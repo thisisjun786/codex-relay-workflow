@@ -113,20 +113,26 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			// CRW-869 finding 3: the stamp takes the session lock before the bound D-close handler, so a
 			// lock that is already busy fails here and the bound close never runs. On a goalplan-bound
 			// "orchestrate D" the answer is the bound close's busy refusal, carrying the lock failure's
-			// reason; every other prompt keeps the oracle's silence. The predicate mirrors the bound-D
+			// reason. Any other chat command is told it was not applied, naming the lock (CRW-1094), where the
+			// oracle answers nothing and the person cannot see why; a status read goes on to its read-only
+			// answer, and every other prompt keeps the oracle's silence. The predicate mirrors the bound-D
 			// dispatch (verb == D and a bound slug) on the same pre-stamp read. A matching retry's first
 			// attempt already published its marker, so the answer names it and leaves the goalplan
 			// unknown rather than naming nothing (CRW-930, d1); a fresh close published nothing of this
 			// close and keeps the bare text.
-			if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil && command.Verb == fsm.VerbD && current.Slug != "" {
+			switch command := fsm.ParseOrchestrateCommand(p.Prompt); {
+			case command == nil:
+				return ""
+			case command.Verb == fsm.VerbD && current.Slug != "":
 				reason := "the session lock could not be taken"
 				if stampErr != nil {
 					reason = stampErr.Error()
 				}
 				return promptDcloseRefusalNaming(promptDcloseNotApplied(reason),
 					promptDcloseRecoveryPublishedForPrompt(current, command))
+			case command.Verb != fsm.VerbStatus:
+				return promptSubmitNotApplied(p.Cwd, p.SessionID, command.Verb, stampErr)
 			}
-			return ""
 		}
 	}
 	if turn != "" && slices.Contains(current.InjectedTurns, turn) {
@@ -300,6 +306,21 @@ func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() err
 		return promptSubmitPublished, warning, nil
 	}
 	return promptSubmitFailed, "", err
+}
+
+// promptSubmitNotApplied is the answer to a chat orchestrate command whose turn stamp could not be written, so the command was
+// not applied (CRW-1094). A busy lock names the lock file: a live holder may still be inside it, and one that died is taken over
+// on the next attempt, so a retry is the remedy. Any other failure names its error.
+func promptSubmitNotApplied(cwd, sessionID string, verb fsm.OrchestrateVerb, err error) string {
+	reason := "the session state could not be written"
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrExist):
+		reason = "the session lock " + state.SessionLockPath(cwd, sessionID) + " could not be taken: another process holds it. Retry; a lock whose holder has died is taken over"
+	default:
+		reason += " (" + err.Error() + ")"
+	}
+	return "[crw \u2014 orchestrate " + string(verb) + " was not applied: " + reason + ". The phase and ledger were not changed.]"
 }
 
 // promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores (the

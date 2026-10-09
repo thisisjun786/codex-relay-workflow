@@ -314,7 +314,7 @@ func TestResolveTombstone(t *testing.T) {
 			put(t, filepath.Join(cwd, ".crw"), []byte("x"))
 		}
 		if k.Lock {
-			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
+			put(t, filepath.Join(sessions, "s1.json.lock"), []byte(strconv.Itoa(os.Getpid()))) // a live holder: since CRW-1094 a dead owner's lock is taken over
 		}
 		path := filepath.Join(sessions, "s1.json")
 		before, _ := os.ReadFile(path)

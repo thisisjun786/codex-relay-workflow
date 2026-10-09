@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -318,17 +320,6 @@ func makeSessionsDir(cwd string) error {
 	return os.MkdirAll(filepath.Join(cwd, crwdir.DirName, SessionsSubdir), 0o777)
 }
 
-// createExclusive is writeFileSync(path, data, { flag: "wx" }): the file exists before it is written, and a failed write
-// leaves it behind.
-func createExclusive(path, data string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(data)
-	return errors.Join(err, f.Close())
-}
-
 // writeNew creates path, which must not exist (fs.ErrExist otherwise, nothing touched), writes data, fsyncs and closes it. On any
 // failure, a close error included, the file this call created is removed again, but only while the path still names that file;
 // a removal that fails is joined into the error, so a file left behind is never silent.
@@ -401,4 +392,21 @@ func tempPath(finalPath string) string {
 	_, _ = rand.Read(b[:]) // cannot fail: the runtime stops the program if it cannot read
 	b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80
 	return fmt.Sprintf("%s.%d.%x-%x-%x-%x-%x.tmp", finalPath, os.Getpid(), b[:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// orphanTempName matches the temp files the state writers make beside a state file: this port's <key>.json.<pid>.<uuid>.tmp
+// (tempPath) and the oracle's <key>.json.<pid>.<ms>.tmp. The key is a sanitised id.
+var orphanTempName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.json\.([0-9]+)\.(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]+)\.tmp$`)
+
+// OrphanStateTemp reports whether name, an entry of the sessions directory, is a state writer's temp file whose writer is gone
+// (ProcessGone of the pid in its name), so nothing will rename it into place (CRW-1094, known-defects.md:79). Only an explicit
+// maintenance command removes one; a hook never sweeps. A writer that is alive, a pid that cannot be judged and any other name
+// answer false.
+func OrphanStateTemp(name string) bool {
+	m := orphanTempName.FindStringSubmatch(name)
+	if m == nil {
+		return false
+	}
+	pid, err := strconv.Atoi(m[1])
+	return err == nil && ProcessGone(pid)
 }

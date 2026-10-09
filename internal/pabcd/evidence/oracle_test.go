@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -394,7 +395,7 @@ func TestTombstone(t *testing.T) {
 		lock := lockFunc(state.WithSessionLock)
 		switch k.Lock {
 		case "held":
-			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
+			put(t, filepath.Join(sessions, "s1.json.lock"), []byte(strconv.Itoa(os.Getpid()))) // a live holder: since CRW-1094 a dead owner's lock is taken over
 		case "sentinel_window": // the first acquisition fails, the second finds the lock free
 			calls := 0
 			lock = func(cwd, sessionID string, fn func() error) error {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -61,6 +62,31 @@ func TestHelperProcess(t *testing.T) {
 	case "wait": // tries only after the holder owns the lock; the sleep seam runs after a create that failed and waits for the release, not for a time
 		waitFor("A-in")
 		err = withSessionLock(cwd, "conc", func() error { note("B-in"); return nil }, func(time.Duration) { note("B-got-EEXIST"); waitFor("A-released") })
+	case "die-holding": // CRW-1094: a hook killed inside its critical section leaves the lock file behind
+		err = WithSessionLock(cwd, "conc", func() error { _ = syscall.Kill(os.Getpid(), syscall.SIGKILL); select {} })
+	case "efbig-lock": // CRW-1094: the owner record cannot be written (RLIMIT_FSIZE 0 answers EFBIG); the caller made the directory
+		var old syscall.Rlimit
+		if err = syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err == nil {
+			zero := old
+			zero.Cur = 0
+			err = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &zero)
+		}
+		if err != nil {
+			fmt.Print("setup: ", err)
+			os.Exit(0)
+		}
+		ran := false
+		lockErr := WithSessionLock(cwd, "conc", func() error { ran = true; return nil })
+		_ = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old)
+		fmt.Printf("ran=%v efbig=%v", ran, errors.Is(lockErr, syscall.EFBIG))
+	case "inc": // CRW-1094: mutual exclusion between processes, decided by the lock and not by the clock
+		for i := 0; i < 15 && err == nil; i++ {
+			err = withSessionLock(cwd, "conc", func() error {
+				c := ReadState(cwd, "conc")
+				c.IdleEditNudges++
+				return WriteState(cwd, c)
+			}, lockBudgetSleep())
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -87,7 +113,7 @@ func children(t *testing.T, cwd string, pairs ...[2]string) (outs []string) {
 	wg.Wait()
 	for i, err := range errs {
 		var killed *exec.ExitError
-		if err != nil && !(errors.As(err, &killed) && pairs[i][0] == "kill") {
+		if err != nil && !(errors.As(err, &killed) && (pairs[i][0] == "kill" || pairs[i][0] == "die-holding")) {
 			t.Fatalf("%s %s: %v %s", pairs[i][0], pairs[i][1], err, killed)
 		}
 	}
@@ -182,14 +208,17 @@ func TestFailedRenameReturnsTheErrorRemovesTheTempAndKeepsThePreviousState(t *te
 	}
 }
 
-func TestHeldLockExhaustsTheScheduleAndIsNeverBroken(t *testing.T) { // recorded lock_held_exhausts
+// Recorded lock_held_exhausts, with the record of a live process: the oracle never breaks a lock, however old; the port takes one
+// over only when its owner is gone (CRW-1094, TestALockWhoseOwnerIsGoneIsTakenOverAtOnce), so the oracle's 424242 is replaced by
+// this test's own pid, a holder that is alive, and age alone still breaks nothing.
+func TestHeldLockExhaustsTheScheduleAndIsNeverBroken(t *testing.T) {
 	cwd := t.TempDir()
 	if err := makeSessionsDir(cwd); err != nil {
 		t.Fatal(err)
 	}
 	lock := StatePath(cwd, "s") + ".lock"
-	old := time.Now().Add(-240 * time.Hour)
-	if err := os.WriteFile(lock, []byte("424242"), 0o644); err != nil || os.Chtimes(lock, old, old) != nil {
+	old, live := time.Now().Add(-240*time.Hour), strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(lock, []byte(live), 0o644); err != nil || os.Chtimes(lock, old, old) != nil {
 		t.Fatal(err)
 	}
 	var slept []time.Duration
@@ -200,7 +229,7 @@ func TestHeldLockExhaustsTheScheduleAndIsNeverBroken(t *testing.T) { // recorded
 	for i := range want {
 		want[i] *= time.Millisecond
 	}
-	if !errors.As(err, &pathErr) || pathErr.Path != lock || !errors.Is(err, fs.ErrExist) || entered || !slices.Equal(slept, want) || fileText(t, lock) != "424242" {
+	if !errors.As(err, &pathErr) || pathErr.Path != lock || !errors.Is(err, fs.ErrExist) || entered || !slices.Equal(slept, want) || fileText(t, lock) != live {
 		t.Fatalf("err %v entered %v slept %v", err, entered, slept)
 	}
 }
@@ -213,7 +242,7 @@ func TestLockIsHeldWithThePidAndReleasedAfterReturnErrorAndPanic(t *testing.T) {
 		err := func() (err error) {
 			defer func() { recovered = recover() }()
 			return WithSessionLock(cwd, "s", func() error {
-				if got := fileText(t, lock); got != fmt.Sprint(os.Getpid()) {
+				if got := fileText(t, lock); got != sessionLockRecord(os.Getpid()) { // CRW-1094: "<pid> flock", where the oracle writes the bare pid
 					t.Errorf("%s: lock holds %q", name, got)
 				}
 				return fn()
