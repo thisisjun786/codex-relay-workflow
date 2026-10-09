@@ -1093,18 +1093,13 @@ func (w *githubPostWrites) readsReach(files []string) bool {
 	return false
 }
 
-// rewrites is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the file the guard reads
+// rewritesIn is whether the text itself writes the script file it runs (cp evil.sh post.sh && bash post.sh): the file the guard reads
 // before the command is then not the file that runs. A write to a destination the reader cannot name is taken as a write to the
 // script.
 //
 // The writes of the script bodies the text runs count as well (bash writer.sh; bash post.sh): a known write wherever it is, an unknown
 // one for every script but the one whose body makes it. In a body judged inside another, the writes around it are walked with the
-// script of each level excluded the same way.
-func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
-	return w.rewritesIn(script, dir, true)
-}
-
-// rewritesIn is rewrites; with strict false only a write that names the script (or a tree it lies in) counts.
+// script of each level excluded the same way. With strict false only a write that names the script (or a tree it lies in) counts.
 func (w *githubPostWrites) rewritesIn(script string, dir shellir.Dir, strict bool) bool {
 	if !githubPostScriptKnown(script, dir) {
 		return false // the script is unreadable already
