@@ -113,7 +113,9 @@ type Context struct {
 	pipeKnown   bool
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
-	Depth   int
+	// RuntimeCarrier keeps the outer run-time wrapper through nested shells, even when it has no structured Feed.
+	RuntimeCarrier string
+	Depth          int
 	// Repeat is whether the text may run more than once or alongside the rest of its text: a carrier other than a shell's own
 	// -c string runs its text again or later (xargs, find, watch, trap, eval, a shell reading stdin). A shell's -c string runs
 	// once, where the text puts it.
@@ -1262,11 +1264,16 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if name == "xargs" || name == "find" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
+		ctx.RuntimeCarrier = name
 		ctx.Repeat = true
 	}
 	if name == "watch" {
 		// watch runs its command again at every interval, with or without -x: the text may run after the rest of the text.
 		ctx.Repeat = true
+	}
+	if name == "parallel" {
+		// parallel carries shell text now, but its moves still receive operands at run time.
+		ctx.RuntimeCarrier = name
 	}
 	if u.recordName != "" {
 		// The wrapper's own file operand is a write of its own (script transcript, strace -o FILE).

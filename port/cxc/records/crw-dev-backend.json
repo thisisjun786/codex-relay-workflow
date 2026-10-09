@@ -99,6 +99,39 @@
           ]
         }
       ]
+    },
+    {
+      "file": "references/core/api-lifecycle.md",
+      "reason": "CRW-1024: state the push-only scope of the pull-request rules (internal work opens no pull request) and name the commit subject and handoff where a CRW task branch has no PR title or body; rewrite the PR-gate and PR-description wording of the migration rule as change wording. Recorded per the validation ledger.",
+      "hunks": [
+        {
+          "line": 161,
+          "old": [
+            "  # Blocks PR if breaking changes detected without migration guide\n"
+          ],
+          "new": [
+            "  # Blocks the change if breaking changes are detected without a migration guide\n"
+          ]
+        },
+        {
+          "line": 164,
+          "old": [
+            "When a breaking change is intentional, require a migration guide link in the PR description.\n"
+          ],
+          "new": [
+            "When a breaking change is intentional, require a migration guide link in the change's description.\n"
+          ]
+        },
+        {
+          "line": 190,
+          "old": [
+            "| Breaking change deployed without migration guide | PR gate: `oasdiff breaking --fail-on ERR` + guide link required |\n"
+          ],
+          "new": [
+            "| Breaking change deployed without migration guide | Change gate: `oasdiff breaking --fail-on ERR` + guide link required |\n"
+          ]
+        }
+      ]
     }
   ]
 }

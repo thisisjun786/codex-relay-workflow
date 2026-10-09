@@ -120,6 +120,8 @@ func worktreeDelOwn(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		return worktreeDelJudgeGit(e, id)
 	case "find":
 		return worktreeDelJudgeFind(e, id)
+	case "mv":
+		return worktreeDelJudgeMv(e, id)
 	}
 	return GuardVerdict{}
 }
@@ -492,6 +494,10 @@ func worktreeDelGitArgs(e shellir.Exec) (rest []string, dir shellir.Dir, unknown
 	args, unknown := worktreeDelArgs(e.Args)
 	dir = e.Dir
 	for i := 0; i < len(args); i++ {
+		if len(rest) > 0 {
+			rest = append(rest, args[i]) // the subcommand and what follows it
+			continue
+		}
 		switch {
 		case args[i] == "-C" && i+1 < len(args):
 			if !dir.Known {
@@ -501,8 +507,11 @@ func worktreeDelGitArgs(e shellir.Exec) (rest []string, dir shellir.Dir, unknown
 				dir = shellir.Dir{Path: resolveFrom(dir.Path, args[i+1]), Known: true}
 			}
 			i++
-		case args[i] == "-c" && i+1 < len(args):
+		case (args[i] == "-c" || gitGlobalTakesValue(args[i])) && i+1 < len(args):
 			i++
+		case strings.HasPrefix(args[i], "-"):
+			// A global flag before the subcommand (-P, --no-pager, --bare) moves no directory. The shared reader accepts
+			// only the global options it models, so every flag here is one of them.
 		default:
 			rest = append(rest, args[i])
 		}
@@ -519,7 +528,8 @@ func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	if len(rest) < 2 || rest[0] != "worktree" || rest[1] != "remove" {
 		return GuardVerdict{}
 	}
-	if unknown {
+	// Structured find and xargs feeds are judged by worktreeDelJudgeFeed. Other run-time wrappers cannot place the target.
+	if unknown || e.Ctx.Feed == nil && e.Ctx.RuntimeCarrier != "" {
 		return worktreeDelUnreadable(id)
 	}
 	target := ""
@@ -535,6 +545,89 @@ func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{}
 }
 
+// worktreeDelJudgeMv is the verdict for mv. A move takes its sources away from the session as rm -r does, so a source that is
+// the managed checkout or one of its ancestors is refused. A move whose operands arrive at run time (behind xargs, find or
+// parallel, or in a nested shell that find runs) is refused. A source the reader cannot read is refused too, since from any
+// directory it may name the checkout through a variable. A destination the reader cannot read is not a source and stays allowed.
+func worktreeDelJudgeMv(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
+	if e.Ctx.RuntimeCarrier != "" {
+		return worktreeDelUnreadable(id)
+	}
+	args, _ := worktreeDelArgs(e.Args)
+	// getopt permutes the arguments, so an option after the first operand is an option; with POSIXLY_CORRECT it is an operand.
+	// Both readings are judged, as sed's two readings are.
+	for _, stopAtOperand := range []bool{false, true} {
+		sources, ok := mvSources(args, stopAtOperand)
+		if !ok {
+			return worktreeDelUnreadable(id)
+		}
+		for _, s := range sources {
+			if s == "" {
+				return worktreeDelUnreadable(id)
+			}
+			if worktreeDelTargetProtected(s, e, id) {
+				return GuardVerdict{Deny: true, Reason: denyReason("mv "+s, id)}
+			}
+		}
+	}
+	return GuardVerdict{}
+}
+
+// mvSources returns the operands mv moves: with -t or --target-directory every operand is a source, otherwise all but the
+// last. The destination of -t is not a source. stopAtOperand is the POSIXLY_CORRECT reading, where options end at the first
+// operand. ok is false for an option the reader does not model.
+func mvSources(args []string, stopAtOperand bool) (sources []string, ok bool) {
+	var operands []string
+	targetDir, flagsDone := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case !flagsDone && a == "--":
+			flagsDone = true
+		case !flagsDone && strings.HasPrefix(a, "--"):
+			name, _, hasValue := strings.Cut(a, "=")
+			switch name {
+			case "--target-directory":
+				targetDir = true
+				if !hasValue {
+					i++
+				}
+			case "--suffix":
+				if !hasValue {
+					i++
+				}
+			case "--force", "--interactive", "--no-clobber", "--verbose", "--update", "--no-target-directory", "--strip-trailing-slashes", "--debug", "--backup":
+			default:
+				return nil, false
+			}
+		case !flagsDone && len(a) > 1 && a[0] == '-':
+			for k := 1; k < len(a); k++ {
+				c := a[k]
+				if c == 't' || c == 'S' {
+					targetDir = targetDir || c == 't'
+					if k == len(a)-1 {
+						i++
+					}
+					break
+				}
+				if !strings.ContainsRune("finvbuTZ", rune(c)) {
+					return nil, false
+				}
+			}
+		default:
+			operands = append(operands, a)
+			flagsDone = flagsDone || stopAtOperand
+		}
+	}
+	if targetDir {
+		return operands, true
+	}
+	if len(operands) < 2 {
+		return nil, true
+	}
+	return operands[:len(operands)-1], true
+}
+
 // worktreeDelTargetProtected says whether a removal target, taken from the program's directory, is protected. A
 // relative target from an unknown directory cannot be placed, so it is protected.
 func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdentity) bool {
@@ -543,4 +636,13 @@ func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdenti
 		return true
 	}
 	return isProtectedTarget(target, e.Dir.Path, id, true)
+}
+
+// gitGlobalTakesValue names the git global options that take their value in the next word.
+func gitGlobalTakesValue(s string) bool {
+	switch s {
+	case "--git-dir", "--work-tree", "--namespace", "--super-prefix":
+		return true
+	}
+	return false
 }

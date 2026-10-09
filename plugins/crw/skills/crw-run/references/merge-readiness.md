@@ -634,6 +634,10 @@ defect inside this issue's promise: those block. A disposition written to clear 
 gate without assessing what the finding does is the false record this step exists to
 prevent.
 
+`crw manage premerge eval <PR>` runs that grading and writes the `premerge-record/1` of the head, with no disposition yet.
+`crw manage premerge dispose <record> --ref <criterion or defect id> --class <class> --note <text>` then writes the parent's
+disposition of one finding into the same record. `dag-accept` takes the record with `--premerge @<record>`.
+
 The evaluation does not restate the child's handoff. The child judged the findings its
 own rounds produced ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release));
 what the parent grades anew is the findings the child never saw (a late thread) and the
