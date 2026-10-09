@@ -159,8 +159,94 @@
     },
     {
       "file": "references/dispatch-surfaces.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable. CRW-1130: start the surface choice from the CRW binding (DISPATCH-MANAGED-01): a relay-held issue or DAG node is an independent relay child through crw-run managed start/resume/dag-release, with the relay's duplicate-assignment and capacity refusals, a read-only projection instead of a second manifest, and relay delivery as the goal-free parent's wake; project parents use read-only and review helpers; unmanaged PABCD and bounded helpers keep the thread/subagent choice; an unresolved binding is not permission to go unmanaged; a bounded worktree worker's evidence is read in the tree the dispatch assigned. Oracle: pabcd/references/dispatch-surfaces.md:25-31,87,180,230.",
       "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "surfaces. [Delegation](delegation.md) owns what a subagent packet contains once\n"
+          ],
+          "new": [
+            "surfaces for unmanaged work; a CRW-managed lane is chosen first by\n",
+            "[DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
+            "[Delegation](delegation.md) owns what a subagent packet contains once\n"
+          ]
+        },
+        {
+          "line": 7,
+          "new": [
+            "## DISPATCH-MANAGED-01 (STRICT) — start from the binding, not from the mechanism\n",
+            "\n",
+            "Before choosing a surface, find out what owns the work. Read the binding the task carries:\n",
+            "the task packet, the assignment record the relay holds for it, or the DAG node\n",
+            "([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).\n",
+            "\n",
+            "- **Managed** — a Linear issue the relay holds, or a DAG node. An independent lane for it is an\n",
+            "  independent relay child, started and resumed through `crw-run`: the managed start, the DAG release\n",
+            "  and their bridge recovery, pair/profile, capacity and receipt rules. It is never a desktop\n",
+            "  `create_thread` lane. The relay refuses a second active or paused assignment of the same issue and\n",
+            "  a release past capacity; those answers are followed, not routed around by creating a thread by\n",
+            "  hand. A project parent uses read-only and review helpers only; the implementation of an issue is\n",
+            "  its independent relay child's, and that child may own bounded native helpers for its own task.\n",
+            "  The manifest of managed lanes is a read-only projection of the relay assignments and DAG records,\n",
+            "  not a second file to keep. A goal-free parent is resumed by relay delivery\n",
+            "  ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it\n",
+            "  checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))\n",
+            "  and yields only after that readiness is established, never by arming a wake of its own.\n",
+            "- **Unmanaged** — standalone PABCD with no relay-held issue, and bounded helper delegation inside\n",
+            "  any task. The rest of this file applies as written.\n",
+            "- **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is\n",
+            "  not permission to take the unmanaged route for an independent lane: resolve the binding, or\n",
+            "  report that it is unresolved and keep to bounded helpers meanwhile. Nothing is forced the other\n",
+            "  way either: a bounded helper or worktree worker needs no relay binding, and none is invented for it.\n",
+            "\n",
+            "A native helper's dispatch record is a local helper record. It is never an independent child's\n",
+            "assignment, a DAG acceptance or a relay receipt.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 31,
+          "old": [
+            "own goal or PABCD state. Different workers must use different worktrees.\n"
+          ],
+          "new": [
+            "own goal or PABCD state. Different workers must use different worktrees. The\n",
+            "worker's evidence is read in the tree the dispatch assigned to it, not in the\n",
+            "coordinator's native cwd; a dispatch that recorded no assigned tree keeps the\n",
+            "native cwd.\n"
+          ]
+        },
+        {
+          "line": 86,
+          "old": [
+            "Route by what the work needs to own, not by how parallel it is:\n"
+          ],
+          "new": [
+            "Route by what the work needs to own, not by how parallel it is. A CRW-bound issue or DAG\n",
+            "node is routed by [DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)\n",
+            "first; this list is for the rest:\n"
+          ]
+        },
+        {
+          "line": 114,
+          "old": [
+            "Creating a thread is user-visible, so it needs a user request. A request for\n"
+          ],
+          "new": [
+            "Creating a thread is user-visible, so it needs a user request (a managed lane is started\n",
+            "by the relay, not created as a thread by hand). A request for\n"
+          ]
+        },
+        {
+          "line": 128,
+          "old": [
+            "N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.\n"
+          ],
+          "new": [
+            "For unmanaged work, N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.\n"
+          ]
+        },
         {
           "line": 150,
           "old": [
@@ -168,6 +254,38 @@
           ],
           "new": [
             "[Lane dispatch](../../crw-loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ]
+        },
+        {
+          "line": 180,
+          "old": [
+            "Lane work outlives a turn, and nothing resumes a parent automatically. Stop-continuation\n",
+            "is bounded on purpose: it releases under context pressure and at the stagnation cap. A\n",
+            "parent that dispatches lanes, yields, and expects to wake up later has arranged nothing,\n",
+            "and every lane then sits finished and unmerged.\n"
+          ],
+          "new": [
+            "Lane work outlives a turn, and for unmanaged lanes nothing resumes a parent automatically.\n",
+            "Stop-continuation is bounded on purpose: it releases under context pressure and at the\n",
+            "stagnation cap. A parent that dispatches lanes, yields, and expects to wake up later has\n",
+            "arranged nothing, and every lane then sits finished and unmerged. In a managed run a\n",
+            "goal-free parent is resumed by relay delivery instead (DISPATCH-MANAGED-01): it verifies that\n",
+            "wake readiness and arranges no second wake or manifest.\n"
+          ]
+        },
+        {
+          "line": 230,
+          "old": [
+            "Independent task lanes are separate tasks, so nothing in the system knows two were handed the\n",
+            "same issue until their pull requests collide. One shared record makes that visible before\n",
+            "the branches diverge. Per lane: repository, lane id, task and host id, worktree, branch,\n"
+          ],
+          "new": [
+            "For unmanaged work, independent task lanes are separate tasks, so nothing in the system knows\n",
+            "two were handed the same issue until their pull requests collide. One shared record makes that\n",
+            "visible before the branches diverge. Managed lanes keep no such file: the relay refuses a\n",
+            "second active assignment of an issue, and their identity, checkout and status are read from\n",
+            "its assignment and DAG records. Per lane: repository, lane id, task and host id, worktree, branch,\n"
           ]
         },
         {
