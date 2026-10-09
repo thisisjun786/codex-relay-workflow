@@ -390,12 +390,14 @@ func envSplitLong(w string) bool {
 }
 
 // envAssignmentWord is an assignment in env's own argument list: GNU env takes any NAME=VALUE whose NAME is not
-// empty as one, whether or not NAME is a shell identifier (9=1, a-b=1). Before the program, a word that starts
-// with "-" is an option, so envAssignment excludes it; after a double dash every such word is an assignment.
+// empty as one, whether or not NAME is a shell identifier (9=1, a-b=1). While env still reads options, a word
+// that starts with "-" is an option, so envAssignment excludes it there (inOptions). The first assignment and a
+// double dash end the options: from there every NAME=VALUE is an assignment, one that starts with "-" as well
+// (-S=echo), and the first word that is none is the program (CRW-1047).
 var envAssignmentWord = regexp.MustCompile("^[^=]+=")
 
-func envAssignment(w string, afterDashes bool) bool {
-	return envAssignmentWord.MatchString(w) && (afterDashes || !strings.HasPrefix(w, "-"))
+func envAssignment(w string, inOptions bool) bool {
+	return envAssignmentWord.MatchString(w) && (!inOptions || !strings.HasPrefix(w, "-"))
 }
 
 // argList is an argument list as a shared chain: a list and its tail are the same nodes, and equal lists
@@ -433,13 +435,83 @@ type walkState struct {
 	list     int
 }
 
-// wrapperWalk is the state one wrapper reading shares with the env splits inside it: the argument lists
-// already walked, so a state is walked once however many splits lead to it, and the work stays linear. A state
-// is a wrapper name, whether timeout's duration was read, and the interned argument list, so naming it costs a
-// constant however long the list is.
+// wrapperWalk is the state one command reading shares with the env splits and the wrappers inside it: the
+// argument lists already walked, so a state is walked once however many splits or candidate programs lead to it,
+// and the work stays linear. A state is a wrapper name, whether timeout's duration was read, and the interned
+// argument list, so naming it costs a constant however long the list is. A candidate program is judged on the
+// shared list, never on a copy of the words after it, and what the judgment looks for in those words (the first
+// word that is no prefix, a --test flag, an interpreter's -c) is found once per position and remembered (first),
+// so many candidates over one tail scan it once (CRW-1047).
 type wrapperWalk struct {
 	seen     map[walkState]bool
 	interned map[argListKey]*argList
+	found    map[firstKey]*argList
+	judged   map[firstKey]bool
+}
+
+// firstKey names one search of a list position: what is searched for (a firstKind) and the position's id.
+type firstKey struct {
+	kind firstKind
+	list int
+}
+
+type firstKind int
+
+const (
+	firstProgram firstKind = iota
+	firstEnvProgram
+	firstTestFlag
+	firstInterpreterC
+	firstSuCommand
+)
+
+// firstMatches is what each firstKind searches for at one word: the program (no assignment, option or prefix
+// word), env's program after its assignments, a Node --test flag, an interpreter's -c with a word after it, and
+// su's -c or --command.
+func firstMatches(kind firstKind, l *argList) bool {
+	w := l.head
+	switch kind {
+	case firstProgram:
+		return !assignmentWord.MatchString(w) && !strings.HasPrefix(w, "-") && !shellPrefixWords[w]
+	case firstEnvProgram:
+		return !envAssignment(w, false)
+	case firstTestFlag:
+		return w == "--test" || strings.HasPrefix(w, "--test=")
+	case firstInterpreterC:
+		return strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, "c") && l.tail != nil
+	default:
+		return w == "-c" || w == "--command" || strings.HasPrefix(w, "--command=") || strings.HasPrefix(w, "-c") && !strings.HasPrefix(w, "--")
+	}
+}
+
+// first is the first position from l on whose word kind searches for, or nil. Every position it passes
+// remembers the answer, so a later search from any of them costs a constant.
+func (ww *wrapperWalk) first(kind firstKind, l *argList) *argList {
+	var passed []*argList
+	var at *argList
+	for ; l != nil; l = l.tail {
+		if hit, ok := ww.found[firstKey{kind, l.id}]; ok {
+			at = hit
+			break
+		}
+		if firstMatches(kind, l) {
+			at = l
+			break
+		}
+		passed = append(passed, l)
+	}
+	for _, p := range passed {
+		ww.found[firstKey{kind, p.id}] = at
+	}
+	if at != nil {
+		ww.found[firstKey{kind, at.id}] = at
+	}
+	return at
+}
+
+// newWrapperWalk is an empty walk.
+func newWrapperWalk() *wrapperWalk {
+	return &wrapperWalk{seen: map[walkState]bool{}, interned: map[argListKey]*argList{}, found: map[firstKey]*argList{}, judged: map[firstKey]bool{}}
 }
 
 // list chains words in front of tail.
@@ -461,7 +533,8 @@ func (ww *wrapperWalk) list(words []string, tail *argList) *argList {
 
 // wrapperRunsNodeTest reports whether a wrapper runs a Node test: its program is read from args, the words
 // after the wrapper's name. The options are walked from the first word. A listed option skips its value; an
-// env assignment is skipped; env -S and --split-string (and its abbreviations) take a command line that env
+// env assignment ends env's options, so the later words that hold an "=" are assignments too and the first that
+// holds none is the program; env -S and --split-string (and its abbreviations) take a command line that env
 // splits into words (CRW-983, CRW-1047). An option the table does not list has no known value, so both readings
 // are judged: the option alone takes no value, and the option takes the next word. A node test under either
 // reading is a finding. timeout's first word that starts no option is its duration, whatever its spelling and
@@ -470,7 +543,7 @@ func (ww *wrapperWalk) list(words []string, tail *argList) *argList {
 // is one more level of depth and shares the walked states, so the walk is bounded by shellMaxDepth and by the
 // number of distinct argument lists, not by the number of ways to reach them.
 func wrapperRunsNodeTest(name string, args []string, depth int) bool {
-	ww := &wrapperWalk{seen: map[walkState]bool{}, interned: map[argListKey]*argList{}}
+	ww := newWrapperWalk()
 	return ww.runs(name, ww.list(args, nil), depth)
 }
 
@@ -491,19 +564,15 @@ func (ww *wrapperWalk) runs(name string, args *argList, depth int) bool {
 		ww.seen[state] = true
 		w := l.head
 		switch {
-		case name == "env" && envAssignment(w, false):
-			return walk(l.tail, duration)
+		case name == "env" && envAssignment(w, true):
+			return ww.command(ww.first(firstEnvProgram, l.tail), depth+1)
 		case w == "--" && name == "timeout" && !duration:
 			after := l.tail.next()
-			return after != nil && commandRunsNodeTest(after.words(), depth+1)
+			return after != nil && ww.command(after, depth+1)
 		case w == "--" && name == "env":
-			rest := l.tail
-			for rest != nil && envAssignment(rest.head, true) {
-				rest = rest.tail
-			}
-			return commandRunsNodeTest(rest.words(), depth+1)
+			return ww.command(ww.first(firstEnvProgram, l.tail), depth+1)
 		case w == "--":
-			return commandRunsNodeTest(l.tail.words(), depth+1)
+			return ww.command(l.tail, depth+1)
 		case name == "env" && envSplitCluster.MatchString(w):
 			if rest := w[len(envSplitCluster.FindString(w)):]; rest != "" {
 				return ww.split(rest, l.tail, depth)
@@ -521,7 +590,7 @@ func (ww *wrapperWalk) runs(name string, args *argList, depth int) bool {
 		case name == "timeout" && !duration:
 			return walk(l.tail, true)
 		default:
-			return commandRunsNodeTest(l.words(), depth+1)
+			return ww.command(l, depth+1)
 		}
 	}
 	return walk(args, false)
@@ -955,60 +1024,65 @@ func nodeTestRun(text string, failClosed bool, depth int) bool {
 // commandRunsNodeTest reports whether one simple command is a Node test run, looking past its
 // assignments and prefix words to the program it names.
 func commandRunsNodeTest(cmd shellCommand, depth int) bool {
+	ww := newWrapperWalk()
+	return ww.command(ww.list(cmd, nil), depth)
+}
+
+// command is commandRunsNodeTest on a shared argument list: the program is the first word that is no
+// assignment, option or prefix word, and the words after it are read in place (CRW-1047).
+func (ww *wrapperWalk) command(l *argList, depth int) bool {
 	if depth > shellMaxDepth {
 		return true
 	}
-	words := []string(cmd)
-	for len(words) > 0 && (assignmentWord.MatchString(words[0]) || strings.HasPrefix(words[0], "-") || shellPrefixWords[words[0]]) {
-		words = words[1:]
-	}
-	if len(words) == 0 {
+	l = ww.first(firstProgram, l)
+	if l == nil {
 		return false
 	}
-	name, args := filepath.Base(words[0]), words[1:]
+	name, args := filepath.Base(l.head), l.tail
 	switch {
 	case shellWrappers[name]:
-		return wrapperRunsNodeTest(name, args, depth)
+		return ww.runs(name, args, depth)
 	case strings.HasSuffix(name, "node"):
-		return hasTestFlag(args)
+		return ww.first(firstTestFlag, args) != nil
 	case shellInterpreters[name]:
-		for k, a := range args {
-			if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "c") && k+1 < len(args) {
-				return nodeTestRun(args[k+1], true, depth+1)
-			}
+		if c := ww.first(firstInterpreterC, args); c != nil {
+			return ww.judge(firstInterpreterC, c, c.tail.head, depth)
 		}
 	case name == "eval":
-		return nodeTestRun(strings.Join(args, " "), true, depth+1)
+		return nodeTestRun(strings.Join(args.words(), " "), true, depth+1)
 	case name == "su":
-		return suCommandRuns(args, depth)
+		return ww.suCommandRuns(args, depth)
 	}
 	return false
+}
+
+// judge is nodeTestRun on text found at a position, run once per position and search: candidates that find the
+// same position share the answer.
+func (ww *wrapperWalk) judge(kind firstKind, at *argList, text string, depth int) bool {
+	key := firstKey{kind, at.id}
+	if found, ok := ww.judged[key]; ok {
+		return found
+	}
+	found := nodeTestRun(text, true, depth+1)
+	ww.judged[key] = found
+	return found
 }
 
 // suCommandRuns reads the program su -c runs: the word after -c or --command, the text joined to -c, or
 // the text after --command=. Its other options take no program, so the reader does not parse them.
-func suCommandRuns(args []string, depth int) bool {
-	for k, a := range args {
-		switch {
-		case a == "-c" || a == "--command":
-			return k+1 < len(args) && nodeTestRun(args[k+1], true, depth+1)
-		case strings.HasPrefix(a, "--command="):
-			return nodeTestRun(strings.TrimPrefix(a, "--command="), true, depth+1)
-		case strings.HasPrefix(a, "-c") && !strings.HasPrefix(a, "--"):
-			return nodeTestRun(a[2:], true, depth+1)
-		}
+func (ww *wrapperWalk) suCommandRuns(args *argList, depth int) bool {
+	at := ww.first(firstSuCommand, args)
+	if at == nil {
+		return false
 	}
-	return false
-}
-
-// hasTestFlag reports whether a Node argument list carries the --test flag.
-func hasTestFlag(words []string) bool {
-	for _, w := range words {
-		if w == "--test" || strings.HasPrefix(w, "--test=") {
-			return true
-		}
+	switch a := at.head; {
+	case a == "-c" || a == "--command":
+		return at.tail != nil && ww.judge(firstSuCommand, at, at.tail.head, depth)
+	case strings.HasPrefix(a, "--command="):
+		return ww.judge(firstSuCommand, at, strings.TrimPrefix(a, "--command="), depth)
+	default:
+		return ww.judge(firstSuCommand, at, a[2:], depth)
 	}
-	return false
 }
 
 // yamlQuoted reads the value a single- or double-quoted YAML scalar holds on its line, which is the text
@@ -2064,6 +2138,56 @@ func TestWorkflow_a_long_wrapper_option_list_is_walked_in_linear_work(t *testing
 		}
 		if got {
 			t.Errorf("%s with %d unknown options and an echo: found, want no finding", name, options)
+		}
+	}
+}
+
+// CRW-1047, fix round 5. The walk judges a candidate program without copying the words after it, and what it
+// asks of those words (the prefix words to skip, a --test flag, a wrapper's own walk) is read once per position,
+// not once per candidate: an unknown option followed by a value is read both ways, so every value is a candidate
+// program, and a judgment that copied or rescanned the rest of the list at each one would be quadratic (about
+// 840MB for 4000 pairs, while the linear walk needs well under 16MB).
+func TestWorkflow_an_option_value_list_is_judged_in_linear_work(t *testing.T) {
+	const pairs, budget = 4000, 16 << 20
+	for _, name := range []string{"env", "sudo", "timeout"} {
+		for _, value := range []string{"x", "node", "command", "bash"} {
+			args := slices.Repeat([]string{"--unknown", value}, pairs)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			got := wrapperRunsNodeTest(name, args, 0)
+			runtime.ReadMemStats(&after)
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > budget {
+				t.Errorf("%s with %d pairs of an unknown option and %q allocated %d bytes, want at most %d: each candidate copies the rest of the list", name, pairs, value, allocated, budget)
+			}
+			if got {
+				t.Errorf("%s with %d pairs of an unknown option and %q: found, want no finding", name, pairs, value)
+			}
+		}
+	}
+}
+
+// CRW-1047, fix round 5. GNU env ends its options at the first assignment: every later word that holds an "="
+// is an assignment, even one that starts with "-" (-S=echo, --split-string=echo), and the first word without
+// one is the program. The same holds for the words of an env -S value and behind an unlisted option.
+func TestWorkflow_an_env_assignment_ends_env_options(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"an option-shaped assignment after an assignment", "      - run: env FOO=1 '-S=echo' node --test\n", true},
+		{"a long option-shaped assignment after an assignment", "      - run: env FOO=1 '--split-string=echo' node --test\n", true},
+		{"an option-shaped assignment inside -S", "      - run: env -S \"FOO=1 -S=echo node --test\"\n", true},
+		{"an option-shaped assignment behind an unlisted option", "      - run: env --unset HOME FOO=1 '-S=echo' node --test\n", true},
+		{"a numeric then an option-shaped assignment", "      - run: env 9=1 -u=x node --test\n", true},
+		{"an option-shaped assignment before an echo", "      - run: env FOO=1 '-S=echo' echo node --test\n", false},
+		{"a long option-shaped assignment before an echo", "      - run: env FOO=1 '--split-string=echo' echo node --test\n", false},
+		{"an option-shaped assignment inside -S before an echo", "      - run: env -S \"FOO=1 -S=echo echo node --test\"\n", false},
+		{"an option-shaped assignment behind an unlisted option before an echo", "      - run: env --unset HOME FOO=1 '-S=echo' echo node --test\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
 		}
 	}
 }
