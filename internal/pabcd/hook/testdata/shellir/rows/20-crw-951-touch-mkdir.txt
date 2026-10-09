@@ -118,16 +118,16 @@ python3 -c 'import os; print(os.path.exists("/w/x")) # p.mkdir()'
 --why Allow counterexample (fix round 1): the text p.touch() in a triple-quoted string is data.
 python3 -c 'import os; print("""a p.touch() b""", os.path.exists("/w/x"))'
 
-=== CRW-951-touch-10-fstring-field | W
---why An f-string replacement field is program text: the unattributed p.touch() inside it is an unknown destination.
+=== CRW-951-touch-10-fstring-field | B
+--why The field is code, but its computed create has no protected reference (CRW-951 item 3).
 python3 -c 'import os; print(f"{p.touch()}", os.path.exists("/w/x"))'
 
-=== CRW-951-touch-11-exec-program-name-receiver | E
---why A string run by exec is program text: the unattributed p.touch() in it is an unknown destination.
+=== CRW-951-touch-11-exec-program-name-receiver | R
+--why The decoded create has no protected reference; the separate worktree guard still refuses exec.
 python3 -c 'import os; exec("p.touch()"); os.path.exists("/w/x")'
 
-=== CRW-951-mkdir-09-comment-then-call | W
---why A comment does not hide a call on the next line: p.mkdir() after a comment line.
+=== CRW-951-mkdir-09-comment-then-call | B
+--why A comment does not hide the call, but the computed create has no protected reference.
 python3 -c 'import os
 # note
 p.mkdir()

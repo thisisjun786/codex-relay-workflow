@@ -33,6 +33,33 @@ func shellIRWriteNames(tok string) bool {
 // Path.mkdir. They are read like write_text: a Path(...) call receiver names its destination, any other receiver is unknown.
 func shellIRPyPathCreateName(tok string) bool { return tok == "touch" || tok == "mkdir" }
 
+// Computed pathlib creates follow CRW-951's protected-reference condition. The
+// memory root ends in memories; .codex and CODEX_HOME also name the protected area.
+// Decode literals with the existing reader so escaped path fragments count too.
+func shellIRPyProtectedReference(src string) bool {
+	for _, sp := range shellIRTokenSpans(src) {
+		if src[sp[0]:sp[1]] == "CODEX_HOME" {
+			return true
+		}
+	}
+	rs := shellVerbWithoutComments(src, true)
+	for i := 0; i < len(rs); i++ {
+		if rs[i] != '\'' && rs[i] != '"' {
+			continue
+		}
+		end := shellWriteTripleScanRegion(rs, i, true)
+		start := i
+		for start > 0 && strings.ContainsRune("rRuUbBfF", rs[start-1]) {
+			start--
+		}
+		if value, ok := shellVerbLiteral(rs[start:end]); ok && (strings.Contains(value, "memories") || strings.Contains(value, ".codex")) {
+			return true
+		}
+		i = end - 1
+	}
+	return false
+}
+
 // shellIRPyRunsText names the calls that run a string as a program or a command (exec, eval, compile, a subprocess or an os.system
 // call, runpy, timeit, an interactive console): a program that names one may run any string literal it holds.
 func shellIRPyRunsText(tok string) bool {
@@ -175,7 +202,7 @@ func shellIRStructuralWriteUnknownFrom(src string, from int, python bool) bool {
 			if data != nil && data[sp[0]] {
 				continue
 			}
-			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) {
+			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) && shellIRPyProtectedReference(src) {
 				return true
 			}
 			continue

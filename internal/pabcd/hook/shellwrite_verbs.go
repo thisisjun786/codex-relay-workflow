@@ -421,8 +421,13 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 			case top.kind == 'u' && c == ')':
 				dests = append(dests, shellIRUnknownDest)
 			case top.kind == 'p' && c == ')':
-				if shellVerbWriteMethod(rs, i+1, python) {
-					dests = append(dests, shellWriteEscapePath(rs, spans)...)
+				if method := shellVerbWriteMethod(rs, i+1, python); method != "" {
+					for _, dest := range shellWriteEscapePath(rs, spans) {
+						if dest == shellIRUnknownDest && shellIRPyPathCreateName(method) && !shellIRPyProtectedReference(binds.scope) {
+							continue
+						}
+						dests = append(dests, dest)
+					}
 				} else if python {
 					if at, kind, ok := shellWritePathMethodCall(rs, i+1); ok {
 						pending = pendingCall{at: at, kind: kind, recv: spans}
@@ -583,15 +588,15 @@ func shellVerbCallKind(rs []rune, i int, c rune) byte {
 	return 0
 }
 
-// shellVerbWriteMethod reports whether .write_text( or .write_bytes( follows at j (blanks allowed), as after Path(...); for a Python
+// shellVerbWriteMethod names .write_text( or .write_bytes( when it follows at j (blanks allowed), as after Path(...); for a Python
 // program also .touch( and .mkdir(, the pathlib methods that create their receiver (CRW-951). A Node program's Path(...).touch() is
 // the program's own method and writes nothing the reader can name, so the two names stay out of its list.
-func shellVerbWriteMethod(rs []rune, j int, python bool) bool {
+func shellVerbWriteMethod(rs []rune, j int, python bool) string {
 	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
 		j++
 	}
 	if j >= len(rs) || rs[j] != '.' {
-		return false
+		return ""
 	}
 	for j++; j < len(rs) && shellVerbSpaceRune(rs[j]); {
 		j++
@@ -604,10 +609,13 @@ func shellVerbWriteMethod(rs []rune, j int, python bool) bool {
 		if end := j + len(name); end <= len(rs) && string(rs[j:end]) == name {
 			for ; end < len(rs) && shellVerbSpaceRune(rs[end]); end++ {
 			}
-			return end < len(rs) && rs[end] == '('
+			if end < len(rs) && rs[end] == '(' {
+				return name
+			}
+			return ""
 		}
 	}
-	return false
+	return ""
 }
 
 // shellWritePathMethodCall reads the method call that follows a Path(...) receiver at j (CRW-900): its bracket index and the
