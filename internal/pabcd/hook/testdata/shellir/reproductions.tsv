@@ -955,3 +955,261 @@ added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...{CR}<nl>builtins.exec(...)'	CRW-851-lc-15	row	-
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins<nl>if True:<nl>    x = 1.<nl>    builtins.exec(...)'	CRW-851-lc-16	row	-
 added by CRW-851 (verifier P0: a line end after a dot is a new statement, not an attribute chain)	python3 -c 'import builtins; x = ...<nl>builtins \<nl>.exec(...)'	CRW-851-lc-17	row	-
+linear-issue-CRW-895.json	find ../repo -delete	CRW-895-a1	row	-
+linear-issue-CRW-895.json	find .. -maxdepth 0 -name repo -exec rm -rf {} +	CRW-895-a2	row	-
+linear-issue-CRW-895.json	echo ../repo | xargs rm -rf	CRW-895-a3	row	-
+linear-issue-CRW-895.json	find "$PWD" -exec rm -rf {} +	CRW-895-a4	row	-
+linear-issue-CRW-895.json	find .. -delete	CRW-895-a5	row	-
+linear-issue-CRW-895.json	printf '%s\n' ../repo | xargs rm -rf	CRW-895-a6	row	-
+linear-issue-CRW-895.json	echo "$X" | xargs rm	CRW-895-a7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo "$X" | xargs rm -rf	CRW-895-a7b	row	-
+linear-issue-CRW-895.json	find . -name '*.o' -delete	CRW-895-c1	row	-
+linear-issue-CRW-895.json	find build -delete	CRW-895-c2	row	-
+linear-issue-CRW-895.json	find . -type f -name '*.tmp' -exec rm {} +	CRW-895-c3	row	-
+linear-issue-CRW-895.json	find . -name '*.o' | xargs rm	CRW-895-c4	row	-
+linear-issue-CRW-895.json	git ls-files -z | xargs -0 rm -f	CRW-895-c5	row	-
+independent verifier of the 10-09 re-check (CRW-895)	git ls-files -z | xargs -0 rm	CRW-895-c5b	row	-
+linear-issue-CRW-895.json	ls | xargs rm	CRW-895-c6	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find . -type f -delete	CRW-895-c7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find . -newer x -delete	CRW-895-c8	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -path '*/build/*' -delete	CRW-895-c9	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find {CHECKOUT} -name '*.o' -delete	CRW-895-c10	row	-
+added by CRW-895 (a shape the issue rules imply)	find . \( -name '*.o' -o -name '*.a' \) -delete	CRW-895-c11	row	-
+added by CRW-895 (a shape the issue rules imply)	find . ! -name keep -delete	CRW-895-c12	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -name '*.tmp' -execdir rm {} +	CRW-895-c13	row	-
+added by CRW-895 (a shape the issue rules imply)	find build -empty -exec rmdir {} +	CRW-895-c14	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build ../repo/build | xargs rm	CRW-895-c15	row	-
+added by CRW-895 (a shape the issue rules imply)	echo . | xargs rm	CRW-895-c16	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -print	CRW-895-c17	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -exec ls {} +	CRW-895-c18	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs ls	CRW-895-c19	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm ./build	CRW-895-c20	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm < /dev/null	CRW-895-c21	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../other | xargs rm	CRW-895-c22	row	-
+added by CRW-895 (a shape the issue rules imply)	find -L . -name '*.o' -delete	CRW-895-c23	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -name -delete	CRW-895-c24	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find .. -exec rmdir {} +	CRW-895-d1	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec shred {} +	CRW-895-d2	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec unlink {} \;	CRW-895-d3	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec git worktree remove {} \;	CRW-895-d4	row	-
+independent verifier of the 10-09 re-check (CRW-895)	find ../repo -okdir rm -rf {} \;	CRW-895-d5	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -execdir rm -rf {} +	CRW-895-d6	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -ok rm -rf {} \;	CRW-895-d7	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec rm {} +	CRW-895-d8	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -exec rm {} +	CRW-895-d9	row	-
+added by CRW-895 (a shape the issue rules imply)	find {CHECKOUT}/.. -name repo -delete	CRW-895-d10	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find -L ../repo -delete	CRW-895-d11	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -name a -o -delete	CRW-895-d12	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -exec rm {} +	CRW-895-d13	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -execdir git worktree remove {} \;	CRW-895-d14	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec git -C .. worktree remove {} \;	CRW-895-d15	row	-
+added by CRW-895 (a shape the issue rules imply)	find {CHECKOUT} -exec rmdir {} +	CRW-895-d16	row	-
+added by CRW-895 (a shape the issue rules imply)	find build ../repo -delete	CRW-895-d17	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. <<<x -delete	CRW-895-d18	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | xargs git worktree remove	CRW-895-e1	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs rm	CRW-895-e2	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | xargs rmdir	CRW-895-e3	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs unlink	CRW-895-e4	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs shred	CRW-895-e5	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo "$(cat list.txt)" | xargs rm	CRW-895-e6	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ~ | xargs rm	CRW-895-e7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs -a list.txt rm	CRW-895-e8	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs rm <<< ../repo	CRW-895-e9	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs rm << EOF\n../repo\nEOF	CRW-895-e10	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo {CHECKOUT} | xargs rm	CRW-895-e11	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo .. | xargs rm	CRW-895-e12	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	printf '../repo\n' | xargs rm	CRW-895-e13	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	printf '../repo\0' | xargs -0 rm	CRW-895-e14	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs -I{} rm {}	CRW-895-e15	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | cat | xargs rm	CRW-895-e16	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo $PWD | xargs rm	CRW-895-e17	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm < list.txt	CRW-895-e18	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo/. | xargs rm	CRW-895-e19	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build ../repo | xargs rmdir	CRW-895-e20	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -type f | xargs rm	CRW-895-e21	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build | sed s/build/../repo/ | xargs rm	CRW-895-e22	row	-
+added by CRW-895 (a shape the issue rules imply)	(echo ../repo) | xargs rm	CRW-895-e23	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git worktree remove <<< {CHECKOUT}	CRW-895-e24	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs -I{} sh -c 'rm {}'	CRW-895-e25	row	-
+added by CRW-895 (a shape the issue rules imply)	nohup echo ../repo | xargs rm	CRW-895-e26	row	-
+added by CRW-895 (a shape the issue rules imply)	cat << EOF | xargs rm\n../repo\nEOF	CRW-895-e27	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel git worktree remove	CRW-895-p1	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rmdir	CRW-895-p2	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel unlink	CRW-895-p3	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel shred	CRW-895-p4	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rm -rf	CRW-895-p5	row	-
+added by CRW-895 (a shape the issue rules imply)	ls | parallel rm	CRW-895-p6	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -type d -name build -prune -o -type f -delete	CRW-895-c25	row	-
+added by CRW-895 (a shape the issue rules imply)	echo repo | xargs git -C .. status	CRW-895-c26	row	-
+added by CRW-895 (a shape the issue rules imply)	ls ../repo | xargs rmdir	CRW-895-c27	row	-
+added by CRW-895 (a shape the issue rules imply)	cat list.txt | xargs rm	CRW-895-c28	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git worktree remove <<< repo	CRW-895-c29	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name '*.o' -o -name '*.a' \) -delete	CRW-895-c30	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | tee x | xargs rmdir	CRW-895-e28	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | sort | uniq | xargs rmdir	CRW-895-e29	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | sed s/a/b/ | xargs rmdir	CRW-895-e30	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | cut -d, -f1 | xargs rmdir	CRW-895-e31	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git -C .. worktree remove <<< repo	CRW-895-e32	row	-
+added by CRW-895 (a shape the issue rules imply)	cd ..; echo repo | xargs rmdir	CRW-895-e33	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | env xargs rmdir	CRW-895-e34	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs env rmdir	CRW-895-e35	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | (xargs rmdir)	CRW-895-e36	row	-
+added by CRW-895 (a shape the issue rules imply)	f() { echo ../repo; }; f | xargs rmdir	CRW-895-e37	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -maxdepth 1 -name repo | xargs git worktree remove	CRW-895-e38	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec sh -c 'rm "$1"' _ {} \;	CRW-895-d19	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. . -name x -delete	CRW-895-d20	row	-
+added by CRW-895 (a shape the issue rules imply)	find -H .. -name x -delete	CRW-895-d21	row	-
+added by CRW-895 (a shape the issue rules imply)	find -D tree .. -name x -delete	CRW-895-d22	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo \( -name x -o -true \) -delete	CRW-895-d23	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -name x -prune -o -delete	CRW-895-d24	row	-
+added by CRW-895 (a shape the issue rules imply)	find -delete	CRW-895-d25	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '*' -delete	CRW-895-f1	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -path '*' -delete	CRW-895-f2	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -regex '.*' -delete	CRW-895-f3	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '????' -delete	CRW-895-f4	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find . -name '*' -delete	CRW-895-f5	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name '*' -type f -delete	CRW-895-f6	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -name 'r*' -delete	CRW-895-f7	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo ! -name x -delete	CRW-895-f8	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo ! -name repo -delete	CRW-895-f9	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find . -name 'r*' -delete	CRW-895-f10	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -iname 'REPO' -delete	CRW-895-f11	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo -type f -delete	CRW-895-f12	row	-
+pre-merge evaluation crw895-3d1fe314 (d1)	find ../repo \( -name x -o -name '*' \) -delete	CRW-895-f13	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list -type f -delete	CRW-895-g1	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from - -name x -delete	CRW-895-g2	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list -name x -exec rm {} +	CRW-895-g3	row	-
+pre-merge evaluation crw895-3d1fe314 (d2)	find -files0-from roots.list | xargs rmdir	CRW-895-g4	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../%s\n' repo | xargs git worktree remove --force	CRW-895-h1	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../re\160o\n' | xargs git worktree remove --force	CRW-895-h2	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s/%s\n' .. repo | xargs rmdir	CRW-895-h3	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%b' '../re\x70o' | xargs rmdir	CRW-895-h4	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo -e '../re\x70o' | xargs rmdir	CRW-895-h5	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo '.\./repo' | xargs rmdir	CRW-895-h6	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf "'../repo'\n" | xargs rmdir	CRW-895-h7	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s\n' build/old.o | xargs rm	CRW-895-h8	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '../%s\n' other | xargs rmdir	CRW-895-h9	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s\n' ../other ../repo | xargs rmdir	CRW-895-h10	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	printf '%s' .. /repo | xargs rmdir	CRW-895-h11	row	-
+pre-merge evaluation crw895-3d1fe314 (d3)	echo '..\x2frepo' | xargs rmdir	CRW-895-h12	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} git worktree remove --force '../{}'	CRW-895-i1	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} rmdir ../{}	CRW-895-i2	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -i rmdir ../{}	CRW-895-i3	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I@ rm ../@	CRW-895-i4	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo worktree | xargs -I{} git {} remove ../repo	CRW-895-i5	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo rm | xargs -I{} {} -rf ../repo	CRW-895-i6	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} rm ../{}	CRW-895-i7	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} rm {}	CRW-895-i8	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo old.o | xargs -I{} rm build/{}	CRW-895-i9	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo build | xargs -I{} rmdir {}	CRW-895-i10	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf 'a:../repo' | xargs -d : rmdir	CRW-895-i11	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf '../repo' | xargs -0 rmdir	CRW-895-i12	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	printf '../repo\n' | xargs -d '\n' rmdir	CRW-895-i13	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	echo repo | xargs -I{} sh -c 'rmdir ../{}'	CRW-895-i14	row	-
+pre-merge evaluation crw895-3d1fe314 (d4)	ls | xargs -I{} sh -c 'rmdir ../{}'	CRW-895-i15	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf '../repoX' | head -c 7 | xargs git worktree remove --force	CRW-895-j1	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'x../repo' | tail -c 7 | xargs rmdir	CRW-895-j2	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo '../repoX' | grep -o '../repo' | xargs rmdir	CRW-895-j3	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../other | head -n 1 | xargs rmdir	CRW-895-j4	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | head -n 1 | xargs rmdir	CRW-895-j5	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | sort -u | xargs rmdir	CRW-895-j6	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo ../repo | grep -v x | xargs rmdir	CRW-895-j7	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'a\n../repo\n' | tail -n 1 | xargs rmdir	CRW-895-j8	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	printf 'X\\\n../repo' | tail -n 1 | xargs rmdir	CRW-895-j9	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	echo '../repoX' | cut -c1-7 | xargs rmdir	CRW-895-j10	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	pwd | xargs git worktree remove	CRW-895-j11	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	realpath . | xargs rmdir	CRW-895-j12	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	git rev-parse --show-toplevel | xargs git worktree remove	CRW-895-j13	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	ls -d .. | xargs rmdir	CRW-895-j14	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	/bin/echo ../repo | xargs rmdir	CRW-895-j15	row	-
+pre-merge evaluation crw895-3d1fe314 (d5)	ls build | xargs rm	CRW-895-j16	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . -type f \( -exec rm {} + \)	CRW-895-k1	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -type f -exec rm {} + \)	CRW-895-k2	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -exec rm {} + \)	CRW-895-k3	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find ../repo -type f \( -name x -o -true \) -delete	CRW-895-k4	row	-
+pre-merge evaluation crw895-3d1fe314 (d6)	find . \( -type f -o -type l \) -exec rm {} +	CRW-895-k5	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm build/old.o'	CRW-895-l1	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	echo ../repo | xargs sh -c 'rm "$@"' _	CRW-895-l2	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-l3	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find ../repo -exec bash -c 'rm "$0"' {} \;	CRW-895-l4	row	-
+pre-merge evaluation crw895-3d1fe314 (d7)	find . -exec sh -c 'rm build/old.o' \;	CRW-895-l5	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	yes ../repo | head -1 | xargs rmdir	CRW-895-m1	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	awk 'BEGIN{print "../repo"}' | xargs rmdir	CRW-895-m2	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	ls -d build | xargs rm	CRW-895-m3	row	-
+pre-merge evaluation crw895-3d1fe314 (c1, d3 formatted operands)	printf '%s\n' ../repo | xargs -I{} sh -c 'rmdir {}'	CRW-895-m4	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'git worktree remove --force {}' \;	CRW-895-n1	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find .. -exec bash -c 'rm -rf {}' \;	CRW-895-n2	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rmdir {}' \;	CRW-895-n3	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -execdir sh -c 'rm -rf "x/{}"' \;	CRW-895-n4	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find build -exec sh -c 'rm -rf {}' \;	CRW-895-n5	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find . -name '*.o' -exec sh -c 'rm -f {}' \;	CRW-895-n6	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find . -exec sh -c 'rm -rf {}' \;	CRW-895-n7	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rm -rf "$1"' _ {} \;	CRW-895-n8	row	-
+second verification of ad1b3d605 (P0 find placeholder in a shell text)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-n9	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:alpha:]]*' -delete	CRW-895-o1	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:print:]]*' -delete	CRW-895-o2	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:digit:]]*' -delete	CRW-895-o3	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[[:digit:]r]*' -delete	CRW-895-o4	row	-
+second verification of ad1b3d605 (P2 POSIX class in a find name pattern)	find ../repo -name '[^[:alpha:]]*' -delete	CRW-895-o5	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo ../other | cat roots.list | xargs git worktree remove --force	CRW-895-q1	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build | sort roots.list | xargs rmdir	CRW-895-q2	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo ../other | grep o roots.list | xargs rmdir	CRW-895-q3	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | cat - | xargs rm	CRW-895-q4	row	-
+second verification of ad1b3d605 (P2 filter file operand)	echo build/old.o | grep old | xargs rm	CRW-895-q5	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -maxdepth 0 -exec sh -c 'cd {}; rm -rf repo' \;	CRW-895-r1	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -maxdepth 0 -exec sh -c 'cd {} && git worktree remove --force repo' \;	CRW-895-r2	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec sh -c 'cd {}; rm -rf ../../../repo' \;	CRW-895-r3	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name b -exec sh -c 'D={}; cd "$D"; rm -rf ../../../repo' \;	CRW-895-r4	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec sh -c 'cd {}/x; rmdir ../../../../repo' \;	CRW-895-r5	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -path ./a/b -exec git -C {}/../.. worktree remove --force ../repo \;	CRW-895-r6	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find .. -name x -exec sh -c 'cd /tmp/a/b; rm -rf {}' \;	CRW-895-r7	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find ../repo -exec sh -c 'rm build/old.o' \;	CRW-895-r8	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;	CRW-895-r9	row	-
+third verification of f0857f317 (P0 find {} sets the context of a shell)	find . -name '*.o' -exec rm -f {}.tmp \;	CRW-895-r10	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[.r.]]*' -delete	CRW-895-r11	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -name '[[=r=]]*' -delete	CRW-895-r12	row	-
+third verification of f0857f317 (P2 find name pattern the reader cannot settle)	find ../repo -iname '[[:digit:]]*' -delete	CRW-895-r13	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regex '.*\(repo\|x\)' -delete	CRW-895-s1	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regextype posix-extended -regex '.*(repo|x)' -delete	CRW-895-s2	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -iregex '.*\(REPO\|x\)' -delete	CRW-895-s3	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -regex '\.\./re\(po\)\?' -delete	CRW-895-s4	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find .. -maxdepth 0 -regex '.*\(repo\|x\)' -exec rm -rf {} +	CRW-895-s5	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find ../repo -maxdepth 0 -regex '.*\(repo\|x\)' -exec git worktree remove --force {} \;	CRW-895-s6	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -regex '.*\.o' -delete	CRW-895-s7	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -type f -regex '.*\(o\|a\)' -delete	CRW-895-s8	row	-
+fix round after review of cf7844fce (P0 find -regex the reader cannot evaluate guards)	find . -name '*.o' -regex '.*\(o\|a\)' -delete	CRW-895-s9	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -name '*.o' -exec sh -c 'cd {}; rm x' \;	CRW-895-t1	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'D={}; cd "$D"; rm file' \;	CRW-895-t2	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}; rm {}.o' \;	CRW-895-t3	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find /tmp/build -type f -exec sh -c 'cd {}/..; rm -f ./stale' \;	CRW-895-t4	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT} -exec sh -c 'cd {}; rm x' \;	CRW-895-t5	row	-
+fix round after review of cf7844fce (P1 regression of the third round (absolute find start from an unknown directory))	find {CHECKOUT}/.. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-t6	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex ".*\'" -delete	CRW-895-u1	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex ".*\'" -exec git worktree remove --force {} \;	CRW-895-u2	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '.*po\>' -delete	CRW-895-u3	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '\`.*' -delete	CRW-895-u4	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find ../repo -regex '.*[\.]po' -delete	CRW-895-u5	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find .. -maxdepth 0 -regex ".*\'" -exec rm -rf {} +	CRW-895-u6	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*\.o' -delete	CRW-895-u7	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*/build/.*[0-9]' -delete	CRW-895-u8	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '.*[[:digit:]]' -delete	CRW-895-u9	row	-
+fix round after verification of 9f189ad1 (P0 find -regex syntax the reader does not read)	find . -regex '^\./src/.*$' -delete	CRW-895-u10	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find build -type d -exec sh -c 'cd {}; rm -f stale' \;	CRW-895-v1	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find src -exec sh -c 'D={}; cd "$D"; rm x' \;	CRW-895-v2	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find . -exec sh -c 'cd {}; rm x' \;	CRW-895-v3	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find .. -maxdepth 0 -exec sh -c 'cd {}; rm x' \;	CRW-895-v4	row	-
+fix round after verification of 9f189ad1 (P1 start points re-judged from an unknown directory)	find build -type d -exec sh -c 'cd $X; rm -rf {}' \;	CRW-895-v5	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -maxdepth 1 -name '*.tmp' -exec rm -f build/{} \;	CRW-895-w1	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -maxdepth 1 -name '*.tmp' -exec rm -f /tmp/stash/{} \;	CRW-895-w2	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name '*.tmp' -exec rm -rf ../{} \;	CRW-895-w3	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf ../repo/{} \;	CRW-895-w4	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find ../build -name x -exec rm -rf build/{} \;	CRW-895-w5	row	-
+fix round after verification of 9f189ad1 (P1 prefix before {})	find . -name x -exec rm -rf {}/../.. \;	CRW-895-w6	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\*' -delete	CRW-895-x1	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*\.' -delete	CRW-895-x2	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\$' -delete	CRW-895-x3	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\^' -delete	CRW-895-x4	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find . -regex '.*\\' -delete	CRW-895-x5	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
+fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-
