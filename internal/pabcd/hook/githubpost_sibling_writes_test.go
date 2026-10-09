@@ -174,14 +174,14 @@ func TestGitHubPostDirectBinaryOverTheScriptLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	real, err := os.ReadFile(self)
+	exe, err := os.ReadFile(self)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(real) <= githubPostMaxFileBytes {
-		t.Fatalf("the test binary is %d bytes, not over the script limit", len(real))
+	if len(exe) <= githubPostMaxFileBytes {
+		t.Fatalf("the test binary is %d bytes, not over the script limit", len(exe))
 	}
-	write("bin/crw", real)
+	write("bin/crw", exe)
 	for _, c := range []struct {
 		cmd    string
 		denied bool
