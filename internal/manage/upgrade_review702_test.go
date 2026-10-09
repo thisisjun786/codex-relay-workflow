@@ -489,3 +489,23 @@ func TestUpgradeReview702ServiceWaitBudgetIsRecorded(t *testing.T) {
 		t.Errorf("the wait did not record its last status answer: %q", recorded)
 	}
 }
+
+// TestUpgradeReview702ServiceWaitExhaustionOutranksUpdateFailure: a service that never reports itself
+// running and matching is the host's wait ending, which outranks the update's failure. The run exits
+// 4 with postcheck_failed, and the record still names the update failure among its reasons.
+func TestUpgradeReview702ServiceWaitExhaustionOutranksUpdateFailure(t *testing.T) {
+	oldBudget, oldInterval := upgradeServiceBudget, upgradeServiceInterval
+	upgradeServiceBudget, upgradeServiceInterval = 50*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { upgradeServiceBudget, upgradeServiceInterval = oldBudget, oldInterval })
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		installExit: 1, statusAnswers: []string{upgradeStatusUnknown}})
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonPostCheck {
+		t.Errorf("reason %q, want %q", got, upgradeReasonPostCheck)
+	}
+	if reasons := upgradeReview702Reasons(t, h); !slices.Contains(reasons, upgradeReasonUpdateFailed) {
+		t.Errorf("the record does not name %q: %v", upgradeReasonUpdateFailed, reasons)
+	}
+}

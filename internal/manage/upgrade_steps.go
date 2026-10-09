@@ -551,6 +551,10 @@ type upgradePostCheck struct {
 	// decided order lets it outrank a failed update, which a service that merely came up slowly does
 	// not.
 	mismatch bool
+	// serviceNotReady reports that the service did not report itself running and matching within
+	// the wait budget. It is carried apart from the other findings because a service that is down
+	// outranks a failed update: the run is then waiting on the host, not rolled back.
+	serviceNotReady bool
 }
 
 // postCheck is step 8: the pointer must name the runtime the update installed and that runtime's
@@ -570,6 +574,7 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 	}
 	if runtime != "" && !r.waitForService(runtime) {
 		post.reasons = append(post.reasons, upgradeReasonPostCheck)
+		post.serviceNotReady = true
 	}
 	r.verifyInstallTarget(&post)
 	// A configuration file the snapshot read and that is now gone is a change the run can state
