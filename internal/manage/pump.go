@@ -135,9 +135,11 @@ type pumpState struct {
 	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
 
 	// QueueLegacyChecked marks a queue thread whose queue was searched for the pre-change ledger
-	// records that could have carried its notices and left nothing to answer for. The pre-change pump
-	// no longer writes such records, so the search runs until it finds nothing once, and never again.
-	// A state written before the key existed reads as no thread searched.
+	// records that could have carried its notices and left nothing to answer for beyond a plain pin it
+	// took: no record, only records that settled as never delivered, or the one provable record the pin
+	// adopts. The pre-change pump no longer writes such records, so the search runs until then, and never
+	// again; a thread holding a pin it has not been marked for (one another build left) is searched before
+	// that pin is acted on. A state written before the key existed reads as no thread searched.
 	QueueLegacyChecked map[string]bool `json:"queue_legacy_checked"`
 
 	extra map[string]json.RawMessage
