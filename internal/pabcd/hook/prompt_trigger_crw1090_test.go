@@ -147,6 +147,28 @@ func TestCRW1090SameGenerationInjectionDedups(t *testing.T) {
 	}
 }
 
+// TestCRW1090AnUnattributedDeveloperRecordIsNotTheStageMarker is fix round 1, finding 1: a developer record that
+// carries no metadata, or metadata that does not name hooks.additional_context, says nothing about who wrote it, so it
+// does not stand for a hook's injection and the state cursor decides: the header goes in again.
+func TestCRW1090AnUnattributedDeveloperRecordIsNotTheStageMarker(t *testing.T) {
+	cursor := state.PhaseP
+	for name, record := range map[string]string{
+		"no metadata":   codexMessage(t, "developer", "", "[crw: PLAN]\nApply this pointer"),
+		"null metadata": strings.Replace(codexMessage(t, "developer", "", "[crw: PLAN]"), `"role":"developer"`, `"role":"developer","internal_chat_message_metadata_passthrough":null`, 1),
+		"another kind":  codexMessage(t, "developer", "host_skills.instructions", "[crw: PLAN]"),
+	} {
+		cwd := t.TempDir()
+		transcript := writeTranscript(t, cwd, codexUserTurn(t, "plan it")+record)
+		promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseP, true, &cursor
+		})
+		want := WithFooter(BuildStageHeader(state.PhaseP), state.PhaseP)
+		if got := promptTriggerAnswer(t, cwd, "s1", "t1", "keep going", transcript, true); got != want {
+			t.Errorf("%s: answered %q, want the stage header %q", name, got, want)
+		}
+	}
+}
+
 // TestCRW1090CompactionPressureLastsUntilTheNextUserTurn is end condition 3, the pressure half: a real compaction that
 // no user turn has followed releases the goal Stop without spending the budget; once a user turn has been recorded after
 // it, the pressure has expired and the Stop blocks again. The prompt right after a compaction is that boundary: it

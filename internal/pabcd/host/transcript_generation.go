@@ -16,7 +16,10 @@ import (
 // additionalContext is a `response_item` message of role developer whose metadata names `hooks.additional_context`; a
 // compaction is a `compacted` record followed by an `event_msg` item_completed of item type ContextCompaction; a user
 // prompt is a `response_item` message of role user whose metadata names `user.text`, with an `event_msg` item_completed of
-// item type UserMessage. A record that carries no metadata (an older rollout) is read by role alone.
+// item type UserMessage. A developer record counts as a hook's only when its metadata names `hooks.additional_context`: a
+// record without metadata, with null metadata or with metadata of another kind is not attributable to a hook, so it is no
+// marker and the state cursor decides (a missing marker costs one re-injection, a wrong one skips the directive). A user
+// record without metadata is still read by its text, which only decides when the compaction's recovery window ends.
 type TranscriptGeneration struct {
 	compacted bool     // the tail shows a compaction
 	userTurn  bool     // a user prompt was recorded after the last compaction the tail shows
@@ -140,13 +143,13 @@ func (r transcriptRecord) isUserPrompt() bool {
 	return false
 }
 
-// hookContext is the text of a hook's additionalContext record: a developer message, whose metadata, when it has any,
-// names hooks.additional_context.
+// hookContext is the text of a hook's additionalContext record: a developer message whose metadata names
+// hooks.additional_context. Nothing else attributes a developer record to a hook, so a record without metadata is not one.
 func (r transcriptRecord) hookContext() ([]string, bool) {
 	if r.Type != "response_item" || r.Payload.Type != "message" || r.Payload.Role != "developer" {
 		return nil, false
 	}
-	if r.Payload.Metadata != nil && !slices.Contains(r.Payload.Metadata.Kinds, "hooks.additional_context") {
+	if r.Payload.Metadata == nil || !slices.Contains(r.Payload.Metadata.Kinds, "hooks.additional_context") {
 		return nil, false
 	}
 	return r.texts(), true

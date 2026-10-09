@@ -89,6 +89,8 @@ func TestTranscriptGenerationReadsOnlyRecordsAfterTheLastCompaction(t *testing.T
 	const environment = `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"]}}}` + "\n"
 	const otherKind = `{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"[crw: PLAN]"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["host_skills.instructions"]}}}` + "\n"
 	const legacyDev = `{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"[crw: PLAN]"}]}}` + "\n"
+	const nullMetaDev = `{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"[crw: PLAN]"}],"internal_chat_message_metadata_passthrough":null}}` + "\n"
+	const emptyKindsDev = `{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"[crw: PLAN]"}],"internal_chat_message_metadata_passthrough":{}}}` + "\n"
 	for _, c := range []struct {
 		name, tail      string
 		whole           bool
@@ -100,7 +102,11 @@ func TestTranscriptGenerationReadsOnlyRecordsAfterTheLastCompaction(t *testing.T
 		{"compaction then environment context", compacted + environment, true, false, true},
 		{"compaction then user turn", compacted + userTurn + devRecord("[crw: PLAN]"), true, true, false},
 		{"another kind of developer record", otherKind, true, false, false},
-		{"a developer record without metadata", legacyDev, true, true, false},
+		// A developer record nothing attributes to a hook is not the marker (CRW-1090 fix round 1): the role alone does not say
+		// who wrote it, and a missing marker only costs a re-injection, where a wrong one skips the directive.
+		{"a developer record without metadata", legacyDev, true, false, false},
+		{"a developer record with null metadata", nullMetaDev, true, false, false},
+		{"a developer record with metadata that names no kind", emptyKindsDev, true, false, false},
 		{"a cut first line", devRecord("[crw: PLAN]"), false, false, false},
 		{"a cut first line before a whole one", "cut\n" + devRecord("[crw: PLAN]"), false, true, false},
 		{"lines that are not records", "{bad\n[1]\n\"s\"\n" + devRecord("[crw: PLAN]"), true, true, false},
