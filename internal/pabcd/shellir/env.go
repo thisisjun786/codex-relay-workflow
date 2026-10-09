@@ -18,6 +18,20 @@ func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, er
 	return analyze(src, newState(cwd), lookup)
 }
 
+// AnalyzeScript reads the text of a script file that a shell runs from a program record that had Cdpath: with CDPATH possibly set
+// in the environment the script inherits, a cd to a bare name in it may land in a directory the text does not show.
+func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
+	st := newState(cwd)
+	st.cdpath = cdpath
+	return analyze(src, st, nil)
+}
+
+// textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
+// a declaration may set it, and none of them is followed to its end, so the name in the text is enough.
+func textNamesCdpath(src string) bool {
+	return strings.Contains(strings.ToLower(src), "cdpath")
+}
+
 // AnalyzeNoDir reads a command text with no working directory at all, with no environment. It is the reading of the memory write
 // gate that does not depend on a directory (the Python programs of the text, and whether the text is readable at all); the
 // judgments that need a directory are made by the readings that have one (see Dir.Unset).
@@ -42,6 +56,7 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 		return Result{}, unreadablef("a carriage return outside a word is a word break for the parser and an ordinary byte for bash")
 	}
 	st.lookup = lookup
+	st.cdpath = st.cdpath || textNamesCdpath(src)
 	w := &walker{}
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err
