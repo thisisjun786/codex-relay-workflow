@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
@@ -416,5 +417,100 @@ func TestReviewObserverLeavesAPlanWithAnUnreadableRoundAlone(t *testing.T) {
 	e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
 	if after, _ := os.ReadFile(path); string(after) != string(edited) {
 		t.Fatal("the observer rewrote a plan whose stored round it cannot keep")
+	}
+}
+
+// stopRaw delivers a payload built by the caller, for the agent_id shapes stop cannot express (an empty text, a number).
+func (e reviewObsEnv) stopRaw(t *testing.T, extra map[string]any) {
+	t.Helper()
+	p := map[string]any{"hook_event_name": "SubagentStop", "cwd": e.cwd, "session_id": e.session, "agent_type": "explorer"}
+	for k, v := range extra {
+		p[k] = v
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if code := harness.Hook(context.Background(), []string{"subagent-stop", "--leg", "subagent-stop-observing-review"},
+		bytes.NewReader(raw), &out, &stderr, os.LookupEnv, harness.Legs()); code != 0 || stderr.Len() != 0 || out.Len() != 0 {
+		t.Fatalf("exit=%d out=%q stderr=%s", code, &out, &stderr)
+	}
+}
+
+// CRW-564 d2 (port: fixed). The oracle reads `payload.agent_id ?? ""` and records a sign-off from a child it cannot name, so the
+// round turns terminal with an empty reviewerSession and the real reviewer's later answer is refused as a second signer
+// (review-observer.ts:117-118,133). The A>B check reads the verdict only, so such a PASS would be spent as an honest approval.
+func TestReviewObserverIgnoresASignoffFromAChildItCannotName(t *testing.T) {
+	for name, id := range map[string]any{"missing": nil, "empty": "", "number": 7, "object": map[string]any{"a": 1}} {
+		t.Run(name, func(t *testing.T) {
+			e := reviewObsSeed(t, "rb", nil)
+			launch := e.open(t)
+			extra := map[string]any{"last_assistant_message": reviewObsSignoff(launch, "PASS")}
+			if id != nil {
+				extra["agent_id"] = id
+			}
+			e.stopRaw(t, extra)
+			if r := e.round(t); r.Status != goalplan.ReviewInFlight || r.Lane.Verdict != "" || r.Lane.ReviewerSession != nil {
+				t.Fatalf("a nameless sign-off must record nothing: %+v", r)
+			}
+			if !strings.Contains(e.ledger(t), "no agent id") {
+				t.Fatalf("the ignored sign-off says why: %q", e.ledger(t))
+			}
+			// The real reviewer is still the first signer.
+			e.stopRaw(t, map[string]any{"agent_id": "reviewer-1", "last_assistant_message": reviewObsSignoff(launch, "FAIL")})
+			if r := e.round(t); r.Lane.Verdict != goalplan.VerdictFail || r.Lane.ReviewerSession == nil || *r.Lane.ReviewerSession != "reviewer-1" {
+				t.Fatalf("the named reviewer records its verdict: %+v", r)
+			}
+		})
+	}
+}
+
+// CRW-564 d1 (port: fixed). The oracle writes the verdict under the goalplan lock only and reads the session state before it, so a
+// FAIL can land between the A>B transition's review check and its publication, which holds the session lock for that whole span.
+// The observer takes the session lock first (the order every writer of this tree follows: session, then goalplan), and judges the
+// state it reads under it.
+func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testing.T) {
+	for _, verdict := range []string{"PASS", "FAIL"} {
+		t.Run(verdict, func(t *testing.T) {
+			e := reviewObsSeed(t, "rb", nil)
+			launch := e.open(t)
+			entered, release := make(chan struct{}), make(chan struct{})
+			done := make(chan error, 1)
+			go func() {
+				done <- state.WithSessionLock(e.cwd, e.session, func() error {
+					close(entered)
+					<-release
+					st := state.ReadState(e.cwd, e.session)
+					st.Phase = state.PhaseB // the transition publishes B before it lets go
+					return state.WriteState(e.cwd, st)
+				})
+			}()
+			<-entered
+			stopped := make(chan struct{})
+			go func() {
+				defer close(stopped)
+				e.stopRaw(t, map[string]any{"agent_id": "reviewer-1", "last_assistant_message": reviewObsSignoff(launch, verdict)})
+			}()
+			select {
+			case <-stopped:
+				t.Fatal("the observer must wait for the session lock the transition holds")
+			case <-time.After(60 * time.Millisecond):
+			}
+			if r := e.round(t); r.Lane.Verdict != "" {
+				t.Fatalf("no verdict may land while the transition holds the session: %+v", r)
+			}
+			close(release)
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			<-stopped
+			if r := e.round(t); r.Status != goalplan.ReviewInFlight || r.Lane.Verdict != "" {
+				t.Fatalf("the session left A before the observer judged: %+v", r)
+			}
+			if !strings.Contains(e.ledger(t), "the session left A before the reviewer finished") {
+				t.Fatalf("ledger %q", e.ledger(t))
+			}
+		})
 	}
 }
