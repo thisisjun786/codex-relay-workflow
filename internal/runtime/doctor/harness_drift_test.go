@@ -19,9 +19,8 @@ package doctor
 //
 // The runner seam: the oracle reads spawnSync error.code ENOENT and status 127/9009 as a missing
 // interpreter, and a killed timeout (status null, signal SIGTERM, error ETIMEDOUT) falls through
-// to the install hint. HarnessRun keeps only the status, so a recorded ENOENT is replayed as a run
-// with no status and a recorded ETIMEDOUT as a killed run -- the status Go's os.ProcessState
-// ExitCode answers for a signalled process (-1).
+// to the install hint. A recorded ENOENT is replayed as a run with no status, and a recorded
+// ETIMEDOUT as a run with no status and HarnessRun.Killed set, neither converted to another status.
 //
 // Every case runs in a t.TempDir() tree; neither function reads HOME, CODEX_HOME or CRW_HOME, so no
 // real state is reachable here (the recorder itself ran under temporary homes).
@@ -182,9 +181,9 @@ func harnessDriftEvidenceClass(t *testing.T, got HarnessCheck, want harnessDrift
 }
 
 // harnessDriftRun maps a recorded spawnSync shape onto the Go seam: a process that never started
-// (error ENOENT) has no status; a probe the oracle killed at the timeout (status null, signal
-// SIGTERM, error ETIMEDOUT) is a run whose process died on a signal, which Go reports with the -1
-// exit code of os.ProcessState.ExitCode; every other shape carries its own status.
+// (error ENOENT) has no status and no kill marker; a probe the oracle killed at the timeout (status
+// null, signal SIGTERM, error ETIMEDOUT) has no status and the kill marker; every other shape
+// carries its own status.
 func harnessDriftRun(t *testing.T, want *harnessDriftRunRecorded) HarnessRun {
 	t.Helper()
 	if want == nil {
@@ -192,8 +191,9 @@ func harnessDriftRun(t *testing.T, want *harnessDriftRunRecorded) HarnessRun {
 	}
 	run := HarnessRun{Status: want.Status, Stdout: want.Stdout, Stderr: want.Stderr}
 	if want.Status == nil && want.Error == "ETIMEDOUT" {
-		killed := harnessDriftKilled
-		run.Status = &killed
+		// Passed through as the contract gives it: no status, and the kill marker. No status is
+		// invented for it (CRW-1015: a -1 here hid that a nil status read as a missing interpreter).
+		run.Killed = true
 	}
 	return run
 }
@@ -280,19 +280,58 @@ func TestHarnessAstGrepCheckRecorded(t *testing.T) {
 	}
 }
 
-// A port-only case, not a corpus claim (hence no intentionally_changed_ prefix): the seam wording
-// inherited from harness_report.go says a runner that cannot start a process and one it killed
-// both answer Status nil, and under that wording a killed ast-grep probe reads as the missing
-// interpreter instead of the oracle's install hint. The recorded timeout_killed case drives the
-// other reading (-1, what ExitCode answers for a signalled process); this case pins the collapse so
-// it cannot change unnoticed.
-func TestHarnessAstGrepCheckKilledWithNoStatusPort(t *testing.T) {
+// CRW-1015 d2: a probe the timeout killed answers the oracle's install hint, not the missing
+// interpreter. The shared runner contract (harness_report.go) answers a killed run with no exit
+// status and the signal text on stderr, the same status a process that never started has; only the
+// stderr tells them apart. These cases pass that answer through unchanged.
+func TestHarnessAstGrepCheckKilledWithNoStatus(t *testing.T) {
 	plugin := harnessDriftTree(t, map[string]string{"skills/ast-grep/scripts/ast_grep_helper.py": "# stub\n"}, nil)
-	check := HarnessAstGrepCheck(plugin, func(string, []string, time.Duration) HarnessRun {
-		return HarnessRun{Stderr: "signal: killed"}
-	})
-	want := HarnessCheck{Name: "ast-grep", Severity: HarnessWarn, Evidence: "python3 not found - install Python 3.9+ to run the ast-grep helper"}
-	if check != want {
-		t.Fatalf("HarnessAstGrepCheck = %+v, want the missing-interpreter reading %+v", check, want)
+	for _, stderr := range []string{"signal: killed", "signal: terminated"} {
+		check := HarnessAstGrepCheck(plugin, func(string, []string, time.Duration) HarnessRun {
+			return HarnessRun{Stderr: stderr}
+		})
+		want := HarnessCheck{Name: "ast-grep", Severity: HarnessWarn, Evidence: "sg not resolved \u2014 run `ast_grep_helper.py install` to provision"}
+		if check != want {
+			t.Fatalf("stderr %q: HarnessAstGrepCheck = %+v, want the oracle timeout answer %+v", stderr, check, want)
+		}
+	}
+}
+
+// A process that never started stays the missing interpreter: no status and no signal text.
+func TestHarnessAstGrepCheckSpawnFailureStaysMissingInterpreter(t *testing.T) {
+	plugin := harnessDriftTree(t, map[string]string{"skills/ast-grep/scripts/ast_grep_helper.py": "# stub\n"}, nil)
+	for _, stderr := range []string{"", `exec: "python3": executable file not found in $PATH`, "fork/exec /usr/bin/python3: no such file or directory"} {
+		check := HarnessAstGrepCheck(plugin, func(string, []string, time.Duration) HarnessRun {
+			return HarnessRun{Stderr: stderr}
+		})
+		want := HarnessCheck{Name: "ast-grep", Severity: HarnessWarn, Evidence: "python3 not found - install Python 3.9+ to run the ast-grep helper"}
+		if check != want {
+			t.Fatalf("stderr %q: HarnessAstGrepCheck = %+v, want the missing-interpreter answer %+v", stderr, check, want)
+		}
+	}
+}
+
+// The kill marker and the -1 status of a signalled process both read as a killed run, with or
+// without the signal text; a plain exit status and a spawn failure do not.
+func TestHarnessAstGrepCheckKilledMarkers(t *testing.T) {
+	plugin := harnessDriftTree(t, map[string]string{"skills/ast-grep/scripts/ast_grep_helper.py": "# stub\n"}, nil)
+	minusOne := -1
+	missing := 127
+	cases := []struct {
+		name string
+		run  HarnessRun
+		want string
+	}{
+		{"marker", HarnessRun{Killed: true}, "sg not resolved \u2014 run `ast_grep_helper.py install` to provision"},
+		{"marker with partial output", HarnessRun{Killed: true, Stdout: "ast-grep 0.1.0\n"}, "sg not resolved \u2014 run `ast_grep_helper.py install` to provision"},
+		{"status -1", HarnessRun{Status: &minusOne}, "sg not resolved \u2014 run `ast_grep_helper.py install` to provision"},
+		{"status 127", HarnessRun{Status: &missing}, "python3 not found - install Python 3.9+ to run the ast-grep helper"},
+		{"no status", HarnessRun{}, "python3 not found - install Python 3.9+ to run the ast-grep helper"},
+	}
+	for _, c := range cases {
+		check := HarnessAstGrepCheck(plugin, func(string, []string, time.Duration) HarnessRun { return c.run })
+		if check.Severity != HarnessWarn || check.Evidence != c.want {
+			t.Errorf("%s: HarnessAstGrepCheck = %+v, want WARN %q", c.name, check, c.want)
+		}
 	}
 }

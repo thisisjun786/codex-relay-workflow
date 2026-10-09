@@ -13,13 +13,13 @@
 // windows branch (`py`, 9009's Store alias) and WSL are out of the port scope; 9009 stays in the
 // interpreter test because the oracle tests it unconditionally.
 //
-// The runner seam is the package's HarnessRunner, and the oracle distinguishes two spawn results
-// this seam cannot: a process that never started (spawnSync error.code ENOENT) and one the probe
-// timeout killed (status null, signal SIGTERM, error.code ETIMEDOUT). The port reads Status nil as
-// the first -- the missing interpreter the check exists to report -- and harnessDriftKilled (-1),
-// what os.ProcessState.ExitCode answers for a signal death, as the second, which falls through to
-// the install hint exactly as the oracle's timeout does. Both readings are pinned by the replay;
-// the runner the command issue builds decides which one a real kill reports.
+// The runner seam is the package's HarnessRunner, and the oracle distinguishes two spawn results:
+// a process that never started (spawnSync error.code ENOENT) and one the probe timeout killed
+// (status null, signal SIGTERM, error.code ETIMEDOUT). The port keeps them apart (CRW-1015): a run
+// with no status and no kill marker is the missing interpreter the check exists to report, while a
+// killed run (HarnessRun.Killed, status harnessDriftKilled, or the "signal: ..." text) falls
+// through to the install hint exactly as the oracle's timeout does. Both readings are pinned by the
+// replay, which passes the recorded timeout through as the runner contract gives it.
 package doctor
 
 import (
@@ -47,8 +47,8 @@ const (
 	harnessDriftAstGrepTimeout = 8 * time.Second
 	// harnessDriftKilled is the status of a probe the runner ran and then killed when the timeout
 	// expired: Go answers -1 for a process that died on a signal where the oracle's spawnSync
-	// answers status null beside signal SIGTERM. It is not the missing interpreter Status nil
-	// reads (that is the ENOENT spawn failure); it falls through to the install hint.
+	// answers status null beside signal SIGTERM. It is not the missing interpreter (the ENOENT
+	// spawn failure); it falls through to the install hint.
 	harnessDriftKilled = -1
 	// harnessDriftJSSpace is JavaScript's \s set as a Go regexp class (doctor.ts:632-633), the one
 	// the oracle's version and path matches use: the ASCII whitespace plus the Unicode spaces V8
@@ -131,10 +131,19 @@ func harnessDriftMCPCheck(pluginRoot string, manifest any) HarnessCheck {
 	if targetEscapesRoot(pluginRoot, path) {
 		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " resolves outside the plugin root"}
 	}
-	if _, err := os.Stat(path); err != nil {
+	// The verdict above is on a name; the file is read through a handle bound to the plugin root, so
+	// a link swapped after it cannot lead the read out of the root (CRW-1015).
+	raw, err := doctorRootedRead(pluginRoot, path)
+	switch {
+	case errors.Is(err, errDoctorRootEscape):
+		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " resolves outside the plugin root"}
+	case errors.Is(err, errDoctorRootMissing):
 		return HarnessCheck{Name: "drift:mcp", Severity: HarnessFail, Evidence: "mcpServers -> " + text + " but file is missing"}
 	}
-	document, err := harnessDriftReadJSON(path)
+	var document any
+	if err == nil {
+		document, err = harnessDriftParse(raw)
+	}
 	if err == nil {
 		var servers any
 		servers, err = harnessDriftMember(document, "mcpServers")
@@ -200,7 +209,23 @@ func harnessDriftReadJSON(path string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return harnessDriftParse(raw)
+}
+
+func harnessDriftParse(raw []byte) (any, error) {
 	return pyjson.Loads(hookTrustEntriesUTF8(raw), pyjson.LoadOptions{Surrogates: true, Deep: true})
+}
+
+// harnessDriftRunKilled reads a run the timeout or a signal ended, as against one that never
+// started. The runner says so with Killed; a runner that does not is read by the status -1 an
+// os.ProcessState gives a signalled process and by the "signal: ..." text os/exec's ExitError
+// writes for it, which a run with no status carries on stderr (the shared contract of
+// harness_report.go). A spawn failure has neither: no status, no signal text.
+func harnessDriftRunKilled(run HarnessRun) bool {
+	if run.Killed || (run.Status != nil && *run.Status == harnessDriftKilled) {
+		return true
+	}
+	return run.Status == nil && strings.HasPrefix(strings.TrimSpace(run.Stderr), "signal: ")
 }
 
 // HarnessAstGrepCheck is the POSIX branch of runAstGrepCheck (doctor.ts:597-645): the ast-grep
@@ -216,10 +241,12 @@ func HarnessAstGrepCheck(pluginRoot string, runner HarnessRunner) HarnessCheck {
 	}
 	result := runner(harnessDriftPython, []string{helper, "doctor"}, harnessDriftAstGrepTimeout)
 	switch {
+	case harnessDriftRunKilled(result):
+		// A probe the timeout or a signal ended ran, so the interpreter exists: it falls through to
+		// the install hint exactly as the oracle's ETIMEDOUT run does (CRW-1015).
+		return HarnessCheck{Name: "ast-grep", Severity: HarnessWarn, Evidence: "sg not resolved — run `ast_grep_helper.py install` to provision"}
 	case result.Status == nil || *result.Status == 127 || *result.Status == 9009:
 		return HarnessCheck{Name: "ast-grep", Severity: HarnessWarn, Evidence: "python3 not found - install Python 3.9+ to run the ast-grep helper"}
-	case *result.Status == harnessDriftKilled:
-		return HarnessCheck{Name: "ast-grep", Severity: HarnessWarn, Evidence: "sg not resolved — run `ast_grep_helper.py install` to provision"}
 	}
 	out := result.Stdout + result.Stderr
 	version := regexp.MustCompile("ast-grep" + harnessDriftJSSpace + "+([0-9]+\\.[0-9]+\\.[0-9]+)").FindStringSubmatch(out)
