@@ -182,7 +182,7 @@ The log lives in the relay's host-shared store, in tables the writable open crea
 tables (decision D-01):
 
 * the open validates only the tables of the frozen v1 schema (`relay-sqlite.sql`) and refuses a store missing one of them, as before;
-  it then creates the zone with `CREATE ... IF NOT EXISTS`. A store that predates the zone opens, keeps every row, and gains it;
+  it then creates the zone with `CREATE ... IF NOT EXISTS`, every statement in one write transaction when the catalog lacks any object of it, so the zone arrives whole or not at all and two opens at the same moment meet one schema change; a store that holds the whole zone is only read. A step that SQLite answers with `SQLITE_SCHEMA` ("database schema has changed") is run again, a bounded number of times. A store that predates the zone opens, keeps every row, and gains it;
   a runtime without the zone validates only the frozen tables, so it opens a store that has it and never reads or writes it.
   `SchemaVersion` stays `1`; no existing table or column changes;
 * the zone is the twelve `dag_*` tables of the contract: `dag_plans`, `dag_plan_revisions`, `dag_nodes`, `dag_edges`,
