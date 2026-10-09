@@ -148,12 +148,52 @@ func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) sourc
 func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bool) {
 	rel := filepath.Clean(spawnFinalGateFSPath(path))
 	if filepath.IsAbs(rel) {
-		var err error
-		if rel, err = filepath.Rel(cwd, rel); err != nil {
+		var ok bool
+		if rel, ok = spawnFinalGateBelow(cwd, rel); !ok {
 			return source.Identity{}, false
 		}
 	}
 	return spawnFinalGateIdentity(spawnFinalGateObject(root, rel)["sourceIdentity"])
+}
+
+// spawnFinalGateSameDir decides whether two stats name one directory (device and inode); a seam of the tests, which make two spellings
+// of one directory stat alike the way a case-insensitive file system does.
+var spawnFinalGateSameDir = os.SameFile
+
+// spawnFinalGateBelow is the path of the absolute path abs relative to the working directory cwd, or false when cwd cannot be made
+// absolute or no ancestor of abs is cwd. cwd is made absolute, then resolved through its links. The ancestor of abs that is the same
+// directory is the base, found from the root down, and the same directory is decided by identity (device and inode, os.SameFile of
+// the stat of each ancestor, which follows links), not by comparing the resolved spellings: a link resolves to the spelling its text
+// holds, which a case-insensitive file system (APFS, NTFS) does not tell from the one the receipt path uses. The suffix is not
+// resolved: the links below the base stay in the returned path, so os.Root refuses a link that leaves cwd, whatever its target, an
+// absolute one to a directory below cwd or a relative one that leaves and comes back, and the boundary is kept.
+func spawnFinalGateBelow(cwd, abs string) (string, bool) {
+	base, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		base = resolved
+	}
+	want, err := os.Stat(base)
+	if err != nil {
+		return "", false
+	}
+	for i := 0; i <= len(abs); i++ {
+		if i != len(abs) && abs[i] != filepath.Separator {
+			continue
+		}
+		prefix := abs[:i]
+		if prefix == "" {
+			prefix = string(filepath.Separator)
+		}
+		if got, err := os.Stat(prefix); err != nil || !got.IsDir() || !spawnFinalGateSameDir(want, got) {
+			continue
+		}
+		rel, err := filepath.Rel(prefix, abs)
+		return rel, err == nil
+	}
+	return "", false
 }
 
 // spawnFinalGateFSPath is path as Node's fs reads a string: a lone surrogate, which pyjson keeps as the three WTF-8 bytes of its code
