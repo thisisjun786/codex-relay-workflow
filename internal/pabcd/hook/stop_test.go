@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -704,5 +705,140 @@ func TestStopAnswersAreOneLineOfJSON(t *testing.T) {
 	}
 	if got := stopEnvelope("a\n<b> & \u2028"); got != "{\"decision\":\"block\",\"reason\":\"a\\n<b> & \u2028\"}\n" {
 		t.Errorf("envelope %q", got)
+	}
+}
+
+// beforeLock runs change where a participating writer or the user could land between Stop's first reading and the
+// session lock, then takes the real lock.
+func beforeLock(change func(cwd, sessionID string)) func(cwd, sessionID string, fn func() error) error {
+	return func(cwd, sessionID string, fn func() error) error {
+		change(cwd, sessionID)
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+}
+
+func stopSetGoalStatus(t *testing.T, env host.LookupEnv, status string) {
+	t.Helper()
+	path, err := host.GoalsDBPath(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("UPDATE thread_goals SET status = ? WHERE thread_id = ?", status, stopSID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// stopAskDecision rewrites the bound plan so that its only remaining work waits on an open decision.
+func stopAskDecision(t *testing.T, cwd, slug string) {
+	t.Helper()
+	stopWritePlan(t, cwd, slug, func(p *goalplan.Goalplan) {
+		wp := stopWorkPhase("wp1", "Pick a store", goalplan.WorkPhasePending)
+		wp.AwaitsDecision = []string{"d1"}
+		p.WorkPhases = []goalplan.GoalplanWorkPhase{wp}
+		p.Decisions = []goalplan.GoalplanDecision{{ID: "d1", Question: "Which store?", Status: goalplan.DecisionOpen, AskedAt: "2026-01-01T00:00:00.000Z"}}
+	})
+}
+
+// CRW-192 verification round 1: what the Stop decision stood on is judged again on what the lock found. A pause by
+// the user, a question that now awaits an answer, a plan that is gone, or a new user turn that lands between the
+// first reading and the lock releases the event without spending the budget.
+func TestStopReleasesWhenTheWorldMovedBeforeTheLock(t *testing.T) {
+	readyPlan := func(t *testing.T, cwd string) {
+		stopWritePlan(t, cwd, "plan", func(p *goalplan.Goalplan) {
+			p.WorkPhases = []goalplan.GoalplanWorkPhase{stopWorkPhase("wp1", "One", goalplan.WorkPhasePending)}
+		})
+	}
+	for _, inFlight := range []bool{false, true} {
+		setup := func(t *testing.T) (string, host.LookupEnv) {
+			cwd, env := stopRig(t, "active")
+			if inFlight {
+				stopInFlight(t, cwd, state.PhaseB, func(s *state.State) { s.Slug = "plan" })
+			} else {
+				sessionHookStateFile(t, cwd, stopSID, func(s *state.State) { s.Slug = "plan" })
+			}
+			readyPlan(t, cwd)
+			return cwd, env
+		}
+		cases := []struct {
+			name   string
+			change func(t *testing.T, cwd string, env host.LookupEnv)
+		}{
+			{"the user pauses the goal", func(t *testing.T, cwd string, env host.LookupEnv) { stopSetGoalStatus(t, env, "paused") }},
+			{"the goal database goes", func(t *testing.T, cwd string, env host.LookupEnv) {
+				path, _ := host.GoalsDBPath(env)
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}},
+			{"a decision opens", func(t *testing.T, cwd string, env host.LookupEnv) { stopAskDecision(t, cwd, "plan") }},
+			{"a new user turn is stamped", func(t *testing.T, cwd string, env host.LookupEnv) {
+				s := state.ReadState(cwd, stopSID)
+				s.StopBlockTurnID, s.StopBlockTotal = ptr("t1"), 0
+				if err := state.WriteState(cwd, s); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		}
+		if !inFlight {
+			cases = append(cases, struct {
+				name   string
+				change func(t *testing.T, cwd string, env host.LookupEnv)
+			}{"the bound plan is gone", func(t *testing.T, cwd string, env host.LookupEnv) {
+				if err := os.RemoveAll(filepath.Join(cwd, ".crw", "goalplans", "plan")); err != nil {
+					t.Fatal(err)
+				}
+			}})
+		}
+		for _, c := range cases {
+			cwd, env := setup(t)
+			if c.name == "a new user turn is stamped" {
+				sessionHookStateFile(t, cwd, stopSID, func(s *state.State) { s.StopBlockTurnID = ptr("t0"); s.StopBlockTotal = 5 })
+			}
+			ran := false
+			lock := beforeLock(func(cwd, sessionID string) { c.change(t, cwd, env); ran = true })
+			a := stopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "linux", env, lock)
+			if !ran {
+				t.Fatalf("in flight %v, %s: the lock seam did not run", inFlight, c.name)
+			}
+			if a != (StopAnswer{}) {
+				t.Errorf("in flight %v, %s: %+v", inFlight, c.name, a)
+			}
+			if s := state.ReadState(cwd, stopSID); s.StopBlockCount != 0 || (s.StopBlockTotal != 0 && c.name != "a new user turn is stamped") || s.StopBlockPhase != nil {
+				t.Errorf("in flight %v, %s: the released event spent the budget: %+v", inFlight, c.name, s)
+			}
+			if c.name == "a new user turn is stamped" {
+				if s := state.ReadState(cwd, stopSID); s.StopBlockTotal != 0 || s.StopBlockTurnID == nil || *s.StopBlockTurnID != "t1" {
+					t.Errorf("in flight %v: the new turn's stamp was changed: %+v", inFlight, s)
+				}
+			}
+		}
+	}
+}
+
+// An event of an earlier user turn that reaches Stop after the next turn was stamped does not spend that turn's
+// budget either: the payload's turn_id is held against the stamp.
+func TestStopReleasesAnEventOfAnEarlierTurn(t *testing.T) {
+	cwd, env := stopRig(t, "active")
+	stopInFlight(t, cwd, state.PhaseB, func(s *state.State) { s.StopBlockTurnID = ptr("t1") })
+	before := stopStateBytes(t, cwd)
+	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TurnID: "t0"}, "linux", env); a != (StopAnswer{}) {
+		t.Errorf("a stale turn: %+v", a)
+	}
+	if stopStateBytes(t, cwd) != before {
+		t.Errorf("a stale turn wrote the state")
+	}
+	// the current turn, and a host whose state carries no stamp yet, keep the loop
+	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TurnID: "t1"}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
+		t.Errorf("the current turn: %+v", a)
+	}
+	cwd, env = stopRig(t, "active")
+	stopInFlight(t, cwd, state.PhaseB)
+	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TurnID: "t0"}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
+		t.Errorf("an unstamped state: %+v", a)
 	}
 }

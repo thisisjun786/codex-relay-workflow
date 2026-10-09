@@ -95,7 +95,11 @@ func Legs() []Leg {
 			}
 			// The platform argument stays empty, as for UserPromptSubmit: the block texts resolve this host's
 			// platform when it is not given, which is the oracle's default (process.platform).
-			answer := pabcdhook.StopHandle(pabcdhook.StopPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: transcript}, "", os.LookupEnv)
+			turn := ""
+			if p.TurnID != nil {
+				turn = *p.TurnID
+			}
+			answer := pabcdhook.StopHandle(pabcdhook.StopPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: transcript, TurnID: turn}, "", os.LookupEnv)
 			if answer.Context != "" {
 				return ContextOutput("Stop", answer.Context)
 			}

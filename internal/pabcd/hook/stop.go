@@ -19,8 +19,9 @@
 // Differences from the oracle, all recorded in docs/port-cxc/known-defects/CRW-192.md: the counter is
 // read, judged and written inside the session lock on the state the lock found (the oracle writes the
 // whole state back from an unlocked read, which loses a participating writer's update), a change of
-// the phase or the binding between the first read and the lock releases instead of blocking on a stale
-// phase, a cycle in flight whose bound goalplan waits only on open decisions releases as the idle path
+// the phase, the binding or the user turn stamp between the first read and the lock releases instead of
+// blocking on a stale phase, a pause of the goal or a decision opened in that window releases too (the
+// goal, the goalplan wait and the payload's turn_id are judged again inside the lock), a cycle in flight whose bound goalplan waits only on open decisions releases as the idle path
 // does, and the friction advisory line is not ported (its ledger writer is a deprecated, unregistered
 // hook of the oracle, so no CRW store feeds it).
 package hook
@@ -57,8 +58,9 @@ const (
 const stopTotalCapMessage = "CRW Stop continuation cap (24) reached for this user turn; releasing."
 
 // StopPayload is what the harness hands StopHandle: the Stop fields handleStop reads. TranscriptPath
-// is the payload's transcript_path, or empty when it is null, absent or not a string.
-type StopPayload struct{ Cwd, SessionID, TranscriptPath string }
+// is the payload's transcript_path, and TurnID the payload's turn_id; each is empty when it is null,
+// absent or not a string. TurnID is held against the turn stamp of the state (not in the oracle).
+type StopPayload struct{ Cwd, SessionID, TranscriptPath, TurnID string }
 
 // StopAnswer is what a Stop leg answers. Stdout is the finished line (a block, or the systemMessage of
 // the total cap); Context is the additionalContext of an interactive session's render advisory, which
@@ -98,7 +100,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if host.IsContextPressureTail(host.ReadTranscriptTail(p.TranscriptPath, host.TailBytes)) {
 			return StopAnswer{}
 		}
-		return stopCounted(p, st, platform, env, lock, func(fresh state.State) string {
+		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State) string {
 			return stopGoalIdleBlock(p.Cwd, fresh, p.SessionID, platform, env)
 		})
 	}
@@ -117,7 +119,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if host.IsContextPressureTail(host.ReadTranscriptTail(p.TranscriptPath, host.TailBytes)) {
 		return StopAnswer{}
 	}
-	return stopCounted(p, st, platform, env, lock, func(fresh state.State) string {
+	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State) string {
 		if plateau := stopObjectivePlateau(p.Cwd, p.SessionID); plateau.Flat {
 			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID)
 		}
@@ -129,14 +131,41 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	})
 }
 
+// stopDue judges again, inside the lock, what the decision outside it stood on and that the user can
+// change meanwhile: the goal is still ACTIVE (a pause releases), the bound goalplan still reads and does
+// not wait on an open decision (idle: it must still read and not wait; in flight: it must not wait), and
+// the event still belongs to the user turn the state is stamped with.
+type stopDue func(p StopPayload, fresh state.State, env host.LookupEnv) bool
+
+func stopHeld(p StopPayload, fresh state.State, env host.LookupEnv) (*goalplan.Goalplan, bool) {
+	if sessionHookGoalStatus(p.SessionID, env) != host.GoalActive {
+		return nil, false
+	}
+	if p.TurnID != "" && fresh.StopBlockTurnID != nil && *fresh.StopBlockTurnID != p.TurnID {
+		return nil, false
+	}
+	return stopSafeReadBoundGoalplan(p.Cwd, fresh.Slug), true
+}
+
+func stopIdleDue(p StopPayload, fresh state.State, env host.LookupEnv) bool {
+	plan, ok := stopHeld(p, fresh, env)
+	return ok && plan != nil && !goalplan.RemainingWorkAwaitsDecisions(plan)
+}
+
+func stopInFlightDue(p StopPayload, fresh state.State, env host.LookupEnv) bool {
+	plan, ok := stopHeld(p, fresh, env)
+	return ok && !(plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan))
+}
+
 // stopCounted bumps the stop counter under the session lock and, when the bump leaves a block, builds
 // it from the state the lock found. judged is the state the decision was made on; if the phase, the
-// cycle or the binding changed since, the event is stale and releases.
-func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, build func(fresh state.State) string) StopAnswer {
+// cycle, the binding or the user turn changed since, or due no longer holds, the event is stale and
+// releases without writing.
+func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, due stopDue, build func(fresh state.State) string) StopAnswer {
 	var answer StopAnswer
 	err := lock(p.Cwd, p.SessionID, func() error {
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
-		if unreadable || !stopSameBinding(judged, fresh) || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
+		if unreadable || !stopSameBinding(judged, fresh) || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) || !due(p, fresh, env) {
 			return nil
 		}
 		next, outcome := stopBump(p.Cwd, fresh)
@@ -157,10 +186,11 @@ func stopCounted(p StopPayload, judged state.State, platform string, env host.Lo
 	return answer
 }
 
-// stopSameBinding is whether the state the lock found still has the phase, the cycle and the goalplan
-// binding the decision was made on.
+// stopSameBinding is whether the state the lock found still has the phase, the cycle, the goalplan
+// binding and the user turn stamp the decision was made on.
 func stopSameBinding(a, b state.State) bool {
-	return a.Phase == b.Phase && a.OrchestrationActive == b.OrchestrationActive && a.Slug == b.Slug
+	return a.Phase == b.Phase && a.OrchestrationActive == b.OrchestrationActive && a.Slug == b.Slug &&
+		stopSameText(a.StopBlockTurnID, b.StopBlockTurnID)
 }
 
 type stopBumpOutcome int

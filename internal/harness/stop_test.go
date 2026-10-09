@@ -165,3 +165,25 @@ func TestStopLegRepeatedEventIsBounded(t *testing.T) {
 		t.Errorf("state after the loop: phase %s notified %v", s.Phase, s.StopBlockCapNotified)
 	}
 }
+
+// A Stop of an earlier user turn (its turn_id differs from the stamp the next prompt wrote) releases and neither
+// blocks nor spends the new turn's budget; the stamped turn's own Stop keeps the loop.
+func TestStopLegReleasesAnEventOfAnEarlierTurn(t *testing.T) {
+	cwd, env := stopSetup(t, "active")
+	s := state.ReadState(cwd, "s1")
+	t1 := "t1"
+	s.StopBlockTurnID = &t1
+	if err := state.WriteState(cwd, s); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(state.StatePath(cwd, "s1"))
+	if code, out, errOut := stopHook(Legs(), payload("Stop", cwd, `,"turn_id":"t0"`), env); code != 0 || out != "" || errOut != "" {
+		t.Fatalf("a stale turn: %d %q %q", code, out, errOut)
+	}
+	if after, _ := os.ReadFile(state.StatePath(cwd, "s1")); string(after) != string(before) {
+		t.Errorf("a stale turn changed the state")
+	}
+	if _, out, _ := stopHook(Legs(), payload("Stop", cwd, `,"turn_id":"t1"`), env); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("the stamped turn: %q", out)
+	}
+}
