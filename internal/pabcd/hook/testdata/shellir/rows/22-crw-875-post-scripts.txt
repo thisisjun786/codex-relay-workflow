@@ -175,15 +175,14 @@ gh pr comment 2 --body-file {TMP}/b.md
 bash post.sh
 
 === CRW-875-22-08c | T
---why Control: the script writes a file that is not a body file it posts, in a directory the posts do not read.
+--why Control: the text around the script writes a file that is not a body file it posts, in a directory the posts do not read.
 --file {TMP}/b.md
 hello
 --file post.sh
-echo done > {WORK}/out.log
 gh pr comment 1 --body-file {TMP}/b.md
 gh pr comment 2 --body-file {TMP}/b.md
 --cmd
-bash post.sh
+echo done > {WORK}/out.log; bash post.sh
 
 === CRW-875-22-09 | Q
 --why A write the reader cannot name (a computed destination) may reach the body file.
@@ -333,3 +332,252 @@ CDPATH=/x; cd {WORK}/sub; cd inner; bash clean.sh
 === CRW-875-22-27 | B
 --why Control: CDPATH assigned in a text with no script and no post is not judged.
 echo hi
+
+=== CRW-875-22-30 | Q
+--why rg --hostname-bin runs the program it names (a program that rewrites the checked body file), so the line is not exception B: the script is refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+rg --hostname-bin={TMP}/w.sh --hyperlink-format=default hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-30b | Q
+--why The separated form of --hostname-bin is refused the same way.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+rg --hostname-bin {TMP}/w.sh --hyperlink-format=default hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-31 | Q
+--why A prefix assignment on an exception B line can change what the program runs (RIPGREP_CONFIG_PATH names a config with --pre): the script is refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+RIPGREP_CONFIG_PATH={TMP}/cfg rg hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-31b | Q
+--why An export line is a command of the script that is neither form A nor exception B: the script is refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+export RIPGREP_CONFIG_PATH={TMP}/cfg
+rg hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-31c | Q
+--why A prefix assignment on echo is refused as well (no assignment before any line).
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+X=1 echo hi
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-31d | Q
+--why printf -v assigns a variable (PATH among them): printf with an option is refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+printf -v PATH %s {TMP}/bin
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32 | T
+--why Exception B names git status (no option before the subcommand): the script of git status and a clean post is allowed.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git status
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32b | T
+--why git log, show, diff, grep and commit without an option before the subcommand are exception B.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git log --oneline -n 3
+git show --stat
+git diff --stat
+git grep -n hello
+git commit -m done
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32c | Q
+--why An option before the git subcommand (-C) is not exception B.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git -C {WORK} status
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32d | Q
+--why git branch is not a subcommand of exception B.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git branch x
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32e | Q
+--why git diff --output writes a file by the text (it could rewrite the checked body file): refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git diff --output={TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32f | Q
+--why An unambiguous abbreviation of --output is read as --output by git.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git log --out={TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-32g | Q
+--why git grep -O runs a program on the files it finds.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git grep -Ouse hello
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-33 | Q
+--why Two posts on one line joined by ; are a list, not a simple command: refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md; gh pr comment 2 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-33b | Q
+--why A redirection on a post line is not form A: refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md > {TMP}/out.log
+--cmd
+bash post.sh
+
+=== CRW-875-22-33c | Q
+--why A redirection on an exception B line is refused (it writes a file).
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+echo hi > {TMP}/o.txt
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-33d | Q
+--why A trailing ; is a control operator of the line.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md;
+--cmd
+bash post.sh
+
+=== CRW-875-22-34 | T
+--why An exception B program named by an absolute path in a system directory is the installed program.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+/usr/bin/grep -c hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-34b | Q
+--why A program named by a relative path is a file of the directory, not the installed program.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+./grep -c hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh

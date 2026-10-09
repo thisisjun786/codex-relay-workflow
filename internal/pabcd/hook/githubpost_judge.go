@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -80,10 +82,10 @@ func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostW
 	if err != nil {
 		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 	}
-	return githubPostJudgeExecs(res.Execs, depth, outer)
+	return githubPostJudgeExecs(res.Execs, depth, outer, depth > 0 && githubPostScriptLayout(command))
 }
 
-func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrites) (githubPostSite, bool) {
+func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrites, layout bool) (githubPostSite, bool) {
 	// The closed rule: a post is judged only as one simple command. A post that sits behind a wrapper,
 	// a shell, a list, a pipe or a substitution is refused.
 	simple := len(execs) == 1 && githubPostPlainContext(execs[0].Ctx)
@@ -91,6 +93,11 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	// exception B, each a plain line of its own. One line that is neither refuses the script.
 	lines := depth > 0 && githubPostHasPost(execs)
 	if lines {
+		// layout is whether the text is, statement by statement, plain simple commands each on a line of its own (no assignment,
+		// redirection, list, declaration, compound command or word with an expansion): what the execution records cannot show.
+		if !layout {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
 		for _, e := range execs {
 			if !githubPostScriptLine(e) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
@@ -193,28 +200,136 @@ func githubPostHasPost(execs []shellir.Exec) bool {
 
 // githubPostScriptLine is whether one execution of a script that holds a post is a line the rule allows: a plain command of its
 // own line that is a gh post (its form is judged by the caller) or a command of exception B. Exception B is a program named by a
-// bare word and run on literal words only: rg without --pre or --pre-glob, grep, egrep, fgrep, cat, head, tail, wc, ls, echo
-// and printf. Every other line (a gh read, git, cd, an assignment, a script or an inline program) refuses the script.
+// bare word (or by an absolute path in a system bin directory) and run on literal words only: rg without --pre, --pre-glob or
+// --hostname-bin, grep, egrep, fgrep, cat, head, tail, wc, ls, echo, printf without an option, and git log, show, diff, grep, status
+// and commit with no option before the subcommand and no option that writes a file or runs a program. Every other line (a gh read,
+// another git subcommand, cd, an assignment, a script or an inline program) refuses the script.
 func githubPostScriptLine(e shellir.Exec) bool {
-	if e.Kind != shellir.KindCommand || e.Inline != nil || !githubPostPlainContext(e.Ctx) || !e.Program.Known {
+	if e.Kind != shellir.KindCommand || e.Inline != nil || !githubPostPlainContext(e.Ctx) || !e.Program.Known ||
+		len(e.Assigns) > 0 || len(e.Redirs) > 0 {
 		return false
 	}
 	if githubPostProgram(e.Name) == "gh" {
 		return githubPostPostSub(githubPostWordsOf(e))
 	}
-	if e.Program.Value != e.Name {
-		return false // a path names a file, not the installed program
+	if !githubPostInstalledName(e) {
+		return false // a relative path names a file, not the installed program
 	}
-	switch e.Name {
-	case "rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "echo", "printf":
-	default:
-		return false
-	}
+	args := make([]string, 0, len(e.Args))
 	for _, a := range e.Args {
 		if !a.Known {
 			return false
 		}
-		if e.Name == "rg" && (a.Value == "--pre" || strings.HasPrefix(a.Value, "--pre=") || a.Value == "--pre-glob" || strings.HasPrefix(a.Value, "--pre-glob=")) {
+		args = append(args, a.Value)
+	}
+	switch e.Name {
+	case "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "echo":
+		return true
+	case "printf":
+		// printf -v assigns a variable (PATH among them).
+		return len(args) == 0 || !strings.HasPrefix(args[0], "-")
+	case "rg":
+		for _, a := range args {
+			switch {
+			case a == "--pre" || a == "--pre-glob" || a == "--hostname-bin",
+				strings.HasPrefix(a, "--pre=") || strings.HasPrefix(a, "--pre-glob=") || strings.HasPrefix(a, "--hostname-bin="):
+				return false
+			}
+		}
+		return true
+	case "git":
+		return githubPostGitReadLine(args)
+	}
+	return false
+}
+
+// githubPostInstalledName is whether a command is named by a bare word or by an absolute path in a system bin directory, so that
+// it is the installed program and not a file of the working directory.
+func githubPostInstalledName(e shellir.Exec) bool {
+	if e.Program.Value == e.Name {
+		return true
+	}
+	dir, base := filepath.Split(e.Program.Value)
+	switch dir {
+	case "/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/homebrew/bin/":
+		return base == e.Name
+	}
+	return false
+}
+
+// githubPostGitReadLine is git of exception B: log, show, diff, grep, status or commit as the first word (no option before the
+// subcommand), without an option that writes a file (--output, in any abbreviation git accepts) or that runs a program on the files
+// (-O, --open-files-in-pager).
+func githubPostGitReadLine(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "log", "show", "diff", "grep", "status", "commit":
+	default:
+		return false
+	}
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "--") {
+			name := strings.TrimPrefix(a, "--")
+			if i := strings.IndexByte(name, '='); i >= 0 {
+				name = name[:i]
+			}
+			if name != "" && (strings.HasPrefix("output", name) || strings.HasPrefix("open-files-in-pager", name)) {
+				return false
+			}
+		} else if strings.HasPrefix(a, "-") && strings.Contains(a, "O") {
+			return false
+		}
+	}
+	return true
+}
+
+// githubPostScriptLayout is whether a script text is a sequence of plain simple commands, each on a line of its own: every
+// statement is a call with no assignment before it, no redirection, no background, coprocess or negation, no trailing ;, and
+// only words of literal text (no parameter, command, arithmetic or process expansion); a list, pipe, declaration (export,
+// declare), loop, conditional, function, group or subshell is not a statement of that kind. The execution records of the reader
+// cannot show the assignments of a declaration or the separators of a line, so the rule reads them in the text.
+func githubPostScriptLayout(src string) bool {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
+	if err != nil {
+		return false
+	}
+	last := uint(0)
+	for _, st := range file.Stmts {
+		call, ok := st.Cmd.(*syntax.CallExpr)
+		if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 || len(st.Redirs) > 0 ||
+			st.Background || st.Coprocess || st.Negated || st.Semicolon.IsValid() {
+			return false
+		}
+		if st.Pos().Line() <= last {
+			return false
+		}
+		last = st.End().Line()
+		for _, w := range call.Args {
+			if !githubPostLiteralWord(w) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// githubPostLiteralWord is whether a word is made of literal text and quotes only.
+func githubPostLiteralWord(w *syntax.Word) bool {
+	for _, p := range w.Parts {
+		switch x := p.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			if x.Dollar {
+				return false
+			}
+			for _, q := range x.Parts {
+				if _, ok := q.(*syntax.Lit); !ok {
+					return false
+				}
+			}
+		default:
 			return false
 		}
 	}
