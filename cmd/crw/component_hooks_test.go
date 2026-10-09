@@ -432,15 +432,15 @@ func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *
 	}
 }
 
-// TestSessionStartStaticLegsSkipResumeThroughTheDispatcher: through the production row table, a resumed session gets only the
-// session binding from the map-affordance leg and nothing from the subagent fallback leg, while startup and compact get both
-// whole (CRW-1146).
+// TestSessionStartStaticLegsSkipResumeThroughTheDispatcher: through the production row table, a resumed session that was given the
+// map-affordance and subagent-fallback guidance at its start gets only the session binding from the first leg and nothing from the
+// second; a resume of a session never given it (the switch was off at its start) and a startup or compact get both whole (CRW-1146).
 func TestSessionStartStaticLegsSkipResumeThroughTheDispatcher(t *testing.T) {
 	_ = fallbackComponentEnv(t)
 	t.Setenv("CRW_BIN", "crw")
 	ws := t.TempDir()
-	run := func(leg, source string) string {
-		raw := `{"session_id":"s-1","cwd":` + strconv.Quote(ws) + `,"hook_event_name":"SessionStart","source":` + strconv.Quote(source) + `}`
+	run := func(leg, session, source string) string {
+		raw := `{"session_id":` + strconv.Quote(session) + `,"cwd":` + strconv.Quote(ws) + `,"hook_event_name":"SessionStart","source":` + strconv.Quote(source) + `}`
 		var out bytes.Buffer
 		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"session-start", "--leg", leg}, stdout: &out}, strings.NewReader(raw), componentHooks())
 		if !claimed || code != 0 {
@@ -448,19 +448,33 @@ func TestSessionStartStaticLegsSkipResumeThroughTheDispatcher(t *testing.T) {
 		}
 		return out.String()
 	}
+	const mapLeg, fallbackLeg = "session-start-announcing-map-affordance", "session-start-announcing-subagent-fallback"
 	for _, source := range []string{"startup", "compact"} {
-		if out := run("session-start-announcing-map-affordance", source); !strings.Contains(out, "External skill catalogs are searchable") || !strings.Contains(out, "This session's id is `s-1`") {
+		if out := run(mapLeg, "s-1", source); !strings.Contains(out, "External skill catalogs are searchable") || !strings.Contains(out, "This session's id is `s-1`") {
 			t.Errorf("map affordance, source %s: %q", source, out)
 		}
-		if out := run("session-start-announcing-subagent-fallback", source); out == "" {
+		if out := run(fallbackLeg, "s-1", source); out == "" {
 			t.Errorf("subagent fallback, source %s answered nothing", source)
 		}
 	}
-	out := run("session-start-announcing-map-affordance", "resume")
+	out := run(mapLeg, "s-1", "resume")
 	if !strings.Contains(out, "This session's id is `s-1`") || strings.Contains(out, "External skill catalogs") || strings.Contains(out, "Loop contract") {
 		t.Errorf("map affordance on resume: %q", out)
 	}
-	if out := run("session-start-announcing-subagent-fallback", "resume"); out != "" {
+	if out := run(fallbackLeg, "s-1", "resume"); out != "" {
 		t.Errorf("subagent fallback on resume: %q", out)
+	}
+	// A session whose legs were silent at its start (the hook switch off) hears both on its first resume, and only then.
+	if out := run(mapLeg, "s-2", "resume"); !strings.Contains(out, "External skill catalogs are searchable") {
+		t.Errorf("map affordance on the first resume of a session never given it: %q", out)
+	}
+	if out := run(fallbackLeg, "s-2", "resume"); out == "" {
+		t.Error("subagent fallback on the first resume of a session never given it answered nothing")
+	}
+	if out := run(mapLeg, "s-2", "resume"); strings.Contains(out, "External skill catalogs") {
+		t.Errorf("map affordance on the second resume: %q", out)
+	}
+	if out := run(fallbackLeg, "s-2", "resume"); out != "" {
+		t.Errorf("subagent fallback on the second resume: %q", out)
 	}
 }

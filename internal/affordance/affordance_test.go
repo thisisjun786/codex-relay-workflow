@@ -403,34 +403,94 @@ func TestUnicodeSessionBoundAndSingleConsumer(t *testing.T) {
 	}
 }
 
-// CRW-1146: a resumed session already holds the static pointers from its first start, so source=resume re-issues only what can
-// change (the session binding and the not-on-PATH banner); startup, compact, clear, a missing or an unknown or non-string source
-// keep the whole list.
+// sessionEnv is testEnv with a Codex home of its own, where the guidance a session was given is recorded.
+func sessionEnv(t *testing.T, bin string) host.LookupEnv {
+	t.Helper()
+	home := t.TempDir()
+	return func(k string) (string, bool) {
+		switch k {
+		case "CRW_BIN":
+			return bin, true
+		case "CODEX_HOME":
+			return home, true
+		}
+		return "", false
+	}
+}
+
+// CRW-1146: a resumed session is not given again the guidance it was given, so source=resume re-issues only what can change (the
+// session binding and the not-on-PATH banner); startup, compact, clear, a missing or an unknown or non-string source keep the whole
+// list.
 func TestSessionStartResumeKeepsOnlyTheChangeableSections(t *testing.T) {
 	big := t.TempDir()
 	seed(t, big, 40)
-	full := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", nil), big, testEnv)
+	env := sessionEnv(t, "crw")
+	full := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", nil), big, env)
 	if n := len(strings.Split(contextOf(t, full, "SessionStart"), "\n\n")); n != 8 {
 		t.Fatalf("baseline has %d sections", n)
 	}
 	for _, source := range []any{"startup", "compact", "clear", "", "future-source", 7, nil, "RESUME", "resume "} {
-		got := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": source}), big, testEnv)
+		got := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": source}), big, env)
 		if got != full {
 			t.Errorf("source %v changed the output", source)
 		}
 	}
-	resumed := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, testEnv)
-	if got := contextOf(t, resumed, "SessionStart"); got != RenderSessionBinding("SESSION", testEnv) {
+	resumed := RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, env)
+	if got := contextOf(t, resumed, "SessionStart"); got != RenderSessionBinding("SESSION", env) {
 		t.Errorf("resume context is not exactly the session binding: %q", got)
 	}
-	// The banner depends on where crw is, so a resumed session hears it again.
-	notOnPath := func(k string) (string, bool) { return "chosen-crw", k == "CRW_BIN" }
-	got := contextOf(t, RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, notOnPath), "SessionStart")
-	if parts := strings.Split(got, "\n\n"); len(parts) != 2 || parts[0] != RenderSessionBinding("SESSION", notOnPath) || !strings.Contains(parts[1], "is not on PATH here") {
-		t.Errorf("resume with crw off PATH: %q", got)
+	// Without a session id nothing can be recorded or looked up, so a resume cannot be known to hold the pointers.
+	if got := RunMapAffordanceSessionStart(payload(big, "SessionStart", "", map[string]any{"source": "resume"}), big, env); got == "" {
+		t.Errorf("resume without a session id answered nothing")
 	}
-	// Nothing to say is no output, not an empty envelope.
-	if got := RunMapAffordanceSessionStart(payload(big, "SessionStart", "", map[string]any{"source": "resume"}), big, testEnv); got != "" {
-		t.Errorf("resume without a session id and with crw on PATH answered %q", got)
+}
+
+// The first start a session hears the pointers is not always its first start: the switch can be off then, or the hook run by an
+// older build that kept no record. A resume of such a session gets everything once, and only the changeable part after that.
+func TestSessionStartResumeOfASessionNeverGivenThePointersGivesThemOnce(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	resume := payload(big, "SessionStart", "S1", map[string]any{"source": "resume"})
+	full := RunMapAffordanceSessionStart(payload(big, "SessionStart", "elsewhere", nil), big, env)
+	if got := RunMapAffordanceSessionStart(resume, big, env); got != strings.ReplaceAll(full, "elsewhere", "S1") {
+		t.Fatalf("first resume of an unrecorded session did not give the whole list: %q", got)
+	}
+	if got := contextOf(t, RunMapAffordanceSessionStart(resume, big, env), "SessionStart"); got != RenderSessionBinding("S1", env) {
+		t.Errorf("second resume: %q", got)
+	}
+	// The pointers say how to run crw, so a resume where that differs gives them whole again, with the banner.
+	other := func(k string) (string, bool) {
+		if k == "CRW_BIN" {
+			return "chosen-crw", true
+		}
+		return env(k)
+	}
+	got := contextOf(t, RunMapAffordanceSessionStart(resume, big, other), "SessionStart")
+	if !strings.Contains(got, "External skill catalogs are searchable") || !strings.Contains(got, "is not on PATH here") {
+		t.Errorf("resume with crw elsewhere: %q", got)
+	}
+	// And a small workspace then a large one: the map pointer appearing is a change too.
+	small := t.TempDir()
+	sm := payload(small, "SessionStart", "S2", map[string]any{"source": "resume"})
+	RunMapAffordanceSessionStart(payload(small, "SessionStart", "S2", nil), small, env)
+	if got := contextOf(t, RunMapAffordanceSessionStart(sm, small, env), "SessionStart"); got != RenderSessionBinding("S2", env) {
+		t.Errorf("small workspace resume: %q", got)
+	}
+	seed(t, small, 40)
+	if got := contextOf(t, RunMapAffordanceSessionStart(sm, small, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("resume after the workspace grew past the map threshold: %q", got)
+	}
+}
+
+// With crw off PATH the banner is the one changeable section a resume repeats.
+func TestSessionStartResumeRepeatsTheBannerWhenCrwIsOffPath(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "chosen-crw")
+	RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", nil), big, env)
+	got := contextOf(t, RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, env), "SessionStart")
+	if parts := strings.Split(got, "\n\n"); len(parts) != 2 || parts[0] != RenderSessionBinding("SESSION", env) || !strings.Contains(parts[1], "is not on PATH here") {
+		t.Errorf("resume with crw off PATH: %q", got)
 	}
 }
