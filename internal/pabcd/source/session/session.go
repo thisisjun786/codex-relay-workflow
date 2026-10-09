@@ -94,7 +94,7 @@ func gitIdentity(cwd string) (worktree, error) { return gitIdentityWith(git, cwd
 // nativeGit is the git the native side's probes run; a test replaces it to fail the native probes alone.
 var nativeGit = git
 
-func gitIdentityWith(git func(string, ...string) (string, error), cwd string) (worktree, error) {
+func gitIdentityWith(run func(string, ...string) (string, error), cwd string) (worktree, error) {
 	var w worktree
 	for _, probe := range []struct {
 		into *string
@@ -104,7 +104,7 @@ func gitIdentityWith(git func(string, ...string) (string, error), cwd string) (w
 		{&w.commonDir, []string{"rev-parse", "--path-format=absolute", "--git-common-dir"}},
 		{&w.gitDir, []string{"rev-parse", "--absolute-git-dir"}},
 	} {
-		out, err := git(cwd, probe.args...)
+		out, err := run(cwd, probe.args...)
 		if err == nil {
 			*probe.into, err = canonical(out)
 		}
@@ -115,8 +115,8 @@ func gitIdentityWith(git func(string, ...string) (string, error), cwd string) (w
 	return w, nil
 }
 
-// nativeRepo is what the native cwd's probes established: a repository (resolved), no repository (git said so), or
-// nothing (git could not answer).
+// nativeRepo is what the native cwd's probes established: in a repository, or in none because git said so. A git
+// that could not answer is neither: nativeGitIdentity returns unknownNative.
 type nativeRepo int
 
 const (

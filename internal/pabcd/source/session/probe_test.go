@@ -99,8 +99,8 @@ func TestNativeProbeFailureIsUnknownNotOutsideARepository(t *testing.T) {
 			restore := func() { nativeGit = git }
 
 			fail()
-			if root, err := Bind(main, "s1", other); err == nil {
-				t.Fatalf("bound %q from a native directory whose repository is unknown", root)
+			if root, err := Bind(main, "s1", other); err != unknownNative {
+				t.Fatalf("bind from a native directory whose repository is unknown: %q, %v", root, err)
 			}
 			if _, err := os.Lstat(filepath.Join(main, ".crw", "sources", "s1.json")); !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("a binding was written: %v", err)
@@ -114,11 +114,14 @@ func TestNativeProbeFailureIsUnknownNotOutsideARepository(t *testing.T) {
 			before, err := os.ReadFile(path)
 			must(t, err)
 			fail()
-			if got, err := Resolve(main, "s2"); err == nil {
-				t.Fatalf("resolved %q with the native repository unknown", got)
+			if got, err := Resolve(main, "s2"); err != unknownNative {
+				t.Fatalf("resolve with the native repository unknown: %q, %v", got, err)
 			}
-			if _, err := Bind(main, "s2", wt); err == nil {
-				t.Fatal("rebinding passed with the native repository unknown")
+			if _, err := Bind(main, "s2", wt); err != unknownNative {
+				t.Fatalf("rebind with the native repository unknown: %v", err)
+			}
+			if res := CheckBound(main, "s2"); res.OK {
+				t.Fatalf("the gate passed with the native repository unknown: %+v", res)
 			}
 			if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
 				t.Fatalf("binding changed: %v", err)
