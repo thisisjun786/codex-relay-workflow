@@ -3,6 +3,7 @@
 package laneparity
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -53,6 +54,10 @@ type Latency struct {
 	// average when the leg was last measured.
 	Inconclusive bool    `json:"inconclusive,omitempty"`
 	Load         float64 `json:"load,omitempty"`
+	// Broken is a leg whose command did not do its work while it was timed (it failed, was killed,
+	// timed out, answered something else, or starts another build): its time is not a latency, and
+	// host load does not excuse it.
+	Broken bool `json:"broken,omitempty"`
 	// Skipped is a leg no claimed fixture exercises yet (its port is pending): not timed, and not
 	// a failure, but listed as unverified in the report.
 	Skipped bool   `json:"skipped,omitempty"`
@@ -117,7 +122,7 @@ func Settle(v Latency, load float64, loadKnown bool, cpus int, strict bool) Late
 	if loadKnown {
 		v.Load = load
 	}
-	if v.OK || strict || !loadKnown || load <= float64(cpus) {
+	if v.OK || v.Broken || strict || !loadKnown || load <= float64(cpus) {
 		return v
 	}
 	v.Inconclusive, v.OK = true, true
@@ -155,8 +160,15 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		return nil, err
 	}
 	pick := map[string]contracttest.HookFireResult{}
+	unfit := map[string]string{} // leg -> why its fixtures cannot be timed: the command did not do its work
 	for _, res := range all {
 		if !res.Run || res.Scripted || len(res.Legs) == 0 || res.Steps[0].Leg != res.Leg {
+			continue
+		}
+		if err := timedStepProblem(res); err != "" {
+			if unfit[res.Leg] == "" {
+				unfit[res.Leg] = res.ID + ": " + err
+			}
 			continue
 		}
 		prior, have := pick[res.Leg]
@@ -179,47 +191,68 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		fixture := "probe"
 		var res contracttest.HookFireResult
 		var scenario cxccorpus.Scenario
+		var wantExit int
 		if !l.Own {
 			var ok bool
-			if res, ok = pick[l.Leg]; !ok {
+			if res, ok = pick[l.Leg]; !ok && unfit[l.Leg] != "" {
+				out = append(out, Latency{Leg: l.Leg, TimeoutMs: l.Timeout * 1000, Broken: true, Reason: "the declared command does not do its work: " + unfit[l.Leg]})
+				continue
+			} else if !ok {
 				out = append(out, Latency{Leg: l.Leg, TimeoutMs: l.Timeout * 1000, OK: true, Skipped: true, Reason: "no claimed fixture to time (its port is pending)"})
 				continue
 			}
 			fixture = res.ID
 			if rec != nil {
-				if scenario, err = oracleScenario(o.Root, res.ID); err != nil {
+				if scenario, wantExit, err = oracleScenario(o.Root, res.ID); err != nil {
 					return nil, err
 				}
 			}
 		}
+		if problem := timedBuildProblem(declared[l.Leg], o.CRW); problem != "" {
+			out = append(out, Latency{Leg: l.Leg, Fixture: fixture, TimeoutMs: l.Timeout * 1000, Broken: true, Attempts: 1, Reason: problem})
+			continue
+		}
 		for attempt := 1; attempt <= max(o.Attempts, 1); attempt++ {
 			var goSamples, tsSamples []time.Duration
+			var broken string
 			if l.Own {
-				if goSamples, err = timeProbe(in, l.Leg, o.Runs); err != nil {
+				if goSamples, broken, err = timeProbe(in, l.Leg, o.Runs); err != nil {
 					return nil, err
 				}
 			} else {
 				only := regexp.MustCompile("^" + regexp.QuoteMeta(res.ID) + "$")
 				// The two sides alternate, so a load that comes and goes on a shared host weighs on both.
-				for i := 0; i < o.Runs; i++ {
+				for i := 0; i < o.Runs && broken == ""; i++ {
 					in := in
 					in.Only = only
 					rs, err := contracttest.FireHooks(in)
 					if err != nil {
 						return nil, err
 					}
-					if len(rs) != 1 || rs[0].Observed == nil || len(rs[0].Observed.Steps) == 0 {
-						return nil, fmt.Errorf("%s: no timed step", res.ID)
+					if len(rs) != 1 {
+						return nil, fmt.Errorf("%s: %d fixtures fired, expected 1", res.ID, len(rs))
+					}
+					if broken = timedStepProblem(rs[0]); broken != "" {
+						break
 					}
 					goSamples = append(goSamples, rs[0].Observed.Steps[0].Elapsed)
 					if rec != nil {
-						elapsed, err := timeOracle(rec, scenario)
+						elapsed, err := timeOracle(rec, scenario, wantExit)
 						if err != nil {
+							if errors.Is(err, errOracleStep) {
+								broken = err.Error()
+								break
+							}
 							return nil, err
 						}
 						tsSamples = append(tsSamples, elapsed)
 					}
 				}
+			}
+			if broken != "" {
+				verdict = Latency{Leg: l.Leg, Fixture: fixture, Runs: len(goSamples), TimeoutMs: l.Timeout * 1000, Broken: true, Attempts: attempt,
+					Reason: "the command did not do its work while it was timed: " + broken}
+				break
 			}
 			verdict = Judge(l.Leg, fixture, l.Timeout, goSamples, tsSamples)
 			verdict.Attempts = attempt
@@ -234,7 +267,9 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 	return out, nil
 }
 
-func timeProbe(in contracttest.HookFireInput, leg string, runs int) ([]time.Duration, error) {
+// timeProbe times a registration of CRW's own with its probe; broken is non-empty when a run of the
+// probe did not do its work (the probe's check failed).
+func timeProbe(in contracttest.HookFireInput, leg string, runs int) (samples []time.Duration, broken string, err error) {
 	var probe *OwnProbe
 	for _, p := range OwnProbes() {
 		if p.Leg == leg && (probe == nil || !p.Silent) {
@@ -243,20 +278,66 @@ func timeProbe(in contracttest.HookFireInput, leg string, runs int) ([]time.Dura
 		}
 	}
 	if probe == nil {
-		return nil, fmt.Errorf("no probe for %s", leg)
+		return nil, "", fmt.Errorf("no probe for %s", leg)
 	}
-	var out []time.Duration
 	for i := 0; i < runs; i++ {
-		rs, err := contracttest.FireProbes(in, []contracttest.Probe{{ID: probe.ID, Scenario: probe.Scenario}})
+		rs, err := contracttest.FireProbes(in, []contracttest.Probe{{ID: probe.ID, Scenario: probe.Scenario, Check: probe.Check}})
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		if rs[0].Err != nil || len(rs[0].Observed.Steps) == 0 {
-			return nil, fmt.Errorf("%s: %v", probe.ID, rs[0].Err)
+		if rs[0].Err != nil {
+			return samples, probe.ID + ": " + rs[0].Err.Error(), nil
 		}
-		out = append(out, rs[0].Observed.Steps[0].Elapsed)
+		if len(rs[0].Observed.Steps) == 0 {
+			return samples, probe.ID + ": no step ran", nil
+		}
+		if problem := stepProblem(rs[0].Observed.Steps[0]); problem != "" {
+			return samples, probe.ID + ": " + problem, nil
+		}
+		samples = append(samples, rs[0].Observed.Steps[0].Elapsed)
 	}
-	return out, nil
+	return samples, "", nil
+}
+
+// stepProblem is why a step's time is not a latency: it was killed, timed out or never ran.
+func stepProblem(s cxccorpus.StepResult) string {
+	switch {
+	case s.Timeout:
+		return "the command timed out"
+	case s.Signal != "":
+		return "the command was killed by signal " + s.Signal
+	}
+	return ""
+}
+
+// timedStepProblem is why a fired fixture's first step is not a measurement of the hook working: it
+// differs from the fixture's expectation (a failing exit, another answer, a missing command), did
+// not run, was killed or timed out. Empty when the time is a latency.
+func timedStepProblem(res contracttest.HookFireResult) string {
+	switch {
+	case res.Err != nil:
+		return firstLines(res.Err.Error(), 3)
+	case res.Observed == nil || len(res.Observed.Steps) == 0:
+		return "no step ran"
+	}
+	return stepProblem(res.Observed.Steps[0])
+}
+
+// timedBuildProblem is why the declared command is not the build under test: the latency of another
+// executable is not the latency of crw.
+func timedBuildProblem(command, crw string) string {
+	started, problem := CommandBuild(command, crw)
+	if problem != "" {
+		return problem
+	}
+	want, err := FileDigest(crw)
+	if err != nil {
+		return err.Error()
+	}
+	if started != want {
+		return fmt.Sprintf("the declared command %q starts another executable than the crw build under test (%s, not %s)", command, short(started), short(want))
+	}
+	return ""
 }
 
 func oracleRecorder(o LatencyOptions, scratch string) (*cxccorpus.Recorder, error) {
@@ -300,17 +381,27 @@ func errorsJoin(errs ...error) error {
 	return nil
 }
 
-// oracleScenario is a fixture's original scenario, in the oracle's own names.
-func oracleScenario(root, id string) (cxccorpus.Scenario, error) {
+// oracleScenario is a fixture's original scenario, in the oracle's own names, and the exit status
+// its first step recorded.
+func oracleScenario(root, id string) (cxccorpus.Scenario, int, error) {
 	fix, err := cxccorpus.LoadFixture(filepath.Join(root, cxccorpus.FixtureDir, id+".json"))
 	if err != nil {
-		return cxccorpus.Scenario{}, err
+		return cxccorpus.Scenario{}, 0, err
 	}
-	return cxccorpus.Scenario{ID: id, Covers: fix.Covers, Note: fix.Note, Given: fix.Given, Steps: fix.Run.Steps, Observe: fix.Run.Observe}, nil
+	exit := 0
+	if len(fix.Expect.Steps) > 0 {
+		exit = fix.Expect.Steps[0].Exit
+	}
+	return cxccorpus.Scenario{ID: id, Covers: fix.Covers, Note: fix.Note, Given: fix.Given, Steps: fix.Run.Steps, Observe: fix.Run.Observe}, exit, nil
 }
 
-// timeOracle runs the scenario once against the CXC oracle and returns the first step's time.
-func timeOracle(rec *cxccorpus.Recorder, s cxccorpus.Scenario) (time.Duration, error) {
+// errOracleStep marks an oracle run whose command did not do what its recording says.
+var errOracleStep = errors.New("the oracle command did not run as recorded")
+
+// timeOracle runs the scenario once against the CXC oracle and returns the first step's time. The
+// step must have exited as recorded (wantExit), not been killed and not timed out: a command that
+// failed at once is quicker than one that works.
+func timeOracle(rec *cxccorpus.Recorder, s cxccorpus.Scenario, wantExit int) (time.Duration, error) {
 	got, err := rec.Record(s)
 	if err != nil {
 		return 0, fmt.Errorf("oracle %s: %w", s.ID, err)
@@ -318,5 +409,12 @@ func timeOracle(rec *cxccorpus.Recorder, s cxccorpus.Scenario) (time.Duration, e
 	if len(got.Expect.Steps) == 0 {
 		return 0, fmt.Errorf("oracle %s: no step", s.ID)
 	}
-	return got.Expect.Steps[0].Elapsed, nil
+	step := got.Expect.Steps[0]
+	if problem := stepProblem(step); problem != "" {
+		return 0, fmt.Errorf("%w: %s: %s", errOracleStep, s.ID, problem)
+	}
+	if step.Exit != wantExit {
+		return 0, fmt.Errorf("%w: %s exited %d, recorded %d", errOracleStep, s.ID, step.Exit, wantExit)
+	}
+	return step.Elapsed, nil
 }

@@ -3,6 +3,10 @@
 package laneparity
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +101,77 @@ func TestSettle_aFailureUnderAnOverloadedHostIsInconclusiveUnlessStrict(t *testi
 				t.Errorf("load %v", got.Load)
 			}
 		})
+	}
+}
+
+// editDeclaration replaces text in the hook files of a generated plugin root (the JSON spelling).
+func editDeclaration(t *testing.T, plugin, from, to string) {
+	t.Helper()
+	hit := false
+	err := filepath.WalkDir(filepath.Join(plugin, "wiring"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
+			return err
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(raw), from) {
+			return err
+		}
+		hit = true
+		return os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), from, to)), 0o644)
+	})
+	if err != nil || !hit {
+		t.Fatalf("editing %q: hit %v, %v", from, hit, err)
+	}
+}
+
+const mapLeg = "session-start-announcing-map-affordance"
+
+func latencyOf(t *testing.T, o FireOptions, leg string) Latency {
+	t.Helper()
+	lat, err := MeasureLatency(LatencyOptions{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Runs: 1, Attempts: 1, Strict: true,
+		Only: regexp.MustCompile("^" + regexp.QuoteMeta(leg) + "$")})
+	if err != nil {
+		return Latency{Reason: "error: " + err.Error()}
+	}
+	if len(lat) != 1 {
+		t.Fatalf("%d legs timed", len(lat))
+	}
+	return lat[0]
+}
+
+// A hook that fails at once is faster than a working one: the cell must not pass it.
+func TestMeasureLatency_aFailingHookIsNotAFastPass(t *testing.T) {
+	good := latencyOf(t, fireFixture(t), mapLeg)
+	if !good.OK {
+		t.Fatalf("the working hook does not pass: %+v", good)
+	}
+	for name, edit := range map[string]func(*testing.T, string, string){
+		"exits nonzero": func(t *testing.T, plugin, crw string) {
+			editDeclaration(t, plugin, "--leg "+mapLeg+`"`, "--leg "+mapLeg+`; exit 3"`)
+		},
+		"another executable": func(t *testing.T, plugin, crw string) {
+			editDeclaration(t, plugin, `\"`+crw+`\" hook session-start --leg `+mapLeg, "/bin/false hook session-start --leg "+mapLeg)
+		},
+		"killed": func(t *testing.T, plugin, crw string) {
+			editDeclaration(t, plugin, "--leg "+mapLeg+`"`, "--leg "+mapLeg+`; kill -9 $$"`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := fireFixture(t)
+			edit(t, o.Plugin, o.CRW)
+			got := latencyOf(t, o, mapLeg)
+			if got.OK || got.Inconclusive || got.Skipped {
+				t.Fatalf("a failing hook passed the latency cell: %+v", got)
+			}
+		})
+	}
+}
+
+// A leg declared under another event, or not at all, is not a leg that can be timed.
+func TestMeasureLatency_aLegWithNoDeclaredCommandFails(t *testing.T) {
+	o := fireFixture(t)
+	editDeclaration(t, o.Plugin, "--leg "+mapLeg+`"`, "--leg other-leg"+`"`)
+	if got := latencyOf(t, o, mapLeg); got.OK {
+		t.Fatalf("passed: %+v", got)
 	}
 }

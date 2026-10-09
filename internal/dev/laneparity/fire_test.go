@@ -16,6 +16,8 @@ import (
 // the first leg of the table (the one the registration faults aim at).
 var slice = regexp.MustCompile(`^hook__(session-start-ensuring-provider-bridge|session-start-announcing-map-affordance|pre-tool-use-guarding-managed-worktree-deletion|user-prompt-submit-guiding-worktree-rename|subagent-stop-verifying-evidence)__`)
 
+func regexpOf(expr string) *regexp.Regexp { return regexp.MustCompile(expr) }
+
 func fireFixture(t *testing.T) FireOptions {
 	t.Helper()
 	crw, err := crwUnderTest()
@@ -256,8 +258,35 @@ func TestRun_aPassingReportOfTheSameKeyStandsInForARun(t *testing.T) {
 		t.Errorf("the same key must be reused, exit %d: %s", code, out.String())
 	}
 	out.Reset()
+	strict := args("--reuse", report, "--strict") // a stricter verdict is another criterion
+	if code := Run(strict, &out, &errs); strings.Contains(out.String(), "reused") {
+		t.Errorf("--strict must not reuse a report judged without it, exit %d: %s", code, out.String())
+	}
+	out.Reset()
 	other := append(args("--reuse", report), "--runs", "7") // an option the key holds
 	if code := Run(other, &out, &errs); code != 0 || strings.Contains(out.String(), "reused") {
 		t.Errorf("another option must not reuse, exit %d: %s", code, out.String())
+	}
+}
+
+// The node that runs the oracle is part of what a latency cell judged.
+func TestNodeIdentity_namesTheExecutableThatRunsTheOracle(t *testing.T) {
+	if got := nodeIdentity("fire", "/oracle", "/bin/true"); got != "" {
+		t.Errorf("a cell that runs no oracle has no node: %q", got)
+	}
+	if got := nodeIdentity("latency", "", "/bin/true"); got != "" {
+		t.Errorf("no oracle, no node: %q", got)
+	}
+	a, b, c := nodeIdentity("latency", "/oracle", "/bin/true"), nodeIdentity("all", "/oracle", "/bin/false"), nodeIdentity("latency", "/oracle", "/does/not/exist")
+	if a == "" || b == "" || c == "" || a == b || a == c || b == c {
+		t.Errorf("identities must differ: %q %q %q", a, b, c)
+	}
+	if a != nodeIdentity("latency", "/oracle", "/bin/true") {
+		t.Error("the same node has two identities")
+	}
+	k1, _ := ReportKey(repoRoot(t), "crw", "plugin", "latency", a)
+	k2, _ := ReportKey(repoRoot(t), "crw", "plugin", "latency", c)
+	if k1 == k2 {
+		t.Error("another node shares a key")
 	}
 }

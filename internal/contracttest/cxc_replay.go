@@ -312,7 +312,7 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	if got, err = mapStrings(got, invocation.Replace); err != nil {
 		return err
 	}
-	if err := compare(flatten(want), flatten(got), claim); err != nil {
+	if err := compare(flatten(want), flatten(got), claim, r.light); err != nil {
 		return fmt.Errorf("%s (%s by %s): %w", id, claim.State, claim.Issue, err)
 	}
 	return nil
@@ -357,8 +357,10 @@ func flatten(e cxccorpus.Expect) map[string]string {
 	return flat
 }
 
-// compare applies the claim's patch to the expectation and lists up to eight differences.
-func compare(want, got map[string]string, claim cxcClaim) error {
+// compare applies the claim's patch to the expectation and lists up to eight differences. A light
+// case (timing) logs no calls and leaves its tree unobserved, so stepsOnly judges the steps alone:
+// the exit, signal, timeout, form and bytes of what each command answered.
+func compare(want, got map[string]string, claim cxcClaim, stepsOnly bool) error {
 	for _, prefix := range claim.Remove {
 		before := len(want)
 		maps.DeleteFunc(want, func(key, _ string) bool { return strings.HasPrefix(key, prefix) })
@@ -367,6 +369,11 @@ func compare(want, got map[string]string, claim cxcClaim) error {
 		}
 	}
 	maps.Copy(want, claim.Set)
+	if stepsOnly {
+		keep := func(key string) bool { return key == "exit" || strings.HasPrefix(key, "steps/") }
+		maps.DeleteFunc(want, func(key, _ string) bool { return !keep(key) })
+		maps.DeleteFunc(got, func(key, _ string) bool { return !keep(key) })
+	}
 	keys := append(slices.Collect(maps.Keys(want)), slices.Collect(maps.Keys(got))...)
 	slices.Sort(keys)
 	var diffs []string

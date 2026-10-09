@@ -20,7 +20,7 @@ import (
 type Receipt struct {
 	Run     string `json:"run"`
 	Plugin  string `json:"plugin"` // PluginDigest of the root that was fired
-	Binary  string `json:"binary"` // sha256 of the crw build the declared command started
+	Binary  string `json:"binary"` // sha256 of the executable the declared command starts (empty when it names none)
 	Fixture string `json:"fixture"`
 	Step    int    `json:"step"`
 	Leg     string `json:"leg"`
@@ -143,7 +143,9 @@ func VerifyReceipts(run, plugin, binary string, want []Want, got []Receipt) []st
 		if r.Plugin != plugin {
 			add("%s: receipt names another plugin root (%s), the fired one is %s", where, short(r.Plugin), short(plugin))
 		}
-		if r.Binary != binary {
+		if r.Binary == "" {
+			add("%s: receipt names no crw build: the declared command starts no executable the harness can identify", where)
+		} else if r.Binary != binary {
 			add("%s: receipt names another crw build (%s), the fired one is %s", where, short(r.Binary), short(binary))
 		}
 		if r.Leg != w.Leg {

@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +32,7 @@ const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all}
                [--only RE] [--inject FAULT]
   latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--attempts N] [--strict] [--legs RE]
                                         p50 and p95 of the Go command against the CXC v0.2.40 command
-  all          --crw PATH [--plugin DIR] [--oracle DIR] [--runs N] [--attempts N]
+  all          --crw PATH [--plugin DIR] [--oracle DIR] [--node PATH] [--runs N] [--attempts N] [--strict]
                                         every cell; a generated root when --plugin is not given
 
 common flags: --repo DIR (default: the git top level) --json FILE (the report) --scratch DIR (parent of the run's case roots)
@@ -265,7 +267,10 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	if report.Plugin.Digest, err = PluginDigest(pluginRoot); err != nil {
 		return fail(err)
 	}
-	if report.Key, err = ReportKey(root, report.CRW.SHA256, report.Plugin.Digest, command, *only, *legs, *inject, *oracle, *runs, *attempts); err != nil {
+	// The key holds every option that changes what is run or how it is judged: the strictness of the
+	// latency verdict, and the node that runs the oracle (by its path and its content).
+	if report.Key, err = ReportKey(root, report.CRW.SHA256, report.Plugin.Digest, command, *only, *legs, *inject, *oracle, *runs, *attempts,
+		"strict="+strconv.FormatBool(*strict), "node="+nodeIdentity(command, *oracle, *node)); err != nil {
 		return fail(err)
 	}
 	if *reuse != "" {
@@ -343,6 +348,31 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return exitCode(report.OK)
+}
+
+// nodeIdentity names the node executable a latency cell runs the oracle with: the path the flag
+// names (or node on PATH) and the sha256 of that file. It is empty where no oracle runs, and says
+// so when the file cannot be read, so a node that is not there never shares a key with one that is.
+func nodeIdentity(command, oracle, node string) string {
+	if oracle == "" || (command != "latency" && command != "all") {
+		return ""
+	}
+	if node == "" {
+		found, err := exec.LookPath("node")
+		if err != nil {
+			return "node on PATH: not found"
+		}
+		node = found
+	}
+	abs, err := filepath.Abs(node)
+	if err != nil {
+		return node + ": " + err.Error()
+	}
+	digest, err := FileDigest(abs)
+	if err != nil {
+		return abs + ": unreadable"
+	}
+	return abs + " sha256 " + digest
 }
 
 // ReportKey identifies what a run judged: the build, the plugin root's declarations, the corpus

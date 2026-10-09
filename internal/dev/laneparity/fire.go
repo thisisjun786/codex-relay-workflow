@@ -121,6 +121,12 @@ func Fire(o FireOptions) (FireReport, error) {
 	if rep.Binary, err = FileDigest(o.CRW); err != nil {
 		return rep, err
 	}
+	// A receipt names the build the declared command starts, not the file --crw names: a root whose
+	// commands start another executable shows it there.
+	builds := map[string]string{}
+	for leg, command := range declared {
+		builds[leg], _ = CommandBuild(command, o.CRW)
+	}
 	scratch := o.Scratch
 	if scratch == "" {
 		if scratch, err = os.MkdirTemp("", "crw-parity-"); err != nil {
@@ -176,12 +182,12 @@ func Fire(o FireOptions) (FireReport, error) {
 		}
 		rep.Fixtures = append(rep.Fixtures, ff)
 		if res.Run && res.Observed != nil {
-			ws, rs := stepReceipts(rep, wantLeg, declared, res)
+			ws, rs := stepReceipts(rep, wantLeg, declared, builds, res)
 			wants, rep.Receipts = append(wants, ws...), append(rep.Receipts, rs...)
 		}
 	}
 	rep.OK = true
-	if rep.Probes, err = fireOwn(o, in, wantLeg, declared, &rep, &wants, perLeg); err != nil {
+	if rep.Probes, err = fireOwn(o, in, wantLeg, declared, builds, &rep, &wants, perLeg); err != nil {
 		return rep, err
 	}
 	for _, p := range rep.Probes {
@@ -216,7 +222,7 @@ func Fire(o FireOptions) (FireReport, error) {
 }
 
 // stepReceipts makes the receipts of a fixture's hook steps, and what each must name.
-func stepReceipts(rep FireReport, wantLeg map[string]Leg, declared map[string]string, res contracttest.HookFireResult) ([]Want, []Receipt) {
+func stepReceipts(rep FireReport, wantLeg map[string]Leg, declared, builds map[string]string, res contracttest.HookFireResult) ([]Want, []Receipt) {
 	var wants []Want
 	var receipts []Receipt
 	for i, step := range res.Steps {
@@ -239,7 +245,7 @@ func stepReceipts(rep FireReport, wantLeg map[string]Leg, declared map[string]st
 		fixture := res.ID
 		wants = append(wants, Want{Fixture: fixture, Step: i, Leg: step.Leg, Event: event, Subject: subject})
 		receipts = append(receipts, Receipt{
-			Run: rep.Run, Plugin: rep.Plugin, Binary: rep.Binary, Fixture: fixture, Step: i, Leg: step.Leg, Event: event,
+			Run: rep.Run, Plugin: rep.Plugin, Binary: builds[step.Leg], Fixture: fixture, Step: i, Leg: step.Leg, Event: event,
 			Command: declared[step.Leg], Session: seen.Session, Turn: seen.Turn, ToolUse: seen.ToolUse, ToolName: seen.ToolName,
 			Agent: seen.Agent, Skills: seen.Skills, Exit: observed.Exit, StdoutSHA256: StdoutDigest(observedAnswer),
 		})
@@ -324,7 +330,7 @@ type ProbeFire struct {
 
 // fireOwn fires the probes for the registrations K1 does not hold, folding them into the leg cells
 // and the receipts.
-func fireOwn(o FireOptions, in contracttest.HookFireInput, wantLeg map[string]Leg, declared map[string]string, rep *FireReport, wants *[]Want, perLeg map[string]*LegFire) ([]ProbeFire, error) {
+func fireOwn(o FireOptions, in contracttest.HookFireInput, wantLeg map[string]Leg, declared, builds map[string]string, rep *FireReport, wants *[]Want, perLeg map[string]*LegFire) ([]ProbeFire, error) {
 	probes := OwnProbes()
 	cps := make([]contracttest.Probe, len(probes))
 	for i, p := range probes {
@@ -359,7 +365,7 @@ func fireOwn(o FireOptions, in contracttest.HookFireInput, wantLeg map[string]Le
 			observed := res.Observed.Steps[0]
 			*wants = append(*wants, Want{Fixture: "probe:" + p.ID, Step: 0, Leg: p.Leg, Event: wantLeg[p.Leg].Event, Subject: subject})
 			rep.Receipts = append(rep.Receipts, Receipt{
-				Run: rep.Run, Plugin: rep.Plugin, Binary: rep.Binary, Fixture: "probe:" + p.ID, Step: 0, Leg: p.Leg, Event: wantLeg[p.Leg].Event,
+				Run: rep.Run, Plugin: rep.Plugin, Binary: builds[p.Leg], Fixture: "probe:" + p.ID, Step: 0, Leg: p.Leg, Event: wantLeg[p.Leg].Event,
 				Command: declared[p.Leg], Session: subject.Session, Turn: subject.Turn, ToolUse: subject.ToolUse, ToolName: subject.ToolName,
 				Exit: observed.Exit, StdoutSHA256: StdoutDigest(observed.StdoutBytes()),
 			})
