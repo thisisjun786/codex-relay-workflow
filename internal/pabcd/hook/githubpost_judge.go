@@ -58,7 +58,7 @@ func HandleGitHubPostGuard(raw string) string {
 	if !denied {
 		return ""
 	}
-	return githubPostDeny(site.rule, site.place)
+	return githubPostDenyPayload(site, p, input, cwd)
 }
 
 // githubPostJudgeArgv judges an argv array as the text that runs it: each word is quoted, so the reader

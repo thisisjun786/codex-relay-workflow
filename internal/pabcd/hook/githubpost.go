@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
 )
 
 const (
@@ -63,8 +64,38 @@ func GitHubPostCancelledAnswer() string {
 
 // githubPostDeny is the deny envelope: the rule, the place, and one way forward.
 func githubPostDeny(rule, place string) string {
-	reason := "GitHub post blocked (" + rule + ") at " + place +
-		": write the text to a file, check it, and pass it with --body-file, -F body=@file or --input"
+	reason := "GitHub post blocked (" + rule + ") at " + memoryGateLabel(place) +
+		": check the text in a regular file under TMPDIR, /tmp or /var/tmp, then use --body-file, -F body=@file or --input"
+	return editAnswer("deny", reason, reason)
+}
+
+// Diagnostics classify the refusal without changing the rule or decision.
+func githubPostDenyPayload(site githubPostSite, p, input map[string]any, cwd string) string {
+	if site.rule != githubPostRuleUnread {
+		return githubPostDeny(site.rule, site.place)
+	}
+	command, _ := githubPostCommand(input)
+	if words, ok := githubPostArgv(input); ok {
+		command = strings.Join(words, " ")
+	}
+	recovery := "Run a readable script file or `crw pabcd receipt test -- ...`."
+	if p["agent_id"] != nil || p["agent_type"] != nil {
+		recovery = "Report the blocked command and cause code to your parent."
+	}
+	reason := "Cannot read the command or its program (unreadable-github-post); GitHub posting has not been established. " + recovery
+	if githubPostInlineNamesPost(command) {
+		reason = "GitHub post cannot be verified (unreadable-github-post) at " + memoryGateLabel(site.place) + ". " + recovery
+		if site.place != githubPostWhereCommand && site.place != githubPostWhereTitle {
+			raw := site.place
+			if !filepath.IsAbs(raw) {
+				raw = filepath.Join(cwd, raw)
+			}
+			resolved, err := filepath.EvalSymlinks(raw)
+			if !githubPostUnderRoots(filepath.Clean(raw)) || err == nil && !githubPostUnderRoots(resolved) {
+				reason = "GitHub body file is outside the allowed temp roots TMPDIR, /tmp or /var/tmp (unreadable-github-post). Move the checked text to a regular file under one of those roots."
+			}
+		}
+	}
 	return editAnswer("deny", reason, reason)
 }
 

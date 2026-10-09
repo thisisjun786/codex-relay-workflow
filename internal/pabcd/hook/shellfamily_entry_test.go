@@ -44,7 +44,7 @@ func TestShellFamilyThroughEntryPoints(t *testing.T) {
 			if (memOut != "") != (want[0] == "attempt") {
 				t.Errorf("HandleMemoryWriteGate = %q, want attempt=%v: %q", memOut, want[0] == "attempt", cmd)
 			}
-			if memOut != "" && want == reproClasses["U"] && !strings.Contains(gateDeny(t, memOut), "a program the gate cannot read: ") {
+			if memOut != "" && want == reproClasses["U"] && !strings.Contains(gateDeny(t, memOut), "unreadable-program") {
 				t.Errorf("HandleMemoryWriteGate for an unreadable program lacks the gate's wording: %q", memOut)
 			}
 			ghOut := HandleGitHubPostGuard(githubPostShell(t, cwd, cmd))
