@@ -68,6 +68,10 @@ type Word struct {
 type Dir struct {
 	Path  string
 	Known bool
+	// Unset is a reading made with no directory at all (AnalyzeNoDir): the directory-dependent judgments that need a directory
+	// (a relative stdin alias) are left to the readings that are given one. A directory
+	// that becomes unknown inside the text (cd "$X") is not Unset: it is unknown and those judgments refuse.
+	Unset bool
 }
 
 // Assign is a variable assignment with its value when that value is known.
@@ -214,7 +218,7 @@ func (s *state) setVar(name string, v Word, appendValue bool) {
 func joinStates(states ...*state) *state {
 	first := states[0]
 	out := &state{
-		dir:   Dir{Path: first.dir.Path, Known: true},
+		dir:   Dir{Path: first.dir.Path, Known: true, Unset: true},
 		vars:  map[string]string{},
 		funcs: map[string]*syntax.Stmt{},
 	}
@@ -222,6 +226,9 @@ func joinStates(states ...*state) *state {
 	for _, s := range states {
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false
+		}
+		if !s.dir.Unset {
+			out.dir.Unset = false // a branch that changed the directory leaves it unknown, not unset
 		}
 		if s.cdpath {
 			out.cdpath = true
@@ -245,7 +252,14 @@ func joinStates(states ...*state) *state {
 	return out
 }
 
+// unknownDir is the directory after something that may have changed it (a cd to a place the reader cannot name, pushd, popd,
+// a sourced file): it is not known, and it is no longer a reading with no directory (Dir.Unset).
 func unknownDir(d Dir) Dir { return Dir{Path: d.Path} }
+
+// notProvenDir is the directory where the reader gives up proving a state without having seen the directory change (after a
+// loop, past a case arm that falls through, before a loop body that changes something): it is not known, but a reading with
+// no directory at all stays one. A cd inside the loop or the arm is a change of its own and has made the directory unknown.
+func notProvenDir(d Dir) Dir { return Dir{Path: d.Path, Unset: d.Unset} }
 
 // walker collects Exec records in run order.
 type walker struct {
@@ -306,7 +320,7 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	case stdinKind(redirs, "") != "":
 		// An input redirection of its own replaces what an outer one gave: when it names no file the reader can name (a
 		// variable, a descriptor alias) the command reads a file unknown, not the file the outer redirection named.
-		f, _ := lastStdinFile(redirs)
+		f, _ := lastStdinFile(redirs, st.dir)
 		ctx.stdinFile = f
 	}
 	if isCompound(s.Cmd) && len(redirs) > 0 {
@@ -328,13 +342,14 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	case *syntax.IfClause:
 		return w.ifClause(c, st, ctx)
 	case *syntax.WhileClause:
-		prescanLoop(st, c.Cond, c.Do)
+		keepsDir := prescanLoop(st, c.Cond, c.Do)
+		before := st.dir
 		lctx := loopContext(ctx)
 		if err := w.stmts(c.Cond, st, lctx); err != nil {
 			return err
 		}
 		err := w.stmts(c.Do, st, lctx)
-		afterLoop(st)
+		afterLoop(st, before, keepsDir)
 		return err
 	case *syntax.ForClause:
 		return w.forClause(c, st, ctx)
@@ -372,9 +387,13 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 }
 
 // afterLoop makes the state unknown once a loop has run: the body may have run zero or many times, so the directory and the
-// variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards).
-func afterLoop(st *state) {
-	st.dir = unknownDir(st.dir)
+// variables after it are not those of any one iteration (a cd in a loop body is unknown afterwards). A loop whose condition and
+// body cannot change the directory (keepsDir, from prescanLoop) leaves it where it was before the loop (before): every iteration
+// starts and ends there, so the directory after zero, one or many iterations is that one.
+func afterLoop(st *state, before Dir, keepsDir bool) {
+	if !keepsDir || st.dir != before {
+		st.dir = notProvenDir(st.dir)
+	}
 	st.clearVars()
 }
 
@@ -384,9 +403,11 @@ func loopContext(ctx Context) Context {
 }
 
 // prescanLoop makes the state conservative before a loop body runs, because a
-// later iteration sees what an earlier one changed.
-func prescanLoop(st *state, lists ...[]*syntax.Stmt) {
-	changes := false
+// later iteration sees what an earlier one changed. It reports whether the
+// statements cannot change the directory (see changesDir); only then does the
+// directory stay known through the loop.
+func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
+	changes, dir := false, changesDir(st, lists...)
 	for _, list := range lists {
 		for _, s := range list {
 			syntax.Walk(s, func(n syntax.Node) bool {
@@ -402,10 +423,55 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) {
 			})
 		}
 	}
+	if dir {
+		st.dir = notProvenDir(st.dir)
+	}
 	if changes {
-		st.dir = unknownDir(st.dir)
 		st.clearVars()
 	}
+	return !dir
+}
+
+// changesDir reports statements that may change the directory of the shell that runs them: a cd, pushd or popd; anything
+// that runs text or a builtin the reader does not see at this point (eval, source, ., trap, builtin, command, exec, an alias, a
+// zsh precommand modifier, a function call, a command whose name is not a plain word); or any mention of CDPATH, which changes
+// where a later cd goes. It looks inside nested statements, command substitutions and subshells too (it does not tell a subshell
+// from the shell itself, so it may say yes where the directory cannot change, never the other way).
+func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
+	changes := false
+	for _, list := range lists {
+		for _, s := range list {
+			syntax.Walk(s, func(n syntax.Node) bool {
+				switch c := n.(type) {
+				case *syntax.Lit:
+					if strings.Contains(c.Value, "CDPATH") {
+						changes = true
+					}
+				case *syntax.CallExpr:
+					if len(c.Args) > 0 && changesDirCall(c.Args[0].Lit(), st) {
+						changes = true
+					}
+				}
+				return !changes
+			})
+		}
+	}
+	return changes
+}
+
+func changesDirCall(name string, st *state) bool {
+	if name == "" || strings.ContainsAny(name, `\$'"`+"`") {
+		return true // a name the parser does not hand over as one plain word: the reader cannot say which command it is
+	}
+	if _, ok := st.funcs[name]; ok {
+		return true
+	}
+	switch name {
+	case "cd", "pushd", "popd", "eval", "source", ".", "trap", "builtin", "command", "exec",
+		"alias", "unalias", "shopt", "enable", "noglob", "nocorrect", "-":
+		return true
+	}
+	return false
 }
 
 func changesStateCall(c *syntax.CallExpr, st *state) bool {
@@ -486,6 +552,7 @@ func (w *walker) ifClause(c *syntax.IfClause, st *state, ctx Context) error {
 }
 
 func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
+	var keepsDir bool
 	switch loop := c.Loop.(type) {
 	case *syntax.WordIter:
 		for _, item := range loop.Items {
@@ -493,19 +560,20 @@ func (w *walker) forClause(c *syntax.ForClause, st *state, ctx Context) error {
 				return err
 			}
 		}
-		prescanLoop(st, c.Do)
+		keepsDir = prescanLoop(st, c.Do)
 		st.unsetVar(loop.Name.Value)
 	case *syntax.CStyleLoop:
 		if err := w.substsIn(loop, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
-		prescanLoop(st, c.Do)
+		keepsDir = prescanLoop(st, c.Do)
 	default:
 		return unreadablef("unsupported loop %T", c.Loop)
 	}
+	before := st.dir
 	err := w.stmts(c.Do, st, loopContext(ctx))
-	afterLoop(st)
+	afterLoop(st, before, keepsDir)
 	return err
 }
 
@@ -515,8 +583,15 @@ func (w *walker) caseClause(c *syntax.CaseClause, st *state, ctx Context) error 
 	}
 	for _, item := range c.Items {
 		if item.Op != syntax.Break {
-			// Fall-through runs later arms after this one, so the arms share state.
-			st.dir = unknownDir(st.dir)
+			// Fall-through runs later arms after this one, so the arms share state. The directory stays known when no arm can
+			// change it (changesDir).
+			arms := make([][]*syntax.Stmt, 0, len(c.Items))
+			for _, it := range c.Items {
+				arms = append(arms, it.Stmts)
+			}
+			if changesDir(st, arms...) {
+				st.dir = notProvenDir(st.dir)
+			}
 			st.clearVars()
 			break
 		}
@@ -803,7 +878,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		}
 	}
 	if isOpaqueInterpreter(name) {
-		if err := opaqueInterpreter(name, words[1:], redirs, ctx); err != nil {
+		if err := opaqueInterpreter(name, words[1:], redirs, st.dir, ctx); err != nil {
 			return err
 		}
 	}
@@ -811,7 +886,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	var script *Word
 	if isInterpreter(name) {
 		var err error
-		inline, script, err = w.interpreterInline(name, words[1:], redirs, ctx)
+		inline, script, err = w.interpreterInline(name, words[1:], redirs, st.dir, ctx)
 		if err != nil {
 			return err
 		}
@@ -925,6 +1000,11 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	if !st.dir.Known {
 		return unreadablef("script file %s is resolved from an unknown directory", script.Value)
 	}
+	if fdAliasPath(script.Value, st.dir) {
+		// A script operand that names a descriptor reads what the shell gave that descriptor (the pipe, a here-document): there
+		// is no file to read, so the program is unreadable whatever the spelling of the path.
+		return unreadablef("%s reads its program from %s, a file-descriptor alias", name, script.Value)
+	}
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
 		Script: script, Dir: st.dir, Ctx: ctx,
@@ -995,6 +1075,11 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	ctx.Depth++
 	if ctx.Depth > MaxNestingDepth {
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
+	}
+	if name == "busybox" && len(args) == 0 && ctx.Stdin != StdinNone && ctx.Stdin != StdinFile {
+		// A bare busybox names no applet. Behind a pipe, a here-document or a here-string the reader cannot prove
+		// what it runs, so it is refused; a bare busybox with nothing to read only prints its usage.
+		return unreadablef("busybox without an applet has standard input from %s", ctx.Stdin)
 	}
 	u, err := unwrapCommand(name, args)
 	if err != nil {
