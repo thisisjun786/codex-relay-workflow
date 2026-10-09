@@ -777,3 +777,6 @@ added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	
 added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'runner = object(); runner \<nl>.exec("x")'	CRW-851-lc-b06	row	-
 added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'def myexec(s): return s<nl>myexec \<nl>("x")'	CRW-851-lc-b07	row	-
 added by CRW-851 (line-continuation allow counterexample of the 10-09 re-check)	python3 -c 'import mybuiltins; mybuiltins \<nl>.exec("x")'	CRW-851-lc-b08	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner . builtins \<nl>.exec(x)'	CRW-851-lc-b09	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner \<nl>. builtins.exec(x)'	CRW-851-lc-b10	row	-
+added by CRW-851 (pre-merge evaluation d1: builtins reached as an attribute of another object)	python3 -c 'import types; ...; runner \<nl>. \<nl>__builtins__ \<nl>. \<nl>eval(x)'	CRW-851-lc-b11	row	-

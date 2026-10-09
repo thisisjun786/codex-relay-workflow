@@ -102,3 +102,21 @@ myexec \
 --why Control: a module whose name merely ends in builtins (mybuiltins) with a continuation before the dot.
 python3 -c 'import mybuiltins; mybuiltins \
 .exec("x")'
+
+=== CRW-851-lc-b09 | none/allow/deny
+--why Control (pre-merge evaluation d1): builtins is an attribute of another object, runner . builtins, and the continuation stands after it; the user function writes nothing, so the memory gate must not judge it.
+python3 -c 'import types; runner = types.SimpleNamespace(builtins=types.SimpleNamespace(exec=lambda x: x)); x="ok"; runner . builtins \
+.exec(x)'
+
+=== CRW-851-lc-b10 | none/allow/deny
+--why Control (pre-merge evaluation d1): the same attribute chain with the continuation before the dot in front of builtins.
+python3 -c 'import types; runner = types.SimpleNamespace(builtins=types.SimpleNamespace(exec=lambda x: x)); x="ok"; runner \
+. builtins.exec(x)'
+
+=== CRW-851-lc-b11 | none/allow/deny
+--why Control (pre-merge evaluation d1): the same attribute chain with a continuation on both sides of the dot in front of builtins and in front of the call dot.
+python3 -c 'import types; runner = types.SimpleNamespace(__builtins__=types.SimpleNamespace(eval=lambda x: x)); x="ok"; runner \
+. \
+__builtins__ \
+. \
+eval(x)'
