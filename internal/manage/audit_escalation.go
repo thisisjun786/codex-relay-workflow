@@ -106,6 +106,9 @@ func auditDraftMarkPosted(e *Env, cfg *Config, fingerprint, ref string) (*auditE
 	if doc.State != auditDraftStatePosted {
 		return nil, fmt.Errorf("not_posted: the draft %s is %s; mark it posted before recording a raise", fingerprint, doc.State)
 	}
+	if _, known := auditDraftSeverityRank[doc.Severity]; !known {
+		return nil, fmt.Errorf("invalid_severity: the draft %s carries the severity %q, not one of P0-P3", fingerprint, doc.Severity)
+	}
 	section, err := auditDraftSectionOf(cfg)
 	if err != nil {
 		return nil, err
