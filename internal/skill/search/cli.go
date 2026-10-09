@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -168,10 +169,25 @@ func CacheKey(source, url string) string {
 	return source + "-" + hex.EncodeToString(sum[:])
 }
 
+// legacyCacheKey is the name an earlier build gave the cache of a catalog URL: the source and the first 24 characters
+// of the URL's base64. A source reads one catalog, so the name held that catalog and no other.
+func legacyCacheKey(source, url string) string {
+	return source + "-" + base64.RawURLEncoding.EncodeToString([]byte(url))[:24]
+}
+
 func loadSource(ctx context.Context, source string, refresh bool, fetch fetchFunc, warnings io.Writer) ([]SkillRow, error) {
 	cached := func(url string) (string, error) {
 		key := CacheKey(source, url)
-		res, err := CachedFetchText(key, func() (string, error) { return fetch(ctx, url, MaxBodyBytes) }, CacheOptions{Refresh: refresh, Warnings: warnings})
+		// A body of an earlier build's file is used only when the source's own reader takes it as a catalog.
+		parse := FetchHermesRows
+		if source == "jaw" {
+			parse = FetchJawRows
+		}
+		accept := func(body string) bool {
+			_, err := parse(func(string) (string, error) { return body, nil })
+			return err == nil
+		}
+		res, err := CachedFetchText(key, func() (string, error) { return fetch(ctx, url, MaxBodyBytes) }, CacheOptions{Refresh: refresh, Warnings: warnings, LegacyKey: legacyCacheKey(source, url), Accept: accept})
 		return res.Text, err
 	}
 	if source == "jaw" {
