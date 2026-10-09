@@ -944,6 +944,11 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if ctx.Depth > MaxNestingDepth {
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
+	if name == "busybox" && len(args) == 0 && ctx.Stdin != StdinNone && ctx.Stdin != StdinFile {
+		// A bare busybox names no applet. Behind a pipe, a here-document or a here-string the reader cannot prove
+		// what it runs, so it is refused; a bare busybox with nothing to read only prints its usage.
+		return unreadablef("busybox without an applet has standard input from %s", ctx.Stdin)
+	}
 	u, err := unwrapCommand(name, args)
 	if err != nil {
 		return err
