@@ -82,19 +82,25 @@ type AuditDefect struct {
 // AuditResult is one graded bundle: the ledger row's fields and the defects it found. It
 // is what a mode issue reads to decide what to report.
 type AuditResult struct {
-	Mode     string           `json:"mode"`
-	Subject  string           `json:"subject"`
-	Head     string           `json:"head"`
-	Issue    string           `json:"issue"`
-	Pair     string           `json:"pair"`
-	Phase    string           `json:"phase"`
-	Round    string           `json:"round"`
-	Status   string           `json:"status"`
-	Score    int              `json:"score"`
-	GradedAt string           `json:"graded_at"`
-	Bundle   string           `json:"bundle"`
-	Criteria []AuditCriterion `json:"criteria"`
-	Defects  []AuditDefect    `json:"defects"`
+	Mode     string `json:"mode"`
+	Subject  string `json:"subject"`
+	Head     string `json:"head"`
+	Issue    string `json:"issue"`
+	Pair     string `json:"pair"`
+	Phase    string `json:"phase"`
+	Round    string `json:"round"`
+	Status   string `json:"status"`
+	Score    int    `json:"score"`
+	GradedAt string `json:"graded_at"`
+	Bundle   string `json:"bundle"`
+	// BundleGiven is the bundle path as the caller wrote it. Bundle is the absolute directory it
+	// names.
+	BundleGiven string           `json:"bundleGiven,omitempty"`
+	Criteria    []AuditCriterion `json:"criteria"`
+	Defects     []AuditDefect    `json:"defects"`
+	// graded is the grade.json bytes the grade read and validated for an ok result. The row's copy
+	// is made from them, so it is the result this grade scored whatever happens to the file after.
+	graded []byte
 }
 
 // auditLedgerRow is one line of the ledger, in the key order the issue fixes. The score is
@@ -116,6 +122,14 @@ type auditLedgerRow struct {
 	P3       int    `json:"p3"`
 	GradedAt string `json:"graded_at"`
 	Bundle   string `json:"bundle"`
+	// The keys below follow the fixed ones and are absent from a row written before CRW-838. The
+	// bundle is the absolute directory the grade ran in, and bundleGiven the text the caller gave.
+	// An ok row carries an id (see auditRowID), the copy of its grade.json and the copy's sha256,
+	// so a regrade of the same bundle cannot change what the row found.
+	BundleGiven  string `json:"bundleGiven,omitempty"`
+	ID           string `json:"id,omitempty"`
+	Result       string `json:"result,omitempty"`
+	ResultSHA256 string `json:"result_sha256,omitempty"`
 }
 
 // auditAlertDefect is a defect as an alert line carries it: where it is and what it is,
@@ -300,7 +314,11 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) (rows int, err erro
 			Mode: result.Mode, Subject: result.Subject, Head: result.Head, Issue: result.Issue,
 			Pair: result.Pair, Phase: result.Phase, Round: result.Round, Status: result.Status,
 			Score: auditScoreOf(result), P0: p0, P1: p1, P2: p2, P3: p3,
-			GradedAt: result.GradedAt, Bundle: result.Bundle,
+			GradedAt: result.GradedAt, Bundle: result.Bundle, BundleGiven: result.BundleGiven,
+		}
+		// The copy of an ok result is on disk before the row that names it.
+		if err := auditResultCopyFor(e, cfg, result, &row); err != nil {
+			return rows, err
 		}
 		if err := auditAppendLine(ledger, ledgerPath, row); err != nil {
 			return rows, err

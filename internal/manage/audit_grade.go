@@ -449,17 +449,22 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 	result := AuditResult{
 		Mode: bundle.Mode, Subject: bundle.Subject, Head: bundle.Head, Issue: bundle.Issue,
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
-		Bundle: absBundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
+		Bundle: absBundle, BundleGiven: job.Bundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
 	}
 	if status := auditRunGrader(ctx, section, absBundle, auditPrompt(bundle), log); status != "" {
 		result.Status = status
 		return result
 	}
 	result.Status = auditStatusInvalid
-	doc, ok := auditParseResult(crwconfig.JoinRoot(absBundle, auditGradeFile))
+	data, err := os.ReadFile(crwconfig.JoinRoot(absBundle, auditGradeFile))
+	if err != nil {
+		return result
+	}
+	doc, ok := auditParseResultBytes(data)
 	if !ok {
 		return result
 	}
+	result.graded = data
 	result.Status = auditStatusOK
 	result.Score = *doc.Score
 	result.Criteria = make([]AuditCriterion, 0, len(doc.Criteria))
@@ -553,6 +558,12 @@ func auditParseResult(path string) (auditGradeDoc, bool) {
 	if err != nil {
 		return auditGradeDoc{}, false
 	}
+	return auditParseResultBytes(data)
+}
+
+// auditParseResultBytes is auditParseResult over the bytes of a grade.json already read, so a
+// reader of a ledger row's copy judges the copy's bytes by the same rules.
+func auditParseResultBytes(data []byte) (auditGradeDoc, bool) {
 	var doc auditGradeDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return auditGradeDoc{}, false

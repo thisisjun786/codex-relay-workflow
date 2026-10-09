@@ -443,8 +443,11 @@ func TestAuditDraftsReview744RegradeFromAnotherCwdVoidsTheBundle(t *testing.T) {
 	if len(report.Created) != 0 || len(report.Updated) != 0 {
 		t.Fatalf("the regrade from another cwd still produced a draft: %+v", report)
 	}
-	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
-		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	// CRW-838: the older ok row carries the copy of its own grade.json, so it is read from that
+	// copy (clean, so no draft) and is not named as graded again: the bundle's later file cannot
+	// reach it. A row without a copy is still skipped as graded again (the fixture-row tests).
+	if len(report.Skipped) != 0 {
+		t.Fatalf("the older ok row was skipped although it carries its own result copy: %+v", report.Skipped)
 	}
 }
 
@@ -553,8 +556,11 @@ func TestAuditDraftsReview744FailedRecordVoidsTheBundle(t *testing.T) {
 	if len(report.Created) != 0 || len(report.Updated) != 0 {
 		t.Fatalf("the unrecorded regrade still produced a draft: %+v", report)
 	}
-	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "unrecorded grade") {
-		t.Fatalf("the ok row is not named as carrying an unrecorded grade: %+v", report.Skipped)
+	// CRW-838: the ok row is read from its own result copy, so the unrecorded file the bundle
+	// carries is never read for it; a row without a copy is still skipped for the unrecorded
+	// grade (the fixture-row tests).
+	if len(report.Skipped) != 0 {
+		t.Fatalf("the ok row was skipped although it carries its own result copy: %+v", report.Skipped)
 	}
 }
 
@@ -629,8 +635,11 @@ func TestAuditDraftsReview744ResolvedBundleSurvivesItsLink(t *testing.T) {
 	if len(report.Created) != 0 || len(report.Updated) != 0 {
 		t.Fatalf("the resolved regrade still produced a draft after its link went: %+v", report)
 	}
-	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
-		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	// CRW-838: the older ok row carries the copy of its own grade.json, so it is read from that
+	// copy (clean, so no draft) and is not named as graded again: the bundle's later file cannot
+	// reach it. A row without a copy is still skipped as graded again (the fixture-row tests).
+	if len(report.Skipped) != 0 {
+		t.Fatalf("the older ok row was skipped although it carries its own result copy: %+v", report.Skipped)
 	}
 }
 
@@ -1014,7 +1023,10 @@ func TestAuditDraftsReview744RelativeBundleUnderSymlinkedCwdIsOneBundle(t *testi
 	if len(report.Created) != 0 || len(report.Updated) != 0 {
 		t.Fatalf("the regrade under the symlinked cwd still produced a draft: %+v", report)
 	}
-	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
-		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	// CRW-838: the older ok row carries the copy of its own grade.json, so it is read from that
+	// copy (clean, so no draft) and is not named as graded again: the bundle's later file cannot
+	// reach it. A row without a copy is still skipped as graded again (the fixture-row tests).
+	if len(report.Skipped) != 0 {
+		t.Fatalf("the older ok row was skipped although it carries its own result copy: %+v", report.Skipped)
 	}
 }
