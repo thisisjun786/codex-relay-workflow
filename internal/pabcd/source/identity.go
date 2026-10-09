@@ -120,7 +120,9 @@ func hasPrefix(path, prefix []uint16) bool {
 // Compare says whether the tree moved between two identities; an unavailable side is never "different". The
 // checks run in the oracle's order with its messages.
 func Compare(a, b Identity) Comparison {
-	different := func(detail string) Comparison { return Comparison{Kind: ComparisonDifferent, Detail: detail} }
+	different := func(detail string) Comparison {
+		return Comparison{Kind: ComparisonDifferent, Detail: detail, DetailSet: true}
+	}
 	switch {
 	case a.Kind == KindUnavailable || b.Kind == KindUnavailable:
 		return Comparison{Kind: ComparisonUnavailable, Reason: "git could not resolve the source identity on at least one side"}
