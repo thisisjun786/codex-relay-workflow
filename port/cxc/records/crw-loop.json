@@ -208,7 +208,7 @@
     },
     {
       "file": "references/runtime-lifecycle.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1084: say that a loop request naming a project or a coordination gets a short scope pointer (crw-run for the project parent, crw-loop only for an explicit current-task implementation) instead of the arming recipe.",
       "hunks": [
         {
           "line": 34,
@@ -217,6 +217,18 @@
           ],
           "new": [
             "   copy-paste objects: [Phase control](../../crw-pabcd/references/phase-control.md) (ATTEST-SHAPE-01).\n"
+          ]
+        },
+        {
+          "line": 46,
+          "old": [
+            "at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), and an active goal\n"
+          ],
+          "new": [
+            "at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), except that a request naming a\n",
+            "project or a coordination gets a short scope pointer instead (crw-run for the project parent,\n",
+            "crw-loop only for an explicit implementation of a task in this session; the pointer arms\n",
+            "nothing), and an active goal\n"
           ]
         }
       ]
