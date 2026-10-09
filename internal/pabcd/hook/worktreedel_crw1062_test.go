@@ -47,3 +47,26 @@ func TestXargsFedRemovalIsRefused(t *testing.T) {
 		"xargs rm ./build",
 	)
 }
+
+// TestCRW1062EntryPointRefusesTheNamedShapes: the four shapes the issue names are refused at the PreToolUse entry point, and the
+// two controls are allowed there.
+func TestCRW1062EntryPointRefusesTheNamedShapes(t *testing.T) {
+	rig := newDelRig(t)
+	for _, command := range []string{
+		"mv ../repo /tmp/gone",
+		"printf '../%s\\n' repo | xargs git worktree remove -f",
+		"echo x | cat list.txt | xargs git worktree remove -f",
+		"echo ../repo,x | xargs -d, git worktree remove -f",
+	} {
+		raw := gatePayload(t, rig.checkout, map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": command}})
+		if HandleWorktreeGuardPreTool(raw, rig.env()) == "" {
+			t.Errorf("%q: the entry point passed it; want a deny", command)
+		}
+	}
+	for _, command := range []string{"mv ./build ./out", "echo x | xargs wc -l"} {
+		raw := gatePayload(t, rig.checkout, map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": command}})
+		if got := HandleWorktreeGuardPreTool(raw, rig.env()); got != "" {
+			t.Errorf("%q: the entry point denied a control: %s", command, got)
+		}
+	}
+}
