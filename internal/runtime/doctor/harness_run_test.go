@@ -266,6 +266,19 @@ func TestHarnessRunDoctorRecorded(t *testing.T) {
 				t.Fatal(err)
 			}
 			report := RunHarnessDoctor(root, harnessRunStub(states, version), options, projectRoot, harnessRunEnv(env), time.Now())
+			if recorded.Name == "manifest_hooks_not_an_array" {
+				// The oracle passed a hooks member of the wrong type over; the port fails the hooks
+				// check and names the member (CRW-1152, port: fixed).
+				for _, check := range report.Checks {
+					if check.Name == "hooks" && (check.Severity != HarnessFail || !strings.Contains(check.Evidence, "manifest hooks must be an array of hook file paths: nope")) {
+						t.Errorf("hooks check = %+v, want the type FAIL", check)
+					}
+				}
+				if report.Overall != HarnessFail {
+					t.Errorf("overall = %q, want FAIL", report.Overall)
+				}
+				return
+			}
 			if report.SchemaVersion != HarnessSchemaVersion {
 				t.Errorf("schemaVersion = %d, want %d", report.SchemaVersion, HarnessSchemaVersion)
 			}
@@ -463,10 +476,10 @@ func TestHarnessRunExecTimeoutIsDriftKilled(t *testing.T) {
 	}
 }
 
-// TestHarnessRunDoctorRecoversCheckPanics is predecessor note 1: the CLI boundary turns the panic
-// HarnessPabcdCheck throws where the oracle throws outside every catch into the same failure
-// output and exit code cli.ts's catch gives.
-func TestHarnessRunDoctorRecoversCheckPanics(t *testing.T) {
+// TestHarnessRunDoctorKeepsTheReportOfAnUnreadableSessionsDirectory: the readdirSync failure the
+// oracle throws outside every catch (cli.ts catch: stderr, exit 1, nothing on stdout) is the
+// pabcd-state check's skipped WARN here, and the report holds the other checks (CRW-1152).
+func TestHarnessRunDoctorKeepsTheReportOfAnUnreadableSessionsDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	sessions := filepath.Join(tmp, ".crw", "sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {
@@ -486,13 +499,13 @@ func TestHarnessRunDoctorRecoversCheckPanics(t *testing.T) {
 	env := harnessRunEnv(map[string]string{"PLUGIN_ROOT": tmp})
 	code := RunHarnessDoctorCLI([]string{"--json"}, &stdout, &stderr, env, func() (string, error) { return tmp, nil }, harnessRunStub(nil, ""), time.Now())
 	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
+		t.Fatalf("exit = %d, want 1 (the empty payload fails its manifest)", code)
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("stdout = %q, want empty", stdout.String())
+	if !strings.Contains(stdout.String(), `"schemaVersion": 1`) || !strings.Contains(stdout.String(), `"name": "pabcd-state"`) || !strings.Contains(stdout.String(), "check skipped: EACCES") {
+		t.Errorf("stdout = %q, want the report with the skipped pabcd-state check", stdout.String())
 	}
-	if !strings.HasPrefix(stderr.String(), "crw-ops error: ") || !strings.HasSuffix(stderr.String(), "\n") {
-		t.Errorf("stderr = %q, want the cli.ts catch text", stderr.String())
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
 }
 

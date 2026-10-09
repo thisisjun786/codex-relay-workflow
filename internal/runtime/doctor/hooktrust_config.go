@@ -339,7 +339,7 @@ func hookTrustConfigReadConfig(codexHome string) (string, bool, error) {
 	if _, err := os.Stat(path); err != nil {
 		return "", false, nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := harnessReadBounded(path)
 	if err != nil {
 		return "", false, err
 	}

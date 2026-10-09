@@ -133,6 +133,19 @@ func TestListHookTrustEntries_recordedCases(t *testing.T) {
 				t.Fatalf("entries %+v came with the error %v", got, err)
 			}
 			switch {
+			case strings.HasPrefix(want.Name, "proto_"):
+				// The oracle lists a hook declared under a member Object.prototype lends every
+				// object; the port refuses the event (CRW-1152, port: fixed).
+				event := strings.TrimPrefix(want.Name, "proto_")
+				switch event {
+				case "proto":
+					event = "__proto__"
+				case "matcher_kept", "not_array", "empty_array":
+					event = "toString"
+				}
+				if err == nil || err.Error() != "unsupported hook event: "+event {
+					t.Fatalf("error = %v, want the unsupported-event refusal for %q", err, event)
+				}
 			case strings.HasPrefix(want.Name, "matcher_residual_"):
 				hookTrustEntriesCheckResidual(t, want, got, err)
 			case want.Error != "":

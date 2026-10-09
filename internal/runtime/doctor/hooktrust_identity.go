@@ -16,11 +16,12 @@
 // a handler then differs from the oracle's. A caller that must hash every valid hook document
 // reads it with pyjson; an identity read from U+FFFD is a different hook.
 //
-// Two CXC behaviours are kept as the oracle has them, not repaired (one line each in
-// docs/port-cxc/known-defects.md): an event that is a JavaScript Object.prototype member is
-// accepted (the eleven function members hash with no event_name key, __proto__ with an empty
-// event_name object), and an object value with an own toString member makes the type refusal
-// throw the raw TypeError "Cannot convert object to primitive value".
+// One CXC behaviour is kept as the oracle has it, not repaired (one line in
+// docs/port-cxc/known-defects.md): an object value with an own toString member makes the type
+// refusal throw the raw TypeError "Cannot convert object to primitive value". One is repaired
+// (docs/port-cxc/known-defects/CRW-1152.md, port: fixed): an event that is a JavaScript
+// Object.prototype member (constructor, toString, __proto__, ...) is refused as an unsupported
+// event, where the oracle hashed it.
 package doctor
 
 import (
@@ -36,25 +37,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// hookTrustIdentityKind is what an event name resolved to (hook-trust.ts:18-29, :109): one of
-// the ten labels, or a member a JavaScript object inherits from Object.prototype.
-type hookTrustIdentityKind int
-
-const (
-	hookTrustIdentityLabel hookTrustIdentityKind = iota
-	// A function member of Object.prototype: EVENT_LABELS[event] finds it, JSON.stringify
-	// writes no event_name for it, and the identity holds only the hooks (and the matcher).
-	hookTrustIdentityFunction
-	// __proto__: Object.prototype itself, written as an empty object.
-	hookTrustIdentityProto
-)
-
 // HookTrustIdentityHash is identityHash (hook-trust.ts:96-139): "sha256:" plus the hex
 // digest of sha256 over the canonical JSON of a command hook's trust identity. The event
 // label decides the identity, the matcher is dropped for UserPromptSubmit and Stop only, and
 // the handler normalizes to type command with the clamped timeout and the defaulted async.
 func HookTrustIdentityHash(event string, matcher *string, handler map[string]any) (string, error) {
-	kind, label, known := hookTrustIdentityEvent(event)
+	label, known := hookTrustIdentityEvent(event)
 	if !known {
 		return "", errors.New("unsupported hook event: " + event)
 	}
@@ -94,12 +82,7 @@ func HookTrustIdentityHash(event string, matcher *string, handler map[string]any
 		normalized["statusMessage"] = statusMessage
 	}
 	identity := map[string]any{"hooks": []any{normalized}}
-	switch kind {
-	case hookTrustIdentityLabel:
-		identity["event_name"] = label
-	case hookTrustIdentityProto:
-		identity["event_name"] = map[string]any{}
-	}
+	identity["event_name"] = label
 	if !hookTrustIdentityMatcherDropped(event) && matcher != nil {
 		identity["matcher"] = *matcher
 	}
@@ -108,41 +91,48 @@ func HookTrustIdentityHash(event string, matcher *string, handler map[string]any
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
-// hookTrustIdentityEvent is EVENT_LABELS[event] (hook-trust.ts:18-29, :109) with its
-// prototype chain: a name the table holds is its label; the eleven function members a
-// JavaScript object inherits from Object.prototype resolve to a function (kept, see the
-// package comment); __proto__ resolves to Object.prototype itself; every other name has no
-// entry.
-func hookTrustIdentityEvent(event string) (hookTrustIdentityKind, string, bool) {
+// hookTrustIdentityEvent is EVENT_LABELS[event] (hook-trust.ts:18-29, :109) as an own-property
+// lookup: the ten labels the table holds. The oracle's plain-object lookup also finds the
+// members JavaScript inherits from Object.prototype (constructor, toString, __proto__, ...) and
+// hashes them as events; the port reads them as the names they are not (hookTrustEventInherited)
+// and refuses them like any other unknown event (CRW-1152, port: fixed).
+func hookTrustIdentityEvent(event string) (string, bool) {
 	switch event {
 	case "PreToolUse":
-		return hookTrustIdentityLabel, "pre_tool_use", true
+		return "pre_tool_use", true
 	case "PostToolUse":
-		return hookTrustIdentityLabel, "post_tool_use", true
+		return "post_tool_use", true
 	case "SessionStart":
-		return hookTrustIdentityLabel, "session_start", true
+		return "session_start", true
 	case "UserPromptSubmit":
-		return hookTrustIdentityLabel, "user_prompt_submit", true
+		return "user_prompt_submit", true
 	case "Stop":
-		return hookTrustIdentityLabel, "stop", true
+		return "stop", true
 	case "SubagentStart":
-		return hookTrustIdentityLabel, "subagent_start", true
+		return "subagent_start", true
 	case "SubagentStop":
-		return hookTrustIdentityLabel, "subagent_stop", true
+		return "subagent_stop", true
 	case "PreCompact":
-		return hookTrustIdentityLabel, "pre_compact", true
+		return "pre_compact", true
 	case "PostCompact":
-		return hookTrustIdentityLabel, "post_compact", true
+		return "post_compact", true
 	case "PermissionRequest":
-		return hookTrustIdentityLabel, "permission_request", true
+		return "permission_request", true
+	}
+	return "", false
+}
+
+// hookTrustEventInherited reports whether name is a member every JavaScript object inherits from
+// Object.prototype: the eleven function members and __proto__. None of them is an event a hook
+// document can declare.
+func hookTrustEventInherited(name string) bool {
+	switch name {
 	case "constructor", "toString", "toLocaleString", "valueOf", "hasOwnProperty",
 		"isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__",
-		"__lookupGetter__", "__lookupSetter__":
-		return hookTrustIdentityFunction, "", true
-	case "__proto__":
-		return hookTrustIdentityProto, "", true
+		"__lookupGetter__", "__lookupSetter__", "__proto__":
+		return true
 	}
-	return hookTrustIdentityLabel, "", false
+	return false
 }
 
 // hookTrustIdentityMatcherDropped is MATCHER_DROPPED_EVENTS.has(event) (hook-trust.ts:36).

@@ -124,8 +124,10 @@ func TestManifestTargetsExactEscapeAndShapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	targetTestWant(t, root, []TargetIssue{{TargetHook, "hook references missing dist: linked/missing.js"}})
+	// A hooks or mcpServers member of the wrong type declares nothing; the oracle passed it over
+	// silently, the port reports it (CRW-1152, port: fixed).
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":"ignored","mcpServers":[]}`)
-	targetTestWant(t, root, []TargetIssue{})
+	targetTestWant(t, root, []TargetIssue{{TargetHook, "manifest hooks must be an array of hook file paths: ignored"}, {TargetMCP, "manifest mcpServers must be a string file path: "}})
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":[null,7,true,{},["x","y"]]}`)
 	targetTestWant(t, root, []TargetIssue{{TargetHook, "manifest hook file must be a string: null"}, {TargetHook, "manifest hook file must be a string: 7"}, {TargetHook, "manifest hook file must be a string: true"}, {TargetHook, "manifest hook file must be a string: [object Object]"}, {TargetHook, "manifest hook file must be a string: x,y"}})
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":[],"mcpServers":"/outside.json"}`)
@@ -142,7 +144,12 @@ func TestManifestTargetsExactEscapeAndShapes(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "dir.js"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	targetTestWant(t, root, []TargetIssue{})
+	// A directory reports a nonzero size and passed as a target; it is not a file (CRW-1152, port: fixed).
+	targetTestWant(t, root, []TargetIssue{{TargetHook, "target is not a regular file: dir.js"}})
+	if err := os.Remove(filepath.Join(root, "dir.js")); err != nil {
+		t.Fatal(err)
+	}
+	targetTestWrite(t, root, "dir.js", "target")
 	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"2":[{"hooks":[{"command":"${PLUGIN_ROOT}/two.js"}]}],"1":[{"hooks":[{"command":"${PLUGIN_ROOT}/one.js"}]}]}}`)
 	targetTestWant(t, root, []TargetIssue{{TargetHook, "hook references missing dist: one.js"}, {TargetHook, "hook references missing dist: two.js"}})
 }

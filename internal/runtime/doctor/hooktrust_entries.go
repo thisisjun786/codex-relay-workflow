@@ -16,13 +16,14 @@
 //
 // Several oracle behaviours are kept as they are, not repaired (one line each in
 // docs/port-cxc/known-defects.md): the matcher test is JavaScript's RegExp grammar, which Go
-// approximates; an event name that Object.prototype defines passes the oracle's "in" guard and
-// is spelled into the key as the source of the inherited function; a "hooks" member that is a
+// approximates; a "hooks" member that is a
 // non-empty string or array is read as an object with index keys; "./" is stripped twice before
 // the path is resolved; a plugin root of "/" rejects every reference (the prefix test appends a
 // separator to a root that already ends with one); and a document nested deeper than the Go
-// reader's limit is refused. Two behaviours are repaired, as answers to Devin's security
-// findings (port: fixed): the manifest goes through the same containment check as a hook file,
+// reader's limit is refused. Three behaviours are repaired (port: fixed). An event name that
+// Object.prototype defines passed the oracle's "in" guard and was spelled into the key as the
+// source of the inherited function; it is refused as an unsupported event (CRW-1152,
+// docs/port-cxc/known-defects/CRW-1152.md). Two are answers to Devin's security findings: the manifest goes through the same containment check as a hook file,
 // and each file is opened through an os.Root of the plugin root and read from the opened handle,
 // so a link swapped in once the root is open cannot lead outside it
 // (hookTrustEntriesReadContained).
@@ -33,7 +34,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"math"
 	"os"
@@ -252,24 +252,11 @@ func hookTrustEntriesIndex(key string) (uint64, bool) {
 	return number, err == nil && number != math.MaxUint32 && strconv.FormatUint(number, 10) == key
 }
 
-// hookTrustEntriesLabel is "rawEventName in EVENT_LABELS" and the template-literal spelling of
-// EVENT_LABELS[eventName] in the key (hook-trust.ts:181, :206): the ten labels, and the members
-// Object.prototype defines, which spell as the source of the inherited function (constructor
-// is Object) or, for __proto__, as the object.
+// hookTrustEntriesLabel is "rawEventName in EVENT_LABELS" and EVENT_LABELS[eventName] in the key
+// (hook-trust.ts:181, :206): the ten labels. A name Object.prototype defines is not one
+// (hookTrustIdentityEvent).
 func hookTrustEntriesLabel(event string) (string, bool) {
-	kind, label, known := hookTrustIdentityEvent(event)
-	switch {
-	case !known:
-		return "", false
-	case kind == hookTrustIdentityProto:
-		return "[object Object]", true
-	case kind == hookTrustIdentityFunction:
-		if event == "constructor" {
-			event = "Object"
-		}
-		return "function " + event + "() { [native code] }", true
-	}
-	return label, true
+	return hookTrustIdentityEvent(event)
 }
 
 // hookTrustEntriesStrip is normalizeHookPath (hook-trust.ts:140-142): one leading "./".
@@ -300,8 +287,10 @@ const hookTrustEntriesRootEscape = "path escapes from parent"
 // open. The root path itself is resolved once by EvalSymlinks and opened by os.OpenRoot, which
 // follows links in the root's own name. The Root also refuses an absolute link, even when it
 // points inside, a link that leaves the root and comes back, and a chain of more than 8 links.
-// The type of the opened file then decides what it is: a directory is EISDIR and any other file
-// that is not regular is refused. observe is a test seam, called with "open" just before the
+// The open does not block, so a FIFO is judged on the descriptor instead of waited for. The type of
+// the opened file then decides what it is: a directory is EISDIR and any other file that is not
+// regular is refused; a regular file is read up to harnessReadLimit and a longer one is refused
+// (CRW-1152). observe is a test seam, called with "open" just before the
 // open; production passes nil.
 func hookTrustEntriesReadContained(pluginRoot, reference string, observe func(stage string)) ([]byte, error) {
 	absolute, err := filepath.Abs(pluginRoot)
@@ -335,7 +324,7 @@ func hookTrustEntriesReadContained(pluginRoot, reference string, observe func(st
 	if observe != nil {
 		observe("open")
 	}
-	file, err := rooted.Open(within)
+	file, err := rooted.OpenFile(within, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		var pathErr *fs.PathError
 		if errors.As(err, &pathErr) && pathErr.Err.Error() == hookTrustEntriesRootEscape {
@@ -344,17 +333,7 @@ func hookTrustEntriesReadContained(pluginRoot, reference string, observe func(st
 		return nil, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	switch {
-	case info.IsDir():
-		return nil, &fs.PathError{Op: "read", Path: candidate, Err: syscall.EISDIR}
-	case !info.Mode().IsRegular():
-		return nil, &fs.PathError{Op: "read", Path: candidate, Err: errors.New("not a regular file")}
-	}
-	return io.ReadAll(file)
+	return harnessReadHandle(file, candidate)
 }
 
 // hookTrustEntriesInside is "path === root || path.startsWith(root + sep)".

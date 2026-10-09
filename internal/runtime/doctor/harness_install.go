@@ -11,8 +11,8 @@
 // The oracle's error text is an observable part of the report, so the filesystem errors are
 // printed in Node's shape (CODE: description, syscall ['path']) like the cli port's planFailure.
 // Where the oracle throws outside every catch -- an unreadable sessions directory, a homedir that
-// cannot be established -- the port panics with the same message, the throw the CLI boundary
-// (CRW-618) catches as cli.ts catches it.
+// cannot be established -- the oracle loses the report; the port answers a WARN naming the failure
+// and skipping that check, and the other checks stay (CRW-1152, port: fixed).
 package doctor
 
 import (
@@ -39,9 +39,11 @@ func harnessInstallCheck(severity HarnessSeverity, evidence, repair string) Harn
 
 // HarnessPabcdCheck is checkPabcdHealth (doctor.ts:166-181): the sessions directory of the
 // project, a PASS while every `*.json` session parses, and a WARN naming the corrupt ones. A file
-// that cannot be read counts as corrupt, as the oracle's catch does; the oracle's own
-// `readdirSync` failure is outside that catch and aborts the report, so this port panics with the
-// same message.
+// that cannot be read counts as corrupt, as the oracle's catch does, and so does one that is not
+// a regular file (a FIFO is never opened for a blocking read), is larger than harnessReadLimit or
+// nests deeper than the parser's limit. The oracle's own `readdirSync` failure is outside that
+// catch and aborts the whole report; here it is a WARN that names the failure and skips the
+// check (CRW-1152, port: fixed).
 func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 	stateDir := filepath.Join(projectRoot, harnessInstallSessionsDir)
 	if !harnessReportIsDir(stateDir) {
@@ -49,7 +51,7 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 	}
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
-		panic(harnessInstallScandirError(err))
+		return HarnessCheck{Name: "pabcd-state", Severity: HarnessWarn, Evidence: "cannot read .crw/sessions, check skipped: " + harnessInstallScandirError(err).Error()}
 	}
 	total := 0
 	corrupt := []string{}
@@ -59,13 +61,13 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 			continue
 		}
 		total++
-		raw, err := os.ReadFile(filepath.Join(stateDir, name))
+		raw, err := harnessReadBounded(filepath.Join(stateDir, name))
 		if err != nil {
-			corrupt = append(corrupt, name)
+			corrupt = append(corrupt, harnessInstallRefusedName(name, err))
 			continue
 		}
 		if _, err := harnessInstallParseJSON(raw); err != nil {
-			corrupt = append(corrupt, name)
+			corrupt = append(corrupt, harnessInstallRefusedName(name, err))
 		}
 	}
 	if len(corrupt) > 0 {
@@ -79,6 +81,21 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 	return HarnessCheck{Name: "pabcd-state", Severity: HarnessPass, Evidence: fmt.Sprintf("%d session file(s), all parseable", total)}
 }
 
+// harnessInstallRefusedName is a session slot's name in the corrupt list. A slot the harness
+// refuses to read for what it is (not a regular file, past the byte limit, nested past the depth
+// limit) says why; any other failure is the plain name, as the oracle lists it.
+func harnessInstallRefusedName(name string, err error) string {
+	switch {
+	case errors.Is(err, errNotRegular):
+		return name + " (not a regular file)"
+	case errors.Is(err, errHarnessTooLarge):
+		return name + " (larger than the read limit)"
+	case errors.Is(err, errHarnessTooDeep):
+		return name + " (nested past the depth limit)"
+	}
+	return name
+}
+
 // harnessInstallTargetKind is one KINDS row of manifestTargetChecks (doctor.ts:229-232): the
 // validator's kind and the check name it is reported under.
 type harnessInstallTargetKind struct {
@@ -88,6 +105,22 @@ type harnessInstallTargetKind struct {
 
 func harnessInstallTargetKinds() []harnessInstallTargetKind {
 	return []harnessInstallTargetKind{{TargetHook, "hooks"}, {TargetMCP, "mcp-targets"}}
+}
+
+// harnessInstallTargetFailure is the evidence of the kind whose document cannot be used: the
+// oracle's "unparseable" for malformed JSON, and the reason for a document the harness refuses
+// to read as it is (a FIFO or other non-regular file, past the byte limit, nested past the depth
+// limit; CRW-1152).
+func harnessInstallTargetFailure(parse *TargetParseError) string {
+	switch {
+	case errors.Is(parse.Err, errNotRegular):
+		return "unreadable " + string(parse.Kind) + " json (not a regular file): " + parse.Path
+	case errors.Is(parse.Err, errHarnessTooLarge):
+		return "unreadable " + string(parse.Kind) + " json (larger than the read limit): " + parse.Path
+	case errors.Is(parse.Err, errHarnessTooDeep):
+		return "unreadable " + string(parse.Kind) + " json (nested past the depth limit): " + parse.Path
+	}
+	return "unparseable " + string(parse.Kind) + " json: " + parse.Path
 }
 
 // HarnessManifestTargetChecks is manifestTargetChecks (doctor.ts:228-254) over the shared
@@ -103,7 +136,7 @@ func HarnessManifestTargetChecks(pluginRoot string) []HarnessCheck {
 			checks := make([]HarnessCheck, 0, len(kinds))
 			for _, row := range kinds {
 				if row.kind == parse.Kind {
-					checks = append(checks, HarnessCheck{Name: row.name, Severity: HarnessFail, Evidence: "unparseable " + string(parse.Kind) + " json: " + parse.Path})
+					checks = append(checks, HarnessCheck{Name: row.name, Severity: HarnessFail, Evidence: harnessInstallTargetFailure(parse)})
 				} else {
 					checks = append(checks, HarnessCheck{Name: row.name, Severity: HarnessWarn, Evidence: "not evaluated after " + string(parse.Kind) + " parse failure"})
 				}
@@ -140,7 +173,7 @@ func HarnessInstalledRootCheck(pluginRoot string, options HarnessOptions, env ho
 		func() (string, error) {
 			return harnessInstallCodexHome(options.CodexHome, record.Environ(env), harnessInstallPasswdHome)
 		},
-		os.ReadFile)
+		harnessReadBounded)
 }
 
 // harnessInstallInstalledRootCheck is HarnessInstalledRootCheck with the resolution and the
@@ -148,8 +181,9 @@ func HarnessInstalledRootCheck(pluginRoot string, options HarnessOptions, env ho
 func harnessInstallInstalledRootCheck(pluginRoot string, resolve func() (string, error), readFile func(string) ([]byte, error)) HarnessCheck {
 	codexHome, err := resolve()
 	if err != nil {
-		// doctor.ts:402 reads the home outside the try: nothing is read before it fails.
-		panic(err)
+		// doctor.ts:402 reads the home outside the try and loses the report; here nothing is read
+		// before it fails and the check is a skipped WARN (CRW-1152, port: fixed).
+		return harnessInstallCheck(HarnessWarn, "cannot establish the Codex home, check skipped: "+harnessInstallErrorMessage(err, ""), "")
 	}
 	check, err := harnessInstallRootBody(pluginRoot, codexHome, readFile)
 	if err != nil {
@@ -270,12 +304,13 @@ func harnessInstallNodeName(name string) string {
 	return source.DecodeUTF8([]byte(name))
 }
 
-// harnessInstallParseJSON is JSON.parse over Node's UTF-8 decode. Unlike the hook-trust reader it
-// has no MaxDepth cap (JSON.parse accepts nesting past 10,000, probed at 10001), keeps an
-// object's key order with dict semantics for a repeated key and refuses trailing content, as
-// encoding/json's decoder does.
+// harnessInstallParseJSON is JSON.parse over Node's UTF-8 decode. It keeps an object's key order
+// with dict semantics for a repeated key and refuses trailing content, as encoding/json's decoder
+// does. Unlike JSON.parse, which accepts nesting past 10,000 (probed at 10001), it stops at
+// pyjson.MaxDepth: a document nested deeper is an explicit diagnostic (errHarnessTooDeep), not a
+// PASS (CRW-1152, port: fixed).
 func harnessInstallParseJSON(data []byte) (any, error) {
-	return pyjson.Loads(source.DecodeUTF8(data), pyjson.LoadOptions{Surrogates: true, Deep: true})
+	return harnessParseBounded(source.DecodeUTF8(data), pyjson.LoadOptions{Surrogates: true})
 }
 
 // harnessInstallString is String(err) for the generic manifest-target check: the error's name and
