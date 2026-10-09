@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -85,9 +86,21 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return fmt.Sprintf("%s: %s", e.Method, e.Message) }
 
-type TransportError struct{ Reason string }
+type TransportError struct {
+	Reason string
+	// withheld marks an error the client returned before the request's frame was written: nothing
+	// reached the host.
+	withheld bool
+}
 
 func (e *TransportError) Error() string { return e.Reason }
+
+// Withheld reports whether err is a request the client refused before writing its frame, so the
+// host certainly never received it.
+func Withheld(err error) bool {
+	var transport *TransportError
+	return errors.As(err, &transport) && transport.withheld
+}
 
 type RequestRecord struct {
 	Index    uint64
@@ -174,7 +187,7 @@ func (c *Client) FailBeforeWrite(method string) {
 	c.beforeWrite = func(actual string) error {
 		if actual == method {
 			c.beforeWrite = nil
-			return &TransportError{Reason: method + ": simulated failure before write"}
+			return &TransportError{Reason: method + ": simulated failure before write", withheld: true}
 		}
 		return nil
 	}

@@ -352,17 +352,24 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		// answer is lost is outcome_unknown and may have installed the limit, so its receipt must say what it
 		// carried, and a process that stops while it waits must leave that in the ledger. It is made after the
 		// watch is admitted and the caller asked, so a send that fails before this point never claims a limit
-		// was requested; a record that cannot be stored is withdrawn and nothing is sent. Once the answer is
-		// read, the observation below replaces this one with the settings the host reported.
+		// was requested. A record that cannot be stored is withdrawn and nothing is sent: the receipt says
+		// not_attempted and retry-safe, so the same request ID may send again. Once the answer is read, the
+		// observation below replaces this one with the settings the host reported.
 		if limit != nil {
 			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, nil)
 			if err := save(); err != nil {
 				delete(receipt, "settings")
-				return err
+				refuse("thread/resume", contract.OrderedObject{{Key: "code", Value: "receipt_unsaved"}, {Key: "message", Value: "the receipt could not be stored before the resume; nothing was sent: " + errorText(err)}}, true)
+				return nil
 			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
 		if err = awaited(err); err != nil {
+			// A resume the transport certainly withheld never reached the host, so the stored limit is
+			// withdrawn; a resume that may have gone out (its answer lost) keeps it.
+			if limit != nil && notSent(err) {
+				delete(receipt, "settings")
+			}
 			return err
 		}
 		receipt["resumed"] = resumed
