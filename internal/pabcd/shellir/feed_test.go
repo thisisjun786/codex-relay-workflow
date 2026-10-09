@@ -59,6 +59,10 @@ func TestFindScanGuardsAndStarts(t *testing.T) {
 		{". -name r* -delete", ".", "-delete:true"},
 		{"../repo -path */build/* -delete", "../repo", "-delete:true"},
 		{"../repo -regex .*\\.o -delete", "../repo", "-delete:true"},
+		{"../repo -regextype posix-extended -regex .*\\.(o|a) -delete", "../repo", "-delete:true"},
+		{"../repo -regex (.*) -delete", "../repo", "-delete:false"},
+		{"../repo -regex ^.*$ -delete", "../repo", "-delete:false"},
+		{"../repo -regex .+ -delete", "../repo", "-delete:false"},
 		{"../repo -name x -o -name * -delete", "../repo", "-delete:false"},
 		// a group is reached through the tests before it
 		{". -type f ( -exec rm {} + )", ".", "-exec:true"},

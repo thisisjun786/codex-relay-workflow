@@ -273,8 +273,9 @@ func chainsGuard(chains []findChain, start string) bool {
 	return true
 }
 
-// excludes says whether the test is false for the start point. A test the reader cannot evaluate against a directory's name is
-// taken as one that selects some files and leaves the start point out (-newer, -mtime, -size, -empty, -type), as is a negated test;
+// excludes says whether the test is false for the start point. A test the reader cannot evaluate against a directory's name (-newer,
+// -mtime, -size, -empty, -type, a regular expression with groups) is taken as one that selects some files and leaves the start
+// point out, as is a negated test;
 // the name and path patterns and the regular expression are evaluated against the start point as find prints it, so -name '*' or
 // a pattern that fits the start point's own name does not leave it out.
 func (t findTest) excludes(start string) bool {
@@ -302,7 +303,7 @@ func (t findTest) excludes(start string) bool {
 		return true
 	}
 	if !known {
-		return false
+		return true
 	}
 	return !matches
 }
@@ -369,8 +370,13 @@ func globMatch(pattern, s string) (matches, known bool) {
 }
 
 // regexMatch matches a find -regex pattern (a regular expression that must match the whole path). Only the part both dialects
-// share is evaluated; a pattern with grouping, alternation or repetition operators is not.
+// share is evaluated; a pattern with grouping, alternation or repetition operators is not (known is false), unless it is made of
+// nothing else, which fits every path.
 func regexMatch(pattern, s string, fold bool) (matches, known bool) {
+	if strings.Trim(pattern, ".*()^$|+?\\") == "" {
+		// Dots, stars, groups and anchors only (.*, (.*), ^.*$, .+): the pattern fits every path.
+		return true, true
+	}
 	if strings.ContainsAny(pattern, "(){}|+?") {
 		return false, false
 	}
