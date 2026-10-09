@@ -335,28 +335,16 @@ func globMatch(pattern, s string) (matches, known bool) {
 				b.WriteString(`\\`)
 			}
 		case '[':
-			j := i + 1
-			if j < len(pattern) && (pattern[j] == '!' || pattern[j] == '^') {
-				j++
-			}
-			if j < len(pattern) && pattern[j] == ']' {
-				j++
-			}
-			for j < len(pattern) && pattern[j] != ']' {
-				j++
-			}
-			if j >= len(pattern) {
+			end, class, ok := globBracket(pattern, i)
+			if !ok {
 				b.WriteString(`\[`)
 				break
 			}
-			body := pattern[i+1 : j]
-			neg := ""
-			if body != "" && (body[0] == '!' || body[0] == '^') {
-				neg, body = "^", body[1:]
+			if class == "" {
+				return false, false
 			}
-			body = strings.NewReplacer(`\`, `\\`, `[`, `\[`).Replace(body)
-			b.WriteString("[" + neg + body + "]")
-			i = j
+			b.WriteString(class)
+			i = end
 		default:
 			b.WriteString(regexp.QuoteMeta(string(c)))
 		}
@@ -367,6 +355,65 @@ func globMatch(pattern, s string) (matches, known bool) {
 		return false, false
 	}
 	return re.MatchString(s), true
+}
+
+// posixClasses are the character classes a find pattern bracket may name ([[:alpha:]]); Go's regular expressions spell them the same way.
+var posixClasses = map[string]bool{
+	"alpha": true, "digit": true, "alnum": true, "upper": true, "lower": true, "space": true, "punct": true, "print": true,
+	"graph": true, "cntrl": true, "xdigit": true, "blank": true,
+}
+
+// globBracket reads the bracket expression that starts at pattern[i] ('['): end is the index of its closing ']' and class its
+// regular expression. A POSIX class inside it ([:alpha:]) does not end it at its own ']'. ok is false when no ']' closes the bracket
+// (the '[' is then a plain character); class is "" for a bracket the reader does not evaluate (a collating symbol or an
+// equivalence class, an unknown class name).
+func globBracket(pattern string, i int) (end int, class string, ok bool) {
+	j := i + 1
+	neg := ""
+	if j < len(pattern) && (pattern[j] == '!' || pattern[j] == '^') {
+		neg = "^"
+		j++
+	}
+	var body strings.Builder
+	first := true
+	for j < len(pattern) {
+		c := pattern[j]
+		switch {
+		case c == ']' && !first:
+			return j, "[" + neg + body.String() + "]", true
+		case c == '[' && j+1 < len(pattern) && (pattern[j+1] == ':' || pattern[j+1] == '.' || pattern[j+1] == '='):
+			delim := pattern[j+1]
+			k := strings.Index(pattern[j+2:], string(delim)+"]")
+			if k < 0 {
+				body.WriteString(`\[`)
+				j++
+				break
+			}
+			name := pattern[j+2 : j+2+k]
+			j += k + 4
+			if delim != ':' || !posixClasses[name] {
+				// A collating symbol, an equivalence class or an unknown class: find may or may not match it, so the bracket is not read.
+				return j - 1, "", true
+			}
+			body.WriteString("[:" + name + ":]")
+		case c == '\\':
+			if j+1 < len(pattern) {
+				body.WriteString(regexp.QuoteMeta(pattern[j+1 : j+2]))
+				j += 2
+			} else {
+				body.WriteString(`\\`)
+				j++
+			}
+		case c == '[':
+			body.WriteString(`\[`)
+			j++
+		default:
+			body.WriteByte(c)
+			j++
+		}
+		first = false
+	}
+	return 0, "", false
 }
 
 // regexMatch matches a find -regex pattern (a regular expression that must match the whole path). Only the part both dialects
@@ -434,21 +481,31 @@ var filterSpecs = map[string]filterSpec{
 	"fgrep": {flags: "iEFGPvxwsqhHnbIaUy", valued: "emfABC"},
 }
 
-// filterPasses says whether a program with these options passes the lines of its input on.
+// filterPasses says whether a program with these options passes the lines of its input on. A file operand makes it read that file
+// instead of standard input (cat roots.list, sort file, grep pattern file), so the lines it prints are not the producer's.
 func filterPasses(name string, args []Word) (spec filterSpec, ok bool) {
 	spec, ok = filterSpecs[name]
 	if !ok {
 		return spec, false
 	}
+	var operands []string
+	patternGiven := false
 	for i := 0; i < len(args); i++ {
 		if !args[i].Known {
 			return spec, false
 		}
 		v := args[i].Value
 		if v == "--" {
-			return spec, true
+			for _, a := range args[i+1:] {
+				if !a.Known {
+					return spec, false
+				}
+				operands = append(operands, a.Value)
+			}
+			break
 		}
 		if len(v) < 2 || v[0] != '-' {
+			operands = append(operands, v)
 			continue
 		}
 		if strings.HasPrefix(v, "--") {
@@ -461,6 +518,9 @@ func filterPasses(name string, args []Word) (spec filterSpec, ok bool) {
 			c := v[k]
 			switch {
 			case strings.IndexByte(spec.valued, c) >= 0:
+				if c == 'e' || c == 'f' {
+					patternGiven = true
+				}
 				if k == len(v)-1 {
 					i++
 				}
@@ -469,6 +529,19 @@ func filterPasses(name string, args []Word) (spec filterSpec, ok bool) {
 			default:
 				return spec, false
 			}
+		}
+	}
+	if name == "tee" {
+		// The operands of tee are files it writes; its output is its input.
+		return spec, true
+	}
+	if strings.HasSuffix(name, "grep") && !patternGiven && len(operands) > 0 {
+		// The first operand of grep is the pattern.
+		operands = operands[1:]
+	}
+	for _, o := range operands {
+		if o != "-" {
+			return spec, false
 		}
 	}
 	return spec, true

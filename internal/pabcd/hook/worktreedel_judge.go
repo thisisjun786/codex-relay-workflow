@@ -215,11 +215,12 @@ func worktreeDelHasUnknownArg(e shellir.Exec) bool {
 // the worktree always, the worktree itself when no test guards the action), and the names xargs reads from standard input decide
 // it (a name that resolves to the worktree, its slot or an ancestor, spelled other than .; a source the reader cannot read is
 // refused). The program's own operands are judged by its own verdict. A feed that belongs to a wrapper outside the shell text the
-// program stands in reaches it only through the shell's positional parameters, so it applies when the program uses one (or, for
-// xargs -I, when the shell text holds the replace string).
+// program stands in reaches it through the shell's positional parameters, and through the text itself where the wrapper replaces a
+// string in every word it runs (find's {}, xargs -I's string), so it applies when the program uses a parameter or holds that string.
 func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	for f := e.Ctx.Feed; f != nil; f = f.Outer {
-		if f.Carried && !f.Replaced && !worktreeDelHasUnknownArg(e) && !(f.Replace != "" && worktreeDelReplaceUsed(e, f.Replace)) {
+		if f.Carried && !f.Replaced && !worktreeDelHasUnknownArg(e) && !(f.Replace != "" && worktreeDelReplaceUsed(e, f.Replace)) &&
+			!(f.Wrapper == "find" && worktreeDelReplaceUsed(e, "{}")) {
 			continue
 		}
 		var v GuardVerdict

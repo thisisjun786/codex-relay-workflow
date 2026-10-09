@@ -394,3 +394,63 @@ func TestPlainCommandsCarryNoFeed(t *testing.T) {
 		}
 	}
 }
+
+// TestGlobMatchPOSIXClasses: a find pattern bracket that names a POSIX class ends at its own closing bracket, not at the class's.
+func TestGlobMatchPOSIXClasses(t *testing.T) {
+	for _, c := range []struct {
+		pattern, s     string
+		matches, known bool
+	}{
+		{"[[:alpha:]]*", "repo", true, true},
+		{"[[:print:]]*", "repo", true, true},
+		{"[[:digit:]]*", "repo", false, true},
+		{"[[:digit:]r]*", "repo", true, true},
+		{"[^[:alpha:]]*", "repo", false, true},
+		{"[![:digit:]]*", "repo", true, true},
+		{"[[:upper:]][[:lower:]]", "Ab", true, true},
+		{"[[:alpha:]", "[x", false, true},
+		{"[]a]x", "]x", true, true},
+		{"[a-c]*", "b1", true, true},
+		{"[[:nosuch:]]*", "repo", false, false},
+		{"[[.a.]]*", "a", false, false},
+	} {
+		m, k := globMatch(c.pattern, c.s)
+		if m != c.matches || k != c.known {
+			t.Errorf("globMatch(%q, %q) = %v, %v; want %v, %v", c.pattern, c.s, m, k, c.matches, c.known)
+		}
+	}
+}
+
+// TestFilterPassesReadsFileOperands: a filter given a file reads the file, so its output is not the lines of standard input.
+func TestFilterPassesReadsFileOperands(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+		ok   bool
+	}{
+		{"cat", nil, true},
+		{"cat", []string{"-"}, true},
+		{"cat", []string{"-n"}, true},
+		{"cat", []string{"roots.list"}, false},
+		{"cat", []string{"--", "roots.list"}, false},
+		{"sort", []string{"-r", "roots.list"}, false},
+		{"head", []string{"-n", "1"}, true},
+		{"head", []string{"-n", "1", "roots.list"}, false},
+		{"tail", []string{"-2"}, true},
+		{"uniq", []string{"-c"}, true},
+		{"uniq", []string{"in", "out"}, false},
+		{"tac", []string{"roots.list"}, false},
+		{"tee", []string{"copy.txt"}, true},
+		{"grep", []string{"old"}, true},
+		{"grep", []string{"old", "roots.list"}, false},
+		{"grep", []string{"-e", "old"}, true},
+		{"grep", []string{"-e", "old", "roots.list"}, false},
+		{"grep", []string{"-v", "-f", "pats"}, true},
+		{"grep", []string{"-o", "old"}, false},
+		{"grep", []string{"-r", "old"}, false},
+	} {
+		if _, ok := filterPasses(c.name, words(c.args...)); ok != c.ok {
+			t.Errorf("filterPasses(%s %v) = %v, want %v", c.name, c.args, ok, c.ok)
+		}
+	}
+}
