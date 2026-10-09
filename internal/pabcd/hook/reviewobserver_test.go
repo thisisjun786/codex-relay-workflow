@@ -508,11 +508,14 @@ func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testin
 			// Every exit, including a failed assertion, lets the transition go and waits for both goroutines before the seam is restored.
 			stopped := make(chan struct{})
 			started := false
+			doneReceived := false
 			defer func() {
 				releaseLock()
-				select {
-				case <-done:
-				case <-time.After(bound):
+				if !doneReceived {
+					select {
+					case <-done:
+					case <-time.After(bound):
+					}
 				}
 				if started {
 					select {
@@ -524,6 +527,7 @@ func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testin
 			select {
 			case <-entered:
 			case err := <-done:
+				doneReceived = true
 				t.Fatalf("the transition ended before it held the session lock: %v", err)
 			case <-time.After(bound):
 				t.Fatal("the transition never took the session lock")
@@ -549,6 +553,7 @@ func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testin
 				t.Fatalf("no verdict may land while the transition holds the session: %+v", r)
 			}
 			releaseLock()
+			doneReceived = true
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
