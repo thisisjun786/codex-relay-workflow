@@ -501,6 +501,12 @@ func premergeMergeTree(ctx context.Context, e *Env, co auditPkgCheckout, indexDi
 // premergeTreeWithDevManifests is the merge tree with dev's blob in place of each conflicted manifest, made
 // through a temporary index file below the bundle root that is removed again.
 func premergeTreeWithDevManifests(ctx context.Context, co auditPkgCheckout, indexDir, indexName, dev, tree string, paths []string) (string, error) {
+	// git runs in the checkout, so the index file is named by an absolute path: the same file is made,
+	// read by git and removed again whatever the caller's working directory is.
+	indexDir, err := filepath.Abs(indexDir)
+	if err != nil {
+		return "", premergeFail(3, "git_failed", "%v", err)
+	}
 	if err := os.MkdirAll(indexDir, 0o700); err != nil {
 		return "", premergeFail(3, "git_failed", "%v", err)
 	}
@@ -539,8 +545,9 @@ type premergeTreeEntry struct {
 	path string
 }
 
-// premergeTreeEntries lists the merge commit's regular files. A link and a submodule are left out: the
-// bundle never makes a link, because it could point out of the bundle, and a submodule has no content here.
+// premergeTreeEntries lists the merge commit's regular files. A link or a submodule in the tree is an error
+// that names its path: the bundle never makes a link, because it could point out of the bundle, and a
+// submodule has no content here, so leaving either out would grade a tree that is not the merge.
 func premergeTreeEntries(ctx context.Context, co auditPkgCheckout, commit string) ([]premergeTreeEntry, error) {
 	out, err := premergeGitOK(ctx, co.Repository, nil, "ls-tree", "-r", "-z", "--full-tree", commit)
 	if err != nil {
@@ -553,8 +560,11 @@ func premergeTreeEntries(ctx context.Context, co auditPkgCheckout, commit string
 		if !ok || len(fields) != 3 {
 			return nil, fmt.Errorf("git ls-tree record %q is not mode, type, object and path", record)
 		}
-		if fields[1] != "blob" || fields[0] == "120000" {
-			continue
+		switch {
+		case fields[0] == "120000":
+			return nil, fmt.Errorf("the merged tree holds a symbolic link, %q, which the bundle does not carry", path)
+		case fields[1] != "blob":
+			return nil, fmt.Errorf("the merged tree holds a %s entry, %q, which the bundle does not carry", fields[1], path)
 		}
 		entries = append(entries, premergeTreeEntry{mode: fields[0], sha: fields[2], path: path})
 	}
@@ -806,6 +816,42 @@ func premergeReadGrade(path string) (premergeGrade, error) {
 	return grade, nil
 }
 
+// premergeCheckCriteriaCovered refuses a grade whose criteria are not exactly the registered ones: a
+// criterion left out would carry no verdict for the relay to ask a disposition of, and one nobody
+// registered is a grade of something else.
+func premergeCheckCriteriaCovered(registered []map[string]any, grade premergeGrade) error {
+	want := map[string]bool{}
+	for _, criterion := range registered {
+		if id, _ := criterion["id"].(string); id != "" {
+			want[id] = true
+		}
+	}
+	var missing, extra []string
+	for id := range want {
+		if _, ok := grade.criteria[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	for id := range grade.criteria {
+		if !want[id] {
+			extra = append(extra, id)
+		}
+	}
+	if len(missing) == 0 && len(extra) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	var parts []string
+	if len(missing) > 0 {
+		parts = append(parts, "no verdict for the registered "+strings.Join(missing, ", "))
+	}
+	if len(extra) > 0 {
+		parts = append(parts, "a verdict for "+strings.Join(extra, ", ")+", which the relay did not register")
+	}
+	return fmt.Errorf("grade.json does not grade exactly the registered criteria: %s", strings.Join(parts, "; "))
+}
+
 // ---- the record ----
 
 // premergeDirLock holds an exclusive lock on a directory, so two writers of its records take turns. With
@@ -999,12 +1045,17 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	if err != nil {
 		return PremergeEvalResult{}, premergeFail(3, "relay_unreadable", "%v", err)
 	}
-	criteria, unavailable, err := auditPRCriteria(ctx, e, cfg, child.Relationship)
+	criteria, setDigest, unavailable, err := auditPRCriteriaSet(ctx, e, cfg, child.Relationship)
 	if err != nil {
 		return PremergeEvalResult{}, premergeFail(3, "relay_unreadable", "%v", err)
 	}
 	if unavailable {
 		return PremergeEvalResult{}, premergeFail(3, "criteria_unavailable", "the relay holds no criteria for %s: a record would bind a digest of criteria the grader never saw", issue)
+	}
+	// The record binds the node's criteria digest, so the criteria the grader is given must be that set.
+	if setDigest != node.Digest {
+		return PremergeEvalResult{}, premergeFail(3, "criteria_mismatch", "the criteria the relay holds for %s (relationship %s, digest %q) are not the ones node %s of plan %s fixed (digest %q): a record would bind a digest of criteria the grader never saw",
+			issue, child.Relationship, setDigest, node.Node, node.Plan, node.Digest)
 	}
 
 	unlock, err := premergeEvalLock(e, cfg, opts.PR, pull.HeadOID)
@@ -1017,7 +1068,10 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	if err != nil {
 		return PremergeEvalResult{}, err
 	}
-	root := premergeBundleRoot(e, cfg, section)
+	root, err := filepath.Abs(premergeBundleRoot(e, cfg, section))
+	if err != nil {
+		return PremergeEvalResult{}, premergeFail(1, "grader_failed", "%v", err)
+	}
 	merged, err := premergeMergeTree(ctx, e, co, root, ".premerge-index-"+strconv.Itoa(opts.PR)+"-"+pull.HeadOID[:premergeHeadChars], opts.PR, dev, pull.HeadOID)
 	if err != nil {
 		return PremergeEvalResult{}, err
@@ -1041,6 +1095,10 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	gradePath := filepath.Join(absBundle, auditGradeFile)
 	grade, err := premergeReadGrade(gradePath)
 	if err != nil {
+		return PremergeEvalResult{}, premergeFail(1, "grade_invalid", "%v (%s)", err, auditFirstLine(log.String()))
+	}
+
+	if err := premergeCheckCriteriaCovered(criteria, grade); err != nil {
 		return PremergeEvalResult{}, premergeFail(1, "grade_invalid", "%v (%s)", err, auditFirstLine(log.String()))
 	}
 

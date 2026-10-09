@@ -388,20 +388,32 @@ func auditPRPhaseOf(section auditPRSection, merged time.Time) (string, error) {
 // error: reporting that as "no criteria" would grade a pull request against nothing while
 // looking like a clean run.
 func auditPRCriteria(ctx context.Context, e *Env, cfg *Config, relationship string) ([]map[string]any, bool, error) {
+	criteria, _, unavailable, err := auditPRCriteriaSet(ctx, e, cfg, relationship)
+	return criteria, unavailable, err
+}
+
+// auditPRCriteriaSet is auditPRCriteria with the set digest the relay holds for the relationship's
+// criteria, which the pre-merge evaluation compares with the digest its node fixes.
+func auditPRCriteriaSet(ctx context.Context, e *Env, cfg *Config, relationship string) ([]map[string]any, string, bool, error) {
 	if relationship == "" {
-		return nil, true, nil
+		return nil, "", true, nil
 	}
 	out, err := auditPRRelay(ctx, e, cfg, "criteria-show", "--relationship", relationship)
 	if err != nil {
-		return nil, true, err
+		return nil, "", true, err
 	}
 	var answer struct {
-		Criteria []map[string]any `json:"criteria"`
+		Criteria  []map[string]any `json:"criteria"`
+		SetDigest *string          `json:"setDigest"`
 	}
 	if err := json.Unmarshal(out, &answer); err != nil {
-		return nil, true, fmt.Errorf("the criteria-show answer: %w", err)
+		return nil, "", true, fmt.Errorf("the criteria-show answer: %w", err)
 	}
-	return answer.Criteria, len(answer.Criteria) == 0, nil
+	digest := ""
+	if answer.SetDigest != nil {
+		digest = *answer.SetDigest
+	}
+	return answer.Criteria, digest, len(answer.Criteria) == 0, nil
 }
 
 // auditPRScrub replaces the configured strings with a redaction marker. The longest string

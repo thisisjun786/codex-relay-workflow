@@ -45,7 +45,8 @@ var premergeTestBase = map[string]string{
 }
 
 // premergeTestRepoSpec says what the pull request branch and dev change after the shared base.
-// A value of "-" deletes the path; a value starting with "link:" makes a symbolic link.
+// A value of "-" deletes the path; a value starting with "link:" makes a symbolic link; "gitlink:" makes a
+// nested repository, which git stages as a submodule entry.
 type premergeTestRepoSpec struct {
 	prFiles  map[string]string
 	devFiles map[string]string
@@ -86,6 +87,13 @@ func premergeTestWrite(t *testing.T, root string, files map[string]string) {
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
+		case strings.HasPrefix(body, "gitlink:"):
+			// a nested repository with one commit: `git add` stages it as a submodule entry
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			premergeTestGit(t, path, "init", "--quiet", "-b", "main")
+			premergeTestGit(t, path, "commit", "--quiet", "--allow-empty", "-m", "inner")
 		case strings.HasPrefix(body, "link:"):
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
@@ -234,6 +242,7 @@ type premergeTestOptions struct {
 	body         string
 	prState      string
 	criteria     string
+	criteriaNode string // the node whose criteria digest the relay's criteria carry; the first node when empty
 	audit        map[string]any
 	premerge     map[string]any
 	noAssignment bool // the issue has no assignment, so no relationship
@@ -243,6 +252,9 @@ type premergeTestOptions struct {
 // premergeTestCriteriaJSON is a criteria-show answer with two criteria.
 const premergeTestCriteriaJSON = `{"relationshipId":"rel-1","criteria":[{"id":"c1","title":"the first thing","required":true},` +
 	`{"id":"c2","title":"the second thing","required":false}],"setDigest":"d"}`
+
+// premergeTestSetDigestMarker stands, in a criteria-show answer, for the digest of the node's criteria.
+const premergeTestSetDigestMarker = `"setDigest":"d"`
 
 func premergeTestNew(t *testing.T, opts premergeTestOptions) *premergeTestFixture {
 	t.Helper()
@@ -320,6 +332,11 @@ func premergeTestNew(t *testing.T, opts premergeTestOptions) *premergeTestFixtur
 	if criteria == "" {
 		criteria = premergeTestCriteriaJSON
 	}
+	digestNode := opts.criteriaNode
+	if digestNode == "" {
+		digestNode = nodes[0].id
+	}
+	criteria = strings.Replace(criteria, premergeTestSetDigestMarker, `"setDigest":"`+premergeTestNodeDigest(digestNode)+`"`, 1)
 	assignments := map[string]string{premergeTestIssue: auditPRAssignmentJSON(t, "rel-1", "child-1")}
 	if opts.noAssignment {
 		assignments = map[string]string{premergeTestIssue: `{"assignments":[]}`}

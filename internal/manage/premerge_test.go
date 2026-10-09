@@ -221,6 +221,13 @@ func TestPremergeEvalGradeFailuresWriteNoRecord(t *testing.T) {
 		{"criteria as a list", "json", variant(func(d map[string]any) { d["criteria"] = []any{} })},
 		{"an unknown verdict", "json", variant(func(d map[string]any) { d["criteria"].(map[string]any)["c1"].(map[string]any)["verdict"] = "MAYBE" })},
 		{"no verdict", "json", variant(func(d map[string]any) { delete(d["criteria"].(map[string]any)["c1"].(map[string]any), "verdict") })},
+		{"a registered criterion left out", "json", variant(func(d map[string]any) { delete(d["criteria"].(map[string]any), "c2") })},
+		{"only a criterion nobody registered", "json", variant(func(d map[string]any) {
+			d["criteria"] = map[string]any{"invented": map[string]any{"verdict": "PASS", "evidence": "x"}}
+		})},
+		{"an extra criterion nobody registered", "json", variant(func(d map[string]any) {
+			d["criteria"].(map[string]any)["invented"] = map[string]any{"verdict": "PASS", "evidence": "x"}
+		})},
 		{"defects not a list", "json", variant(func(d map[string]any) { d["defects"] = "none" })},
 		{"an unknown severity", "json", variant(func(d map[string]any) { defect(d, func(x map[string]any) { x["severity"] = "P4" }) })},
 		{"no severity", "json", variant(func(d map[string]any) { defect(d, func(x map[string]any) { delete(x, "severity") }) })},
@@ -362,7 +369,7 @@ func TestPremergeEvalIssueKey(t *testing.T) {
 // exit 3, and a node that is cancelled or is not an implementation node is not one.
 func TestPremergeEvalNodeResolution(t *testing.T) {
 	two := []premergeTestNodeSpec{{"n-953", premergeTestIssue, "implementation"}, {"n-953b", premergeTestIssue, "implementation"}}
-	f := premergeTestNew(t, premergeTestOptions{nodes: two})
+	f := premergeTestNew(t, premergeTestOptions{nodes: two, criteriaNode: "n-953b"})
 	_, err := f.eval(PremergeEvalOptions{})
 	pe := premergeTestErr(t, err, 3, "node_unknown")
 	if !strings.Contains(pe.Detail, "n-953") || !strings.Contains(pe.Detail, "n-953b") {
@@ -391,7 +398,7 @@ func TestPremergeEvalNodeResolution(t *testing.T) {
 	premergeTestErr(t, err, 3, "node_unknown")
 
 	// a node the plan cancelled is not alive: the reopened issue has one live node again
-	f = premergeTestNew(t, premergeTestOptions{nodes: two, changes: [][]map[string]any{{{"op": "cancel_node", "node_id": "n-953"}}}})
+	f = premergeTestNew(t, premergeTestOptions{nodes: two, criteriaNode: "n-953b", changes: [][]map[string]any{{{"op": "cancel_node", "node_id": "n-953"}}}})
 	result, err = f.eval(PremergeEvalOptions{})
 	if err != nil || result.Node != "n-953b" {
 		t.Fatalf("with the first node cancelled: %+v, %v", result, err)
@@ -530,25 +537,111 @@ func TestPremergeEvalInputs(t *testing.T) {
 	premergeTestErr(t, err, 3, "inputs_rejected")
 }
 
-// A link in the merged tree is not made in the bundle: it could point out of it.
-func TestPremergeEvalDoesNotMakeLinksInTheBundle(t *testing.T) {
+// A link in the merged tree is refused with its path before the grader runs: it could point out of the
+// bundle, and leaving it out would grade a tree that is not the merge. No record is written.
+func TestPremergeEvalRefusesALinkInTheMergedTree(t *testing.T) {
 	spec := premergeTestCleanSpec()
 	spec.prFiles["escape"] = "link:/etc"
 	f := premergeTestNew(t, premergeTestOptions{spec: &spec})
-	if _, err := f.eval(PremergeEvalOptions{}); err != nil {
-		t.Fatal(err)
+	_, err := f.eval(PremergeEvalOptions{})
+	pe := premergeTestErr(t, err, 3, "bundle_rejected")
+	if !strings.Contains(pe.Detail, "escape") {
+		t.Errorf("the refusal does not name the link: %s", pe.Detail)
 	}
-	err := filepath.WalkDir(f.bundle(), func(path string, entry fs.DirEntry, err error) error {
-		if err == nil && entry.Type()&fs.ModeSymlink != 0 {
-			t.Errorf("%s is a link", path)
+	if f.graderRuns() != 0 {
+		t.Error("the grader ran")
+	}
+	premergeTestNoRecords(t, f.records)
+	if _, err := os.Lstat(f.bundle()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a bundle was left: %v", err)
+	}
+}
+
+// A submodule entry has no content in the bundle either: the tree would not be the merge, so it is refused.
+func TestPremergeEvalRefusesASubmoduleInTheMergedTree(t *testing.T) {
+	spec := premergeTestCleanSpec()
+	spec.prFiles["vendor/inner"] = "gitlink:"
+	f := premergeTestNew(t, premergeTestOptions{spec: &spec})
+	_, err := f.eval(PremergeEvalOptions{})
+	pe := premergeTestErr(t, err, 3, "bundle_rejected")
+	if !strings.Contains(pe.Detail, "vendor/inner") {
+		t.Errorf("the refusal does not name the submodule: %s", pe.Detail)
+	}
+	if f.graderRuns() != 0 {
+		t.Error("the grader ran")
+	}
+	premergeTestNoRecords(t, f.records)
+}
+
+// A grade must answer exactly the criteria the relay registered: the one a record binds a digest of.
+// (The cases of a criterion left out and one nobody registered are rows of the grade-failure table.)
+func TestPremergeEvalGradeCoversTheRegisteredCriteria(t *testing.T) {
+	f := premergeTestNew(t, premergeTestOptions{})
+	f.setGrade("json", premergeTestCleanGrade)
+	if _, err := f.eval(PremergeEvalOptions{}); err != nil {
+		t.Fatalf("a grade of exactly c1 and c2: %v", err)
+	}
+}
+
+// The criteria the relay holds for the relationship must be the ones the chosen node fixed: a digest of
+// other criteria is not the node's.
+func TestPremergeEvalCriteriaOfAnotherNodeAreRefused(t *testing.T) {
+	two := []premergeTestNodeSpec{{"n-953", premergeTestIssue, "implementation"}, {"n-953b", premergeTestIssue, "implementation"}}
+	// the relationship's criteria are n-953's; the caller chooses n-953b
+	f := premergeTestNew(t, premergeTestOptions{nodes: two, criteriaNode: "n-953"})
+	_, err := f.eval(PremergeEvalOptions{Node: "n-953b"})
+	pe := premergeTestErr(t, err, 3, "criteria_mismatch")
+	for _, want := range []string{"n-953b", premergeTestNodeDigest("n-953b"), premergeTestNodeDigest("n-953")} {
+		if !strings.Contains(pe.Detail, want) {
+			t.Errorf("the refusal lacks %q: %s", want, pe.Detail)
 		}
-		return err
-	})
+	}
+	if f.graderRuns() != 0 {
+		t.Error("the grader ran")
+	}
+	premergeTestNoRecords(t, f.records)
+	// the node whose criteria they are is graded
+	if _, err := f.eval(PremergeEvalOptions{Node: "n-953"}); err != nil {
+		t.Fatalf("--node n-953: %v", err)
+	}
+	// a criteria answer with no digest binds nothing either
+	f = premergeTestNew(t, premergeTestOptions{criteria: strings.Replace(premergeTestCriteriaJSON, `"setDigest":"d"`, `"setDigest":null`, 1)})
+	_, err = f.eval(PremergeEvalOptions{})
+	premergeTestErr(t, err, 3, "criteria_mismatch")
+}
+
+// A bundle_dir that is a relative path works from a working directory other than the checkout, also when a
+// manifest conflict needs the temporary index below it.
+func TestPremergeEvalRelativeBundleDirWithManifestConflict(t *testing.T) {
+	const manifest = "plugins/crw/.codex-plugin/plugin.json"
+	spec := premergeTestCleanSpec()
+	spec.prFiles[manifest] = "{\n  \"name\": \"crw\",\n  \"version\": \"0.4.0+bbbbbbbbbbbb\"\n}\n"
+	spec.devFiles[manifest] = "{\n  \"name\": \"crw\",\n  \"version\": \"0.4.0+cccccccccccc\"\n}\n"
+	work := t.TempDir()
+	t.Chdir(work)
+	f := premergeTestNew(t, premergeTestOptions{spec: &spec, premerge: map[string]any{"bundle_dir": "rel-bundles"}})
+	result, err := f.eval(PremergeEvalOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(filepath.Join(f.bundle(), "candidate", "tree", "escape")); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("the link entry was materialised: %v", err)
+	body, err := os.ReadFile(filepath.Join(work, "rel-bundles", "pr-7-"+f.repo.head[:8], "candidate", "tree", filepath.FromSlash(manifest)))
+	if err != nil || !strings.Contains(string(body), "cccccccccccc") {
+		t.Errorf("the manifest in the tree = %q, %v; want dev's", body, err)
+	}
+	if _, err := os.Stat(result.Record); err != nil {
+		t.Errorf("no record: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(f.repo.checkout, "rel-bundles")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the bundle root was made below the checkout: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(work, "rel-bundles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "pr-7-"+f.repo.head[:8] {
+			t.Errorf("%s was left under the bundle root", entry.Name())
+		}
 	}
 }
 
