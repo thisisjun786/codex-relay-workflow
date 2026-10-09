@@ -117,15 +117,17 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		// A quiet thread starts no bridge process.
 		return nil
 	}
-	texts, err := pumpReview776QueueReadNotices(dir, names)
+	texts, modTimes, err := pumpReview776QueueReadNotices(dir, names)
 	if err != nil {
 		return err
 	}
 	// An upgraded state has no pin, but the ledger may still hold a record under a pre-change
 	// logical id. That lookup runs on the full set as it stands before any notice is moved aside and
 	// before the size split, because the pre-change id hashed every queued name: a narrower set would
-	// miss an old record and re-send an attempt that may already have gone.
-	whole := pumpReview776QueueBatch{names: names, texts: texts, body: pumpReview776QueueBody(texts)}
+	// miss an old record and re-send an attempt that may already have gone. The lookup judges each
+	// member on the modification time read with its text, so a notice the producer replaced since the
+	// read cannot lend its newer time to the older text.
+	whole := pumpReview776QueueBatch{names: names, texts: texts, body: pumpReview776QueueBody(texts), modTimes: modTimes}
 	if dry {
 		// A dry run makes no durable change, so it does not adopt a legacy record or save state. It
 		// reports the notices it would move aside and the batch it would send.
@@ -317,29 +319,88 @@ type pumpReview776QueueBatch struct {
 	// read, not the prefix the batch carries, so a notice the producer adds after the prefix still
 	// changes the id and lets a batch the ledger already refused be tried again under a new id.
 	idNames []string
+	// modTimes is the modification time of the file each text was read from, taken through the same
+	// open handle as the text. Only the whole queue the round read carries it, for the legacy lookup.
+	modTimes []time.Time
 }
 
-// pumpReview776QueueReadNotices reads one thread's notices in name order. A notice is a regular
-// file the producer wrote; a symlink would let the queue carry the contents of a file outside it,
-// so it is refused rather than followed.
-func pumpReview776QueueReadNotices(dir string, names []string) ([]string, error) {
+// pumpReview776QueueReadNotices reads one thread's notices in name order, each with the
+// modification time of the file its text came from. A notice is a regular file the producer wrote; a
+// symlink would let the queue carry the contents of a file outside it, so it is refused rather than
+// followed.
+func pumpReview776QueueReadNotices(dir string, names []string) ([]string, []time.Time, error) {
 	texts := make([]string, 0, len(names))
+	modTimes := make([]time.Time, 0, len(names))
 	for _, name := range names {
-		path := filepath.Join(dir, name)
+		text, modified, err := pumpReview776QueueReadNotice(dir, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		texts = append(texts, text)
+		modTimes = append(modTimes, modified)
+	}
+	return texts, modTimes, nil
+}
+
+// pumpReview776QueueReadTries bounds the re-reads of one notice the producer keeps replacing, so a
+// read fails loudly instead of spinning.
+const pumpReview776QueueReadTries = 8
+
+// pumpReview776QueueReadNotice reads one notice's trimmed text and the modification time of the very
+// file the text came from. Both come from one open handle: the producer's --queue write is an atomic
+// rename onto the name, so a time read from the path after the text could belong to a newer notice,
+// and pairing an older text with that newer time would make a ledger record that carried the older
+// text look stale (the record is judged on the time, the completion on the text). A handle whose file
+// is no longer the one the name held when it was checked, or whose file changed while it was read, is
+// read again.
+func pumpReview776QueueReadNotice(dir, name string) (string, time.Time, error) {
+	path := filepath.Join(dir, name)
+	for attempt := 0; attempt < pumpReview776QueueReadTries; attempt++ {
 		info, err := os.Lstat(path)
 		if err != nil {
-			return nil, err
+			return "", time.Time{}, err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("crw manage pump: the notice %s is a symlink; refusing to send through it", name)
+			return "", time.Time{}, fmt.Errorf("crw manage pump: the notice %s is a symlink; refusing to send through it", name)
 		}
-		raw, err := os.ReadFile(path)
+		text, modified, same, err := pumpReview776QueueReadHandle(path, info)
 		if err != nil {
-			return nil, err
+			return "", time.Time{}, err
 		}
-		texts = append(texts, strings.TrimSpace(string(raw)))
+		if same {
+			return text, modified, nil
+		}
 	}
-	return texts, nil
+	return "", time.Time{}, fmt.Errorf("crw manage pump: the notice %s kept changing while it was read", name)
+}
+
+// pumpReview776QueueReadHandle reads the file at path through one handle and reports whether that
+// file is the one checked (the same file, unchanged from before the read to after it).
+func pumpReview776QueueReadHandle(path string, checked os.FileInfo) (string, time.Time, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	if !os.SameFile(checked, before) {
+		return "", time.Time{}, false, nil
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	if !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		return "", time.Time{}, false, nil
+	}
+	return strings.TrimSpace(string(raw)), before.ModTime(), true, nil
 }
 
 // pumpReview776QueueOldest is the oldest modification time among one batch's notices. It is
@@ -1191,15 +1252,16 @@ type pumpReview776QueueLegacyCandidate struct {
 // name-ordered prefixes of the queue, then the oldest-first prefixes. An oldest-first prefix matters
 // when a notice queued later sorts before the notices the pre-change attempt carried. A set that is
 // already a name-ordered prefix is listed once, as a name-ordered prefix.
-func pumpReview776QueueLegacyCandidates(dir string, batch pumpReview776QueueBatch) ([]pumpReview776QueueLegacyCandidate, error) {
-	modTimes := make([]time.Time, len(batch.names))
-	for i, name := range batch.names {
-		info, err := os.Lstat(filepath.Join(dir, name))
-		if err != nil {
-			return nil, err
-		}
-		modTimes[i] = info.ModTime()
+//
+// Each member's time is the one read with its text (batch.modTimes), never one read again from the
+// path: a notice the producer replaced since the read would otherwise pair the older text with the
+// newer time, the record that carried the older text would look stale, and the older text would go
+// again under a new id. A batch without those times is refused rather than judged on other times.
+func pumpReview776QueueLegacyCandidates(batch pumpReview776QueueBatch) ([]pumpReview776QueueLegacyCandidate, error) {
+	if len(batch.modTimes) != len(batch.names) || len(batch.texts) != len(batch.names) {
+		return nil, fmt.Errorf("crw manage pump: the queue snapshot has %d names, %d texts and %d modification times", len(batch.names), len(batch.texts), len(batch.modTimes))
 	}
+	modTimes := batch.modTimes
 	build := func(indices []int) pumpReview776QueueLegacyCandidate {
 		c := pumpReview776QueueLegacyCandidate{}
 		for _, i := range indices {
@@ -1318,17 +1380,23 @@ func pumpReview776QueueGateNames(dir string, pinned []string) ([]string, error) 
 // attempts, and the answer of one attempt is no evidence about another. The rule over the records
 // that carry something and were not refused is one invariant per notice:
 //
-//   - I1: a notice that any record carrying it shows delivered is never sent again; it is completed.
+//   - I1: a notice that any record carrying it shows delivered is never sent again. It is completed
+//     when that record can prove it carried the text on disk; when only a record that cannot (an
+//     accepted attempt whose text is not the text on disk) shows it, it is held under the pin instead.
 //   - I2: while a record carrying a notice is undetermined (no receipt, or no bridge), and no record
 //     shows it delivered, the notice is not sent.
 //   - I3: a notice every record carrying it shows was never delivered is sent once, in a new batch.
+//
+// The time each member is judged on is the one read with its text (see
+// pumpReview776QueueLegacyCandidates), so a notice the producer replaced during the round is judged as
+// the text the round holds, and a record that carried that text is not mistaken for a stale one.
 //
 // One such record is adopted by itself (see pumpReview776QueueAdoptOne): its pin is the whole
 // evidence set, so reconciling that pin keeps the invariant, and a record whose text is still the
 // text on disk can be replayed under its own id. Several are adopted together as one overlap pin (see
 // pumpReview776QueueSettleOverlap), which reads every record's answer each round.
 func pumpReview776QueueAdoptLegacy(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) (pumpReview776QueueLegacyAction, error) {
-	candidates, err := pumpReview776QueueLegacyCandidates(dir, batch)
+	candidates, err := pumpReview776QueueLegacyCandidates(batch)
 	if err != nil {
 		return pumpReview776QueueLegacyNone, err
 	}
@@ -1514,16 +1582,23 @@ const (
 // Every record's answer is read each round: the ledger's settled answer, else the bridge's own
 // receipt. A notice counts only while its file still carries the text the records were matched
 // against; one the producer wrote again since is a notice none of them carried. Then the invariant is
-// applied per notice. A notice any record shows delivered is completed (I1). A notice no record shows
-// delivered and an undetermined record carried keeps the pin (I2): the thread waits, with a
-// legacy_overlap_hold log line naming the notices and the records, and nothing is sent -- not even a
-// notice that is free -- because a hold that sent around it would have to form a batch the pin does not
-// describe. Once nothing is undetermined the pin goes, and every notice still queued is one every
-// record that carried it shows never went, which the next batch sends once under its own id (I3).
+// applied per notice, and the evidence is kept per record. A notice a record shows delivered is
+// completed (I1) when that record can prove it: its whole text is the text on disk, or it carried only
+// members that were not written again after it. A notice no record proves delivered and an undetermined
+// record carried keeps the pin (I2): the thread waits, with a legacy_overlap_hold log line naming the
+// notices and the records, and nothing is sent -- not even a notice that is free -- because a hold that
+// sent around it would have to form a batch the pin does not describe. Once nothing is undetermined, a
+// notice that only an unprovable record shows delivered (an accepted attempt whose text is not the text
+// on disk, so it cannot show which queued notice it carried) is held under the pin, with a
+// legacy_overlap_hold line: it can neither be completed nor sent. Otherwise the pin goes, and every
+// notice still queued is one every record that carried it shows never went, which the next batch sends
+// once under its own id (I3). The proven notices are completed in the same round either way: an
+// unprovable record's uncertainty is about its own notices, not about another record's proof.
 //
 // This is the fail-closed form of the reconciliation: it never replays an old id and never sends while
-// any record is undetermined, so no combination of answers can deliver a notice twice; the cost is that
-// a free notice waits with the held ones until the undetermined records settle.
+// any record is undetermined or any notice is held, so no combination of answers can deliver a notice
+// twice; the cost is that a free notice waits with the held ones until the undetermined records settle,
+// and stays queued behind a held pin for the operator.
 func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin, stored bool) (pumpReview776QueueOverlapOutcome, error) {
 	verdicts, err := pumpReview776QueueOverlapVerdicts(ctx, e, cfg, thread, pin.Overlap)
 	if err != nil {
@@ -1551,8 +1626,20 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 		}
 		intact[name] = pumpReview776BodyDigest(string(raw)) == pin.SHA256[name]
 	}
-	delivered, undetermined := map[string]bool{}, map[string]bool{}
+	// Each notice is classed by the records that carried it, one record at a time, so one record's
+	// uncertainty never hides another record's proof: proven when a record whose text is the text on
+	// disk shows it delivered; unprovable when only a record that cannot show which notice it carried
+	// shows a delivery; undetermined when a record that carried it has no settled answer.
+	proven, unproven, undetermined := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	var unprovable, waitingOn []string
+	note := func(list []string, id string) []string {
+		for _, listed := range list {
+			if listed == id {
+				return list
+			}
+		}
+		return append(list, id)
+	}
 	for i, ref := range pin.Overlap {
 		for _, name := range ref.Names {
 			if !intact[name] {
@@ -1560,28 +1647,35 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 			}
 			switch verdicts[i] {
 			case pumpReview776QueueOverlapDelivered:
-				delivered[name] = true
-				if ref.Unprovable && (len(unprovable) == 0 || unprovable[len(unprovable)-1] != ref.LogicalID) {
-					unprovable = append(unprovable, ref.LogicalID)
+				if ref.Unprovable {
+					unproven[name] = true
+					unprovable = note(unprovable, ref.LogicalID)
+				} else {
+					proven[name] = true
 				}
 			case pumpReview776QueueOverlapUndetermined:
 				undetermined[name] = true
-				if len(waitingOn) == 0 || waitingOn[len(waitingOn)-1] != ref.LogicalID {
-					waitingOn = append(waitingOn, ref.LogicalID)
-				}
+				waitingOn = note(waitingOn, ref.LogicalID)
 			}
 		}
 	}
-	var complete, waiting []string
+	// complete: a proven notice (I1), whatever any other record says. held: a notice only an
+	// unprovable record shows delivered, which can neither be completed (it may not be the text that
+	// went) nor sent (it may be). waiting: a notice not proven while a record that carried it is
+	// undetermined (I2); it stays queued, and an unprovable notice also waits on it, because that record
+	// may yet prove it.
+	var complete, held, waiting []string
 	for _, name := range pin.Names {
 		switch {
-		case delivered[name]:
+		case proven[name]:
 			complete = append(complete, name)
 		case undetermined[name]:
 			waiting = append(waiting, name)
+		case unproven[name]:
+			held = append(held, name)
 		}
 	}
-	if len(unprovable) == 0 && len(complete) == 0 && len(waiting) == 0 {
+	if len(complete) == 0 && len(held) == 0 && len(waiting) == 0 {
 		if !stored {
 			return pumpReview776QueueOverlapFree, nil
 		}
@@ -1591,12 +1685,11 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 		pumpLog(cfg, fmt.Sprintf("queue %s: the overlapping pre-change attempts settled without a delivery", thread))
 		return pumpReview776QueueOverlapFree, pumpReview776QueuePinLift(cfg, st, thread, nil)
 	}
-	if len(unprovable) > 0 {
-		// The single-record rule for an accepted attempt whose text is not recoverable: nothing is
-		// archived undelivered and nothing is delivered twice, so the thread waits under a held pin.
-		pin.Held = true
-	}
-	if !stored || pin.Held {
+	// The pin is written before the first move and is never yet marked held here, so a crash part way
+	// leaves an overlap pin that the next round reconciles again from the records' answers: a notice
+	// already moved is gone and counts for nothing, and the rest is classed as before. A pin marked held
+	// before the moves would stop that reconciliation and strand a proven notice in the queue.
+	if !stored {
 		if err := ctx.Err(); err != nil {
 			return pumpReview776QueueOverlapHold, err
 		}
@@ -1604,11 +1697,6 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 		if err := st.pumpSave(cfg); err != nil {
 			return pumpReview776QueueOverlapHold, err
 		}
-	}
-	if pin.Held {
-		pumpLog(cfg, fmt.Sprintf("queue %s %s: the pre-change attempts %s were accepted and their text is not recoverable; the notices stay queued",
-			thread, pumpQueueLegacyOverlapHold, strings.Join(unprovable, ",")))
-		return pumpReview776QueueOverlapHold, nil
 	}
 	if len(complete) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -1638,6 +1726,20 @@ func pumpReview776QueueSettleOverlap(ctx context.Context, e *Env, cfg *Config, s
 	}
 	if err := ctx.Err(); err != nil {
 		return pumpReview776QueueOverlapHold, err
+	}
+	if len(held) > 0 {
+		// Every record has answered and the proven notices are completed. What is left are notices only
+		// an unprovable record shows delivered: the single-record rule for an accepted attempt whose text
+		// is not recoverable applies to them, so the pin is held, which archives nothing undelivered and
+		// delivers nothing twice, and the operator is told which notices and records it holds on.
+		pin.Held = true
+		st.QueueAttempt[thread] = pin
+		if err := st.pumpSave(cfg); err != nil {
+			return pumpReview776QueueOverlapHold, err
+		}
+		pumpLog(cfg, fmt.Sprintf("queue %s %s: notices %s were carried by the pre-change attempts %s, which were accepted and whose text is not recoverable; the notices stay queued",
+			thread, pumpQueueLegacyOverlapHold, strings.Join(held, ","), strings.Join(unprovable, ",")))
+		return pumpReview776QueueOverlapHold, nil
 	}
 	return pumpReview776QueueOverlapDone, pumpReview776QueuePinLift(cfg, st, thread, nil)
 }

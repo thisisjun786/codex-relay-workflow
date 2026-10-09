@@ -514,3 +514,237 @@ func pumpOverlapDescribe(shape pumpOverlapShape) string {
 	}
 	return strings.Join(parts, "; ")
 }
+
+// pumpOverlapUnprovablePhase is one receipt assignment of the unprovable-overlap test and what the
+// rounds under it must leave: the notices completed, the notices still queued, whether a pin is left
+// and whether it holds the thread, and the texts sent so far with how often each went.
+type pumpOverlapUnprovablePhase struct {
+	short, long string
+	completed   []string
+	queued      []string
+	pinned      bool
+	held        bool
+	sent        map[string]int
+}
+
+// An overlap pin can join a record whose accepted answer cannot show which queued notice it carried
+// (its whole set looks unchanged, yet its text is not the text on disk) with a record that proves a
+// delivery on its own. The uncertainty is per record: a notice the provable record shows delivered
+// is completed (I1), and only the notices the unprovable record alone answers for are held. The
+// longer record over [a b] carried b in the second b was written again, so its text is not the text
+// on disk and it is unprovable; the shorter record over [a] carries the text on disk.
+func TestPumpQueueUnprovableOverlapStillCompletesAProvenDelivery(t *testing.T) {
+	a, b := pumpOverlapA, pumpOverlapB
+	cases := []struct {
+		name        string
+		shortLedger string
+		phases      []pumpOverlapUnprovablePhase
+	}{
+		{"short-accepted-in-ledger", deliverStateAccepted, []pumpOverlapUnprovablePhase{
+			{short: pumpOverlapUnknown, long: pumpOverlapAccepted, completed: []string{a}, queued: []string{b}, pinned: true, held: true},
+		}},
+		{"short-accepted-by-receipt", deliverStateUnknown, []pumpOverlapUnprovablePhase{
+			{short: pumpOverlapAccepted, long: pumpOverlapAccepted, completed: []string{a}, queued: []string{b}, pinned: true, held: true},
+		}},
+		{"short-settles-later", deliverStateUnknown, []pumpOverlapUnprovablePhase{
+			{short: pumpOverlapUnknown, long: pumpOverlapAccepted, queued: []string{a, b}, pinned: true},
+			{short: pumpOverlapAccepted, long: pumpOverlapAccepted, completed: []string{a}, queued: []string{b}, pinned: true, held: true},
+		}},
+		{"short-never-went", deliverStateUnknown, []pumpOverlapUnprovablePhase{
+			// a is still carried by the unprovable record that went, so it can neither be completed nor
+			// sent again: both wait under the held pin.
+			{short: pumpOverlapNotAttempted, long: pumpOverlapAccepted, queued: []string{a, b}, pinned: true, held: true},
+		}},
+		{"long-never-went", deliverStateUnknown, []pumpOverlapUnprovablePhase{
+			{short: pumpOverlapAccepted, long: pumpOverlapNotAttempted, completed: []string{a, b}, sent: map[string]int{"B-current": 1}},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := pumpTestNow
+			e := pumpTestEnv(t, &now)
+			bridge, receiptsPath, log := pumpOverlapBridge(t)
+			cfg := pumpTestConfig(t, bridge)
+			thread := "parent-1"
+			dir := filepath.Join(cfg.StateDir, pumpQueueDir, thread)
+			stamp := now.Add(-time.Hour)
+			pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, thread, a, "A-proven"), stamp.Add(-time.Minute))
+			// b was written again within the stamp's second, the precision limit of a whole-second stamp.
+			pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, thread, b, "B-current"), stamp.Add(500*time.Millisecond))
+			longID := pumpQueueTestLegacyRecord(t, cfg, thread, []string{a, b}, []string{"A-proven", "B-old"}, stamp, deliverStateUnknown)
+			shortID := pumpQueueTestLegacyRecord(t, cfg, thread, []string{a}, []string{"A-proven"}, stamp, tc.shortLedger)
+			for p, phase := range tc.phases {
+				pumpOverlapSetReceipts(t, receiptsPath, map[string]string{shortID: phase.short, longID: phase.long})
+				for round := 0; round < 3; round++ {
+					if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, name := range phase.completed {
+					if _, err := os.Lstat(filepath.Join(dir, pumpSentDir, name)); err != nil {
+						t.Errorf("phase %d: %s was shown delivered and is not completed: %v", p, name, err)
+					}
+					if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+						t.Errorf("phase %d: %s is still queued after its completion", p, name)
+					}
+				}
+				for _, name := range phase.queued {
+					if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
+						t.Errorf("phase %d: %s left the queue: %v", p, name, err)
+					}
+				}
+				for _, text := range []string{"A-proven", "B-current", "B-old"} {
+					if got := pumpOverlapSentCount(t, log, text); got != phase.sent[text] {
+						t.Errorf("phase %d: %s was sent %d times, want %d", p, text, got, phase.sent[text])
+					}
+				}
+				pin, pinned := pumpReview776QueueAttempt(t, cfg, thread)
+				if pinned != phase.pinned {
+					t.Errorf("phase %d: pin present=%v, want %v (%v)", p, pinned, phase.pinned, pin)
+				}
+				if held, _ := pin["held"].(bool); held != phase.held {
+					t.Errorf("phase %d: pin held=%v, want %v (%v)", p, held, phase.held, pin)
+				}
+			}
+		})
+	}
+}
+
+// The producer's --queue write is an atomic rename, so it can replace a notice between the round's
+// read of the queue and the legacy lookup. The lookup must judge the text the round read on the time
+// of the file that text came from: a pre-change record that carried the older text is then still
+// adopted, the older text is completed or reconciled under the record's own id and never goes again
+// under a new one, and the newer notice is a notice of its own that goes exactly once.
+func TestPumpQueueLegacyLookupJudgesTheTimeReadWithTheText(t *testing.T) {
+	cases := []struct {
+		name, state, receipt string
+		replace              bool
+	}{
+		{"accepted-in-ledger", deliverStateAccepted, "", true},
+		{"accepted-by-receipt", deliverStateUnknown, pumpOverlapAccepted, true},
+		{"accepted-unchanged", deliverStateAccepted, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := pumpTestNow
+			e := pumpTestEnv(t, &now)
+			bridge, receiptsPath, log := pumpOverlapBridge(t)
+			cfg := pumpTestConfig(t, bridge)
+			thread, name := "parent-1", pumpOverlapA
+			dir := filepath.Join(cfg.StateDir, pumpQueueDir, thread)
+			stamp := now.Add(-time.Hour)
+			path := pumpQueueTestNotice(t, cfg, thread, name, "A-already-delivered")
+			pumpQueueTestSetTime(t, path, stamp.Add(-time.Minute))
+			id := pumpQueueTestLegacyRecord(t, cfg, thread, []string{name}, []string{"A-already-delivered"}, stamp, tc.state)
+			pumpOverlapSetReceipts(t, receiptsPath, map[string]string{id: tc.receipt})
+
+			// The round reads the queue as FlushThread does.
+			names, err := pumpQueueSortedNames(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			texts, modTimes, err := pumpReview776QueueReadNotices(dir, names)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !modTimes[0].Equal(stamp.Add(-time.Minute)) {
+				t.Fatalf("the time read with the text is %v, want %v", modTimes[0], stamp.Add(-time.Minute))
+			}
+			whole := pumpReview776QueueBatch{names: names, texts: texts, body: pumpReview776QueueBody(texts), modTimes: modTimes}
+			if tc.replace {
+				// The producer replaces the notice after the read, the way --queue writes: a new file renamed
+				// onto the name, written after the record.
+				if err := os.WriteFile(path+".tmp", []byte("B-new-undelivered"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				pumpQueueTestSetTime(t, path+".tmp", stamp.Add(time.Minute))
+				if err := os.Rename(path+".tmp", path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := pumpTestReadStatePtr(t, cfg)
+			action, err := pumpReview776QueueAdoptLegacy(context.Background(), e, cfg, st, dir, thread, whole)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == pumpReview776QueueLegacyNone {
+				t.Fatalf("the record that carried the text the round read was not adopted")
+			}
+			if _, pinned := st.QueueAttempt[thread]; !pinned {
+				t.Fatalf("the adopted record left no pin")
+			}
+			// The later rounds settle the pin and deliver what is left.
+			for round := 0; round < 3; round++ {
+				if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if sent := pumpOverlapSentCount(t, log, "A-already-delivered"); sent != 0 {
+				t.Errorf("the text the pre-change attempt delivered was sent again %d times", sent)
+			}
+			wantB := 0
+			if tc.replace {
+				wantB = 1
+			}
+			if sent := pumpOverlapSentCount(t, log, "B-new-undelivered"); sent != wantB {
+				t.Errorf("the newer notice was sent %d times, want %d", sent, wantB)
+			}
+			raw, err := os.ReadFile(filepath.Join(dir, pumpSentDir, name))
+			if err != nil {
+				t.Fatalf("nothing was completed under sent/: %v", err)
+			}
+			if !tc.replace && string(raw) != "A-already-delivered" {
+				t.Errorf("sent/ holds %q, want the delivered text", raw)
+			}
+			if names := pumpQueueTestNames(t, cfg, thread); len(names) != 0 {
+				t.Errorf("notices left queued: %v", names)
+			}
+			if pin, pinned := pumpReview776QueueAttempt(t, cfg, thread); pinned {
+				t.Errorf("a pin is left: %v", pin)
+			}
+		})
+	}
+}
+
+// A notice the producer replaces while it is read is read again, so the text and the time always come
+// from one file; a notice that is a symlink is still refused.
+func TestPumpQueueReadNoticePairsTheTextWithItsOwnFile(t *testing.T) {
+	now := pumpTestNow
+	_ = pumpTestEnv(t, &now)
+	dir := t.TempDir()
+	path := filepath.Join(dir, pumpOverlapA)
+	if err := os.WriteFile(path, []byte(" A \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	at := now.Add(-time.Hour)
+	pumpQueueTestSetTime(t, path, at)
+	checked, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The name now holds another file than the one checked: the handle read reports it as not the same.
+	if err := os.WriteFile(path+".tmp", []byte("B"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, same, err := pumpReview776QueueReadHandle(path, checked); err != nil || same {
+		t.Errorf("a replaced notice read as the checked one (same=%v, err=%v)", same, err)
+	}
+	pumpQueueTestSetTime(t, path, at)
+	text, modified, err := pumpReview776QueueReadNotice(dir, pumpOverlapA)
+	if err != nil || text != "B" || !modified.Equal(at) {
+		t.Errorf("read %q at %v (%v), want %q at %v", text, modified, err, "B", at)
+	}
+	link := filepath.Join(dir, pumpOverlapB)
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pumpReview776QueueReadNotice(dir, pumpOverlapB); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("a symlinked notice was read: %v", err)
+	}
+	if _, err := pumpReview776QueueLegacyCandidates(pumpReview776QueueBatch{names: []string{pumpOverlapA}, texts: []string{"B"}}); err == nil {
+		t.Errorf("a snapshot without the times read with its texts was judged")
+	}
+}
