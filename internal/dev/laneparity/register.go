@@ -33,35 +33,54 @@ type Manifest struct {
 	Hooks []string
 }
 
-// ReadRegistered reads the hook registrations of a plugin root the way a host does: the manifest's
-// hooks list, each file in it, each command entry. A hook file outside the root is refused.
-func ReadRegistered(root string) (Manifest, []Registered, error) {
+// readManifest reads the manifest of a plugin root: its name and the hook files it lists.
+func readManifest(root string) (Manifest, error) {
 	var raw struct {
 		Name  string          `json:"name"`
 		Hooks json.RawMessage `json:"hooks"`
 	}
 	m, err := os.ReadFile(filepath.Join(root, ".codex-plugin", "plugin.json"))
 	if err != nil {
-		return Manifest{}, nil, err
+		return Manifest{}, err
 	}
 	if err := json.Unmarshal(m, &raw); err != nil {
-		return Manifest{}, nil, fmt.Errorf("plugin.json: %w", err)
+		return Manifest{}, fmt.Errorf("plugin.json: %w", err)
 	}
 	manifest := Manifest{Name: raw.Name}
 	if len(raw.Hooks) > 0 {
 		var one string
 		if json.Unmarshal(raw.Hooks, &manifest.Hooks) != nil {
 			if err := json.Unmarshal(raw.Hooks, &one); err != nil {
-				return manifest, nil, fmt.Errorf("plugin.json hooks: neither a list of paths nor a path")
+				return manifest, fmt.Errorf("plugin.json hooks: neither a list of paths nor a path")
 			}
 			manifest.Hooks = []string{one}
 		}
 	}
+	return manifest, nil
+}
+
+// hookPath resolves a hook file the manifest lists to a path relative to the root; one that leaves
+// the root is refused.
+func hookPath(rel string) (string, error) {
+	clean := filepath.Clean(strings.TrimPrefix(rel, "./"))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("plugin.json hooks: %q leaves the plugin root", rel)
+	}
+	return clean, nil
+}
+
+// ReadRegistered reads the hook registrations of a plugin root the way a host does: the manifest's
+// hooks list, each file in it, each command entry. A hook file outside the root is refused.
+func ReadRegistered(root string) (Manifest, []Registered, error) {
+	manifest, err := readManifest(root)
+	if err != nil {
+		return manifest, nil, err
+	}
 	var out []Registered
 	for _, rel := range manifest.Hooks {
-		clean := filepath.Clean(strings.TrimPrefix(rel, "./"))
-		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-			return manifest, nil, fmt.Errorf("plugin.json hooks: %q leaves the plugin root", rel)
+		clean, err := hookPath(rel)
+		if err != nil {
+			return manifest, nil, err
 		}
 		data, err := os.ReadFile(filepath.Join(root, clean))
 		if err != nil {

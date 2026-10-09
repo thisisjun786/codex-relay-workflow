@@ -47,14 +47,14 @@ wait for the activation PR (CRW-392); pointing `--plugin` at the real root check
 
 ## Evidence and cleanup
 
-The report (`--json`) records the build (path and sha256), the plugin root (path and digest of its manifest and hook
-files), the oracle revision of K1, the run id every receipt carries, the owner, process and run directory of the test,
+The report (`--json`) records the build (path and sha256), the plugin root (path and digest of its manifest, the files under
+`wiring/hooks` and every hook file the manifest lists), the oracle revision of K1, the run id every receipt carries, the owner, process and run directory of the test,
 and how it was cleaned up: every case root is removed as its case ends, the run directory (a generated plugin root and the
 case roots, under `--scratch` or `$TMPDIR`) when the run ends, and the number of entries left behind must be zero or the run
 fails. No shared database, live session, Codex home or installed runtime is used. The report's `key` is a digest of the build,
 the plugin root, the corpus files the cells read, every option that changes what is run or how it is judged (including `--strict`),
 and every artifact a cell runs, by content: the executable each declared command starts (so a root starting another file at the same
-path is another artifact), the node and the oracle tree a latency cell runs, and the harness's own executable (its verdict rules).
+path is another artifact), the node and the oracle tree a latency cell runs (read through links, as the recorder reads it), and the harness's own executable (its verdict rules).
 `--reuse FILE` stands a passing report of the same key in for a run, so evidence of the same artifact, revision and criteria is not
 produced twice. `latencyLaterAttempts` names the legs whose latency passed only on a later measurement, and the summary line counts
 first-attempt and later passes.

@@ -182,8 +182,13 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 	}
+	// Paths derived from the repository are written into links and reports read from other
+	// directories, so the repository is named absolutely.
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return fail(err)
+	}
 	var onlyRE, legsRE *regexp.Regexp
-	var err error
 	if *only != "" {
 		if onlyRE, err = regexp.Compile(*only); err != nil {
 			return fail(err)
@@ -401,8 +406,10 @@ func nodeIdentity(command, oracle, node string) string {
 }
 
 // oracleIdentity names the oracle tree a latency cell runs, by content: every file's path, type and
-// bytes (a link by its target). It is empty where no oracle runs, and says so when the tree cannot
-// be read, so an oracle that is not there never shares a key with one that is.
+// bytes. The recorder follows links (a linked root, directory or file is the code that runs), so a
+// link is named by its target and what it leads to is read through it. It is empty where no oracle
+// runs, and says so when the tree cannot be read, so an oracle that is not there never shares a key
+// with one that is.
 func oracleIdentity(command, oracle string) string {
 	if oracle == "" || (command != "latency" && command != "all") {
 		return ""
@@ -412,43 +419,66 @@ func oracleIdentity(command, oracle string) string {
 		return oracle + ": " + err.Error()
 	}
 	sum := sha256.New()
-	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(abs, path)
-		switch {
-		case d.Type()&fs.ModeSymlink != 0:
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(sum, "L\x00%s\x00%s\x00", rel, target)
-		case d.IsDir():
-			fmt.Fprintf(sum, "D\x00%s\x00", rel)
-		case d.Type().IsRegular():
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			info, err := f.Stat()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(sum, "F\x00%s\x00%o\x00%d\x00", rel, info.Mode().Perm(), info.Size())
-			if _, err := io.Copy(sum, f); err != nil {
-				return err
-			}
-		default:
-			fmt.Fprintf(sum, "O\x00%s\x00%s\x00", rel, d.Type())
-		}
-		return nil
-	})
-	if err != nil {
+	if err := hashOracleEntry(sum, abs, ".", map[string]bool{}); err != nil {
 		return abs + ": unreadable: " + err.Error()
 	}
 	return abs + " sha256 " + hex.EncodeToString(sum.Sum(nil))
+}
+
+// hashOracleEntry adds the entry at path (named rel in the tree) to sum, following links. A
+// directory already being read higher up (a link back to it) is named, not read again.
+func hashOracleEntry(sum io.Writer, path, rel string, reading map[string]bool) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(sum, "L\x00%s\x00%s\x00", rel, target)
+		if info, err = os.Stat(path); err != nil {
+			fmt.Fprintf(sum, "B\x00%s\x00", rel) // a dangling link leads nowhere
+			return nil
+		}
+	}
+	switch {
+	case info.IsDir():
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(sum, "D\x00%s\x00", rel)
+		if reading[real] {
+			fmt.Fprintf(sum, "C\x00%s\x00", rel)
+			return nil
+		}
+		reading[real] = true
+		defer delete(reading, real)
+		entries, err := os.ReadDir(path) // sorted by name
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := hashOracleEntry(sum, filepath.Join(path, e.Name()), filepath.Join(rel, e.Name()), reading); err != nil {
+				return err
+			}
+		}
+	case info.Mode().IsRegular():
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		fmt.Fprintf(sum, "F\x00%s\x00%o\x00%d\x00", rel, info.Mode().Perm(), info.Size())
+		if _, err := io.Copy(sum, f); err != nil {
+			return err
+		}
+	default:
+		fmt.Fprintf(sum, "O\x00%s\x00%s\x00", rel, info.Mode().Type())
+	}
+	return nil
 }
 
 // startedIdentity names, by content, the executable every declared command starts first, as the

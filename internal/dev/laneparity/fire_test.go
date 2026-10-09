@@ -276,6 +276,48 @@ func TestOracleIdentity_namesTheOracleByContent(t *testing.T) {
 	}
 }
 
+// The recorder follows links in the oracle: a symlinked root, directory or file is the code that
+// runs, so its bytes are the identity, not the link text.
+func TestOracleIdentity_followsLinksToTheCodeThatRuns(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	shared := filepath.Join(dir, "shared")
+	for _, d := range []string{filepath.Join(real, "components", "x", "dist"), shared} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entry := filepath.Join(real, "components", "x", "dist", "cli.js")
+	lib := filepath.Join(shared, "lib.js")
+	single := filepath.Join(dir, "single.js")
+	for _, f := range []string{entry, lib, single} {
+		if err := os.WriteFile(f, []byte("one"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(shared, filepath.Join(real, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(single, filepath.Join(real, "single.js")); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "oracle")
+	if err := os.Symlink(real, root); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{oracleIdentity("latency", root): true}
+	for name, file := range map[string]string{"the entry script under a linked root": entry, "a file in a linked directory": lib, "a linked file": single} {
+		if err := os.WriteFile(file, []byte("changed "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id := oracleIdentity("latency", root)
+		if seen[id] {
+			t.Errorf("%s changed and the oracle keeps its identity", name)
+		}
+		seen[id] = true
+	}
+}
+
 // Without an oracle, `all` has measured no latency: the report says the cell is not verified rather
 // than leaving it out of a green report; `latency` alone refuses to run.
 func TestRun_withoutAnOracleTheLatencyCellIsNotVerified(t *testing.T) {
@@ -314,29 +356,145 @@ func TestRun_withoutAnOracleTheLatencyCellIsNotVerified(t *testing.T) {
 	}
 }
 
+// rootWithPendingLeg is a view of the repository whose status files leave every fixture of leg
+// pending, whoever claims them in the checkout: the corpus the tests run on does not depend on
+// which ports the tree has merged. Everything else is linked from the real root.
+func rootWithPendingLeg(t *testing.T, leg string) string {
+	t.Helper()
+	real := repoRoot(t)
+	root := t.TempDir()
+	link := func(from, to string) {
+		t.Helper()
+		if err := os.Symlink(from, to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "contract" {
+			link(filepath.Join(real, e.Name()), filepath.Join(root, e.Name()))
+		}
+	}
+	contract, err := os.ReadDir(filepath.Join(real, "contract"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "contract", "notes", "cxc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range contract {
+		if e.Name() != "notes" {
+			link(filepath.Join(real, "contract", e.Name()), filepath.Join(root, "contract", e.Name()))
+		}
+	}
+	notes, err := os.ReadDir(filepath.Join(real, "contract", "notes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range notes {
+		if e.Name() != "cxc" {
+			link(filepath.Join(real, "contract", "notes", e.Name()), filepath.Join(root, "contract", "notes", e.Name()))
+		}
+	}
+	prefix := "hook__" + leg + "__"
+	var released []string
+	files, err := filepath.Glob(filepath.Join(real, "contract", "notes", "cxc", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Ext(path) == ".json" {
+			var note map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &note); err != nil {
+				t.Fatal(err)
+			}
+			var identical []string
+			if note["identical"] != nil {
+				if err := json.Unmarshal(note["identical"], &identical); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var kept []string
+			for _, id := range identical {
+				if strings.HasPrefix(id, prefix) {
+					released = append(released, id)
+				} else {
+					kept = append(kept, id)
+				}
+			}
+			var changed []map[string]json.RawMessage
+			if note["intentionally-changed"] != nil {
+				if err := json.Unmarshal(note["intentionally-changed"], &changed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var keptChanged []map[string]json.RawMessage
+			for _, c := range changed {
+				var id string
+				_ = json.Unmarshal(c["id"], &id)
+				if strings.HasPrefix(id, prefix) {
+					released = append(released, id)
+				} else {
+					keptChanged = append(keptChanged, c)
+				}
+			}
+			if note["identical"] != nil {
+				note["identical"], _ = json.Marshal(kept)
+			}
+			if note["intentionally-changed"] != nil {
+				note["intentionally-changed"], _ = json.Marshal(keptChanged)
+			}
+			if raw, err = json.Marshal(note); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(root, "contract", "notes", "cxc", filepath.Base(path)), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, _ := json.Marshal(map[string]any{"issue": "TEST", "pending": released})
+	if err := os.WriteFile(filepath.Join(root, "contract", "notes", "cxc", "TEST.json"), pending, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func TestMeasureLatency_timesTheGoSideAndJudgesItAgainstTheTimeout(t *testing.T) {
 	o := fireFixture(t)
+	const pendingLeg = "subagent-stop-observing-review"
 	lat, err := MeasureLatency(LatencyOptions{
 		Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Runs: 3, Attempts: 2,
-		Only: regexp.MustCompile(`^(session-start-announcing-map-affordance|pre-tool-use-guarding-github-post|subagent-stop-observing-review)$`),
+		Only: regexp.MustCompile(`^(session-start-announcing-map-affordance|pre-tool-use-guarding-github-post)$`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lat) != 3 {
+	if len(lat) != 2 {
 		t.Fatalf("%d legs timed: %+v", len(lat), lat)
 	}
 	for _, l := range lat {
-		switch l.Leg {
-		case "subagent-stop-observing-review":
-			if !l.Skipped || !l.OK || l.Runs != 0 {
-				t.Errorf("a leg no fixture exercises must be skipped, not failed: %+v", l)
-			}
-		default:
-			if l.Skipped || l.Runs != 3 || l.Oracle || l.GoP95 <= 0 || l.TimeoutMs != 10000 || l.Attempts < 1 {
-				t.Errorf("%s: %+v", l.Leg, l)
-			}
+		if l.Skipped || l.Runs != 3 || l.Oracle || l.GoP95 <= 0 || l.TimeoutMs != 10000 || l.Attempts < 1 {
+			t.Errorf("%s: %+v", l.Leg, l)
 		}
+	}
+	// A leg whose port is still pending has no claimed fixture: skipped, not failed. A tree that has
+	// merged its port claims the fixtures, and then they are timed like any other leg's.
+	lat, err = MeasureLatency(LatencyOptions{
+		Root: rootWithPendingLeg(t, pendingLeg), CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Runs: 3, Attempts: 2,
+		Only: regexp.MustCompile(`^` + pendingLeg + `$`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lat) != 1 || !lat[0].Skipped || !lat[0].OK || lat[0].Runs != 0 {
+		t.Errorf("a leg no claimed fixture exercises must be skipped, not failed: %+v", lat)
 	}
 }
 

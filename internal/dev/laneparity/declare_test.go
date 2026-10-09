@@ -3,6 +3,8 @@
 package laneparity
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,5 +149,75 @@ func TestPluginDigest_differsWhenADeclarationChanges(t *testing.T) {
 	}
 	if dc, _ := PluginDigest(b); dc == da {
 		t.Error("the digest ignores a changed timeout")
+	}
+}
+
+// A hook file the manifest lists anywhere in the root is a declaration: the digest that keys report
+// reuse holds it, so changing a matcher or timeout there is another plugin root.
+func TestPluginDigest_holdsADeclaredHookFileOutsideWiringHooks(t *testing.T) {
+	dir, _ := generated(t)
+	manifestPath := filepath.Join(dir, ".codex-plugin", "plugin.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest["hooks"] = append(manifest["hooks"].([]any), "./h.json")
+	out, _ := json.Marshal(manifest)
+	if err := os.WriteFile(manifestPath, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(dir, "h.json")
+	write := func(timeout string) {
+		t.Helper()
+		body := `{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"/bin/true","timeout":` + timeout + `}]}]}}`
+		if err := os.WriteFile(external, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("10")
+	a, err := PluginDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("11")
+	if b, _ := PluginDigest(dir); b == a {
+		t.Error("the digest ignores a declared hook file outside wiring/hooks")
+	}
+}
+
+// A relative source checkout (--repo .) must not become the target of links in another directory.
+func TestGeneratePluginRoot_aRelativeSourceKeepsTheSkills(t *testing.T) {
+	root := repoRoot(t)
+	legs, err := ExpectedLegs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	dest := filepath.Join(t.TempDir(), "crw")
+	if err := GeneratePluginRoot(dest, filepath.Join("plugins", "crw"), "/opt/crw-under-test/crw", legs); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{filepath.Join("skills", "crw-run", "SKILL.md"), "LICENSE"} {
+		if _, err := os.Stat(filepath.Join(dest, rel)); err != nil {
+			t.Errorf("%s is not reachable through a root generated from a relative source: %v", rel, err)
+		}
+	}
+}
+
+// The same through the command line: --repo . writes a root whose links resolve.
+func TestRun_pluginRootWithARelativeRepo(t *testing.T) {
+	root := repoRoot(t)
+	t.Chdir(root)
+	dest := filepath.Join(t.TempDir(), "crw")
+	var out, errs bytes.Buffer
+	if code := Run([]string{"plugin-root", "--repo", ".", "--crw", "/opt/crw-under-test/crw", "--out", dest}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s %s", code, out.String(), errs.String())
+	}
+	if _, err := os.Stat(filepath.Join(dest, "skills", "crw-run", "SKILL.md")); err != nil {
+		t.Errorf("the generated skills link does not resolve: %v", err)
 	}
 }

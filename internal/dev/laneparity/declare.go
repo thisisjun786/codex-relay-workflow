@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -249,6 +250,11 @@ type hookEntry struct {
 // the harness and for the first cells of a run before the activation PR lands; any other root can
 // be named instead.
 func GeneratePluginRoot(dest, src, crw string, legs []Leg) error {
+	// The links point at src from dest, a directory elsewhere: a relative src would be read from there.
+	src, err := filepath.Abs(src)
+	if err != nil {
+		return err
+	}
 	if strings.ContainsAny(crw, "\"$`\\\n") || !filepath.IsAbs(crw) {
 		return fmt.Errorf("crw path %q must be absolute and free of quote, dollar, backtick and backslash", crw)
 	}
@@ -351,8 +357,9 @@ func copyExceptHooks(src, dest string) error {
 	})
 }
 
-// PluginDigest identifies a plugin root's declaration surface: a hash over the manifest and every
-// hook file with their paths. Two plugins that declare the same event differ in it.
+// PluginDigest identifies a plugin root's declaration surface: a hash over the manifest, every
+// file under wiring/hooks and every hook file the manifest lists (wherever in the root it sits),
+// with their paths. Two plugins that declare the same event differ in it.
 func PluginDigest(root string) (string, error) {
 	sum := sha256.New()
 	var paths []string
@@ -373,10 +380,23 @@ func PluginDigest(root string) (string, error) {
 			return "", err
 		}
 	}
+	// A hook file the manifest lists outside those directories is a declaration all the same. A
+	// manifest that cannot be read leaves only the files above; the registration cell reports it.
+	if manifest, err := readManifest(root); err == nil {
+		for _, rel := range manifest.Hooks {
+			if clean, err := hookPath(rel); err == nil {
+				paths = append(paths, filepath.Join(root, clean))
+			}
+		}
+	}
 	sort.Strings(paths)
+	paths = slices.Compact(paths)
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // listed but missing: the registration cell fails it
+			}
 			return "", err
 		}
 		rel, _ := filepath.Rel(root, path)
