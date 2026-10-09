@@ -2,6 +2,8 @@ package job
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -27,11 +29,12 @@ crw relay job off | on | status                    완료 웨이크 스위치 (�
 crw relay job drain --session <id> [--json]        미전달 완료를 받아가고 전달 표시
 crw relay job removal                              제거 체크리스트`
 
-func cliFormatList(recs []BgRecord) string {
-	if len(recs) == 0 {
+// cliFormatList lists the records and then the broken record files, which are reported and left as they are (CRW-1134).
+func cliFormatList(recs []BgRecord, broken []BrokenRecord) string {
+	if len(recs) == 0 && len(broken) == 0 {
 		return "백그라운드 작업 없음"
 	}
-	lines := make([]string, len(recs))
+	lines := make([]string, len(recs), len(recs)+len(broken))
 	for i, rec := range recs {
 		lines[i] = DescribeRecord(rec)
 		if IsTerminal(rec.Status) {
@@ -41,6 +44,9 @@ func cliFormatList(recs []BgRecord) string {
 			}
 			lines[i] += "  [" + delivered + "]"
 		}
+	}
+	for _, b := range broken {
+		lines = append(lines, "- "+b.ID+" (손상된 기록: "+b.Reason+") — 파일을 그대로 둡니다")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -85,7 +91,7 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 	case "list":
 		var recs []BgRecord
 		recs, err = ListRecords(cwd, clock)
-		result.Out = cliFormatList(recs)
+		result.Out = cliFormatList(recs, BrokenRecords(cwd))
 		if err == nil && asJSON {
 			items := make([]any, 0, len(recs))
 			for _, rec := range recs {
@@ -98,8 +104,12 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 			result.Out = items
 		}
 	case "get", "cancel":
-		rec, ok := ReadRecord(cwd, id)
-		if !ok {
+		rec, readErr := readRecord(cwd, id)
+		var broken BrokenRecord
+		if errors.As(readErr, &broken) {
+			return CLIResult{broken.Error() + " — 파일을 그대로 둡니다: " + RecordPath(cwd, id), 1}, nil
+		}
+		if readErr != nil {
 			code := 0
 			if verb == "get" {
 				code = 1
@@ -110,14 +120,17 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 			return cliCancel(cwd, rec, clock)
 		} else {
 			rec, err = Reconcile(cwd, rec, clock)
+			// The final newline ends the last line and is not a line of its own, and the lines are shown as they are, spaces and
+			// blank lines included (CRW-1134; the oracle counted the empty string after the last newline and trimmed the output).
 			body, _ := ReadText(OutPath(cwd, id))
-			lines := text.SplitLinesByteExact(body)
-			tail := cliTail(opts.Tail, len(lines))
-			shown := ""
-			if tail > 0 {
-				shown = strings.Join(lines[len(lines)-tail:], "\n")
+			var lines []string
+			if body != "" {
+				lines = text.SplitLinesByteExact(strings.TrimSuffix(body, "\n"))
 			}
-			result.Out = strings.TrimRightFunc(DescribeRecord(rec)+"\n\n"+shown, func(r rune) bool { return text.Trim(string(r)) == "" })
+			result.Out = DescribeRecord(rec)
+			if tail := cliTail(opts.Tail, len(lines)); tail > 0 {
+				result.Out = DescribeRecord(rec) + "\n\n" + strings.Join(lines[len(lines)-tail:], "\n")
+			}
 		}
 	case "off", "on":
 		result.Out, err = cliSwitch(cwd, verb, clock)
@@ -136,11 +149,18 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 			if state.Since != nil {
 				since = *state.Since
 			}
+			if state.Err != nil {
+				since = "읽을 수 없음: " + state.Err.Error()
+			}
 			flag = "  파일 플래그: off (" + since + ")"
 		}
 		var recs []BgRecord
 		recs, err = ListRecords(cwd, clock)
-		result.Out = strings.Join([]string{"wake: " + wake, flag, "  " + EnvVar + ": " + env, "  작업 " + strconv.Itoa(len(recs)) + "건"}, "\n")
+		count := "  작업 " + strconv.Itoa(len(recs)) + "건"
+		if broken := BrokenRecords(cwd); len(broken) > 0 {
+			count += ", 손상된 기록 " + strconv.Itoa(len(broken)) + "건 (crw relay job list)"
+		}
+		result.Out = strings.Join([]string{"wake: " + wake, flag, "  " + EnvVar + ": " + env, count}, "\n")
 	case "drain":
 		session := opts.Session
 		if session == nil {
@@ -207,6 +227,10 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 	if verb == "on" {
 		if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
 			return "", err
+		}
+		// RemovePath ignores what it cannot remove (a directory): the switch would stay off while on says ON (CRW-1134).
+		if _, err := os.Lstat(DisabledPath(cwd)); !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("the off switch %s cannot be removed, so the wake stays off", DisabledPath(cwd))
 		}
 	}
 	_ = appendLedger(cwd, Event{{"event", event}}, clock)

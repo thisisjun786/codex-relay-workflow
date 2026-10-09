@@ -1,0 +1,125 @@
+{
+  "issue": "CRW-1134",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__bg__cancel_running_job_kills_group",
+      "reason": "Claim handover from CRW-345, whose reason stands: Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist. CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":{\"id\":\"<BG_1>\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"sh\",\"-c\",\"exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done\"],\"note\":null,\"pid\":\"<PID>\",\"startToken\":\"Thu Jan  1 00:00:00 2026\",\"status\":\"running\",\"exitCode\":null,\"startedAt\":\"<TS>\",\"endedAt\":null,\"deliveredAt\":null}}",
+        "steps/3/form": "json-pretty",
+        "steps/3/stdout": "{\"out\":\"<BG_1> cancelled\"}",
+        "steps/5/form": "json-pretty",
+        "steps/5/stdout": "{\"out\":[{\"id\":\"<BG_1>\",\"sessionId\":\"rec-s1\",\"adoptedBy\":null,\"cwd\":\"${WS}\",\"command\":[\"sh\",\"-c\",\"exec 2>/dev/null; trap 'echo term > probe/term.tmp && mv probe/term.tmp probe/term; exit 143' TERM; echo ready > probe/ready.tmp && mv probe/ready.tmp probe/ready; while [ -d probe ]; do sleep 1 & wait $!; done\"],\"note\":null,\"pid\":\"<PID>\",\"startToken\":\"Thu Jan  1 00:00:00 2026\",\"status\":\"cancelled\",\"exitCode\":null,\"startedAt\":\"<TS>\",\"endedAt\":\"<TS>\",\"deliveredAt\":null}]}",
+        "tree/ws/.crw/bg/<BG_1>.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "cli__bg__drain_session_ignores_off_switch",
+      "reason": "Claim handover from CRW-345, whose reason stands: Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist. CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":{\"delivered\":true,\"text\":\"[crw bg] \\ubc31\\uadf8\\ub77c\\uc6b4\\ub4dc \\uc791\\uc5c5 1\\uac74\\uc774 \\ub05d\\ub0ac\\uc2b5\\ub2c8\\ub2e4.\\n- e1 (complete, exit 0, 4m12s) \\u2014 npm run build\\n\\ucd9c\\ub825\\uc740 `crw relay job get <id> --tail 40`\\uc73c\\ub85c \\ubd05\\ub2c8\\ub2e4. \\uc804\\uccb4 \\ubaa9\\ub85d\\uc740 `crw relay job list`.\\n\\uacb0\\uacfc\\ub97c \\ud655\\uc778\\ud558\\uace0 \\ud544\\uc694\\ud55c \\ud6c4\\uc18d \\uc791\\uc5c5\\uc744 \\uc774\\uc5b4\\uac00\\uc138\\uc694.\"}}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":\"\\ubbf8\\uc804\\ub2ec \\uc644\\ub8cc \\uc5c6\\uc74c\"}",
+        "steps/2/form": "empty",
+        "steps/2/stdout": "",
+        "steps/2/exit": "2",
+        "steps/2/stderr": "usage: crw relay job drain [-h] --session SESSION [--json]\ncrw relay job drain: error: the following arguments are required: --session\n",
+        "exit": "2",
+        "tree/ws/.crw/bg/e1.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "cli__bg__get_tail_and_missing_id",
+      "reason": "Claim handover from CRW-345, whose reason stands: Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist. CRW-1134 (known-defects/CRW-1134.md): get no longer counts the empty string after the output's final newline as a line, and shows the lines as they are: the default tail is the last twenty lines (6 to 25) and --tail 3 is three lines (23 to 25), where the oracle showed 19 and 2.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"- b1 (complete, exit 0, 4m12s) \\u2014 npm run build\\n\\nline 6\\nline 7\\nline 8\\nline 9\\nline 10\\nline 11\\nline 12\\nline 13\\nline 14\\nline 15\\nline 16\\nline 17\\nline 18\\nline 19\\nline 20\\nline 21\\nline 22\\nline 23\\nline 24\\nline 25\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":\"- b1 (complete, exit 0, 4m12s) \\u2014 npm run build\\n\\nline 23\\nline 24\\nline 25\"}",
+        "steps/2/form": "json-pretty",
+        "steps/2/stdout": "{\"out\":\"- b1 (complete, exit 0, 4m12s) \\u2014 npm run build\"}",
+        "steps/3/form": "json-pretty",
+        "steps/3/stdout": "{\"out\":\"\\uc5c6\\ub294 id: nope\"}"
+      }
+    },
+    {
+      "id": "cli__bg__off_on_status",
+      "reason": "Claim handover from CRW-345, whose reason stands: Approved generation-2 scope: existing relay usage, strict flags/verbs and answer envelopes win; original job data and messages are retained under out. Removal uses the existing CRW checklist. CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "steps/0/form": "json-pretty",
+        "steps/0/stdout": "{\"out\":\"wake: ON\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: on\\n  CRW_BGWAKE: unset/on\\n  \\uc791\\uc5c5 1\\uac74\"}",
+        "steps/1/form": "json-pretty",
+        "steps/1/stdout": "{\"out\":\"bg wake OFF (\\uc774 \\uc6cc\\ud06c\\ud2b8\\ub9ac). \\ub2e4\\uc2dc \\ucf1c\\ub824\\uba74: crw relay job on\"}",
+        "steps/2/form": "json-pretty",
+        "steps/2/stdout": "{\"out\":\"wake: OFF\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: off (<TS>)\\n  CRW_BGWAKE: unset/on\\n  \\uc791\\uc5c5 1\\uac74\"}",
+        "steps/3/form": "json-pretty",
+        "steps/3/stdout": "{\"out\":\"bg wake ON. \\uaebc\\uc838 \\uc788\\ub294 \\ub3d9\\uc548 \\ub05d\\ub09c \\uc791\\uc5c5\\uc740 \\uc6e8\\uc774\\ud06c\\ud558\\uc9c0 \\uc54a\\uace0 crw relay job list \\uc5d0\\ub9cc \\ub0a8\\uc2b5\\ub2c8\\ub2e4.\"}",
+        "steps/4/form": "json-pretty",
+        "steps/4/stdout": "{\"out\":\"bg wake \\uc774\\ubbf8 ON\"}",
+        "steps/5/form": "json-pretty",
+        "steps/5/stdout": "{\"out\":\"wake: ON\\n  \\ud30c\\uc77c \\ud50c\\ub798\\uadf8: on\\n  CRW_BGWAKE: unset/on\\n  \\uc791\\uc5c5 1\\uac74\"}",
+        "tree/ws/.crw/bg/enabled-at/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "hook__session-start-adopting-background-completions__adopts_previous_sessions_completion",
+      "reason": "Claim handover from CRW-490, which replayed it identical; CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "tree/ws/.crw/bg/build1.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "hook__session-start-adopting-background-completions__off_flag_adopts_silently",
+      "reason": "Claim handover from CRW-490, which replayed it identical; CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "tree/ws/.crw/bg/build1.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "hook__stop-waking-on-background-completion__missing_session_id_falls_back_to_codex_thread_id",
+      "reason": "Claim handover from CRW-490, which replayed it identical; CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "tree/ws/.crw/bg/build1.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "hook__stop-waking-on-background-completion__undelivered_completion_blocks_once_then_releases",
+      "reason": "Claim handover from CRW-490, which replayed it identical; CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "tree/ws/.crw/bg/build1.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "hook__stop-waking-on-background-completion__wake_carries_at_most_five",
+      "reason": "Claim handover from CRW-490, which replayed it identical; CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "tree/ws/.crw/bg/job1.json/mode": "0600",
+        "tree/ws/.crw/bg/job2.json/mode": "0600",
+        "tree/ws/.crw/bg/job3.json/mode": "0600",
+        "tree/ws/.crw/bg/job4.json/mode": "0600",
+        "tree/ws/.crw/bg/job5.json/mode": "0600",
+        "tree/ws/.crw/bg/job6.json/mode": "0600",
+        "tree/ws/.crw/bg/job7.json/mode": "0600",
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600"
+      }
+    },
+    {
+      "id": "hook__user-prompt-submit-delivering-background-completions__injects_once_and_never_decides",
+      "reason": "Claim handover from CRW-490, which replayed it identical; CRW-1134 (known-defects/CRW-1134.md): the bg store is private to its owner from its first write: a record, the ledger and the switch files this run creates or rewrites are 0600 and a bg directory it creates is 0700 (a directory that exists already keeps its mode); the oracle wrote them 0644 and 0755 under the recorded umask.",
+      "set": {
+        "tree/ws/.crw/bg/ledger.jsonl/mode": "0600",
+        "tree/ws/.crw/bg/test1.json/mode": "0600"
+      }
+    }
+  ]
+}

@@ -242,14 +242,21 @@ func runHook(ctx context.Context, event string, in io.Reader, stdout io.Writer, 
 			code = 0
 		}
 	}()
-	raw, overflow := harness.ReadStdin(in)
+	// harness.ReadStdin's bound and decoding, with the read error kept apart from empty input: input that failed to read or passed a
+	// bound is not the empty payload, whose cwd and CODEX_THREAD_ID fallbacks could wake or adopt for the wrong session, and the hook
+	// does nothing with it (CRW-1134).
+	b, err := io.ReadAll(io.LimitReader(in, harness.MaxStdinBytes+1))
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
-	if overflow || hookUnits(raw) > MaxHookUnits {
-		raw = ""
+	raw, unusable := decodeUTF8(b), err != nil || len(b) > harness.MaxStdinBytes
+	if unusable || hookUnits(raw) > MaxHookUnits {
+		raw, unusable = "", true
 	}
 	harness.RecordInvocation(raw, "bg-wake", event, env)
+	if unusable {
+		return 0
+	}
 	p, out := parseHookPayload(raw), ""
 	getenv := func(k string) string { v, _ := env(k); return v }
 	// Stop and UserPromptSubmit write their envelope from inside the delivery, so a completion is stamped only after its text reached

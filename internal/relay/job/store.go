@@ -13,6 +13,11 @@
 //   - EnsureDir makes the same judgment of .crw and bg, so the ledger and the spawn, which begin with it, stay inside the workspace.
 //   - AtomicWrite creates its temporary file exclusively, and the ledger is opened without following a link.
 //
+// The store is private to its owner (CRW-1134): EnsureDir creates bg with mode 0700, and the records, the switch files and the ledger
+// are created 0600 from their first write; a bg directory that exists already is not changed (no chmod of the tree). The privacy
+// matters because a record and the ledger keep the job's command as it was given, every argument included, for diagnosis: a secret
+// passed as an argument stays in <id>.json and ledger.jsonl until the operator deletes .crw/bg.
+//
 // This is a work control, not a boundary against a writer that swaps a link between the check and the use; a hard link is a second
 // name for its file and is not detected. Reads still follow links, as the oracle's did. Two oracle values have no Go spelling: a lone
 // surrogate (such input becomes U+FFFD; a caller that must keep it passes the raw token as json.RawMessage) and
@@ -78,7 +83,7 @@ func EnsureDir(cwd string) (string, error) {
 	if err := inside(cwd, dir); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil { // private from its creation (CRW-1134)
 		return "", err
 	}
 	return dir, nil
@@ -128,8 +133,9 @@ func confined(cwd, path string) (string, error) {
 }
 
 // AtomicWrite publishes text at path through a temporary file beside it and a rename, so a reader never sees a torn file
-// (atomicWrite). The temporary file is <path>.tmp-<pid>-<ms>, created exclusively; a taken name (a write of the same target in the same
-// millisecond, a planted entry) is skipped for <path>.tmp-<pid>-<ms>-1 and on. A rename that fails leaves it behind, as the oracle did.
+// (atomicWrite). The temporary file is <path>.tmp-<pid>-<ms>, created exclusively with mode 0600; a taken name (a write of the same
+// target in the same millisecond, a planted entry) is skipped for <path>.tmp-<pid>-<ms>-1 and on. A write or a rename that fails
+// removes the temporary file this call created, which the oracle left behind (CRW-1134); no other file is touched.
 func AtomicWrite(cwd, path, text string) error {
 	return atomicWrite(cwd, path, text, os.Getpid(), time.Now().UnixMilli())
 }
@@ -143,7 +149,11 @@ func atomicWrite(cwd, path, text string, pid int, ms int64) error {
 	if err != nil {
 		return err
 	}
-	return crwdir.Rename(tmp, path)
+	if err := crwdir.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp) // our own unpublished file
+		return err
+	}
+	return nil
 }
 
 // writeTemp writes text to a new temporary file beside path, <path>.tmp-<pid>-<ms> or the first free -<n> after it, and returns its name.
@@ -151,16 +161,17 @@ func writeTemp(path, text string, pid int, ms int64) (string, error) {
 	const exclusive = os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	base := path + ".tmp-" + strconv.Itoa(pid) + "-" + strconv.FormatInt(ms, 10)
 	tmp := base
-	f, err := os.OpenFile(tmp, exclusive, 0o666)
+	f, err := os.OpenFile(tmp, exclusive, 0o600)
 	for try := 1; errors.Is(err, os.ErrExist) && try < 100; try++ {
 		tmp = base + "-" + strconv.Itoa(try)
-		f, err = os.OpenFile(tmp, exclusive, 0o666)
+		f, err = os.OpenFile(tmp, exclusive, 0o600)
 	}
 	if err != nil {
 		return "", err
 	}
 	_, err = f.WriteString(text)
 	if err = errors.Join(err, f.Close()); err != nil {
+		_ = os.Remove(tmp) // created exclusively above, so it is ours
 		return "", err
 	}
 	return tmp, nil
@@ -168,11 +179,17 @@ func writeTemp(path, text string, pid int, ms int64) (string, error) {
 
 // ReadText is the text of the file as Node reads it with "utf8", or false when it is missing or cannot be read (readTextOrNull).
 func ReadText(path string) (string, bool) {
+	text, err := readText(path)
+	return text, err == nil
+}
+
+// readText is ReadText with the error, for a caller that must tell a missing file from one that does not read.
+func readText(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		return "", err
 	}
-	return decodeUTF8(b), true
+	return decodeUTF8(b), nil
 }
 
 // ReadJSON is the text of a file that holds one JSON object or array, or false (readJsonOrNull; its typeof test lets an array through).
@@ -256,7 +273,7 @@ func appendLedger(cwd string, event Event, now func() time.Time) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, LedgerFile), os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o666)
+	f, err := os.OpenFile(filepath.Join(dir, LedgerFile), os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}

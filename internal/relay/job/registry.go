@@ -3,9 +3,9 @@
 //
 // Behaviour is the oracle's; the differences are these. Every function takes the workspace the caller trusts and acts on its record,
 // exit file and ledger, never on the cwd field of a record it has read (store.go's rule; the oracle wrote through rec.cwd). Time comes
-// from a clock the caller passes, read where the oracle reads Date. A record is decoded by key: isRecord's four tests are the oracle's,
-// a key this port does not name is kept and written back, and any other field that is absent or of another type reads as null (a record
-// the oracle writes has all thirteen keys, typed). Date.parse reads the standard spellings (a zone-less date-time as local time) and
+// from a clock the caller passes, read where the oracle reads Date. A record is decoded by key and checked whole before any lifecycle
+// step (CRW-1134): all thirteen keys of the oracle's record must be there with their types, a key this port does not name is kept and
+// written back, and a file that fails the check is a broken record, which nothing changes and list, get, cancel and status report. Date.parse reads the standard spellings (a zone-less date-time as local time) and
 // answers NaN for what V8's legacy parser adds, and the sort by endedAt compares bytes where the oracle used localeCompare, which
 // agrees for the UTC stamps the oracle writes.
 
@@ -69,10 +69,46 @@ type BgRecord struct {
 	Extra       []Member
 }
 
-// isRecord is the oracle's test of a parsed record: id, cwd and status are text and command is an array. A null is not text.
-func isRecord(m map[string]json.RawMessage) bool {
-	is := func(key string, first byte) bool { v := m[key]; return len(v) > 0 && v[0] == first }
-	return is("id", '"') && is("cwd", '"') && is("command", '[') && is("status", '"')
+// recordKeys are the thirteen keys of a record, each with the test of its value: s text, s? text or null, n? a number or null, i? an
+// integer or null, [s] an array of text, and st one of the statuses.
+var recordKeys = []struct{ key, kind string }{{"id", "s"}, {"sessionId", "s?"}, {"adoptedBy", "s?"}, {"cwd", "s"}, {"command", "[s]"},
+	{"note", "s?"}, {"pid", "i?"}, {"startToken", "s?"}, {"status", "st"}, {"exitCode", "n?"}, {"startedAt", "s"}, {"endedAt", "s?"},
+	{"deliveredAt", "s?"}}
+
+// checkRecord is the whole-record test (CRW-1134): the oracle's isRecord tested four keys, so a file without deliveredAt was taken as
+// delivered, a fractional pid as a dead process and a number in command was joined by coercion. It names the first key that fails.
+func checkRecord(m map[string]json.RawMessage) error {
+	for _, k := range recordKeys {
+		raw, ok := m[k.key]
+		if !ok {
+			return fmt.Errorf("no %q", k.key)
+		}
+		if strings.HasSuffix(k.kind, "?") && string(raw) == "null" {
+			continue
+		}
+		var bad bool
+		switch strings.TrimSuffix(k.kind, "?") {
+		case "s":
+			var v string
+			bad = json.Unmarshal(raw, &v) != nil
+		case "[s]":
+			var v []string
+			bad = len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &v) != nil
+		case "n":
+			var v float64
+			bad = len(raw) == 0 || raw[0] == '"' || json.Unmarshal(raw, &v) != nil
+		case "i":
+			var v int
+			bad = json.Unmarshal(raw, &v) != nil
+		case "st":
+			var v BgStatus
+			bad = json.Unmarshal(raw, &v) != nil || !slices.Contains([]BgStatus{StatusRunning, StatusComplete, StatusFailed, StatusCancelled, StatusCancelRequested}, v)
+		}
+		if bad {
+			return fmt.Errorf("%q is %s", k.key, raw)
+		}
+	}
+	return nil
 }
 
 // opt is a pointer as a record or ledger value: nil is null.
@@ -108,25 +144,33 @@ func writeRecord(ws string, rec BgRecord, clock func() time.Time) error {
 	return atomicWrite(ws, RecordPath(ws, rec.ID), string(b), os.Getpid(), clock().UnixMilli())
 }
 
-// errRecordGone is a record that is not there, or does not read, when a writer goes back to it under the lock.
-const errRecordGone = sentinel("the record is gone or does not read")
+// errRecordGone is a record that is not there when a writer goes back to it under the lock.
+const errRecordGone = sentinel("the record is gone")
 
-// readRecord is ReadRecord as an error.
-func readRecord(ws, id string) (BgRecord, error) {
-	rec, ok := ReadRecord(ws, id)
-	if !ok {
-		return BgRecord{}, errRecordGone
-	}
-	return rec, nil
+// BrokenRecord is a file of the store, <id>.json, that does not read as a record: it cannot be read, is not a JSON object, fails the
+// whole-record check or holds another id. Nothing changes such a file.
+type BrokenRecord struct {
+	ID     string
+	Reason string
 }
 
-// ReadRecord is the record of that id, or false when its file is missing, is not a JSON object, fails isRecord or holds another id: the
-// oracle returned it under the id asked for and then wrote its corrections to the record file of the id it held (readRecord).
-func ReadRecord(ws, id string) (BgRecord, bool) {
-	raw, ok := ReadJSON(RecordPath(ws, id))
+func (e BrokenRecord) Error() string { return "손상된 기록 " + e.ID + ": " + e.Reason }
+
+// readRecord is the record of that id, errRecordGone when its file is missing, or a BrokenRecord.
+func readRecord(ws, id string) (BgRecord, error) {
+	raw, err := readText(RecordPath(ws, id))
+	if errors.Is(err, os.ErrNotExist) {
+		return BgRecord{}, errRecordGone
+	}
+	if err != nil {
+		return BgRecord{}, BrokenRecord{id, "읽을 수 없음 (" + err.Error() + ")"}
+	}
 	var m map[string]json.RawMessage
-	if !ok || json.Unmarshal(raw, &m) != nil || !isRecord(m) {
-		return BgRecord{}, false
+	if !json.Valid([]byte(raw)) || json.Unmarshal([]byte(raw), &m) != nil || m == nil {
+		return BgRecord{}, BrokenRecord{id, "JSON 객체가 아님"}
+	}
+	if err := checkRecord(m); err != nil {
+		return BgRecord{}, BrokenRecord{id, err.Error()}
 	}
 	get := func(key string) json.RawMessage { raw := m[key]; delete(m, key); return raw }
 	rec := BgRecord{ID: str(get("id")), SessionID: nullable[string](get("sessionId")), AdoptedBy: nullable[string](get("adoptedBy")), Cwd: str(get("cwd")),
@@ -134,12 +178,31 @@ func ReadRecord(ws, id string) (BgRecord, bool) {
 		ExitCode: nullable[float64](get("exitCode")), StartedAt: str(get("startedAt")), EndedAt: nullable[string](get("endedAt")), DeliveredAt: nullable[string](get("deliveredAt"))}
 	_ = json.Unmarshal(get("command"), &rec.Command)
 	if rec.ID != id {
-		return BgRecord{}, false
+		return BgRecord{}, BrokenRecord{id, "다른 id를 담음 (" + rec.ID + ")"}
 	}
 	for _, key := range slices.Sorted(maps.Keys(m)) {
 		rec.Extra = append(rec.Extra, Member{key, m[key]})
 	}
-	return rec, true
+	return rec, nil
+}
+
+// ReadRecord is the record of that id, or false when its file is missing or is a broken record (readRecord): the oracle returned a
+// record under the id asked for whatever id it held and then wrote its corrections to the record file of the id it held.
+func ReadRecord(ws, id string) (BgRecord, bool) {
+	rec, err := readRecord(ws, id)
+	return rec, err == nil
+}
+
+// BrokenRecords is every broken record of the store, in the order of ListRecordIDs.
+func BrokenRecords(ws string) []BrokenRecord {
+	var out []BrokenRecord
+	for _, id := range ListRecordIDs(ws) {
+		var broken BrokenRecord
+		if _, err := readRecord(ws, id); errors.As(err, &broken) {
+			out = append(out, broken)
+		}
+	}
+	return out
 }
 
 // nullable is the JSON value as a pointer, nil for null and for a value of another type than T; str is a string, empty for any other.
@@ -186,21 +249,20 @@ type ExitRead struct {
 	Code  float64
 }
 
-// readExitCode reads the exit file; like parseInt it takes the sign and digits the body starts with, so "3x" is 3, and like
-// Number.isFinite it leaves an infinite one pending.
+// readExitCode reads the exit file. Its body, trimmed, must be one whole integer with an optional sign and finite as a number; anything
+// else is a write in progress (pending). The oracle took the integer prefix (parseInt), so a half-written "1" of "127", or "3x", was a
+// final code (CRW-1134).
 func readExitCode(ws, id string) ExitRead {
 	raw, ok := ReadText(ExitPath(ws, id))
 	if !ok {
 		return ExitRead{State: "absent"}
 	}
-	body, end := text.Trim(raw), 0
-	if body != "" && (body[0] == '+' || body[0] == '-') {
-		end++
+	body := text.Trim(raw)
+	digits := strings.TrimLeft(body, "+-")
+	if len(body)-len(digits) > 1 || digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return ExitRead{State: "pending"}
 	}
-	for end < len(body) && body[end] >= '0' && body[end] <= '9' {
-		end++
-	}
-	code, err := strconv.ParseFloat(body[:end], 64)
+	code, err := strconv.ParseFloat(body, 64)
 	if err != nil || math.IsInf(code, 0) {
 		return ExitRead{State: "pending"}
 	}
@@ -261,7 +323,12 @@ func reconcile(ws string, rec BgRecord, clock func() time.Time, held bool) (BgRe
 		}
 	case rec.PID == nil: // the shell never spawned, so only age bounds the record
 		started, ok := dateMs(rec.StartedAt)
-		if !ok || nowMs()-float64(started) <= PendingExitGraceMs {
+		if !ok {
+			// No pid, no exit file and no age: nothing will ever settle it, and no process can be named as its owner (CRW-1134).
+			event = Event{{"event", "completed"}, {"id", rec.ID}, {"exitCode", nil}, {"detail", "startedAt unreadable"}}
+			break
+		}
+		if nowMs()-float64(started) <= PendingExitGraceMs {
 			return rec, nil
 		}
 	default:
@@ -289,6 +356,16 @@ func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time, 
 		}
 		fixed := cur
 		fixed.Status, fixed.ExitCode, fixed.EndedAt = next.Status, next.ExitCode, next.EndedAt
+		if next.ExitCode == nil {
+			// The shell may have published its code since the exit file was read: the code wins over "vanished" (CRW-1134).
+			if exit := readExitCode(ws, rec.ID); exit.State == "known" {
+				code := exit.Code
+				fixed.Status, fixed.ExitCode, event = StatusComplete, &code, Event{{"event", "completed"}, {"id", rec.ID}, {"exitCode", code}}
+				if code != 0 {
+					fixed.Status = StatusFailed
+				}
+			}
+		}
 		if cur.Status == StatusCancelRequested {
 			if cur.PID != nil && !groupEnded(*cur.PID) {
 				return change{}
@@ -297,8 +374,9 @@ func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time, 
 		}
 		return change{next: fixed, event: event, write: true}
 	})
-	if errors.Is(err, errRecordGone) {
-		return rec, nil // nothing to correct any more
+	var broken BrokenRecord
+	if errors.Is(err, errRecordGone) || errors.As(err, &broken) {
+		return rec, nil // nothing to correct any more, or nothing this port may change
 	}
 	if err != nil {
 		return rec, err
@@ -334,20 +412,28 @@ func listRecords(ws string, clock func() time.Time, held bool) ([]BgRecord, erro
 	return out, nil
 }
 
-// DisabledState is the "bg off" switch: whether its file could be read (the oracle's readTextOrNull answers null for every read error,
-// so an unreadable file is not off), and the time the file holds (disabledState).
+// DisabledState is the "bg off" switch: whether it is off, the time the file holds, and Err when the file is there but does not read
+// (disabledState). Only a missing file is on: the oracle's readTextOrNull answered null for every read error, so an unreadable switch
+// (a directory, a file without read permission) let the wake run against "bg off" (CRW-1134). It is now off, with the error.
 type DisabledState struct {
 	Disabled bool
 	Since    *string
+	Err      error
 }
 
 // ReadDisabledState reads the switch file of the workspace.
 func ReadDisabledState(ws string) DisabledState {
-	raw, ok := ReadText(DisabledPath(ws))
-	if since := text.Trim(raw); ok && since != "" {
+	raw, err := readText(DisabledPath(ws))
+	if errors.Is(err, os.ErrNotExist) {
+		return DisabledState{}
+	}
+	if err != nil {
+		return DisabledState{Disabled: true, Err: err}
+	}
+	if since := text.Trim(raw); since != "" {
 		return DisabledState{Disabled: true, Since: &since}
 	}
-	return DisabledState{Disabled: ok}
+	return DisabledState{Disabled: true}
 }
 
 // EnvDisabled is the environment kill switch; it reaches only sessions started after it was exported (envDisabled).
@@ -476,7 +562,8 @@ func adoptOrphans(ws string, sessionID *string, clock func() time.Time, recs []B
 			next.AdoptedBy = sessionID
 			return change{next: next, event: Event{{"event", "adopted"}, {"id", rec.ID}, {"sessionId", *sessionID}, {"at", at}}, write: true}
 		})
-		if errors.Is(err, errRecordGone) {
+		var broken BrokenRecord
+		if errors.Is(err, errRecordGone) || errors.As(err, &broken) {
 			err = nil
 			continue
 		}

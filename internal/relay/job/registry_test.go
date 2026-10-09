@@ -91,15 +91,21 @@ func TestWriteRecordIsJSONStringifyWithTwoSpaces(t *testing.T) {
 	}
 }
 
-func TestReadRecordKeepsTheOraclesFourTestsAndTheKeysItDoesNotName(t *testing.T) {
-	const head = "{\"cwd\":\"x\",\"command\":[],\"status\":\"s\","
+func TestReadRecordWantsTheWholeRecordAndKeepsTheKeysItDoesNotName(t *testing.T) { // CRW-1134: the oracle tested four keys
+	full := "\"sessionId\":null,\"adoptedBy\":null,\"cwd\":\"x\",\"command\":[],\"note\":null,\"pid\":null,\"startToken\":null,\"status\":\"running\"," +
+		"\"exitCode\":null,\"startedAt\":\"2026-09-09T00:00:00.000Z\",\"endedAt\":null,\"deliveredAt\":null"
 	for name, c := range map[string]struct {
 		text string
 		ok   bool
-	}{ // oracle: only the minimal record is listed
+	}{
 		"junk": {"nope", false}, "empty object": {"{}", false}, "array": {"[1]", false}, "no command": {"{\"id\":\"n\",\"cwd\":\"x\",\"status\":\"running\"}", false},
-		"upper-case key": {"{\"ID\":\"u\",\"cwd\":\"x\",\"command\":[],\"status\":\"s\"}", false}, "null id": {head + "\"id\":null}", false}, "minimal": {head + "\"id\":\"m\"}", true},
-		"another record's id": {head + "\"id\":\"b\"}", false},
+		"the oracle's minimal four": {"{\"cwd\":\"x\",\"command\":[],\"status\":\"running\",\"id\":\"m\"}", false},
+		"null id":                   {"{\"id\":null," + full + "}", false}, "whole": {"{\"id\":\"m\"," + full + "}", true},
+		"another record's id": {"{\"id\":\"b\"," + full + "}", false},
+		"an unknown status":   {"{\"id\":\"m\"," + strings.Replace(full, "\"running\"", "\"s\"", 1) + "}", false},
+		"a fractional pid":    {"{\"id\":\"m\"," + strings.Replace(full, "\"pid\":null", "\"pid\":12.5", 1) + "}", false},
+		"a text exit code":    {"{\"id\":\"m\"," + strings.Replace(full, "\"exitCode\":null", "\"exitCode\":\"3\"", 1) + "}", false},
+		"no deliveredAt":      {"{\"id\":\"m\"," + strings.Replace(full, ",\"deliveredAt\":null", "", 1) + "}", false},
 	} {
 		ws := workspace(t)
 		put(t, RecordPath(ws, "m"), c.text)
@@ -107,10 +113,9 @@ func TestReadRecordKeepsTheOraclesFourTestsAndTheKeysItDoesNotName(t *testing.T)
 			t.Errorf("%s: %+v %v", name, r, ok)
 		}
 	}
-	// A key the port does not name is kept, sorted, and written back after the thirteen; a named key of another type reads as null and
-	// is written as null, so the operation that changes a named key is never overridden.
+	// A key the port does not name is kept, sorted, and written back after the thirteen.
 	ws := workspace(t)
-	put(t, RecordPath(ws, "x"), "{\"zzz\":{\"a\": 1},\"id\":\"x\",\"cwd\":\"c\",\"command\":[],\"status\":\"running\",\"pid\":12.5,\"exitCode\":\"3\",\"aaa\":[1, 2],\"u\":\"\\ud800\"}")
+	put(t, RecordPath(ws, "x"), "{\"zzz\":{\"a\": 1},\"id\":\"x\","+full+",\"aaa\":[1, 2],\"u\":\"\\ud800\"}")
 	put(t, ExitPath(ws, "x"), "0")
 	r, _ := ReadRecord(ws, "x")
 	if got, err := Reconcile(ws, r, noonClock); err != nil || got.Status != StatusComplete || *got.ExitCode != 0 || len(got.Extra) != 3 {
@@ -131,8 +136,8 @@ func TestReconcileTakesTheExitFileAsTheAnswer(t *testing.T) {
 	for body, want := range map[string]struct {
 		status string
 		code   *float64
-	}{"0": {"complete", fp(0)}, "1": {"failed", fp(1)}, "1x": {"failed", fp(1)}, "  7\n": {"failed", fp(7)}, "-0": {"complete", fp(0)}, "+5": {"failed", fp(5)}, "-7": {"failed", fp(-7)},
-		"0x10": {"complete", fp(0)}, "12.5": {"failed", fp(12)}, "\ufeff3": {"failed", fp(3)}, "3 4": {"failed", fp(3)}, "99999999999999999999": {"failed", fp(1e20)},
+	}{"0": {"complete", fp(0)}, "1": {"failed", fp(1)}, "1x": {"running", nil}, "  7\n": {"failed", fp(7)}, "-0": {"complete", fp(0)}, "+5": {"failed", fp(5)}, "-7": {"failed", fp(-7)},
+		"0x10": {"running", nil}, "12.5": {"running", nil}, "\ufeff3": {"failed", fp(3)}, "3 4": {"running", nil}, "99999999999999999999": {"failed", fp(1e20)}, // CRW-1134: one whole integer
 		"abc": {"running", nil}, "": {"running", nil}, "-": {"running", nil}, strings.Repeat("9", 400): {"running", nil}} {
 		ws := workspace(t)
 		r := mk(ws, "e")
@@ -178,7 +183,7 @@ func TestReconcileJudgesAJobWithoutAnExitFile(t *testing.T) {
 	}{
 		{"pid null, fresh", "2026-09-09T00:09:55.000Z", nil, nil, noonClock, StatusRunning},
 		{"pid null, old (oracle)", "", nil, nil, noonClock, StatusFailed},
-		{"pid null, startedAt unreadable stays running", "junk", nil, nil, noonClock, StatusRunning},
+		{"pid null, startedAt unreadable", "junk", nil, nil, noonClock, StatusFailed}, // CRW-1134: the oracle kept it running for ever
 		{"pid dead", "", nil, &gone, noonClock, StatusFailed},
 		{"pid alive", "", nil, &live, noonClock, StatusRunning},
 		{"empty exit file, fresh, pid dead", "", dp(5 * s), &gone, noonClock, StatusRunning},
@@ -205,7 +210,11 @@ func TestReconcileJudgesAJobWithoutAnExitFile(t *testing.T) {
 		if err != nil || got.Status != c.want {
 			t.Errorf("%s: %s %v, want %s", c.name, got.Status, err, c.want)
 		}
-		if c.want == StatusFailed && (got.ExitCode != nil || got.EndedAt == nil || !strings.HasSuffix(ledger(t, ws)[0], ",\"exitCode\":null,\"detail\":\"watcher vanished\"}")) {
+		detail := "watcher vanished"
+		if c.started == "junk" {
+			detail = "startedAt unreadable"
+		}
+		if c.want == StatusFailed && (got.ExitCode != nil || got.EndedAt == nil || !strings.HasSuffix(ledger(t, ws)[0], ",\"exitCode\":null,\"detail\":\""+detail+"\"}")) {
 			t.Errorf("%s: a vanished shell is failed with an unknown code: %+v", c.name, got)
 		}
 	}
