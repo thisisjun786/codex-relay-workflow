@@ -23,6 +23,7 @@ import {
   type RelayRelationshipView,
   type RunState,
   type StatusSource,
+  relationshipPullRequestText,
   sectionReading,
 } from "../api.ts";
 import { Card } from "../ui/kit.tsx";
@@ -153,7 +154,7 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
             <Row
               key={`relationship-${index}`}
               id={text(relationship.issueKey)}
-              sub={`parent ${text(relationship.parentTaskId)} · child ${text(relationship.childTaskId)} · generation ${text(relationship.executionGeneration)} · ${text(relationship.relationshipStatus)} · next ${text(relationship.nextExpectedAction)} · head ${text(relationship.head?.revisionHash)}`}
+              sub={`parent ${text(relationship.parentTaskId)} · child ${text(relationship.childTaskId)} · generation ${text(relationship.executionGeneration)} · ${text(relationship.relationshipStatus)} · next ${text(relationship.nextExpectedAction)} · ${relationshipPullRequestText(relationship)} · head ${text(relationship.head?.revisionHash)}`}
               state={relationship.read?.state ?? "unknown"}
               reason={relationship.read?.reason}
             />

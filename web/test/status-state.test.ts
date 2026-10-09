@@ -8,7 +8,7 @@
 // runStateReadings in src/api.ts, which is the same function the bar component renders.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runStateReadings, sectionReading, type RunState } from "../src/api.ts";
+import { relationshipPullRequestText, runStateReadings, sectionReading, type RunState } from "../src/api.ts";
 
 /** The document GET /api/status answers, with one reading overridden per case. */
 function document(overrides: {
@@ -145,4 +145,29 @@ test("the execution policy keeps the file, registered and running digests apart"
   assert.equal(parts[2].label, "Running digest");
   assert.equal(parts[2].state, "unknown");
   assert.equal(parts[2].reason, "worker_policy_unconfigured");
+});
+
+// CRW-1044: the relationship's pull request is shown as the relay exported it. A relationship
+// that names none (null) reads as no pull request; a value the document did not carry, or a
+// link the relay could not read, reads as unknown, never as none.
+test("a relationship with a pull request shows its repository and number", () => {
+  assert.equal(
+    relationshipPullRequestText({ pullRequest: { repository: "thisisjun786/codex-relay-workflow", number: 812 }, read: { state: "ok" } }),
+    "pull request thisisjun786/codex-relay-workflow#812",
+  );
+});
+
+test("a relationship that names no pull request reads as no pull request", () => {
+  assert.equal(relationshipPullRequestText({ pullRequest: null, read: { state: "ok" } }), "no pull request");
+});
+
+test("a document without the pull request field reads as unknown, not as none", () => {
+  assert.equal(relationshipPullRequestText({ read: { state: "ok" } }), "pull request unknown");
+});
+
+test("a relationship the relay could not read reads its pull request as unknown", () => {
+  assert.equal(
+    relationshipPullRequestText({ pullRequest: null, read: { state: "unknown", reason: "store busy" } }),
+    "pull request unknown",
+  );
 });
