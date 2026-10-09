@@ -424,6 +424,21 @@ func (r *upgradeRunState) snapshot() (int, string) {
 	return 0, ""
 }
 
+// resolveRunDir records the run directory's physical path for the installer. Management builds W
+// from the configured state directory as raw text, so a link followed by ".." keeps the meaning the
+// kernel gives it; crw install update cleans --from and --backup-state-to (filepath.Abs), which
+// would read the archive and checksums of a different directory than the one this run pinned and
+// verified, or find none after the service was stopped. The physical path has nothing to clean.
+// A run directory that cannot be resolved is refused before anything is stopped.
+func (r *upgradeRunState) resolveRunDir() (int, string) {
+	dir, err := filepath.EvalSymlinks(r.dir)
+	if err != nil {
+		return r.refuse(upgradeStepSums, upgradeReasonSumsFailed, "", fmt.Errorf("the run directory %s: %w", r.dir, err))
+	}
+	r.installDir = dir
+	return 0, ""
+}
+
 // stopAndUpdate is step 6: stop with the running executable, then install with the extracted one.
 // The runtime the pointer names is recorded before the stop, so the restart after it can fall back
 // to the runtime the service was running. A stop that did not succeed stops the run before the
@@ -439,8 +454,10 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonStopFailed
 	}
-	args := []string{"install", "update", "--from", r.archive, "--state", r.state,
-		"--socket", r.cfg.Relay.Socket, "--backup-state-to", crwconfig.JoinRoot(r.dir, "state-backup")}
+	// The pinned archive and the backup are named through the physical run directory: the installer
+	// cleans both, and the directory the kernel resolves is the one whose checksums were verified.
+	args := []string{"install", "update", "--from", crwconfig.JoinRoot(r.installDir, filepath.Base(r.archive)), "--state", r.state,
+		"--socket", r.cfg.Relay.Socket, "--backup-state-to", crwconfig.JoinRoot(r.installDir, "state-backup")}
 	if r.opts.Issue != "" {
 		args = append(args, "--issue", r.opts.Issue)
 	}

@@ -170,10 +170,13 @@ type upgradeRunState struct {
 	cfg  *Config
 	opts upgradeOptions
 
-	dir     string // W
-	extract string // W/extract
-	archive string
-	commit  string
+	dir string // W
+	// installDir is W as the kernel resolves it: no link, no "..". The installer cleans every path
+	// it is given, so the arguments of its update name the pinned files through this spelling.
+	installDir string
+	extract    string // W/extract
+	archive    string
+	commit     string
 	// tree is the tree of the commit, as the forge reports it; the record must name it.
 	tree    string
 	state   string
@@ -228,6 +231,9 @@ func (r *upgradeRunState) execute() (int, string) {
 		return code, reason
 	}
 	r.archive = archive
+	if code, reason = r.resolveRunDir(); code != 0 {
+		return code, reason
+	}
 
 	if code, reason = r.extractAndResolve(); code != 0 {
 		return code, reason
