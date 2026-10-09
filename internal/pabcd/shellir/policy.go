@@ -12,9 +12,12 @@ func isWrapper(name string) bool {
 	return false
 }
 
+// isShell is whether a program name is a POSIX or Korn family shell: a program that runs shell text from -c, a script file,
+// a here-document, a here-string or the standard input. busybox reaches the same family through its applets (sh, ash, hush);
+// the wrapper table hands the applet to this check.
 func isShell(name string) bool {
 	switch name {
-	case "bash", "sh", "dash", "zsh", "ksh":
+	case "bash", "sh", "dash", "zsh", "ksh", "ash", "mksh", "hush", "pdksh", "oksh", "posh", "yash", "rbash":
 		return true
 	}
 	return false
@@ -25,6 +28,9 @@ func isOnceCarrier(carrier string) bool {
 	name, ok := strings.CutSuffix(carrier, " -c")
 	return ok && isShell(name)
 }
+
+// IsShell is isShell for the consumers that read a shebang line: a script whose interpreter is one of these names is shell text.
+func IsShell(name string) bool { return isShell(name) }
 
 // isCodeEnvName lists the environment names that make a program run code the
 // text does not show. The list is closed; tests pin it. SHELL picks the shell that

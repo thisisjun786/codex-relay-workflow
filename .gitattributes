@@ -1,0 +1,2 @@
+# Parallel shell-reader branches each append index lines to this file; a line union merges them without a conflict (CRW-1061).
+internal/pabcd/hook/testdata/shellir/reproductions.tsv merge=union

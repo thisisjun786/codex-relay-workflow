@@ -1,0 +1,183 @@
+# CRW-894 fix round 1: the findings of the independent verifier on 4636e20a (d1 link boundary and relative aliases, benign relative scripts, d3 json.tool shadowing).
+# ../repo is the managed checkout.
+# CRW-894 fix round 3: python3 -m json.tool is refused as on dev (the working directory heads its module search path and json.tool imports
+# many standard modules through it, so no text proves what runs). A row that expected the module allowed records the deviation.
+
+=== CRW-894-vf-01 | U
+--why python3 reads its program from the pipe through /proc/self/root/.. : the kernel follows the root link first, so the two dot-dot segments end at / and the path is /dev/stdin (verifier of 4636e20a, d1 link boundary).
+printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/root/../../dev/stdin
+
+=== CRW-894-vf-02 | U
+--why python3 reads its program from the pipe through /proc/self/cwd/.. in the directory /: the cwd link is followed before the dot-dot segment.
+cd /; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/cwd/../dev/stdin
+
+=== CRW-894-vf-03 | U
+--why bash reads its script from the pipe through /proc/self/root/.. in front of /dev/stdin.
+printf 'rm -rf ../repo\n' | bash /proc/self/root/../../dev/stdin
+
+=== CRW-894-vf-04 | U
+--why A bash input redirection through the root link and a dot-dot segment is the pipe.
+printf 'rm -rf ../repo\n' | bash </proc/self/root/../dev/stdin
+
+=== CRW-894-vf-05 | U
+--why node reads its program from the pipe through the root link of pid 1 and dot-dot segments in front of /dev/fd/0.
+printf 'import shutil; shutil.rmtree("../repo")\n' | node /proc/1/root/../../dev/fd/0
+
+=== CRW-894-vf-06 | U
+--why In a directory the reader does not know, dev/stdin is the stdin alias when the directory is /: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vf-07 | U
+--why In a directory the reader does not know, dev/fd/0 is the stdin alias when the directory is /: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/fd/0
+
+=== CRW-894-vf-08 | U
+--why In a directory the reader does not know, proc/self/fd/0 is the stdin alias when the directory is /: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 proc/self/fd/0
+
+=== CRW-894-vf-09 | U
+--why In a directory the reader does not know, a lone descriptor number is the stdin alias when the directory is /dev/fd or /proc/self/fd: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 0
+
+=== CRW-894-vf-10 | U
+--why In a directory the reader does not know, fd/0 is the stdin alias when the directory is /dev: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 fd/0
+
+=== CRW-894-vf-11 | U
+--why In a directory the reader does not know, a dotted relative alias is the stdin alias when the directory is /: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 ./dev/./stdin
+
+=== CRW-894-vf-12 | U
+--why In a directory the reader does not know, a dot-dot relative alias is the stdin alias from a directory two levels down: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 ../../dev/stdin
+
+=== CRW-894-vf-13 | U
+--why In a directory the reader does not know, a relative alias through the root link is the stdin alias: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 proc/self/root/../dev/stdin
+
+=== CRW-894-vf-14 | U
+--why In a directory the reader does not know, node reads its program from a relative stdin alias: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | node dev/stdin
+
+=== CRW-894-vf-15 | U
+--why In a directory the reader does not know, perl reads its program from a relative stdin alias: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | perl dev/stdin
+
+=== CRW-894-vf-16 | U
+--why In a directory the reader does not know, php reads its program from a relative stdin alias: the pipe is the program (verifier of 4636e20a, d1 unknown directory).
+cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | php dev/stdin
+
+=== CRW-894-vf-17 | U
+--why In a directory the reader does not know, bash reads its script from the relative alias dev/stdin.
+cd "$DIR"; printf 'rm -rf ../repo\n' | bash dev/stdin
+
+=== CRW-894-vf-18 | U
+--why In a directory the reader does not know, a bash input redirection from dev/fd/0 is the pipe.
+cd "$DIR"; printf 'rm -rf ../repo\n' | bash <dev/fd/0
+
+=== CRW-894-vf-19 | B
+--why Control: a script in a sibling directory is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | python3 ../tools/gen.py
+
+=== CRW-894-vf-20 | B
+--why Control: a script below a directory named fd is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | python3 build/fd/gen.py
+
+=== CRW-894-vf-21 | B
+--why Control: a script in a directory named fd is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | python3 fd/gen.py
+
+=== CRW-894-vf-22 | B
+--why Control: a script whose name starts with stdin is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | python3 stdin_reader.py
+
+=== CRW-894-vf-23 | B
+--why Control: a script named stdin.py is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | python3 ../stdin.py
+
+=== CRW-894-vf-24 | B
+--why Control: a script whose name has fd and digits is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | python3 ./tools/fd10.py
+
+=== CRW-894-vf-25 | B
+--why Control: a node script in a parent directory is no descriptor alias, so the interpreter is not judged (verifier of 4636e20a, benign accounting).
+cd "$DIR"; printf x | node ../tools/gen.js
+
+=== CRW-894-vf-26 | U
+--why python3 -m json.tool runs json/tool.py of the working directory when the directory holds a json package: the module is not the standard library (verifier of 4636e20a, d3).
+--file json/__init__.py
+import os
+--file json/tool.py
+print('local')
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-27 | U
+--why A json.py in the working directory shadows the standard library json for python3 -m json.tool.
+--file json.py
+print('local')
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-28 | U
+--why A compiled json extension module in the working directory shadows the standard library json.
+--file json.cpython-312-x86_64-linux-gnu.so
+x
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-29 | U
+--why A json.pyc in the working directory shadows the standard library json.
+--file json.pyc
+x
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-30 | U
+--why A json package with a compiled __init__ in the working directory shadows the standard library json.
+--file json/__init__.pyc
+x
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-31 | U
+--why The json package shadow with the options of json.tool is still the local module.
+--file json/__init__.py
+import os
+--file json/tool.py
+print('local')
+--cmd
+printf x | python3 -m json.tool --sort-keys
+
+=== CRW-894-vf-32 | U
+--why The text creates the json package that python3 -m json.tool then runs.
+mkdir json; printf 'print(1)' > json/__init__.py; printf x | python3 -m json.tool
+
+=== CRW-894-vf-33 | U
+--why The text copies a file to json.py that python3 -m json.tool then runs.
+cp evil.py json.py; printf x | python3 -m json.tool
+
+=== CRW-894-vf-34 | U
+--why In a directory the reader does not know the module search path starts somewhere it cannot see: python3 -m json.tool is not proven.
+cd "$DIR"; printf x | python3 -m json.tool
+
+=== CRW-894-vf-35 | B | deviation=attempt/deny/deny
+--why Control: a json directory with no __init__ is a namespace candidate the standard library package outranks.
+--file json/notes.txt
+x
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-36 | B | deviation=attempt/deny/deny
+--why Control: a file json.txt is not a module.
+--file json.txt
+x
+--cmd
+printf x | python3 -m json.tool
+
+=== CRW-894-vf-37 | B | deviation=attempt/deny/deny
+--why Control: a file json.py in another directory is not on the module search path.
+--file sub/json.py
+print('local')
+--cmd
+printf x | python3 -m json.tool
