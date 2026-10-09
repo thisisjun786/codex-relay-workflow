@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -70,6 +71,45 @@ type mapDeps struct {
 	run    func(string, []string, bool) (int, error)
 	exists func(string) bool
 	remove func(string) error
+	// installedSkill names the scripts directory of the plugin-installed crw-repo-map skill when the
+	// default skills-link script is absent (CRW-392); nil or an empty answer keeps the default.
+	installedSkill func(env host.LookupEnv, defaultScript string) string
+}
+
+// installedRepoMapDir is the scripts directory of the repo-map skill a plugin installation keeps
+// under the Codex home's plugin cache (<codex>/plugins/cache/<marketplace>/crw/<version>/skills),
+// or under PLUGIN_ROOT when the host provides it. It answers only when the default script, the one
+// a skills link gives, is absent; of several installed versions the most recently written wins.
+func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
+	if info, err := os.Stat(defaultScript); err == nil && info.Mode().IsRegular() {
+		return ""
+	}
+	skill := filepath.Join("skills", "crw-repo-map", "scripts")
+	var candidates []string
+	if root, _ := env("PLUGIN_ROOT"); text.Trim(root) != "" {
+		candidates = append(candidates, filepath.Join(root, skill))
+	}
+	codex, _ := env("CODEX_HOME")
+	if codex == "" {
+		if home, err := host.Home(env); err == nil {
+			codex = filepath.Join(home, ".codex")
+		}
+	}
+	if codex != "" {
+		cached, _ := filepath.Glob(filepath.Join(codex, "plugins", "cache", "*", "crw", "*", skill))
+		candidates = append(candidates, cached...)
+	}
+	best, bestTime := "", time.Time{}
+	for _, dir := range candidates {
+		info, err := os.Stat(filepath.Join(dir, "repomap.py"))
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestTime) {
+			best, bestTime = dir, info.ModTime()
+		}
+	}
+	return best
 }
 
 func runRepoMap(c invocation) int {
@@ -89,8 +129,9 @@ func runRepoMap(c invocation) int {
 			}
 			return cmd.ProcessState.ExitCode(), err
 		},
-		exists: func(p string) bool { _, err := os.Stat(p); return err == nil },
-		remove: os.RemoveAll,
+		exists:         func(p string) bool { _, err := os.Stat(p); return err == nil },
+		remove:         os.RemoveAll,
+		installedSkill: installedRepoMapDir,
 	}
 	return launchRepoMap(c.args, os.LookupEnv, c.stderr, d)
 }
@@ -100,6 +141,11 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 	if err != nil {
 		fmt.Fprintln(stderr, "crw map:", err)
 		return 1
+	}
+	if root, _ := env("CRW_SKILLS_DIR"); text.Trim(root) == "" && d.installedSkill != nil {
+		if dir := d.installedSkill(env, p.script); dir != "" {
+			p.script, p.requirements = filepath.Join(dir, "repomap.py"), filepath.Join(dir, "requirements.txt")
+		}
 	}
 	p.hasVenv = d.exists(p.python)
 	bootstrap, _ := env("CRW_MAP_BOOTSTRAP")
