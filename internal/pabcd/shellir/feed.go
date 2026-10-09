@@ -602,10 +602,6 @@ func isASCII(s string) bool {
 	return true
 }
 
-func isAlnum(c byte) bool {
-	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
-}
-
 // transparentWrapper names the wrappers that hand their standard input and their operands on unchanged.
 func transparentWrapper(name string) bool {
 	switch name {
