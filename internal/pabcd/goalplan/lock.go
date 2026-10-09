@@ -1,6 +1,7 @@
 package goalplan
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,10 +19,18 @@ import (
 
 // GoalplanWriteLockOptions supplies the oracle's delay/clock seams (:753-757).
 // Nil delays use 5/10/20/40 ms; a non-nil empty list tries only once.
+//
+// Context (CRW-1074) is the invocation's context for a caller the first SIGINT can end (the loop steer
+// row): a context that has ended before or during the wait takes no lock and returns its own error, and
+// one that ends after the lock is held and the plan read, before the callback runs, makes
+// WithGoalplanWriteLock release the lock and return that error without running the callback, so nothing
+// is written. Nil means no context, which is every other caller: its behaviour is unchanged. A wait that
+// supplies no Sleep seam ends with the context rather than sleeping out the delay.
 type GoalplanWriteLockOptions struct {
 	RetryDelaysMs []int
 	Sleep         func(int)
 	Now           func() string
+	Context       context.Context
 }
 
 // GoalplanWriteLockResult is the ok/locked/unreadable union (:759-762).
@@ -90,13 +99,29 @@ func goalplanLockVanishedOpenHeld(parent *os.File, dir string) (*os.File, error)
 
 func sleepGoalplanLock(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
 
+// goalplanLockSleepContext is sleepGoalplanLock that returns early when ctx ends; the acquisition loop reads
+// the context again right after it.
+func goalplanLockSleepContext(ctx context.Context, ms int) {
+	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
 // goalplanLockAcquire takes slug's write lock inside parent, the plan directory, waiting on the
 // oracle's retry schedule. It returns the held directory, or a "locked" outcome when the whole
 // schedule ran out with another holder's directory still there, or the acquisition error as it is.
 // It is the one acquisition path, so a creator and a mutator queue on the same mkdir.
 func goalplanLockAcquire(parent *os.File, real, slug string, o *GoalplanWriteLockOptions) (*os.File, *GoalplanWriteLockResult[struct{}], error) {
 	delays, sleep, now := GoalplanLockRetryDelaysMs(), sleepGoalplanLock, func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
+	var ctx context.Context
 	if o != nil {
+		ctx = o.Context
+		if ctx != nil && o.Sleep == nil {
+			sleep = func(ms int) { goalplanLockSleepContext(ctx, ms) }
+		}
 		if o.RetryDelaysMs != nil {
 			delays = o.RetryDelaysMs
 		}
@@ -109,6 +134,11 @@ func goalplanLockAcquire(parent *os.File, real, slug string, o *GoalplanWriteLoc
 	}
 	dir := filepath.Join(real, GoalplanLockDir)
 	for attempt := 0; ; attempt++ {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+		}
 		if err := boundFile(parent, real, true); err != nil {
 			return nil, nil, err
 		}
@@ -129,6 +159,15 @@ func goalplanLockAcquire(parent *os.File, real, slug string, o *GoalplanWriteLoc
 			return nil, nil, e
 		}
 		if attempt >= len(delays) {
+			// A cancellation that landed as the wait ended answers the context's own error, not the busy refusal.
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					if held != nil {
+						_ = held.Close()
+					}
+					return nil, nil, err
+				}
+			}
 			owner := "(owner.json unavailable)"
 			if held != nil {
 				owner = readGoalplanLockOwnerText(held, dir)
@@ -424,6 +463,13 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	}
 	if lost := revivalLoss(file.parsed); lost != "" {
 		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, lost)}, nil
+	}
+	// CRW-1074: the context is read once more with the lock held and the plan read, immediately before the callback
+	// that does the first write, so a first SIGINT that lands in that window leaves nothing written.
+	if o != nil && o.Context != nil {
+		if err := o.Context.Err(); err != nil {
+			return result, err
+		}
 	}
 	value, err := fn(read.Plan)
 	if err != nil {

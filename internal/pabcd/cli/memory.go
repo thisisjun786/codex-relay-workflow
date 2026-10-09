@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -79,11 +80,28 @@ func RunMemoryCLI(a MemoryAllowWriteArgs) (string, int) {
 	return cliPublishedMemoryAllowWrite(a, state.WriteState)
 }
 
+// RunMemoryCLIContext is RunMemoryCLI for a caller the first SIGINT can end (the memory row of cmd/crw serve,
+// CRW-1074): the session lock wait ends with ctx, and ctx is read once more with the lock held, immediately
+// before the grant is written. A run they end returns the context's own error with the state untouched and
+// nothing to print, as the oracle's process dies at the signal; once the write has started the run finishes
+// and answers as RunMemoryCLI does.
+func RunMemoryCLIContext(ctx context.Context, a MemoryAllowWriteArgs) (string, int, error) {
+	return cliMemoryAllowWriteRun(ctx, a, state.WriteState, nil)
+}
+
 // cliPublishedMemoryAllowWrite is the CRW-823 write seam. writeState is an argument, never package
 // state, so a test can drive the published-but-unsynced path without changing what any other caller
 // does; RunMemoryCLI passes state.WriteState.
 func cliPublishedMemoryAllowWrite(a MemoryAllowWriteArgs, writeState func(string, state.State) error) (string, int) {
-	err := state.WithSessionLock(a.Cwd, a.SessionID, func() error {
+	output, code, _ := cliMemoryAllowWriteRun(context.Background(), a, writeState, nil)
+	return output, code
+}
+
+// cliMemoryAllowWriteRun is the grant under the invocation's context. interrupt is the CRW-1074 test seam, a
+// field of the caller's own: it runs immediately before the pre-write context check, so a test can end the
+// context exactly between the lock and the write. nil means no hook.
+func cliMemoryAllowWriteRun(ctx context.Context, a MemoryAllowWriteArgs, writeState func(string, state.State) error, interrupt func()) (string, int, error) {
+	err := state.WithSessionLockContext(ctx, a.Cwd, a.SessionID, func() error {
 		s, unreadable := state.ReadStateStrict(a.Cwd, a.SessionID)
 		// Intentionally changed: the oracle replaces unreadable bytes with a default.
 		if unreadable {
@@ -97,21 +115,31 @@ func cliPublishedMemoryAllowWrite(a MemoryAllowWriteArgs, writeState func(string
 		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
+		// CRW-1074: the pre-write cancellation check. Cancelled here, the grant is not written.
+		if interrupt != nil {
+			interrupt()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		s.MemoryWriteGrant = true
 		return writeState(a.Cwd, s)
 	})
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return "", 0, err
+	}
 	// A write that published the state at the final path and then failed the directory sync is a
 	// written grant: the grant is visible to every reader, so a retry would record it twice. The
 	// durability failure is carried as a warning instead. A failure before the rename published
 	// nothing and stays the failure it was.
 	if err != nil && !state.Published(err) {
-		return fmt.Sprintf("memory allow-write: could not record the grant (%s)", cliErrorMessage(err)), 1
+		return fmt.Sprintf("memory allow-write: could not record the grant (%s)", cliErrorMessage(err)), 1, nil
 	}
 	recorded := fmt.Sprintf("memory allow-write: session %s may perform ONE memory write; grant recorded for cwd %s; the next write consumes this grant.", a.SessionID, a.Cwd)
 	if err != nil {
-		return recorded + "\n" + cliPublishedStateWarning(err), 0
+		return recorded + "\n" + cliPublishedStateWarning(err), 0, nil
 	}
-	return recorded, 0
+	return recorded, 0, nil
 }
 
 // cliPublishedStateWarning is CRW-823's state durability warning: the state at the final path is the

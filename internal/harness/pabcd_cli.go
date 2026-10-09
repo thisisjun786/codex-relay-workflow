@@ -66,7 +66,12 @@ func evidenceVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	return code
 }
 
-func memoryVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+// memoryVerb is the memory row. It takes the invocation's context (CRW-1074): the oracle's process dies at the first
+// SIGINT and records nothing, so an allow-write whose session lock wait ends with that context, or which finds it
+// ended with the lock held and before the grant is written, answers Interrupted (130) with nothing printed. Once the
+// write has started the command finishes and prints its own answer. The help and parse answers read nothing and are
+// printed under any context.
+func memoryVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stdout, cli.MemoryUsage)
 		return 0
@@ -85,7 +90,10 @@ func memoryVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "memory: "+parsed.Error+"\n"+cli.MemoryUsage)
 		return 2
 	}
-	output, code := cli.RunMemoryCLI(*parsed.Args)
+	output, code, err := cli.RunMemoryCLIContext(ctx, *parsed.Args)
+	if err != nil {
+		return Interrupted
+	}
 	stream := stdout
 	if code != 0 {
 		stream = stderr
@@ -150,7 +158,12 @@ func configVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 // scanVerb is the scan row: the parser and the runner this repository already ported, driven
 // exactly as the oracle's scan branch does (cli.ts:325-336). A parse error keeps the "scan: "
 // prefix on stderr and exit 1; every other outcome goes to stdout with the runner's own exit code.
-func scanVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+//
+// The row takes the invocation's context (CRW-1074): a record whose session lock wait ends with it, or which finds it
+// ended with the lock held and before the scan_completed row is appended, answers Interrupted (130) with nothing
+// printed and nothing written, as the oracle's process dies at the signal. Once the append has started the command
+// finishes and prints its own answer.
+func scanVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
@@ -161,7 +174,10 @@ func scanVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "scan: "+parsed.Error)
 		return 1
 	}
-	result := cli.RunScanCli(*parsed.Args)
+	result, err := cli.RunScanCliContext(ctx, *parsed.Args)
+	if err != nil {
+		return Interrupted
+	}
 	fmt.Fprintln(stdout, result.Output)
 	return result.Code
 }
@@ -275,7 +291,11 @@ func metricWrites(args []string) bool {
 // as the oracle's branch does. The oracle labels a parse refusal with the kind ("loop: "), which is why an
 // unknown flag reads "loop: init: unknown flag '--help'"; a library error is the oracle's uncaught throw and
 // answers the generic "crw cli failed: " prefix; every result goes to stdout with its own code.
-func loopVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+//
+// The row takes the invocation's context (CRW-1074): a steer whose batch read or goalplan lock wait ends with it, or which
+// finds it ended with the lock held and before the transaction's first write, answers Interrupted (130) with nothing
+// printed and nothing written, as the oracle's process dies at the signal. The other verbs do not read it.
+func loopVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
@@ -286,7 +306,10 @@ func loopVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "loop: "+err.Error())
 		return 1
 	}
-	result, err := cli.RunLoopCli(parsed)
+	result, err := cli.RunLoopCliContext(ctx, parsed)
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return Interrupted
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1
