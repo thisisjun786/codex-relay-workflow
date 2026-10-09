@@ -185,7 +185,7 @@ func pumpOverlapShapes() []pumpOverlapShape {
 		{
 			// The reviewer's reproduction: a and c were written again after both attempts, b was not, so
 			// both records carried b alone. Neither record can prove the text b holds is the text it sent
-			// (its digest covers a's and c's old texts, which are gone), so an accepted answer holds b.
+			// (its digest covers a's and c's old texts, which are gone), so either one holds the thread.
 			name: "same-members",
 			notices: []pumpOverlapNotice{
 				{pumpOverlapA, "A-new-after-both", time.Minute},
@@ -324,21 +324,21 @@ func pumpOverlapProvable(shape pumpOverlapShape, record pumpOverlapRecord) bool 
 }
 
 // pumpOverlapCoverage classifies each notice under one receipt assignment: delivered when a provable
-// record that carried it answers accepted; pending when it is not delivered and a record that carried
-// it is undetermined; held when neither, and a record that cannot prove its text answers accepted; free
-// otherwise (every record that carried it says it never went, or none carried it).
-func pumpOverlapCoverage(shape pumpOverlapShape, kinds []string) (delivered, pending, held map[string]bool) {
+// record that carried it answers accepted; pending when it is not delivered and a provable record that
+// carried it is undetermined; free otherwise (every record that carried it says it never went, or none
+// carried it). A record that cannot prove its text holds the whole thread whatever it answers: then
+// hold is true and every notice that is not delivered is held, never sent, for the operator.
+func pumpOverlapCoverage(shape pumpOverlapShape, kinds []string) (delivered, pending, held map[string]bool, hold bool) {
 	delivered, pending, held = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i, record := range shape.records {
-		provable := pumpOverlapProvable(shape, record)
+		if !pumpOverlapProvable(shape, record) {
+			hold = true
+			continue
+		}
 		for _, name := range record.carries {
 			switch kinds[i] {
 			case pumpOverlapAccepted:
-				if provable {
-					delivered[name] = true
-				} else {
-					held[name] = true
-				}
+				delivered[name] = true
 			case pumpOverlapUnknown, pumpOverlapUnreachable:
 				pending[name] = true
 			}
@@ -346,12 +346,16 @@ func pumpOverlapCoverage(shape pumpOverlapShape, kinds []string) (delivered, pen
 	}
 	for name := range delivered {
 		delete(pending, name)
-		delete(held, name)
 	}
-	for name := range pending {
-		delete(held, name)
+	if hold {
+		pending = map[string]bool{}
+		for _, notice := range shape.notices {
+			if !delivered[notice.name] {
+				held[notice.name] = true
+			}
+		}
 	}
-	return delivered, pending, held
+	return delivered, pending, held, hold
 }
 
 // pumpOverlapSentCount is how many deliveries the fake bridge saw that carried text.
@@ -367,8 +371,8 @@ func pumpOverlapSentCount(t *testing.T, log, text string) int {
 // pumpOverlapRun sets one shape up, runs rounds of the queue under the first receipt assignment,
 // checks I1 and I2, then settles every undetermined receipt (unknown turns accepted, unreachable
 // turns not_attempted), runs more rounds and checks I1 and I3: a notice a provable attempt delivered
-// is never sent and is completed, a notice only an attempt that cannot prove its text delivered is
-// never sent and stays queued under a held pin (and the thread waits behind it), every other notice
+// is never sent and is completed; while any attempt cannot prove its text, every other notice is never
+// sent and stays queued under a held pin, whatever that attempt answers; otherwise every other notice
 // is sent exactly once, and nothing else stays queued or pinned.
 func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 	now := pumpTestNow
@@ -411,8 +415,8 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 	}
 
 	flush(3)
-	delivered, pending, held := pumpOverlapCoverage(shape, kinds)
-	waits := len(pending) > 0 || len(held) > 0
+	delivered, pending, held, hold := pumpOverlapCoverage(shape, kinds)
+	waits := len(pending) > 0 || hold
 	for _, notice := range shape.notices {
 		sent := pumpOverlapSentCount(t, log, notice.text)
 		switch {
@@ -447,8 +451,8 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 	if pinned != waits {
 		t.Errorf("after the first rounds the pin is present=%v, want %v (pending %v, held %v)", pinned, waits, pending, held)
 	}
-	if isHeld, _ := pin["held"].(bool); isHeld != (len(pending) == 0 && len(held) > 0) {
-		t.Errorf("after the first rounds the pin held=%v (pending %v, held %v)", isHeld, pending, held)
+	if isHeld, _ := pin["held"].(bool); isHeld != hold {
+		t.Errorf("after the first rounds the pin held=%v, want %v (pending %v, held %v)", isHeld, hold, pending, held)
 	}
 	if t.Failed() {
 		return
@@ -470,7 +474,7 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 		final[i] = settled[id]
 	}
 	flush(3)
-	delivered, _, held = pumpOverlapCoverage(shape, final)
+	delivered, _, held, hold = pumpOverlapCoverage(shape, final)
 	for _, notice := range shape.notices {
 		sent := pumpOverlapSentCount(t, log, notice.text)
 		switch {
@@ -481,8 +485,8 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 			if !completed(notice.name) || queued(notice.name) {
 				t.Errorf("%s is not completed at the end (sent/ %v, queued %v)", notice.name, completed(notice.name), queued(notice.name))
 			}
-		case len(held) > 0:
-			// A held pin keeps the thread: the notice it holds and every other one wait, unsent and queued.
+		case hold:
+			// A held pin keeps the thread: every notice not proven delivered waits, unsent and queued.
 			if sent != 0 || completed(notice.name) || !queued(notice.name) {
 				t.Errorf("%s was sent %d times, completed %v, queued %v behind a held pin", notice.name, sent, completed(notice.name), queued(notice.name))
 			}
@@ -496,11 +500,11 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 		}
 	}
 	pin, pinned = pumpReview776QueueAttempt(t, cfg, thread)
-	if pinned != (len(held) > 0) {
-		t.Errorf("at the end the pin is present=%v, want %v (held %v): %v", pinned, len(held) > 0, held, pin)
+	if pinned != hold {
+		t.Errorf("at the end the pin is present=%v, want %v (held %v): %v", pinned, hold, held, pin)
 	}
-	if isHeld, _ := pin["held"].(bool); isHeld != (len(held) > 0) {
-		t.Errorf("at the end the pin held=%v, want %v", isHeld, len(held) > 0)
+	if isHeld, _ := pin["held"].(bool); isHeld != hold {
+		t.Errorf("at the end the pin held=%v, want %v", isHeld, hold)
 	}
 	if t.Failed() {
 		t.Logf("%s; texts %v; receipts %v then %v; deliveries %q", pumpOverlapDescribe(shape), texts, kinds, final, pumpQueueTestSentMessages(t, log))
@@ -508,10 +512,12 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 }
 
 // Overlapping pre-change records are reconciled as one evidence set. Over two and three overlapping
-// records, every receipt answer for every record: a notice any record's receipt shows delivered is
-// never sent again and is completed (I1); a notice an undetermined record carried is not sent while
+// records, every receipt answer for every record: a notice a provable record's receipt shows delivered
+// is never sent again and is completed (I1); a notice an undetermined record carried is not sent while
 // that record is undetermined (I2); a notice every record that carried it shows never went is sent
-// exactly once in a new batch and completed (I3).
+// exactly once in a new batch and completed (I3). A record that cannot prove its text holds the thread
+// whatever it answers (R2): nothing it or any other record covers is sent, and only a notice a provable
+// record shows delivered is completed.
 func TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants(t *testing.T) {
 	for _, shape := range pumpOverlapShapes() {
 		for _, kinds := range pumpOverlapCombos(len(shape.records)) {
@@ -524,8 +530,9 @@ func TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants(t *testing.T) {
 
 // The reviewer's reproduction, by name: two unsettled records over [a b] and [a b c], a and c written
 // again after both, b not. The longer record's receipt says it never went, the shorter one's says it
-// was delivered. b must not be sent again. The shorter record carried b by time only and cannot prove
-// b's text is the one it sent, so b is held rather than completed, and a and c wait behind the held pin.
+// was delivered. b must not be sent again. Neither record can prove b's text is the one it sent (each
+// carried b by time only), so the thread holds: b is neither completed nor sent, and a and c wait
+// behind the held pin.
 func TestPumpQueueOverlappingUnsettledRecordsNeverResendADeliveredMember(t *testing.T) {
 	pumpOverlapRun(t, pumpOverlapShapeNamed(t, "same-members"), []string{pumpOverlapAccepted, pumpOverlapNotAttempted})
 }
@@ -608,10 +615,11 @@ type pumpOverlapUnprovablePhase struct {
 
 // An overlap pin can join a record whose accepted answer cannot show which queued notice it carried
 // (its whole set looks unchanged, yet its text is not the text on disk) with a record that proves a
-// delivery on its own. The uncertainty is per record: a notice the provable record shows delivered
-// is completed (I1), and only the notices the unprovable record alone answers for are held. The
-// longer record over [a b] carried b in the second b was written again, so its text is not the text
-// on disk and it is unprovable; the shorter record over [a] carries the text on disk.
+// delivery on its own. A notice the provable record shows delivered is completed (I1), on the round its
+// answer settles; the unprovable record holds the thread from the start, whatever it answers, so every
+// other notice stays queued and unsent for the operator. The longer record over [a b] carried b in the
+// second b was written again, so its text is not the text on disk and it is unprovable; the shorter
+// record over [a] carries the text on disk.
 func TestPumpQueueUnprovableOverlapStillCompletesAProvenDelivery(t *testing.T) {
 	a, b := pumpOverlapA, pumpOverlapB
 	cases := []struct {
@@ -626,7 +634,7 @@ func TestPumpQueueUnprovableOverlapStillCompletesAProvenDelivery(t *testing.T) {
 			{short: pumpOverlapAccepted, long: pumpOverlapAccepted, completed: []string{a}, queued: []string{b}, pinned: true, held: true},
 		}},
 		{"short-settles-later", deliverStateUnknown, []pumpOverlapUnprovablePhase{
-			{short: pumpOverlapUnknown, long: pumpOverlapAccepted, queued: []string{a, b}, pinned: true},
+			{short: pumpOverlapUnknown, long: pumpOverlapAccepted, queued: []string{a, b}, pinned: true, held: true},
 			{short: pumpOverlapAccepted, long: pumpOverlapAccepted, completed: []string{a}, queued: []string{b}, pinned: true, held: true},
 		}},
 		{"short-never-went", deliverStateUnknown, []pumpOverlapUnprovablePhase{
@@ -635,7 +643,9 @@ func TestPumpQueueUnprovableOverlapStillCompletesAProvenDelivery(t *testing.T) {
 			{short: pumpOverlapNotAttempted, long: pumpOverlapAccepted, queued: []string{a, b}, pinned: true, held: true},
 		}},
 		{"long-never-went", deliverStateUnknown, []pumpOverlapUnprovablePhase{
-			{short: pumpOverlapAccepted, long: pumpOverlapNotAttempted, completed: []string{a, b}, sent: map[string]int{"B-current": 1}},
+			// The unprovable record's answer that it never went does not show which text of b went
+			// nowhere, so b is not sent: it waits under the held pin.
+			{short: pumpOverlapAccepted, long: pumpOverlapNotAttempted, completed: []string{a}, queued: []string{b}, pinned: true, held: true},
 		}},
 	}
 	for _, tc := range cases {
@@ -823,7 +833,7 @@ func TestPumpQueueReadNoticePairsTheTextWithItsOwnFile(t *testing.T) {
 	if _, _, err := pumpReview776QueueReadNotice(dir, pumpOverlapB); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("a symlinked notice was read: %v", err)
 	}
-	if _, err := pumpReview776QueueLegacyCandidates(pumpReview776QueueBatch{names: []string{pumpOverlapA}, texts: []string{"B"}}); err == nil {
+	if _, _, err := pumpReview776QueueLegacyScan(&Config{StateDir: dir}, "parent-1", pumpReview776QueueBatch{names: []string{pumpOverlapA}, texts: []string{"B"}}); err == nil {
 		t.Errorf("a snapshot without the times read with its texts was judged")
 	}
 }

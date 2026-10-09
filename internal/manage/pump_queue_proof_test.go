@@ -38,8 +38,10 @@ func pumpQueueTestQueuedText(t *testing.T, dir, name string) (string, bool) {
 // before Deliver stamped the record, and an atomic --queue write of b in between leaves a b older than
 // the stamp that the attempt never carried. The record's message digest covers a's old text, which is
 // gone, so b's text cannot be checked against it. Such a record never completes b by its modification
-// time: an answer that it went holds the thread with a named log line (nothing is archived undelivered
-// and nothing is sent twice), and an answer that it never went sends the notices once.
+// time, and its answer never lets b be sent either: whatever it answers -- went, never went, or nothing
+// settled -- the thread holds with a named log line for the operator, so nothing is archived
+// undelivered and nothing is sent twice. A record over [b] alone that never went does not lift the
+// hold: the record over [a b] may still have carried b's text.
 func TestPumpQueuePartlyReplacedLegacyRecordIsNoProofOfTheText(t *testing.T) {
 	a, b := pumpOverlapA, pumpOverlapB
 	cases := []struct {
@@ -54,12 +56,12 @@ func TestPumpQueuePartlyReplacedLegacyRecordIsNoProofOfTheText(t *testing.T) {
 		sent    int
 		logName string
 	}{
-		{name: "accepted-in-ledger", ledger: deliverStateAccepted, held: true, pinned: true, logName: "legacy_unprovable_hold"},
-		{name: "accepted-by-receipt", ledger: deliverStateUnknown, receipt: pumpOverlapAccepted, held: true, pinned: true, logName: "legacy_unprovable_hold"},
-		{name: "overlap-accepted-with-a-whole-record-that-never-went", ledger: deliverStateUnknown, receipt: pumpOverlapAccepted, short: pumpOverlapNotAttempted, held: true, pinned: true, logName: pumpQueueLegacyOverlapHold},
-		{name: "undetermined", ledger: deliverStateUnknown, receipt: pumpOverlapUnknown, pinned: true},
-		{name: "never-went", ledger: deliverStateUnknown, receipt: pumpOverlapNotAttempted, sent: 1},
-		{name: "overlap-never-went", ledger: deliverStateUnknown, receipt: pumpOverlapNotAttempted, short: pumpOverlapRefused, sent: 1},
+		{name: "accepted-in-ledger", ledger: deliverStateAccepted, held: true, pinned: true, logName: pumpQueueLegacyUnprovableHold},
+		{name: "accepted-by-receipt", ledger: deliverStateUnknown, receipt: pumpOverlapAccepted, held: true, pinned: true, logName: pumpQueueLegacyUnprovableHold},
+		{name: "overlap-accepted-with-a-whole-record-that-never-went", ledger: deliverStateUnknown, receipt: pumpOverlapAccepted, short: pumpOverlapNotAttempted, held: true, pinned: true, logName: pumpQueueLegacyUnprovableHold},
+		{name: "undetermined", ledger: deliverStateUnknown, receipt: pumpOverlapUnknown, held: true, pinned: true, logName: pumpQueueLegacyUnprovableHold},
+		{name: "never-went", ledger: deliverStateUnknown, receipt: pumpOverlapNotAttempted, held: true, pinned: true, logName: pumpQueueLegacyUnprovableHold},
+		{name: "overlap-never-went", ledger: deliverStateUnknown, receipt: pumpOverlapNotAttempted, short: pumpOverlapRefused, held: true, pinned: true, logName: pumpQueueLegacyUnprovableHold},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

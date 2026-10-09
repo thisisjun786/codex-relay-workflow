@@ -993,12 +993,11 @@ func pumpQueuePartialHeld(t *testing.T, e *Env, cfg *Config, log string) {
 	}
 }
 
-// An unsettled pre-change record over two names where only one was replaced is reconciled through
-// the bridge's receipt alone. The receipt says the attempt went, but the record cannot show which text
-// of the unchanged member it carried, so the thread is held: the member is neither sent again nor
-// archived. (A receipt that says it never went sends both notices once: see
+// An unsettled pre-change record over two names where only one was replaced cannot show which text of
+// the unchanged member it carried, so the thread is held whatever its receipt says: the member is
+// neither sent again nor archived. (Every receipt answer is covered by
 // TestPumpQueuePartlyReplacedLegacyRecordIsNoProofOfTheText.)
-func TestPumpQueuePartiallyReplacedUnsettledLegacyRecordIsReconciled(t *testing.T) {
+func TestPumpQueuePartiallyReplacedUnsettledLegacyRecordHoldsTheThread(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
 	bridge, log := deliverFakeBridge(t, []map[string]any{
@@ -1079,7 +1078,9 @@ func TestPumpQueueRefusedPublishedMoveIsNotPutBack(t *testing.T) {
 // one over all three, where the third member was written again after it. The unsettled record only
 // covers the two unchanged members, and the bridge may say it never went; the accepted record is the
 // evidence that those two were delivered. Neither the unsettled record's receipt nor its pin may hide
-// the accepted one, or the delivered members go out again under a new id.
+// the accepted one, or the delivered members go out again under a new id. The unsettled record cannot
+// prove its text (its digest covers c's old text), so it holds the thread for the operator: the
+// replaced c, which no attempt carried, waits queued and unsent behind the held pin.
 func TestPumpQueueOverlappingLegacyRecordsKeepAcceptedEvidence(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
@@ -1111,19 +1112,19 @@ func TestPumpQueueOverlappingLegacyRecordsKeepAcceptedEvidence(t *testing.T) {
 			t.Errorf("the notice %s the accepted record carried did not reach sent/: %v", name, err)
 		}
 	}
-	// The replaced member is a notice no attempt carried: it is delivered exactly once, on its own,
-	// and completed, and the thread is left with nothing queued and no pin.
-	if messages := pumpQueueTestSentMessages(t, log); len(messages) != 1 || strings.Count(messages[0], "C-new") != 1 {
-		t.Errorf("the deliveries are %q, want exactly one carrying C-new", messages)
+	// The replaced member is a notice no attempt carried, but the unprovable record holds the thread:
+	// nothing is sent, c stays queued and the pin holds with a named line.
+	if messages := pumpQueueTestSentMessages(t, log); len(messages) != 0 {
+		t.Errorf("the deliveries are %q, want none behind the held pin", messages)
 	}
-	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, c)); err != nil {
-		t.Errorf("the replaced member did not reach sent/: %v", err)
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 || names[0] != c {
+		t.Errorf("queued notices are %v, want only %s", names, c)
 	}
-	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 0 {
-		t.Errorf("notices left queued: %v", names)
+	if pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); !ok || pin["held"] != true {
+		t.Errorf("the thread is not held: %v", pin)
 	}
-	if pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
-		t.Errorf("a pin is left: %v", pin)
+	if !strings.Contains(pumpQueueTestLog(t, cfg), pumpQueueLegacyUnprovableHold) {
+		t.Errorf("no %s line:\n%s", pumpQueueLegacyUnprovableHold, pumpQueueTestLog(t, cfg))
 	}
 }
 

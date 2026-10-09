@@ -1324,12 +1324,13 @@ func TestPumpReview776LegacyPrefixNameSetIsReconciled(t *testing.T) {
 	}
 }
 
-// A legacy pin taken for an unsettled record whose text the ledger no longer matches carries no
-// per-member digest, so an accepted reconciliation cannot complete a notice nobody sent.
-func TestPumpReview776LegacyPinCarriesNoDigestForAChangedBody(t *testing.T) {
+// An unsettled pre-change record whose text the ledger no longer matches cannot prove which text it
+// carried, so it holds the thread: its pin is held, names the record as one that cannot prove its text,
+// and nothing is sent or completed from it.
+func TestPumpReview776LegacyRecordWithAChangedBodyHoldsTheThread(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
-	bridge, _ := deliverFakeBridge(t, []map[string]any{
+	bridge, log := deliverFakeBridge(t, []map[string]any{
 		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
 		{"payload": map[string]any{"status": "outcome_unknown"}},
 	})
@@ -1349,13 +1350,23 @@ func TestPumpReview776LegacyPinCarriesNoDigestForAChangedBody(t *testing.T) {
 	if !ok {
 		t.Fatal("the unsettled record was not pinned")
 	}
-	if legacy, _ := pin["legacy"].(bool); !legacy {
-		t.Errorf("the pin is not marked legacy: %v", pin)
+	if held, _ := pin["held"].(bool); !held {
+		t.Errorf("the pin does not hold the thread: %v", pin)
 	}
-	if sha, present := pin["sha256"]; present {
-		if m, _ := sha.(map[string]any); len(m) != 0 {
-			t.Errorf("a legacy pin carries per-member digests it cannot justify: %v", m)
+	overlap, _ := pin["overlap"].([]any)
+	if len(overlap) != 1 {
+		t.Fatalf("the pin names %d records, want the one: %v", len(overlap), pin)
+	}
+	if ref, _ := overlap[0].(map[string]any); ref["logical_id"] != oldID || ref["unprovable"] != true {
+		t.Errorf("the pin does not name %s as a record that cannot prove its text: %v", oldID, ref)
+	}
+	for _, tool := range deliverSendToolsOf(t, log) {
+		if tool == deliverToolSend || tool == deliverToolSteer {
+			t.Errorf("a notice was sent from a record that cannot prove its text: %v", deliverSendToolsOf(t, log))
 		}
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 {
+		t.Errorf("the notice left the queue: %v", names)
 	}
 }
 
@@ -1489,8 +1500,9 @@ func TestPumpReview776LegacyAcceptedWithUnrecoverableTextHoldsTheQueue(t *testin
 	}
 }
 
-// A pre-change attempt whose names are neither today's queue nor a prefix of it is not this batch's
-// attempt: adopting it could complete notices it never carried, so the batch takes its own id.
+// A pre-change attempt whose names are not a subset of today's queue -- it names a notice no longer
+// queued -- is not this batch's attempt: adopting it could complete notices it never carried, so the
+// batch takes its own id. The notices predate the record, so its stamp is not what rules it out.
 func TestPumpReview776LegacyLookupIgnoresAnotherNameSet(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
@@ -1499,11 +1511,12 @@ func TestPumpReview776LegacyLookupIgnoresAnotherNameSet(t *testing.T) {
 		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
 	})
 	cfg := pumpTestConfig(t, bridge)
-	// The old attempt carried z.txt alone; a.txt arrived afterwards, so its name set is neither the
-	// queue nor a prefix of it.
+	// The old attempt carried y.txt and z.txt; y.txt is not queued, so its name set is no subset of the
+	// queue.
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
 	pumpQueueTestNotice(t, cfg, "parent-1", "zzzzzzzzzzzzzzzz.txt", "z-body")
-	otherID := pumpBatchIDStrings([]string{"parent-1", "zzzzzzzzzzzzzzzz.txt"})
+	pumpQueueTestBackdate(t, cfg, "parent-1")
+	otherID := pumpBatchIDStrings([]string{"parent-1", "yyyyyyyyyyyyyyyy.txt", "zzzzzzzzzzzzzzzz.txt"})
 	if err := deliverSave(cfg, deliverRecord{
 		LogicalID: otherID, RequestID: otherID, Tool: deliverToolSend, TargetThread: "parent-1",
 		MessageSHA256: deliverMessageSHA256("z-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
@@ -1662,9 +1675,10 @@ func TestPumpReview776AcceptedCompletionFailureKeepsThePin(t *testing.T) {
 	}
 }
 
-// An unsettled pre-change record whose text the ledger does not store is reconciled under the old
-// id through the bridge's own receipt, not sent under the new id.
-func TestPumpReview776LegacyUnsettledRecordIsReconciledDespiteAChangedBody(t *testing.T) {
+// An unsettled pre-change record whose text the ledger does not store is not sent under the new id,
+// and, since it cannot prove which text it carried, its receipt is not read either: no answer it gives
+// could complete or send a notice. The thread holds under its old id, with a named line.
+func TestPumpReview776LegacyUnsettledRecordWithAChangedBodyIsHeldNotSent(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
 	bridge, log := deliverFakeBridge(t, []map[string]any{
@@ -1683,20 +1697,15 @@ func TestPumpReview776LegacyUnsettledRecordIsReconciledDespiteAChangedBody(t *te
 		MessageSHA256: deliverMessageSHA256("the old body nobody can rebuild"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
 		t.Fatal(err)
 	}
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
-		t.Fatal(err)
+	for round := 0; round < 2; round++ {
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatal(err)
+		}
 	}
-	reconciled := false
 	for _, call := range deliverSendCallsOf(t, log) {
-		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
-			reconciled = true
-		}
 		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
-			t.Errorf("the round sent instead of reconciling the old id: %v", deliverSendToolsOf(t, log))
+			t.Errorf("the round sent instead of holding on the old id: %v", deliverSendToolsOf(t, log))
 		}
-	}
-	if !reconciled {
-		t.Fatalf("the old id %q was not reconciled: %v", oldID, deliverSendToolsOf(t, log))
 	}
 	pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1")
 	if !ok {
@@ -1705,10 +1714,13 @@ func TestPumpReview776LegacyUnsettledRecordIsReconciledDespiteAChangedBody(t *te
 	if pin["logical_id"] != oldID {
 		t.Errorf("the pin names %v, want the old id %q", pin["logical_id"], oldID)
 	}
-	if legacy, _ := pin["legacy"].(bool); !legacy {
-		t.Errorf("the pin is not marked legacy: %v", pin)
+	if held, _ := pin["held"].(bool); !held {
+		t.Errorf("the pin does not hold the thread: %v", pin)
 	}
 	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 2 {
-		t.Errorf("a notice left the queue during the reconciliation: %v", names)
+		t.Errorf("a notice left the queue during the hold: %v", names)
+	}
+	if logText := pumpQueueTestLog(t, cfg); !strings.Contains(logText, pumpQueueLegacyUnprovableHold) || !strings.Contains(logText, oldID) {
+		t.Errorf("no %s line naming %s:\n%s", pumpQueueLegacyUnprovableHold, oldID, logText)
 	}
 }

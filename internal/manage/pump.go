@@ -134,6 +134,12 @@ type pumpState struct {
 	// not replayed. A state written before the key existed reads as no refusals.
 	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
 
+	// QueueLegacyChecked marks a queue thread whose queue was searched for the pre-change ledger
+	// records that could have carried its notices and left nothing to answer for. The pre-change pump
+	// no longer writes such records, so the search runs until it finds nothing once, and never again.
+	// A state written before the key existed reads as no thread searched.
+	QueueLegacyChecked map[string]bool `json:"queue_legacy_checked"`
+
 	extra map[string]json.RawMessage
 }
 
@@ -152,38 +158,40 @@ type pumpReview776QueuePin struct {
 	// refusal is counted against it. A pin without it (written before the ordinal existed) is counted
 	// against its logical id.
 	Base string `json:"base,omitempty"`
-	// Legacy marks a pin taken for a pre-change ledger record whose body the ledger does not store.
-	// Such an attempt is reconciled through the bridge's own receipt instead of being replayed with
-	// the text on disk, which a notice the producer replaced no longer matches.
-	// A legacy pin without digests cannot prove which notices the attempt carried and holds the thread
-	// when the receipt says it went. An overlap pin carries digests only to tell a notice the producer
-	// wrote again from the one the records were matched against; a notice is completed only when a
-	// record that proves its text shows it delivered.
+	// Legacy marks a pin taken for pre-change ledger records whose body the ledger does not store. An
+	// overlap pin carries it with digests that only tell a notice the producer wrote again from the one
+	// the records were matched against; a notice is completed only when a record that proves its text
+	// shows it delivered. A legacy pin without an overlap (one an earlier build of the queue wrote) cannot
+	// prove which notices its attempt carried, so it holds the thread.
 	Legacy bool `json:"legacy,omitempty"`
 	// Held marks a pin whose pre-change attempt the ledger accepted but whose text is not
 	// recoverable. The attempt covered the pin's names, so completing them by name could archive a
 	// notice it never carried, and sending them under a new id could deliver one twice; the thread
 	// waits while the pin holds, which is the queue's rule for a pin.
 	Held bool `json:"held,omitempty"`
-	// Overlap is the evidence set of a pin taken over several pre-change records whose notice sets
-	// overlap. Each is reconciled on its own receipt every round, and the pin's names and digests are
-	// the notices any of them carried. A notice is completed once a provable record that carried it
-	// shows a delivery, and nothing is sent while a record that carried an unproven notice is
-	// undetermined. Once every record has answered, a notice only an unprovable record shows delivered
-	// marks the pin Held.
+	// Overlap is the evidence set of a pin taken over the pre-change records that carried queued
+	// notices, when there are several or one cannot prove its text. Each is reconciled on its own
+	// receipt every round, and the pin's names and digests are the notices any of them carried. A notice
+	// is completed once a provable record that carried it shows a delivery, and nothing is sent while a
+	// record that carried an unproven notice is undetermined. A record that cannot prove its text marks
+	// the pin Held: the thread sends nothing until an operator settles it, and the provable records are
+	// still reconciled under the hold.
 	Overlap []pumpReview776QueueLegacyRef `json:"overlap,omitempty"`
 }
 
-// pumpReview776QueueLegacyRef is one pre-change record of an overlap pin: its logical id and the
-// notices it carried, those of its set that were not written again after it. Unprovable marks a
-// record that cannot prove which text it carried -- one that carried only part of its set, or one over
-// a whole set whose text is not the text on disk -- so an accepted answer cannot show which queued text
-// it delivered: a notice only such a record shows delivered is held instead of completed, while a
-// notice another, provable record shows delivered is still completed.
+// pumpReview776QueueLegacyRef is one pre-change record of an overlap pin: its logical id, the names
+// its id hashes (Members) and the notices it carried (Names), those of its members that were not
+// written again after it. Unprovable marks a record that cannot prove which text it carried -- one that
+// carried only part of its members, or one whose message digest is not the digest of its members' text
+// on disk -- with the Reason for the operator. Such a record holds the thread: its answer never
+// completes a notice and never lets one be sent, while a notice another, provable record shows
+// delivered is still completed.
 type pumpReview776QueueLegacyRef struct {
 	LogicalID  string   `json:"logical_id"`
 	Names      []string `json:"names"`
+	Members    []string `json:"members,omitempty"`
 	Unprovable bool     `json:"unprovable,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 // pumpQueueRefusal is a queue thread's count of the refusals one batch id has taken. The next batch
@@ -208,8 +216,9 @@ func pumpNewState() pumpState {
 		Offsets: map[string]int64{}, PRs: map[string]string{}, Sources: map[string]string{},
 		Cursors: map[string]string{}, Sent: map[string]bool{},
 		QueueAccepted: map[string][]string{}, QueueAttempt: map[string]pumpReview776QueuePin{},
-		QueueRefused: map[string]pumpQueueRefusal{},
-		extra:        map[string]json.RawMessage{},
+		QueueRefused:       map[string]pumpQueueRefusal{},
+		QueueLegacyChecked: map[string]bool{},
+		extra:              map[string]json.RawMessage{},
 	}
 }
 
@@ -257,6 +266,8 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.QueueAttempt)
 		case "queue_refused":
 			err = json.Unmarshal(value, &st.QueueRefused)
+		case "queue_legacy_checked":
+			err = json.Unmarshal(value, &st.QueueLegacyChecked)
 		default:
 			// A key this file does not name belongs to a later node; it is preserved on write.
 			st.extra[key] = value
@@ -289,6 +300,9 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 	if st.QueueRefused == nil {
 		st.QueueRefused = map[string]pumpQueueRefusal{}
 	}
+	if st.QueueLegacyChecked == nil {
+		st.QueueLegacyChecked = map[string]bool{}
+	}
 	return st, nil
 }
 
@@ -315,7 +329,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 		{"prs", st.PRs}, {"sources", st.Sources}, {"cursors", st.Cursors}, {"sent", st.Sent},
 		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
 		{"pr_seq", st.PRSeq}, {"queue_attempt", st.QueueAttempt},
-		{"queue_refused", st.QueueRefused},
+		{"queue_refused", st.QueueRefused}, {"queue_legacy_checked", st.QueueLegacyChecked},
 	} {
 		if err := put(field.key, field.value); err != nil {
 			return err
