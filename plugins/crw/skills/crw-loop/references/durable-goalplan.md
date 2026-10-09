@@ -89,7 +89,11 @@ This is the on-disk shape under `.crw/goalplans/<slug>/goalplan.json`
 - `crw pabcd loop show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — renders the current plan summary.
 - `crw pabcd loop validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — runs the E8 quality gate; it FAILS
   unless the plan is complete and every `met` criterion carries `capturedEvidence`.
-- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]`
+- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]` — applies one
+  batch once per `idempotencyKey`. Sending the same batch again under the same key applies nothing
+  and records any ledger row the first attempt could not write; a different batch under a recorded
+  key is refused, so give different content a new key. The goalplan keeps each batch's ops, an
+  `annotate` note included, and `show` lists the notes.
 - `crw pabcd loop add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]` —
   registers a criterion whose scenario is the `--criterion` text. There is no `--id`:
   ids are assigned as `c-1`, `c-2`, ... (max existing `c-N` + 1, in registration

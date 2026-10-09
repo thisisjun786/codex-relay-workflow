@@ -270,13 +270,40 @@ type FinalGateState struct {
 }
 
 // SteeringEntry is one applied steering batch, the source of truth for idempotency; Summary says what the batch changed, never
-// a copy of the plan.
+// a copy of the plan. Ops and Events (CRW-1111) are what the batch carried and the ledger rows it owes: the normalised ops, the
+// annotate note and the dependency declarations included, and one event per row with a stable id, so a retry with the same key
+// can tell the same batch from another and record a row the first attempt could not write without applying anything again. An
+// entry written before them has neither (a legacy entry); the oracle has neither.
 type SteeringEntry struct {
-	IdempotencyKey string `json:"idempotencyKey"`
-	Rationale      string `json:"rationale"`
-	Evidence       string `json:"evidence"`
-	AppliedAt      string `json:"appliedAt"`
-	Summary        string `json:"summary"`
+	IdempotencyKey string                `json:"idempotencyKey"`
+	Rationale      string                `json:"rationale"`
+	Evidence       string                `json:"evidence"`
+	AppliedAt      string                `json:"appliedAt"`
+	Summary        string                `json:"summary"`
+	Ops            []SteeringOpRecord    `json:"ops,omitempty"`
+	Events         []SteeringEventRecord `json:"events,omitempty"`
+}
+
+// SteeringOpRecord is one op of a steering entry as the batch carried it after validation (SteerOp). Note belongs to annotate;
+// Scenario, Surface, Presented and ExpectedEvidence to add-criterion; ID, Title and DependsOn to add-work-phase.
+type SteeringOpRecord struct {
+	Kind             SteerOpKind      `json:"kind"`
+	Note             string           `json:"note,omitempty"`
+	Scenario         string           `json:"scenario,omitempty"`
+	Surface          CriterionSurface `json:"surface,omitempty"`
+	Presented        PresentedSurface `json:"presented,omitempty"`
+	ExpectedEvidence string           `json:"expectedEvidence,omitempty"`
+	ID               string           `json:"id,omitempty"`
+	Title            string           `json:"title,omitempty"`
+	DependsOn        []string         `json:"dependsOn,omitempty"`
+}
+
+// SteeringEventRecord is one ledger row a steering entry owes: its stable id, its event and its detail. The row's time is the
+// entry's AppliedAt.
+type SteeringEventRecord struct {
+	ID     string              `json:"id"`
+	Event  GoalplanLedgerEvent `json:"event"`
+	Detail string              `json:"detail"`
 }
 
 // Goalplan is the durable plan of a loop. ActiveWorkPhaseID is the work-phase cursor the FSM does not hold across a D-close.

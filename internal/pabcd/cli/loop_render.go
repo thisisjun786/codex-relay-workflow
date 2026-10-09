@@ -20,7 +20,8 @@ func RenderLoopPlan(plan *goalplan.Goalplan, lock *goalplan.GoalplanLockStatus) 
 // RenderLoopPlanLines is renderPlanLines (:679-710). The line order is the oracle's:
 // banner, objective, host, the work-phase and criteria counts, complete, the optional
 // writeLock line, then one line per work phase, per criterion and per open decision
-// (the decision's options and the phases waiting on it included).
+// (the decision's options and the phases waiting on it included), and last the port's
+// own lines for the annotate notes steering batches recorded (CRW-1111).
 func RenderLoopPlanLines(plan *goalplan.Goalplan, lock *goalplan.GoalplanLockStatus) string {
 	lines := []string{
 		"[crw loop: " + plan.Slug + "]",
@@ -75,6 +76,16 @@ func RenderLoopPlanLines(plan *goalplan.Goalplan, lock *goalplan.GoalplanLockSta
 			joined = "none"
 		}
 		lines = append(lines, "    waiting: "+joined)
+	}
+	// CRW-1111: an annotate note a steering batch recorded is part of the plan's record, so show lists it
+	// with the key of the batch that carried it. The oracle drops the note when it applies the batch.
+	for i := range plan.SteeringLog {
+		entry := &plan.SteeringLog[i]
+		for j := range entry.Ops {
+			if entry.Ops[j].Kind == goalplan.SteerOpAnnotate {
+				lines = append(lines, "  - note "+entry.IdempotencyKey+": "+entry.Ops[j].Note)
+			}
+		}
 	}
 	return strings.Join(lines, "\n")
 }

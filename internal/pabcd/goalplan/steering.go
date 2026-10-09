@@ -13,7 +13,15 @@ package goalplan
 // The op grammar, its validation and the pure fold are in steering_ops.go (B15a / CRW-376) and
 // are called, never copied. The oracle's own comment there says this half is B15b.
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -37,6 +45,10 @@ type SteeringBatchOptions struct {
 	// argument, never package state, so a test can drive the published-but-unsynced path without
 	// changing what any other caller does.
 	publish *goalplanPublishedOptions
+
+	// appendLedger replaces the ledger append of the entry's rows, so a test can fail one row of a
+	// batch (CRW-1111). nil is AppendGoalplanLedger.
+	appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error
 }
 
 // steeringBatchSummary is the oracle's entry summary (:275): how many ops the batch carried and
@@ -57,12 +69,135 @@ func steeringLedgerPathText(slug string) string {
 }
 
 // steeringLedgerWarning is the oracle's warning (:312-316): the batch stands and its audit row is
-// missing, so re-running is safe. err.Error() is Go's wording for the oracle's err.message.
+// missing. err.Error() is Go's wording for the oracle's err.message. The oracle's last sentence says
+// re-running is a no-op; since CRW-1111 re-running the same batch with the same key records the rows
+// still missing, so the sentence says that instead.
 func steeringLedgerWarning(slug string, err error) string {
 	return "the batch was applied but its ledger entry could not be written to " +
 		steeringLedgerPathText(slug) +
 		" (" + err.Error() + "). " +
-		"Re-running is a no-op because the key is recorded."
+		"Re-running the same batch with the same key records the missing rows without applying it again."
+}
+
+// steeringKeyReusedReason is the refusal for a key whose recorded batch differs from the one now sent
+// (CRW-1111): the key says the batch was applied, so a different batch under it would be answered as
+// done without being applied.
+func steeringKeyReusedReason(entry SteeringEntry) string {
+	return "idempotencyKey " + steeringOpsQuoted(entry.IdempotencyKey) + " was already used at " + entry.AppliedAt +
+		" for a different batch - send different content under a new key"
+}
+
+// steeringOpRecords is the batch's ops as the entry records them.
+func steeringOpRecords(ops []SteerOp) []SteeringOpRecord {
+	out := make([]SteeringOpRecord, 0, len(ops))
+	for _, op := range ops {
+		r := SteeringOpRecord{Kind: op.Kind}
+		switch op.Kind {
+		case SteerOpAnnotate:
+			r.Note = op.Note
+		case SteerOpAddCriterion:
+			r.Scenario, r.Surface, r.Presented, r.ExpectedEvidence = op.Scenario, op.Surface, op.Presented, op.ExpectedEvidence
+		default:
+			r.ID, r.Title = op.ID, op.Title
+			if len(op.DependsOn) > 0 {
+				r.DependsOn = append([]string{}, op.DependsOn...)
+			}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// steeringSameBatch reports whether the recorded entry carries the batch now sent: the same rationale,
+// evidence and ops. A work phase's prerequisites are a set (the add verb's own retry compares them so), so
+// their order does not tell two batches apart.
+func steeringSameBatch(entry SteeringEntry, batch SteerBatch) bool {
+	if entry.Rationale != batch.Rationale || entry.Evidence != batch.Evidence {
+		return false
+	}
+	sorted := func(ops []SteeringOpRecord) []SteeringOpRecord {
+		out := make([]SteeringOpRecord, len(ops))
+		for i, op := range ops {
+			if op.DependsOn != nil {
+				op.DependsOn = slices.Sorted(slices.Values(op.DependsOn))
+			}
+			out[i] = op
+		}
+		return out
+	}
+	return reflect.DeepEqual(sorted(entry.Ops), sorted(steeringOpRecords(batch.Ops)))
+}
+
+// steeringEvents is the rows a batch owes, in the oracle's order, each with its stable id: the steered
+// row, then one dependency_registered row per add-work-phase that declared prerequisites (:292-306).
+func steeringEvents(key, summary, rationale string, ops []SteerOp) []SteeringEventRecord {
+	events := []SteeringEventRecord{{ID: "steer:" + key, Event: EventSteered, Detail: key + ": " + summary + " — " + rationale}}
+	for i, op := range ops {
+		if op.Kind != SteerOpAddWorkPhase || len(op.DependsOn) == 0 {
+			continue
+		}
+		events = append(events, SteeringEventRecord{
+			ID: "steer:" + key + ":op" + strconv.Itoa(i), Event: EventDependencyRegistered,
+			Detail: op.ID + " dependsOn=" + strings.Join(op.DependsOn, ","),
+		})
+	}
+	return events
+}
+
+// steeringRecordedRows is the set of rows of the plan's ledger written at ts, keyed by event and detail:
+// what a retry compares the entry's events against. The ledger is read one line at a time; a line that
+// is not an object matches nothing.
+func steeringRecordedRows(cwd, slug, ts string) (map[[2]string]bool, error) {
+	path, err := goalplanLedgerPath(cwd, slug)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[[2]string]bool{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	seen := map[[2]string]bool{}
+	r := bufio.NewReader(f)
+	for {
+		line, readErr := r.ReadBytes('\n')
+		var row struct {
+			Ts     string `json:"ts"`
+			Slug   string `json:"slug"`
+			Event  string `json:"event"`
+			Detail string `json:"detail"`
+		}
+		if json.Unmarshal(line, &row) == nil && row.Ts == ts && row.Slug == slug {
+			seen[[2]string{row.Event, row.Detail}] = true
+		}
+		if errors.Is(readErr, io.EOF) {
+			return seen, nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+}
+
+// steeringRecordEvents appends the entry's rows, in order, skipping those recorded already when
+// recorded is not nil (a retry; a fresh entry cannot have any). It answers the warning of the first row
+// that could not be written, "" when every row is in the ledger.
+func steeringRecordEvents(cwd, slug string, entry SteeringEntry, recorded map[[2]string]bool, appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error) string {
+	if appendLedger == nil {
+		appendLedger = AppendGoalplanLedger
+	}
+	for _, ev := range entry.Events {
+		if recorded[[2]string{string(ev.Event), ev.Detail}] {
+			continue
+		}
+		if err := appendLedger(cwd, slug, GoalplanLedgerEntry{Ts: entry.AppliedAt, Slug: slug, Event: ev.Event, Detail: ev.Detail}); err != nil {
+			return steeringLedgerWarning(slug, err)
+		}
+	}
+	return ""
 }
 
 // goalplanPublishedWarning is CRW-793's durability warning: the plan at the final path is the new one,
@@ -89,7 +224,9 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 	var publish *goalplanPublishedOptions
 	var ctx context.Context
 	var beforeWrite func()
+	var appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error
 	if o != nil {
+		appendLedger = o.appendLedger
 		if o.Now != nil {
 			now = o.Now
 		}
@@ -101,7 +238,7 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 		ctx = lockOptions.Context
 	}
 	locked, err := WithGoalplanWriteLock(cwd, slug, func(plan *Goalplan) (SteerResult, error) {
-		return steeringApplyLocked(ctx, cwd, slug, plan, batch, now, publish, beforeWrite)
+		return steeringApplyLocked(ctx, cwd, slug, plan, batch, now, publish, beforeWrite, appendLedger)
 	}, lockOptions)
 	if err != nil {
 		return SteerResult{}, err
@@ -135,11 +272,31 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 // a first SIGINT that lands while the change is being prepared publishes nothing. After that write has begun
 // it is not read again: the transaction finishes and answers as before. beforeWrite (nil for none) runs right
 // after that last check, as the plan write begins.
-func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions, beforeWrite func()) (SteerResult, error) {
+func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions, beforeWrite func(), appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error) (SteerResult, error) {
 	for i := range plan.SteeringLog {
 		if plan.SteeringLog[i].IdempotencyKey == batch.IdempotencyKey {
 			existing := plan.SteeringLog[i]
-			return SteerResult{Kind: SteerResultDuplicate, Entry: &existing}, nil
+			// A legacy entry records no batch and no events: it answers duplicate as before, and nothing it
+			// may have lost is guessed at (CRW-1111).
+			if existing.Ops == nil {
+				return SteerResult{Kind: SteerResultDuplicate, Entry: &existing}, nil
+			}
+			// The same key with another batch would be answered as done without being applied; it is refused.
+			if !steeringSameBatch(existing, batch) {
+				return SteerResult{Kind: SteerResultRejected, Entry: &existing, Reason: steeringKeyReusedReason(existing)}, nil
+			}
+			// The same batch again: nothing is applied again, and a row the first attempt could not write is
+			// recorded now, under this lock (CRW-1111). The oracle answers duplicate and the row stays lost.
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return SteerResult{}, err
+				}
+			}
+			recorded, err := steeringRecordedRows(cwd, slug, existing.AppliedAt)
+			if err != nil {
+				return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringLedgerWarning(slug, err)}, nil
+			}
+			return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringRecordEvents(cwd, slug, existing, recorded, appendLedger)}, nil
 		}
 	}
 	entry := SteeringEntry{
@@ -148,7 +305,9 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 		Evidence:       batch.Evidence,
 		AppliedAt:      now(),
 		Summary:        steeringBatchSummary(batch.Ops),
+		Ops:            steeringOpRecords(batch.Ops),
 	}
+	entry.Events = steeringEvents(entry.IdempotencyKey, entry.Summary, entry.Rationale, batch.Ops)
 	applied, reason := steeringOpsApplyOps(plan, batch.Ops)
 	if reason != "" {
 		return SteerResult{Kind: SteerResultRejected, Reason: reason}, nil
@@ -175,24 +334,12 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 		}
 		warning = goalplanPublishedWarning(slug, err)
 	}
-	if err := AppendGoalplanLedger(cwd, slug, GoalplanLedgerEntry{
-		Ts: entry.AppliedAt, Slug: slug, Event: EventSteered,
-		Detail: entry.IdempotencyKey + ": " + entry.Summary + " — " + entry.Rationale,
-	}); err != nil {
-		return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: steeringLedgerWarning(slug, err)}, nil
-	}
-	// One row per phase that actually declared prerequisites, emitted after the steered row so
-	// the batch that carried the edge is the row above it (:292-306).
-	for _, op := range batch.Ops {
-		if op.Kind != SteerOpAddWorkPhase || len(op.DependsOn) == 0 {
-			continue
-		}
-		if err := AppendGoalplanLedger(cwd, slug, GoalplanLedgerEntry{
-			Ts: entry.AppliedAt, Slug: slug, Event: EventDependencyRegistered,
-			Detail: op.ID + " dependsOn=" + strings.Join(op.DependsOn, ","),
-		}); err != nil {
-			return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: steeringLedgerWarning(slug, err)}, nil
-		}
+	// The rows the entry owes, in the oracle's order: the steered row, then one row per phase that
+	// actually declared prerequisites, so the batch that carried the edge is the row above it (:292-306).
+	// A fresh entry has no row recorded yet; a row that cannot be written leaves the batch applied with a
+	// warning, and the same batch sent again under the same key records it.
+	if rowWarning := steeringRecordEvents(cwd, slug, entry, nil, appendLedger); rowWarning != "" {
+		return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: rowWarning}, nil
 	}
 	return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: warning}, nil
 }
