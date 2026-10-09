@@ -412,8 +412,19 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 		} else if text != "" {
 			return ActionHold, text, nil
 		}
-		return ActionHold, fmt.Sprintf("generation %d of relationship %s is open, a correction of %s that goes to its child: record it with dag-correct if that is not done yet, wait for its report, then accept it with dag-accept --supersedes %s",
-			rel.Generation, short(rel.ID), n.NodeID, short(acc.AcceptanceID)), nil
+		text := fmt.Sprintf("generation %d of relationship %s is open, a correction of %s that goes to its child: record it with dag-correct if that is not done yet, wait for its report, then accept it with dag-accept --supersedes %s",
+			rel.Generation, short(rel.ID), n.NodeID, short(acc.AcceptanceID))
+		if st.Cause == CauseCriteriaChanged {
+			// the report of that generation is ruled under the plan's criteria, which the relationship has to hold first (CRW-1036)
+			drift, err := criteriaRegistrationDrift(ctx, q, rel, n)
+			if err != nil {
+				return "", "", err
+			}
+			if drift != "" {
+				text += ". " + drift
+			}
+		}
+		return ActionHold, text, nil
 	}
 	why := st.Cause
 	if st.Cause == CauseCriteriaChanged {

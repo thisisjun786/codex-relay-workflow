@@ -2,17 +2,19 @@ package dagsched
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // A generation opened by hand for an accepted node whose plan revision changed only its criteria (CRW-1036). The route of such a node is a re-validation
 // (revalidation.go): the same output is ruled again under the plan's criteria and accepted again, with no new generation and no new child. dag-correct
-// therefore refuses to record a hand-opened generation for it, and dag-accept refuses a generation that is not recorded as an execution, so the child
+// therefore refuses to record a hand-opened generation for it, under any reason it was opened with, and dag-accept refuses a generation that is not recorded as an execution, so the child
 // would finish work that can only be refused afterwards. generation-open and generation-bind ask this inside the transaction that writes the generation or the binding.
 
 func init() { registry.HandOpenedGenerationGuard = guardHandOpenedGeneration }
@@ -23,11 +25,19 @@ func generationOpenedByRuling(ctx context.Context, q store.Querier, relationship
 	return queryOne(ctx, q, "SELECT 1 FROM verdicts v JOIN events e ON e.event_id = v.event_id WHERE e.relationship_id = ? AND v.verdict = 'needs_changes' AND v.next_generation = ? LIMIT 1", []any{relationship, generation}, &one)
 }
 
-// guardHandOpenedGeneration refuses a correction generation opened or bound by hand for a relationship that executes an accepted plan node whose route is a
-// re-validation. Every other generation passes: one for a node that is not accepted, one for an accepted node that is not stale (CRW-906), one for a node
-// whose route is a correction, a decision reply and a generation a ruling opened.
+// generationRecorded is whether the generation is recorded as an execution of a plan node (dag_node_executions): dag-accept accepts its result whatever opened it.
+func generationRecorded(ctx context.Context, q store.Querier, relationship string, generation int64) (bool, error) {
+	var one int
+	return queryOne(ctx, q, "SELECT 1 FROM dag_node_executions WHERE relationship_id = ? AND execution_generation = ? LIMIT 1", []any{relationship, generation}, &one)
+}
+
+// guardHandOpenedGeneration refuses a generation opened or bound by hand for a relationship that executes an accepted plan node whose route is a re-validation,
+// whatever reason it is opened under: dag-correct records none of them on that route (a correction reason is refused by the route, initial_assignment and an
+// empty reason state no correction), and dag-accept refuses a generation that is not recorded. Every other generation passes: one for a node that is not
+// accepted (the first generation of an assignment among them), one for an accepted node that is not stale (CRW-906), one for a node whose route is a
+// correction, a decision reply (dag-correct records it by its own rule) and a generation a ruling opened.
 func guardHandOpenedGeneration(ctx context.Context, st *store.Store, relationship, reason string, generation int64) error {
-	if !correctionOpenReason(reason) {
+	if reason == delivery.DecisionReply {
 		return nil
 	}
 	q := st.Q(ctx)
@@ -75,6 +85,14 @@ func (s *Scheduler) openGenerationDeadEnd(ctx context.Context, q store.Querier, 
 		return "", nil
 	}
 	if ruled, err := generationOpenedByRuling(ctx, q, rel.ID, rel.Generation); err != nil || ruled {
+		return "", err
+	}
+	// a generation dag-correct already recorded is accepted with --supersedes once its result is ruled under the plan's criteria, and a decision reply is recorded by its own rule: neither is a dead end
+	if recorded, err := generationRecorded(ctx, q, rel.ID, rel.Generation); err != nil || recorded {
+		return "", err
+	}
+	var reason sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil || reason.String == delivery.DecisionReply {
 		return "", err
 	}
 	changed, unavailable, err := s.consumedChange(ctx, q, plan, snap, n)

@@ -170,3 +170,53 @@ func TestANonPRNodeIsIntegratedOnItsMergedMark(t *testing.T) {
 		}
 	}
 }
+
+// The guard does not stand on the reason a generation is opened under: generation-open --reason initial_assignment for the same accepted node is a generation that
+// dag-correct refuses to record (its reason states no correction) and dag-accept refuses to accept, so it is refused as well, and so is the bind of one opened
+// before the guard asked it (verification round 2 of CRW-1036).
+func TestGenerationOpenAndBindAreRefusedUnderInitialAssignmentWhereTheRouteIsARevalidation(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["A"].RelationshipID
+	k.invRevise("sr", "A", "sr-r2", withCriteria(dig("the second edition of A's criteria")))
+	generations := k.count("SELECT COUNT(*) FROM generations")
+	reg := &registry.Registry{Store: k.s}
+	if _, err := reg.OpenGeneration(context.Background(), rid, "by-hand-initial", "initial_assignment", sql.NullString{}); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "dag-generation-withdraw") {
+		t.Fatalf("generation-open --reason initial_assignment = %v, want the revalidation route to refuse it", err)
+	}
+	if got := k.count("SELECT COUNT(*) FROM generations"); got != generations {
+		t.Fatalf("%d generations after the refused open, want %d", got, generations)
+	}
+	number := openUnguarded(t, k, rid, "by-hand-initial-old", "initial_assignment")
+	if _, err := reg.BindAnchor(context.Background(), rid, number, "turn-dispatch", "dispatch_receipt"); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("generation-bind of an initial_assignment generation = %v, want disposition_conflict", err)
+	}
+	if k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ? AND execution_generation = ? AND anchor_state = 'bound'", rid, number) != 0 {
+		t.Fatal("the generation was bound")
+	}
+}
+
+// A hand-opened correction that dag-correct already recorded is an execution of the node: a later revision of the criteria alone leaves it acceptable (the
+// criteria are registered again, the generation's result is ruled under them and accepted with --supersedes), so the reading does not call it a dead end
+// (verification round 2 of CRW-1036).
+func TestARecordedHandCorrectionIsNotADeadEndAfterACriteriaRevision(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["B"].RelationshipID
+	prepared := k.rvPrepare("sr", "B")
+	acOpenByHand(t, k, rid, prepared.DispatchRequestID, AcceptedResultCorrection, 2, true)
+	if _, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest); err != nil {
+		t.Fatalf("dag-correct: %v", err)
+	}
+	criteria := dig("the criteria of B after the recorded correction")
+	k.invRevise("sr", "B", "sr-r2", withCriteria(criteria))
+	detail := rvDetail(t, k.read("sr"), "B")
+	if strings.Contains(detail, "dag-correct refuses to record that generation") || strings.Contains(detail, "record is left as it is") || !strings.Contains(detail, "dag-accept --supersedes") || !strings.Contains(detail, "criteria-register") {
+		t.Fatalf("the reading of a recorded correction reports a dead end: %q", detail)
+	}
+	k.exec("UPDATE canonical_criteria SET set_digest = ? WHERE relationship_id = ?", criteria, rid)
+	k.rvReportGeneration(rid, "B", 2, criteria)
+	if res, err := k.accept("sr", "B", AcceptInput{Supersedes: accepted["B"].AcceptanceID}); err != nil || res.SupersededID != accepted["B"].AcceptanceID {
+		t.Fatalf("accept the recorded correction = %+v %v", res, err)
+	}
+}
