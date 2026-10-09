@@ -731,10 +731,14 @@ added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	find {CHECKOUT} -del
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'import shutil; shutil.rmtree("{CHECKOUT}")'	CRW-1028-ev-d8-python-rmtree	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post.json	CRW-1028-ev-d9-json-secret	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post2.json	CRW-1028-ev-d9-json-escaped	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post3.json	CRW-1028-ev-d9-json-escaped-name	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'exec(br"""# coding note; coding: unicode_escape\n\x6fpen(file="{MEMORY}/n.md",mode="w")\n""")'	CRW-1028-ev-d10-double-coding	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	node -e 'require("fs").writeFileSync(process.argv[1],"x")' {MEMORY}/n.md	CRW-1028-ev-d11-node-argv	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'm="{MEMORY}/n.md"; f=open; f(m,"w").write("x")'	CRW-1028-ev-d11-python-f-open	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'import pathlib; pathlib.Path("{MEMORY}/"+"n.md").write_text("x")'	CRW-1028-ev-d11-python-path-computed	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'import pathlib; pathlib.Path("{MEMORY}").joinpath("n.md").write_text("x")'	CRW-1028-ev-d11-python-path-join	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'import pathlib; (pathlib.Path("{MEMORY}")/"n.md").write_text("x")'	CRW-1028-ev-d11-python-path-div	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); p.write_text("x")'	CRW-1028-ev-d11-python-path-bound	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	ruby -e 'File.write("{MEMORY}/n.md","x")'	CRW-1028-ev-d12-ruby	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	perl -e 'open(F,">","{MEMORY}/n.md"); print F "x"'	CRW-1028-ev-d12-perl	row	-
 added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	sed 'e echo x > {MEMORY}/n.md' <<<x	CRW-1028-ev-d12-sed-e	row	-

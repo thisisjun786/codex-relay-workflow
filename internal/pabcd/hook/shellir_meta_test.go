@@ -377,12 +377,40 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var checked, refused, unknown int
+	var checked, refused, unknown, refusedRun, refusedSkipped, refusedWords, overRefused int
 	for _, base := range shellMetaBases() {
+		baseNames, _, _ := shellMetaReaderNames(base.cmd)
 		for _, v := range append([]string{base.cmd}, shellMetaVariants(base.cmd)...) {
 			names, unk, ref := shellMetaReaderNames(v)
 			if ref {
+				// A refused variant is executed too (CRW-1028, criterion c2, part (c): every generated case runs under the real
+				// shells). A refusal is the verdict, so nothing is asserted about what the reader lists; the run measures
+				// the over-refusal side (a refused variant that runs only programs its base lists) and proves the sandbox
+				// held: the variant names no path outside the temporary directory, and the shells run with the stub PATH,
+				// the temporary HOME and a ten second limit.
 				refused++
+				if shellMetaEscapesSandbox(v) {
+					refusedSkipped++
+					continue
+				}
+				refusedRun++
+				for _, shell := range shells {
+					words := shellMetaTrace(t, shell, v, dir, stubs)
+					harmless := true
+					for _, word := range words {
+						name := path.Base(word)
+						if shellMetaIgnored[name] || strings.Contains(name, "=") {
+							continue
+						}
+						refusedWords++
+						if !baseNames[name] && !shellMetaOpener[name] {
+							harmless = false
+						}
+					}
+					if harmless && shell == shells[0] {
+						overRefused++
+					}
+				}
 				continue
 			}
 			if unk {
@@ -404,4 +432,29 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 		}
 	}
 	t.Logf("traced program words checked: %d; commands the reader refused: %d; commands with an unnamed program: %d", checked, refused, unknown)
+	t.Logf("refused commands run under the real shells: %d (skipped as not provably inside the sandbox: %d); program words they traced: %d; "+
+		"refused commands that ran only their base's programs and the wrapper words (over-refused): %d", refusedRun, refusedSkipped, refusedWords, overRefused)
+	if refused > 0 && refusedRun == 0 {
+		t.Errorf("the reader refused %d generated commands and none of them was run under the real shells", refused)
+	}
+	if refusedSkipped*10 > refused {
+		t.Errorf("%d of %d refused commands were skipped as outside the sandbox: the base list names absolute paths", refusedSkipped, refused)
+	}
+}
+
+// shellMetaOpener is the words the wrapper and transport transforms put before the base program. A refused variant that
+// traces only these and the programs of its base ran what the base would run: the reader over-refused it.
+var shellMetaOpener = map[string]bool{
+	"env": true, "command": true, "exec": true, "nohup": true, "time": true, "builtin": true, "bash": true, "zsh": true,
+	"eval": true, "printf": true, "source": true, ".": true,
+}
+
+// shellMetaAbsPath finds an absolute path in a command text: a slash that starts a word.
+var shellMetaAbsPath = regexp.MustCompile(`(^|[^A-Za-z0-9_.$/])/[A-Za-z]`)
+
+// shellMetaEscapesSandbox is whether a generated command might touch a path outside the temporary directory: it names an
+// absolute path other than /dev/null. The bases use relative paths only, so this is false for every generated case; the
+// check keeps a later base with an absolute path from leaving the sandbox unnoticed.
+func shellMetaEscapesSandbox(cmd string) bool {
+	return shellMetaAbsPath.MatchString(strings.ReplaceAll(cmd, "/dev/null", ""))
 }
