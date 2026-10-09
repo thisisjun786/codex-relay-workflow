@@ -1,6 +1,7 @@
 package configguard
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -24,7 +26,7 @@ import (
 // activated, and records here what that run showed together with the codex version and the digest
 // of config.toml it was measured against. The hook reuses the record only while both still match
 // what it sees now (the codex version, config.toml, and the project and system layers that apply
-// to the working directory), and takes it from nothing else: a file's mtime is not evidence, and a record
+// to the working directory, judged after the version is read), and takes it from nothing else: a file's mtime is not evidence, and a record
 // without a readable version or digest is no record. When the version or the config changes the
 // hook measures again; when the record shows a soft flag off the hook still warns every session
 // (a resumed or compacted session needs the notice), it just does not run the listing to learn it.
@@ -125,16 +127,58 @@ func selfHealEvidenceHash(path string) (*string, error) {
 	return &digest, nil
 }
 
+// selfHealKernelJoin is dir/name without cleaning dir: the codex run inherits CODEX_HOME as it is
+// spelled, and the kernel resolves a ".." that follows a symbolic link physically, where
+// filepath.Join folds it lexically and would name another directory's file. The evidence has to
+// fingerprint the file codex reads, so it takes the spelling to the kernel unchanged (CRW-1150).
+func selfHealKernelJoin(dir, name string) string {
+	switch {
+	case dir == "":
+		return name
+	case strings.HasSuffix(dir, "/"):
+		return dir + name
+	}
+	return dir + "/" + name
+}
+
+// selfHealBounded runs one fingerprint step inside the round's deadline. A read of a regular file on
+// a stalled filesystem cannot be interrupted, so the step runs in its own goroutine and is abandoned
+// when ctx ends: the caller gets ctx's error at once and the round answers with a measurement that
+// failed. The abandoned goroutine ends with the process or when the read returns.
+func selfHealBounded[T any](ctx context.Context, step func() (T, error)) (T, error) {
+	if ctx == nil || ctx.Done() == nil {
+		return step()
+	}
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		value, err := step()
+		done <- result{value, err}
+	}()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+}
+
 // selfHealConfigDigest names the config.toml the evidence was measured against.
-func selfHealConfigDigest(home string) (string, error) {
-	digest, err := selfHealEvidenceHash(filepath.Join(home, "config.toml"))
-	if err != nil {
-		return "", err
-	}
-	if digest == nil {
-		return selfHealConfigAbsent, nil
-	}
-	return *digest, nil
+func selfHealConfigDigest(ctx context.Context, home string) (string, error) {
+	return selfHealBounded(ctx, func() (string, error) {
+		digest, err := selfHealEvidenceHash(selfHealKernelJoin(home, "config.toml"))
+		if err != nil {
+			return "", err
+		}
+		if digest == nil {
+			return selfHealConfigAbsent, nil
+		}
+		return *digest, nil
+	})
 }
 
 // selfHealLayerFiles are the config layers other than the user's config.toml that codex reads for a
@@ -146,7 +190,7 @@ func selfHealConfigDigest(home string) (string, error) {
 // link, so both ancestor chains are covered.
 func selfHealLayerFiles(home string, cwds ...string) []string {
 	files := []string{"/etc/codex/config.toml", "/etc/codex/managed_config.toml", "/etc/codex/requirements.toml",
-		filepath.Join(home, "managed_config.toml"), filepath.Join(home, "requirements.toml")}
+		selfHealKernelJoin(home, "managed_config.toml"), selfHealKernelJoin(home, "requirements.toml")}
 	seen := map[string]bool{}
 	for _, cwd := range cwds {
 		for dir := cwd; ; dir = filepath.Dir(dir) {
@@ -166,25 +210,27 @@ func selfHealLayerFiles(home string, cwds ...string) []string {
 // config.toml. An unknown or relative cwd, one whose physical directory cannot be resolved, or a
 // layer that cannot be read, is an error: evidence is then neither recorded nor reused, and the hook
 // measures.
-func selfHealLayersDigest(home, cwd string) (string, error) {
+func selfHealLayersDigest(ctx context.Context, home, cwd string) (string, error) {
 	if !filepath.IsAbs(cwd) {
 		return "", errSelfHealLayersUnknown
 	}
-	physical, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.New()
-	for _, path := range selfHealLayerFiles(home, filepath.Clean(cwd), filepath.Clean(physical)) {
-		digest, err := selfHealEvidenceHash(path)
+	return selfHealBounded(ctx, func() (string, error) {
+		physical, err := filepath.EvalSymlinks(cwd)
 		if err != nil {
 			return "", err
 		}
-		if digest != nil {
-			sum.Write([]byte(path + "\t" + *digest + "\n"))
+		sum := sha256.New()
+		for _, path := range selfHealLayerFiles(home, filepath.Clean(cwd), filepath.Clean(physical)) {
+			digest, err := selfHealEvidenceHash(path)
+			if err != nil {
+				return "", err
+			}
+			if digest != nil {
+				sum.Write([]byte(path + "\t" + *digest + "\n"))
+			}
 		}
-	}
-	return hex.EncodeToString(sum.Sum(nil)), nil
+		return hex.EncodeToString(sum.Sum(nil)), nil
+	})
 }
 
 var errSelfHealLayersUnknown = errSelfHealReport("the working directory of the codex run is not known")
@@ -207,50 +253,96 @@ type RecordSelfHealEvidenceDeps struct {
 	Cwd string
 	Run CodexRunner
 	Now func() string
+	// Ctx ends the recording: a fingerprint read or a publication that has not finished when it ends
+	// is abandoned and nothing is recorded. nil means no deadline.
+	Ctx context.Context
 }
 
 // RecordSelfHealEvidence is called by an explicit command after it changed the declared flags. It
-// measures once more (features list and version), and records the result only when config.toml did
-// not change while it measured. A measurement it cannot make removes an older record, which no
-// longer describes the flags just changed, and is not an error: the hook falls back to measuring.
+// measures once more (features list, bracketed by two version reads) and records the result only when
+// config.toml and the other layers did not change while it measured, and the codex that listed is the
+// one whose version is recorded: each runner call resolves the executable afresh, so a binary
+// replaced between the listing and the version read would otherwise pair one codex's listing with
+// another's version. A measurement it cannot make removes an older record, which no longer describes
+// the flags just changed, and is not an error: the hook falls back to measuring.
 func RecordSelfHealEvidence(deps RecordSelfHealEvidenceDeps) error {
-	before, err := selfHealConfigDigest(deps.CodexHome)
+	ctx := deps.Ctx
+	before, err := selfHealConfigDigest(ctx, deps.CodexHome)
 	if err != nil {
 		return dropSelfHealEvidence(deps.CodexHome)
 	}
-	layersBefore, err := selfHealLayersDigest(deps.CodexHome, deps.Cwd)
-	if err != nil {
-		return dropSelfHealEvidence(deps.CodexHome)
-	}
-	state, err := ReadDeclaredState(deps.Run)
+	layersBefore, err := selfHealLayersDigest(ctx, deps.CodexHome, deps.Cwd)
 	if err != nil {
 		return dropSelfHealEvidence(deps.CodexHome)
 	}
 	version := selfHealCodexVersion(deps.Run)
-	after, err := selfHealConfigDigest(deps.CodexHome)
-	if version == "" || err != nil || after != before {
-		return dropSelfHealEvidence(deps.CodexHome)
-	}
-	if layersAfter, err := selfHealLayersDigest(deps.CodexHome, deps.Cwd); err != nil || layersAfter != layersBefore {
-		return dropSelfHealEvidence(deps.CodexHome)
-	}
-	marker, err := ReadSelfHealMarkerFile(deps.CodexHome)
+	state, err := ReadDeclaredState(deps.Run)
 	if err != nil {
-		return err
+		return dropSelfHealEvidence(deps.CodexHome)
 	}
-	if marker == nil {
-		marker = &SelfHealMarker{}
-		if _, statErr := os.Stat(SelfHealMarkerPath(deps.CodexHome)); statErr == nil {
-			// A readable but malformed marker is left alone, as ClearSelfHealOptOut leaves it.
-			return nil
-		}
+	versionAfter := selfHealCodexVersion(deps.Run)
+	after, err := selfHealConfigDigest(ctx, deps.CodexHome)
+	if version == "" || version != versionAfter || err != nil || after != before {
+		return dropSelfHealEvidence(deps.CodexHome)
+	}
+	if layersAfter, err := selfHealLayersDigest(ctx, deps.CodexHome, deps.Cwd); err != nil || layersAfter != layersBefore {
+		return dropSelfHealEvidence(deps.CodexHome)
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
 	}
 	now := deps.Now
 	if now == nil {
 		now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 	}
-	marker.Probe = &SelfHealProbeEvidence{CodexVersion: version, ConfigSHA256: after, LayersSHA256: layersBefore, RecordedAt: now(), Features: state}
-	return WriteSelfHealMarkerFile(deps.CodexHome, marker)
+	probe := &SelfHealProbeEvidence{CodexVersion: version, ConfigSHA256: after, LayersSHA256: layersBefore, RecordedAt: now(), Features: state}
+	// The marker is read and published under its lock, so a disable that completes meanwhile is read
+	// here and keeps its opt-out, or waits and overwrites this record (never the reverse).
+	return updateSelfHealMarker(deps.CodexHome, true, func() (*SelfHealMarker, error) {
+		marker, err := ReadSelfHealMarkerFile(deps.CodexHome)
+		if err != nil {
+			return nil, err
+		}
+		if marker == nil {
+			if _, statErr := os.Stat(SelfHealMarkerPath(deps.CodexHome)); statErr == nil {
+				// A readable but malformed marker is left alone, as ClearSelfHealOptOut leaves it.
+				return nil, nil
+			}
+			marker = &SelfHealMarker{}
+		}
+		if marker.OptedOut != nil && *marker.OptedOut {
+			// An explicit opt-out that came after the enable's own clear stands.
+			return nil, nil
+		}
+		marker.Probe = probe
+		return marker, nil
+	})
+}
+
+// selfHealMarkerLockWait is how long a marker writer waits for another's lock. A holder keeps it only
+// for one read and one publication.
+const selfHealMarkerLockWait = activationLockWait
+
+// updateSelfHealMarker is the one read-modify-write of the marker file, under an exclusive lock on its
+// sidecar so the explicit commands' writers (enable's recorder, disable's opt-out, enable's clear)
+// never interleave: a stale marker read before another writer published is never published after it
+// (CRW-1150). update returns the marker to publish, or nil to leave the file as it is. A refused
+// lock is an error and writes nothing; when the filesystem cannot lock at all, a writer that is not
+// optional (an explicit opt-out or clear, which must not be lost) goes on without the lock, as it did
+// before the lock existed.
+func updateSelfHealMarker(home string, requireLock bool, update func() (*SelfHealMarker, error)) error {
+	lock, err := crwdir.LockConfig(SelfHealMarkerPath(home), selfHealMarkerLockWait)
+	switch {
+	case err == nil:
+		defer lock.Release()
+	case requireLock || err.Error() == crwdir.ConfigLockBusy:
+		return err
+	}
+	marker, err := update()
+	if err != nil || marker == nil {
+		return err
+	}
+	return WriteSelfHealMarkerFile(home, marker)
 }
 
 // dropSelfHealEvidence removes the record of an older measurement after a recording attempt that
@@ -258,16 +350,21 @@ func RecordSelfHealEvidence(deps RecordSelfHealEvidenceDeps) error {
 // mtime cache no longer describes them either: it is retired too (selfHealRetireLegacyCache), and a
 // marker with neither is left as it is.
 func dropSelfHealEvidence(home string) error {
-	marker, err := ReadSelfHealMarkerFile(home)
-	if err != nil || marker == nil {
+	if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
 		return err
 	}
-	if marker.Probe == nil && !marker.probeSeen && (marker.AllEnabled == nil || !*marker.AllEnabled) {
-		return nil
-	}
-	marker.Probe = nil
-	selfHealRetireLegacyCache(marker)
-	return WriteSelfHealMarkerFile(home, marker)
+	return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
+		marker, err := ReadSelfHealMarkerFile(home)
+		if err != nil || marker == nil {
+			return nil, err
+		}
+		if marker.Probe == nil && !marker.probeSeen && (marker.AllEnabled == nil || !*marker.AllEnabled) {
+			return nil, nil
+		}
+		marker.Probe = nil
+		selfHealRetireLegacyCache(marker)
+		return marker, nil
+	})
 }
 
 // selfHealRetireLegacyCache turns the oracle's all-enabled cache off (allEnabled false is the
@@ -293,13 +390,15 @@ func selfHealEvidenceState(deps SelfHealReportDeps, marker *SelfHealMarker, heal
 			return nil, false
 		}
 	}
-	if digest, err := selfHealConfigDigest(deps.CodexHome); err != nil || digest != e.ConfigSHA256 {
-		return nil, false
-	}
-	if layers, err := selfHealLayersDigest(deps.CodexHome, deps.Cwd); err != nil || layers != e.LayersSHA256 {
-		return nil, false
-	}
+	// The version is read first: the probe can take most of the round's time, and a change completed
+	// while it ran must be seen by the digests that judge the record after it.
 	if version := selfHealCodexVersion(deps.Run); version == "" || version != e.CodexVersion {
+		return nil, false
+	}
+	if digest, err := selfHealConfigDigest(deps.Ctx, deps.CodexHome); err != nil || digest != e.ConfigSHA256 {
+		return nil, false
+	}
+	if layers, err := selfHealLayersDigest(deps.Ctx, deps.CodexHome, deps.Cwd); err != nil || layers != e.LayersSHA256 {
 		return nil, false
 	}
 	return e.Features, true

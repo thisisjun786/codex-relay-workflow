@@ -545,7 +545,7 @@ func TestSelfHealEvidenceFingerprintRefusesFilesThatAreNotRegular(t *testing.T) 
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := selfHealLayersDigest(home, project)
+		_, err := selfHealLayersDigest(context.Background(), home, project)
 		done <- err
 	}()
 	select {
@@ -566,7 +566,7 @@ func TestSelfHealEvidenceFingerprintRefusesFilesThatAreNotRegular(t *testing.T) 
 		}
 	})
 	go func() {
-		_, err := selfHealConfigDigest(home)
+		_, err := selfHealConfigDigest(context.Background(), home)
 		done <- err
 	}()
 	select {
@@ -718,7 +718,8 @@ func TestSelfHealEvidenceFingerprintsTheConfigTheKernelResolves(t *testing.T) {
 	if err := os.Symlink(filepath.Join(storage, "project"), filepath.Join(base, "work", "alias")); err != nil {
 		t.Fatal(err)
 	}
-	home := filepath.Join(base, "work", "alias", "..", "codex")
+	// Spelled by concatenation: filepath.Join would fold the ".." before the kernel sees it.
+	home := base + "/work/alias/../codex"
 	for _, dir := range []string{filepath.Join(base, "codex"), filepath.Join(storage, "codex")} {
 		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[features]\nhooks = true\n"), 0o644); err != nil {
 			t.Fatal(err)

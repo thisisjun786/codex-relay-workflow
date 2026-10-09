@@ -156,41 +156,49 @@ func WriteSelfHealMarkerFile(home string, marker *SelfHealMarker) error {
 }
 
 // MarkSelfHealOptedOut merges the explicit disable choice with accepted cache and
-// healed-key consent fields. Newly present overrides append in JS spread order.
+// healed-key consent fields. Newly present overrides append in JS spread order. It reads and
+// publishes under the marker lock, so an enable's recorder cannot publish an older marker over it.
 func MarkSelfHealOptedOut(home, at string) error {
-	m, err := ReadSelfHealMarkerFile(home)
-	if err != nil {
-		return err
-	}
-	if m == nil {
-		m = &SelfHealMarker{}
-	}
-	fields, err := selfHealMarkerObject(m)
-	if err != nil {
-		return err
-	}
-	for _, field := range fields {
-		m.order = append(m.order, field.Key)
-	}
-	for _, key := range []string{"optedOut", "optedOutAt", "allEnabled"} {
-		if !slices.Contains(m.order, key) {
-			m.order = append(m.order, key)
+	return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
+		m, err := ReadSelfHealMarkerFile(home)
+		if err != nil {
+			return nil, err
 		}
-	}
-	opted, enabled := true, false
-	m.OptedOut, m.OptedOutAt, m.AllEnabled = &opted, &at, &enabled
-	// The flags this opt-out reverts no longer match what the evidence verified.
-	m.Probe = nil
-	return WriteSelfHealMarkerFile(home, m)
+		if m == nil {
+			m = &SelfHealMarker{}
+		}
+		fields, err := selfHealMarkerObject(m)
+		if err != nil {
+			return nil, err
+		}
+		for _, field := range fields {
+			m.order = append(m.order, field.Key)
+		}
+		for _, key := range []string{"optedOut", "optedOutAt", "allEnabled"} {
+			if !slices.Contains(m.order, key) {
+				m.order = append(m.order, key)
+			}
+		}
+		opted, enabled := true, false
+		m.OptedOut, m.OptedOutAt, m.AllEnabled = &opted, &at, &enabled
+		// The flags this opt-out reverts no longer match what the evidence verified.
+		m.Probe = nil
+		return m, nil
+	})
 }
 
 // ClearSelfHealOptOut clears only the explicit opt-out fields; an absent or
 // readable malformed marker stays untouched, and a read failure is refused.
 func ClearSelfHealOptOut(home string) error {
-	m, err := ReadSelfHealMarkerFile(home)
-	if err != nil || m == nil {
+	if m, err := ReadSelfHealMarkerFile(home); err != nil || m == nil {
 		return err
 	}
-	m.OptedOut, m.OptedOutAt = nil, nil
-	return WriteSelfHealMarkerFile(home, m)
+	return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
+		m, err := ReadSelfHealMarkerFile(home)
+		if err != nil || m == nil {
+			return nil, err
+		}
+		m.OptedOut, m.OptedOutAt = nil, nil
+		return m, nil
+	})
 }

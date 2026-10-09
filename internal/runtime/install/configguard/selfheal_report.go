@@ -72,6 +72,9 @@ type SelfHealReportDeps struct {
 	// is not reused (CRW-1150).
 	Cwd string
 	Run CodexRunner
+	// Ctx is the round's deadline: a fingerprint read that has not finished when it ends is abandoned
+	// and the round measures (CRW-1150). nil means no deadline.
+	Ctx context.Context
 }
 
 // SelfHealReport is selfHealDeclaredFeatures without its writes. The marker is read only, and the
@@ -198,7 +201,7 @@ func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env
 	// codex runs in the hook's working directory, which decides the project layers that apply; when it
 	// cannot be read, recorded evidence is not reused.
 	cwd, _ := os.Getwd()
-	additional := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: SelfHealReportRunner(probeCtx, env)}))
+	additional := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: SelfHealReportRunner(probeCtx, env), Ctx: probeCtx}))
 	if ctx.Err() != nil {
 		// The probe was cancelled while it ran: nothing is rendered or written after cancellation.
 		return harness.Interrupted
