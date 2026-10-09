@@ -1,6 +1,7 @@
 package recall
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,21 +37,60 @@ func codexHome(env ...host.LookupEnv) (string, error) {
 	if value, _ := lookup("CODEX_HOME"); text.Trim(value) != "" {
 		return RecallPhysicalAbs(source.DecodeUTF8([]byte(value)))
 	}
-	home, err := host.Home(os.LookupEnv)
+	home, err := recallHome(lookup)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, ".codex"), nil
 }
 
+// recallHome is the user's home directory for a default location. An empty HOME names no directory: the
+// default would resolve against the working directory and create state in the workspace, so it is refused
+// and no other home is chosen in its place.
+func recallHome(env host.LookupEnv) (string, error) {
+	home, err := host.Home(env)
+	if err != nil {
+		return "", err
+	}
+	if home == "" {
+		return "", errors.New("cannot resolve the home directory: HOME is empty")
+	}
+	return home, nil
+}
+
 func sessionsDir(home string) string { return filepath.Join(home, "sessions") }
 func memoriesDir(home string) string { return filepath.Join(home, "memories") }
 
-// Missing home is null; sorted names break Number ties, including non-files.
+// physicalHome names the directory the system lists for home. Joining names onto a path that has a link
+// followed by `..` would name the lexical parent instead, so the home is resolved once, before it is
+// listed and before names are joined to it. A home whose cleaned spelling is already that directory
+// keeps its spelling.
+func physicalHome(home string) string {
+	resolved, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		return home
+	}
+	lexical, e1 := os.Stat(filepath.Clean(home))
+	physical, e2 := os.Stat(resolved)
+	if e1 == nil && e2 == nil && os.SameFile(lexical, physical) {
+		return home
+	}
+	return resolved
+}
+
+// usableDatabase is a regular file, or a link that reaches one. A directory or a dangling link with a
+// matching name is not a database, and must not hide the one that is.
+func usableDatabase(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// Missing home is null; sorted names break Number ties.
 func latestVersionedDb(home, prefix string) (string, error) {
 	if _, err := os.Stat(home); err != nil {
 		return "", nil
 	}
+	home = physicalHome(home)
 	entries, err := os.ReadDir(home)
 	if err != nil {
 		return "", err
@@ -64,7 +104,7 @@ func latestVersionedDb(home, prefix string) (string, error) {
 			continue
 		}
 		number, _ := strconv.ParseFloat(digits, 64)
-		if best == "" || number > bestNumber {
+		if (best == "" || number > bestNumber) && usableDatabase(filepath.Join(home, name)) {
 			best, bestNumber = name, number
 		}
 	}

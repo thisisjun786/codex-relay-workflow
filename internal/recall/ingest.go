@@ -19,11 +19,13 @@ const TOOL_TEXT_CAP = 8192
 const BACKFILL_BATCH = 1000
 
 type IngestResult struct {
-	Scanned   float64 `json:"scanned"`
-	Ingested  float64 `json:"ingested"`
-	Appended  float64 `json:"appended"`
-	Pruned    float64 `json:"pruned"`
-	Msgs      float64 `json:"msgs"`
+	Scanned  float64 `json:"scanned"`
+	Ingested float64 `json:"ingested"`
+	Appended float64 `json:"appended"`
+	Pruned   float64 `json:"pruned"`
+	Msgs     float64 `json:"msgs"`
+	// Skipped counts the files that could not be read this time; the rest were indexed.
+	Skipped   float64 `json:"skipped,omitempty"`
 	ElapsedMs float64 `json:"elapsedMs"`
 }
 
@@ -150,6 +152,12 @@ func (o ingestOptions) unchanged(prev KnownFile, st os.FileInfo, path string) bo
 func measureIndexFreshness(home string, db *RwDb, days float64, budget *FreshnessBudget) (IndexFreshness, error) {
 	return measureIndexFreshnessMode(home, db, days, budget, false)
 }
+
+// ingestFileError marks a failure of one rollout (it could not be read), as against the index database's.
+type ingestFileError struct{ err error }
+
+func (e ingestFileError) Error() string { return e.err.Error() }
+func (e ingestFileError) Unwrap() error { return e.err }
 
 // ingestOptions selects how far a refresh looks before it trusts a file's stored state.
 type ingestOptions struct {
@@ -337,6 +345,11 @@ func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (Ingest
 		// another refresh may have committed this file since the snapshot above. No lock is held
 		// while the home is listed or while unchanged files are skipped.
 		if err := ingestTransaction(db, func() error { return ingestLocked(db, s, file, opts, &r) }); err != nil {
+			var unreadable ingestFileError
+			if errors.As(err, &unreadable) {
+				r.Skipped++ // The file is left as it was; one unreadable rollout does not stop the refresh.
+				continue
+			}
 			return IngestResult{}, err
 		}
 	}
@@ -441,7 +454,7 @@ func ingestCursor(db *RwDb, path string) (*KnownFile, error) {
 func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, head, tail []byte, st os.FileInfo, result *IngestResult) error {
 	meta, err := ReadRolloutMeta(file.Path)
 	if err != nil {
-		return err
+		return ingestFileError{err}
 	}
 	appendOnly := prev != nil
 	var buf []byte
@@ -453,7 +466,7 @@ func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, head, tai
 		buf, err = os.ReadFile(file.Path)
 	}
 	if err != nil {
-		return err
+		return ingestFileError{err}
 	}
 	boundary := completeLineBoundary(buf)
 	if appendOnly {
@@ -463,7 +476,7 @@ func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, head, tai
 	}
 	entries, err := ParseRollout(source.DecodeUTF8(buf[:boundary]), true)
 	if err != nil {
-		return err
+		return ingestFileError{err}
 	}
 	if !appendOnly {
 		if _, err := s.delMsgs.Run(file.Path); err != nil {

@@ -31,6 +31,10 @@ func normalizeRepoKey(raw string) string {
 		}
 		return pack(host, path)
 	}
+	// A drive-letter path names a local directory, not host:path, and falls back to the cwd scope.
+	if localDrivePath(raw) {
+		return ""
+	}
 	// The optional userinfo can backtrack away: @ is legal in the host alternative.
 	if at := strings.IndexByte(raw, '@'); at > 0 && !strings.ContainsRune(raw[:at], '/') {
 		valid := true
@@ -47,6 +51,12 @@ func normalizeRepoKey(raw string) string {
 		return pack(host, path)
 	}
 	return ""
+}
+
+// localDrivePath is C:\repo and C:/repo. A single letter before the colon followed by a separator is a
+// drive, as git itself reads it; any longer host name, or a path without a separator, is still scp syntax.
+func localDrivePath(raw string) bool {
+	return len(raw) >= 3 && asciiLetter(raw[0]) && raw[1] == ':' && (raw[2] == '/' || raw[2] == '\\')
 }
 
 func scpRemote(raw string) (host, path string, ok bool) {

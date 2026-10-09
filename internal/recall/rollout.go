@@ -26,6 +26,9 @@ type RolloutSource string
 const (
 	RolloutMain     RolloutSource = "main"
 	RolloutSubagent RolloutSource = "subagent"
+	// RolloutUnknown is a file whose first line is too long to read: it cannot be said to be a main
+	// or a subagent session, so a main-only search leaves it out.
+	RolloutUnknown RolloutSource = "unknown"
 )
 
 // RolloutMeta preserves null versus empty string from the first session_meta line.
@@ -152,6 +155,11 @@ func rolloutCompare(a, b string) int {
 
 // ListRolloutFiles walks live date directories and the flat archive, newest first.
 // now is an ordinary clock injection for deterministic callers, not a test-only mode.
+//
+// Only usable files are listed (a regular file, or a link that reaches one), and what cannot be read
+// of one directory leaves that directory out, not the listing. A window that reaches before the
+// representable calendar excludes nothing; a directory or archive file whose date is not a calendar
+// date has no age to compare, so a window leaves it out, and no window lists it.
 func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFile, error) {
 	clock := time.Now()
 	if len(now) != 0 {
@@ -160,51 +168,52 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 	cutoff := ""
 	if days > 0 {
 		ms := float64(clock.UnixMilli()) - days*86_400_000
-		cutoff = "NaN-NaN-NaN"
 		if !math.IsInf(ms, 0) && !math.IsNaN(ms) && math.Abs(ms) <= 8_640_000_000_000_000 {
 			cutoff = LocalDateString(time.UnixMilli(int64(math.Trunc(ms))))
 		}
 	}
+	inWindow := func(date string) bool {
+		if cutoff == "" {
+			return true
+		}
+		_, err := time.Parse("2006-01-02", date)
+		return err == nil && rolloutCompare(date, cutoff) >= 0
+	}
 	out := []RolloutFile{}
-	add := func(dir, date string) error {
-		if cutoff != "" && rolloutCompare(date, cutoff) < 0 {
-			return nil
+	add := func(dir, date string) {
+		if !inWindow(date) {
+			return
 		}
 		names, err := os.ReadDir(dir)
 		if err != nil {
-			return err
+			return
 		}
 		for _, entry := range names {
 			name := source.DecodeUTF8([]byte(entry.Name()))
-			if strings.HasSuffix(name, ".jsonl") {
+			if strings.HasSuffix(name, ".jsonl") && usableDatabase(filepath.Join(dir, entry.Name())) {
 				out = append(out, RolloutFile{filepath.Join(dir, name), date})
 			}
 		}
-		return nil
 	}
 	root := sessionsDir(home)
 	if _, err := os.Stat(root); err == nil {
 		for _, year := range safeDirs(root) {
 			for _, month := range safeDirs(filepath.Join(root, year)) {
 				for _, day := range safeDirs(filepath.Join(root, year, month)) {
-					if err := add(filepath.Join(root, year, month, day), year+"-"+month+"-"+day); err != nil {
-						return nil, err
-					}
+					add(filepath.Join(root, year, month, day), year+"-"+month+"-"+day)
 				}
 			}
 		}
 	}
 	archive := filepath.Join(home, "archived_sessions")
 	if _, err := os.Stat(archive); err == nil {
-		names, err := os.ReadDir(archive)
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range names {
-			name := source.DecodeUTF8([]byte(entry.Name()))
-			date := DateFromRolloutName(name)
-			if strings.HasSuffix(name, ".jsonl") && date != nil && (cutoff == "" || rolloutCompare(*date, cutoff) >= 0) {
-				out = append(out, RolloutFile{filepath.Join(archive, name), *date})
+		if names, err := os.ReadDir(archive); err == nil {
+			for _, entry := range names {
+				name := source.DecodeUTF8([]byte(entry.Name()))
+				date := DateFromRolloutName(name)
+				if strings.HasSuffix(name, ".jsonl") && date != nil && inWindow(*date) && usableDatabase(filepath.Join(archive, entry.Name())) {
+					out = append(out, RolloutFile{filepath.Join(archive, name), *date})
+				}
 			}
 		}
 	}
@@ -232,9 +241,15 @@ func safeDirs(dir string) []string {
 }
 
 func readFirstLine(path string) (string, error) {
+	line, _, err := readFirstLineBounded(path)
+	return line, err
+}
+
+// readFirstLineBounded also reports whether the line was cut at the read bound.
+func readFirstLineBounded(path string) (line string, truncated bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer f.Close()
 	const cap = 1_048_576
@@ -242,14 +257,19 @@ func readFirstLine(path string) (string, error) {
 		buf := make([]byte, size)
 		n, err := f.ReadAt(buf, 0)
 		if err != nil && err != io.EOF {
-			return "", err
+			return "", false, err
 		}
 		head := source.DecodeUTF8(buf[:n])
 		if nl := strings.IndexByte(head, '\n'); nl >= 0 {
-			return head[:nl], nil
+			return head[:nl], false, nil
 		}
-		if n < size || size >= cap {
-			return head, nil
+		if n < size {
+			return head, false, nil
+		}
+		if size >= cap {
+			more := make([]byte, 1)
+			extra, _ := f.ReadAt(more, cap)
+			return head, extra > 0, nil
 		}
 	}
 }
@@ -285,9 +305,14 @@ func rolloutJSON(s string) map[string]any {
 // ReadRolloutMeta reads only the head. File errors escape; malformed metadata falls back.
 func ReadRolloutMeta(path string) (RolloutMeta, error) {
 	fallback := RolloutMeta{Source: RolloutMain}
-	head, err := readFirstLine(path)
+	head, truncated, err := readFirstLineBounded(path)
 	if err != nil {
 		return fallback, err
+	}
+	if truncated {
+		// The first line is longer than the bound and cannot be read: the file is neither known to be a
+		// main session nor a subagent's.
+		return RolloutMeta{Source: RolloutUnknown}, nil
 	}
 	j := rolloutJSON(head)
 	if j["type"] != "session_meta" {
@@ -389,12 +414,15 @@ func toolOutputText(output any) (string, error) {
 	return "", nil
 }
 
-// ParseRollout skips unreadable JSON lines but propagates JS String coercion errors.
-// It returns no partial list on error, as an oracle throw returns no accumulator.
+// ParseRollout skips unreadable JSON lines. An entry whose text, name, arguments or output is of a type
+// that cannot be read as text (the oracle's String coercion throws, ending the whole parse) is dropped
+// alone; the entries before and after it are kept.
 func ParseRollout(content string, includeTools bool) ([]ChatEntry, error) {
 	entries := []ChatEntry{}
+lines:
 	for _, line := range text.SplitLines(content) {
-		if !strings.Contains(line, `"response_item"`) {
+		// A line can spell its type with escapes (response_\u0069tem), so a line with an escape is parsed.
+		if !strings.Contains(line, "response_item") && !strings.Contains(line, `\u`) {
 			continue
 		}
 		j := rolloutJSON(line)
@@ -420,7 +448,7 @@ func ParseRollout(content string, includeTools bool) ([]ChatEntry, error) {
 				}
 				s, err := rolloutString(rolloutDefault(c["text"], ""))
 				if err != nil {
-					return nil, err
+					continue lines
 				}
 				parts = append(parts, s)
 			}
@@ -432,17 +460,17 @@ func ParseRollout(content string, includeTools bool) ([]ChatEntry, error) {
 		} else if includeTools && kind == "function_call" {
 			name, err := rolloutString(rolloutDefault(p["name"], "tool"))
 			if err != nil {
-				return nil, err
+				continue lines
 			}
 			args, err := rolloutString(rolloutDefault(p["arguments"], ""))
 			if err != nil {
-				return nil, err
+				continue lines
 			}
 			e.Text = text.Trim(name + " " + args)
 		} else if includeTools && kind == "function_call_output" {
 			s, err := toolOutputText(p["output"])
 			if err != nil {
-				return nil, err
+				continue lines
 			}
 			e.Text = text.Trim(s)
 			if e.Text == "" {

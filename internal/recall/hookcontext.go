@@ -109,7 +109,7 @@ func hookContextHome(env host.LookupEnv) (string, error) {
 	if v, _ := env("CODEX_HOME"); text.Trim(v) != "" {
 		return codexHome(env)
 	}
-	home, err := host.Home(env)
+	home, err := recallHome(env)
 	if err != nil {
 		return "", err
 	}

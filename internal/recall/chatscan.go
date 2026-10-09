@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -122,7 +123,7 @@ func ChatMatchPlan(query string, anyMode, synonyms bool) MatchPlan {
 
 // searchViaScan consumes resolved shared inputs. The variadic clock replaces
 // Date.now for deterministic callers; NowMs remains an index-only option.
-// Metadata/list/parser errors escape; only the full-file read becomes a warning.
+// A listing error escapes; a file whose head or body cannot be read becomes a warning, and the rest is searched.
 func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, clock ...time.Time) (ChatSearchResult, error) {
 	now := time.Now
 	if len(clock) != 0 {
@@ -164,7 +165,9 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 		}
 		meta, err := ReadRolloutMeta(file.Path)
 		if err != nil {
-			return ChatSearchResult{}, err
+			// One file that cannot be read is skipped, with a warning; it does not end the search.
+			result.Warnings = append(result.Warnings, "unreadable rollout: "+file.Path+" ("+err.Error()+")")
+			continue
 		}
 		if shared.Source != RolloutAll && meta.Source != shared.Source {
 			continue
@@ -178,7 +181,9 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 			result.Warnings = append(result.Warnings, "unreadable rollout: "+file.Path+" ("+err.Error()+")")
 			continue
 		}
-		if !MatchesFilePrefilter(Lower(content), shared.Plan) {
+		// The raw text is a prefilter only while it spells what the decoded text would: a file with a
+		// \u escape can hide a match from it, so such a file is parsed and judged on the decoded text.
+		if !MatchesFilePrefilter(Lower(content), shared.Plan) && !strings.Contains(content, `\u`) {
 			continue
 		}
 		entries, err := ParseRollout(content, includeTools)

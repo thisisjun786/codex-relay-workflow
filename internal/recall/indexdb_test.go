@@ -72,10 +72,10 @@ func TestIndexPath(t *testing.T) {
 		{map[string]string{"CRW_HOME": "relative crw", "HOME": "fallback"}, filepath.Join("relative crw", "recall", "index.sqlite")},
 		{map[string]string{"CRW_HOME": "  root  ", "HOME": "fallback"}, filepath.Join("  root  ", "recall", "index.sqlite")},
 		{map[string]string{"CRW_HOME": "\uFEFF \t", "HOME": "fallback"}, filepath.Join("fallback", ".crw", "recall", "index.sqlite")},
-		{map[string]string{"HOME": ""}, filepath.Join(".crw", "recall", "index.sqlite")},
+		{map[string]string{"HOME": ""}, ""}, // port: fixed (CRW-1123): an empty HOME names no home
 	} {
 		got, err := indexPath(func(k string) (string, bool) { v, ok := c.env[k]; return v, ok })
-		if err != nil || got != c.want {
+		if (c.want == "") != (err != nil) || got != c.want {
 			t.Errorf("%v: %q %v, want %q", c.env, got, err, c.want)
 		}
 	}

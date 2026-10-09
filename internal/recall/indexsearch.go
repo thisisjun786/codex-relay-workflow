@@ -242,8 +242,11 @@ func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
 		if row["match_field"] == "tool_log" {
 			hit.MatchField = "tool_log"
 		}
-		if row["source"] == "subagent" {
+		switch row["source"] {
+		case "subagent":
 			hit.Source = RolloutSubagent
+		case "unknown":
+			hit.Source = RolloutUnknown
 		}
 		if hit.ThreadID != nil && *hit.ThreadID != "" {
 			if tm, ok := meta.ByID[*hit.ThreadID]; ok {

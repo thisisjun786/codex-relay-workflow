@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
 // IndexSchemaVersion 3 added the unique (path, ord) invariant; 4 adds the file identity and the
@@ -76,6 +77,11 @@ func indexPath(env ...host.LookupEnv) (string, error) {
 	lookup := host.LookupEnv(os.LookupEnv)
 	if len(env) > 0 {
 		lookup = env[0]
+	}
+	if value, _ := lookup("CRW_HOME"); text.Trim(value) == "" {
+		if _, err := recallHome(lookup); err != nil { // The default would be the workspace's.
+			return "", err
+		}
 	}
 	home, err := host.CRWHome(lookup)
 	if err != nil {

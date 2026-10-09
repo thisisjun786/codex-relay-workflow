@@ -334,7 +334,16 @@ func strictPercentDecode(s string) (string, bool) {
 		if !a || !c {
 			return "", false
 		}
-		b = append(b, hi<<4|lo)
+		if decoded := hi<<4 | lo; decoded == '/' || decoded == '\\' {
+			// An encoded separator is part of its segment. Decoded it would join two segments and
+			// give a/b and a%2Fb one identity, so it stays encoded, in one spelling.
+			b = append(b, '%', '2', 'F')
+			if decoded == '\\' {
+				b[len(b)-2], b[len(b)-1] = '5', 'C'
+			}
+		} else {
+			b = append(b, decoded)
+		}
 		i += 2
 	}
 	return string(b), utf8.Valid(b)

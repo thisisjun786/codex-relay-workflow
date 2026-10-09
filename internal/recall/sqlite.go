@@ -44,7 +44,33 @@ type NamedParams []NamedParam
 // RunResult has JavaScript number semantics, including lastInsertRowid rounding.
 type RunResult struct{ Changes, LastInsertRowid float64 }
 
-func openDbReadOnly(path string) (*RwDb, error) { return openDb(path, sqlite.SQLITE_OPEN_READONLY) }
+func openDbReadOnly(path string) (*RwDb, error) {
+	if err := readOnlyURIError(path); err != nil {
+		return nil, err
+	}
+	return openDb(path, sqlite.SQLITE_OPEN_READONLY)
+}
+
+// readOnlyURIError refuses a URI whose mode asks for something other than a read-only file: SQLite lets
+// `mode=` in a URI override the flags of the open, so `file:x?mode=memory` would make the read-only API
+// open (and write to) a private in-memory database, and `mode=rwc` would create a file.
+func readOnlyURIError(path string) error {
+	rest, ok := strings.CutPrefix(path, "file:")
+	if !ok {
+		return nil
+	}
+	_, query, found := strings.Cut(rest, "?")
+	if !found {
+		return nil
+	}
+	query, _, _ = strings.Cut(query, "#")
+	for _, pair := range strings.Split(query, "&") {
+		if key, value, _ := strings.Cut(pair, "="); key == "mode" && value != "ro" {
+			return fmt.Errorf("a read-only open refuses the URI mode %q", value)
+		}
+	}
+	return nil
+}
 func openDbReadWrite(path string) (*RwDb, error) {
 	return openDb(path, sqlite.SQLITE_OPEN_READWRITE|sqlite.SQLITE_OPEN_CREATE)
 }
@@ -283,24 +309,30 @@ func (s *Stmt) bind(params []any) error {
 		}
 		if ordered {
 			if s.bare == nil {
-				s.bare = map[string]string{}
+				// The aliases are checked whole before any is kept: an ambiguous statement is refused
+				// every time, and never leaves part of its aliases behind.
+				aliases := map[string]string{}
 				for i := int32(1); i <= count; i++ {
 					name := s.parameterName(i)
 					if name == "" {
 						continue
 					}
 					bare := name[1:]
-					if prior := s.bare[bare]; prior != "" && prior != name {
+					if prior := aliases[bare]; prior != "" && prior != name {
 						//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 						return fmt.Errorf("Cannot create bare named parameter '%s' because of conflicting names '%s' and '%s'.", bare, prior, name)
 					}
-					s.bare[bare] = name
+					aliases[bare] = name
 				}
+				s.bare = aliases
 			}
 			seen := map[int32]bool{}
 			_, unordered := params[0].(map[string]any)
 			for _, arg := range named {
-				key, _, _ := strings.Cut(arg.Name, "\x00")
+				if strings.ContainsRune(arg.Name, 0) {
+					return fmt.Errorf("Named parameter %q must not contain a null byte", arg.Name)
+				}
+				key := arg.Name
 				alias := s.bare[key]
 				index := int32(0)
 				for i := int32(1); i <= count; i++ {
