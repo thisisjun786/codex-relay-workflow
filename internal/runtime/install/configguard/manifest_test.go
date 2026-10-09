@@ -118,16 +118,14 @@ func TestActivationIntentionallyChangedCases(t *testing.T) {
 	}
 }
 
-func TestActivateMalformedReadableManifestIsAbsent(t *testing.T) {
+// CRW-1153 (port: fixed): a manifest that exists but cannot be read is refused, never replaced by a new activation.
+func TestActivateMalformedReadableManifestIsRefused(t *testing.T) {
 	home := activationHome(t)
 	activationWrite(t, manifestPath(home), "truncated {")
 	var calls [][]string
 	m, e := Activate(activationDeps(t, home, allActivationFlags(), &calls))
-	if e != nil || m == nil {
+	if e == nil || m != nil || activationRead(t, manifestPath(home)) != "truncated {" {
 		t.Fatalf("result=%+v error=%v", m, e)
-	}
-	if parseInstallManifest(activationRead(t, manifestPath(home))) == nil {
-		t.Fatal("new manifest missing")
 	}
 }
 
@@ -322,7 +320,13 @@ func TestActivateFailedConfigPublicationPreservesBytes(t *testing.T) {
 	if activationRead(t, path) != "# original\n" {
 		t.Fatal("config truncated")
 	}
-	if _, e = os.Stat(manifestPath(home)); !os.IsNotExist(e) {
-		t.Fatal("manifest published after failed config write")
+	// CRW-1153: the flag the CLI enabled before the failed key write is recorded as crw's, so the deactivation reverts it;
+	// the key that was never written is not.
+	m := parseInstallManifest(activationRead(t, manifestPath(home)))
+	if m == nil || !m.Flags["hooks"].EnabledByCodexclaw {
+		t.Fatalf("the flag enabled before the failed config write is not recorded: %+v", m)
+	}
+	if _, ok := m.TableKeys["memories.dedicated_tools"]; ok {
+		t.Fatal("a key that was never written is recorded")
 	}
 }

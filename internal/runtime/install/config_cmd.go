@@ -121,22 +121,28 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 	if action == "unset" && len(args) > 2 && args[2] == "--release" {
 		// The explicit release of a record crw no longer owns (CRW-1149): config.toml is not touched.
 		r, err := configguard.ReleaseManagedKey(configguard.ConfigSetDeps{CodexHome: home}, id)
-		if err != nil {
+		if err != nil && !r.OK {
 			fmt.Fprintln(stderr, "crw: "+err.Error())
 			return 1
 		}
+		renderRecovered(stdout, r.Recovered)
 		if !r.OK {
 			fmt.Fprintf(stderr, "config unset: %s\n", r.Reason)
 			return 1
 		}
 		fmt.Fprintf(stdout, "%s: crw's record released; config.toml left as it is\n", id)
+		if err != nil {
+			fmt.Fprintln(stderr, "crw: "+err.Error())
+			return 1
+		}
 		return 0
 	}
 	r, err := configguard.ApplyManagedKey(configguard.ConfigSetDeps{CodexHome: home}, id, value)
-	if err != nil {
+	if err != nil && !r.OK {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
 		return 1
 	}
+	renderRecovered(stdout, r.Recovered)
 	if !r.OK {
 		fmt.Fprintf(stderr, "config %s: %s\n", action, r.Reason)
 		return 1
@@ -150,6 +156,11 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%s: %s -> %s%s\n", id, configValue(r.PriorValue, "(unset)"), r.AppliedValue, suffix)
 	if r.BackupPath != nil {
 		fmt.Fprintf(stdout, "backup: %s\n", *r.BackupPath)
+	}
+	if err != nil {
+		// In place and recorded, but not known to be durable (CRW-1153).
+		fmt.Fprintln(stderr, "crw: "+err.Error())
+		return 1
 	}
 	return 0
 }

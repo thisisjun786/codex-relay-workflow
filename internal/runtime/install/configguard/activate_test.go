@@ -187,8 +187,16 @@ func TestActivateFailurePaths(t *testing.T) {
 				if e == nil || m != nil || !strings.Contains(e.Error(), "failed (exit 7): failure") {
 					t.Fatalf("result=%+v error=%v", m, e)
 				}
-				if _, e := os.Stat(manifestPath(home)); !os.IsNotExist(e) {
-					t.Fatal("hard failure published manifest")
+				m := parseInstallManifest(activationRead2(t, manifestPath(home)))
+				if kind == "list" {
+					if m != nil {
+						t.Fatal("a failed probe published a manifest")
+					}
+					return
+				}
+				// CRW-1153 (port: fixed): the hard failure records the flag enabled before it, so it is not left unowned.
+				if m == nil || !m.Flags["multi_agent"].EnabledByCodexclaw || m.Flags["goals"].EnabledByCodexclaw {
+					t.Fatalf("hard failure record=%+v", m)
 				}
 				return
 			}
@@ -301,4 +309,14 @@ func TestPreserveMultiAgentV2TableCRLF(t *testing.T) {
 	if !ok || got != want {
 		t.Fatalf("got%q/%v want%q", got, ok, want)
 	}
+}
+
+// activationRead2 reads a file that may be absent, as "".
+func activationRead2(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return string(b)
 }

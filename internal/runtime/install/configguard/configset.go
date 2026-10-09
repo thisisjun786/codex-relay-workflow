@@ -3,6 +3,7 @@ package configguard
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,8 @@ type ConfigSetOutcome struct {
 	Entry                  ManagedKey
 	PriorValue, BackupPath *string
 	AppliedValue           string
+	// Recovered names what this command recorded of an interrupted earlier change (CRW-1153).
+	Recovered []string
 }
 
 type ManagedState struct {
@@ -81,10 +84,19 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	// target is the file the lock guards: the caller's path with a symlink followed, so two
 	// writers reaching one file through different spellings share one lock.
 	target := lock.Target
+	// An interrupted change is recorded first (CRW-1153); a pending activation whose flags must be read is left to the
+	// feature commands, which can run Codex.
+	recovered, recErr := recoverIntent(deps.CodexHome, path, nil)
+	if recErr != nil && !crwdir.Published(recErr) {
+		return ConfigSetOutcome{}, recErr
+	}
 	// The authoritative manifest, read inside the lock so a concurrent writer's manifest is seen
-	// rather than a copy that is already stale.
-	m, err := readPriorManifest(deps.CodexHome)
-	if err != nil || m == nil {
+	// rather than a copy that is already stale. One that exists but cannot be read is refused, never replaced (CRW-1153).
+	m, err := readOwnedManifest(deps.CodexHome)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	if m == nil {
 		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; run 'crw install features enable' first. " +
 			"Without it there is nowhere to record the previous value, and 'crw install features disable' could not revert this key."}, nil
 	}
@@ -135,6 +147,20 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	if res.Action == TomlUnsupportedValue {
 		return ConfigSetOutcome{Reason: keyID + " currently holds a value crw will not rewrite (" + refused + "); edit config.toml by hand."}, nil
 	}
+	// config.toml, the backup and the manifest that records the key are one transaction (CRW-1153): every destination is
+	// checked first, an intent naming the effect is published before config.toml changes, and the manifest is committed from
+	// it; a stop in between leaves the intent for the next explicit command to record.
+	if err := txPrecheck(target, manifestPath(deps.CodexHome), intentPath(deps.CodexHome)); err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	var unsynced error
+	if recErr != nil {
+		unsynced = recErr
+	}
+	original, owned := prior, res.Changed
+	if hadRecord {
+		original, owned = recorded.PriorValue, recorded.SetByCodexclaw || res.Changed
+	}
 	var backup *string
 	if res.Changed {
 		if exists || value == nil {
@@ -147,22 +173,35 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 				now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 			}
 			name := path + ".crw-" + strings.NewReplacer(":", "-", ".", "-").Replace(now()) + ".bak"
+			if err := txStep("backup"); err != nil {
+				return ConfigSetOutcome{}, err
+			}
 			if err := activationBackup(name, pre, info.Mode()); err != nil {
 				return ConfigSetOutcome{}, err
 			}
 			backup = &name
 		}
-		if err := activationPublish(target, []byte(res.Content)); err != nil {
+		op, effect := "config-set", intentEffect{Kind: intentKey, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: original, Applied: applied, Owned: hadRecord && recorded.SetByCodexclaw, Attempted: true}
+		if value == nil {
+			op, effect = "config-unset", intentEffect{Kind: intentRestore, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: recorded.PriorValue, Applied: recorded.AppliedValue, Attempted: true}
+		}
+		in, err := newIntent(deps.CodexHome, op, path, m)
+		if err != nil {
 			return ConfigSetOutcome{}, err
+		}
+		in.Effects = []intentEffect{effect}
+		if err := in.publish("intent", &unsynced); err != nil {
+			return ConfigSetOutcome{}, err
+		}
+		if err := txPublish("config", target, []byte(res.Content), &unsynced); err != nil {
+			// Nothing was published over config.toml, so the intent describes nothing in place; it is closed when it can be.
+			return ConfigSetOutcome{}, errors.Join(err, closeIntent(deps.CodexHome, &unsynced))
 		}
 	}
 	if value == nil {
 		delete(m.TableKeys, keyID)
 	} else {
-		original, owned := prior, res.Changed
-		if hadRecord {
-			original, owned = recorded.PriorValue, recorded.SetByCodexclaw || res.Changed
-		} else {
+		if !hadRecord {
 			m.tableOrder = append(m.tableOrder, keyID)
 		}
 		m.TableKeys[keyID] = TableKeyRecord{entry.Table, entry.Key, original, applied, owned}
@@ -172,14 +211,18 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	if err != nil {
 		return ConfigSetOutcome{}, err
 	}
-	bytes, err := manifestBytes(m)
+	if res.Changed {
+		err = commitManifest(deps.CodexHome, m, &unsynced)
+	} else {
+		var b []byte
+		if b, err = manifestBytes(m); err == nil {
+			err = txPublish("manifest", manifestPath(deps.CodexHome), b, &unsynced)
+		}
+	}
 	if err != nil {
 		return ConfigSetOutcome{}, err
 	}
-	if err := activationPublish(manifestPath(deps.CodexHome), bytes); err != nil {
-		return ConfigSetOutcome{}, err
-	}
-	return ConfigSetOutcome{OK: true, Changed: res.Changed, Entry: *entry, PriorValue: prior, AppliedValue: applied, BackupPath: backup}, nil
+	return ConfigSetOutcome{OK: true, Changed: res.Changed, Entry: *entry, PriorValue: prior, AppliedValue: applied, BackupPath: backup, Recovered: recovered}, txDurability(unsynced)
 }
 
 // configUnsetRefusal answers why unset must not restore rec, or "" when crw still owns the key. The live value and the
@@ -263,8 +306,15 @@ func ReleaseManagedKey(deps ConfigSetDeps, id string) (ConfigSetOutcome, error) 
 		return ConfigSetOutcome{}, err
 	}
 	defer lock.Release()
-	m, err := readPriorManifest(deps.CodexHome)
-	if err != nil || m == nil {
+	recovered, recErr := recoverIntent(deps.CodexHome, path, nil)
+	if recErr != nil && !crwdir.Published(recErr) {
+		return ConfigSetOutcome{}, recErr
+	}
+	m, err := readOwnedManifest(deps.CodexHome)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	if m == nil {
 		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; there is no record to release."}, nil
 	}
 	keyID := ManagedKeyID(*entry)
@@ -277,8 +327,9 @@ func ReleaseManagedKey(deps ConfigSetDeps, id string) (ConfigSetOutcome, error) 
 	if err != nil {
 		return ConfigSetOutcome{}, err
 	}
-	if err := activationPublish(manifestPath(deps.CodexHome), b); err != nil {
+	unsynced := recErr
+	if err := txPublish("manifest", manifestPath(deps.CodexHome), b, &unsynced); err != nil {
 		return ConfigSetOutcome{}, err
 	}
-	return ConfigSetOutcome{OK: true, Entry: *entry, PriorValue: rec.PriorValue, AppliedValue: rec.AppliedValue}, nil
+	return ConfigSetOutcome{OK: true, Entry: *entry, PriorValue: rec.PriorValue, AppliedValue: rec.AppliedValue, Recovered: recovered}, txDurability(unsynced)
 }

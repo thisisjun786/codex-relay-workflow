@@ -93,7 +93,7 @@ func configLockPathsPublishChecked(path string, b []byte, check func() error) er
 // activation deadlocking on the lock it already holds. The other files this package publishes (the
 // install manifest, the self-heal marker) are not shared with another writer and keep
 // activationPublish.
-func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
+func activationSetKeyLocked(path, table, key string, unsynced *error) (TomlEditResult, error) {
 	content, _, e := activationReadFile(path)
 	if e != nil {
 		return TomlEditResult{}, e
@@ -105,7 +105,7 @@ func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
 	if !res.Changed {
 		return res, nil
 	}
-	if e := activationPublish(path, []byte(res.Content)); e != nil {
+	if e := txPublish("config", path, []byte(res.Content), unsynced); e != nil {
 		return TomlEditResult{}, e
 	}
 	return res, nil
@@ -270,6 +270,12 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// enable a flag and publish its manifest, after which this activation would enable the flag again,
 	// record it as previously disabled and claim it as its own, and a later deactivation would turn
 	// off a flag the other activation enabled.
+	// An interrupted change is recorded before this activation reads anything it decides from (CRW-1153), so the flags and
+	// the key it left on are crw's, not pre-existing state.
+	recovered, recErr := recoverIntent(deps.CodexHome, path, deps.Run)
+	if recErr != nil && !crwdir.Published(recErr) {
+		return nil, recErr
+	}
 	state, e := ReadDeclaredState(deps.Run)
 	if e != nil {
 		return nil, e
@@ -283,7 +289,8 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e = validateConfig(path, string(pre)); e != nil {
 		return nil, e
 	}
-	prior, e := readPriorManifest(deps.CodexHome)
+	// A manifest that exists but cannot be read is refused rather than replaced (CRW-1153).
+	prior, e := readOwnedManifest(deps.CodexHome)
 	if e != nil {
 		return nil, e
 	}
@@ -293,38 +300,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// released, starts a new baseline.
 	carried := activationCarries(prior, path)
 	toEnable := FeaturesToEnable(state)
-	keysChange := false
-	for _, entry := range AutoEnabledManagedKeys() {
-		res, _, e := semanticSet(string(pre), entry.Table, entry.Key, true)
-		if e != nil {
-			return nil, errInvalidConfig(path, e.Error())
-		}
-		keysChange = keysChange || res.Changed
-	}
-	// An activation of a carried install that has nothing to change writes no backup and no manifest (CRW-1145). A soft flag
-	// that failed before is off, so it is in toEnable and its explicit retry still runs.
-	if carried && len(toEnable) == 0 && !keysChange {
-		prior.Unchanged = true
-		return prior, nil
-	}
-	var backup *string
-	if exists {
-		info, e := os.Stat(path)
-		if e != nil {
-			return nil, e
-		}
-		name := path + ".crw-" + strings.NewReplacer(":", "-", ".", "-").Replace(now()) + ".bak"
-		if e = activationBackup(name, pre, info.Mode()); e != nil {
-			return nil, e
-		}
-		backup = &name
-	}
-	m := &InstallManifest{Version: 2, ConfigPath: path, BackupPath: backup, RunBackupPath: backup, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
-	if carried {
-		// The baseline's backup stays the evidence of the state before crw: the deactivation reads a key's original absence
-		// from it, and this run's backup already holds crw's own values.
-		m.BackupPath = prior.BackupPath
-	}
+	m := &InstallManifest{Version: 2, ConfigPath: path, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}, Recovered: recovered}
 	for _, k := range DeclaredFeatures() {
 		key := string(k)
 		f := FlagRecord{PriorEnabled: state[key]}
@@ -334,34 +310,20 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		m.Flags[key] = f
 		m.flagOrder = append(m.flagOrder, key)
 	}
+	// The managed keys are planned on the pre-image: a key already at its value is recorded as it is, a key to change is an
+	// effect of the transaction, and a key in a form the editor does not touch is left alone.
+	var effects []intentEffect
 	for _, key := range toEnable {
-		r := deps.Run([]string{"features", "enable", string(key)})
-		f := m.Flags[string(key)]
-		if r.ExitCode == 0 {
-			f.EnabledByCodexclaw = true
-		} else {
-			f.EnableFailed = true
-			f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
-			if !slices.Contains(SoftFeatures(), key) {
-				return nil, fmt.Errorf("codex features enable %s failed (exit %d): %s", key, r.ExitCode, text.Trim(r.Stderr))
-			}
-		}
-		m.Flags[string(key)] = f
+		effects = append(effects, intentEffect{Kind: intentFlag, Name: string(key)})
 	}
 	for _, entry := range AutoEnabledManagedKeys() {
 		id := ManagedKeyID(entry)
 		priorValue, editable := semanticRaw(string(pre), entry.Table, entry.Key)
-		if !editable {
-			continue
-		}
-		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
-		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
-		// published in that window be overwritten with content built from the pre-retrust bytes.
-		res, e := activationSetKeyLocked(path, entry.Table, entry.Key)
+		res, _, e := semanticSet(string(pre), entry.Table, entry.Key, true)
 		if e != nil {
-			return nil, e
+			return nil, errInvalidConfig(path, e.Error())
 		}
-		if res.Action == TomlUnsupportedValue {
+		if !editable || res.Action == TomlUnsupportedValue {
 			continue
 		}
 		owned := res.Changed
@@ -371,22 +333,116 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 				owned = rec.SetByCodexclaw || res.Changed
 			}
 		}
+		if res.Changed {
+			effects = append(effects, intentEffect{Kind: intentKey, Name: id, Table: entry.Table, Key: entry.Key, Prior: priorValue, Applied: "true", Owned: owned})
+			continue
+		}
 		m.TableKeys[id] = TableKeyRecord{entry.Table, entry.Key, priorValue, "true", owned}
 		m.tableOrder = append(m.tableOrder, id)
 	}
-	m.ActivatedAt = now()
-	m.PostActivateHash, e = hashOrNull(path)
+	// An activation of a carried install that has nothing to change writes no backup and no manifest (CRW-1145). A soft flag
+	// that failed before is off, so it is in toEnable and its explicit retry still runs.
+	if carried && len(effects) == 0 {
+		prior.Unchanged, prior.Recovered = true, recovered
+		return prior, recErr
+	}
+	// Every file the transaction publishes is checked before anything changes (CRW-1153); config.toml only when a key is to
+	// be written to it (a flag is written by the Codex CLI itself).
+	targets := []string{manifestPath(deps.CodexHome), intentPath(deps.CodexHome)}
+	for _, effect := range effects {
+		if effect.Kind == intentKey {
+			targets = append(targets, path)
+			break
+		}
+	}
+	if e = txPrecheck(targets...); e != nil {
+		return nil, e
+	}
+	// A recovery whose directory sync failed is reported with this command's own durability.
+	var unsynced error
+	if recErr != nil {
+		unsynced = recErr
+	}
+	if exists {
+		info, e := os.Stat(path)
+		if e != nil {
+			return nil, e
+		}
+		name := path + ".crw-" + strings.NewReplacer(":", "-", ".", "-").Replace(now()) + ".bak"
+		if e = txStep("backup"); e != nil {
+			return nil, e
+		}
+		if e = activationBackup(name, pre, info.Mode()); e != nil {
+			return nil, e
+		}
+		m.BackupPath, m.RunBackupPath = &name, &name
+	}
+	if carried {
+		// The baseline's backup stays the evidence of the state before crw: the deactivation reads a key's original absence
+		// from it, and this run's backup already holds crw's own values.
+		m.BackupPath = prior.BackupPath
+	}
+	in, e := newIntent(deps.CodexHome, "activate", path, m)
 	if e != nil {
 		return nil, e
 	}
-	b, e := manifestBytes(m)
-	if e != nil {
+	in.Effects = effects
+	if e = in.publish("intent", &unsynced); e != nil {
 		return nil, e
 	}
-	if e = activationPublish(manifestPath(deps.CodexHome), b); e != nil {
-		return nil, e
+	// From here on every stop commits what was done: the manifest records the effects in place, or, when it cannot be
+	// written, the intent stays for the next explicit command.
+	finish := func(cause error) (*InstallManifest, error) {
+		m.ActivatedAt = now()
+		var err error
+		if m.PostActivateHash, err = hashOrNull(path); err != nil {
+			return nil, errors.Join(cause, err)
+		}
+		if err = commitManifest(deps.CodexHome, m, &unsynced); err != nil {
+			return nil, errors.Join(cause, err)
+		}
+		if cause != nil {
+			return nil, cause
+		}
+		return m, txDurability(unsynced)
 	}
-	return m, nil
+	for i, effect := range in.Effects {
+		if e = in.attempt(i, &unsynced); e != nil {
+			return finish(e)
+		}
+		switch effect.Kind {
+		case intentFlag:
+			key := DeclaredFeature(effect.Name)
+			r := deps.Run([]string{"features", "enable", effect.Name})
+			f := m.Flags[effect.Name]
+			if r.ExitCode == 0 {
+				f.EnabledByCodexclaw = true
+			} else {
+				f.EnableFailed = true
+				f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
+			}
+			m.Flags[effect.Name] = f
+			if r.ExitCode != 0 && !slices.Contains(SoftFeatures(), key) {
+				// A hard flag that fails stops the activation, and the flags enabled before it are recorded as crw's, so
+				// the deactivation reverts them (CRW-1153).
+				return finish(fmt.Errorf("codex features enable %s failed (exit %d): %s; the flags enabled before it are recorded, and 'crw install features disable' reverts them", key, r.ExitCode, text.Trim(r.Stderr)))
+			}
+		case intentKey:
+			// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
+			// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
+			// published in that window be overwritten with content built from the pre-retrust bytes.
+			res, e := activationSetKeyLocked(path, effect.Table, effect.Key, &unsynced)
+			if e != nil {
+				return finish(e)
+			}
+			if res.Action == TomlUnsupportedValue {
+				continue
+			}
+			m.TableKeys[effect.Name] = TableKeyRecord{effect.Table, effect.Key, effect.Prior, effect.Applied, effect.Owned || res.Changed}
+			m.tableOrder = append(m.tableOrder, effect.Name)
+		}
+	}
+	return finish(nil)
 }
 
 const activationLineEnd = "[\\r\\n\\x{2028}\\x{2029}]"

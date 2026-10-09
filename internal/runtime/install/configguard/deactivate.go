@@ -48,6 +48,8 @@ type DeactivateResult struct {
 	Failed []FailedFlag `json:"failed"`
 	// Released reports a manifest a completed deactivation already released: there is nothing left to revert.
 	Released bool `json:"released"`
+	// Recovered names what this command recorded of an interrupted earlier change before reverting (CRW-1153).
+	Recovered []string `json:"recovered"`
 }
 
 // FailedFlag is one flag a deactivation could not disable.
@@ -526,11 +528,31 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// Oracle parity: marker failure never gates uninstall, including early exits. The
 	// marker API itself refuses unreadable records rather than replacing their consent data.
 	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
-	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}}
+	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}, Recovered: []string{}}
 	noManifest := func() (*DeactivateResult, error) {
 		markOptedOut()
 		r.NoManifest = true
 		return r, nil
+	}
+	// An interrupted change is recorded first, under the lock of the config file it is about, so this deactivation reverts
+	// what that change did (CRW-1153).
+	if pending, err := pendingIntentConfig(deps.CodexHome); err != nil {
+		return nil, err
+	} else if pending != "" {
+		lockPath := deps.ConfigPath
+		if lockPath == "" {
+			lockPath = pending
+		}
+		lock, err := crwdir.LockConfig(lockPath, activationLockWait)
+		if err != nil {
+			return nil, err
+		}
+		recovered, err := recoverIntent(deps.CodexHome, lockPath, deps.Run)
+		lock.Release()
+		if err != nil && !crwdir.Published(err) {
+			return nil, err
+		}
+		r.Recovered = recovered
 	}
 	// The first reading decides only whether and where to lock; the reading every decision below uses
 	// is taken after the lock is held (CRW-877).

@@ -50,8 +50,9 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 	case "enable":
 		var m *configguard.InstallManifest
 		m, err = configguard.Activate(configguard.ActivateDeps{Run: run, CodexHome: home})
-		if err == nil {
-			// Explicit enable resumes healing; the optional marker never gates activation.
+		if m != nil {
+			// Explicit enable resumes healing; the optional marker never gates activation. A result that comes with an error
+			// is in place and recorded but not known to be durable (CRW-1153); it is shown, and the error fails the command.
 			_ = configguard.ClearSelfHealOptOut(home)
 			renderFeatureEnable(stdout, stderr, m)
 		}
@@ -113,7 +114,15 @@ func featureList(keys []string) string {
 	return strings.Join(keys, ", ")
 }
 
+// renderRecovered reports what a command recorded of an interrupted earlier change (CRW-1153).
+func renderRecovered(stdout io.Writer, recovered []string) {
+	if len(recovered) > 0 {
+		fmt.Fprintf(stdout, "crw: recorded an interrupted earlier change: %s\n", strings.Join(recovered, ", "))
+	}
+}
+
 func renderFeatureEnable(stdout, stderr io.Writer, m *configguard.InstallManifest) {
+	renderRecovered(stdout, m.Recovered)
 	var enabled, failed, keys []string
 	for _, key := range configguard.DeclaredFeatures() {
 		r := m.Flags[string(key)]
@@ -171,6 +180,7 @@ func featureWarning(key string, rec *configguard.FlagRecord) string {
 }
 
 func renderFeatureDisable(stdout io.Writer, r *configguard.DeactivateResult) {
+	renderRecovered(stdout, r.Recovered)
 	if r.NoManifest {
 		fmt.Fprintln(stdout, "crw: no install manifest; nothing to revert")
 		return

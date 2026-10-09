@@ -204,8 +204,13 @@ func TestFeaturesSoftAndHardFailures(t *testing.T) {
 				if code != 1 || out != "" || !strings.Contains(err, "codex features enable goals failed (exit 2)") {
 					t.Fatalf("%d %q %q", code, out, err)
 				}
-				if _, err := os.Stat(filepath.Join(h.home, configguard.InstallManifestName)); !os.IsNotExist(err) {
-					t.Fatal("manifest written after hard failure")
+				// CRW-1153 (port: fixed): the flag enabled before the hard failure is recorded, and disable reverts it.
+				if !strings.Contains(h.read(configguard.InstallManifestName), `"enabledByCodexclaw": true`) {
+					t.Fatal("the flag enabled before the hard failure is not recorded")
+				}
+				h.env = h.env.Without("CRW499_FAKE_FAIL_KEY")
+				if out := h.success("disable"); !strings.Contains(out, "disabled [multi_agent]") {
+					t.Fatalf("disable after a hard failure: %q", out)
 				}
 				return
 			}

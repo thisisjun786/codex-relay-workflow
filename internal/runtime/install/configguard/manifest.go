@@ -40,8 +40,10 @@ type InstallManifest struct {
 	ReleasedAt *string
 	// Unchanged marks an activation that found nothing to change and published nothing; RunBackupPath is the backup this run
 	// wrote. Neither is written.
-	Unchanged             bool
-	RunBackupPath         *string
+	Unchanged     bool
+	RunBackupPath *string
+	// Recovered names what this command recorded of an interrupted earlier change (CRW-1153); it is never written.
+	Recovered             []string
 	flagOrder, tableOrder []string
 }
 
