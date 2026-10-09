@@ -2,7 +2,6 @@ package manage
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -44,11 +43,15 @@ func auditReportLedger(e *Env, cfg *Config) ([]auditLedgerRow, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var row auditLedgerRow
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
+		decoded, err := auditLedgerDecode(line)
+		if err != nil {
 			return nil, fmt.Errorf("the audit ledger line %d: %w", i+1, err)
 		}
-		rows = append(rows, row)
+		if decoded.Kind != "" {
+			// A line that is not a graded result (a posted escalation, CRW-962) is not a row here.
+			continue
+		}
+		rows = append(rows, decoded.Result)
 	}
 	return rows, nil
 }

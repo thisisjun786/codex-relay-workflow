@@ -56,7 +56,8 @@ const (
 
 // auditDraftUsage is what the drafts subcommand prints.
 const auditDraftUsage = "usage: crw manage audit drafts [--round R | --since T] [--severity P1]\n" +
-	"       crw manage audit drafts mark --fingerprint F --posted ISSUE"
+	"       crw manage audit drafts mark --fingerprint F --posted ISSUE\n" +
+	"       crw manage audit drafts --mark-posted DRAFT [--ref REF]"
 
 // auditDraftSeverityRank orders the severities from the most to the least severe. A defect
 // whose severity is not one of the four is not a defect this surface drafts.
@@ -467,34 +468,41 @@ func auditDraftSummaryOf(doc *auditDraft) auditDraftSummary {
 	}
 }
 
-// auditDraftLedgerRows reads the audit ledger. A ledger that does not exist yet holds no
-// rows, which is not an error: nothing has been graded. A line that is not a whole document
-// is the torn tail the ledger writer leaves on its own line when it separates an interrupted
-// append from the rows after it, so it is counted and skipped rather than failing every later
-// run: the rows after it are whole and still count.
-func auditDraftLedgerRows(e *Env, cfg *Config) ([]auditLedgerRow, int, error) {
+// auditDraftLedgerRows reads the audit ledger: its graded results, and the posted escalations
+// it holds beside them. A ledger that does not exist yet holds no rows, which is not an error:
+// nothing has been graded. A line that is not a whole document is the torn tail the ledger
+// writer leaves on its own line when it separates an interrupted append from the rows after it,
+// so it is counted and skipped rather than failing every later run: the rows after it are whole
+// and still count. A line of a kind this build does not read is neither a result nor torn.
+func auditDraftLedgerRows(e *Env, cfg *Config) ([]auditLedgerRow, []auditEscalationRow, int, error) {
 	path := crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditLedgerFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, 0, nil
+			return nil, nil, 0, nil
 		}
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	var rows []auditLedgerRow
+	var escalations []auditEscalationRow
 	torn := 0
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var row auditLedgerRow
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
+		decoded, err := auditLedgerDecode(line)
+		if err != nil {
 			torn++
 			continue
 		}
-		rows = append(rows, row)
+		switch decoded.Kind {
+		case "":
+			rows = append(rows, decoded.Result)
+		case auditLedgerKindEscalationPosted:
+			escalations = append(escalations, decoded.Escalation)
+		}
 	}
-	return rows, torn, nil
+	return rows, escalations, torn, nil
 }
 
 // auditDraftBundleOf checks that a ledger row's bundle still holds that row's audit. A bundle
@@ -735,6 +743,116 @@ func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, er
 	return true, nil
 }
 
+// auditDraftCollection is what the ledger and the bundles give one drafts run: the defects at
+// or above the threshold with the audits that saw them, the ok rows it could not read, the
+// posted escalations the ledger holds, and how many torn lines it passed.
+type auditDraftCollection struct {
+	candidates  map[string]*auditDraftCandidate
+	order       []string
+	skipped     []auditDraftSkip
+	torn        int
+	escalations []auditEscalationRow
+}
+
+// auditDraftCollect reads the ledger and each bundle's grade.json and gathers the defects at or
+// above the threshold rank. It writes nothing. The ledger is read in full, because the newest row
+// of a bundle decides whether its grade.json may be read at all, and only the ok rows inside the
+// scope are then read. The caller holds the drafts lock.
+func auditDraftCollect(e *Env, cfg *Config, section auditDraftSection, scope auditDraftScope, thresholdRank int) (auditDraftCollection, error) {
+	var collected auditDraftCollection
+	rows, escalations, torn, err := auditDraftLedgerRows(e, cfg)
+	if err != nil {
+		return collected, err
+	}
+	collected.escalations = escalations
+	// A bundle is a mutable directory: grading into it again replaces its grade.json, and the
+	// ledger keeps every row that ever named it. Only the newest such row can still have its
+	// grade there, and the status does not decide which row that is: a later run that timed out
+	// or failed leaves its own grade.json in the bundle, so a row that named it must not be
+	// drafted from that file. Every older row is named and skipped rather than given the newest
+	// audit's defects as sightings it never made.
+	bundles := auditDraftBundleIDs(rows)
+	newest := map[int]int{}
+	for i := range rows {
+		if bundles[i] < 0 {
+			continue
+		}
+		newest[bundles[i]] = i
+	}
+	// A torn line is the fragment auditAppendLine leaves on its own line when it separates an
+	// interrupted append from the rows after it, so it is counted rather than treated as a row.
+	collected.torn = torn
+	candidates := map[string]*auditDraftCandidate{}
+	var order []string
+	for i, row := range rows {
+		matches, err := auditDraftScopeMatches(row, scope)
+		if err != nil {
+			return collected, err
+		}
+		if !matches {
+			continue
+		}
+		if owner, ok := newest[bundles[i]]; ok && owner != i {
+			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+				Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
+			continue
+		}
+		// A ledger is append-only and unscoped runs read every ok row, so one row the product
+		// cannot read must not stop the rows it can: the row is named in the report instead.
+		if err := auditDraftBundleOf(row); err != nil {
+			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
+			continue
+		}
+		// A grade marks its bundle before its grader can leave a file and clears the mark once
+		// its ledger row is on disk. A bundle that still carries the mark holds the result of a
+		// run nothing names, so no row is drafted from it: the file may belong to a run that
+		// timed out, failed or was killed, and attributing it to this older row would report
+		// defects the row never found.
+		if auditPending(e, cfg, row.Bundle) {
+			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
+			continue
+		}
+		doc, ok := auditParseResult(crwconfig.JoinRoot(row.Bundle, auditGradeFile))
+		if !ok {
+			collected.skipped = append(collected.skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})
+			continue
+		}
+		for _, defect := range doc.Defects {
+			rank, knownSeverity := auditDraftSeverityRank[defect.Severity]
+			if !knownSeverity || rank > thresholdRank {
+				continue
+			}
+			fingerprint := auditDraftFingerprint(defect.Where, defect.What)
+			entry := auditDraftSeen{Mode: row.Mode, Subject: row.Subject, Head: row.Head, At: row.GradedAt}
+			candidate, seen := candidates[fingerprint]
+			if !seen {
+				path := auditDraftWherePath(defect.Where)
+				candidate = &auditDraftCandidate{
+					fingerprint: fingerprint, severity: defect.Severity,
+					project: auditDraftOwner(section.Owners, path), path: path,
+					defect: defect, criteria: doc.Criteria, order: len(order),
+				}
+				candidates[fingerprint] = candidate
+				order = append(order, fingerprint)
+			}
+			if auditDraftSeverityRank[candidate.severity] > rank {
+				// The higher severity carries its own evidence: the reproduction steps, the
+				// where and the criteria notes are the ones that grade wrote, not the ones the
+				// lower-severity grade wrote about the same defect.
+				candidate.severity = defect.Severity
+				candidate.defect = defect
+				candidate.criteria = doc.Criteria
+			}
+			if !auditDraftSeenHas(candidate.seen, entry) {
+				candidate.seen = append(candidate.seen, entry)
+			}
+		}
+	}
+	collected.candidates, collected.order = candidates, order
+	return collected, nil
+}
+
 // auditDraftsRun reads the ledger and each bundle's grade.json, and writes one draft per defect at
 // or above the threshold. The ledger is read in full, because the newest row of a bundle decides
 // whether its grade.json may be read at all, and only the ok rows inside the run's range are then
@@ -774,94 +892,14 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	if _, err := auditDraftIndexLoad(dir); err != nil {
 		return report, err
 	}
-	rows, torn, err := auditDraftLedgerRows(e, cfg)
+	collected, err := auditDraftCollect(e, cfg, section, scope, thresholdRank)
 	if err != nil {
 		return report, err
 	}
-	// A bundle is a mutable directory: grading into it again replaces its grade.json, and the
-	// ledger keeps every row that ever named it. Only the newest such row can still have its
-	// grade there, and the status does not decide which row that is: a later run that timed out
-	// or failed leaves its own grade.json in the bundle, so a row that named it must not be
-	// drafted from that file. Every older row is named and skipped rather than given the newest
-	// audit's defects as sightings it never made.
-	bundles := auditDraftBundleIDs(rows)
-	newest := map[int]int{}
-	for i := range rows {
-		if bundles[i] < 0 {
-			continue
-		}
-		newest[bundles[i]] = i
-	}
-	// A torn line is the fragment auditAppendLine leaves on its own line when it separates an
-	// interrupted append from the rows after it, so it is counted rather than treated as a row.
-	report.TornLines = torn
-	candidates := map[string]*auditDraftCandidate{}
-	var order []string
-	for i, row := range rows {
-		matches, err := auditDraftScopeMatches(row, scope)
-		if err != nil {
-			return report, err
-		}
-		if !matches {
-			continue
-		}
-		if owner, ok := newest[bundles[i]]; ok && owner != i {
-			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
-				Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
-			continue
-		}
-		// A ledger is append-only and unscoped runs read every ok row, so one row the product
-		// cannot read must not stop the rows it can: the row is named in the report instead.
-		if err := auditDraftBundleOf(row); err != nil {
-			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
-			continue
-		}
-		// A grade marks its bundle before its grader can leave a file and clears the mark once
-		// its ledger row is on disk. A bundle that still carries the mark holds the result of a
-		// run nothing names, so no row is drafted from it: the file may belong to a run that
-		// timed out, failed or was killed, and attributing it to this older row would report
-		// defects the row never found.
-		if auditPending(e, cfg, row.Bundle) {
-			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
-				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
-			continue
-		}
-		doc, ok := auditParseResult(crwconfig.JoinRoot(row.Bundle, auditGradeFile))
-		if !ok {
-			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})
-			continue
-		}
-		for _, defect := range doc.Defects {
-			rank, knownSeverity := auditDraftSeverityRank[defect.Severity]
-			if !knownSeverity || rank > thresholdRank {
-				continue
-			}
-			fingerprint := auditDraftFingerprint(defect.Where, defect.What)
-			entry := auditDraftSeen{Mode: row.Mode, Subject: row.Subject, Head: row.Head, At: row.GradedAt}
-			candidate, seen := candidates[fingerprint]
-			if !seen {
-				path := auditDraftWherePath(defect.Where)
-				candidate = &auditDraftCandidate{
-					fingerprint: fingerprint, severity: defect.Severity,
-					project: auditDraftOwner(section.Owners, path), path: path,
-					defect: defect, criteria: doc.Criteria, order: len(order),
-				}
-				candidates[fingerprint] = candidate
-				order = append(order, fingerprint)
-			}
-			if auditDraftSeverityRank[candidate.severity] > rank {
-				// The higher severity carries its own evidence: the reproduction steps, the
-				// where and the criteria notes are the ones that grade wrote, not the ones the
-				// lower-severity grade wrote about the same defect.
-				candidate.severity = defect.Severity
-				candidate.defect = defect
-				candidate.criteria = doc.Criteria
-			}
-			if !auditDraftSeenHas(candidate.seen, entry) {
-				candidate.seen = append(candidate.seen, entry)
-			}
-		}
-	}
+	report.TornLines = collected.torn
+	report.Skipped = append(report.Skipped, collected.skipped...)
+	candidates, order := collected.candidates, collected.order
+	postedEscalations := auditEscalationPosted(collected.escalations)
 	var fresh, existing []*auditDraftCandidate
 	for _, fingerprint := range order {
 		candidate := candidates[fingerprint]
@@ -924,9 +962,22 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		// the management session raises the issue it already has rather than a second one.
 		if doc.State == auditDraftStatePosted {
 			if stored, known := auditDraftSeverityRank[doc.Severity]; known && auditDraftSeverityRank[candidate.severity] < stored {
-				report.PostedEscalations = append(report.PostedEscalations, auditDraftPostedEscalation{
-					Fingerprint: doc.Fingerprint, Issue: doc.Posted, From: doc.Severity, To: candidate.severity,
-				})
+				// A raise the management session has already posted (a ledger line from
+				// `--mark-posted`) at this severity or a higher one is not reported again; a raise
+				// above the posted one is, from the severity the issue now stands at.
+				from := doc.Severity
+				covered := false
+				if posted, ok := postedEscalations[doc.Fingerprint]; ok {
+					covered = auditDraftSeverityRank[posted.To] <= auditDraftSeverityRank[candidate.severity]
+					if auditDraftSeverityRank[posted.To] < stored {
+						from = posted.To
+					}
+				}
+				if !covered {
+					report.PostedEscalations = append(report.PostedEscalations, auditDraftPostedEscalation{
+						Fingerprint: doc.Fingerprint, Issue: doc.Posted, From: from, To: candidate.severity,
+					})
+				}
 			}
 		} else {
 			if changed {
@@ -976,7 +1027,20 @@ func auditRunDrafts(_ context.Context, e *Env, args []string) int {
 			return auditDraftRunMark(e, args[1:])
 		}
 	}
-	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "since": true, "severity": true})
+	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "since": true, "severity": true, "mark-posted": true, "ref": true})
+	if err == nil {
+		if _, markPosted := values["mark-posted"]; markPosted {
+			if values["round"] != "" || values["since"] != "" || values["severity"] != "" {
+				err = errors.New("--mark-posted records one raise and takes no range or severity")
+			} else if values["mark-posted"] == "" {
+				err = errors.New("--mark-posted needs a draft id")
+			} else {
+				return auditDraftRunMarkPosted(e, values["mark-posted"], values["ref"])
+			}
+		} else if _, ref := values["ref"]; ref {
+			err = errors.New("--ref belongs to --mark-posted")
+		}
+	}
 	if err == nil && values["round"] != "" && values["since"] != "" {
 		err = errors.New("--round and --since name one range each; give only one")
 	}
@@ -1009,6 +1073,38 @@ func auditRunDrafts(_ context.Context, e *Env, args []string) int {
 		return 1
 	}
 	fmt.Fprintf(e.Stdout, "%s\n", data)
+	return 0
+}
+
+// auditDraftRunMarkPosted is crw manage audit drafts --mark-posted: it records, as a line of
+// the audit ledger, that the management session posted the raise of a posted draft's severity,
+// so no later drafts run reports the same raise again (CRW-962). It prints the line it wrote.
+func auditDraftRunMarkPosted(e *Env, fingerprint, ref string) int {
+	if err := auditDraftFingerprintName(fingerprint); err != nil {
+		fmt.Fprintln(e.Stderr, auditDraftUsage)
+		fmt.Fprintf(e.Stderr, "crw manage audit drafts --mark-posted: error: %v\n", err)
+		return usageExit
+	}
+	cfg := coreDefaults(e)
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit drafts --mark-posted: error: %v\n", err)
+		return 1
+	}
+	defer release()
+	row, err := auditDraftMarkPosted(e, cfg, fingerprint, ref)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit drafts --mark-posted: error: %v\n", err)
+		return 1
+	}
+	if row != nil {
+		data, err := json.Marshal(row)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage audit drafts --mark-posted: error: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(e.Stdout, "%s\n", data)
+	}
 	return 0
 }
 
