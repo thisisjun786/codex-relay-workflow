@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 // crw manage improve run turns one plan boundary into a whole improvement pass: it runs
@@ -171,8 +173,10 @@ func improveRoadmapDocument(boundary, ref, bundle string, report improveProposeR
 	b.WriteString(fmt.Sprintf("- left for a later run: %d\n", report.Remaining))
 	if report.Remaining > 0 {
 		// A repeated run of this boundary and ref drafts nothing new, so a candidate the cap left is
-		// drafted by proposing this bundle, which holds its evidence, with the configured cap.
-		b.WriteString("- draft the left candidates: crw manage improve propose --bundle " + bundle + "\n")
+		// drafted by proposing this bundle, which holds its evidence, with the configured cap. The
+		// line is meant to be pasted into a shell, and a ref or a state directory may hold a space or
+		// a shell metacharacter, so the path is written as one shell word.
+		b.WriteString("- draft the left candidates: crw manage improve propose --bundle " + quote.Shell(bundle) + "\n")
 	}
 	b.WriteString("\n## Candidates\n\n")
 	if len(report.Candidates) == 0 {

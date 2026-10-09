@@ -3,6 +3,7 @@ package manage
 import (
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,6 +185,60 @@ func TestImproveResidual1055CutCandidateIsDraftedByProposingTheRoadmapBundle(t *
 	}
 	if drafts := improveRoadmapTestDrafts(t, manageState); len(drafts) != 3 {
 		t.Errorf("the drafts directory holds %v, want three", drafts)
+	}
+}
+
+// TestImproveResidual1055RoadmapCommandSurvivesTheShell follows the roadmap's command the way a
+// person does: the line is pasted into a shell. A ref and a state directory may hold a space or a
+// shell metacharacter, so the bundle path in the line must read back as one word, the one argument
+// of --bundle, and nothing in it may be run.
+func TestImproveResidual1055RoadmapCommandSurvivesTheShell(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no POSIX shell")
+	}
+	for _, c := range []struct{ name, state, ref string }{
+		{"space in ref", "manage-state", "M 2"},
+		{"space in state", "manage state", "M2"},
+		{"metacharacters", "manage $(touch pwned) state", "M'2;`touch pwned`"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := improveTestSetup(t)
+			manageState := filepath.Join(s.root, c.state)
+			improveTestStore(t, s, improveResidual1055ThreeFrictions)
+			improveRoadmapTestConfigure(t, s, manageState, map[string]any{"max_new_drafts": 2})
+			var stdout, stderr strings.Builder
+			e := improveRoadmapTestEnv(s, &stdout, &stderr)
+			if code, _, errOut := improveRoadmapTestRun(t, e, "--boundary", "milestone", "--ref", c.ref); code != 0 {
+				t.Fatalf("run: exit %d, stderr %s", code, errOut)
+			}
+			body := improveReview789LatestRoadmap(t, manageState)
+			const prefix = "- draft the left candidates: crw manage improve propose "
+			var rest string
+			for _, line := range strings.Split(body, "\n") {
+				if after, ok := strings.CutPrefix(line, prefix); ok {
+					rest = after
+				}
+			}
+			if rest == "" {
+				t.Fatalf("the roadmap names no command to draft the left candidates:\n%s", body)
+			}
+			bundles := improveRoadmapTestBundles(t, manageState, c.ref)
+			bundle := filepath.Join(manageState, "improve", c.ref, bundles[len(bundles)-1])
+			workDir := t.TempDir()
+			cmd := exec.Command(sh, "-c", "printf '%s\\n' "+rest)
+			cmd.Dir = workDir
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("the shell rejected the roadmap command %q: %v", rest, err)
+			}
+			if got, want := string(out), "--bundle\n"+bundle+"\n"; got != want {
+				t.Errorf("the shell reads the roadmap command %q as %q, want %q", rest, got, want)
+			}
+			if entries, _ := os.ReadDir(workDir); len(entries) != 0 {
+				t.Errorf("reading the roadmap command ran something: %v", entries)
+			}
+		})
 	}
 }
 
