@@ -1,6 +1,6 @@
 # Linear and CXC integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-status`, `crw-check`, `crw-logic`, `crw-tidy`, and `crw-refactor`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-add-issue`, `crw-run`, `crw-loop`, `crw-status`, `crw-check`, `crw-logic`, `crw-tidy`, and `crw-refactor`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Skill names under each installation
 
@@ -181,6 +181,7 @@ Load the existing owner for the requested operation:
 | Where to start or what to do next | [crw-next](../../crw-next/SKILL.md) |
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
+| Turn one short request into one ready issue (a lighter path than a plan) | [crw-add-issue](../../crw-add-issue/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
 | Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
@@ -271,6 +272,26 @@ When existing work breaks this mapping, reconcile its scope and ownership
 through `crw-plan` before new dispatch. Preserve active work, IDs, and history;
 do not silently split, close, or reassign live issues. Editing these instructions
 does not migrate existing work or alter the relay's runtime contracts.
+
+### The release gate
+
+An issue is released to a child only when its body already holds what the child needs to start. Work released without a decided answer makes the child design while it implements, and the evaluations that follow find the same class of fault again and again. The gate judges five items, each under its own heading in the issue body (Korean first, the English heading is read the same):
+
+| Item | Heading | What it must state |
+|---|---|---|
+| `criteria` | `## 기준` / Acceptance criteria | The registered acceptance criteria as a list. |
+| `edit_region` | `## 편집 영역` / Edit regions | The files or directories the change edits, in backticks. A path named in backticks in the criteria or the decided answer counts. |
+| `decided_answer` | `## 정한 답` / Decided answer | The answer to every design question, so the child implements and does not design. |
+| `red_test` | `## 먼저 실패하게 쓸 시험` / Red tests | The test cases to write first and see fail. |
+| `done_condition` | `## 끝 조건` / Done condition | Which command must give which result, with the command in backticks or a code block. |
+
+A heading with no entry under it, or one holding only `TBD`, states nothing. `crw skill issue-ready check` reads the issue as the Linear tools return it (id, title, description and labels, as JSON on stdin or in a file) and answers `ready`, `not_ready` or `design_first`. It names every missing item with the heading that supplies it, writes nothing and reads nothing from Linear, and the same issue gives the same bytes. Exit 0 releases; exit 1 holds the release and the reasons are the refusal; exit 2 and 3 mean the issue was not read.
+
+**Design first.** A design question is a decision the child would otherwise take while implementing. An issue whose `## 열린 결정` (Open decisions) section lists one, or that carries the label `설계 먼저`, is held as `design_first`: it is not released as an implementation. The design comes first, from an architect-role proposal that checks the repository's constraints (append-only triggers, package cycles) and the parent's decision. The parent writes the result into the decided answer section, empties the open decisions, removes the label, and only then releases. The label is what makes the state visible in Linear; whoever finds an open decision on an unreleased issue adds it with the Linear write authority the assignment already gives, and a missing label is a gap the [crw-tidy](../../crw-tidy/SKILL.md) pass supplements. Assigning the architect role or any model to the design is the execution settings' business, not this rule's.
+
+**Where the refusal lives.** The gate is this rule, the command and the tidy check, and not a refusal inside the relay. The relay's release request carries fixed fields and no issue body, and a field there would be a change to the relay ([the record at release](#the-record-at-release) makes the same choice for the pair). The parent runs the command before any packet, task, `managed-start` or DAG release ([Check the issue is ready before release](../../crw-run/SKILL.md#check-the-issue-is-ready-before-release)), and a held answer ends that release: nothing is created and the reasons go to the issue's owner.
+
+**The one bypass.** A held issue is released anyway only on the management session's explicit approval for that issue. The approval is a record the command carries (`exception`: the issue, the approver, the date as YYYY-MM-DD and a statement), the report returns it as `exception_record` with the items it was released without, and the parent writes that line into the coordination record beside the launch. The command can refuse a record that names no approver, issue, date or statement; whether the approver was the management session is the caller's to state truthfully. A child, a parent's own judgment that the issue is small and an earlier release of a sibling are not that approval.
 
 ### Schedule baseline contract
 
@@ -1242,7 +1263,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns the project parent's native goal and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, `crw-tidy` supplements records that fall short of the rules already agreed, and `crw-refactor` diagnoses structural debt after cycle verification and carries selected repairs into the existing execution owner. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-add-issue` turns one short request into one ready issue without a plan, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns the project parent's native goal and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, `crw-tidy` supplements records that fall short of the rules already agreed, and `crw-refactor` diagnoses structural debt after cycle verification and carries selected repairs into the existing execution owner. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
