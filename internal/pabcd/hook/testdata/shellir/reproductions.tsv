@@ -758,3 +758,26 @@ added by CRW-1028 (over-block of sequential script executions in a carried text)
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash lint.sh; bash refresh.sh'	CRW-1028-ev-overblock-02	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; x=$(bash refresh.sh)	CRW-1028-ev-overblock-03	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash refresh.sh; bash lint.sh'	CRW-1028-ev-overblock-04	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("a").touch()'	CRW-951-touch-01-joinpath	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("a").mkdir()'	CRW-951-mkdir-01-joinpath	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; m="{MEMORY}/a"; Path(m).touch()'	CRW-951-touch-02-literal	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; Path("{MEMORY}/a").touch()'	CRW-951-touch-03-inline-literal	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'import pathlib; pathlib.Path("{MEMORY}/d").mkdir(parents=True, exist_ok=True)'	CRW-951-mkdir-02-inline-literal	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; m="{MEMORY}/d"; Path(m).mkdir()'	CRW-951-mkdir-03-literal	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "a").touch()'	CRW-951-touch-04-division	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "d").mkdir()'	CRW-951-mkdir-04-division	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/a"); p.touch()'	CRW-951-touch-05-bound-name	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/d"); p.mkdir()'	CRW-951-mkdir-05-bound-name	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; Path.touch(Path("{MEMORY}/a"))'	CRW-951-touch-06-unbound-method	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; f = Path("{MEMORY}/a").touch; f()'	CRW-951-touch-07-method-alias	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'exec("from pathlib import Path; Path(\"{MEMORY}/a\").touch()")'	CRW-951-touch-08-in-exec	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; Path("/w/x").touch()'	CRW-951-touch-09-work-tree	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'from pathlib import Path; Path("/w/d").mkdir()'	CRW-951-mkdir-06-work-tree	row	-
+added by CRW-951 (re-check of 2026-10-09, pathlib touch and mkdir)	python3 -c 'import pathlib; pathlib.Path("/w/d/e").mkdir(parents=True, exist_ok=True)'	CRW-951-mkdir-07-work-tree-parents	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'from pathlib import Path; m="{MEMORY}/a"; print(Path(m).exists())'	CRW-951-read-01-exists	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'from pathlib import Path; m="{MEMORY}"; print(Path(m).is_dir())'	CRW-951-read-02-is-dir	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'from pathlib import Path; m="{MEMORY}/a"; print(Path(m).stat())'	CRW-951-read-03-stat	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; m="{MEMORY}/a"; print(os.path.exists(m))'	CRW-951-read-04-os-path-exists	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'print("touch()")'	CRW-951-read-05-string-data	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; print("touch() and mkdir()", os.path.exists("/w/x"))'	CRW-951-read-06-string-data-with-api	row	-
+added by CRW-951 (allow counterexample of the pathlib touch and mkdir rule)	python3 -c 'import os; touch = 1; mkdir = 2; print(touch + mkdir, os.path.exists("/w/x"))'	CRW-951-read-07-bare-names	row	-

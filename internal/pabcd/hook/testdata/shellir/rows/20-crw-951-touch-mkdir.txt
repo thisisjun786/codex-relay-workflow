@@ -1,0 +1,95 @@
+# CRW-951: pathlib touch() and mkdir() create a file or a directory at their receiver, like write_text() writes one (re-check of
+# 2026-10-09, rows RC-951-*). A protected destination is an attempt; a computed receiver is the unknown destination of criterion c1e.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-951-touch-01-joinpath | W
+--why RC-951: Path(root).joinpath("a").touch() creates a file in the protected memory root.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("a").touch()'
+
+=== CRW-951-mkdir-01-joinpath | W
+--why RC-951: Path(root).joinpath("a").mkdir() creates a directory in the protected memory root.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("a").mkdir()'
+
+=== CRW-951-touch-02-literal | W
+--why RC-951: a literal Path(m).touch() with m inside the protected root.
+python3 -c 'from pathlib import Path; m="{MEMORY}/a"; Path(m).touch()'
+
+=== CRW-951-touch-03-inline-literal | W
+--why Path("{MEMORY}/a").touch() with the destination written in the call.
+python3 -c 'from pathlib import Path; Path("{MEMORY}/a").touch()'
+
+=== CRW-951-mkdir-02-inline-literal | W
+--why Path("{MEMORY}/d").mkdir(parents=True, exist_ok=True) with the destination written in the call.
+python3 -c 'import pathlib; pathlib.Path("{MEMORY}/d").mkdir(parents=True, exist_ok=True)'
+
+=== CRW-951-mkdir-03-literal | W
+--why A literal Path(m).mkdir() with m inside the protected root.
+python3 -c 'from pathlib import Path; m="{MEMORY}/d"; Path(m).mkdir()'
+
+=== CRW-951-touch-04-division | W
+--why (Path(root) / "a").touch(): a parenthesised receiver is a computed destination.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "a").touch()'
+
+=== CRW-951-mkdir-04-division | W
+--why (Path(root) / "d").mkdir(): a parenthesised receiver is a computed destination.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "d").mkdir()'
+
+=== CRW-951-touch-05-bound-name | W
+--why The receiver is a name bound to a path: p = Path(m); p.touch() (criterion c1e).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/a"); p.touch()'
+
+=== CRW-951-mkdir-05-bound-name | W
+--why The receiver is a name bound to a path: p = Path(m); p.mkdir() (criterion c1e).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/d"); p.mkdir()'
+
+=== CRW-951-touch-06-unbound-method | W
+--why The unbound method Path.touch(Path(m)).
+python3 -c 'from pathlib import Path; Path.touch(Path("{MEMORY}/a"))'
+
+=== CRW-951-touch-07-method-alias | W
+--why The method is bound to a name and called later.
+python3 -c 'from pathlib import Path; f = Path("{MEMORY}/a").touch; f()'
+
+=== CRW-951-touch-08-in-exec | E
+--why The same call inside a program text passed to exec.
+python3 -c 'exec("from pathlib import Path; Path(\"{MEMORY}/a\").touch()")'
+
+=== CRW-951-touch-09-work-tree | B
+--why Allow counterexample: Path("/w/x").touch() inside the work tree is no protected destination.
+python3 -c 'from pathlib import Path; Path("/w/x").touch()'
+
+=== CRW-951-mkdir-06-work-tree | B
+--why Allow counterexample: Path("/w/d").mkdir() inside the work tree is no protected destination.
+python3 -c 'from pathlib import Path; Path("/w/d").mkdir()'
+
+=== CRW-951-mkdir-07-work-tree-parents | B
+--why Allow counterexample: Path("/w/d/e").mkdir(parents=True, exist_ok=True) inside the work tree.
+python3 -c 'import pathlib; pathlib.Path("/w/d/e").mkdir(parents=True, exist_ok=True)'
+
+=== CRW-951-read-01-exists | B
+--why Allow counterexample: Path(m).exists() reads the protected path and writes nothing.
+python3 -c 'from pathlib import Path; m="{MEMORY}/a"; print(Path(m).exists())'
+
+=== CRW-951-read-02-is-dir | B
+--why Allow counterexample: Path(m).is_dir() reads.
+python3 -c 'from pathlib import Path; m="{MEMORY}"; print(Path(m).is_dir())'
+
+=== CRW-951-read-03-stat | B
+--why Allow counterexample: Path(m).stat() reads.
+python3 -c 'from pathlib import Path; m="{MEMORY}/a"; print(Path(m).stat())'
+
+=== CRW-951-read-04-os-path-exists | B
+--why Allow counterexample: os.path.exists(m) reads.
+python3 -c 'import os; m="{MEMORY}/a"; print(os.path.exists(m))'
+
+=== CRW-951-read-05-string-data | B
+--why Allow counterexample: the text touch() as data in a string writes nothing.
+python3 -c 'print("touch()")'
+
+=== CRW-951-read-06-string-data-with-api | B
+--why Allow counterexample: the text touch() and mkdir() as string data next to a read of a path.
+python3 -c 'import os; print("touch() and mkdir()", os.path.exists("/w/x"))'
+
+=== CRW-951-read-07-bare-names | B
+--why Allow counterexample: bare names touch and mkdir are no pathlib method.
+python3 -c 'import os; touch = 1; mkdir = 2; print(touch + mkdir, os.path.exists("/w/x"))'
