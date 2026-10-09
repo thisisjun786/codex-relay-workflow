@@ -477,7 +477,7 @@ func harnessRunExec(file string, args []string, timeout time.Duration) HarnessRu
 	// text the oracle saw. A string a test passes to the check directly is unaffected.
 	out, errOut := source.DecodeUTF8(stdout.Bytes()), source.DecodeUTF8(stderr.Bytes())
 	if ctx.Err() == context.DeadlineExceeded || errors.Is(err, exec.ErrWaitDelay) {
-		return HarnessRun{Status: harnessRunInt(harnessDriftKilled), Stdout: out, Stderr: errOut}
+		return HarnessRun{Status: harnessRunInt(harnessDriftKilled), Stdout: out, Stderr: errOut, Killed: true}
 	}
 	if err == nil {
 		return HarnessRun{Status: harnessRunInt(0), Stdout: out, Stderr: errOut}
@@ -485,7 +485,7 @@ func harnessRunExec(file string, args []string, timeout time.Duration) HarnessRu
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		code := exit.ExitCode()
-		return HarnessRun{Status: &code, Stdout: out, Stderr: errOut}
+		return HarnessRun{Status: &code, Stdout: out, Stderr: errOut, Killed: code == harnessDriftKilled}
 	}
 	return HarnessRun{Status: nil, Stdout: out, Stderr: errOut}
 }
