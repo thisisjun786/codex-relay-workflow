@@ -20,7 +20,9 @@ type SelfHealMarker struct {
 	OptedOutAt, CheckedAt  *string
 	ConfigMtimeMs          *float64
 	HealedKeys, CachedKeys []string
-	order                  []string
+	// Probe is the verified execution evidence an explicit command recorded (CRW-1150).
+	Probe *SelfHealProbeEvidence
+	order []string
 }
 
 func SelfHealMarkerPath(home string) string { return filepath.Join(home, SelfHealMarkerName) }
@@ -63,6 +65,7 @@ func ParseSelfHealMarker(raw string) *SelfHealMarker {
 	}
 	m.HealedKeys = stringsOnly(o.Get("healedKeys"))
 	m.CachedKeys = stringsOnly(o.Get("cachedKeys"))
+	m.Probe = parseSelfHealProbeEvidence(o.Get("probeEvidence"))
 	return m
 }
 
@@ -110,6 +113,9 @@ func selfHealMarkerObject(m *SelfHealMarker) (pyjson.Object, error) {
 	}
 	if m.CachedKeys != nil {
 		add("cachedKeys", m.CachedKeys)
+	}
+	if m.Probe != nil {
+		add("probeEvidence", selfHealProbeEvidenceObject(m.Probe))
 	}
 	ordered := pyjson.Object{}
 	for _, key := range m.order {
@@ -166,6 +172,8 @@ func MarkSelfHealOptedOut(home, at string) error {
 	}
 	opted, enabled := true, false
 	m.OptedOut, m.OptedOutAt, m.AllEnabled = &opted, &at, &enabled
+	// The flags this opt-out reverts no longer match what the evidence verified.
+	m.Probe = nil
 	return WriteSelfHealMarkerFile(home, m)
 }
 

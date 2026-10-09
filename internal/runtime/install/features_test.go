@@ -39,6 +39,10 @@ func TestFeatureCodexHelper(t *testing.T) {
 		_, _ = os.Stderr.Write([]byte{'a', 0xe2, 0x82})
 		os.Exit(3)
 	}
+	if len(args) == 1 && args[0] == "--version" && os.Getenv("CRW1150_FAKE_VERSION") != "" {
+		fmt.Println(os.Getenv("CRW1150_FAKE_VERSION"))
+		os.Exit(0)
+	}
 	if len(args) < 2 || args[0] != "features" {
 		os.Exit(91)
 	}
@@ -93,7 +97,7 @@ func newFeatureHome(t *testing.T, content string) featureHome {
 		t.Fatal(err)
 	}
 	env := scope.Env(os.Environ()).With("HOME", t.TempDir()).With("CODEX_HOME", home).With("PATH", bin).With("CRW499_FAKE_HOME", home)
-	for _, key := range []string{"CRW499_FAKE_MODE", "CRW499_FAKE_LIST_FAIL", "CRW499_FAKE_FAIL_KEY", "CRW499_FAKE_DISABLE_FAIL"} {
+	for _, key := range []string{"CRW499_FAKE_MODE", "CRW499_FAKE_LIST_FAIL", "CRW499_FAKE_FAIL_KEY", "CRW499_FAKE_DISABLE_FAIL", "CRW1150_FAKE_VERSION"} {
 		env = env.Without(key)
 	}
 	return featureHome{t, home, env}
@@ -461,5 +465,46 @@ func TestFeaturesKeepsInstallerHelp(t *testing.T) {
 	want := "usage: crw install {install,update,rollback,remove,status,register-mcp,hook,register-service} ...\n"
 	if code != 0 || out.String() != want || err.Len() != 0 {
 		t.Fatalf("exit %d stdout=%q stderr=%q", code, out.String(), err.String())
+	}
+}
+
+// CRW-1150: the explicit enable records the verified listing, with the codex version and the config
+// digest, so SessionStart does not repeat it; without a readable version it records nothing.
+func TestFeaturesEnableRecordsVerifiedProbeEvidence(t *testing.T) {
+	t.Parallel()
+	h := newFeatureHome(t, "")
+	h.env = h.env.With("CRW1150_FAKE_VERSION", "codex-cli 9.9.9")
+	if code, _, err := h.run("enable"); code != 0 {
+		t.Fatalf("exit %d %s", code, err)
+	}
+	marker, err := configguard.ReadSelfHealMarkerFile(h.home)
+	if err != nil || marker == nil || marker.Probe == nil {
+		t.Fatalf("marker %+v %v", marker, err)
+	}
+	if marker.Probe.CodexVersion != "codex-cli 9.9.9" || !marker.Probe.Features["hooks"] || !marker.Probe.Features["default_mode_request_user_input"] {
+		t.Fatalf("evidence %+v", marker.Probe)
+	}
+	// A later listing from the same codex and config is answered from the record.
+	var runs int
+	count := func(args []string) configguard.CodexRunResult {
+		if len(args) == 2 {
+			runs++
+		}
+		return configguard.CodexRunResult{Stdout: "codex-cli 9.9.9\n"}
+	}
+	outcomes := configguard.SelfHealReport(configguard.SelfHealReportDeps{CodexHome: h.home, Run: count})
+	if runs != 0 || len(outcomes) != 1 || outcomes[0].Reason != configguard.SelfHealReasonAlreadyEnabled {
+		t.Fatalf("runs %d outcomes %+v", runs, outcomes)
+	}
+}
+
+func TestFeaturesEnableWithoutAReadableVersionRecordsNoEvidence(t *testing.T) {
+	t.Parallel()
+	h := newFeatureHome(t, "")
+	if code, _, err := h.run("enable"); code != 0 {
+		t.Fatalf("exit %d %s", code, err)
+	}
+	if _, err := os.Stat(configguard.SelfHealMarkerPath(h.home)); !os.IsNotExist(err) {
+		t.Fatalf("a marker was written without a verified version: %v", err)
 	}
 }

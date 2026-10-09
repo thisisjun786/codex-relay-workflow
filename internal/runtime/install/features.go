@@ -53,6 +53,9 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 		if err == nil {
 			// Explicit enable resumes healing; the optional marker never gates activation.
 			_ = configguard.ClearSelfHealOptOut(home)
+			// The explicit command's verified listing lets SessionStart skip repeating it (CRW-1150).
+			// Failing to record it never fails the enable: the hook measures instead.
+			_ = configguard.RecordSelfHealEvidence(configguard.RecordSelfHealEvidenceDeps{CodexHome: home, Run: run})
 			renderFeatureEnable(stdout, stderr, m)
 		}
 	case "disable":
