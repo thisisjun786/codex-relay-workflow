@@ -34,6 +34,16 @@ func TestContextCutDoesNotLeaveASurrogate(t *testing.T) {
 	}
 }
 
+func TestContextSectionsRejectRequiredOverflow(t *testing.T) {
+	out := ContextOutputSections("SessionStart", []ContextSection{
+		{Text: strings.Repeat("required identity ", 3000), Required: true},
+		{Text: "gate: do not bypass", Required: true},
+	})
+	if !strings.Contains(out, "required context exceeds") || strings.Contains(out, "required identity") || strings.Contains(out, "[truncated]") {
+		t.Fatal("required overflow emitted a partial instruction")
+	}
+}
+
 func TestObservationEmptyHomeUsesHomeFallback(t *testing.T) {
 	for _, mode := range []string{"empty", "unset", "explicit"} {
 		t.Run(mode, func(t *testing.T) {

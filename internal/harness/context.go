@@ -60,6 +60,11 @@ func ContextOutputSections(event string, sections []ContextSection) string {
 		return ContextOutput(event, strings.Join(lines, "\n\n"))
 	}
 	budget := max(0, MaxContext-64-required-2*max(0, len(lines)-1))
+	if required+2*max(0, len(lines)-1) > MaxContext-64 {
+		// Required instructions are atomic. Reject an impossible envelope
+		// explicitly instead of presenting a truncated identity or gate.
+		return ContextOutput(event, "[crw] required context exceeds the hook context limit; shorten the configured invocation or required guidance and retry this hook before mutation.")
+	}
 	for i, s := range sections {
 		if s.Required {
 			continue

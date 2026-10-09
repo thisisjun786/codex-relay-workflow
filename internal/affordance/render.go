@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 // Texts port map-affordance.ts:103-231 after the canonical name substitution.
@@ -19,6 +20,16 @@ const questionsText = "[crw] User questions: main agents may leave useful questi
 
 func invocation(env host.LookupEnv) string {
 	inv, err := host.Invocation(env)
+	if len(utf16.Encode([]rune(inv))) > 1024 {
+		// A long override is repeated in required guidance. Use the installed
+		// runtime pointer rather than cutting a command or identity in half.
+		inv, err = host.Invocation(func(key string) (string, bool) {
+			if key == host.BinEnv {
+				return "", false
+			}
+			return env(key)
+		})
+	}
 	if err != nil {
 		return "crw"
 	}
