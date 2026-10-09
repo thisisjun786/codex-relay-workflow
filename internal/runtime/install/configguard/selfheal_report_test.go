@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -687,5 +688,116 @@ func TestSelfHealReportNeverTouchesTheRealHomes(t *testing.T) {
 	}
 	if after := selfHealReportShallowListing(t, filepath.Join(realHome, ".crw")); !reflect.DeepEqual(crwBefore, after) {
 		t.Fatalf("the real ~/.crw changed:\n before %v\n after  %v", crwBefore, after)
+	}
+}
+
+// TestSelfHealReportTruncatedListingIsSilent is CRW-977 d1. A probe that exits 0 while a descendant
+// still holds its stdout open leaves the runner at exec.ErrWaitDelay with the part of the listing
+// that arrived. The oracle's spawnSync waits for the full list; the port keeps the hook within its
+// time limit instead and takes the cut list for a failed measurement, so a flag that is on is not
+// read as off from a list that ended early.
+func TestSelfHealReportTruncatedListingIsSilent(t *testing.T) {
+	previous := selfHealReportWaitDelay
+	selfHealReportWaitDelay = 300 * time.Millisecond
+	t.Cleanup(func() { selfHealReportWaitDelay = previous })
+
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	dir := selfHealReportFakeCodexAt(t)
+	pidFile := filepath.Join(dir, "holder.pid")
+	// The cut list lacks default_mode_request_user_input, which the full list reports on.
+	selfHealReportWriteFakeCodex(t, dir, "printf '%s\\n' 'goals stable true' 'hooks stable true' 'multi_agent stable true'\n"+
+		"sleep 20 &\necho $! > \""+pidFile+"\"\nexit 0\n")
+	t.Cleanup(func() {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+
+	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+	if code != 0 || out != "" {
+		t.Fatalf("a cut listing answered exit %d with %q, want silent exit 0", code, out)
+	}
+}
+
+// TestSelfHealReportRunnerMarksAWaitDelayAsFailed pins the runner's side of the same rule: the
+// exit status of a probe whose output was cut off is not 0.
+func TestSelfHealReportRunnerMarksAWaitDelayAsFailed(t *testing.T) {
+	previous := selfHealReportWaitDelay
+	selfHealReportWaitDelay = 300 * time.Millisecond
+	t.Cleanup(func() { selfHealReportWaitDelay = previous })
+
+	dir := selfHealReportFakeCodexAt(t)
+	pidFile := filepath.Join(dir, "holder.pid")
+	selfHealReportWriteFakeCodex(t, dir, "printf partial\nsleep 20 &\necho $! > \""+pidFile+"\"\nexit 0\n")
+	t.Cleanup(func() {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+
+	res := SelfHealReportRunner(context.Background(), selfHealReportEnv(selfHealReportTempHome(t)))([]string{"features", "list"})
+	if res.ExitCode == 0 {
+		t.Fatalf("a probe whose output was cut off reported exit 0 with %q", res.Stdout)
+	}
+}
+
+// TestSelfHealReportPathSearchSkipsAnUnrunnableCodex is CRW-977 d2. libuv's PATH search (spawnSync)
+// skips a candidate it may not execute (EACCES) and goes on to the next directory, so a working
+// codex behind a file of mode 0001 (the owner has no execute permission) is the one that runs.
+func TestSelfHealReportPathSearchSkipsAnUnrunnableCodex(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute a file that has any execute bit, so mode 0001 is not unrunnable for it")
+	}
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	front, back := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(front, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o001); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(front, "codex"), 0o001); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = features ] && [ \"$2\" = list ]; then\nprintf '%s' '" + selfHealReportSoftOff + "'\nexit 0\nfi\nexit 1\n"
+	if err := execfile.WriteExecutable(filepath.Join(back, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", front+string(os.PathListSeparator)+back)
+
+	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "default_mode_request_user_input") {
+		t.Fatalf("the working codex behind an unrunnable one was not used: %q", out)
+	}
+}
+
+// TestSelfHealReportOnlyAnUnrunnableCodexIsSilent keeps the other half: when every candidate is
+// unrunnable, spawnSync reports EACCES and the round stays silent.
+func TestSelfHealReportOnlyAnUnrunnableCodexIsSilent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may execute a file that has any execute bit")
+	}
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	front := t.TempDir()
+	if err := os.WriteFile(filepath.Join(front, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(front, "codex"), 0o001); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", front)
+	if _, err := selfHealReportBinary(selfHealReportEnv(home)); err != errSelfHealReportEACCES {
+		t.Fatalf("err = %v, want EACCES", err)
+	}
+	out, code := selfHealReportRun(t, home, selfHealReportSessionStart)
+	if code != 0 || out != "" {
+		t.Fatalf("answered exit %d with %q, want silent exit 0", code, out)
 	}
 }

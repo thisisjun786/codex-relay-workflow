@@ -3,6 +3,7 @@ package configguard
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"golang.org/x/sys/unix"
 )
 
 // The SessionStart self-heal leg, report only (Jun's J4 decision, 2026-10-06).
@@ -271,7 +273,11 @@ func SelfHealReportRunner(ctx context.Context, env host.LookupEnv) CodexRunner {
 		cmd.WaitDelay = selfHealReportWaitDelay
 		runErr := cmd.Run()
 		result := CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
-		if !budget.overflow && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
+		// exec.ErrWaitDelay is a probe that exited while a descendant still held its output open: the
+		// list that arrived may be cut short, and a cut list would read an enabled flag as off. spawnSync
+		// has no timeout and waits for the whole list; the hook has a time limit, so the port ends the wait
+		// and takes the list for a failed measurement (CRW-977, known-defects).
+		if !budget.overflow && !errors.Is(runErr, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			result.ExitCode = cmd.ProcessState.ExitCode()
 		}
 		if cmd.ProcessState == nil && result.Stderr == "" && runErr != nil {
@@ -294,7 +300,9 @@ func selfHealReportBinary(env host.LookupEnv) (string, error) {
 			return "", err
 		}
 		info, err := os.Stat(candidate)
-		if err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+		// libuv's PATH search (execvp) skips a candidate the caller may not execute (EACCES) and tries
+		// the next directory, so the test is the access check with the effective ids, not an execute bit.
+		if err == nil && !info.IsDir() && unix.Faccessat(unix.AT_FDCWD, candidate, unix.X_OK, unix.AT_EACCESS) == nil {
 			return candidate, nil
 		}
 		denied = denied || err == nil || os.IsPermission(err)
@@ -314,12 +322,11 @@ type errSelfHealReport string
 
 func (e errSelfHealReport) Error() string { return string(e) }
 
-// selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
 // selfHealReportWaitDelay bounds how long a probe's output may be held open after it exited or was
 // killed, the same bound internal/runtime/doctor's commandWaitDelay gives its codex probe: a
 // descendant that inherited the pipe would otherwise hold the hook (and the session start) until it
-// exits.
-const selfHealReportWaitDelay = 5 * time.Second
+// exits. A variable only so a test can shorten it.
+var selfHealReportWaitDelay = 5 * time.Second
 
 // selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
 type selfHealReportBudget struct {
