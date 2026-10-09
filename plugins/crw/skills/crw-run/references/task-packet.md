@@ -1489,7 +1489,7 @@ says, so read the level first and the fields second:
   and a child that lost its first assignment answers a review in whatever language it drifts to.
 - The publication scope and the escalation route, restated. Like the workflow and the language
   they have no transport field, and a child that compacted away its first assignment is left with
-  `crw-dev`'s own rules, which say never to push without approval and point a question at the
+  `crw-dev`'s own rules, which allow a push only under an applicable grant and point a question at the
   user. Say whether its publication scope is still the explicit push approval
   `DEV-GIT-PUSH-01` requires (push its task branch and, where a pull request exists, update it, never merge, nothing
   wider) or that it is not, and that a question only a person can answer goes to the parent as
