@@ -736,17 +736,41 @@ func shellWriteCopyModuleKind(rs []rune, i int, binds shellWriteCopyImports) byt
 }
 
 // shellWriteCopyKind is the frame kind of a call to a copy, rename or link function, or 0 when the call is no such
-// function. callee is the module the call names or a local name the program bound, and binds says which modules that local
-// name stands for: both readings count, so an alias named like a module (import shutil as os) is read too (CRW-900 D2).
+// function. callee is the name the call is made on. An import that bound the name decides what the call is (CRW-900 D1,
+// binding first): a shutil or os binding is read as that module, so import os as shutil reads shutil.rename as os.rename,
+// and import shutil as os names no rename. A binding to any other module makes a copy-named call unknown, because that
+// module's function may write where this reader cannot see. A name no import bound is read by its own spelling.
 func shellWriteCopyKind(callee, name string, binds shellWriteCopyImports) byte {
-	modules := append([]string{callee}, binds.alias[callee]...)
+	bound := binds.alias[callee]
+	if len(bound) == 0 {
+		if shellWriteCopyFunc(callee, name) {
+			return shellWriteCopyKindOf([]string{callee + "." + name})
+		}
+		return 0
+	}
+	if !shellWriteCopyNamed(name) {
+		return 0
+	}
 	var funcs []string
-	for _, module := range modules {
+	for _, module := range bound {
+		if module != "shutil" && module != "os" {
+			return 'u'
+		}
 		if shellWriteCopyFunc(module, name) {
 			funcs = append(funcs, module+"."+name)
 		}
 	}
-	return shellWriteCopyKindOf(funcs)
+	if kind := shellWriteCopyKindOf(funcs); kind != 0 {
+		return kind
+	}
+	// The import bound the name to a copy-named call that names nothing: the spelling rules for Path, open and os do not
+	// apply to it, so the frame is 'j', which reads no destination (CRW-900 D2).
+	return 'j'
+}
+
+// shellWriteCopyNamed reports whether name is a copy, rename or link function of shutil or os.
+func shellWriteCopyNamed(name string) bool {
+	return shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name)
 }
 
 // shellWriteCopyKindOf is the frame kind of a call that may be any of funcs (each module.name): 'x' when one reading takes the
