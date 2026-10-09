@@ -80,9 +80,10 @@ func componentHooks() []componentHook {
 				}
 				return 0
 			case <-c.ctx.Done():
-				// A cancelled guard still answers: the contract is a deny, never silence, so the post is not let through.
+				// A cancelled guard still answers, with the deny of an unreadable command, and exits as an ordinary deny does: never silence,
+				// so the post is not let through.
 				_, _ = io.WriteString(c.stdout, pabcdhook.GitHubPostCancelledAnswer())
-				return harness.Interrupted
+				return 0
 			}
 		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.

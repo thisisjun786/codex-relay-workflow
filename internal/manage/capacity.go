@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -195,7 +195,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 		}
 	}
 
-	statePath := filepath.Join(cfg.StateDir, capacityStateFile)
+	statePath := crwconfig.JoinRoot(cfg.StateDir, capacityStateFile)
 	previous := capacityReadState(statePath)
 	next := capacityState{Plans: map[string]capacityPlanState{}}
 	// With no configured plan there is nothing to read from the relay, so a host whose relay state
@@ -338,7 +338,7 @@ func capacityWriteState(path string, state capacityState) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}

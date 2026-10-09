@@ -57,6 +57,9 @@ func newRetrustFixture(t *testing.T, config string) *retrustFixture {
 	// The verification probe runs the codex the runner names on the process PATH (the oracle
 	// passes process.env), so the fake binary has to be findable there.
 	t.Setenv("PATH", f.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The verification resolves codex through CODEX_BIN before PATH (codex_bin.go), so an inherited
+	// CODEX_BIN would send the probe to another binary than the fake one (CRW-902).
+	t.Setenv("CODEX_BIN", "")
 	if config != "" {
 		f.write(filepath.Join(f.home, "config.toml"), config)
 	}

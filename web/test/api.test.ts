@@ -295,6 +295,66 @@ test("the policy writes carry the token and the JSON content type, and the read 
   }
 });
 
+// CRW-994 d2: a response whose body ends mid-way (a 200 header, then a reset) says nothing about the
+// write, which the server finishes detached from the request. postPolicy used to turn the rejected
+// json() into a null body under the real status, and the screen read that as a failed write.
+function respondWith(chunks: string[], failAfter: boolean, status = 200): void {
+  GLOBALS.fetch = async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        if (failAfter) controller.error(new Error("socket hang up"));
+        else controller.close();
+      },
+    });
+    return new Response(body, { status });
+  };
+}
+
+test("a policy write whose 200 body ends mid-way is a lost response, not a status with no body", async () => {
+  const api = await freshApi();
+  install("", 200, {});
+  try {
+    respondWith(['{"stored":{"digest":"'], true);
+    await assert.rejects(api.writePolicy({ expectedDigest: "d", change: { kind: "removeException", id: "legacy" } }), /body could not be read/);
+    respondWith(["<html>bad gateway</html>"], false, 502);
+    await assert.rejects(api.writePolicy({ expectedDigest: "d", change: { kind: "removeException", id: "legacy" } }), /answered 502/);
+    // The check route writes nothing, so its unreadable body stays a status with no body.
+    respondWith(["not json"], false);
+    assert.deepEqual(await api.checkPolicy({ expectedDigest: "d", change: { kind: "removeException", id: "legacy" } }), { status: 200, body: null });
+  } finally {
+    uninstall();
+  }
+});
+
+test("a save whose 200 body is cut short is headed Result unknown, then Saved once the file shows the change", async () => {
+  const api = await freshApi();
+  const { initialScreen, screenLoaded, screenAllowedDraft, runSave, saveHeading } = await import("../src/policy-state.ts");
+  install("", 200, {});
+  try {
+    const file = (efforts: string[], digest: string) => ({
+      state: "registered", path: "/host/p.json", mode: "allowlist", digest, registeredDigest: digest, runningDigest: digest,
+      roles: [{ name: "child", expectation: "", pairs: [{ model: "m", reasoningEffort: "high" }] }],
+      allowed: [{ model: "m", efforts }], exceptions: [], applied: "applied", actions: [],
+    });
+    let state = screenLoaded(initialScreen(), { ...file(["high"], "a".repeat(64)) } as never);
+    state = screenAllowedDraft(state, "m", ["high", "max"]);
+    respondWith(['{"stored":'], true);
+    const out = await runSave(state, {
+      check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+      write: (payload) => api.writePolicy(payload),
+    });
+    assert.equal(saveHeading(out.state.notice), "Result unknown", "the cut body is not a failed write");
+    assert.equal(out.reread, true);
+    assert.equal(out.rereadKeepsInputs, true);
+    const reread = screenLoaded(out.state, file(["high", "max"], "b".repeat(64)) as never, true);
+    assert.equal(saveHeading(reread.notice), "Saved");
+  } finally {
+    uninstall();
+  }
+});
+
 test("a failed policy read throws with the server's message rather than a fabricated answer", async () => {
   const api = await freshApi();
   install("", 500, { error: "the policy could not be read" });

@@ -1,0 +1,61 @@
+# CRW-917 round 2 (post-evaluation correction of 3a4a172b): every key of a JSON --input is scanned, a body file is scanned as its raw
+# text, and an interpreter's program text is judged canonically. The github verdict is the one these changes move.
+
+=== CRW-917-42-01 | P
+--why --input whose JSON object repeats a key: the first value holds a secret, so the body is refused.
+--file {TMP}/dup-secret.json
+{"body":"MY_API_KEY=sentinel","body":"hello"}
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/dup-secret.json
+
+=== CRW-917-42-02 | B
+--why Control: --input with a repeated key whose values are both clean is allowed.
+--file {TMP}/dup-clean.json
+{"body":"a","body":"b"}
+--cmd
+gh api repos/o/r/issues/1/comments --input {TMP}/dup-clean.json
+
+=== CRW-917-42-03 | B
+--why --body-file of a JSON-looking file whose escape sequence spells a secret: gh posts the raw text, so it is allowed.
+--file {TMP}/escaped.md
+{"body":"\u0073k-aaaaaaaaaaaaaaaa"}
+--cmd
+gh pr comment 1 --body-file {TMP}/escaped.md
+
+=== CRW-917-42-04 | B
+--why -F body=@ of the same JSON-looking file: the field is the raw text, so it is allowed.
+--file {TMP}/escaped.md
+{"body":"\u0073k-aaaaaaaaaaaaaaaa"}
+--cmd
+gh api repos/o/r/issues/1/comments -F body=@{TMP}/escaped.md
+
+=== CRW-917-42-05 | P
+--why --body-file of a JSON-looking file with a raw secret: the raw text is scanned and refused.
+--file {TMP}/raw-secret.json
+{"body":"sk-aaaaaaaaaaaaaaaaaaaa"}
+--cmd
+gh pr comment 1 --body-file {TMP}/raw-secret.json
+
+=== CRW-917-42-06 | none/deny/deny
+--why An interpreter program that builds gh from empty quote pieces and names a post is refused.
+--cmd
+true; python3 -c 'import os; os.system("g\"\"h pr comment 1 --body MY_API_KEY=sentinel")'
+
+=== CRW-917-42-07 | B
+--why Control: a python program that names no post is allowed.
+--cmd
+python3 -c 'print(1+2)'
+
+=== CRW-917-42-08 | P
+--why --body-file of a JSON-looking file with a NAME=value secret inside a string: the raw bytes are split at the JSON punctuation and refused.
+--file {TMP}/raw-assign.json
+{"body":"MY_API_KEY=sentinel"}
+--cmd
+gh pr comment 1 --body-file {TMP}/raw-assign.json
+
+=== CRW-917-42-09 | B
+--why Control: an escaped key name in a JSON-looking body file is raw text, not a NAME=value shape, so it is allowed.
+--file {TMP}/raw-escaped-key.json
+{"\u004dY_API_KEY":"sentinel-value"}
+--cmd
+gh pr comment 1 --body-file {TMP}/raw-escaped-key.json

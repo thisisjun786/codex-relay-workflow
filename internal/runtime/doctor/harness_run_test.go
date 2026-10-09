@@ -435,6 +435,12 @@ func TestHarnessRunDoctorCLI(t *testing.T) {
 // it killed at the timeout with harnessDriftKilled, never a nil status (nil reads as "python3 not
 // found").
 func TestHarnessRunExecTimeoutIsDriftKilled(t *testing.T) {
+	// The script's sleep outlives the killed shell and holds the output pipe open, so the run ends at
+	// the pipe wait delay, not at the timeout (CRW-818): shorten that wait so the case takes a
+	// fraction of a second instead of the production five.
+	saved := commandWaitDelay
+	commandWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { commandWaitDelay = saved })
 	script := filepath.Join(t.TempDir(), "slow.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)

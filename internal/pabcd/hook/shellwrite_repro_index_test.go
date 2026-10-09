@@ -86,6 +86,7 @@ var reproExpectedSources = []string{
 	"linear-issue-CRW-917.json", "linear-issue-CRW-941.json", "linear-issue-CRW-951.json", "linear-issue-CRW-984.json",
 	"linear-issue-CRW-986.json", "linear-issue-CRW-989.json", "linear-issue-CRW-998.json", "linear-issue-CRW-1011.json",
 	"linear-issue-CRW-1012.json", "linear-issue-CRW-1014.json", "linear-issue-CRW-895.json",
+	"linear-issue-CRW-1064.json",
 	"frozen/pre-eval-records-bundle.json", "frozen/pair-eval-ledger-rows.json",
 	"frozen/crw-765-handoff-562c59e1f97c.json", "frozen/crw-765-wip-20261008.patch", "frozen/crw-875-handoff-f30490c14470.json",
 	"frozen/crw-894-handoff-g3-3113ad91f272.json", "frozen/crw-951-handoff-904053760577.json",

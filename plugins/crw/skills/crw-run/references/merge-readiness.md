@@ -35,7 +35,7 @@ says. Anything beyond that run requires a new explicit user decision; an old ass
 does not supply one. Record a skipped or absent run as such, never as a successful review.
 
 This applies to the external GitHub reviewer, not Codex execution tasks, their
-model settings, CXC's workflow or independent review. Keep the target repository's
+model settings, the `crw-loop` workflow or independent review. Keep the target repository's
 policy for other reviewers, required CI, parent verification, and sufficient
 independent evidence. If an enforced GitHub rule still requires a review beyond that
 run, report the specific configuration conflict for authorized correction;

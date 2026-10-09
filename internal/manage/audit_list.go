@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -102,8 +102,8 @@ func AuditList(_ context.Context, e *Env, cfg *Config, opts AuditListOptions) (A
 		StateDir: auditStateDir(e, cfg),
 		ReadAt:   e.Now().UTC().Format(time.RFC3339),
 	}
-	auditDir := filepath.Join(listing.StateDir, "audit")
-	results, resultsSource := auditListRead(auditListNameLedger, filepath.Join(auditDir, auditLedgerFile),
+	auditDir := crwconfig.JoinRoot(listing.StateDir, "audit")
+	results, resultsSource := auditListRead(auditListNameLedger, crwconfig.JoinRoot(auditDir, auditLedgerFile),
 		func() ([]auditLedgerRow, error) {
 			rows, err := auditReportLedger(e, cfg)
 			if err != nil {
@@ -111,7 +111,7 @@ func AuditList(_ context.Context, e *Env, cfg *Config, opts AuditListOptions) (A
 			}
 			return auditListFilterResults(rows, opts), nil
 		})
-	alerts, alertsSource := auditListRead(auditListNameAlerts, filepath.Join(auditDir, auditAlertFile),
+	alerts, alertsSource := auditListRead(auditListNameAlerts, crwconfig.JoinRoot(auditDir, auditAlertFile),
 		func() ([]auditAlertRow, error) {
 			rows, err := auditListAlerts(e, cfg)
 			if err != nil {
@@ -222,7 +222,7 @@ func auditListSinceMatches(gradedAt string, since time.Time) bool {
 // the ledger reader: a blank line is skipped and a line that is not a whole document is an
 // error naming its line, because an unread alert line would silently drop an alert.
 func auditListAlerts(e *Env, cfg *Config) ([]auditAlertRow, error) {
-	path := filepath.Join(auditStateDir(e, cfg), "audit", auditAlertFile)
+	path := crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditAlertFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -262,7 +262,7 @@ func auditListRounds(e *Env, cfg *Config) ([]auditListRound, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		doc, err := auditRoundLoad(filepath.Join(dir, entry.Name()))
+		doc, err := auditRoundLoad(crwconfig.JoinRoot(dir, entry.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -295,7 +295,7 @@ func auditListDrafts(e *Env, cfg *Config) ([]auditDraftSummary, error) {
 		if entry.IsDir() || !strings.HasSuffix(name, ".json") || name == auditDraftIndexFile {
 			continue
 		}
-		path := filepath.Join(dir, name)
+		path := crwconfig.JoinRoot(dir, name)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err

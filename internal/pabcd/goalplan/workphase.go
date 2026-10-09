@@ -157,9 +157,15 @@ func workPhaseCloseFixed(plan *Goalplan, workPhaseID string, recordedNext WorkPh
 
 	// The oracle builds a new array and a new phase object for the target, and shares the
 	// task array; a caller's plan is never edited in place.
+	// Every phase carrying the target's id closes, as the oracle's map over workPhaseId does
+	// (goalplan.ts:2020-2023): a duplicate pending copy must not be left to re-activate.
 	closedWorkPhases := make([]GoalplanWorkPhase, len(plan.WorkPhases))
 	copy(closedWorkPhases, plan.WorkPhases)
-	closedWorkPhases[currentIdx].Status = WorkPhaseDone
+	for i := range closedWorkPhases {
+		if closedWorkPhases[i].ID == workPhaseID {
+			closedWorkPhases[i].Status = WorkPhaseDone
+		}
+	}
 	closedPlan := *plan
 	closedPlan.ActiveWorkPhaseID = nil
 	closedPlan.WorkPhases = closedWorkPhases
@@ -348,8 +354,10 @@ func workPhaseAdvance(plan *Goalplan) WorkPhaseAdvanceResult {
 	// the standard loop-init flow (cursor seeded null) still books work-phase closes. No
 	// explicit guard against blocked or superseded is needed: the cursor reader already skips
 	// them, so neither can be the phase this marks done.
+	// The oracle tests the id for truthiness (goalplan.ts:2217), so an empty id is no active
+	// work phase either: a phase with an empty id is never closed by an advance.
 	effectiveID := EffectiveActiveWorkPhaseID(plan)
-	if effectiveID == nil {
+	if effectiveID == nil || *effectiveID == "" {
 		return WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceNoActive}
 	}
 	currentIdx := -1

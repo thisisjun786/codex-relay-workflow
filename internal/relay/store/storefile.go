@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"sync"
@@ -181,7 +183,7 @@ func clearStoreFileNonblock(fd int) {
 
 // liveStoreRef is one open store's share of the identity table (CRW-967). registerLiveStore takes it
 // before the store connects and records the identity of the database file it names at that moment;
-// attach confirms, once the connection has opened the file, that the path still names that file;
+// attach confirms, once the connection has opened the file, that the connection holds that file;
 // and release gives both back when the store closes. release does nothing after the first call, so
 // a store closed twice never lowers another store's count.
 type liveStoreRef struct {
@@ -207,19 +209,38 @@ func registerLiveStore(resolved string) *liveStoreRef {
 	return ref
 }
 
-// attach confirms, under the registry lock and once the connection has opened the file, that the
-// path still names the file this reference was taken on. A path that named nothing when the
-// reference was taken, or that names another file now (it was renamed or replaced while the
-// connection opened), cannot record the store's identity correctly, so the open is an error rather
-// than a store the table describes wrongly (CRW-967).
-func (r *liveStoreRef) attach() error {
+// attach confirms, once the connection has opened the file, that the connection holds the file this
+// reference was taken on. The identity compared is the one of the file the connection itself holds
+// (connectionKeyOf), read from its descriptor, so a path that was moved aside while SQLite opened it
+// and put back before this check cannot make the connection pass for the original (CRW-1052). A
+// connection whose file cannot be read is an error, never an assumed match.
+func (r *liveStoreRef) attach(ctx context.Context, db *sql.DB) error {
+	held, err := poolConnectionKeyOf(ctx, db)
+	if err != nil {
+		return fmt.Errorf("the database at %s was opened, but the file the connection holds could not be identified: %w", pyvalue.StrRepr(r.path), err)
+	}
+	return r.confirm(held)
+}
+
+// confirm is the comparison attach makes, under the registry lock, once it knows the file the
+// connection holds. A path that named nothing when the reference was taken, a connection that holds
+// another file than the reference was taken on, or a path that names another file now (it was
+// renamed or replaced while the connection opened, so the sidecars SQLite keeps beside the path are
+// not this file's) cannot record the store's identity correctly, so the open is an error rather than
+// a store the table describes wrongly (CRW-967, CRW-1052).
+func (r *liveStoreRef) confirm(held storeFileKey) error {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
 	if r.released {
 		return fmt.Errorf("the database at %s was released before its store finished opening", pyvalue.StrRepr(r.path))
 	}
-	key, ok := storeFileKeyOf(r.path)
-	if !r.keyed || !ok || key != r.key {
+	if !r.keyed {
+		return fmt.Errorf("the database at %s changed while the store opened, so its identity cannot be recorded", pyvalue.StrRepr(r.path))
+	}
+	if held != r.key {
+		return fmt.Errorf("the connection opened a different file than the database at %s was when the store began to open, so its identity cannot be recorded", pyvalue.StrRepr(r.path))
+	}
+	if key, ok := storeFileKeyOf(r.path); !ok || key != r.key {
 		return fmt.Errorf("the database at %s changed while the store opened, so its identity cannot be recorded", pyvalue.StrRepr(r.path))
 	}
 	return nil

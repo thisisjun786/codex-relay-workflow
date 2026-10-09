@@ -78,6 +78,15 @@ type ReleaseResult struct {
 	Managed                                           contract.OrderedObject
 }
 
+// The bounds of the release request's lists. A volatile entry is one snapshot file with its own sha256 in the manifest, so a node that carries on from many earlier records needs room for
+// one entry per file (CRW-1046: 72 files were refused at 64).
+const (
+	releaseCriteriaLimit          = 256
+	releaseArtifactRootsLimit     = 64
+	releaseAllowedRecipientsLimit = 64
+	releaseVolatileLimit          = 512
+)
+
 // DecodeReleaseRequest reads the request strictly: an unknown field, a missing text, a list over its bound or a trailing document is refused.
 func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
 	var req ReleaseRequest
@@ -104,8 +113,18 @@ func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
 			return ReleaseRequest{}, err
 		}
 	}
-	if len(req.Criteria) == 0 || len(req.Criteria) > 256 || len(req.ArtifactRoots) == 0 || len(req.ArtifactRoots) > 64 || len(req.AllowedRecipients) > 64 || len(req.Volatile) > 64 {
-		return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "criteria, artifact_roots, allowed_recipients and volatile are lists of bounded size, and criteria and artifact_roots are not empty")
+	for _, list := range []struct {
+		name       string
+		n, max     int
+		mayBeEmpty bool
+	}{{"criteria", len(req.Criteria), releaseCriteriaLimit, false}, {"artifact_roots", len(req.ArtifactRoots), releaseArtifactRootsLimit, false},
+		{"allowed_recipients", len(req.AllowedRecipients), releaseAllowedRecipientsLimit, true}, {"volatile", len(req.Volatile), releaseVolatileLimit, true}} {
+		if list.n == 0 && !list.mayBeEmpty {
+			return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "%s has no entry; at least one is required", list.name)
+		}
+		if list.n > list.max {
+			return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "%s has %d entries; the limit is %d", list.name, list.n, list.max)
+		}
 	}
 	if req.Parent.Settings == nil || req.Child.Settings == nil {
 		return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "parent.settings and child.settings are the settings the tasks run with")

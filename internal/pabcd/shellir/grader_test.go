@@ -64,8 +64,9 @@ func TestGraderReproductionsRefused(t *testing.T) {
 		}
 	})
 	t.Run("parallel runs its operands", func(t *testing.T) {
-		if _, err := Analyze("parallel rm -rf {} ::: /tmp/wt/slot/repo", "/work"); !isUnreadable(err) {
-			t.Errorf("parallel: err %v, want unreadable", err)
+		// CRW-1058: the sources are the arguments of the expanded command, which the caller judges as the removal it is.
+		if _, err := Analyze("parallel rm -rf {} ::: /tmp/wt/slot/repo", "/work"); err != nil {
+			t.Errorf("parallel: err %v, want the expanded rm to be read", err)
 		}
 	})
 }

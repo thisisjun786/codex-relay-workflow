@@ -11,8 +11,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 cd sub && bash post.sh
 
-=== PR845-0ec90889-d2b | U
---why env -C sub moves the shell to sub before it runs the script. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+=== PR845-0ec90889-d2b | attempt/deny/allow
+--why env -C sub moves the shell to sub before it runs the script. env -C is modelled (CRW-910): the GitHub guard denies as the finding asks, and the worktree guard allows, since nothing is deleted.
 --file post.sh
 echo ok
 --file sub/post.sh
@@ -129,8 +129,8 @@ echo hi
 --cmd
 (cd sub); bash post.sh
 
-=== PR845-1bf60d75-d6 | U
---why env -C sub moves to sub, whose post.sh posts; the clean post.sh of the working directory is not the file that runs. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+=== PR845-1bf60d75-d6 | attempt/deny/allow
+--why env -C sub moves to sub, whose post.sh posts; the clean post.sh of the working directory is not the file that runs. env -C is modelled (CRW-910): the GitHub guard denies as the finding asks, and the worktree guard allows, since nothing is deleted.
 --file post.sh
 echo hi
 --file sub/post.sh
@@ -138,8 +138,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 env -C sub bash post.sh
 
-=== PR845-1bf60d75-d6b | U
---why env --chdir=sub is the long form. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+=== PR845-1bf60d75-d6b | attempt/deny/allow
+--why env --chdir=sub is the long form. env -C is modelled (CRW-910): the GitHub guard denies as the finding asks, and the worktree guard allows, since nothing is deleted.
 --file post.sh
 echo hi
 --file sub/post.sh
@@ -267,8 +267,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 >out bash post.sh
 
-=== PR845-3e2d3c04-d3 | U
---why env -C sub -S 'bash post.sh' runs sub/post.sh. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+=== PR845-3e2d3c04-d3 | attempt/deny/allow
+--why env -C sub -S 'bash post.sh' runs sub/post.sh. env -C is modelled (CRW-910): the GitHub guard denies as the finding asks, and the worktree guard allows, since nothing is deleted.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -276,8 +276,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 env -C sub -S 'bash post.sh'
 
-=== PR845-3e2d3c04-d3b | U
---why The same after a list operator. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+=== PR845-3e2d3c04-d3b | attempt/deny/allow
+--why The same after a list operator. env -C is modelled (CRW-910): the GitHub guard denies as the finding asks, and the worktree guard allows, since nothing is deleted.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -384,8 +384,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 false || cd sub; bash post.sh
 
-=== PR845-92799ae0-d2 | T | deviation=attempt/deny/deny
---why env -C sub true: the directory change belongs to true only; bash runs the clean post.sh of the working directory. The finding asks for an allow (dev allowed it); the reader refuses env -C, an accepted over-refusal.
+=== PR845-92799ae0-d2 | T
+--why env -C sub true: the directory change belongs to true only; bash runs the clean post.sh of the working directory. The finding asks for an allow (dev allowed it); env -C is modelled (CRW-910), so the reader allows it as the finding asks.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -393,8 +393,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 env -C sub true; bash post.sh
 
-=== PR845-92799ae0-d2b | U
---why The files reversed: the working directory's post.sh posts. env -C is not modelled: the reader refuses it, which denies as the finding asks.
+=== PR845-92799ae0-d2b | attempt/deny/allow
+--why The files reversed: the working directory's post.sh posts. env -C is modelled (CRW-910): the GitHub guard denies as the finding asks, and the worktree guard allows, since nothing is deleted.
 --file post.sh
 gh pr comment 1 -b "$(env)"
 --file sub/post.sh

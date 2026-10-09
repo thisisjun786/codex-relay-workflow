@@ -1,0 +1,52 @@
+# CRW-894 fix round 4: the finding of the independent verifier on b7d8826d (P1: the reading with no directory lost its "no directory" state
+# where branches join, so an ordinary script named stdin or fd/0 in the working directory was refused after an if that does not change directory).
+# ../repo is the managed checkout. (The loop that changes nothing, vg-05 here at first, is row vh-01 of rows/23-crw-894-verifier-8b02f7be.txt: on dev
+# and at 1688f7c5 it was allowed by all three gates, and fix round 5 keeps the directory known through such a loop.)
+
+=== CRW-894-vg-01 | B
+--why An if that changes nothing, then an ordinary file named stdin in the working directory is the script python3 runs (verifier of b7d8826d, P1: the memory gate refused it after the join of the branches).
+--file stdin
+pass
+--cmd
+if true; then :; fi; printf x | python3 stdin
+
+=== CRW-894-vg-02 | B
+--why An if with an else that changes nothing, then an ordinary file fd/0 in the working directory is the script python3 runs.
+--file fd/0
+pass
+--cmd
+if true; then :; else :; fi; printf x | python3 fd/0
+
+=== CRW-894-vg-03 | B
+--why Control: with no if the ordinary file named stdin is the script (allowed at b7d8826d and at 1688f7c5).
+--file stdin
+pass
+--cmd
+printf x | python3 stdin
+
+=== CRW-894-vg-04 | B
+--why A case that changes nothing, then an ordinary file named stdin in the working directory is the script python3 runs.
+--file stdin
+pass
+--cmd
+case x in x) :;; esac; printf x | python3 stdin
+
+=== CRW-894-vg-06 | U
+--why One branch of the if changes the directory to a place the reader cannot name, so dev/stdin may be the pipe when that place is /: the join keeps the unknown directory and the program is refused.
+--cmd
+if true; then cd "$D"; fi; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vg-07 | U
+--why Both branches change the directory to places the reader cannot name: dev/stdin may be the pipe.
+--cmd
+if true; then cd "$A"; else cd "$B"; fi; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vg-08 | U
+--why A loop that changes the directory to a place the reader cannot name, then dev/stdin may be the pipe.
+--cmd
+for i in 1; do cd "$D"; done; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin
+
+=== CRW-894-vg-09 | U
+--why Control: an absolute alias after an if that changes nothing is still the pipe.
+--cmd
+if true; then :; fi; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /dev/./stdin

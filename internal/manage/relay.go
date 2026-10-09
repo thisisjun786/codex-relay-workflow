@@ -32,23 +32,38 @@ func (e *relayHelperUnresolvedError) Error() string {
 // a context that ended.
 func (e *relayHelperUnresolvedError) Unwrap() error { return e.detail }
 
-// relayHelperMemoMu guards relayHelperMemo. It covers the map's own reads and writes and
-// is never held across the doctor call, so a doctor that hangs for one Env cannot hold up
-// another Env's resolution.
+// relayHelperMemoMu guards relayHelperMemo and every field of the entries in it. It covers the
+// map's own reads and writes and is never held across the doctor call, so a doctor that hangs
+// for one Env cannot hold up another Env's resolution.
 var relayHelperMemoMu sync.Mutex
 
-// relayHelperMemo is the state directory each Env resolved from the relay's own doctor
-// answer, remembered for the rest of that Env's life. Env is declared in another issue's
-// file and may not gain a field here, and Run builds one Env per invocation, so the map
-// holds one live entry per run. Run calls relayHelperForget when the invocation ends, so a
-// process that embeds Run and calls it many times does not grow a map entry per call; within
-// the invocation the one resolution is still reused.
-var relayHelperMemo = map[*Env]string{}
+// relayHelperEntry is one Env's resolution of the relay state directory. While the doctor runs
+// it is the resolution in flight: done is open, and a call that overlaps waits on it instead of
+// asking the doctor again. When the doctor answers, done closes with state, err or retry set.
+// A successful entry stays in the map as the remembered answer; a failed or abandoned one is
+// removed, so a failure is never remembered.
+type relayHelperEntry struct {
+	done     chan struct{}
+	state    string
+	err      error
+	resolved bool // the doctor named a state directory; state is the answer
+	retry    bool // the resolving call's own context ended; a waiter resolves for itself
+}
 
-// relayHelperForget drops one Env's remembered state directory. Run calls it when the
-// invocation ends, so a process that embeds Run and calls it many times keeps no Env, with the
-// streams and the document it carries, reachable past its run. The memo's other behaviour is
-// unchanged: within one invocation the same Env still asks the doctor once.
+// relayHelperMemo is the state directory each Env resolved from the relay's own doctor
+// answer, remembered for the rest of that Env's life, or the resolution still running for it.
+// Env is declared in another issue's file and may not gain a field here, and Run builds one
+// Env per invocation, so the map holds one live entry per run. Run calls relayHelperForget when
+// the invocation ends, so a process that embeds Run and calls it many times does not grow a map
+// entry per call; within the invocation the one resolution is still reused.
+var relayHelperMemo = map[*Env]*relayHelperEntry{}
+
+// relayHelperForget drops one Env's remembered state directory, or the resolution still running
+// for it. Run calls it when the invocation ends, so a process that embeds Run and calls it many
+// times keeps no Env, with the streams and the document it carries, reachable past its run. A
+// resolution that ends after the entry was dropped does not bring it back: it publishes only
+// while the map still holds its own entry. The memo's other behaviour is unchanged: within one
+// invocation the same Env still asks the doctor once.
 func relayHelperForget(e *Env) {
 	relayHelperMemoMu.Lock()
 	delete(relayHelperMemo, e)
@@ -84,26 +99,81 @@ func (e *Env) Relay(ctx context.Context, cfg *Config, args ...string) ([]byte, i
 
 // relayHelperState is the state directory Relay runs with: the configured one, else the
 // one this Env already resolved, else the relay doctor's answer, which is remembered. The
-// map is locked only around its own access, so one Env's slow doctor never holds another
-// Env; two concurrent first calls on the same Env may both ask doctor, which is a read of
-// the relay's own state.
+// resolution is single-flight per Env: the first call asks the doctor and a call that overlaps
+// it waits for that answer, so one Env asks the doctor once and every call runs with the same
+// state. Only a success is remembered. A waiter whose resolving call ended because that call's
+// own context ended does not inherit the cancellation: it resolves again with its own context.
+// Any other failure is shared with the waiters of that doctor and forgotten, so the next call
+// asks again. The map is locked only around its own access, so one Env's slow doctor never holds
+// another Env.
 func (e *Env) relayHelperState(ctx context.Context, cfg *Config) (string, error) {
 	if cfg.Relay.State != "" {
 		return cfg.Relay.State, nil
 	}
-	relayHelperMemoMu.Lock()
-	state, ok := relayHelperMemo[e]
-	relayHelperMemoMu.Unlock()
-	if ok {
-		return state, nil
+	for {
+		relayHelperMemoMu.Lock()
+		entry, ok := relayHelperMemo[e]
+		if ok && entry.resolved {
+			state := entry.state
+			relayHelperMemoMu.Unlock()
+			return state, nil
+		}
+		if !ok {
+			entry = &relayHelperEntry{done: make(chan struct{})}
+			relayHelperMemo[e] = entry
+			relayHelperMemoMu.Unlock()
+			return e.relayHelperResolve(ctx, cfg.Relay.Socket, entry)
+		}
+		relayHelperMemoMu.Unlock()
+		select {
+		case <-entry.done:
+		case <-ctx.Done():
+			return "", relayHelperUnresolved(ctx.Err())
+		}
+		relayHelperMemoMu.Lock()
+		state, err, retry := entry.state, entry.err, entry.retry
+		relayHelperMemoMu.Unlock()
+		if !retry {
+			return state, err
+		}
 	}
-	resolved, err := e.relayHelperDoctorState(ctx, cfg.Relay.Socket)
-	if err != nil {
-		return "", relayHelperUnresolved(err)
-	}
+}
+
+// relayHelperResolve asks the doctor for the call that owns entry, publishes the outcome to
+// the waiters. A success stays in the map as the remembered answer unless the Env was forgotten
+// meanwhile; any other outcome leaves the map.
+func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *relayHelperEntry) (state string, err error) {
+	finished := false
+	defer func() {
+		relayHelperMemoMu.Lock()
+		if !finished {
+			// The doctor call did not return (a panic): let a waiter resolve for itself.
+			entry.retry = true
+		}
+		if relayHelperMemo[e] == entry && !entry.resolved {
+			delete(relayHelperMemo, e)
+		}
+		relayHelperMemoMu.Unlock()
+		close(entry.done)
+	}()
+	resolved, doctorErr := e.relayHelperDoctorState(ctx, socket)
 	relayHelperMemoMu.Lock()
-	relayHelperMemo[e] = resolved
+	finished = true
+	switch {
+	case doctorErr == nil:
+		// An entry forgotten while the doctor ran is no longer in the map: its waiters still
+		// get the answer, and nothing puts the entry back.
+		entry.state, entry.resolved = resolved, true
+	case ctx.Err() != nil:
+		entry.retry = true
+		entry.err = relayHelperUnresolved(doctorErr)
+	default:
+		entry.err = relayHelperUnresolved(doctorErr)
+	}
 	relayHelperMemoMu.Unlock()
+	if doctorErr != nil {
+		return "", relayHelperUnresolved(doctorErr)
+	}
 	return resolved, nil
 }
 

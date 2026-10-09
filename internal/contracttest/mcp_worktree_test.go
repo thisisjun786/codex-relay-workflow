@@ -24,15 +24,7 @@ func Test_mcp_isolated_launch_and_followup_are_durable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The destination must be outside every repository and follows TMPDIR.
-	root, err := os.MkdirTemp("", "crw-mcp-worktree-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := testsupport.RemoveTempTree(root); err != nil {
-			t.Error(err)
-		}
-	})
+	root := testsupport.MkdirTempOutsideRepositories(t, "crw-mcp-worktree-")
 	if root, err = filepath.EvalSymlinks(root); err != nil {
 		t.Fatal(err)
 	}

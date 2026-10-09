@@ -206,3 +206,9 @@ func ReplaceStateBackupRoom(room func(parent string, need int64) error) (restore
 	stateBackupRoom = room
 	return func() { stateBackupRoom = saved }
 }
+
+// SqliteIntegrityCheck is the backup's real integrity gate: it duplicates the copied store (and its log, when the
+// copy holds one) beside dest and returns SQLite's PRAGMA integrity_check answer.
+func SqliteIntegrityCheck(ctx context.Context, dest string, copied []BackedUp) (string, error) {
+	return sqliteIntegrityCheck(ctx, dest, copied)
+}

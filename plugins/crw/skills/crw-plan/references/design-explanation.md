@@ -207,8 +207,8 @@ self-referential; an answer written anywhere else names the revision it read, an
 to ask for it. Nobody here re-ran a comparison, no run result is committed, and no host is claimed
 to have this installed, active or live.
 
-CXC is an existing owner and is left alone: the contract modifies no CXC state, and an install
-keeps a foreign Stop entry beside its own rather than displacing it, and never executes it.
+The PABCD state under `.crw/` is an existing owner and is left alone: the contract reads and writes none of it, and an
+install keeps a foreign Stop entry beside its own rather than displacing it, and never executes it.
 
 How an improvement is judged. An off and on comparison builds both arms from one command where a
 single flag is the only difference, and its rule is the one worth copying: the pass is never the

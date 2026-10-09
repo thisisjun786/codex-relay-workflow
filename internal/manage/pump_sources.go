@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -71,8 +70,7 @@ func pumpRolloutPath(e *Env, thread string) (string, error) {
 	if strings.ContainsAny(thread, "*?[]") {
 		return "", fmt.Errorf("crw manage pump: parent thread %q carries a glob character", thread)
 	}
-	pattern := filepath.Join(coreHomeDir(e, "CODEX_HOME", ".codex"), pumpRolloutSessions, "*", "*", "*", "*"+thread+".jsonl")
-	matches, err := filepath.Glob(pattern)
+	matches, err := rootGlob(coreHomeDir(e, "CODEX_HOME", ".codex"), pumpRolloutSessions, "*", "*", "*", "*"+thread+".jsonl")
 	if err != nil {
 		return "", fmt.Errorf("crw manage pump: the rollout glob: %w", err)
 	}

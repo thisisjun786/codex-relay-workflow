@@ -511,10 +511,15 @@ command. Run no write command of this build against a live state directory befor
 
 `crw install backup-state --to <dir>` takes the same stopped byte copy the install route takes, outside any install, so an operator can
 take the default artifact on demand. It calls the same `backupState` routine, so the copy, its manifest and its `integrityCheck` and
-`restoreCandidate` fields are the same, and the destination rules (`<dir>` and its manifest must not exist, must not lie inside the state
+`restoreCandidate` fields have the same meaning, and the destination rules (`<dir>` and its manifest must not exist, must not lie inside the state
 directory or the runtime destination tree, and the free space must cover the directory) are the same. It is routed before the generic install
 options, like `features`, `config` and `migrate-state`: it takes its own `--to` flag and prints its own JSON report (`command: "backup-state"`,
 `applied`, `stateBackup`), and the frozen `crw install` usage line still names only the commands it named before this one arrived.
+
+One step of the install route is not part of it: the swap gate opens the store to read its schema before the copy, and this command opens nothing
+before it. A store the service left with an uncheckpointed write-ahead log (an unclean stop) is copied with that log as it lies, so its frames are in
+`relay.sqlite3-wal` and not merged into the copied `relay.sqlite3`, and `restoreCandidate: true` then means that `PRAGMA integrity_check` passed on a
+scratch duplicate of the copied store and log, where SQLite replays the log. It does not mean that the copied `relay.sqlite3` alone holds every commit.
 
 It refuses while the relay service runs, reading the relay the same way the swap gate does: the selected relay’s own `service status`. Stopping
 the service is the operator’s job. A reading that could not be taken refuses too, so a backup is never taken on the strength of an unasked

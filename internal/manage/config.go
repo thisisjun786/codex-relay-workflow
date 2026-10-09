@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -276,7 +275,7 @@ func coreDefaultConfig(e *Env, file *crwconfig.File) *Config {
 
 // coreSocketPath is the App Server socket's default.
 func coreSocketPath(e *Env) string {
-	return filepath.Join(coreHomeDir(e, "CODEX_HOME", ".codex"), "app-server-control", "app-server-control.sock")
+	return crwconfig.JoinRoot(coreHomeDir(e, "CODEX_HOME", ".codex"), "app-server-control", "app-server-control.sock")
 }
 
 // coreManageStateRoot is the state directory's default: crwconfig's manage_state root,
@@ -288,7 +287,7 @@ func coreManageStateRoot(e *Env, file *crwconfig.File) string {
 	}
 	roots, err := crwconfig.Resolve(e.Getenv, nil)
 	if err != nil {
-		return filepath.Join(coreHomeDir(e, "XDG_STATE_HOME", ".local/state"), "crw", "manage")
+		return crwconfig.JoinRoot(coreHomeDir(e, "XDG_STATE_HOME", ".local/state"), "crw", "manage")
 	}
 	return roots[crwconfig.RootManage].Path
 }
@@ -305,12 +304,16 @@ func coreManageStateFromFile(manage map[string]json.RawMessage, file *crwconfig.
 }
 
 // coreHomeDir is a per-user directory: the variable's value when it is set, else name
-// below HOME.
+// below HOME. The join is raw text (crwconfig.JoinRoot), so a HOME or a variable whose spelling
+// mixes a symbolic link and ".." keeps the meaning the filesystem gives it.
 func coreHomeDir(e *Env, variable, name string) string {
 	if dir := e.Getenv(variable); dir != "" {
 		return dir
 	}
-	return filepath.Join(e.Getenv("HOME"), name)
+	if name == "" {
+		return e.Getenv("HOME")
+	}
+	return crwconfig.JoinRoot(e.Getenv("HOME"), name)
 }
 
 // coreConfigReport is what crw manage config writes: the configuration with the defaults

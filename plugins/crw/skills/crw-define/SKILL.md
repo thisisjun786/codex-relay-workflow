@@ -1,6 +1,6 @@
 ---
 name: crw-define
-description: "Explore an idea and define a goal-based Linear initiative: purpose, desired change, success evidence, scope, and open decisions. Use when intent or an initiative needs definition; hand an agreed goal to crw-plan for projects and issues. Definition alone does not create an execution plan."
+description: "Explore an idea and define a goal-based Linear initiative: purpose, desired change, success evidence, scope, and open decisions. Use when intent or an initiative needs definition; hand an agreed goal to crw-plan for projects and issues. Definition alone does not create an execution plan. This defines Linear initiative intent; discovering one task's requirements inside its PABCD loop is crw-interview's."
 ---
 
 # CRW Define
@@ -20,7 +20,7 @@ Read the request, accepted decisions, and existing initiative and linked documen
 Reuse stable IDs and distinguish the user's words, accepted choices, suggestions,
 and unresolved assumptions. Inspect relevant product or repository evidence only
 where it can change the definition. Do not replace the user's goal with a guessed
-“real problem.” Use installed `cxc-recall` for missing history, not as live proof.
+“real problem.” Use `crw-recall` for missing history, not as live proof.
 
 When an answer could materially change the goal or design, ask one useful question
 at a time. Prefer the consequential hidden premise or missing perspective over a

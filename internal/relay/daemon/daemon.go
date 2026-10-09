@@ -127,22 +127,32 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		}
 		return r, err
 	}
+	if d.haltedStore {
+		// A settlement of the observation pass halted the store and the pass ended on it (CRW-945): nothing
+		// after it - the sweep, the requeue, the reconciliation, the delivery - is attempted on that store.
+		return r, nil
+	}
 	if err := d.sweep(ctx, &r); err != nil && d.halted(ctx, &r, store.HaltSiteObservation, err) {
+		return r, nil
+	}
+	if d.haltedStore {
 		return r, nil
 	}
 	if err := d.requeue(ctx, &r, now); err != nil && d.halted(ctx, &r, store.HaltSiteObservation, err) {
 		return r, nil
 	}
 	var rr delivery.ReconcileReport
-	if err := delivery.ReconcilePass(ctx, d.Reconciler, d.Host, d.Policy.MaxReconciles, now, &rr); err != nil {
-		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
-			return r, nil
-		}
-		return r, err
-	}
+	reconcileErr := delivery.ReconcilePass(ctx, d.Reconciler, d.Host, d.Policy.MaxReconciles, now, &rr)
+	// What the pass did before it ended is this tick's whatever ended it (CRW-945).
 	r.Reconciled += rr.Reconciled
 	r.Skipped += rr.Skipped
 	r.Notes = append(r.Notes, rr.Notes...)
+	if reconcileErr != nil {
+		if d.halted(ctx, &r, store.HaltSiteWrite, reconcileErr) {
+			return r, nil
+		}
+		return r, reconcileErr
+	}
 	if bind() {
 		return r, nil
 	}
@@ -186,31 +196,29 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		return r, err
 	}
 	var sent delivery.TickCounts
-	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
-		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+	deliverErr := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent)
+	// The attempts the pass made were made, whatever ends the tick after it - the pass's own failure, a halt, or a
+	// failure of the read of the waiting heads below: the report keeps their counts and notes (CRW-945).
+	r.Delivered += sent.Delivered
+	r.Deferred += sent.Deferred
+	r.Skipped += sent.Skipped
+	r.Notes = append(r.Notes, sent.Notes...)
+	if deliverErr != nil {
+		if d.halted(ctx, &r, store.HaltSiteWrite, deliverErr) {
 			return r, nil
 		}
-		return r, err
+		return r, deliverErr
 	}
 	if err := d.idle.hold(ctx, &r, d.Host, now); err != nil {
 		// The waiting heads are read out of the store after the delivery pass (CRW-1007, decision 2): a corrupting
 		// read halts the store at the observation site, and the supervisor channel does not write after it.
 		r.Notes = append(r.Notes, d.idle.take()...)
 		if d.halted(ctx, &r, store.HaltSiteObservation, err) {
-			// The delivery pass ran before this read, so its counts and notes are this tick's: the halt keeps them.
-			r.Delivered += sent.Delivered
-			r.Deferred += sent.Deferred
-			r.Skipped += sent.Skipped
-			r.Notes = append(r.Notes, sent.Notes...)
 			return r, nil
 		}
 		return r, err
 	}
 	r.Notes = append(r.Notes, d.idle.take()...)
-	r.Delivered += sent.Delivered
-	r.Deferred += sent.Deferred
-	r.Skipped += sent.Skipped
-	r.Notes = append(r.Notes, sent.Notes...)
 	if d.Channel != nil {
 		a, err := d.Channel.AutoSend(ctx, d.Host, now, d.Policy.MaxProjects, d.Policy.MaxSupervisorSends, d.afterProject, d.afterStaged, d.afterMessage)
 		if err != nil {
@@ -266,7 +274,9 @@ func (d *Daemon) halted(ctx context.Context, r *Report, site string, err error) 
 	if !ok {
 		return false
 	}
-	cause.Site = site
+	// The step that met the failure knows whether it was reading or writing; the caller's site is the one
+	// of the sub-pass it called, which is right only when the sub-pass does both (CRW-945).
+	cause.Site = store.SiteOf(err, site)
 	reason := ""
 	if recordErr := store.RecordHalt(ctx, d.Store.Path, cause); recordErr != nil {
 		reason = "store writes are halted, and the halt marker could not be written: " + recordErr.Error()
@@ -277,6 +287,21 @@ func (d *Daemon) halted(ctx context.Context, r *Report, site string, err error) 
 	// must not let the next pass treat the damaged store as healthy.
 	d.haltedStore, d.haltReason = true, reason
 	r.Notes = append(r.Notes, reason)
+	return true
+}
+
+// adoptMarker takes over a halt marker that appeared during the pass, from the observation path or another
+// process, as this process's own halt, and reports whether there was one.
+func (d *Daemon) adoptMarker(r *Report) bool {
+	if d.haltedStore {
+		return true
+	}
+	state := store.HaltStateAt(d.Store.Path)
+	if !state.Present {
+		return false
+	}
+	d.haltedStore, d.haltReason = true, haltNote(state)
+	r.Notes = append(r.Notes, d.haltReason)
 	return true
 }
 
@@ -306,7 +331,7 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 		_, err := d.Delivery.Enqueue(ctx, event, row.Get("kind").(string), row.Get("recipient_task_id").(string))
 		if err != nil {
 			if _, corrupting := store.CorruptingFailure(err); corrupting {
-				return err
+				return store.MarkSite(store.HaltSiteWrite, err)
 			}
 			r.Notes = append(r.Notes, "requeue refused for "+event+": "+err.Error())
 			err = d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
@@ -314,7 +339,7 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 			})
 			if err != nil {
 				if _, corrupting := store.CorruptingFailure(err); corrupting {
-					return err
+					return store.MarkSite(store.HaltSiteWrite, err)
 				}
 				r.Notes = append(r.Notes, "requeue intent failed for "+event+": "+err.Error())
 			}
@@ -332,6 +357,12 @@ func (d *Daemon) sweep(ctx context.Context, r *Report) error {
 		return nil
 	}
 	batch, err := d.Sweeper.Sweep(ctx, "crw")
+	// The sweep's readings may have published the halt marker (the omission observer does, CRW-848): the marker
+	// is the halt whatever else the sweep returned after it, so a later failure of the sweep does not hide it,
+	// and the recording that follows is not attempted on a store the sweep has just seen damaged (CRW-945).
+	if d.adoptMarker(r) {
+		return nil
+	}
 	if err != nil {
 		return sweepFailure(r, err)
 	}

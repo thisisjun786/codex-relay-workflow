@@ -375,7 +375,10 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 			}
 		}
 	}
-	if diff := listingDiff(copied, skipped, again, againSkipped); diff != "" {
+	// The first listing is compared as it was read, not as it was copied: a log whose copy failed because it went
+	// (copied omits it) still has the identity the first listing read, and the second listing must name the same
+	// link and the same resolved source. What the copy actually read is the digest comparison below, over copied.
+	if diff := listingDiff(entries, skipped, again, againSkipped); diff != "" {
 		return failure(true, "the state directory changed under the copy (%s), so the backup is not a copy of any one moment", diff)
 	}
 	for _, e := range copied {
@@ -885,14 +888,14 @@ func digestOf(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// sqliteIntegrityCheck is the integrity gate of a backup copy: it duplicates the copied store beside the copy and
-
-// scratchNeed is the bytes the integrity gate scratch duplicate needs on the backup filesystem: the
-// copied store own files (relay.sqlite3 and, when copied, its log), which the gate duplicates there.
+// scratchNeed is the bytes the integrity gate's scratch duplicate needs on the backup filesystem: the copied
+// store's own two files, relay.sqlite3 and, when copied, its log, which are the only files the gate duplicates there
+// (sqliteIntegrityCheck). A leftover journal, a store-like directory's contents or a copy of the store under another
+// name are backed up but never duplicated, so they are not charged (CRW-1004).
 func scratchNeed(entries []backedUp) int64 {
 	var need int64
 	for _, e := range entries {
-		if e.Kind != "dir" && strings.HasPrefix(e.Path, "relay.sqlite3") {
+		if e.Kind != "dir" && (e.Path == "relay.sqlite3" || e.Path == walSidecar) {
 			need += e.Size
 		}
 	}
@@ -931,6 +934,7 @@ func copyFileInto(source, target string) error {
 	return out.Close()
 }
 
+// sqliteIntegrityCheck is the integrity gate of a backup copy: it duplicates the copied store beside the copy and
 // asks SQLite PRAGMA integrity_check on the duplicate. The copy itself is never opened: opening a database
 // checkpoints its write-ahead log and would change the bytes the backup holds, so the duplicate is the one SQLite
 // touches. The duplicate holds the copy's log too when the backup carries one, so a store whose commits live only
