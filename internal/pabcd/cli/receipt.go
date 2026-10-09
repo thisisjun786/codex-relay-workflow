@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -170,8 +171,9 @@ var receiptLockAfterCompareHook func()
 // is really waiting, instead of from a timer that can fire before the wait begins.
 var receiptLockWaitParkedHook func()
 
-// receiptLockRefusedHook, when non-nil, runs after the lock file could not be opened and the run judged the directory not
-// writable. A test changes the evidence directory's mode there, the moment a lockless publication would become possible.
+// receiptLockRefusedHook, when non-nil, runs after the lock file could not be opened and the run judged what to report,
+// just before the run returns. A test changes the evidence directory's mode there, the moment a lockless publication
+// would have become possible, to pin that the run still publishes nothing.
 var receiptLockRefusedHook func()
 
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
@@ -270,22 +272,24 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	}
 	lock, err := receiptLockFile(path)
 	if err != nil {
-		// A directory without write permission takes no temporary file either, so the publication below refuses with the
-		// error it always gave. Any other failure, or a lock refused in a directory that can be written, is returned.
-		if !errors.Is(err, fs.ErrPermission) || unix.Access(filepath.Dir(path), unix.W_OK) == nil {
-			return ReceiptCLIResult{}, err
+		// No run publishes without the lock. A directory that takes no write permission also takes no temporary file, and
+		// the refusal below is the error the publication always gave there. The lock error is returned in every other case.
+		if errors.Is(err, fs.ErrPermission) {
+			if probeErr := receiptTempProbe(path); probeErr != nil {
+				err = probeErr
+			}
 		}
 		if receiptLockRefusedHook != nil {
 			receiptLockRefusedHook()
 		}
-	} else {
-		defer lock.Close() // drops the lock
-		if err = receiptLockWait(ctx, lock); err != nil {
-			if ctx.Err() != nil && err == ctx.Err() {
-				return refuse(receiptInterrupted)
-			}
-			return ReceiptCLIResult{}, err
+		return ReceiptCLIResult{}, err
+	}
+	defer lock.Close() // drops the lock
+	if err = receiptLockWait(ctx, lock); err != nil {
+		if ctx.Err() != nil && err == ctx.Err() {
+			return refuse(receiptInterrupted)
 		}
+		return ReceiptCLIResult{}, err
 	}
 	if err = crwdir.PublishContext(ctx, path, data); err != nil {
 		if result, refused := receiptPublishRefusal(ctx, err); refused {
@@ -326,6 +330,19 @@ func receiptPublishRefusal(ctx context.Context, err error) (ReceiptCLIResult, bo
 // permission on the directory itself. The file is left in place, so no two runs can lock different inodes of one name.
 func receiptLockFile(path string) (*os.File, error) {
 	return os.OpenFile(path+".lock", os.O_RDONLY|os.O_CREATE, 0o666)
+}
+
+// receiptTempProbe tries to create, and removes, a temporary file named as the publication names its own beside path. It
+// returns the creation error, which is the one the publication gives in a directory that takes no write permission, and nil
+// when the file could be created.
+func receiptTempProbe(path string) error {
+	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+rand.Text()+".tmp")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	return os.Remove(tmp)
 }
 
 // receiptLockWait takes the exclusive lock on the receipt's lock file. A context that can end is asked for it without blocking,
