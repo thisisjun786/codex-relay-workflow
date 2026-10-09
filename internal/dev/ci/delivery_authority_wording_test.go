@@ -95,3 +95,45 @@ func TestDeliveryAuthority_OtherSkillsPointNotRestate(t *testing.T) {
 		}
 	}
 }
+
+// The packet surfaces (launch packet, required fields, restoration block, S25) carry the grant and point at crw-dev; none of them
+// names a publication scope as the approval DEV-GIT-PUSH-01 requires, or claims to own the rule (CRW-1102).
+func TestDeliveryAuthority_PacketSurfacesDoNotRedefineTheApproval(t *testing.T) {
+	forbidden := []string{
+		"explicit push approval",
+		"approval `DEV-GIT-PUSH-01` (`crw-dev`) requires",
+		"approval `DEV-GIT-PUSH-01` requires",
+		"push approval `DEV-GIT-PUSH-01`",
+		"owns the rule; this line checks that the packet carries it",
+	}
+	for _, rel := range []string{
+		"plugins/crw/skills/crw-run/references/task-packet.md",
+		"plugins/crw/skills/crw-run/references/dispatch-verification.md",
+		"plugins/crw/skills/crw-plan/references/integrations.md",
+	} {
+		data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := strings.Join(strings.Fields(string(data)), " ")
+		for _, old := range forbidden {
+			if strings.Contains(text, old) {
+				t.Errorf("%s keeps a packet-side definition of the push approval (%q)", rel, old)
+			}
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot(), "plugins/crw/skills/crw-run/references/task-packet.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{
+		"`crw-dev` `DEV-GIT-PUSH-01` defines when a push is allowed; this packet is evidence that the standing grant",
+		"names the grant and `crw-dev` owns the rule",
+		"still carries the standing grant that `DEV-GIT-PUSH-01` (`crw-dev`) accepts",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("task-packet.md lacks %q", want)
+		}
+	}
+}
