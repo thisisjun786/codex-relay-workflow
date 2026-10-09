@@ -35,7 +35,7 @@ go build -trimpath -ldflags "-X main.recallTestClock=1767225600000 -X github.com
 
 crw-dev parity all --crw "$TMPDIR/crw" --oracle /path/to/extracted/cxc-v0.2.40 --json report.json
 crw-dev parity registration --plugin /path/to/plugin-root
-crw-dev parity fire --crw "$TMPDIR/crw" --plugin /path/to/plugin-root --only 'hook__stop-' 
+crw-dev parity fire --crw "$TMPDIR/crw" --plugin /path/to/plugin-root --only 'hook__stop-'
 crw-dev parity latency --crw "$TMPDIR/crw" --plugin /path/to/plugin-root --oracle ... --runs 30 --legs 'session-start'
 crw-dev parity plugin-root --crw "$TMPDIR/crw" --out /path/to/new-root/crw
 ```
