@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
@@ -169,6 +170,46 @@ func TestEvidenceCLIAmbiguityAcrossMainAndOverflow(t *testing.T) {
 		}
 		if evidence.HasTombstone(cwd, "s1", evidence.Payload{AgentID: "a0", TurnID: turn}) {
 			t.Fatalf("turn %s still unresolved", turn)
+		}
+	}
+}
+
+// CRW-1110 verification round 2: a resolve that names no turn finds one verdict by its unlocked read and waits for that verdict's
+// tuple lock; while it waits, the same agent's verdict of another turn is recorded beside the full list. The request is still the
+// one that named no turn, so under the lock it counts every turn again, finds two and resolves neither.
+func TestEvidenceCLIImplicitTurnRechecksAmbiguityUnderTheLock(t *testing.T) {
+	cwd := subagentStopWorkspace(t)
+	overflowSeed(t, cwd, state.MaxUnverifiedSubagents)
+	receipt := filepath.Join(cwd, ".crw/evidence/parent.md")
+	subagentStopPut(t, receipt, "parent verified")
+	type result struct {
+		out  string
+		code int
+	}
+	done := make(chan result, 1)
+	if err := evidence.WithCounterLock(cwd, "s1", "a0", "t", func() error {
+		go func() {
+			out, code := cli.RunEvidenceCLI(cli.EvidenceResolveArgs{Verb: "resolve", SessionID: "s1", AgentID: "a0", Receipt: receipt, Cwd: cwd})
+			done <- result{out, code}
+		}()
+		time.Sleep(300 * time.Millisecond) // the CLI has read the one verdict and waits for this lock
+		for n := 1; n <= 3; n++ {
+			subagentStopBlock(t, counterStop(t, cwd, "s1", "a0", "second-turn", ""), n)
+		}
+		if out := counterStop(t, cwd, "s1", "a0", "second-turn", ""); out != "" {
+			t.Errorf("terminal stop blocked: %s", out)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := <-done
+	if got.code == 0 || !strings.Contains(got.out, "more than one unverified record") {
+		t.Fatalf("an implicit resolve settled on the turn of its unlocked read: code=%d %q", got.code, got.out)
+	}
+	for _, turn := range []string{"t", "second-turn"} {
+		if !evidence.HasTombstone(cwd, "s1", evidence.Payload{AgentID: "a0", TurnID: turn}) {
+			t.Fatalf("the ambiguous resolve removed the verdict of turn %s", turn)
 		}
 	}
 }

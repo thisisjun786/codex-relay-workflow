@@ -86,12 +86,14 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	}
 	removed, ambiguous, warning := false, false, error(nil)
 	// CRW-1106: a receipt's resolution is serialised with the SubagentStop gate of the same child, under the lock of the exact
-	// (session, agent, turn), which is taken before the session lock (the one lock order). The turn is found by an unlocked read
-	// first and then pinned, so the locked step resolves exactly the verdict whose lock it holds. A request that names no turn and
-	// finds none or several is run under the session lock alone, where it resolves nothing but reports the ambiguity; if it finds
-	// exactly one there (the unlocked read raced a writer), it only names the turn and the whole request runs again pinned.
+	// (session, agent, turn), which is taken before the session lock (the one lock order). The request the caller made (a.TurnID: a
+	// turn, or none) is kept apart from the turn whose lock is held (lockTurn): a request that names no turn finds its turn by an
+	// unlocked read only to know which lock to take, and inside the locks it counts the verdicts of every turn again, in the main
+	// list and beside it. Several there is the ambiguity it reports, whatever the unlocked read found; exactly one whose turn is not
+	// the locked one (a writer raced the unlocked read) only names the turn, and the request runs again under that turn's lock.
+	var lockTurn *string
 	if turn, ok := cliEvidenceTurn(a); ok {
-		a.TurnID = &turn
+		lockTurn = &turn
 	}
 	var pinTurn *string
 	resolve := func() error {
@@ -102,47 +104,34 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		s := state.ReadState(a.Cwd, a.SessionID)
 		// CRW-1110: the verdicts of the main list and those recorded beside it are one set. A request that matches more than one of
 		// them, in either place, is ambiguous and resolves none.
-		index, beside := -1, 0
+		index, matches, turn := -1, 0, ""
 		for i, entry := range s.UnverifiedSubagents {
 			if cliEvidenceMatches(a, entry) {
-				if index >= 0 {
-					ambiguous = true
-					return nil
-				}
-				index = i
+				index, matches, turn = i, matches+1, entry.TurnID
 			}
 		}
 		overflow, _ := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
 		for _, entry := range overflow {
 			if cliEvidenceMatches(a, entry) {
-				beside++
+				matches, turn = matches+1, entry.TurnID
 			}
 		}
-		inMain := 0
-		if index >= 0 {
-			inMain = 1
-		}
-		if inMain+beside > 1 {
+		if matches > 1 {
 			ambiguous = true
 			return nil
 		}
-		if a.TurnID == nil && inMain+beside == 1 {
-			// The one match of an unpinned request: name its turn and run again with the tuple lock held.
-			turn := ""
-			if index >= 0 {
-				turn = s.UnverifiedSubagents[index].TurnID
-			} else {
-				for _, entry := range overflow {
-					if cliEvidenceMatches(a, entry) {
-						turn = entry.TurnID
-					}
-				}
-			}
+		if matches == 0 {
+			return nil
+		}
+		if lockTurn == nil || *lockTurn != turn {
+			// The one match is not the verdict whose lock is held: name its turn and run again with that tuple's lock.
 			pinTurn = &turn
 			return nil
 		}
+		pinned := a
+		pinned.TurnID = &turn
 		if index < 0 {
-			return cliResolveOverflow(a, s.Phase, &removed, &ambiguous)
+			return cliResolveOverflow(pinned, s.Phase, &removed, &ambiguous)
 		}
 		// Intentionally changed: publishing a capped/repaired read loses interview records too. This
 		// check runs first because cliVerdictsIntact now covers the tracker, and the interview loss
@@ -155,14 +144,14 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
 		target := s.UnverifiedSubagents[index]
-		turn := target.TurnID
-		if turn == "" {
-			turn = "<none>"
+		label := target.TurnID
+		if label == "" {
+			label = "<none>"
 		}
 		override := false
 		if err := state.AppendLedger(a.Cwd, state.LedgerEntry{
 			TS: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), SessionID: a.SessionID, From: &s.Phase, To: s.Phase,
-			Reason:   fmt.Sprintf("evidence resolve: agent=%s turn=%s resolved with a valid receipt", a.AgentID, turn),
+			Reason:   fmt.Sprintf("evidence resolve: agent=%s turn=%s resolved with a valid receipt", a.AgentID, label),
 			Evidence: &a.Receipt, EvidenceAfterReason: true, Actor: "agent", Override: &override,
 		}); err != nil {
 			return err
@@ -187,15 +176,15 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	var err error
 	for range 3 {
 		pinTurn = nil
-		if a.TurnID != nil {
-			err = evidence.WithCounterLock(a.Cwd, a.SessionID, a.AgentID, *a.TurnID, func() error { return state.WithSessionLock(a.Cwd, a.SessionID, resolve) })
+		if lockTurn != nil {
+			err = evidence.WithCounterLock(a.Cwd, a.SessionID, a.AgentID, *lockTurn, func() error { return state.WithSessionLock(a.Cwd, a.SessionID, resolve) })
 		} else {
 			err = state.WithSessionLock(a.Cwd, a.SessionID, resolve)
 		}
 		if err != nil || pinTurn == nil {
 			break
 		}
-		a.TurnID = pinTurn
+		lockTurn = pinTurn
 	}
 	if err != nil {
 		return "evidence resolve: " + cliErrorMessage(err), 1
