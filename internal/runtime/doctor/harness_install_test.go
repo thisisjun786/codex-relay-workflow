@@ -308,16 +308,34 @@ func harnessInstallManifestPayload(t *testing.T, root, name string) string {
 	return payload
 }
 
+// harnessInstallIndependentKinds applies the one deviation from the recorded oracle answers: the
+// oracle stops at the first document it cannot use and leaves the other kind unevaluated (or, for
+// a failure that is not a parse failure, answers one generic check), where the port evaluates the
+// hook and the MCP kind independently, so a kind whose document is fine is still reported
+// (CRW-1152, port: fixed).
+func harnessInstallIndependentKinds(name string, recorded []harnessInstallCheckRecorded) []harnessInstallCheckRecorded {
+	switch name {
+	case "unparseable_hook":
+		return []harnessInstallCheckRecorded{recorded[0], {Name: "mcp-targets", Severity: "PASS", Evidence: "all mcp target(s) present", Repair: recorded[1].Repair}}
+	case "unparseable_mcp":
+		return []harnessInstallCheckRecorded{{Name: "hooks", Severity: "PASS", Evidence: "all hook target(s) present", Repair: recorded[0].Repair}, recorded[1]}
+	case "nonparse_failure":
+		return []harnessInstallCheckRecorded{{Name: "hooks", Severity: recorded[0].Severity, Evidence: recorded[0].Evidence, Repair: recorded[0].Repair}, {Name: "mcp-targets", Severity: "PASS", Evidence: "all mcp target(s) present", Repair: recorded[0].Repair}}
+	}
+	return recorded
+}
+
 func TestHarnessInstallManifestTargetsRecorded(t *testing.T) {
 	for _, recorded := range harnessInstallOracleRecorded(t).ManifestTargets {
 		t.Run(recorded.Name, func(t *testing.T) {
 			root := t.TempDir()
 			payload := harnessInstallManifestPayload(t, root, recorded.Name)
 			got := HarnessManifestTargetChecks(payload)
-			if len(got) != len(recorded.Checks) {
-				t.Fatalf("HarnessManifestTargetChecks(%s) = %d checks, want %d: %+v", recorded.Name, len(got), len(recorded.Checks), got)
+			recordedChecks := harnessInstallIndependentKinds(recorded.Name, recorded.Checks)
+			if len(got) != len(recordedChecks) {
+				t.Fatalf("HarnessManifestTargetChecks(%s) = %d checks, want %d: %+v", recorded.Name, len(got), len(recordedChecks), got)
 			}
-			for i, want := range recorded.Checks {
+			for i, want := range recordedChecks {
 				expected := harnessInstallCheckRecorded{
 					Name:     want.Name,
 					Severity: want.Severity,

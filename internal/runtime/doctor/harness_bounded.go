@@ -136,3 +136,15 @@ func harnessRunGuard(name string, run func() []HarnessCheck) (checks []HarnessCh
 func harnessRunGuardOne(name string, run func() HarnessCheck) HarnessCheck {
 	return harnessRunGuard(name, func() []HarnessCheck { return []HarnessCheck{run()} })[0]
 }
+
+// harnessRunMetadata reads one optional report field. A read that panics answers nil, the value of
+// a field that could not be determined, so the checks already made are not lost with it
+// (CRW-1152, port: fixed).
+func harnessRunMetadata(read func() *string) (value *string) {
+	defer func() {
+		if recover() != nil {
+			value = nil
+		}
+	}()
+	return read()
+}

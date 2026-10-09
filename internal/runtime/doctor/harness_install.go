@@ -46,7 +46,11 @@ func harnessInstallCheck(severity HarnessSeverity, evidence, repair string) Harn
 // check (CRW-1152, port: fixed).
 func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 	stateDir := filepath.Join(projectRoot, harnessInstallSessionsDir)
-	if !harnessReportIsDir(stateDir) {
+	isDir, statErr := harnessInstallStatDir(stateDir)
+	if statErr != nil {
+		return HarnessCheck{Name: "pabcd-state", Severity: HarnessWarn, Evidence: "cannot inspect .crw/sessions, check skipped: " + harnessInstallErrorMessage(statErr, "stat")}
+	}
+	if !isDir {
 		return HarnessCheck{Name: "pabcd-state", Severity: HarnessPass, Evidence: "no .crw/sessions/ directory (clean state)"}
 	}
 	entries, err := os.ReadDir(stateDir)
@@ -79,6 +83,21 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 		}
 	}
 	return HarnessCheck{Name: "pabcd-state", Severity: HarnessPass, Evidence: fmt.Sprintf("%d session file(s), all parseable", total)}
+}
+
+// harnessInstallStatDir is isDir that tells absent from unreadable: a path that is absent (or
+// whose parent is not a directory) or is not a directory answers false, while any other stat
+// failure (a parent that cannot be searched, a loop of links) is returned, so the caller reports
+// it instead of reading it as an absent directory (CRW-1152, port: fixed).
+func harnessInstallStatDir(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if harnessRunRootMissing(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 // harnessInstallRefusedName is a session slot's name in the corrupt list. A slot the harness
@@ -124,13 +143,16 @@ func harnessInstallTargetFailure(parse *TargetParseError) string {
 }
 
 // HarnessManifestTargetChecks is manifestTargetChecks (doctor.ts:228-254) over the shared
-// validator of the build (ValidateManifestTargets, CRW-332/555). A malformed document fails its
-// own kind and leaves the other unevaluated rather than passing it; any other error lands in one
-// generic check instead of guessing a kind.
+// validator of the build (ValidateManifestTargets, CRW-332/555). The hook and the MCP kind are
+// evaluated independently: a document one kind cannot use (malformed, a FIFO, past a limit) fails
+// that kind with the findings it had already made and never hides the other kind's result
+// (CRW-1152). A manifest that cannot be used at all fails its own kind and leaves the other
+// unevaluated rather than passing it; any other error lands in one generic check instead of
+// guessing a kind.
 func HarnessManifestTargetChecks(pluginRoot string) []HarnessCheck {
 	kinds := harnessInstallTargetKinds()
-	issues, err := ValidateManifestTargets(pluginRoot)
-	if err != nil {
+	outcome := validateManifestTargetsByKind(pluginRoot)
+	if err := outcome.manifestErr; err != nil {
 		var parse *TargetParseError
 		if errors.As(err, &parse) {
 			checks := make([]HarnessCheck, 0, len(kinds))
@@ -147,10 +169,22 @@ func HarnessManifestTargetChecks(pluginRoot string) []HarnessCheck {
 	}
 	checks := make([]HarnessCheck, 0, len(kinds))
 	for _, row := range kinds {
+		result := outcome.hook
+		if row.kind == TargetMCP {
+			result = outcome.mcp
+		}
 		messages := []string{}
-		for _, issue := range issues {
+		for _, issue := range result.issues {
 			if issue.Kind == row.kind {
 				messages = append(messages, issue.Message)
+			}
+		}
+		if result.err != nil {
+			var parse *TargetParseError
+			if errors.As(result.err, &parse) {
+				messages = append(messages, harnessInstallTargetFailure(parse))
+			} else {
+				messages = append(messages, "target validation failed: "+harnessInstallString(result.err))
 			}
 		}
 		if len(messages) == 0 {

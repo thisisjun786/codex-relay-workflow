@@ -85,9 +85,9 @@ func RunHarnessDoctor(pluginRoot string, runner HarnessRunner, options HarnessOp
 		SchemaVersion: HarnessSchemaVersion,
 		Overall:       HarnessRollup(checks),
 		Checks:        checks,
-		PluginVersion: harnessRunPluginVersion(manifestPath),
-		CodexVersion:  harnessReportDetectCodexVersion(runner),
-		ActiveSurface: harnessRunActiveSurface(env),
+		PluginVersion: harnessRunMetadata(func() *string { return harnessRunPluginVersion(manifestPath) }),
+		CodexVersion:  harnessRunMetadata(func() *string { return harnessReportDetectCodexVersion(runner) }),
+		ActiveSurface: harnessRunMetadata(func() *string { return harnessRunActiveSurface(env) }),
 	}
 }
 
@@ -134,7 +134,11 @@ func harnessRunManifestCheck(manifestPath string) HarnessCheck {
 // check (CRW-1152, port: fixed).
 func harnessRunSkillsCheck(pluginRoot string) HarnessCheck {
 	skillsDir := filepath.Join(pluginRoot, harnessRunSkillsDir)
-	if !harnessReportIsDir(skillsDir) {
+	isDir, statErr := harnessInstallStatDir(skillsDir)
+	if statErr != nil {
+		return HarnessCheck{Name: "skills", Severity: HarnessWarn, Evidence: "skills/ cannot be inspected, check skipped: " + harnessInstallErrorMessage(statErr, "stat")}
+	}
+	if !isDir {
 		return HarnessCheck{Name: "skills", Severity: HarnessWarn, Evidence: "no skills/ directory"}
 	}
 	entries, err := os.ReadDir(skillsDir)
@@ -164,7 +168,11 @@ func harnessRunSkillsCheck(pluginRoot string) HarnessCheck {
 // spawn configuration. An unreadable agents/ is a skipped WARN as the skills check's is.
 func harnessRunAgentsCheck(pluginRoot string) HarnessCheck {
 	agentsDir := filepath.Join(pluginRoot, harnessRunAgentsDir)
-	if !harnessReportIsDir(agentsDir) {
+	isDir, statErr := harnessInstallStatDir(agentsDir)
+	if statErr != nil {
+		return HarnessCheck{Name: "agents", Severity: HarnessWarn, Evidence: "agents/ cannot be inspected, check skipped: " + harnessInstallErrorMessage(statErr, "stat")}
+	}
+	if !isDir {
 		return HarnessCheck{Name: "agents", Severity: HarnessWarn, Evidence: "no agents/ directory"}
 	}
 	entries, err := os.ReadDir(agentsDir)
