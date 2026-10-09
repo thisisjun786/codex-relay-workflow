@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -218,7 +219,7 @@ func TestLoopSteerInterruptCancelledWithTheLockHeldWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := loopSteer(ctx, args, &goalplan.GoalplanWriteLockOptions{Now: func() string { cancel(); return "2026-03-03T00:00:00.000Z" }})
+	got, err := loopSteer(ctx, args, &goalplan.GoalplanWriteLockOptions{Now: func() string { cancel(); return "2026-03-03T00:00:00.000Z" }}, nil)
 	if !errors.Is(err, context.Canceled) || got != (LoopCliResult{}) {
 		t.Fatalf("cancelled with the lock held: %+v %v", got, err)
 	}
@@ -277,5 +278,146 @@ func TestLoopSteerInterruptEndedContextRefusalsAreSilent(t *testing.T) {
 		}
 		before.assertUnchanged(t, cwd, slug)
 		mutatorsSameTree(t, tree, mutatorsTree(t, cwd))
+	}
+}
+
+// Fix round 2: a cancellation that lands after the lock is taken and before the first write takes precedence
+// over every refusal or error that run reaches before that write, not only over a clean pre-write answer.
+// mutatorsFIFOState makes the session state a FIFO whose writer cancels ctx as soon as the run under the lock
+// opens it to read, then hands it a malformed document: the run is cancelled while its state read is in
+// progress, and that read ends in the unreadable-state refusal.
+func mutatorsFIFOState(t *testing.T, path string, cancel context.CancelFunc) {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		f, err := os.OpenFile(path, os.O_WRONLY, 0)
+		if err != nil {
+			return
+		}
+		cancel()
+		_, _ = f.Write([]byte("{"))
+		_ = f.Close()
+	}()
+}
+
+func mutatorsStillFIFO(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("the session state was replaced: %v %v", info, err)
+	}
+}
+
+func TestMemoryAllowWriteInterruptCancelledDuringARefusedStateReadIsSilent(t *testing.T) {
+	cwd, _, _ := cliSeed(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	path := state.StatePath(cwd, "rec-s1")
+	mutatorsFIFOState(t, path, cancel)
+	writes := 0
+	out, code, err := cliMemoryAllowWriteRun(ctx, MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd},
+		func(cwd string, s state.State) error { writes++; return state.WriteState(cwd, s) }, nil)
+	if !errors.Is(err, context.Canceled) || out != "" || code != 0 || writes != 0 {
+		t.Fatalf("cancelled during the refused state read: %q %d %v, %d writes; want the context's error and nothing to print", out, code, err, writes)
+	}
+	mutatorsStillFIFO(t, path)
+}
+
+func TestMemoryAllowWriteInterruptCancelledOnceTheWriteBeganKeepsItsFailure(t *testing.T) {
+	cwd, _, _ := cliSeed(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out, code, err := cliMemoryAllowWriteRun(ctx, MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd},
+		func(string, state.State) error { cancel(); return errors.New("disk full") }, nil)
+	if err != nil || code != 1 || out != "memory allow-write: could not record the grant (disk full)" {
+		t.Fatalf("a write that began and failed: %q %d %v, want its own failure", out, code, err)
+	}
+}
+
+func TestScanRecordInterruptCancelledDuringARefusedStateReadIsSilent(t *testing.T) {
+	cwd := scanInterruptWorkspace(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	path := state.StatePath(cwd, "s1")
+	mutatorsFIFOState(t, path, cancel)
+	appends, writes := 0, 0
+	got, err := cliScanRecordRunContext(ctx, scanInterruptArgs(t, cwd),
+		func(cwd string, e state.InterviewEvent) error { appends++; return state.AppendInterviewEvent(cwd, e) },
+		func(cwd string, s state.State) error { writes++; return state.WriteState(cwd, s) }, nil)
+	if !errors.Is(err, context.Canceled) || got != (CliResult{}) || appends != 0 || writes != 0 {
+		t.Fatalf("cancelled during the refused state read: %+v %v, %d appends, %d writes; want the context's error and nothing to print", got, err, appends, writes)
+	}
+	mutatorsStillFIFO(t, path)
+	if len(state.ReadInterviewEvents(cwd, "s1")) != 0 {
+		t.Fatal("the cancelled run appended a scan_completed row")
+	}
+}
+
+func TestScanRecordInterruptCancelledOnceTheAppendBeganKeepsItsFailure(t *testing.T) {
+	cwd := scanInterruptWorkspace(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got, err := cliScanRecordRunContext(ctx, scanInterruptArgs(t, cwd),
+		func(string, state.InterviewEvent) error { cancel(); return errors.New("disk full") }, state.WriteState, nil)
+	if err != nil || got.Code != 1 || got.Output != "scan record failed: disk full" {
+		t.Fatalf("an append that began and failed: %+v %v, want its own failure", got, err)
+	}
+}
+
+// TestLoopSteerInterruptEndedContextOutranksPreWriteErrors: an error the goalplan lock path returns before the
+// steering transaction's first write (here the plan file is a symlink) is the answer of a process the signal has
+// already ended.
+func TestLoopSteerInterruptEndedContextOutranksPreWriteErrors(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	planPath := filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")
+	if err := os.Rename(planPath, planPath+".real"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("goalplan.json.real", planPath); err != nil {
+		t.Fatal(err)
+	}
+	tree := mutatorsTree(t, cwd)
+	args, err := ParseLoopCliArgs([]string{"steer", "--session", loopMutSession, "--cwd", cwd, "--batch-json",
+		`{"idempotencyKey":"k1","rationale":"r","evidence":"e","ops":[{"kind":"annotate","note":"n"}]}`}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunLoopCli(args); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("control: the live run's error is %v, want the symlink refusal", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := RunLoopCliContext(ctx, args)
+	if !errors.Is(err, context.Canceled) || got != (LoopCliResult{}) {
+		t.Fatalf("ended context over a pre-write error: %+v %v, want the context's error and nothing to print", got, err)
+	}
+	mutatorsSameTree(t, tree, mutatorsTree(t, cwd))
+}
+
+// TestLoopSteerInterruptCancelledOnceTheWriteBeganAnswersAsToday: a cancellation that lands as the plan write
+// begins does not take precedence; the transaction finishes and answers applied.
+func TestLoopSteerInterruptCancelledOnceTheWriteBeganAnswersAsToday(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	args, err := ParseLoopCliArgs([]string{"steer", "--session", loopMutSession, "--cwd", cwd, "--batch-json",
+		`{"idempotencyKey":"k3","rationale":"r","evidence":"e","ops":[{"kind":"annotate","note":"n"}]}`}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loopSteer(ctx, args, nil, cancel)
+	if err != nil || got.Code != 0 || got.Output != "loop steer: applied k3 (1 op(s): annotate)" {
+		t.Fatalf("cancelled as the write began: %+v %v, want applied", got, err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("the write-begin seam did not run")
+	}
+	if n := len(loopMutPlan(t, cwd, slug).SteeringLog); n != 1 {
+		t.Fatalf("steering log has %d entries, want 1", n)
 	}
 }

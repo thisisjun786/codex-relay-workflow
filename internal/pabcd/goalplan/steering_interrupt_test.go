@@ -162,3 +162,28 @@ func TestSteeringInterruptCancelledWhilePreparingTheChangeWritesNothing(t *testi
 	}
 	steeringInterruptSame(t, before, steeringInterruptBytes(t, dir))
 }
+
+// TestSteeringBeforeWriteRunsOnceAsThePlanWriteBegins: the hook runs once for a batch that writes, with the plan
+// still unwritten, and never for a duplicate that writes nothing.
+func TestSteeringBeforeWriteRunsOnceAsThePlanWriteBegins(t *testing.T) {
+	cwd, slug := steeringApplyWorkspace(t)
+	calls, logged := 0, -1
+	options := &SteeringBatchOptions{BeforeWrite: func() {
+		calls++
+		logged = len(ReadGoalplan(cwd, slug).SteeringLog)
+	}}
+	result, err := ApplySteeringBatch(cwd, slug, steeringApplyBatch(nil), options)
+	if err != nil || result.Kind != SteerResultApplied {
+		t.Fatalf("first batch: %+v %v", result, err)
+	}
+	if calls != 1 || logged != 0 {
+		t.Fatalf("BeforeWrite ran %d times, saw %d steering entries; want once, before the write", calls, logged)
+	}
+	result, err = ApplySteeringBatch(cwd, slug, steeringApplyBatch(nil), options)
+	if err != nil || result.Kind != SteerResultDuplicate {
+		t.Fatalf("second batch: %+v %v", result, err)
+	}
+	if calls != 1 {
+		t.Fatalf("BeforeWrite ran for a duplicate: %d calls", calls)
+	}
+}

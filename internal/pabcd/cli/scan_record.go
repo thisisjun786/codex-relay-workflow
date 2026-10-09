@@ -50,6 +50,11 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 // cliScanRecordRunContext is the scan record run under the invocation's context. interrupt is the CRW-1074 test
 // seam, a field of the caller's own: it runs immediately before the pre-write context check, so a test can end the
 // context exactly between the lock and the first write. nil means no hook.
+//
+// Every answer reached before the scan_completed append began (the lock's own error, and the unreadable,
+// interview and verdict refusals of the state read under the lock) is the answer of a process the signal would
+// already have ended: an ended context takes precedence and nothing is printed. Once the append has begun, the run
+// goes on to the tracker write and its answer stands.
 func cliScanRecordRunContext(ctx context.Context, a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error, writeState func(string, state.State) error, interrupt func()) (CliResult, error) {
 	if a.Action == ScanActionHelp {
 		return CliResult{Output: scanRecordHelp}, nil
@@ -62,6 +67,7 @@ func cliScanRecordRunContext(ctx context.Context, a ScanCliArgs, appendEvent fun
 	}
 	var round float64
 	derivedCount := 0
+	begun := false
 	err := state.WithSessionLockContext(ctx, a.Cwd, a.SessionID, func() error {
 		s, unreadable := state.ReadStateStrict(a.Cwd, a.SessionID)
 		if unreadable {
@@ -95,6 +101,7 @@ func cliScanRecordRunContext(ctx context.Context, a ScanCliArgs, appendEvent fun
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		begun = true
 		if err := appendEvent(a.Cwd, e); err != nil {
 			return err
 		}
@@ -152,6 +159,11 @@ func cliScanRecordRunContext(ctx context.Context, a ScanCliArgs, appendEvent fun
 	// written round: the round is visible and the ledger row it appended is already there, so a retry
 	// would record the same round twice. The durability failure is carried as a warning instead. A
 	// failure before the rename published nothing and stays the failure it was.
+	if !begun {
+		if cerr := ctx.Err(); cerr != nil {
+			return CliResult{}, cerr
+		}
+	}
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return CliResult{}, err
 	}

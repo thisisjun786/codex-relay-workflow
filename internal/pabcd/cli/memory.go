@@ -100,7 +100,12 @@ func cliPublishedMemoryAllowWrite(a MemoryAllowWriteArgs, writeState func(string
 // cliMemoryAllowWriteRun is the grant under the invocation's context. interrupt is the CRW-1074 test seam, a
 // field of the caller's own: it runs immediately before the pre-write context check, so a test can end the
 // context exactly between the lock and the write. nil means no hook.
+//
+// Every answer reached before the grant write began (the lock's own error, and the unreadable, interview and
+// verdict refusals of the state read under the lock) is the answer of a process the signal would already have
+// ended: an ended context takes precedence and nothing is printed. Once the write has begun, the answer stands.
 func cliMemoryAllowWriteRun(ctx context.Context, a MemoryAllowWriteArgs, writeState func(string, state.State) error, interrupt func()) (string, int, error) {
+	begun := false
 	err := state.WithSessionLockContext(ctx, a.Cwd, a.SessionID, func() error {
 		s, unreadable := state.ReadStateStrict(a.Cwd, a.SessionID)
 		// Intentionally changed: the oracle replaces unreadable bytes with a default.
@@ -123,8 +128,14 @@ func cliMemoryAllowWriteRun(ctx context.Context, a MemoryAllowWriteArgs, writeSt
 			return err
 		}
 		s.MemoryWriteGrant = true
+		begun = true
 		return writeState(a.Cwd, s)
 	})
+	if !begun {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", 0, cerr
+		}
+	}
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return "", 0, err
 	}
