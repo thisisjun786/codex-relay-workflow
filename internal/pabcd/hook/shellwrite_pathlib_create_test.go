@@ -16,7 +16,7 @@ func TestPathlibCreateRealGate(t *testing.T) {
 		`python3 -c 'from pathlib import Path; root="{M}"; Path(root).joinpath("a").mkdir()'`,
 		`python3 -c 'from pathlib import Path; m="{M}/a"; Path(m).touch()'`,
 		`python3 -c 'from pathlib import Path; Path("{M}/d").mkdir(parents=True, exist_ok=True)'`,
-		`python3 -c 'import os; print(f"{p.touch()}", os.path.exists("/w/x"))'`,
+		`python3 -c 'import os; print(f"{p.touch()}", os.path.exists("{M}/x"))'`,
 		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n.md").touch()'`,
 		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n").mkdir()'`,
 		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n.md").write_text("x")'`,
@@ -89,5 +89,33 @@ func TestPathlibCreateRealGate(t *testing.T) {
 				t.Errorf("the GitHub post guard answered %s", out)
 			}
 		})
+	}
+}
+
+// The frozen CRW-951 promise permits computed create receivers when the program
+// has no protected reference. Mentioning the protected area makes them attempts.
+func TestPathlibCreateProtectedReference(t *testing.T) {
+	for _, method := range []string{"touch", "mkdir"} {
+		for _, receiver := range []string{`Path("/w").joinpath("x")`, `(Path("/w") / "x")`, `p`, `Path(f"{root}/x")`} {
+			for _, reference := range []string{"", `note="{M}"; `, `note="memories"; `, `note=".codex"; `, `note="\x6demories"; `, `CODEX_HOME="/h"; `} {
+				t.Run(method+" "+receiver+" "+reference, func(t *testing.T) {
+					cwd, root, env := gateScene(t)
+					program := `from pathlib import Path; root="/w"; p=Path("/w/x"); ` + strings.ReplaceAll(reference, "{M}", root) + receiver + "." + method + "()"
+					payload := gateBash(t, cwd, "python3 -c '"+program+"'")
+					wantWrite := reference != ""
+					out := HandleMemoryWriteGate(payload, env)
+					if strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
+						t.Fatalf("without grant: %q, want attempt=%v", out, wantWrite)
+					}
+					gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+					if out := HandleMemoryWriteGate(payload, env); out != "" {
+						t.Fatalf("with grant: %q", out)
+					}
+					if got := state.ReadState(cwd, gateSession).MemoryWriteGrant; got == wantWrite {
+						t.Fatalf("grant kept=%v, want %v", got, !wantWrite)
+					}
+				})
+			}
+		}
 	}
 }
