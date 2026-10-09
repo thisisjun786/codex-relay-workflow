@@ -28,21 +28,37 @@ is distinct from that parent goal.
 
 Two distinct things, do not conflate them:
 
-- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only, and only
-  when one request clause names the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or
-  `pabcd로` / `pabcd phase`) together with a request verb (`use`, `run`, `start`,
-  `invoke`, `enter`, `apply`, or 시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가).
-  The phase is then picked by the first matching phase pattern, in this order: I
-  (`interview`, `인터뷰`, `phase i`), P (`plan`, `phase p`, 계획), A (`audit`, `phase a`,
-  감사), B (`build`, `phase b`, 구현), C (`check`, `phase c`, 검증). With no phase
-  pattern, only a request naming `crw-pabcd` (in any form above) or `pabcd로` falls
-  back to phase P (`Use crw-pabcd`, `pabcd로 시작해줘`); `pabcd phase` has no such
-  fallback, so `Start pabcd phase` injects nothing and `Start pabcd phase i` injects
-  phase I. Without a request verb nothing is injected: a bare `인터뷰 먼저 해줘`,
-  `interview me first` or `pabcd로 인터뷰 해줘` inject nothing, while `Use crw-pabcd to
-  start the interview` injects phase I. Natural hints never enter or advance a phase.
-  A line-anchored `orchestrate i` command instead takes the existing explicit-command
-  parser path.
+- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only. The
+  detector (`DetectTrigger`) yields a phase hint only when one request clause names
+  the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or `pabcd로` / `pabcd phase`)
+  together with a request verb (`use`, `run`, `start`, `invoke`, `enter`, `apply`, or
+  시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가). The phase is then picked by the
+  first matching phase pattern, in this order: I (`interview`, `인터뷰`, `phase i`),
+  P (`plan`, `phase p`, 계획), A (`audit`, `phase a`, 감사), B (`build`, `phase b`,
+  구현), C (`check`, `phase c`, 검증). With no phase pattern, only a request naming
+  `crw-pabcd` (in any form above) or `pabcd로` falls back to phase P; `pabcd phase`
+  has no such fallback. So the detector finds a hint for `Use crw-pabcd`, `pabcd로
+  시작해줘` and `Use crw-pabcd to start the interview` (P, P, I) and for `Start pabcd
+  phase i` (I), and finds none for `Start pabcd phase`, a bare `인터뷰 먼저 해줘`,
+  `interview me first` or `pabcd로 인터뷰 해줘` (no request verb or no phase pattern).
+  What the hook injects is the handler's answer, which depends on the session:
+  - In a session that has not armed PABCD, the loop-arm check runs before the hint.
+    A clause with a loop mode (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` /
+    `ipabcd` word (not the one inside `crw-pabcd`) plus an action word makes the hook
+    answer the arming mandate (ORCH-MANDATE-01) instead of any phase hint. In a fresh
+    session `pabcd로 시작해줘`, `pabcd로 인터뷰 해줘`, `Start pabcd phase` and `Start
+    pabcd phase i` therefore get the mandate; `Use crw-pabcd` and `Use crw-pabcd to
+    start the interview` get a phase hint; `인터뷰 먼저 해줘` and `interview me first`
+    get nothing.
+  - A phase hint is the phase directive plus the trigger-authority note. A P hint is
+    delivered as the interview directive under the default interview-entry policy
+    (`new-unit`: not once a cycle is running), and an I hint is dropped while a goal
+    is active.
+  - In a session that already armed PABCD, a prompt without any hint can still get the
+    current phase directive or stage header re-injected, unless the transcript tail
+    already carries the stage marker or shows context pressure.
+  Natural hints never enter or advance a phase. A line-anchored `orchestrate i`
+  command instead takes the existing explicit-command parser path.
 - **Agent judgment (broad):** for unclear requirements phrased otherwise, select
   `crw-interview` and its applicable references. Loading a skill is not a state
   transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`
