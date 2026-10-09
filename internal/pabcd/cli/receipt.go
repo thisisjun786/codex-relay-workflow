@@ -149,6 +149,10 @@ var receiptBeforePublishHook func()
 // where the rename beat the cancellation.
 var receiptAfterPublishHook func()
 
+// receiptPublish publishes the receipt. It is crwdir.PublishContext; a test replaces it to reach a publication whose
+// directory sync fails after the rename together with a cancellation, which no real directory produces on demand.
+var receiptPublish = crwdir.PublishContext
+
 // receiptLockRetry is how often a run whose context can end asks again for a receipt lock file that another run holds.
 const receiptLockRetry = 20 * time.Millisecond
 
@@ -294,9 +298,16 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		}
 		return ReceiptCLIResult{}, err
 	}
-	if err = crwdir.PublishContext(ctx, path, data); err != nil && !receiptUnsyncedOnly(err) {
+	if err = receiptPublish(ctx, path, data); err != nil && !receiptUnsyncedOnly(err) {
 		if result, refused := receiptPublishRefusal(ctx, err); refused {
 			return result, nil
+		}
+		// The rename happened and only the directory sync failed. A run cancelled by now must not leave its passing receipt
+		// behind, so it is withdrawn as after a clean publication; the sync error is returned with any failure of the removal.
+		if crwdir.Published(err) && ctx.Err() != nil {
+			if werr := withdrawReceipt(path, data); werr != nil {
+				return ReceiptCLIResult{}, errors.Join(err, werr)
+			}
 		}
 		return ReceiptCLIResult{}, err
 	}
