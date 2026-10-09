@@ -65,6 +65,10 @@ type OpenOptions struct {
 	// verify is the fenced opener's check of a writable store, run on the opened database
 	// before the schema script; it returns the write gate the store holds (verifyWritable).
 	verify func(context.Context, *sql.DB) (*os.File, error)
+	// unsynced opens the database with synchronous=OFF instead of FULL. Only buildAbsent sets it, on the
+	// temporary database no other process can name yet: the build is one private writer, a crash discards the
+	// file, and createAbsent syncs the finished file before it links it into place (CRW-1054).
+	unsynced bool
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
@@ -157,7 +161,11 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		}
 		// Python's sqlite3.connect installs its timeout before executing journal_mode.
 		// Do the same: journal_mode may need a lock even before the schema is read.
-		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON"}
+		synchronous := "FULL"
+		if options.unsynced {
+			synchronous = "OFF"
+		}
+		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=" + synchronous, "PRAGMA foreign_keys=ON"}
 		busyConfigured := false
 		for _, pragma := range pragmas {
 			deadline := time.Now().Add(options.BusyTimeout)

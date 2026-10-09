@@ -680,7 +680,11 @@ var createFault = func(string) error { return nil }
 // temporary database, then closes it so no WAL outlives the connection. It returns the stamp it
 // wrote, which the mirror publishAbsent writes is derived from.
 func buildAbsent(ctx context.Context, temp, socket string, options OpenOptions) (stamp ownership.Stamp, err error) {
-	s, err := open(ctx, temp, socket, OpenOptions{BusyTimeout: options.BusyTimeout})
+	// Nothing else can name the temporary database before createAbsent links it, so its build needs no
+	// durability of its own: with synchronous=FULL each of the schema script's and the zone's statements was a
+	// commit that waited for the disk (about 4 s on a loaded host, for every new store). createAbsent syncs the
+	// closed file before it links it into place, which is the only point at which the content must be durable.
+	s, err := open(ctx, temp, socket, OpenOptions{BusyTimeout: options.BusyTimeout, unsynced: true})
 	if err != nil {
 		return stamp, err
 	}
