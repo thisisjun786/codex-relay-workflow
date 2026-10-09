@@ -304,97 +304,39 @@ func awkInline(name string, args []Word) (*Inline, *Word, error) {
 	return &Inline{Language: "awk", Source: args[i]}, nil, nil
 }
 
+// sedInline reads sed's command line (ParseSedArgs reads its options the way getopt_long does, abbreviations included) and
+// returns the script text it runs: the -e and --expression values joined by newlines, or the first operand when no -e or -f
+// gives one. When a script option follows the first operand, that operand is judged as a script too (POSIXLY_CORRECT stops
+// getopt there and runs it). A script file (-f, --file, in any spelling) is not read: its text is not in the command, so the
+// command is unreadable, whether or not the file exists.
 func sedInline(name string, args []Word, redirs []Redir, ctx Context) (*Inline, *Word, error) {
-	var codes []Word
-	var file *Word
-	i := 0
-	for i < len(args) {
-		v, err := knownValue(args[i], name+" option")
+	pa, err := ParseSedArgs(name, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(pa.Files) > 0 {
+		return nil, nil, unreadablef("%s reads its script from a file, which is not read", name)
+	}
+	var sources []Word
+	sources = append(sources, pa.Scripts...)
+	if pa.PosixScript != nil {
+		sources = append(sources, *pa.PosixScript)
+	}
+	if len(sources) == 0 {
+		if len(pa.Operands) == 0 {
+			return nil, nil, unreadablef("%s without a script", name)
+		}
+		sources = append(sources, pa.Operands[0])
+	}
+	parts := make([]string, 0, len(sources))
+	for _, c := range sources {
+		text, err := knownValue(c, name+" script")
 		if err != nil {
 			return nil, nil, err
 		}
-		if v == "--" {
-			i++
-			break
-		}
-		if v == "-" || !strings.HasPrefix(v, "-") {
-			break
-		}
-		if strings.HasPrefix(v, "--") {
-			switch {
-			case v == "--quiet" || v == "--silent" || v == "--regexp-extended" || v == "--separate" ||
-				v == "--unbuffered" || v == "--null-data" || v == "--posix" || v == "--sandbox" ||
-				v == "--debug" || strings.HasPrefix(v, "--in-place") || strings.HasPrefix(v, "--line-length="):
-				i++
-			case strings.HasPrefix(v, "--expression="):
-				codes = append(codes, Word{Known: true, Value: strings.TrimPrefix(v, "--expression=")})
-				i++
-			case v == "--expression" && i+1 < len(args):
-				codes = append(codes, args[i+1])
-				i += 2
-			case strings.HasPrefix(v, "--file="):
-				f := Word{Known: true, Value: strings.TrimPrefix(v, "--file=")}
-				file = &f
-				i++
-			default:
-				return nil, nil, unreadablef("%s option %s is not modelled", name, v)
-			}
-			continue
-		}
-		i++
-		for k := 1; k < len(v); k++ {
-			c := v[k]
-			last := k == len(v)-1
-			switch c {
-			case 'n', 'E', 'r', 's', 'u', 'z':
-			case 'i':
-				k = len(v)
-			case 'e', 'f', 'l':
-				var arg Word
-				if !last {
-					arg = Word{Known: true, Value: v[k+1:]}
-				} else {
-					if i >= len(args) {
-						return nil, nil, unreadablef("%s -%c without a value", name, c)
-					}
-					arg = args[i]
-					i++
-				}
-				switch c {
-				case 'e':
-					codes = append(codes, arg)
-				case 'f':
-					a := arg
-					file = &a
-				}
-				k = len(v)
-			default:
-				return nil, nil, unreadablef("%s option -%c is not modelled", name, c)
-			}
-		}
+		parts = append(parts, text)
 	}
-	var inline *Inline
-	if len(codes) > 0 {
-		parts := make([]string, 0, len(codes))
-		for _, c := range codes {
-			text, err := knownValue(c, name+" script")
-			if err != nil {
-				return nil, nil, err
-			}
-			parts = append(parts, text)
-		}
-		inline = &Inline{Language: "sed", Source: Word{Known: true, Value: strings.Join(parts, "\n")}}
-	}
-	if inline == nil && file == nil {
-		if i >= len(args) {
-			return nil, nil, unreadablef("%s without a script", name)
-		}
-		if !args[i].Known {
-			return nil, nil, unreadablef("%s script is not known (%s)", name, args[i].Reason)
-		}
-		inline = &Inline{Language: "sed", Source: args[i]}
-	}
-	return inline, file, nil
+	return &Inline{Language: "sed", Source: Word{Known: true, Value: strings.Join(parts, "\n")}}, nil, nil
 }
 
 func isPythonName(name string) bool {

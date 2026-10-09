@@ -758,3 +758,172 @@ added by CRW-1028 (over-block of sequential script executions in a carried text)
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash lint.sh; bash refresh.sh'	CRW-1028-ev-overblock-02	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; x=$(bash refresh.sh)	CRW-1028-ev-overblock-03	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash refresh.sh; bash lint.sh'	CRW-1028-ev-overblock-04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o=<m>/a x.txt	CRW-941-S01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o <m>/a x.txt	CRW-941-S02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou=<m>/a x.txt	CRW-941-S03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou <m>/a x.txt	CRW-941-S04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --out=<m>/a x.txt	CRW-941-S05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --out <m>/a x.txt	CRW-941-S06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outp=<m>/a x.txt	CRW-941-S07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outp <m>/a x.txt	CRW-941-S08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outpu=<m>/a x.txt	CRW-941-S09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --outpu <m>/a x.txt	CRW-941-S10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --output <m>/a x.txt	CRW-941-S11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -o<m>/a x.txt	CRW-941-S12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -o <m>/a x.txt	CRW-941-S13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -ro <m>/a x.txt	CRW-941-S14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -ro<m>/a x.txt	CRW-941-S15	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort x.txt --o=<m>/a	CRW-941-S16	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -n -k 1,1 --ou <m>/a x.txt	CRW-941-S17	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o=<m>/a <<'EOF'\nb\na\nEOF	CRW-941-S18	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou <m>/a <<'EOF'\nb\na\nEOF	CRW-941-S19	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --key=1 --o <m>/a x.txt	CRW-941-S20	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -t, --o=<m>/a x.txt	CRW-941-S21	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o="<m>/a" x.txt	CRW-941-S22	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	cat x.txt | sort --o <m>/a	CRW-941-S23	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --compress-program gzip --o <m>/a x.txt	CRW-941-S24	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o="$OUT" x.txt	CRW-941-S25	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -k1,1 -o <m>/a x.txt	CRW-941-S26	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -nr --ou=<m>/a x.txt	CRW-941-S27	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o=out.txt x.txt	CRW-941-S28	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --ou out.txt x.txt	CRW-941-S29	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --o={TMP}/out x.txt	CRW-941-S30	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -- --o=<m>/a	CRW-941-S31	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --s=<m>/a x.txt	CRW-941-S32	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --so=<m>/a x.txt	CRW-941-S33	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --key -o <m>/a	CRW-941-S34	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort --reverse --unique --version-sort x.txt	CRW-941-S35	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sort -u -n -k2,2 x.txt	CRW-941-S36	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 'w <m>/a' x.txt	CRW-941-E01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression='w <m>/a' x.txt	CRW-941-E02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr='w <m>/a' x.txt	CRW-941-E03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr 'w <m>/a' x.txt	CRW-941-E04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --exp 'w <m>/a' x.txt	CRW-941-E05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --e='w <m>/a' x.txt	CRW-941-E06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --e 'w <m>/a' x.txt	CRW-941-E07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expressio='w <m>/a' x.txt	CRW-941-E08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n --expression 'w <m>/a' x.txt	CRW-941-E09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression p --expression 'W <m>/a' x.txt	CRW-941-E10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 'w <m>/a' <<'EOF'\nabc\nEOF	CRW-941-E11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --exp='w <m>/a' <<'EOF'\nabc\nEOF	CRW-941-E12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e'w <m>/a' x.txt	CRW-941-E13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -ne 'w <m>/a' x.txt	CRW-941-E14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -e p -e 's/a/b/w <m>/a' x.txt	CRW-941-E15	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -- 'w <m>/a' x.txt	CRW-941-E16	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'p;w <m>/a' x.txt	CRW-941-E17	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'p\nw <m>/a' x.txt	CRW-941-E18	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/gw <m>/a' x.txt	CRW-941-E19	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/2w <m>/a' x.txt	CRW-941-E20	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'sxaxbxw <m>/a' x.txt	CRW-941-E21	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n '/x/{p;w <m>/a\n}' x.txt	CRW-941-E22	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -E 's/(a)/\1/w <m>/a' x.txt	CRW-941-E23	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -l 5 'w <m>/a' x.txt	CRW-941-E24	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --line-length 5 'w <m>/a' x.txt	CRW-941-E25	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --line-length=5 'w <m>/a' x.txt	CRW-941-E26	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --line 5 'w <m>/a' x.txt	CRW-941-E27	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -s 'w <m>/a' x.txt y.txt	CRW-941-E28	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --quiet 'w <m>/a' x.txt	CRW-941-E29	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --silent 'w <m>/a' x.txt	CRW-941-E30	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --regexp-extended 'w <m>/a' x.txt	CRW-941-E31	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --regexp 'w <m>/a' x.txt	CRW-941-E32	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --null-data 'w <m>/a' x.txt	CRW-941-E33	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --zero-terminated 'w <m>/a' x.txt	CRW-941-E34	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --z 'w <m>/a' x.txt	CRW-941-E35	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --posix 'w <m>/a' x.txt	CRW-941-E36	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -z -u 'w <m>/a' x.txt	CRW-941-E37	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'q;w <m>/a' x.txt	CRW-941-E38	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'q5;w <m>/a' x.txt	CRW-941-E39	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n 'l 5;w <m>/a' x.txt	CRW-941-E40	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'b end;w <m>/a;:end' x.txt	CRW-941-E41	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed ':a;w <m>/a;ba' x.txt	CRW-941-E42	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -e p -e 'w <m>/a' <<'EOF'\nabc\nEOF	CRW-941-E43	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed "w $X/a" x.txt	CRW-941-E44	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 't end;w <m>/a;:end' x.txt	CRW-941-E45	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'w <m>/a' x.txt -n	CRW-941-E46	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file s.sed x.txt	CRW-941-F01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file=s.sed x.txt	CRW-941-F02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --fi=s.sed x.txt	CRW-941-F03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --fil s.sed x.txt	CRW-941-F04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -nf s.sed x.txt	CRW-941-F05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -fs.sed x.txt	CRW-941-F06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e p -f s.sed x.txt	CRW-941-F07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file=- <<'EOF'\nw <m>/a\nEOF	CRW-941-F08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --file - x.txt <<'EOF'\nw <m>/a\nEOF	CRW-941-F09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	printf 'w <m>/a\n' > s.sed; sed -f s.sed x.txt	CRW-941-F10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	cat > s.sed <<'EOF'\nw <m>/a\nEOF\nsed -f s.sed x.txt	CRW-941-F11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --f s.sed x.txt	CRW-941-F12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --s p x.txt	CRW-941-F13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --no-such-option p x.txt	CRW-941-F14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -i 's/a/b/' <m>/a	CRW-941-I01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-place 's/a/b/' <m>/a	CRW-941-I02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in 's/a/b/' <m>/a	CRW-941-I03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --i=.bak 's/a/b/' <m>/a	CRW-941-I04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-place=.bak -e p <m>/a	CRW-941-I05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -i -e 's/a/b/' <m>/a	CRW-941-I06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -ni p <m>/a	CRW-941-I07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -i.bak 's/a/b/' <m>/a	CRW-941-I08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-pl --expression 's/a/b/' <m>/a	CRW-941-I09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in-place 's/a/b/' out.txt	CRW-941-I10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --in=.bak 's/a/b/' out.txt	CRW-941-I11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 's/a/b/' x.txt	CRW-941-C01	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr=p x.txt	CRW-941-C02	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --quiet --expression=p x.txt	CRW-941-C03	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -e 's/w/x/' x.txt	CRW-941-C04	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'y/w/x/' x.txt	CRW-941-C05	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n '/w a/p' x.txt	CRW-941-C06	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'w out.txt' x.txt	CRW-941-C07	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/w out.txt' x.txt	CRW-941-C08	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expr='w out.txt' x.txt	CRW-941-C09	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e 'w /dev/stdout' x.txt	CRW-941-C10	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed --expression 'w /dev/stderr' x.txt	CRW-941-C11	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'r <m>/a' x.txt	CRW-941-C12	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'R <m>/a' x.txt	CRW-941-C13	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 'a w <m>/a' x.txt	CRW-941-C14	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed '1i w <m>/a' x.txt	CRW-941-C15	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n p <<'EOF'\nabc\nEOF	CRW-941-C16	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed ':a;N;$!ba;s/\n/ /g' x.txt	CRW-941-C17	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n '/a/{p;q}' x.txt	CRW-941-C18	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed 's/a/b/;t end;s/c/d/;:end' x.txt	CRW-941-C19	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed '1d;$d' x.txt	CRW-941-C20	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -s -n '$p' x.txt y.txt	CRW-941-C21	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -E 's/(a|b)/\1/' x.txt	CRW-941-C22	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n 'l 5;q5' x.txt	CRW-941-C23	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n p x.txt | sort --o=out.txt	CRW-941-C24	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -e 's/a/b/' -e 's/c/d/' x.txt	CRW-941-C25	row	-
+re-check of CRW-941 on dev 09e5c5bcc (2026-10-09, probe sources under mgmt/recheck-20261009)	sed -n -- p x.txt	CRW-941-C26	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1 -o {MEMORY}/a'; sort -k $K x.txt	CRW-941-N01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1 -o {MEMORY}/a'; sort --key $K x.txt	CRW-941-N02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1G -o {MEMORY}/a'; sort -S $K x.txt	CRW-941-N03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K=', -o {MEMORY}/a'; sort -rt $K x.txt	CRW-941-N04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K='1G -o {MEMORY}/a'; sort --buffer-size=$K x.txt	CRW-941-N05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	K=1; sort -k $K -o out.txt x.txt	CRW-941-N06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sort -k 2,2 -n x.txt	CRW-941-N07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' --expression p x.txt	CRW-941-P02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -e p x.txt	CRW-941-P03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'w {MEMORY}/a' -ne p x.txt	CRW-941-P04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	export POSIXLY_CORRECT=1; sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed 'w {MEMORY}/a' --e p x.txt	CRW-941-P06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed 'w {MEMORY}/a' -e p x.txt	CRW-941-P07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed 'e gh pr comment 1 -b x' --expression p x.txt	CRW-941-P08	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -n p x.txt -n	CRW-941-P09	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	POSIXLY_CORRECT=1 sed -e p x.txt	CRW-941-P10	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed p -e p x.txt	CRW-941-P11	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --in='{MEMORY}/*' -e p out.txt	CRW-941-D01	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' p out.txt	CRW-941-D02	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -ni'{MEMORY}/*.bak' p sub/out.txt	CRW-941-D03	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --in-place='{MEMORY}/*' p out.txt	CRW-941-D04	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/../memories/*' p out.txt	CRW-941-D05	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/x' p out.txt	CRW-941-D06	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i.bak p out.txt	CRW-941-D07	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'bak/*' p out.txt	CRW-941-D08	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'*.orig' p out.txt	CRW-941-D09	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -i'{MEMORY}/*' -i p out.txt	CRW-941-D10	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed -f s.sed x.txt	CRW-941-F15	row	-
+pre-merge evaluation of 101be077 (/state/crw/mgmt/pre-eval/crw941-101be077.json, defects d1 to d4)	sed --file=s.sed x.txt	CRW-941-F16	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	POSIXLY_CORRECT=1 sed --in='{MEMORY}/*' -e p out.txt --in-place	CRW-941-D11	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt -i	CRW-941-D12	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt -i.bak	CRW-941-D13	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
+evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
