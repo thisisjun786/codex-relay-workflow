@@ -219,7 +219,7 @@ func TestInvocationIsResolvedAtRenderTime(t *testing.T) {
 	}{
 		{env("crw", "/different-home"), "crw"},
 		{env("  chosen-crw  ", "/different-home"), "chosen-crw"},
-		{env("", "/synthetic-home"), `"/synthetic-home/.local/share/crw-runtime/current/bin/crw"`},
+		{env("", "/synthetic-home"), `'/synthetic-home/.local/share/crw-runtime/current/bin/crw'`},
 	} {
 		if got := ResolveCRWCommands("`crw session current` and `crw map src` and `crw orchestrate P`", tc.lookup); got != "`"+tc.inv+" relay session current` and `"+tc.inv+" map src` and `"+tc.inv+" pabcd orchestrate P`" {
 			t.Fatalf("resolver: %s", got)
