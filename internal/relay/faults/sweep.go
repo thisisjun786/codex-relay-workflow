@@ -280,9 +280,10 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 				answer.Gaps = append(answer.Gaps, map[string]any{"gap": "observation_refused", "faultClass": o.FaultClass, "reason": reason + ": " + strings.TrimPrefix(err.Error(), "transaction body: ")})
 				continue
 			}
-			// The ledger's record is the sweep's write: a failure of the corrupting class is met at the write
-			// site, not at the observation site of the sweep's reads (CRW-945).
-			return answer, store.AtSite(store.HaltSiteWrite, err)
+			// The ledger's record reads before it writes: a failure of the corrupting class keeps the site of the
+			// statement that met it (a read of its rows is the observation site), and one that carries none is met
+			// by the record's write (CRW-945).
+			return answer, store.MarkSite(store.HaltSiteWrite, err)
 		}
 		answer.Read++
 		row, e := sw.Store.One(ctx, "SELECT state,cycle,severity,occurrence_count,suppression FROM fault_ledger WHERE fault_id=?", id)
@@ -308,7 +309,7 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 		}
 	}
 	if err := sw.writeCursors(ctx, batch.positions, batch.stored); err != nil {
-		return answer, store.AtSite(store.HaltSiteWrite, err)
+		return answer, store.MarkSite(store.HaltSiteWrite, err)
 	}
 	return answer, nil
 }

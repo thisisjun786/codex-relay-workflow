@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
@@ -123,5 +124,71 @@ func TestManagedReadingsHalt_anObserverFailureThatIsNotCorruptionStaysAGap(t *te
 	}
 	if len(page.Gaps) != 1 {
 		t.Fatalf("gaps %v", page.Gaps)
+	}
+}
+
+// claimedReadyForReview turns the unclaimed child into a claimed one whose turn declared ready_for_review, so the
+// observer reads the receipt of the turn from the store after it has read the turn's registry context.
+func (c *unclaimedChild) claimedReadyForReview(t *testing.T) {
+	t.Helper()
+	c.marker(t, "claims/child/claim.json", map[string]any{"sessionId": "child", "dispatchRequestId": "dispatch-1"})
+	c.marker(t, "dispositions/child/business.json", map[string]any{"outcome": "ready_for_review", "sessionId": "child", "turnId": "business"})
+	// A reviewable head with its lineage row, so the head lookup reads the lineage table.
+	c.event(t, "child", "final", "ready_for_review", 1)
+	c.exec(t, "INSERT INTO revision_lineage(relationship_id,execution_generation,event_id,revision_hash,supersedes_hash,declared_by,recorded_at) VALUES('rel-1',1,'receipt','x',NULL,'child',?)", nsAt)
+}
+
+// CRW-945 (evaluation of 901ee68a): the receipt lookup of a claimed ready_for_review turn is a read of the store
+// by the daemon's own observation. Its failure of the corrupting class reached the omission reading as the
+// receipt_unreadable of any other failure, so no marker was published and the sweep went on to record.
+func TestOmissionHalt_aDamagedReceiptReadIsTheStoreUnreadableReading(t *testing.T) {
+	c := newUnclaimedChild(t)
+	c.claimedReadyForReview(t)
+	healthy := c.observe(t)
+	if current, _ := healthy["currentObservation"].(map[string]any); current["label"] == nil {
+		t.Fatalf("the fixture is not a claimed turn whose receipt the observer reads: %v", healthy)
+	}
+	testsupport.DamageTable(t, c.s.DB, c.s.Path, "revision_lineage")
+	reading := c.observe(t)
+	reason, _ := reading["reason"].(string)
+	if reading["reportingState"] != "unmeasured" || !strings.HasPrefix(reason, "store_unreadable: ") {
+		t.Fatalf("the reading hides the damage of the receipt read: %v", reading)
+	}
+	state := store.HaltStateAt(c.s.Path)
+	if !state.Present || state.Marker.Code != 11 || state.Marker.Site != store.HaltSiteObservation {
+		t.Fatalf("the damage left no observation marker: %+v", state)
+	}
+}
+
+// A receipt read that fails for another reason is the receipt_unreadable it always was, with no marker.
+func TestOmissionHalt_aReceiptReadThatIsNotCorruptionStaysUnreadable(t *testing.T) {
+	c := newUnclaimedChild(t)
+	c.claimedReadyForReview(t)
+	c.exec(t, "DROP TABLE revision_lineage")
+	reading := c.observe(t)
+	if reading["reportingState"] != "unmeasured" || reading["reason"] != "receipt_unreadable" {
+		t.Fatalf("a failure that is not corruption changed the reading: %v", reading)
+	}
+	if state := store.HaltStateAt(c.s.Path); state.Present {
+		t.Fatalf("a failure that is not corruption published a marker: %+v", state)
+	}
+}
+
+// Only the observer asks for the corruption: the guard's answer for an unreadable store (the Stop hook's) stays
+// (nil, false, nil).
+func TestOmissionHalt_theGuardsAnswerForAnUnreadableStoreIsUnchanged(t *testing.T) {
+	c := newUnclaimedChild(t)
+	c.claimedReadyForReview(t)
+	testsupport.DamageTable(t, c.s.DB, c.s.Path, "revision_lineage")
+	want := delivery.ReceiptQuery{Relationship: "rel-1", Session: "child", Turn: "business", Generation: int64(1), Dispatch: "dispatch-1"}
+	receipt, readable, err := delivery.LookupStoredReceiptAt(c.ctx, c.s.Path, nil, time.Second, want)
+	if receipt != nil || readable || err != nil {
+		t.Fatalf("the guard's answer moved: %v %v %v", receipt, readable, err)
+	}
+	want.ReportCorruption = true
+	_, readable, err = delivery.LookupStoredReceiptAt(c.ctx, c.s.Path, nil, time.Second, want)
+	cause, corrupting := store.CorruptingFailure(err)
+	if readable || !corrupting || cause.Code != 11 || store.SiteOf(err, "") != store.HaltSiteObservation {
+		t.Fatalf("the observer's lookup did not report the corruption at the observation site: readable %v, %v", readable, err)
 	}
 }

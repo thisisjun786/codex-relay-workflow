@@ -331,7 +331,7 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 		_, err := d.Delivery.Enqueue(ctx, event, row.Get("kind").(string), row.Get("recipient_task_id").(string))
 		if err != nil {
 			if _, corrupting := store.CorruptingFailure(err); corrupting {
-				return store.AtSite(store.HaltSiteWrite, err)
+				return store.MarkSite(store.HaltSiteWrite, err)
 			}
 			r.Notes = append(r.Notes, "requeue refused for "+event+": "+err.Error())
 			err = d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
@@ -339,7 +339,7 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 			})
 			if err != nil {
 				if _, corrupting := store.CorruptingFailure(err); corrupting {
-					return store.AtSite(store.HaltSiteWrite, err)
+					return store.MarkSite(store.HaltSiteWrite, err)
 				}
 				r.Notes = append(r.Notes, "requeue intent failed for "+event+": "+err.Error())
 			}
