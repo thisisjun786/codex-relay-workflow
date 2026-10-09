@@ -467,9 +467,12 @@ func globBracket(pattern string, i int) (end int, class string, ok bool) {
 	return 0, "", false
 }
 
-// regexMatch matches a find -regex pattern (a regular expression that must match the whole path). Only the part both dialects
-// share is evaluated; a pattern with grouping, alternation or repetition operators is not (known is false), unless it is made of
-// nothing else, which fits every path.
+// regexMatch matches a find -regex pattern (a regular expression that must match the whole path). Only syntax whose meaning is the
+// same in every dialect find reads (emacs, posix-basic, posix-extended, awk, egrep) and in Go's regexp is evaluated: literal
+// characters, ., *, a leading ^, a trailing $, an escaped . * [ ] ^ $ / \, and bracket expressions of characters, ranges and POSIX
+// classes. Anything else (a group, alternation, an interval, ?, +, an anchor or word escape such as \' \` \< \b, a letter escape, a
+// ^ or $ elsewhere, a backslash in a bracket, a collating symbol) is not read (known is false) and so never guards, unless the
+// pattern is made of nothing else than dots, stars, groups and anchors, which fits every path.
 func regexMatch(pattern, s string, fold bool) (matches, known bool) {
 	if (!isASCII(s) || !isASCII(pattern)) && strings.ContainsAny(pattern, ".[") || fold && strings.Contains(pattern, "[^") {
 		// A locale decides what . and a bracket take outside ASCII, and a case-folded negated bracket has no bound the reader proves.
@@ -479,18 +482,11 @@ func regexMatch(pattern, s string, fold bool) (matches, known bool) {
 		// Dots, stars, groups and anchors only (.*, (.*), ^.*$, .+): the pattern fits every path.
 		return true, true
 	}
-	if strings.ContainsAny(pattern, "(){}|+?") {
+	goRe, ok := regexToGo(pattern)
+	if !ok {
 		return false, false
 	}
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] == '\\' {
-			if i+1 >= len(pattern) || isAlnum(pattern[i+1]) {
-				return false, false
-			}
-			i++
-		}
-	}
-	p := "^(?s:" + strings.TrimSuffix(strings.TrimPrefix(pattern, "^"), "$") + ")$"
+	p := "^(?s:" + goRe + ")$"
 	if fold {
 		p = "(?i)" + p
 	}
@@ -499,6 +495,102 @@ func regexMatch(pattern, s string, fold bool) (matches, known bool) {
 		return false, false
 	}
 	return re.MatchString(s), true
+}
+
+// regexToGo translates the part of a find regular expression that means the same in every dialect and in Go (see regexMatch); ok
+// is false for any other syntax.
+func regexToGo(pattern string) (string, bool) {
+	var b strings.Builder
+	n := len(pattern)
+	i := 0
+	if i < n && pattern[i] == '^' {
+		i++
+	}
+	atStart := true
+	for i < n {
+		c := pattern[i]
+		switch {
+		case c == '*':
+			if atStart {
+				// A leading * is a plain character in some dialects and an operator in Go.
+				return "", false
+			}
+			b.WriteByte('*')
+			i++
+		case c == '.':
+			b.WriteByte('.')
+			i++
+		case c == '$':
+			if i != n-1 {
+				return "", false
+			}
+			i++
+		case c == '^':
+			return "", false
+		case c == '\\':
+			if i+1 >= n || !strings.ContainsRune(`\.*[]^$/`, rune(pattern[i+1])) {
+				return "", false
+			}
+			b.WriteString(regexp.QuoteMeta(pattern[i+1 : i+2]))
+			i += 2
+		case c == '[':
+			end, class, ok := regexBracket(pattern, i)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(class)
+			i = end + 1
+		case strings.IndexByte("(){}|+?]", c) >= 0:
+			return "", false
+		default:
+			b.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+			i++
+		}
+		atStart = false
+	}
+	return b.String(), true
+}
+
+// regexBracket reads the bracket expression that starts at pattern[i] ('['): end is the index of its closing ']' and class its Go
+// spelling. Only characters, ranges and POSIX classes are read; a backslash, a collating symbol, an equivalence class or an
+// unknown class is not.
+func regexBracket(pattern string, i int) (end int, class string, ok bool) {
+	j := i + 1
+	var body strings.Builder
+	body.WriteByte('[')
+	if j < len(pattern) && pattern[j] == '^' {
+		body.WriteByte('^')
+		j++
+	}
+	first := true
+	for j < len(pattern) {
+		c := pattern[j]
+		switch {
+		case c == ']' && !first:
+			body.WriteByte(']')
+			return j, body.String(), true
+		case c == ']':
+			body.WriteString(`\]`)
+			j++
+		case c == '[':
+			if j+1 >= len(pattern) || pattern[j+1] != ':' {
+				return 0, "", false
+			}
+			k := strings.Index(pattern[j+2:], ":]")
+			if k < 0 || !posixClasses[pattern[j+2:j+2+k]] {
+				return 0, "", false
+			}
+			body.WriteString("[:" + pattern[j+2:j+2+k] + ":]")
+			j += k + 4
+		case c == '\\':
+			return 0, "", false
+		default:
+			body.WriteByte(c)
+			j++
+		}
+		first = false
+	}
+	return 0, "", false
 }
 
 func isASCII(s string) bool {

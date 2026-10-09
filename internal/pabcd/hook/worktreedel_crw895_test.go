@@ -107,7 +107,7 @@ func crw895Shapes() []crw895Shape {
 		{`find ../repo -regex ".*\'" -delete`, true, false},
 		{`find ../repo -regex ".*\'" -exec git worktree remove --force {} \;`, true, false},
 		{`find ../repo -regex '.*po\>' -delete`, true, false},
-		{`find ../repo -regex '\`+"`"+`.*' -delete`, true, false},
+		{`find ../repo -regex '\` + "`" + `.*' -delete`, true, false},
 		{`find ../repo -regex '.*[\.]po' -delete`, true, false},
 		{`find .. -maxdepth 0 -regex ".*\'" -exec rm -rf {} +`, true, false},
 		{`find . -regex '.*/build/.*[0-9]' -delete`, false, false},

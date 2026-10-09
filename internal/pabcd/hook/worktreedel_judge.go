@@ -236,7 +236,7 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 			if deleter == "" {
 				continue
 			}
-			if v = worktreeDelJudgeFindWords(e, deleter, id); v.Deny {
+			if v = worktreeDelJudgeFindWords(f, e, deleter, id); v.Deny {
 				return v
 			}
 			at := e
@@ -244,7 +244,12 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 			if v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, at, id, "-exec "+deleter); v.Deny {
 				return v
 			}
-			v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, e, id, "-exec "+deleter)
+			// The paths find found resolve from the directory the program runs in only where one of its words holds them ({}); a
+			// program that moved to a directory the reader does not know (cd {}) and names nothing of what find found does not
+			// read the start points again from there.
+			if e.Dir.Known || worktreeDelReplaceUsed(e, "{}") {
+				v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, e, id, "-exec "+deleter)
+			}
 		case "xargs":
 			v = worktreeDelJudgeXargs(f, e, id)
 		}
@@ -255,21 +260,47 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	return GuardVerdict{}
 }
 
-// worktreeDelJudgeFindWords refuses a word of a removal that find runs where {} stands after other text (../{}) or with a ..
-// component ({}/../..): find puts each path it finds in place of {}, at a depth the reader does not know, so such a word names a path
-// the start points do not bound. {} alone, ./{} and {} with a suffix ({}.tmp, {}/x) stay at or below the path find found.
-func worktreeDelJudgeFindWords(e shellir.Exec, deleter string, id WorktreeIdentity) GuardVerdict {
+// worktreeDelJudgeFindWords refuses a word of a removal that find runs where {} is joined to other text so that the path it builds
+// is not bounded by the start points. find puts each path it finds in place of {}: the start point as it was written, or a path
+// below it. So the word is its text before {}, then the start point (or a path below), then its text after {}. A ".." component
+// after {}, a start point with a ".." component under a prefix, and a prefix and start point that together name the worktree, its
+// slot or an ancestor (../{} from the checkout, a prefix spelled to end in the name of a start) are refused; a prefix such as
+// build/ or /tmp/stash/ keeps the word below that directory.
+func worktreeDelJudgeFindWords(f *shellir.Feed, e shellir.Exec, deleter string, id WorktreeIdentity) GuardVerdict {
+	starts := f.Starts
+	if len(starts) == 0 {
+		starts = []shellir.Word{{Known: true, Value: "."}}
+	}
+	deny := func(word string) GuardVerdict {
+		return GuardVerdict{Deny: true, Reason: denyReason("find -exec "+deleter+" "+word+" (a path find builds from {} that its start points do not bound)", id)}
+	}
 	for _, a := range e.Args {
 		k := strings.Index(a.Value, "{}")
 		if !a.Known || k < 0 {
 			continue
 		}
-		climbs := false
-		for _, part := range strings.Split(a.Value, "/") {
-			climbs = climbs || part == ".."
+		for _, part := range strings.Split(a.Value[k+2:], "/") {
+			if part == ".." {
+				return deny(a.Value)
+			}
 		}
-		if prefix := a.Value[:k]; climbs || prefix != "" && prefix != "./" {
-			return GuardVerdict{Deny: true, Reason: denyReason("find -exec "+deleter+" "+a.Value+" (a path find builds from {} that its start points do not bound)", id)}
+		prefix := a.Value[:k]
+		if prefix == "" || prefix == "./" {
+			continue
+		}
+		for _, s := range starts {
+			if !s.Known {
+				return deny(a.Value)
+			}
+			for _, part := range strings.Split(s.Value, "/") {
+				if part == ".." {
+					return deny(a.Value)
+				}
+			}
+			word := strings.ReplaceAll(a.Value, "{}", s.Value)
+			if ancestor, self := worktreeDelTargetKind(word, e.Dir, id); ancestor || self {
+				return deny(a.Value)
+			}
 		}
 	}
 	return GuardVerdict{}
