@@ -195,3 +195,70 @@ func TestDoctorRootedReadClassifiesMissingAndDirectory(t *testing.T) {
 		t.Fatalf("a path outside the root: err = %v, want escape", err)
 	}
 }
+
+// CRW-1015 E1: a file the root can see but cannot open (mode 000 for an unprivileged user) is not
+// absent. Only a name the root cannot reach is "missing"; an open that fails for any other reason
+// is the read's own error, as the stat-then-ReadFile it replaces gave it.
+func rootedUnreadable(t *testing.T) (plugin, file string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root opens a mode 000 file")
+	}
+	plugin, link, _ := rootedPlugin(t, `{"version":"1.0.0","mcpServers":"./real.json"}`)
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	file = filepath.Join(plugin, "real.json")
+	if err := os.Chmod(file, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(file, 0o644) })
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the fixture file must stat: %v", err)
+	}
+	return plugin, file
+}
+
+func TestDoctorRootedReadKeepsAnOpenFailureThatIsNotAbsence(t *testing.T) {
+	plugin, file := rootedUnreadable(t)
+	_, err := doctorRootedRead(plugin, file)
+	if err == nil {
+		t.Fatal("a mode 000 file was read")
+	}
+	if errors.Is(err, errDoctorRootMissing) || errors.Is(err, errDoctorRootEscape) {
+		t.Fatalf("err = %v, want the read's own permission error, not a missing or escape verdict", err)
+	}
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("err = %v, want EACCES", err)
+	}
+}
+
+func TestHarnessDriftMCPUnreadableFileIsNotReportedMissing(t *testing.T) {
+	plugin, _ := rootedUnreadable(t)
+	checks := HarnessDriftChecks(plugin)
+	mcp := checks[1]
+	if mcp.Name != "drift:mcp" || mcp.Severity != HarnessFail {
+		t.Fatalf("drift:mcp = %+v, want FAIL", mcp)
+	}
+	if strings.Contains(mcp.Evidence, "file is missing") || !strings.Contains(mcp.Evidence, "permission denied") {
+		t.Fatalf("drift:mcp = %+v, want the permission failure, not missing", mcp)
+	}
+}
+
+func TestManifestTargetsUnreadableFileIsAReadErrorNotMissing(t *testing.T) {
+	plugin, _ := rootedUnreadable(t)
+	issues, err := ValidateManifestTargets(plugin)
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("MCP file: issues = %+v, err = %v, want the EACCES read error", issues, err)
+	}
+	plugin, file := rootedUnreadable(t)
+	manifest := filepath.Join(plugin, ".codex-plugin", "plugin.json")
+	if werr := os.WriteFile(manifest, []byte(`{"hooks":["./real.json"]}`), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	_ = file
+	issues, err = ValidateManifestTargets(plugin)
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("hook file: issues = %+v, err = %v, want the EACCES read error", issues, err)
+	}
+}

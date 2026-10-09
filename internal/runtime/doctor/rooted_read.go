@@ -67,6 +67,9 @@ func doctorRootedRead(pluginRoot, path string) ([]byte, error) {
 	}
 	file, err := rooted.Open(within)
 	if err != nil {
+		if doctorRootedOpenIsRead(err) {
+			return nil, err
+		}
 		return nil, doctorRootedClassify(path, err)
 	}
 	defer file.Close()
@@ -81,8 +84,10 @@ func doctorRootedRead(pluginRoot, path string) ([]byte, error) {
 }
 
 // doctorRootedClassify turns the Root's answer into the sentinel the callers act on. A name the
-// root cannot reach for any reason but an escape (absent, not a directory on the way, a link loop)
-// is "missing", the answer the stat these callers made before gave. An escape stays an escape,
+// root's stat cannot reach for any reason but an escape (absent, not a directory on the way, a link
+// loop) is "missing", the answer the stat these callers made before gave. An open that fails after
+// that stat succeeded is "missing" only when it found nothing to open (doctorRootedOpenIsRead);
+// any other open failure is returned as the read's own error. An escape stays an escape,
 // with one exception: a link that leaves the root toward a file that does not exist is missing, as
 // the paired walk of targetEscapesRoot judges it (CRW-652); the stat that decides it reads no
 // content, so a swap around it can change the finding but never what is read.
@@ -94,6 +99,19 @@ func doctorRootedClassify(path string, err error) error {
 		}
 	}
 	return &doctorRootedError{kind: errDoctorRootMissing, cause: err}
+}
+
+// doctorRootedOpenIsRead tells an open that failed on the file itself -- the name was reachable, the
+// stat before it succeeded, and the open was refused (EACCES, EIO, EMFILE, ...) -- from one that
+// found nothing to open. The first does not prove absence: it stays the read's own error, as the
+// ReadFile after a stat gave it. An escape, and a name that vanished or turned into a link loop
+// between the stat and the open, go to doctorRootedClassify.
+func doctorRootedOpenIsRead(err error) bool {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && pathErr.Err.Error() == hookTrustEntriesRootEscape {
+		return false
+	}
+	return !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) && !errors.Is(err, syscall.ELOOP)
 }
 
 // doctorRootedWithin is the real path of the plugin root and the name of path under it. The name
