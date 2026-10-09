@@ -23,13 +23,14 @@ import (
 // docs/port-cxc/known-defects.md:
 //   - the project layer is dropped (decision 7), so the trust warning is empty: trustPrefix is applied, but nothing sets it;
 //   - the oracle's :1030-1046 branches for an empty guard are ported in spawnHookRoutePrompt, but the guard is never empty;
-//   - a tool_input nested past 4,400 levels prints nothing, where the oracle's JSON.stringify fails near 4,458 at Node 24's default
-//     stack (the threshold depends on the stack size); the payload is still read at any depth, as JSON.parse reads it, so a subagent's
+//   - a tool_input nested past 4,463 levels prints nothing, where the oracle's JSON.stringify fails past 4,462 levels of junk inside
+//     tool_input at Node 24's default stack, measured by the spawn recorder (the threshold depends on the stack size, the platform
+//     and the depth of the caller, CRW-749); the payload is still read at any depth, as JSON.parse reads it, so a subagent's
 //     recursion is still denied (spawnHookRouteLoad keeps the parser from recursing over a depth it cannot hold).
 
 const (
 	spawnHookRouteMaxInput = 4 * 1024 * 1024
-	spawnHookRouteMaxDepth = 4400 // V8's JSON.stringify fails near 4,458 levels at Node 24's default stack
+	spawnHookRouteMaxDepth = 4463 // V8's JSON.stringify fails past 4,462 levels of junk inside tool_input at Node 24's default stack (tool_input is level 1)
 )
 
 // RunSpawnAttachHook is runSpawnAttachHook: the hook output for one PreToolUse payload, "" to allow it untouched, a deny envelope, or

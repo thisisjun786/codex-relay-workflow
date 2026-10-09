@@ -4121,6 +4121,20 @@
      "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
      "classification": "intentionally-changed",
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "4,462 levels inside tool_input, the deepest the oracle can still write: the allow envelope is printed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"agent_type\":\"explorer\",\"junk\":{{FILL:[:4462}}{{FILL:]:4462}}}}",
+     "expectSha256": "622d5b806d8ae3c49fb44a78a02644216094e239910bfb70520d7d5e90223ccc",
+     "expectBytes": 9632,
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "4,463 levels inside tool_input, one past the oracle edge: the answer cannot be written, nothing is printed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"agent_type\":\"explorer\",\"junk\":{{FILL:[:4463}}{{FILL:]:4463}}}}",
+     "expect": "",
+     "classification": "identical"
     }
    ]
   },
