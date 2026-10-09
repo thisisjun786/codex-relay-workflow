@@ -11,7 +11,10 @@
 // unreadable file and the verdict goes to the MarkerWriter instead; the same rule holds in ResolveTombstone (budget.go), where
 // a list the read cut or repaired is not written back. Two are security weaknesses of the second part: a link planted at the
 // marker directory made the marker and the probe appear outside the workspace (unrecordable.go), and a resolve without an agent
-// id removed the tombstones of other agents without ids (budget.go).
+// id removed the tombstones of other agents without ids (budget.go). The 10-10 review fixed more, each recorded in its issue's
+// file under docs/port-cxc/known-defects/: the evidence assignment of a worker in an assigned tree (CRW-1115, assignment.go), one
+// counter reader, the tuple lock and exact session ownership (CRW-1106, attempts.go and budget.go), verdicts past the 64-entry cap
+// (CRW-1110, overflow.go), and the last marker line and names that start with two dots (CRW-1112, this file).
 //
 // Differences that no recorded case or fixture shows:
 //
