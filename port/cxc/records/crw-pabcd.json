@@ -223,7 +223,7 @@
     },
     {
       "file": "references/phase-audit.md",
-      "reason": "CRW-1116: name the reviewer's closing line VERDICT: GO-WITH-FIXES (blockers=N) as the form the observer records, with the attest auditResidual disposing of each blocker.",
+      "reason": "CRW-1116: name the reviewer's closing line VERDICT: GO-WITH-FIXES (blockers=N) as the form the observer records, with the attest auditResidual disposing of each blocker. The A>B attest names auditBlockers for the blockers of a recorded GO-WITH-FIXES (blockers=N) round.",
       "hunks": [
         {
           "line": 3,
@@ -231,7 +231,7 @@
             "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
           ],
           "new": [
-            "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser; the reviewer's own closing line is `VERDICT: GO-WITH-FIXES (blockers=N)`, which the observer records as a near-pass with its count, and the attest's `auditResidual` then says whether each blocker was folded or rebutted). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
+            "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser; the reviewer's own closing line is `VERDICT: GO-WITH-FIXES (blockers=N)`, which the observer records as a near-pass with its count, and the attest's `auditBlockers` then gives each blocker its disposition, folded or rebutted, with the reason). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted); when the recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` it also requires `auditBlockers`, one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N (the gate checks that form, in any language, never the prose of `auditResidual`). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
           ]
         }
       ]
@@ -253,7 +253,7 @@
     },
     {
       "file": "references/phase-control.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left.",
       "hunks": [
         {
           "line": 20,
@@ -262,6 +262,47 @@
           ],
           "new": [
             "Accepted prefixes include `$crw-pabcd`,\n"
+          ]
+        },
+        {
+          "line": 61,
+          "old": [
+            "| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual` | FAIL never advances |\n"
+          ],
+          "new": [
+            "| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual`; a recorded `GO-WITH-FIXES (blockers=N)` adds `auditBlockers` | FAIL never advances |\n"
+          ]
+        },
+        {
+          "line": 72,
+          "old": [
+            "{\"from\":\"A\",\"to\":\"B\",\"did\":\"folded 2 blockers, rebutted 1\",\"auditOutput\":\"<pasted reviewer verdict tail>\",\"auditVerdict\":\"near-pass\",\"auditResidual\":\"GO-WITH-FIXES; blocker 1 folded, blocker 2 rebutted because ...\",\"workPhaseId\":\"wp1\"}\n"
+          ],
+          "new": [
+            "{\"from\":\"A\",\"to\":\"B\",\"did\":\"folded 1 blocker, rebutted 1\",\"auditOutput\":\"<pasted reviewer verdict tail>\",\"auditVerdict\":\"near-pass\",\"auditResidual\":\"GO-WITH-FIXES (blockers=2); blocker 1 folded, blocker 2 rebutted because ...\",\"auditBlockers\":[{\"blocker\":1,\"disposition\":\"folded\",\"reason\":\"<how the plan changed>\"},{\"blocker\":2,\"disposition\":\"rebutted\",\"reason\":\"<why it does not hold>\"}],\"workPhaseId\":\"wp1\"}\n"
+          ]
+        },
+        {
+          "line": 77,
+          "old": [
+            "Omit `workPhaseId` when no goalplan is bound, and `testReceiptPath` when the\n",
+            "session is unbound. Everything else is mandatory on that edge.\n"
+          ],
+          "new": [
+            "Omit `workPhaseId` when no goalplan is bound, `testReceiptPath` when the\n",
+            "session is unbound, and `auditBlockers` when the recorded reviewer verdict has no `blockers=N`. Everything else is mandatory on that edge.\n"
+          ]
+        },
+        {
+          "line": 90,
+          "old": [
+            "`A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires\n",
+            "`auditResidual`.\n"
+          ],
+          "new": [
+            "`A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires\n",
+            "`auditResidual`, and a round whose recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` also requires\n",
+            "`auditBlockers`: one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N.\n"
           ]
         },
         {

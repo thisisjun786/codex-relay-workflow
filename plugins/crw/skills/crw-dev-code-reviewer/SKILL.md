@@ -101,7 +101,7 @@ renders in a report. A bare `VERDICT: GO-WITH-FIXES` still counts, with no count
 on `PASS` or `FAIL`, or a count that is zero, negative or not a number, is no verdict at
 all, and the round stays open. The dispatching agent's exit rule is AUDIT-LOOP-01
 (`crw-pabcd` §A): FAIL always triggers another round, and each blocker of a
-GO-WITH-FIXES is folded into the plan or rebutted in the attest's `auditResidual`.
+GO-WITH-FIXES is folded into the plan or rebutted, which the main agent records in the attest's `auditBlockers`.
 Every finding carries a concrete `trigger`, `impact`, and `path:line` (FAMILY-CITE-01) — no
 finding on a hunch. Do not file pre-existing debt unless the patch worsened it. When a change
 introduces a value/type/message crossing a module boundary, trace the consumer side before

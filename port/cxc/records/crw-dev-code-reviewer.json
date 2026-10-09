@@ -66,7 +66,7 @@
             "on `PASS` or `FAIL`, or a count that is zero, negative or not a number, is no verdict at\n",
             "all, and the round stays open. The dispatching agent's exit rule is AUDIT-LOOP-01\n",
             "(`crw-pabcd` §A): FAIL always triggers another round, and each blocker of a\n",
-            "GO-WITH-FIXES is folded into the plan or rebutted in the attest's `auditResidual`.\n"
+            "GO-WITH-FIXES is folded into the plan or rebutted, which the main agent records in the attest's `auditBlockers`.\n"
           ]
         }
       ]

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -88,25 +87,21 @@ func orchestrateReviewBindingCheckPlan(plan *goalplan.Goalplan, cur state.State,
 			return orchestrateReviewBindingRefuse(cur, a.Verb, sessionID,
 				`you attested "`+attested+`" but the reviewer recorded "`+string(round.Lane.Verdict)+`"`)
 		}
-		// CRW-1116 (port: fixed). A reviewer that answered GO-WITH-FIXES (blockers=N) left N unresolved blockers, and the attest
-		// of this edge is where each gets its disposition: folded into the plan or rebutted with the reason. The oracle never saw
-		// the count, so the attest's near-pass needed only a nonempty auditResidual. A recorded count asks that residual to say
-		// what happened to the blockers; the near-pass itself stays allowed (AUDIT-LOOP-01), and a round with no recorded verdict
-		// or a bare verdict (no count) asks for nothing more (LEAN-REVIEW-01).
-		if round.Lane.Blockers > 0 && round.Lane.Verdict == goalplan.VerdictNearPass && !orchestrateReviewBindingDisposes(a.Attest.AuditResidual) {
+		// CRW-1116 (port: fixed). A reviewer that answered GO-WITH-FIXES (blockers=N) left N unresolved blockers, and the attest of
+		// this edge is where each gets its disposition: folded into the plan or rebutted with the reason. The oracle never saw the
+		// count, so the attest's near-pass needed only a nonempty auditResidual. A recorded count asks for auditBlockers, one
+		// structured entry per blocker ({blocker, disposition: folded|rebutted, reason}). The form is checked, never the prose:
+		// auditResidual stays the main agent's own words in any language, and whether a reason is sound is its judgment. The
+		// near-pass itself stays allowed (AUDIT-LOOP-01), and a round with no recorded verdict or a bare verdict (no count) asks
+		// for nothing more (LEAN-REVIEW-01).
+		if round.Lane.Blockers > 0 && round.Lane.Verdict == goalplan.VerdictNearPass && !a.Attest.DisposesBlockers(round.Lane.Blockers) {
 			return orchestrateReviewBindingRefuse(cur, a.Verb, sessionID,
 				"round "+round.RoundID+" recorded GO-WITH-FIXES (blockers="+strconv.Itoa(round.Lane.Blockers)+
-					"), so auditResidual must say what became of each blocker: folded into the plan, or rebutted with the reason")
+					`), so the attest must carry "auditBlockers": one entry per blocker 1..`+strconv.Itoa(round.Lane.Blockers)+
+					` as {"blocker":<n>,"disposition":"folded"|"rebutted","reason":"<why>"}, each blocker folded into the plan or rebutted with the reason`)
 		}
 	}
 	return nil
-}
-
-// orchestrateReviewBindingDisposes reports whether an auditResidual names a disposition at all: a word that begins fold or rebut
-// (folded, folded back, rebutted, rebuttal), in any case. It does not judge the reasons; the main agent's own verdict does.
-func orchestrateReviewBindingDisposes(residual string) bool {
-	lower := strings.ToLower(residual)
-	return strings.Contains(lower, "fold") || strings.Contains(lower, "rebut")
 }
 
 // orchestrateReviewBindingActiveWorkPhase is `${activeWp ?? "none"}` (:84): only an absent binding
