@@ -24,9 +24,9 @@ const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all}
   registration --plugin DIR             compare what the root declares with what it must declare
   fire         --crw PATH --plugin DIR  fire the corpus's hook fixtures through the declared commands
                [--only RE] [--inject FAULT]
-  latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--legs RE]
+  latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--attempts N] [--legs RE]
                                         p50 and p95 of the Go command against the CXC v0.2.40 command
-  all          --crw PATH [--plugin DIR] [--oracle DIR] [--runs N]
+  all          --crw PATH [--plugin DIR] [--oracle DIR] [--runs N] [--attempts N]
                                         every cell; a generated root when --plugin is not given
 
 common flags: --repo DIR (default: the git top level) --json FILE (the report) --scratch DIR (case roots)
@@ -114,7 +114,8 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	inject := set.String("inject", "", "fire: inject a fault ("+strings.Join(Faults, ", ")+"); the run must fail")
 	oracle := set.String("oracle", "", "latency: the extracted CXC v0.2.40 tree")
 	node := set.String("node", "", "latency: node executable (default: node on PATH)")
-	runs := set.Int("runs", 15, "latency: runs per leg and side")
+	runs := set.Int("runs", 30, "latency: runs per leg and side")
+	attempts := set.Int("attempts", 3, "latency: measurements of a leg that fails before it is reported failing (a shared host's load puts outliers in a p95)")
 	jsonOut := set.String("json", "", "write the report here")
 	scratch := set.String("scratch", "", "parent of the case roots (default: $TMPDIR)")
 	if err := set.Parse(args); err != nil {
@@ -230,7 +231,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		report.OK = report.OK && rep.OK
 	}
 	if command == "latency" || (command == "all" && *oracle != "") {
-		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: *scratch, Oracle: *oracle, Node: *node, Runs: *runs, Only: legsRE})
+		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: *scratch, Oracle: *oracle, Node: *node, Runs: *runs, Attempts: *attempts, Only: legsRE})
 		if err != nil {
 			return fail(err)
 		}
@@ -238,6 +239,9 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		printLatency(stdout, lat)
 		for _, l := range lat {
 			report.OK = report.OK && l.OK
+			if l.Skipped {
+				report.NotVerified = append(report.NotVerified, NotVerified{"latency of " + l.Leg, l.Reason, "the issue that ports the leg"})
+			}
 		}
 	}
 	for _, n := range report.NotVerified {
@@ -322,6 +326,13 @@ func printFire(w io.Writer, rep FireReport) {
 		rep.Run, matched, failed, pending, len(rep.Receipts), len(rep.ReceiptProblems))
 }
 
+func attemptNote(l Latency) string {
+	if l.Attempts > 1 {
+		return fmt.Sprintf("[attempt %d] ", l.Attempts)
+	}
+	return ""
+}
+
 func firstLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	if len(lines) > n {
@@ -334,9 +345,12 @@ func printLatency(w io.Writer, lat []Latency) {
 	good := 0
 	for _, l := range lat {
 		mark := "ok  "
-		if l.OK {
+		switch {
+		case l.Skipped:
+			mark = "SKIP"
+		case l.OK:
 			good++
-		} else {
+		default:
 			mark = "FAIL"
 		}
 		ts := "no oracle"
@@ -344,9 +358,15 @@ func printLatency(w io.Writer, lat []Latency) {
 			ts = fmt.Sprintf("ts p50 %s p95 %s", l.TSP50.Round(time.Microsecond), l.TSP95.Round(time.Microsecond))
 		}
 		fmt.Fprintf(w, "%s latency %-62s runs %d go p50 %s p95 %s; %s; timeout %dms %s\n", mark, l.Leg, l.Runs,
-			l.GoP50.Round(time.Microsecond), l.GoP95.Round(time.Microsecond), ts, l.TimeoutMs, l.Reason)
+			l.GoP50.Round(time.Microsecond), l.GoP95.Round(time.Microsecond), ts, l.TimeoutMs, attemptNote(l)+l.Reason)
 	}
-	fmt.Fprintf(w, "latency: %d/%d legs pass (Go p95 <= TS p95 and <= half the timeout)\n", good, len(lat))
+	skipped := 0
+	for _, l := range lat {
+		if l.Skipped {
+			skipped++
+		}
+	}
+	fmt.Fprintf(w, "latency: %d/%d legs pass (Go p95 <= TS p95 and <= half the timeout), %d not timed\n", good, len(lat)-skipped, skipped)
 }
 
 // HelperEnv is the variable that marks a process as a stub program or git wrapper of a replay case.

@@ -54,6 +54,8 @@ type cxcReplayer struct {
 	// declared, when set, makes a hook step run the command the plugin root declares for its leg
 	// through /bin/sh -c, as the host does, instead of crw hook <event> --leg <leg> (FireHooks).
 	declared map[string]string
+	// light readies cases for timing (FireHooks): the real git and silent stubs, no helper process.
+	light bool
 	// observe sees the outcome of each replayed fixture before it is compared; mutate may change it
 	// first (a fault injected between the process and the comparison).
 	observe func(id string, got cxccorpus.Expect)
@@ -192,6 +194,13 @@ func (r *cxcReplayer) scenario(id string, fix cxccorpus.Fixture, claim cxcClaim)
 // this test binary (cxcHelper), with the variables that point at them.
 func (r *cxcReplayer) Setup(c *cxccorpus.Case, s cxccorpus.Scenario) error {
 	link := func(target, dir, name string) error { return os.Symlink(target, filepath.Join(c.Root, dir, name)) }
+	if r.light {
+		c.Env = append(c.Env, "CRW_BIN="+filepath.Join(c.Root, "bin", "crw"))
+		c.Env = append(c.Env, cxcClosedNetwork()...)
+		return errors.Join(link(r.crw, "bin", "crw"), link(r.git, "bin", "git"), cxccorpus.InstallStubs(c, s.Given, func(name string) error {
+			return os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte("#!/bin/sh\nexit 127\n"), 0o755)
+		}))
+	}
 	if err := errors.Join(link(r.crw, "bin", "crw"), link(r.exe, "bin", "git")); err != nil {
 		return err
 	}

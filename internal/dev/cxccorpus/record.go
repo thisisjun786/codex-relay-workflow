@@ -131,6 +131,11 @@ type Recorder struct {
 	Rules   *Normaliser
 	Timeout time.Duration
 	Keep    bool // keep case roots for inspection
+	// Light readies a case for timing, not for recording: the real git instead of the logging
+	// wrapper, stubs that only exit 127, and neither the fake clock nor the closed network, so no
+	// helper process costs a node start the other side does not pay. Nothing is logged in a light
+	// case, and its outcome is not a recording.
+	Light bool
 }
 
 // Check refuses a recorder whose scratch root could reach real state: it must be absolute,
@@ -211,6 +216,14 @@ func (r *Recorder) newCase(s Scenario) (*Case, error) {
 func (r *Recorder) Setup(c *Case, s Scenario) error {
 	if err := os.Symlink(r.Node, filepath.Join(c.Root, "bin", "node")); err != nil {
 		return err
+	}
+	if r.Light {
+		if err := os.Symlink(r.Git, filepath.Join(c.Root, "bin", "git")); err != nil {
+			return err
+		}
+		return InstallStubs(c, s.Given, func(name string) error {
+			return os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte("#!/bin/sh\nexit 127\n"), 0o755)
+		})
 	}
 	// The wrapper goes on PATH and the scenario runs it, so its descriptor is open only under
 	// syscall.ForkLock: a fork in that window would inherit it and leave the wrapper unexecutable

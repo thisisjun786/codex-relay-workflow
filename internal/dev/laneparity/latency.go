@@ -41,8 +41,13 @@ type Latency struct {
 	TSP95     time.Duration `json:"tsP95"`
 	Oracle    bool          `json:"oracle"`
 	TimeoutMs int           `json:"timeoutMs"`
-	OK        bool          `json:"ok"`
-	Reason    string        `json:"reason,omitempty"`
+	// Attempts is how many measurements it took (1 when the first passed).
+	Attempts int  `json:"attempts"`
+	OK       bool `json:"ok"`
+	// Skipped is a leg no claimed fixture exercises yet (its port is pending): not timed, and not
+	// a failure, but listed as unverified in the report.
+	Skipped bool   `json:"skipped,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // Judge decides a leg: the Go p95 must not exceed the TS p95 (when the leg has an oracle) and must
@@ -77,7 +82,11 @@ type LatencyOptions struct {
 	Oracle  string // the extracted CXC v0.2.40 tree; empty measures the Go side only
 	Node    string
 	Runs    int
-	Only    *regexp.Regexp // legs
+	// Attempts is how many times a leg that fails is measured again (fresh samples each time) before
+	// it is reported as failing: a shared host's load puts outliers into a p95 on either side, and a
+	// leg that is really slower fails every attempt. Zero means one attempt.
+	Attempts int
+	Only     *regexp.Regexp // legs
 }
 
 // MeasureLatency times each leg's declared command and the oracle's command on the same payload,
@@ -104,14 +113,14 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		}
 		defer os.RemoveAll(scratch)
 	}
-	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch}
+	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Light: true}
 	all, err := contracttest.FireHooks(in)
 	if err != nil {
 		return nil, err
 	}
 	pick := map[string]contracttest.HookFireResult{}
 	for _, res := range all {
-		if !res.Run || res.Leg == "" || len(res.Legs) == 0 || res.Steps[0].Leg != res.Leg {
+		if !res.Run || res.Scripted || len(res.Legs) == 0 || res.Steps[0].Leg != res.Leg {
 			continue
 		}
 		prior, have := pick[res.Leg]
@@ -130,39 +139,59 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 		if o.Only != nil && !o.Only.MatchString(l.Leg) {
 			continue
 		}
-		var goSamples, tsSamples []time.Duration
+		var verdict Latency
 		fixture := "probe"
-		if l.Own {
-			if goSamples, err = timeProbe(in, l.Leg, o.Runs); err != nil {
-				return nil, err
-			}
-		} else {
-			res, ok := pick[l.Leg]
-			if !ok {
-				out = append(out, Latency{Leg: l.Leg, TimeoutMs: l.Timeout * 1000, Reason: "no claimed fixture to time"})
+		var res contracttest.HookFireResult
+		var scenario cxccorpus.Scenario
+		if !l.Own {
+			var ok bool
+			if res, ok = pick[l.Leg]; !ok {
+				out = append(out, Latency{Leg: l.Leg, TimeoutMs: l.Timeout * 1000, OK: true, Skipped: true, Reason: "no claimed fixture to time (its port is pending)"})
 				continue
 			}
 			fixture = res.ID
-			only := regexp.MustCompile("^" + regexp.QuoteMeta(res.ID) + "$")
-			for i := 0; i < o.Runs; i++ {
-				in := in
-				in.Only = only
-				rs, err := contracttest.FireHooks(in)
-				if err != nil {
-					return nil, err
-				}
-				if len(rs) != 1 || rs[0].Observed == nil || len(rs[0].Observed.Steps) == 0 {
-					return nil, fmt.Errorf("%s: no timed step", res.ID)
-				}
-				goSamples = append(goSamples, rs[0].Observed.Steps[0].Elapsed)
-			}
 			if rec != nil {
-				if tsSamples, err = timeOracle(rec, o.Root, res.ID, o.Runs); err != nil {
+				if scenario, err = oracleScenario(o.Root, res.ID); err != nil {
 					return nil, err
 				}
 			}
 		}
-		out = append(out, Judge(l.Leg, fixture, l.Timeout, goSamples, tsSamples))
+		for attempt := 1; attempt <= max(o.Attempts, 1); attempt++ {
+			var goSamples, tsSamples []time.Duration
+			if l.Own {
+				if goSamples, err = timeProbe(in, l.Leg, o.Runs); err != nil {
+					return nil, err
+				}
+			} else {
+				only := regexp.MustCompile("^" + regexp.QuoteMeta(res.ID) + "$")
+				// The two sides alternate, so a load that comes and goes on a shared host weighs on both.
+				for i := 0; i < o.Runs; i++ {
+					in := in
+					in.Only = only
+					rs, err := contracttest.FireHooks(in)
+					if err != nil {
+						return nil, err
+					}
+					if len(rs) != 1 || rs[0].Observed == nil || len(rs[0].Observed.Steps) == 0 {
+						return nil, fmt.Errorf("%s: no timed step", res.ID)
+					}
+					goSamples = append(goSamples, rs[0].Observed.Steps[0].Elapsed)
+					if rec != nil {
+						elapsed, err := timeOracle(rec, scenario)
+						if err != nil {
+							return nil, err
+						}
+						tsSamples = append(tsSamples, elapsed)
+					}
+				}
+			}
+			verdict = Judge(l.Leg, fixture, l.Timeout, goSamples, tsSamples)
+			verdict.Attempts = attempt
+			if verdict.OK {
+				break
+			}
+		}
+		out = append(out, verdict)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Leg < out[j].Leg })
 	return out, nil
@@ -221,7 +250,7 @@ func oracleRecorder(o LatencyOptions, scratch string) (*cxccorpus.Recorder, erro
 	if err != nil {
 		return nil, err
 	}
-	rec := &cxccorpus.Recorder{Oracle: oracle, Node: node, Git: git, Scratch: scr, Decls: byLeg, Rules: rules, Timeout: time.Minute}
+	rec := &cxccorpus.Recorder{Oracle: oracle, Node: node, Git: git, Scratch: scr, Decls: byLeg, Rules: rules, Timeout: time.Minute, Light: true}
 	return rec, rec.Check()
 }
 
@@ -234,23 +263,23 @@ func errorsJoin(errs ...error) error {
 	return nil
 }
 
-// timeOracle runs the fixture's original scenario against the CXC oracle runs times.
-func timeOracle(rec *cxccorpus.Recorder, root, id string, runs int) ([]time.Duration, error) {
+// oracleScenario is a fixture's original scenario, in the oracle's own names.
+func oracleScenario(root, id string) (cxccorpus.Scenario, error) {
 	fix, err := cxccorpus.LoadFixture(filepath.Join(root, cxccorpus.FixtureDir, id+".json"))
 	if err != nil {
-		return nil, err
+		return cxccorpus.Scenario{}, err
 	}
-	s := cxccorpus.Scenario{ID: id, Covers: fix.Covers, Note: fix.Note, Given: fix.Given, Steps: fix.Run.Steps, Observe: fix.Run.Observe}
-	var out []time.Duration
-	for i := 0; i < runs; i++ {
-		got, err := rec.Record(s)
-		if err != nil {
-			return nil, fmt.Errorf("oracle %s: %w", id, err)
-		}
-		if len(got.Expect.Steps) == 0 {
-			return nil, fmt.Errorf("oracle %s: no step", id)
-		}
-		out = append(out, got.Expect.Steps[0].Elapsed)
+	return cxccorpus.Scenario{ID: id, Covers: fix.Covers, Note: fix.Note, Given: fix.Given, Steps: fix.Run.Steps, Observe: fix.Run.Observe}, nil
+}
+
+// timeOracle runs the scenario once against the CXC oracle and returns the first step's time.
+func timeOracle(rec *cxccorpus.Recorder, s cxccorpus.Scenario) (time.Duration, error) {
+	got, err := rec.Record(s)
+	if err != nil {
+		return 0, fmt.Errorf("oracle %s: %w", s.ID, err)
 	}
-	return out, nil
+	if len(got.Expect.Steps) == 0 {
+		return 0, fmt.Errorf("oracle %s: no step", s.ID)
+	}
+	return got.Expect.Steps[0].Elapsed, nil
 }

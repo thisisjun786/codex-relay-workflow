@@ -30,6 +30,9 @@ type HookFireInput struct {
 	Declared map[string]string // leg to the command line the plugin root declares for it
 	Scratch  string            // parent of the case roots of fixtures that do not depend on path length
 	Only     *regexp.Regexp    // fixture ids to fire (nil: every hook fixture)
+	// Light readies the cases for timing: the real git and silent stubs instead of helper processes
+	// that log calls. The outcome is not compared with the same strictness (no call is logged).
+	Light bool
 	// Mutate may change a fixture's observed outcome before it is compared, and Steps the steps a
 	// fixture runs (a fault injected between the process and the comparison, or into the delivery).
 	Mutate func(id string, got *cxccorpus.Expect)
@@ -59,6 +62,9 @@ type HookFireResult struct {
 	// Silent is whether the fixture expects no output and exit 0 on every step: a command that does
 	// nothing passes it too, so it is not evidence that the handler ran.
 	Silent bool
+	// Scripted is whether the fixture scripts the answers of stub programs: a light (timing) case
+	// answers none of them, so its timing is not that of the recorded run.
+	Scripted bool
 }
 
 // FireHooks fires every claimed hook fixture of the corpus through in.Declared and compares each
@@ -68,7 +74,7 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.plugin, r.declared, r.mutate = in.Plugin, in.Declared, in.Mutate
+	r.plugin, r.declared, r.mutate, r.light = in.Plugin, in.Declared, in.Mutate, in.Light
 	ids, fixtures, err := loadCXCFixtures(in.Root)
 	if err != nil {
 		return nil, err
@@ -86,7 +92,7 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 			continue
 		}
 		fix, claim := fixtures[id], claims[id]
-		res := HookFireResult{ID: id, State: claim.State, Silent: true}
+		res := HookFireResult{ID: id, State: claim.State, Silent: true, Scripted: len(fix.Given.Stubs) > 0}
 		for _, step := range fix.Run.Steps {
 			res.Steps = append(res.Steps, FiredStep{Leg: step.Hook, Payload: step.Stdin})
 			if step.Hook != "" {
@@ -154,7 +160,7 @@ func FireProbes(in HookFireInput, probes []Probe) ([]ProbeResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.plugin, r.declared = in.Plugin, in.Declared
+	r.plugin, r.declared, r.light = in.Plugin, in.Declared, in.Light
 	syscall.Umask(0o022)
 	var out []ProbeResult
 	for _, p := range probes {

@@ -4,6 +4,7 @@ package laneparity
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -177,5 +178,50 @@ func TestRun_registrationOfATamperedRootFails(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no registration starts this leg") {
 		t.Errorf("output %.400q", out.String())
+	}
+}
+
+func TestMeasureLatency_timesTheGoSideAndJudgesItAgainstTheTimeout(t *testing.T) {
+	o := fireFixture(t)
+	lat, err := MeasureLatency(LatencyOptions{
+		Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Runs: 3, Attempts: 2,
+		Only: regexp.MustCompile(`^(session-start-announcing-map-affordance|pre-tool-use-guarding-github-post|subagent-stop-observing-review)$`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lat) != 3 {
+		t.Fatalf("%d legs timed: %+v", len(lat), lat)
+	}
+	for _, l := range lat {
+		switch l.Leg {
+		case "subagent-stop-observing-review":
+			if !l.Skipped || !l.OK || l.Runs != 0 {
+				t.Errorf("a leg no fixture exercises must be skipped, not failed: %+v", l)
+			}
+		default:
+			if l.Skipped || l.Runs != 3 || l.Oracle || l.GoP95 <= 0 || l.TimeoutMs != 10000 || l.Attempts < 1 {
+				t.Errorf("%s: %+v", l.Leg, l)
+			}
+		}
+	}
+}
+
+// With an oracle checkout (CXC_PARITY_ORACLE names the extracted v0.2.40 tree) the TS side is timed too.
+func TestMeasureLatency_againstTheOracle(t *testing.T) {
+	oracle := os.Getenv("CXC_PARITY_ORACLE")
+	if oracle == "" {
+		t.Skip("CXC_PARITY_ORACLE names the extracted CXC v0.2.40 tree; unset")
+	}
+	o := fireFixture(t)
+	lat, err := MeasureLatency(LatencyOptions{
+		Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Oracle: oracle, Runs: 5, Attempts: 3,
+		Only: regexp.MustCompile(`^session-start-announcing-map-affordance$`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lat) != 1 || !lat[0].Oracle || lat[0].TSP95 <= 0 || !lat[0].OK {
+		t.Fatalf("%+v", lat)
 	}
 }
