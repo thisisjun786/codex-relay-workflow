@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,8 @@ const (
 	// refactorBacklogSource is the fragment tree, refactorBacklogTarget the file it builds.
 	refactorBacklogSource = "docs/port/refactor-backlog.d"
 	refactorBacklogTarget = "docs/port/refactor-backlog.md"
+	// refactorBacklogPortDir is the directory both live in; a tree that has it and neither is missing the backlog.
+	refactorBacklogPortDir = "docs/port"
 	// refactorBacklogSection is the fragment a section directory holds first: its heading, prose
 	// and the entries written before the tree was split.
 	refactorBacklogSection = "_section.md"
@@ -29,8 +32,9 @@ const (
 	refactorBacklogDrift = "edit the fragments under docs/port/refactor-backlog.d and run crw-dev ci refactor-backlog --write"
 )
 
-// refactorBacklogEntry matches the tag an entry bullet opens with, which is the entry identity:
-// a branch that predates the fragments adds one, and a rename keeps the bullet but changes this.
+// refactorBacklogEntry matches the tag an entry bullet opens with. It is how an entry whose fragment
+// was edited is paired with its old line (refactorBacklogDropped); it is not the entry identity,
+// because tags repeat.
 var refactorBacklogEntry = regexp.MustCompile(`^- \[[^\]]+\]`)
 
 // RefactorBacklog is the crw-dev ci refactor-backlog check: --write regenerates the committed file
@@ -63,9 +67,13 @@ func RefactorBacklog(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "refactor-backlog: %s", err)
 		}
-		if dropped := refactorBacklogDropped(target, text); len(dropped) > 0 {
-			return failf(stderr, "%s holds entries no fragment produces: %s; move each into the fragment of its section under %s and run --write again",
-				refactorBacklogTarget, strings.Join(dropped, ", "), refactorBacklogSource)
+		dropped, err := refactorBacklogDropped(target, text)
+		if err != nil {
+			return failf(stderr, "refactor-backlog: %s", err)
+		}
+		if len(dropped) > 0 {
+			return failf(stderr, "%s holds entries no fragment produces: %s; move each into the fragment of its section under %s and run --write again (an entry removed from its fragment is removed from the file by hand first)",
+				refactorBacklogTarget, strings.Join(quoted(dropped), "; "), refactorBacklogSource)
 		}
 		if err := os.WriteFile(target, []byte(text), 0o644); err != nil {
 			return failf(stderr, "refactor-backlog: %s", err)
@@ -80,44 +88,98 @@ func RefactorBacklog(args []string, stdout, stderr io.Writer) int {
 }
 
 // refactorBacklogPaths resolves the fragment tree and the generated file below root. ok is false
-// when neither exists, which is a tree the check has nothing to say about. The file without its
-// source is refused: nothing could then keep the two in step.
+// only for a tree that has no backlog component at all: neither the fragments nor the file, and no
+// docs/port directory that would hold them (every validate fixture has this shape). A tree with
+// docs/port that lost both is refused, and so is a stat error other than "does not exist": a
+// permission error is not the answer "absent". The file without its source is refused too: nothing
+// could then keep the two in step.
 func refactorBacklogPaths(root string) (source, target string, ok bool, err error) {
 	source = filepath.Join(root, refactorBacklogSource)
 	target = filepath.Join(root, refactorBacklogTarget)
-	if _, statErr := os.Stat(source); statErr != nil {
-		if _, statErr := os.Stat(target); statErr == nil {
-			return "", "", false, fmt.Errorf("%s exists but its source %s is missing", refactorBacklogTarget, refactorBacklogSource)
-		}
-		return "", "", false, nil
+	_, sourceErr := os.Stat(source)
+	if sourceErr == nil {
+		return source, target, true, nil
 	}
-	return source, target, true, nil
+	if !errors.Is(sourceErr, fs.ErrNotExist) {
+		return "", "", false, sourceErr
+	}
+	if _, targetErr := os.Stat(target); targetErr == nil {
+		return "", "", false, fmt.Errorf("%s exists but its source %s is missing", refactorBacklogTarget, refactorBacklogSource)
+	} else if !errors.Is(targetErr, fs.ErrNotExist) {
+		return "", "", false, targetErr
+	}
+	if _, portErr := os.Stat(filepath.Join(root, refactorBacklogPortDir)); portErr == nil {
+		return "", "", false, fmt.Errorf("neither %s nor %s exists in a tree that holds %s", refactorBacklogSource, refactorBacklogTarget, refactorBacklogPortDir)
+	} else if !errors.Is(portErr, fs.ErrNotExist) {
+		return "", "", false, portErr
+	}
+	return "", "", false, nil
 }
 
-// refactorBacklogDropped is the entry tags the committed file carries and the assembly does not.
-// Writing the assembly would delete those entries, which is how an entry a branch added before the
-// fragments existed disappears when the generated file is regenerated. The write refuses instead, so
-// the entry is moved into a fragment of its section rather than lost.
-func refactorBacklogDropped(target, assembly string) []string {
+// refactorBacklogDropped is the entries the committed file carries and the assembly does not, as
+// the lines themselves (with their tag). Writing the assembly would delete those entries, which is
+// how an entry a branch added before the fragments existed disappears when the generated file is
+// regenerated. The write refuses instead, so the entry is moved into a fragment of its section
+// rather than lost.
+//
+// An entry is its whole line, because tags repeat (one tag opens many entries of the repository's
+// file). Lines equal to an assembled line are matched one for one first. A committed line left over
+// is an entry whose fragment was edited since the file was generated, and is accepted only when an
+// assembled line of the same tag is left over to take its place; a leftover with no partner (an
+// entry added by hand, or one more under a repeated tag) is dropped. A generated file that is
+// absent has nothing to lose; one that cannot be read is an error.
+func refactorBacklogDropped(target, assembly string) ([]string, error) {
 	committed, err := readText(target)
-	if err != nil {
-		return nil
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	produced := map[string]bool{}
+	if err != nil {
+		return nil, err
+	}
+	produced := map[string]int{}
 	for _, line := range lines(assembly) {
-		if tag := refactorBacklogEntry.FindString(line); tag != "" {
-			produced[tag] = true
+		if refactorBacklogEntry.MatchString(line) {
+			produced[refactorBacklogNormal(line)]++
 		}
+	}
+	var leftover []string
+	for _, line := range lines(committed) {
+		if !refactorBacklogEntry.MatchString(line) {
+			continue
+		}
+		if key := refactorBacklogNormal(line); produced[key] > 0 {
+			produced[key]--
+			continue
+		}
+		leftover = append(leftover, line)
+	}
+	free := map[string]int{} // assembled lines no committed line matched, by tag
+	for key, n := range produced {
+		free[refactorBacklogEntry.FindString(key)] += n
 	}
 	var dropped []string
-	seen := map[string]bool{}
-	for _, line := range lines(committed) {
-		if tag := refactorBacklogEntry.FindString(line); tag != "" && !produced[tag] && !seen[tag] {
-			seen[tag] = true
-			dropped = append(dropped, tag)
+	for _, line := range leftover {
+		tag := refactorBacklogEntry.FindString(refactorBacklogNormal(line))
+		if free[tag] > 0 {
+			free[tag]--
+			continue
 		}
+		dropped = append(dropped, refactorBacklogShown(line))
 	}
-	return dropped
+	return dropped, nil
+}
+
+// refactorBacklogNormal is an entry line as it is compared: without trailing white space or a CR.
+func refactorBacklogNormal(line string) string { return strings.TrimRight(line, " \t\r") }
+
+// refactorBacklogShown is an entry line as the refusal prints it: the whole line up to a length that
+// still identifies it.
+func refactorBacklogShown(line string) string {
+	line = refactorBacklogNormal(line)
+	if runes := []rune(line); len(runes) > 120 {
+		return string(runes[:120]) + "..."
+	}
+	return line
 }
 
 // refactorBacklogError is the drift refusal for root, or nil when the tree holds no fragments or
@@ -133,6 +195,9 @@ func refactorBacklogError(root string) error {
 		return err
 	}
 	committed, err := readText(target)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	if err != nil || committed != text {
 		return errors.New(refactorBacklogDrift)
 	}
@@ -199,4 +264,13 @@ func assembleRefactorBacklogSection(dir string) (string, error) {
 		return section, nil
 	}
 	return section + "\n\n" + entries, nil
+}
+
+// quoted is each text between quotation marks, so an entry line reads as one item of a list.
+func quoted(texts []string) []string {
+	out := make([]string, len(texts))
+	for i, text := range texts {
+		out[i] = fmt.Sprintf("%q", text)
+	}
+	return out
 }
