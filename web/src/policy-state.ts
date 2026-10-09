@@ -991,7 +991,9 @@ export function readingHoldsChange(reading: PolicyReading, change: PolicyChange)
     }
     case "setAllowed": {
       const entry = reading.allowed.find((candidate) => candidate.model === change.model);
-      return entry !== undefined && sameEntries(entry.efforts, change.efforts);
+      // The server stores a row's efforts sorted (internal/policystore allowedEntry), so the order the
+      // operator typed them in is not part of what the file holds.
+      return entry !== undefined && sameEntries(sortedEfforts(entry.efforts), sortedEfforts(change.efforts));
     }
     case "removeAllowed":
       return !reading.allowed.some((candidate) => candidate.model === change.model);
@@ -1087,7 +1089,9 @@ export const LOST_RECHECK_LIMIT = 60;
 export function lostRecheckDelay(state: PolicyScreenState): number | null {
   const lost = state.notice?.lost ?? null;
   if (lost === null || !lost.awaitingRegistration || lost.readings >= LOST_RECHECK_LIMIT) return null;
-  if (state.busy || state.saving !== null || state.reading === null) return null;
+  // A reading that failed (reading is null) does not end the wait: the failed read spent one of the
+  // readings (screenLoadFailed), and the next one is still due within the bound.
+  if (state.busy || state.saving !== null) return null;
   return LOST_RECHECK_MS;
 }
 
@@ -1333,7 +1337,13 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
 
 /** screenLoadFailed records that the policy itself could not be read. */
 export function screenLoadFailed(state: PolicyScreenState, message: string): PolicyScreenState {
-  return { ...state, reading: null, error: message, busy: false };
+  // A read that fails while a lost write awaits its registration is one of the readings that wait may
+  // spend, so a backend that keeps failing is retried within the bound and then left to the operator.
+  const lost = state.notice?.lost ?? null;
+  const notice = state.notice !== null && lost !== null && lost.awaitingRegistration
+    ? { ...state.notice, lost: { ...lost, readings: lost.readings + 1 } }
+    : state.notice;
+  return { ...state, reading: null, error: message, busy: false, notice };
 }
 
 /** screenCatalog applies a catalog answer. */
@@ -1674,6 +1684,11 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
 function sameEntries(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+/** sortedEfforts is an effort list in the order the server stores it. */
+function sortedEfforts(efforts: readonly string[]): string[] {
+  return [...efforts].sort();
 }
 
 /** effortsOf is a raw draft's entries as a change carries them: the blanks dropped. */

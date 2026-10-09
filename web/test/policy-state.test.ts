@@ -618,6 +618,58 @@ test("a verdict is judged again by every later reading, so a stored verdict foll
   assert.equal(saveHeading(unreadable.notice), "Saved");
 });
 
+// CRW-994 d1 (verification round 1): the server stores a row's efforts sorted, so the order the operator
+// typed them in is not part of what the file holds.
+async function afterLostWriteOf(efforts: string[]): Promise<PolicyScreenState> {
+  let state = screenLoaded(initialScreen(), reading());
+  state = screenAllowedDraft(state, "anthropic/opus", efforts);
+  const out = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  return out.state;
+}
+
+test("efforts typed in reverse order are the change the sorted file holds: Result unknown while registering, Saved after", async () => {
+  const stored = (changes: Partial<PolicyReading> = {}) => readingWithTheLostChange({
+    allowed: [{ model: "anthropic/opus", efforts: ["high", "max"] }, { model: "gpt-6.1-sol", efforts: ["xhigh"] }],
+    ...changes,
+  });
+  const awaiting = screenLoaded(await afterLostWriteOf(["max", "high"]), stored({ registeredDigest: "a".repeat(64) }), true);
+  assert.equal(saveHeading(awaiting.notice), "Result unknown");
+  assert.equal(awaiting.notice?.lost?.awaitingRegistration, true);
+  const finished = screenLoaded(awaiting, stored(), true);
+  assert.equal(saveHeading(finished.notice), "Saved");
+  assert.equal(finished.notice?.lost?.outcome, "stored");
+  assert.equal(readingHoldsChange(stored(), { kind: "setAllowed", model: "anthropic/opus", efforts: ["max", "high"] }), true);
+  assert.equal(readingHoldsChange(stored(), { kind: "setAllowed", model: "anthropic/opus", efforts: ["max"] }), false);
+});
+
+// CRW-994 d1 (verification round 1): one failed read while the registration is awaited must not end the
+// automatic re-reading; the failed read spends one of the bounded readings.
+test("a failed re-read while a registration is awaited keeps the timer going, within the bound", async () => {
+  const awaiting = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
+  assert.equal(lostRecheckDelay(awaiting), 2000);
+  const out = await runRead(awaiting, async () => { throw new Error("connection refused"); }, true);
+  assert.equal(out.ok, false);
+  assert.equal(out.state.reading, null);
+  assert.equal(lostRecheckDelay(out.state), 2000, "the read failed, the wait is not over");
+  assert.equal(out.state.notice?.lost?.awaitingRegistration, true);
+  // The next read lands after the registration finished: the verdict follows the file.
+  const next = await runRead(out.state, async () => readingWithTheLostChange(), true);
+  assert.equal(saveHeading(next.state.notice), "Saved");
+  assert.equal(lostRecheckDelay(next.state), null);
+  // Failing reads alone cannot run past the bound.
+  let state = awaiting;
+  let delays = 0;
+  while (lostRecheckDelay(state) !== null) {
+    delays += 1;
+    assert.ok(delays <= LOST_RECHECK_LIMIT, "bounded");
+    state = (await runRead(state, async () => { throw new Error("down"); }, true)).state;
+  }
+  assert.equal(saveHeading(state.notice), "Result unknown");
+});
+
 test("the wait for a registration is bounded", async () => {
   let state = screenLoaded(await afterLostWrite(), readingWithTheLostChange({ registeredDigest: "a".repeat(64) }), true);
   for (let i = 1; i < LOST_RECHECK_LIMIT; i += 1) {
