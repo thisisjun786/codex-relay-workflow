@@ -134,3 +134,60 @@ printf 'echo hi\n' | bash -s foo
 --why bash -s with an operand: the piped removal is the program the shell runs, not the script file named by the operand.
 --cmd
 printf 'rm -rf {CHECKOUT}' | bash -s foo
+
+=== CRW-1058-26 | U
+--why echo takes a repeated -n and bash also takes -e and -E as options: the rm the text hides behind the -e word is what the shell runs, so the program is unreadable.
+--cmd
+echo -n -e 'rm -rf {CHECKOUT}' | bash
+
+=== CRW-1058-27 | B
+--why a repeated -n is still an echo option: the piped text is echo hi, which touches no gate.
+--cmd
+echo -n -n 'echo hi' | bash
+
+=== CRW-1058-28 | U
+--why a function named echo runs in place of the echo the pipe producer names: the function prints the removal, so the program is unreadable.
+--cmd
+echo() { printf 'rm -rf {CHECKOUT}'; }; echo ignored | bash
+
+=== CRW-1058-29 | R
+--why bash - reads its operand as a script file, as bash -- does: remove.sh holds the removal, and the piped text is not the program.
+--file remove.sh
+rm -rf {CHECKOUT}
+--cmd
+bash - remove.sh <<<':'
+
+=== CRW-1058-30 | U
+--why a here-string on the shell's own input replaces the pipe for bash and is read with it by zsh (MULTIOS): the program is unreadable.
+--cmd
+printf 'rm -rf {CHECKOUT}\n' | bash /dev/stdin <<<'echo hi'
+
+=== CRW-1058-31 | R
+--why parallel runs each job in its own shell from the directory of the text: the second job removes ../repo from the checkout itself, and the cd of the first job does not reach it.
+--cmd
+parallel -j1 cd '{}' ';' rm -rf ../repo ::: sub .
+
+=== CRW-1058-32 | R
+--why {.} removes the extension from the final path component only: the dotted parent stays, so the value names the checkout.
+--cmd
+parallel rm -rf '{.}' ::: ../repo.v1/../repo
+
+=== CRW-1058-33 | U
+--why an xargs operand is one more ::: source of parallel: the checkout path xargs appends is a value the reader cannot see, so the program is unreadable.
+--cmd
+echo {CHECKOUT} | xargs parallel rm -rf '{}' ::: /tmp/unprotected
+
+=== CRW-1058-34 | B
+--why a literal pipe program whose shell sends its own standard output to /dev/null: the piped echo is the program, and it touches no gate.
+--cmd
+printf 'echo hi\n' | bash >/dev/null
+
+=== CRW-1058-35 | B
+--why a descriptor 0 copied from a here-string on descriptor 3: the body that descriptor holds is echo hi, which touches no gate.
+--cmd
+bash /dev/stdin 3<<<'echo hi' 0<&3
+
+=== CRW-1058-36 | B
+--why the same copy read by python: the here-string on descriptor 3 is print(1), which touches no gate.
+--cmd
+python3 /dev/fd/0 3<<<'print(1)' 0<&3

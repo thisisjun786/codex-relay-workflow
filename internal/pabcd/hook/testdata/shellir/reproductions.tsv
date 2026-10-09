@@ -1496,3 +1496,14 @@ fix round after verification of 632401ae (P1 escaped literal read as match-all)	
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find .. -maxdepth 0 -regex '.*\.' -exec rm -rf {} +	CRW-895-x6	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '.*' -delete	CRW-895-x7	row	-
 fix round after verification of 632401ae (P1 escaped literal read as match-all)	find ../repo -regex '\(.*\)' -delete	CRW-895-x8	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo -n -e 'rm -rf {CHECKOUT}' | bash	CRW-1058-26	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo -n -n 'echo hi' | bash	CRW-1058-27	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo() { printf 'rm -rf {CHECKOUT}'; }; echo ignored | bash	CRW-1058-28	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash - remove.sh <<<':' with remove.sh holding rm -rf {CHECKOUT}	CRW-1058-29	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'rm -rf {CHECKOUT}\n' | bash /dev/stdin <<<'echo hi'	CRW-1058-30	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	parallel -j1 cd '{}' ';' rm -rf ../repo ::: sub .	CRW-1058-31	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	parallel rm -rf '{.}' ::: ../repo.v1/../repo	CRW-1058-32	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	echo {CHECKOUT} | xargs parallel rm -rf '{}' ::: /tmp/unprotected	CRW-1058-33	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	printf 'echo hi\n' | bash >/dev/null	CRW-1058-34	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	bash /dev/stdin 3<<<'echo hi' 0<&3	CRW-1058-35	row	-
+CRW-1058 pre-merge record crw1058-e83d8ec4 (findings d1 to d9)	python3 /dev/fd/0 3<<<'print(1)' 0<&3	CRW-1058-36	row	-
