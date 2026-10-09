@@ -2,6 +2,7 @@ package pyjson_test
 
 import (
 	"encoding/json"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -72,4 +73,55 @@ func sortedFields(value any) any {
 		return items
 	}
 	return value
+}
+
+// CRW-1075. A Deep reading reads a container without a call per level, so a document read to millions of levels
+// needs no goroutine stack, and it reads every document the recursive reading reads to the same value and the
+// same refusal.
+func TestLoads_deep_reading_agrees_with_the_recursive_one(t *testing.T) {
+	readings := []pyjson.LoadOptions{
+		{}, {Map: true}, {Repeats: true}, {Unique: true}, {Unique: true, Map: true},
+		{Constants: true, Numbers: pyjson.SpelledNumbers}, {Surrogates: true, Numbers: pyjson.BigNumbers},
+		{Trailing: pyjson.TrailingClose}, {Trailing: pyjson.TrailingAnything},
+	}
+	for _, doc := range pyjsontest.Sample(t) {
+		for _, o := range readings {
+			plain, plainErr := pyjson.Loads(doc, o)
+			if plainErr != nil && strings.Contains(plainErr.Error(), "max depth") {
+				continue // the recursive reading's own limit
+			}
+			o.Deep = true
+			deep, deepErr := pyjson.Loads(doc, o)
+			if (plainErr == nil) != (deepErr == nil) || plainErr != nil && plainErr.Error() != deepErr.Error() {
+				t.Errorf("Loads(%.60q, %+v): recursive %v, deep %v", doc, o, plainErr, deepErr)
+				continue
+			}
+			if plainErr == nil && !pyjsontest.Same(plain, deep) {
+				t.Errorf("Loads(%.60q, %+v): recursive %#v, deep %#v", doc, o, plain, deep)
+			}
+		}
+	}
+}
+
+func TestLoads_deep_reading_needs_no_stack_for_the_nesting_of_its_document(t *testing.T) {
+	defer debug.SetMaxStack(debug.SetMaxStack(16 << 20))
+	const levels = 1_500_000
+	opened, closed := strings.Repeat("[", levels), strings.Repeat("]", levels)
+	deep := pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Deep: true}
+	cases := []struct {
+		name, doc string
+		ok        bool
+	}{
+		{"closed arrays", opened + closed, true},
+		{"closed objects", strings.Repeat(`{"a":`, levels/3) + "1" + strings.Repeat("}", levels/3), true},
+		{"unclosed arrays", opened, false},
+		{"unclosed past what the closers left allow", opened + closed[:levels/2], false},
+		{"closed arrays and trailing text", opened + closed + "x", false},
+		{"unclosed arrays and invalid UTF-8", opened + "\xff\xff", false},
+	}
+	for _, c := range cases {
+		if _, err := pyjson.Loads(c.doc, deep); (err == nil) != c.ok {
+			t.Errorf("%s: %v, want ok=%v", c.name, err, c.ok)
+		}
+	}
 }

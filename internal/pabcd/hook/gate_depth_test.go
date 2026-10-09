@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -116,6 +117,10 @@ func TestGateDepthDoesNotChangeHowBrokenJSONIsHandled(t *testing.T) {
 		{"goal gate: broken JSON passes", "pre-tool-use-guarding-goal-budget", `{"hook_event_name":"PreToolUse","tool_input":` + deep + `,`, ""},
 		{"goal gate: deep top-level array passes", "pre-tool-use-guarding-goal-budget", deep, ""},
 		{"automation gate: broken JSON cannot be verified", "pre-tool-use-guarding-automation-ownership", `{"tool_name":"automation_update","x":` + deep + `,`, "Cannot verify automation ownership"},
+		// The reader accepts only the escapes JSON has: \x0065 is not \u0065, so this payload is as broken as it is for
+		// JSON.parse and for the json.Valid check this reader replaced.
+		{"automation gate: an unknown escape followed by four hex digits is broken JSON", "pre-tool-use-guarding-automation-ownership", `{"hook_event_name":"PreToolUse","tool_name":"automation_update","tool_input":{"mode":"vi\x0065w"}}`, "Cannot verify automation ownership"},
+		{"goal gate: an unknown escape followed by four hex digits is not a payload", "pre-tool-use-guarding-goal-budget", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/","tool_name":"create_goal","tool_input":{"objective":"x","token_budget":1,"note":"a\x0065"}}`, ""},
 		{"automation gate: a deep array is not a payload", "pre-tool-use-guarding-automation-ownership", deep, "Malformed native hook payload."},
 	}
 	for _, c := range cases {
@@ -145,6 +150,10 @@ func TestGateDepthChildProcess(t *testing.T) {
 	if err != nil {
 		os.Exit(70)
 	}
+	// A hook runs in a memory-limited process. A reader that recurses once per container needs a
+	// stack in proportion to the nesting of its input, so the child gets a stack no recursion of
+	// that depth fits: the fatal "stack exceeds limit" error is what a real overflow looks like.
+	debug.SetMaxStack(32 << 20)
 	code := harness.Hook(context.Background(), []string{"pre-tool-use", "--leg", leg}, bytes.NewReader(raw), os.Stdout, os.Stderr, os.LookupEnv, harness.Legs())
 	os.Exit(code)
 }
@@ -191,6 +200,11 @@ func TestGateBoundsNestingByTheInputItReads(t *testing.T) {
 		{"3,000,000 unclosed arrays are not a payload", strings.Repeat("[", 3_000_000), ""},
 		{"4 MiB of unclosed arrays are not a payload", strings.Repeat("[", 4*1024*1024), ""},
 		{"an envelope that never closes its 2,500,000-deep field is not a payload", unclosed, ""},
+		// ReadStdin bounds the encoded bytes; each 0xff of the input decodes to the three bytes of U+FFFD, so the
+		// nesting the decoded text allows is more than the input bound holds in openers alone.
+		{"3 MiB of unclosed arrays padded with invalid UTF-8 to the input bound are not a payload", strings.Repeat("[", 3*1024*1024) + strings.Repeat("\xff", 1024*1024), ""},
+		{"1,500,000 closed arrays and trailing text are not a payload", strings.Repeat("[", 1_500_000) + strings.Repeat("]", 1_500_000) + "x", ""},
+		{"600,000 closed objects and trailing text are not a payload", strings.Repeat(`{"a":`, 600_000) + "1" + strings.Repeat("}", 600_000) + "x", ""},
 		{"800,000 unclosed objects are not a payload", strings.Repeat(`{"a":`, 800_000), ""},
 		{"a valid payload 1,900,000 deep keeps its verdict", valid(1_900_000), shallow},
 	}
