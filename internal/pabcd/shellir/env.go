@@ -46,6 +46,9 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err
 	}
+	if err := w.checkJSONToolWrites(); err != nil {
+		return Result{}, err
+	}
 	return Result{Execs: w.out}, nil
 }
 

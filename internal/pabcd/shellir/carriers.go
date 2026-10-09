@@ -839,14 +839,10 @@ func allDigits(s string) bool {
 	return true
 }
 
-// pythonJSONShadowNames are the files and package files of the working directory that python finds before the standard library
-// json: a source or byte-code module json.py and json.pyc, and the __init__ of a json package.
-var pythonJSONShadowNames = []string{"json.py", "json.pyc", "json/__init__.py", "json/__init__.pyc"}
-
-// pythonJSONShadow proves that python -m json.tool runs the standard library: the directory is known, no earlier record of the
-// text writes a module that would be found in it, and the directory holds none (a json package with an __init__, json.py,
-// json.pyc, or a compiled json extension module). A directory the reader cannot list holds nothing it can prove; one that does
-// not exist holds no module.
+// pythonJSONShadow proves that python -m json.tool runs the standard library: the directory is known, the directory holds no
+// module that would be found in it (a json package with an __init__, json.py, json.pyc, or a compiled json extension module),
+// and the text writes none there (checkJSONToolWrites, once the whole text is read). A directory the reader cannot list holds
+// nothing it can prove; one that does not exist holds no module.
 func (w *walker) pythonJSONShadow(name string, dir Dir) error {
 	if dir.Unset {
 		return nil // a reading with no directory: the readings that have one make this judgment
@@ -854,11 +850,8 @@ func (w *walker) pythonJSONShadow(name string, dir Dir) error {
 	if !dir.Known || dir.Path == "" {
 		return unreadablef("%s -m json.tool searches the working directory first and the reader does not know it", name)
 	}
-	for _, n := range pythonJSONShadowNames {
-		if w.createdByText(n, dir) {
-			return unreadablef("%s -m json.tool runs %s, which this text writes", name, n)
-		}
-	}
+	// The python record is the next one the walk appends; the writes of the whole text are judged when it is read.
+	w.jsonTools = append(w.jsonTools, jsonToolUse{name: name, dir: dir, at: len(w.out)})
 	entries, err := os.ReadDir(dir.Path)
 	switch {
 	case err == nil:
@@ -870,8 +863,7 @@ func (w *walker) pythonJSONShadow(name string, dir Dir) error {
 	for _, e := range entries {
 		n := e.Name()
 		switch {
-		case n == "json.py", n == "json.pyc", n == "json.pyw",
-			strings.HasPrefix(n, "json.") && (strings.HasSuffix(n, ".so") || strings.HasSuffix(n, ".pyd")):
+		case jsonModuleName(n):
 			return unreadablef("%s -m json.tool would run %s of the working directory, not the standard library", name, n)
 		case n == "json":
 			sub, err := os.ReadDir(filepath.Join(dir.Path, n))

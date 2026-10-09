@@ -256,6 +256,8 @@ type walker struct {
 	created      map[string]bool
 	createdTrees map[string]bool // directories a copy fills: any file below one is created by the text
 	createdUpTo  int
+	// jsonTools are the python -m json.tool the walk read; checkJSONToolWrites judges the writes of the whole text for them.
+	jsonTools []jsonToolUse
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
