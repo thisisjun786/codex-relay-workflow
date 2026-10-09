@@ -919,3 +919,40 @@ pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf 'require("fs").rmSync("../repo
 pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 -i safe.py <<'EOF'\nimport shutil; shutil.rmtree("../repo")\nEOF	CRW-894-ev-73	row	-
 pre-eval-crw894-1688f7c5.json (CRW-894 d1)	python3 -i safe.py	CRW-894-ev-74	row	-
 pre-eval-crw894-1688f7c5.json (CRW-894 d1)	printf x | python3 safe.py	CRW-894-ev-75	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/root/../../dev/stdin	CRW-894-vf-01	row	-
+verifier of 4636e20a (CRW-894 f1)	cd /; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 /proc/self/cwd/../dev/stdin	CRW-894-vf-02	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'rm -rf ../repo\n' | bash /proc/self/root/../../dev/stdin	CRW-894-vf-03	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'rm -rf ../repo\n' | bash </proc/self/root/../dev/stdin	CRW-894-vf-04	row	-
+verifier of 4636e20a (CRW-894 f1)	printf 'import shutil; shutil.rmtree("../repo")\n' | node /proc/1/root/../../dev/fd/0	CRW-894-vf-05	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/stdin	CRW-894-vf-06	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 dev/fd/0	CRW-894-vf-07	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 proc/self/fd/0	CRW-894-vf-08	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 0	CRW-894-vf-09	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 fd/0	CRW-894-vf-10	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 ./dev/./stdin	CRW-894-vf-11	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 ../../dev/stdin	CRW-894-vf-12	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | python3 proc/self/root/../dev/stdin	CRW-894-vf-13	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | node dev/stdin	CRW-894-vf-14	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | perl dev/stdin	CRW-894-vf-15	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'import shutil; shutil.rmtree("../repo")\n' | php dev/stdin	CRW-894-vf-16	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'rm -rf ../repo\n' | bash dev/stdin	CRW-894-vf-17	row	-
+verifier of 4636e20a (CRW-894 f2)	cd "$DIR"; printf 'rm -rf ../repo\n' | bash <dev/fd/0	CRW-894-vf-18	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 ../tools/gen.py	CRW-894-vf-19	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 build/fd/gen.py	CRW-894-vf-20	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 fd/gen.py	CRW-894-vf-21	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 stdin_reader.py	CRW-894-vf-22	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 ../stdin.py	CRW-894-vf-23	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | python3 ./tools/fd10.py	CRW-894-vf-24	row	-
+verifier of 4636e20a (CRW-894 f4)	cd "$DIR"; printf x | node ../tools/gen.js	CRW-894-vf-25	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-26	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-27	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-28	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-29	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-30	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool --sort-keys	CRW-894-vf-31	row	-
+verifier of 4636e20a (CRW-894 f3)	mkdir json; printf 'print(1)' > json/__init__.py; printf x | python3 -m json.tool	CRW-894-vf-32	row	-
+verifier of 4636e20a (CRW-894 f3)	cp evil.py json.py; printf x | python3 -m json.tool	CRW-894-vf-33	row	-
+verifier of 4636e20a (CRW-894 f3)	cd "$DIR"; printf x | python3 -m json.tool	CRW-894-vf-34	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-35	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-36	row	-
+verifier of 4636e20a (CRW-894 f3)	printf x | python3 -m json.tool	CRW-894-vf-37	row	-

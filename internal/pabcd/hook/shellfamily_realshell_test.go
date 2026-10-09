@@ -48,6 +48,12 @@ func TestPipedProgramRunsUnderRealPrograms(t *testing.T) {
 		{"python3 -i script", "bash", "printf 'print(\"" + marker + "\")\n' | python3 -i safe.py", "python3"},
 		{"python3 -i -c", "bash", "printf 'print(\"" + marker + "\")\n' | python3 -i -c pass", "python3"},
 		{"node -e 0 -i", "bash", "printf 'console.log(\"" + marker + "\")\n' | node -e 0 -i", "node"},
+		// the kernel follows a process link before the dot-dot segment after it
+		{"python3 /proc/self/root/../../dev/stdin", "bash", "printf 'print(\"" + marker + "\")\\n' | python3 /proc/self/root/../../dev/stdin", "python3"},
+		{"cd /; python3 /proc/self/cwd/../dev/stdin", "bash", "cd /; printf 'print(\"" + marker + "\")\\n' | python3 /proc/self/cwd/../dev/stdin", "python3"},
+		{"cd /; python3 dev/stdin", "bash", "cd /; printf 'print(\"" + marker + "\")\\n' | python3 dev/stdin", "python3"},
+		{"cd /; python3 ./dev/./fd/0", "bash", "cd /; printf 'print(\"" + marker + "\")\\n' | python3 ./dev/./fd/0", "python3"},
+		{"bash /proc/self/root/../../dev/stdin", "bash", "printf 'echo " + marker + "\\n' | bash /proc/self/root/../../dev/stdin", "bash"},
 		{"bash /dev/./stdin", "bash", "printf 'echo " + marker + "\\n' | bash /dev/./stdin", "bash"},
 		{"bash </dev/./stdin", "bash", "printf 'echo " + marker + "\\n' | bash </dev/./stdin", "bash"},
 	}
@@ -87,4 +93,36 @@ func reproGotText(t *testing.T, cmd string) [3]string {
 		}
 	}
 	return reproGot(r, cwd, root, env, cmd)
+}
+
+// TestPythonJSONToolRunsTheLocalModule: python3 -m json.tool puts the working directory first on the module search path, so a
+// json package there runs instead of the standard library (finding 3 of the verifier of 4636e20a). The rows
+// (rows/20-crw-894-verifier-4636e20a.txt) refuse that text, and allow it when the directory holds no such module.
+func TestPythonJSONToolRunsTheLocalModule(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	const marker = "from-local-json"
+	dir := t.TempDir()
+	for name, body := range map[string]string{"json/__init__.py": "print('" + marker + "')\n", "json/tool.py": "print('" + marker + "')\n"} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("bash", "-c", "printf '{}' | python3 -m json.tool")
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), marker) {
+		t.Fatalf("the local json package did not run: %q", out)
+	}
+	clean := exec.Command("bash", "-c", "printf '{}' | python3 -m json.tool")
+	clean.Dir = t.TempDir()
+	out, err := clean.CombinedOutput()
+	if err != nil || strings.Contains(string(out), marker) {
+		t.Fatalf("the standard library module did not run in an empty directory: %q (%v)", out, err)
+	}
 }

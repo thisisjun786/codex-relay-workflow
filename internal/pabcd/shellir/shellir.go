@@ -68,6 +68,10 @@ type Word struct {
 type Dir struct {
 	Path  string
 	Known bool
+	// Unset is a reading made with no directory at all (AnalyzeNoDir): the directory-dependent judgments that need a directory
+	// (a relative stdin alias, the module search path of python -m) are left to the readings that are given one. A directory
+	// that becomes unknown inside the text (cd "$X") is not Unset: it is unknown and those judgments refuse.
+	Unset bool
 }
 
 // Assign is a variable assignment with its value when that value is known.

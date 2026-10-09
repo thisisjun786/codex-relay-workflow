@@ -1,9 +1,14 @@
 package shellir
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // shellFlagLetters are the single-letter options a shell accepts before its
@@ -103,7 +108,7 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir
 		if len(codes) > 0 {
 			return nil, nil, unreadablef("%s receives a program and a module", name)
 		}
-		return nil, nil, checkPythonModule(name, *module, args[operand:])
+		return nil, nil, w.checkPythonModule(name, *module, args[operand:], dir)
 	}
 	if len(codes) > 1 {
 		return nil, nil, unreadablef("%s receives more than one program", name)
@@ -632,54 +637,153 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, *Wor
 }
 
 // fdAliasPath reports a path that names a file descriptor of this process, so that reading it reads what the shell gave
-// that descriptor: /dev/stdin, /dev/fd/N and /proc/<pid>/fd/N (and /proc/self/fd/N). The kernel resolves a path before it opens
-// it, so every spelling that resolves to one of these is the alias: the path is cleaned (a dot segment, a doubled slash, a
-// dot-dot segment), a relative path is placed in the directory the command runs in, and the process links /proc/<pid>/root and
-// /proc/self/cwd are followed. A relative path in a directory the reader does not know may be anything under /dev or /proc, so
-// it is the alias when it could be one.
+// that descriptor: /dev/stdin, /dev/fd/N and /proc/<pid>/fd/N (and /proc/self/fd/N). The kernel resolves a path one component
+// at a time, so the check does too: a dot segment and a doubled slash are nothing, a dot-dot segment steps back from the
+// directory reached so far, and the process links /proc/<pid>/root and /proc/<pid>/cwd are replaced by their target the
+// moment they are reached, before the next component (so /proc/self/root/../../dev/stdin is /dev/stdin, not /proc/dev/stdin).
+// A relative path is placed in the directory the command runs in. In a directory the reader does not know, a relative path is
+// the alias when some directory could make it one: its last component is stdin, or a descriptor number that stands alone or
+// follows fd (dev/stdin, fd/0, proc/self/fd/0, 0); an ordinary script path (../tools/gen.py, build/fd/gen.py) is not.
 func fdAliasPath(p string, dir Dir) bool {
 	if p == "" {
 		return false
 	}
-	if !path.IsAbs(p) {
-		if dir.Known {
-			p = path.Join(dir.Path, p)
-		} else {
-			c := path.Clean(p)
-			return c == "stdin" || c == ".." || strings.HasPrefix(c, "fd/") || strings.HasPrefix(c, "../") || strings.Contains(c, "/fd/")
-		}
+	if dir.Unset && !path.IsAbs(p) {
+		return false // a reading with no directory: the readings that have one judge a relative path
 	}
-	for i := 0; i < 4; i++ {
-		p = path.Clean(p)
-		switch {
-		case p == "/dev/stdin", strings.HasPrefix(p, "/dev/fd/"):
+	w := aliasWalk{abs: path.IsAbs(p), dir: dir}
+	if !w.abs && dir.Known {
+		w.abs = true
+		if w.feed(dir.Path) {
 			return true
-		case !strings.HasPrefix(p, "/proc/"):
-			return false
-		}
-		segs := strings.Split(strings.TrimPrefix(p, "/proc/"), "/")
-		if len(segs) >= 4 && segs[1] == "task" {
-			// /proc/<pid>/task/<tid>/X is /proc/<tid>/X for the descriptor and link names this check follows
-			segs = append([]string{segs[0]}, segs[3:]...)
-		}
-		if len(segs) < 2 {
-			return false
-		}
-		switch segs[1] {
-		case "fd":
-			return len(segs) > 2
-		case "root":
-			p = "/" + strings.Join(segs[2:], "/")
-		case "cwd":
-			if (segs[0] != "self" && segs[0] != "thread-self") || !dir.Known {
-				return true // the directory of another process, or of this one when the reader does not know it
-			}
-			p = path.Join(dir.Path, strings.Join(segs[2:], "/"))
-		default:
-			return strings.Contains(p, "/fd/") // the previous reading of a /proc path: any /fd/ below it
 		}
 	}
-	return true // links stacked deeper than the check follows
+	if w.feed(p) {
+		return true
+	}
+	if w.abs {
+		return false
+	}
+	return relativeFdAlias(w.stack)
+}
+
+// aliasWalk is the directory fdAliasPath has reached: the components of an absolute path (abs), or the components of a path
+// relative to a directory the reader does not know (leading ".." components are kept).
+type aliasWalk struct {
+	abs   bool
+	stack []string
+	dir   Dir
+	depth int
+}
+
+// feed moves the walk along a path. It reports true as soon as the walk is at a descriptor alias, or at a link whose target
+// the reader cannot say (the cwd of another process, or of this one when the directory is unknown).
+func (w *aliasWalk) feed(p string) bool {
+	w.depth++
+	if w.depth > 8 {
+		return true // directories that name process links to each other, deeper than the check follows
+	}
+	for _, c := range strings.Split(p, "/") {
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if n := len(w.stack); n > 0 && w.stack[n-1] != ".." {
+				w.stack = w.stack[:n-1]
+			} else if !w.abs {
+				w.stack = append(w.stack, "..")
+			}
+			continue
+		}
+		w.stack = append(w.stack, c)
+		if w.abs && absFdAlias(w.stack) {
+			return true
+		}
+		if pid, link := procLink(w.stack); link != "" {
+			switch link {
+			case "root":
+				w.abs, w.stack = true, nil
+			case "cwd":
+				if (pid != "self" && pid != "thread-self") || !w.dir.Known {
+					return true
+				}
+				w.abs, w.stack = true, nil
+				if w.feed(w.dir.Path) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// procLink names the process link a walk has just reached: /proc/<pid>/root, /proc/<pid>/cwd, or the same below
+// /proc/<pid>/task/<tid>. It returns the pid component and the link name, or an empty link.
+func procLink(s []string) (pid, link string) {
+	for len(s) > 0 && s[0] == ".." {
+		s = s[1:]
+	}
+	if len(s) == 0 || s[0] != "proc" {
+		return "", ""
+	}
+	switch {
+	case len(s) == 3 && (s[2] == "root" || s[2] == "cwd"):
+		return s[1], s[2]
+	case len(s) == 5 && s[2] == "task" && (s[4] == "root" || s[4] == "cwd"):
+		return s[1], s[4]
+	}
+	return "", ""
+}
+
+// absFdAlias is whether an absolute path (as components) is, or is below, a descriptor alias.
+func absFdAlias(s []string) bool {
+	switch {
+	case len(s) >= 2 && s[0] == "dev" && s[1] == "stdin":
+		return true
+	case len(s) >= 3 && s[0] == "dev" && s[1] == "fd":
+		return true
+	case len(s) >= 4 && s[0] == "proc" && s[2] == "fd":
+		return true
+	case len(s) >= 6 && s[0] == "proc" && s[2] == "task" && s[4] == "fd":
+		return true
+	}
+	return false
+}
+
+// relativeFdAlias is whether a relative path in a directory the reader does not know could be a descriptor alias: the
+// directory could be /, /dev, /dev/fd, /proc/self or /proc/self/fd (or below any directory, with leading dot-dot components).
+func relativeFdAlias(s []string) bool {
+	for len(s) > 0 && s[0] == ".." {
+		s = s[1:]
+	}
+	n := len(s)
+	if n == 0 {
+		return false
+	}
+	if s[n-1] == "stdin" {
+		return true
+	}
+	if isDigits(s[n-1]) && n == 1 {
+		return true
+	}
+	for i := 0; i+1 < n; i++ {
+		if s[i] == "fd" && isDigits(s[i+1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // pythonModuleFlags are the options of python -m json.tool that take no value.
@@ -689,14 +793,19 @@ var pythonModuleFlags = []string{"--sort-keys", "--no-ensure-ascii", "--tab", "-
 // issue's control (printf x | python3 -m json.tool) is read: the module and its options are all the text shows. Every other
 // module may run what it reads (pdb, code, runpy, http.server, a module the working directory holds), and so may an operand of
 // json.tool (it names a file the module writes); they are unreadable. The options are a closed list: a flag, or --indent with an
-// integer.
-func checkPythonModule(name string, module Word, rest []Word) error {
+// integer. The module is the standard library's only when the working directory, the first entry of the module search path of
+// python -m, holds no module named json (see pythonJSONShadow): a text that does not show the directory, or shows a json
+// module there or writes one, runs code the reader cannot read.
+func (w *walker) checkPythonModule(name string, module Word, rest []Word, dir Dir) error {
 	mod, err := knownValue(module, name+" -m module")
 	if err != nil {
 		return err
 	}
 	if mod != "json.tool" {
 		return unreadablef("%s -m %s runs a module the reader cannot read", name, mod)
+	}
+	if err := w.pythonJSONShadow(name, dir); err != nil {
+		return err
 	}
 	for i := 0; i < len(rest); i++ {
 		v, err := knownValue(rest[i], name+" -m json.tool option")
@@ -728,4 +837,57 @@ func allDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// pythonJSONShadowNames are the files and package files of the working directory that python finds before the standard library
+// json: a source or byte-code module json.py and json.pyc, and the __init__ of a json package.
+var pythonJSONShadowNames = []string{"json.py", "json.pyc", "json/__init__.py", "json/__init__.pyc"}
+
+// pythonJSONShadow proves that python -m json.tool runs the standard library: the directory is known, no earlier record of the
+// text writes a module that would be found in it, and the directory holds none (a json package with an __init__, json.py,
+// json.pyc, or a compiled json extension module). A directory the reader cannot list holds nothing it can prove; one that does
+// not exist holds no module.
+func (w *walker) pythonJSONShadow(name string, dir Dir) error {
+	if dir.Unset {
+		return nil // a reading with no directory: the readings that have one make this judgment
+	}
+	if !dir.Known || dir.Path == "" {
+		return unreadablef("%s -m json.tool searches the working directory first and the reader does not know it", name)
+	}
+	for _, n := range pythonJSONShadowNames {
+		if w.createdByText(n, dir) {
+			return unreadablef("%s -m json.tool runs %s, which this text writes", name, n)
+		}
+	}
+	entries, err := os.ReadDir(dir.Path)
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	default:
+		return unreadablef("%s -m json.tool: the working directory %s cannot be listed: %v", name, dir.Path, err)
+	}
+	for _, e := range entries {
+		n := e.Name()
+		switch {
+		case n == "json.py", n == "json.pyc", n == "json.pyw",
+			strings.HasPrefix(n, "json.") && (strings.HasSuffix(n, ".so") || strings.HasSuffix(n, ".pyd")):
+			return unreadablef("%s -m json.tool would run %s of the working directory, not the standard library", name, n)
+		case n == "json":
+			sub, err := os.ReadDir(filepath.Join(dir.Path, n))
+			switch {
+			case err == nil:
+			case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+				continue
+			default:
+				return unreadablef("%s -m json.tool: the directory json cannot be listed: %v", name, err)
+			}
+			for _, f := range sub {
+				if fn := f.Name(); strings.HasPrefix(fn, "__init__.") {
+					return unreadablef("%s -m json.tool would run the json package of the working directory", name)
+				}
+			}
+		}
+	}
+	return nil
 }

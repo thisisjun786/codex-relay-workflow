@@ -168,7 +168,7 @@ func shellIRStrings(ws []shellir.Word) []string {
 // The programs come from the shared reader's records, so a program a nested shell -c or eval runs is included. A command
 // the reader cannot read is itself unreadable.
 func shellIRFStringUnreadable(command string) (string, bool) {
-	res, err := shellir.Analyze(command, "")
+	res, err := shellir.AnalyzeNoDir(command)
 	if err != nil {
 		return "the command reader refused it", true
 	}

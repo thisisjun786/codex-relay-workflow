@@ -1,6 +1,10 @@
 package shellir
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // TestFdAliasPathSpellings (CRW-894, d1 of the evaluation of 1688f7c5): every spelling the kernel resolves to a descriptor of the
 // process is the alias; a path that merely looks like one is not.
@@ -39,6 +43,35 @@ func TestFdAliasPathSpellings(t *testing.T) {
 		{"stdin", Dir{}, true},
 		{"fd/0", Dir{}, true},
 		{"../dev/stdin", Dir{}, true},
+		// the verifier of 4636e20a: dot-dot after a process link is resolved after the link, not before it
+		{"/proc/self/root/../../dev/stdin", known, true},
+		{"/proc/self/root/../dev/stdin", known, true},
+		{"/proc/1/root/../../dev/fd/0", known, true},
+		{"/proc/self/cwd/../dev/stdin", Dir{Path: "/", Known: true}, true},
+		{"/proc/self/cwd/../../dev/stdin", Dir{Path: "/x", Known: true}, true},
+		{"/proc/self/cwd/../../dev/stdin", Dir{Path: "/x/y", Known: true}, true},
+		{"/proc/self/cwd/../../dev/stdin", Dir{Path: "/x/y/z", Known: true}, false},
+		{"/proc/self/task/12/root/../dev/stdin", known, true},
+		{"/proc/self/root/../tmp/x.py", known, false},
+		{"dev/stdin", Dir{Path: "/", Known: true}, true},
+		{"dev/stdin", Dir{}, true},
+		{"dev/fd/0", Dir{}, true},
+		{"./dev/./stdin", Dir{}, true},
+		{"proc/self/fd/0", Dir{}, true},
+		{"proc/self/root/../dev/stdin", Dir{}, true},
+		{"../../dev/stdin", Dir{}, true},
+		{"0", Dir{}, true},
+		{"10", Dir{}, true},
+		{"x/fd/3", Dir{}, true},
+		// relative script paths in a directory the reader does not know are no alias
+		{"../tools/gen.py", Dir{}, false},
+		{"build/fd/gen.py", Dir{}, false},
+		{"fd/gen.py", Dir{}, false},
+		{"stdin_reader.py", Dir{}, false},
+		{"../stdin.py", Dir{}, false},
+		{"./tools/fd10.py", Dir{}, false},
+		{"../..", Dir{}, false},
+		{"tools/stdin/run.py", Dir{}, false},
 		{"/dev/null", known, false},
 		{"/dev/stdout", known, false},
 		{"/dev/stdin2", known, false},
@@ -258,6 +291,73 @@ func TestInterpreterReplOptionReadsTheInput(t *testing.T) {
 		_, err := Analyze(c.cmd, "/work")
 		if got := err != nil; got != c.unreadable {
 			t.Errorf("%q: unreadable=%v, want %v (%v)", c.cmd, got, c.unreadable, err)
+		}
+	}
+}
+
+// TestPythonModuleJSONToolShadow (CRW-894, finding 3 of the verifier of 4636e20a): python -m json.tool runs the standard library
+// module only when the working directory (the first entry of the module search path) holds no module named json. A local json
+// package, json.py, compiled json module, json.pyc, a json module the text creates, and a directory the reader does not know
+// leave the module unproven.
+func TestPythonModuleJSONToolShadow(t *testing.T) {
+	const cmd = "printf x | python3 -m json.tool"
+	write := func(dir, name string) {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		name       string
+		files      []string
+		cmd        string
+		unreadable bool
+	}{
+		{"empty directory", nil, cmd, false},
+		{"namespace directory", []string{"json/notes.txt"}, cmd, false},
+		{"json.txt", []string{"json.txt"}, cmd, false},
+		{"json.py in a subdirectory", []string{"sub/json.py"}, cmd, false},
+		{"json package", []string{"json/__init__.py", "json/tool.py"}, cmd, true},
+		{"json package without tool", []string{"json/__init__.py"}, cmd, true},
+		{"compiled package", []string{"json/__init__.pyc"}, cmd, true},
+		{"json.py", []string{"json.py"}, cmd, true},
+		{"json.pyc", []string{"json.pyc"}, cmd, true},
+		{"json.so", []string{"json.so"}, cmd, true},
+		{"json.abi3.so", []string{"json.abi3.so"}, cmd, true},
+		{"json.cpython so", []string{"json.cpython-312-x86_64-linux-gnu.so"}, cmd, true},
+		{"created package", nil, "mkdir json; printf 'x=1' > json/__init__.py; " + cmd, true},
+		{"created json.py", nil, "cp evil.py json.py; " + cmd, true},
+		{"created json.py by tee", nil, "echo x | tee json.py; " + cmd, true},
+		{"unknown directory", nil, "cd \"$D\"; " + cmd, true},
+	} {
+		dir := t.TempDir()
+		for _, f := range c.files {
+			write(dir, f)
+		}
+		_, err := Analyze(c.cmd, dir)
+		if got := err != nil; got != c.unreadable {
+			t.Errorf("%s: unreadable=%v, want %v (%v)", c.name, got, c.unreadable, err)
+		}
+	}
+	// a directory the reader cannot list holds nothing it can prove
+	if _, err := Analyze(cmd, ""); err == nil {
+		t.Error("python3 -m json.tool with no working directory is read")
+	}
+	// the reading that is given no directory at all leaves the directory judgments to the readings that have one, but a
+	// directory that becomes unknown inside the text is judged
+	if _, err := AnalyzeNoDir(cmd); err != nil {
+		t.Errorf("AnalyzeNoDir refuses python3 -m json.tool: %v", err)
+	}
+	if _, err := AnalyzeNoDir("printf x | python3 ./dev/stdin"); err != nil {
+		t.Errorf("AnalyzeNoDir refuses a relative script path: %v", err)
+	}
+	for _, c := range []string{"cd \"$D\"; " + cmd, "cd \"$D\"; printf x | python3 dev/stdin", "printf x | python3 /dev/./stdin"} {
+		if _, err := AnalyzeNoDir(c); err == nil {
+			t.Errorf("AnalyzeNoDir reads %q", c)
 		}
 	}
 }
