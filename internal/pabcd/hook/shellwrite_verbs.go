@@ -388,12 +388,15 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 			case pending.kind != 0 && pending.at == i:
 				kind, recv, pending = pending.kind, pending.recv, pendingCall{}
 			default:
-				kind = shellVerbCallKind(rs, i, c)
+				// A name the program's imports bound to a copy function is that function, whatever its spelling (CRW-900 D4).
+				if python && c == '(' {
+					kind = shellWriteCopyModuleKind(rs, i, binds)
+				}
+				if kind == 0 {
+					kind = shellVerbCallKind(rs, i, c)
+				}
 				if kind == 0 && python && shellWriteExecCallee(rs, i, c) {
 					kind = 'e'
-				}
-				if kind == 0 && python && c == '(' {
-					kind = shellWriteCopyModuleKind(rs, i, binds)
 				}
 				if kind == 0 && python && c == '(' {
 					kind = shellWriteVarMethodKind(rs, i)
@@ -430,6 +433,9 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 				}
 			case top.kind == 'c' && c == ')':
 				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "dst")...)
+			case top.kind == 'x' && c == ')':
+				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "dst")...)
+				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "new")...)
 			case top.kind == 'n' && c == ')':
 				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "new")...)
 			case top.kind == 'r' && c == ')':
@@ -723,33 +729,45 @@ func shellWriteCopyModuleKind(rs []rune, i int, binds shellWriteCopyImports) byt
 		}
 		return 0
 	}
-	if modules := binds.from[name]; len(modules) > 0 && !shellWriteExecDefHeader(rs, j) {
-		for _, module := range modules {
-			if module == "os" && name == "renames" {
-				return 'n'
-			}
-		}
-		return 'c'
+	if funcs := binds.from[name]; len(funcs) > 0 && !shellWriteExecDefHeader(rs, j) {
+		return shellWriteCopyKindOf(funcs)
 	}
 	return 0
 }
 
 // shellWriteCopyKind is the frame kind of a call to a copy, rename or link function, or 0 when the call is no such
-// function: 'n' for os.renames, whose destination keyword is new, and 'c' for every other one, whose destination keyword
-// is dst. callee is the module the call names or a local name the program bound, and binds says which modules that local
-// name stands for (a name may stand for more than one, and any of them naming the function is enough).
+// function. callee is the module the call names or a local name the program bound, and binds says which modules that local
+// name stands for: both readings count, so an alias named like a module (import shutil as os) is read too (CRW-900 D2).
 func shellWriteCopyKind(callee, name string, binds shellWriteCopyImports) byte {
-	modules := []string{callee}
-	if callee != "shutil" && callee != "os" {
-		modules = binds.alias[callee]
-	}
+	modules := append([]string{callee}, binds.alias[callee]...)
+	var funcs []string
 	for _, module := range modules {
-		if module == "os" && name == "renames" {
-			return 'n'
-		}
 		if shellWriteCopyFunc(module, name) {
-			return 'c'
+			funcs = append(funcs, module+"."+name)
 		}
+	}
+	return shellWriteCopyKindOf(funcs)
+}
+
+// shellWriteCopyKindOf is the frame kind of a call that may be any of funcs (each module.name): 'x' when one reading takes the
+// os.renames keyword new= and another takes dst=, 'n' for os.renames alone, 'c' for the other functions, and 0 for none.
+// A name bound twice keeps both readings, so the call names every destination either of them writes (CRW-900 D3).
+func shellWriteCopyKindOf(funcs []string) byte {
+	renames, other := false, false
+	for _, f := range funcs {
+		if f == "os.renames" {
+			renames = true
+		} else {
+			other = true
+		}
+	}
+	switch {
+	case renames && other:
+		return 'x'
+	case renames:
+		return 'n'
+	case other:
+		return 'c'
 	}
 	return 0
 }
@@ -849,7 +867,8 @@ func shellWriteCopyImportsOf(rs []rune, outer shellWriteCopyImports) shellWriteC
 				depth--
 			}
 			i++
-		case (c == '\n' || c == '\r' || c == ';') && depth == 0:
+		// A colon at depth 0 ends a compound header (if x: import y), so the statement after it is read on its own (CRW-900 D1).
+		case (c == '\n' || c == '\r' || c == ';' || c == ':') && depth == 0:
 			flush()
 			i++
 		case shellWriteCopyIdentRune(c):
@@ -887,7 +906,7 @@ func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports)
 		for _, item := range shellWriteCopyImportItems(words[3:]) {
 			if item[0] == "*" {
 				for _, known := range shellWriteCopyFuncs(module) {
-					shellWriteCopyBind(binds.from, known, module)
+					shellWriteCopyBind(binds.from, known, module+"."+known)
 				}
 				continue
 			}
@@ -896,7 +915,7 @@ func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports)
 				name = item[1]
 			}
 			if name != "" && shellWriteCopyFunc(module, item[0]) {
-				shellWriteCopyBind(binds.from, name, module)
+				shellWriteCopyBind(binds.from, name, module+"."+item[0])
 			}
 		}
 	}
