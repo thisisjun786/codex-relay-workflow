@@ -244,8 +244,8 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 }
 
 // bootstrapRepoMapVenv builds the one-time venv under the bootstrap lock, so concurrent runs wait for one another and the
-// second finds the first's venv. A failed attempt removes only a directory this attempt made: a tree that was there before it
-// (another run's, or an earlier partial one) is never deleted (CRW-1147). It returns whether the venv is usable, or a nonzero
+// second finds the first's venv. A failed pip removes the directory only when this attempt made it: a tree that was there before
+// (another run's, or an earlier partial one) is never deleted, only the interpreter this attempt put in it (CRW-1147). It returns whether the venv is usable, or a nonzero
 // exit when the cleanup itself failed.
 func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exit int) {
 	dir := filepath.Dir(filepath.Dir(p.python))
@@ -269,11 +269,15 @@ func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exi
 		return true, 0
 	}
 	fmt.Fprintln(stderr, "crw map: venv bootstrap failed; falling back.")
-	if !existed {
-		if err := d.remove(dir); err != nil {
-			fmt.Fprintln(stderr, "crw map:", err)
-			return false, 1
-		}
+	// A directory that was there before keeps its tree, but loses the interpreter this attempt made: an interpreter is what marks
+	// a ready venv, so one without its requirements would stop the next opted-in run from retrying pip and be run as the map.
+	gone := dir
+	if existed {
+		gone = p.python
+	}
+	if err := d.remove(gone); err != nil {
+		fmt.Fprintln(stderr, "crw map:", err)
+		return false, 1
 	}
 	return false, 0
 }

@@ -86,8 +86,8 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 		{"success", false, false, "", 0, 0, 1, 4, "venv", false, false},
 		{"mk-fails", false, false, "", 1, 0, 1, 3, "python3", false, false},
 		{"pip-fails", false, false, "", 0, 1, 1, 4, "python3", true, false},
-		// A tree that was there before this attempt is not this attempt's to delete (CRW-1147).
-		{"pip-fails-preexisting-dir", false, false, "", 0, 1, 1, 4, "python3", false, true},
+		// A tree that was there before this attempt is not this attempt's to delete, only the interpreter it made (CRW-1147).
+		{"pip-fails-preexisting-dir", false, false, "", 0, 1, 1, 4, "python3", true, true},
 		{"uv-wins-after-bootstrap", false, false, "", 0, 0, 0, 4, "uv", false, false},
 		// help answers before the bootstrap, the venv check and the uv probe (CRW-1147).
 		{"help-skips-bootstrap", true, false, "", 0, 0, 1, 1, "python3", false, false},
@@ -157,8 +157,15 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 			if !reflect.DeepEqual(last.args, want) {
 				t.Fatalf("argv %v want %v", last.args, want)
 			}
-			if (removed != "") != c.removed || c.removed && removed != root+"/venvs/repomap" {
-				t.Fatal("cleanup", removed)
+			wantRemoved := ""
+			if c.removed {
+				wantRemoved = root + "/venvs/repomap"
+				if c.dirExisted {
+					wantRemoved = p.python // the tree stays, the interpreter this attempt made goes
+				}
+			}
+			if removed != wantRemoved {
+				t.Fatalf("cleanup %q want %q", removed, wantRemoved)
 			}
 			if strings.Contains(stderr.String(), "venv bootstrap failed") != (c.pip != 0 && !c.help && c.calls > 1) {
 				t.Fatal(stderr.String())
@@ -504,6 +511,79 @@ func TestRepoMapSecondRunWaitsWhileThePipInstallIsRunning(t *testing.T) {
 	defer mu.Unlock()
 	if len(earlyUse) != 0 {
 		t.Fatalf("%v ran the map interpreter before the pip install finished", earlyUse)
+	}
+}
+
+// A failed pip in a venv directory that was there before keeps that directory, but the interpreter python3 -m venv made is not a
+// ready venv: the next opted-in run retries the install instead of running the map without its requirements, and a run that did
+// not opt in falls back to python3 meanwhile (CRW-1147).
+func TestRepoMapRetriesAFailedPipInAPreexistingVenvDir(t *testing.T) {
+	root := t.TempDir()
+	values := map[string]string{"HOME": root, "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": root, "CRW_MAP_BOOTSTRAP": "1"}
+	env := mapEnv(values)
+	p, err := repoMapPaths(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(filepath.Dir(p.python))
+	kept := filepath.Join(dir, "kept-from-before")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pipRuns, installed := 0, false
+	var mapRuns []string
+	d := mapDeps{
+		exists: func(path string) bool { _, err := os.Stat(path); return err == nil },
+		remove: os.RemoveAll,
+		lock: func(venvs string) (func(), error) {
+			return repoMapBootstrapLock(context.Background(), venvs, io.Discard)
+		},
+		run: func(cmd string, args []string, quiet bool) (int, error) {
+			switch {
+			case cmd == "uv":
+				return 1, nil
+			case len(args) >= 2 && args[0] == "-m" && args[1] == "venv":
+				if err := os.MkdirAll(filepath.Dir(p.python), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p.python, []byte("interpreter"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case len(args) >= 2 && args[0] == "-m" && args[1] == "pip":
+				if pipRuns++; pipRuns == 1 {
+					return 1, nil
+				}
+				installed = true
+			default:
+				if cmd == p.python && !installed {
+					mapRuns = append(mapRuns, "venv-without-requirements")
+				} else {
+					mapRuns = append(mapRuns, cmd)
+				}
+			}
+			return 0, nil
+		},
+	}
+	var stderr strings.Builder
+	if code := launchRepoMap([]string{"."}, env, &stderr, d); code != 0 {
+		t.Fatalf("first run exit %d: %q", code, stderr.String())
+	}
+	values["CRW_MAP_BOOTSTRAP"] = ""
+	if code := launchRepoMap([]string{"."}, env, &stderr, d); code != 0 {
+		t.Fatalf("run without the bootstrap exit %d: %q", code, stderr.String())
+	}
+	values["CRW_MAP_BOOTSTRAP"] = "1"
+	if code := launchRepoMap([]string{"."}, env, &stderr, d); code != 0 {
+		t.Fatalf("retry run exit %d: %q", code, stderr.String())
+	}
+	if want := []string{"python3", "python3", p.python}; pipRuns != 2 || !reflect.DeepEqual(mapRuns, want) {
+		t.Fatalf("pip runs %d (want 2), map runs %v (want %v): the failed install was taken as a ready venv; stderr %q", pipRuns, mapRuns, want, stderr.String())
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("the directory that was there before lost its contents: %v", err)
 	}
 }
 
