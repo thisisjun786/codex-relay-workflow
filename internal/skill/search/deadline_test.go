@@ -285,3 +285,56 @@ func TestShowCancelledWhileFetchingTheBodyIsInterrupted(t *testing.T) {
 		t.Fatalf("%d %q %q", code, out.String(), errOut.String())
 	}
 }
+
+// fakeGH puts a gh that runs script first on PATH.
+func fakeGH(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":/usr/bin:/bin")
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The command's gh source ends at the source deadline whatever gh does: a gh that never finishes, and one whose child
+// keeps the output pipes open, end the search and are named on stderr.
+func TestGHSourceEndsAtTheSourceDeadline(t *testing.T) {
+	cliHome(t)
+	shortLimits(t, 300*time.Millisecond, 20*time.Second)
+	fakeGH(t, "sleep 4\n")
+	var code int
+	var out, errOut string
+	start := time.Now()
+	within(t, 3*time.Second, func() { code, out, errOut = cliRun([]string{"search", "x", "--source", "gh"}, offline) })
+	if code != 3 || out != "" || !strings.Contains(errOut, "skill-search: gh timed out") {
+		t.Fatalf("%d %q %q after %s", code, out, errOut, time.Since(start))
+	}
+}
+
+// A gh that exited while a child still holds its output pipes is done when the pipe grace ends: its answer stands.
+func TestGHAnswerStandsWhileAChildHoldsThePipes(t *testing.T) {
+	cliHome(t)
+	fakeGH(t, "printf '[{\"repository\":{\"nameWithOwner\":\"o/r\"},\"path\":\"skills/x/SKILL.md\"}]'\nsleep 4 &\nexit 0\n")
+	var code int
+	var out, errOut string
+	start := time.Now()
+	within(t, 3*time.Second, func() { code, out, errOut = cliRun([]string{"search", "x", "--source", "gh", "--json"}, offline) })
+	if code != 0 || !strings.Contains(out, `"id": "x"`) || errOut != "" {
+		t.Fatalf("%d %q %q after %s", code, out, errOut, time.Since(start))
+	}
+}
+
+// The caller's cancellation reaches gh: the command ends with status 130 at once, not after gh.
+func TestGHSourceIsCancelledWithTheCommand(t *testing.T) {
+	cliHome(t)
+	fakeGH(t, "sleep 4\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	var code int
+	var out, errOut bytes.Buffer
+	start := time.Now()
+	within(t, 3*time.Second, func() { code = RunContext(ctx, []string{"search", "x", "--source", "gh"}, offline, &out, &errOut) })
+	if code != 130 || out.Len() != 0 || !strings.Contains(errOut.String(), "interrupted") {
+		t.Fatalf("%d %q %q after %s", code, out.String(), errOut.String(), time.Since(start))
+	}
+}
