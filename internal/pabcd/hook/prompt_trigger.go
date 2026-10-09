@@ -28,7 +28,8 @@
 // guard and would have written and answered. A write that records an answer goes through
 // promptSubmitClaim (CRW-1159): the answer goes out only when the lock finds the turn unrecorded and
 // the phase, binding, cursor and bound work phase it was chosen from unmoved, so one turn is answered
-// once and a stale decision is dropped instead of answered and recorded.
+// once and a stale decision is dropped instead of answered and recorded. A turnless answer records
+// nothing but is decided again the same way before it goes out (promptSubmitVerify).
 //
 // The handler answers the context to hand the model, not the envelope: harness.ContextOutput wraps it
 // (hook.ts:583-597 buildContextOutput), which is where the CRLF normalisation, the trim and the
@@ -75,6 +76,8 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, inputs, promptTriggerDedup(turn, loopArmRequested)) != promptClaimEmit {
 				return ""
 			}
+		} else if promptSubmitVerify(lock, p.Cwd, p.SessionID, inputs) != promptClaimEmit {
+			return ""
 		}
 		guided := directive + "\n\n" + ResolveCRWInDirective(TriggerAuthorityNote, env)
 		return WithFooter(guided, current.Phase)
@@ -127,13 +130,11 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	generation := host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes)
 	// Each passive answer below goes out only when the lock that records it finds the turn unrecorded and
 	// the phase, the binding, the cursor and the context generation it was chosen from unmoved (CRW-1159, promptSubmitClaim); a
-	// stale decision is dropped rather than answered or recorded.
+	// stale decision is dropped rather than answered or recorded. A turnless answer is decided again without a write.
 	passive := promptClaimInputs{read: current, cursor: true, mark: mark}
 	if current.LastInjectedPhase != nil && generation.HasStageMarkerForPhase(string(current.Phase)) {
-		if turn != "" {
-			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, passive, promptTriggerReinject(current.Phase, turn)) != promptClaimEmit {
-				return ""
-			}
+		if (turn != "" || agbrowseRequested) && !promptTriggerDecided(lock, p, passive, promptTriggerReinject(current.Phase, turn)) {
+			return ""
 		}
 		if agbrowseRequested {
 			return AgbrowseSearchDirective
@@ -153,19 +154,15 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 		if agbrowseRequested {
 			context = directive + "\n\n" + AgbrowseSearchDirective
 		}
-		if turn != "" {
-			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, inputs, promptTriggerReinject(current.Phase, turn)) != promptClaimEmit {
-				return ""
-			}
+		if !promptTriggerDecided(lock, p, inputs, promptTriggerReinject(current.Phase, turn)) {
+			return ""
 		}
 		return WithFooter(context, current.Phase)
 	}
 
 	// mode 3: the same phase -> the short compaction-immune stage header every turn.
-	if turn != "" {
-		if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, passive, promptTriggerDedup(turn, false)) != promptClaimEmit {
-			return ""
-		}
+	if !promptTriggerDecided(lock, p, passive, promptTriggerDedup(turn, false)) {
+		return ""
 	}
 	header := BuildStageHeader(current.Phase)
 	context := header
@@ -173,6 +170,16 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 		context = header + "\n\n" + AgbrowseSearchDirective
 	}
 	return WithFooter(context, current.Phase)
+}
+
+// promptTriggerDecided says whether a passive answer still holds where it goes out: a payload with a turn records it
+// (promptSubmitClaim: the turn, and the cursor or dedup change), and a turnless one, which records nothing, is decided
+// again without a write (promptSubmitVerify, CRW-1159 fix round 2).
+func promptTriggerDecided(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, in promptClaimInputs, change func(*state.State) bool) bool {
+	if p.TurnID == "" {
+		return promptSubmitVerify(lock, p.Cwd, p.SessionID, in) == promptClaimEmit
+	}
+	return promptSubmitClaim(lock, p.Cwd, p.SessionID, p.TurnID, in, change) == promptClaimEmit
 }
 
 // promptTriggerWrite applies one of this unit's state writes to the session state and reports what it

@@ -6,6 +6,7 @@
 package hook
 
 import (
+	"encoding/json"
 	"os"
 	"slices"
 	"strings"
@@ -224,4 +225,109 @@ func TestCRW1159ARepeatedTurnStillRecordsTheRememberRequest(t *testing.T) {
 	if s := state.ReadState(cwd, "s1"); !s.MemoryWriteRequested {
 		t.Errorf("the concurrent repeat did not record its remember request: %+v", s)
 	}
+}
+
+// appendTo appends text to the file at path, reporting a failure on t.
+func appendTo(t *testing.T, path, text string) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.WriteString(text); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestCRW1159ACompactionCompletedAcrossTheMarkDropsTheAnswer is fix round 2, finding 1: the compacted record was still
+// landing when the handler marked the transcript (its type already on disk), and its remainder lands before the
+// recording lock, ahead of the ContextCompaction item. The cursor is already nil, so PostCompact changes nothing: only
+// the mark can tell, and the PLAN directive is neither answered nor recorded.
+func TestCRW1159ACompactionCompletedAcrossTheMarkDropsTheAnswer(t *testing.T) {
+	// Codex writes the timestamp, the type and then the payload (codexLine sorts the keys, which puts the type last).
+	history, err := json.Marshal(map[string]any{"message": "", "replacement_history": []map[string]any{{"type": "message", "role": "developer",
+		"content": []map[string]any{{"type": "input_text", "text": "[crw: PLAN] " + strings.Repeat("h", 4000)}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ContextCompaction item that follows the record has not landed yet when the lock reads.
+	compaction := `{"timestamp":"2026-10-09T20:49:26.924Z","type":"compacted","payload":` + string(history) + "}\n"
+	split := strings.Index(compaction, `"type":"compacted"`) + 200
+	cwd := t.TempDir()
+	transcript := writeTranscript(t, cwd, codexUserTurn(t, "plan it")+compaction[:split])
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true })
+	payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "keep going", TurnID: "t1", TranscriptPath: transcript, PabcdEnabled: true}
+	got := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159LockAt(2, func() {
+		appendTo(t, transcript, compaction[split:])
+		SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "s1"})
+	}))
+	s := state.ReadState(cwd, "s1")
+	if got != "" || slices.Contains(s.InjectedTurns, "t1") || s.LastInjectedPhase != nil {
+		t.Errorf("a compaction completed across the mark: answered %.120q, cursor %v, turns %v", got, s.LastInjectedPhase, s.InjectedTurns)
+	}
+}
+
+// TestCRW1159ATurnlessAnswerIsDecidedAgain is fix round 2, finding 2: a turnless payload records no turn and no cursor,
+// but its answer is still decided again on the state and the transcript as they stand before it goes out, so a phase
+// that moved or a compaction that landed meanwhile drops the stale directive. The loop-arm bookkeeping write of an armed
+// session is the window: the move lands just before its lock. A turnless answer whose inputs held still writes nothing.
+func TestCRW1159ATurnlessAnswerIsDecidedAgain(t *testing.T) {
+	cursor := state.PhaseP
+	for _, c := range []struct {
+		name  string
+		last  *state.Phase
+		moved func(t *testing.T, cwd, transcript string)
+	}{
+		{"P to B before the mode 2 directive", nil, func(t *testing.T, cwd, _ string) {
+			s := state.ReadState(cwd, "s1")
+			s.Phase = state.PhaseB
+			if err := state.WriteState(cwd, s); err != nil {
+				t.Error(err)
+			}
+		}},
+		{"P to B before the mode 3 header", &cursor, func(t *testing.T, cwd, _ string) {
+			s := state.ReadState(cwd, "s1")
+			s.Phase = state.PhaseB
+			if err := state.WriteState(cwd, s); err != nil {
+				t.Error(err)
+			}
+		}},
+		{"a compaction before the mode 2 directive", nil, func(t *testing.T, cwd, transcript string) {
+			appendTo(t, transcript, codexCompaction(t, "[crw: PLAN]"))
+			SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "s1"})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			transcript := writeTranscript(t, cwd, codexUserTurn(t, "plan it"))
+			promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+				s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseP, true, c.last
+			})
+			payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "Run crw-loop for this task", TranscriptPath: transcript, PabcdEnabled: true}
+			got := promptSubmitHandle(payload, "", promptSubmitHost(cwd), crw1159Lock(func() { c.moved(t, cwd, transcript) }))
+			if strings.Contains(got, "PLAN") {
+				t.Errorf("a stale turnless PLAN context was answered: %.160q", got)
+			}
+			if s := state.ReadState(cwd, "s1"); !promptSamePhase(s.LastInjectedPhase, c.last) || len(s.InjectedTurns) != 0 {
+				t.Errorf("the turnless payload recorded a cursor or a turn: %v, %v", s.LastInjectedPhase, s.InjectedTurns)
+			}
+		})
+	}
+
+	t.Run("inputs that held still answer and write nothing", func(t *testing.T) {
+		cwd := t.TempDir()
+		promptSubmitStateFile(t, cwd, "s1", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true })
+		before, err := os.ReadFile(state.StatePath(cwd, "s1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "keep going", PabcdEnabled: true}
+		if got := promptSubmitHandle(payload, "", promptSubmitHost(cwd), state.WithSessionLock); !strings.Contains(got, "PLAN") {
+			t.Errorf("a turnless mode 2 prompt lost its directive: %.160q", got)
+		}
+		if after, err := os.ReadFile(state.StatePath(cwd, "s1")); err != nil || string(after) != string(before) {
+			t.Errorf("a turnless answer wrote the state (%v)", err)
+		}
+	})
 }

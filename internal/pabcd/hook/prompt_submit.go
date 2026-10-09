@@ -29,6 +29,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -365,7 +366,8 @@ func promptSameWork(a, b *DirectiveOptions) bool {
 // invocations of one turn both answered, and a phase, binding or cursor that moved meanwhile got a stale directive and
 // an old cursor. Here the lock that records the answer reads the state again and the answer goes out only when that
 // read does not record the turn yet and still chooses the same answer (in.holds); change then lands on that read, under
-// promptSubmitWriteStateReason's rewrite guard. A turnless payload has no turn to find recorded.
+// promptSubmitWriteStateReason's rewrite guard. A turnless payload has no turn to find recorded; one that records nothing
+// is decided again by promptSubmitVerify instead.
 func promptSubmitClaim(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID, turn string, in promptClaimInputs, change func(*state.State) bool) promptClaimOutcome {
 	outcome := promptClaimEmit
 	err := lock(cwd, sessionID, func() error {
@@ -385,6 +387,33 @@ func promptSubmitClaim(lock func(cwd, sessionID string, fn func() error) error, 
 		return state.WriteState(cwd, fresh)
 	})
 	if err != nil && !state.Published(err) {
+		return promptClaimFailed
+	}
+	return outcome
+}
+
+// promptSubmitVerify decides a turnless answer again without recording it (CRW-1159, fix round 2). A turnless payload has
+// no turn to record, and the oracle writes nothing for it, so neither does this; but its answer was chosen on the same
+// unlocked read as a turn's, so it goes out only when the state and the transcript as they stand still choose it
+// (in.holds). The check reads the state inside the session lock, after any locked transition (a phase move together with
+// its goalplan) has finished. A session that has no sessions directory has no state and no locked writer yet, so it is
+// read without the lock, and a turnless payload still leaves no file behind. A lock that cannot be taken answers nothing,
+// as for an answer that records; an unreadable state is not a moved one and answers, as promptSubmitClaim's.
+func promptSubmitVerify(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, in promptClaimInputs) promptClaimOutcome {
+	check := func() promptClaimOutcome {
+		if fresh, unreadable := state.ReadStateStrict(cwd, sessionID); !unreadable && !in.holds(cwd, fresh) {
+			return promptClaimStale
+		}
+		return promptClaimEmit
+	}
+	if _, err := os.Stat(filepath.Dir(state.StatePath(cwd, sessionID))); errors.Is(err, fs.ErrNotExist) {
+		return check()
+	}
+	outcome := promptClaimFailed
+	if err := lock(cwd, sessionID, func() error {
+		outcome = check()
+		return nil
+	}); err != nil {
 		return promptClaimFailed
 	}
 	return outcome

@@ -86,3 +86,49 @@ func TestTranscriptMarkFailsOpen(t *testing.T) {
 		t.Error("a transcript that vanished read as changed")
 	}
 }
+
+// TestTranscriptMarkTakenInsideARecord is CRW-1159 fix round 2, finding 1: a mark taken while a record is still being
+// written stands at the start of that record, so a compaction whose type was already on disk at the mark and whose
+// remainder lands after it still counts. A record cut there that is no compaction does not, nothing appended since the
+// mark changes nothing, and a record whose start lies further back than the mark looks (transcriptMarkLineScan) is of
+// an unknown kind: any growth reads as changed.
+func TestTranscriptMarkTakenInsideARecord(t *testing.T) {
+	compacted := `{"timestamp":"2026-10-09T20:49:26.924Z","type":"compacted","payload":{"message":"","replacement_history":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"` + strings.Repeat("h", 5000) + `"}]}]}}` + "\n"
+	ordinary := `{"timestamp":"2026-10-09T20:49:26.924Z","type":"response_item","payload":{"output":"` + strings.Repeat("o", 5000) + `"}}` + "\n"
+	hugeCompacted := `{"timestamp":"2026-10-09T20:49:26.924Z","type":"compacted","payload":{"message":"` + strings.Repeat("x", transcriptMarkLineScan+4096) + `"}}` + "\n"
+	hugeOrdinary := `{"timestamp":"2026-10-09T20:49:26.924Z","type":"response_item","payload":{"output":"` + strings.Repeat("x", transcriptMarkLineScan+4096) + `"}}` + "\n"
+	for _, c := range []struct {
+		name   string
+		record string
+		cut    int // bytes of record on disk at the mark
+		rest   bool
+		want   bool
+	}{
+		{"a compaction completed across the mark", compacted, 200, true, true},
+		{"a compaction cut inside its type, completed across the mark", compacted, 50, true, true},
+		{"an ordinary record completed across the mark", ordinary, 200, true, false},
+		{"a compaction still landing, nothing appended", compacted, 200, false, false},
+		{"a compaction whose start lies beyond the look-back, completed", hugeCompacted, transcriptMarkLineScan + 1024, true, true},
+		{"an ordinary record whose start lies beyond the look-back, completed", hugeOrdinary, transcriptMarkLineScan + 1024, true, true},
+	} {
+		path := filepath.Join(t.TempDir(), "rollout.jsonl")
+		if err := os.WriteFile(path, []byte(devRecord("before")+c.record[:c.cut]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mark := MarkTranscript(path)
+		if c.rest {
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = f.WriteString(c.record[c.cut:] + devRecord("after"))
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := mark.CompactedSince(); got != c.want {
+			t.Errorf("%s: CompactedSince %v, want %v", c.name, got, c.want)
+		}
+	}
+}
