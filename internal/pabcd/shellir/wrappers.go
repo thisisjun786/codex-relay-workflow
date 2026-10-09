@@ -11,6 +11,8 @@ type unwrapped struct {
 	isShell      bool
 	shell        string
 	shellCarrier string
+	// chdirs are the directory operands of env -C and env --chdir, in the order the program applies them.
+	chdirs []Word
 	// recordName and record name the wrapper's own file operand (script's transcript, strace -o) as a synthetic record.
 	recordName string
 	record     []Word
@@ -205,7 +207,25 @@ func unwrapEnv(args []Word) (unwrapped, error) {
 		if err != nil {
 			return u, err
 		}
-		if v == "-" || v == "-i" || v == "--ignore-environment" || v == "-0" || v == "--null" {
+		if v == "-" || v == "-i" || v == "--ignore-environment" || v == "-0" || v == "--null" || v == "-v" || v == "--debug" {
+			args = args[1:]
+			continue
+		}
+		if len(u.chdirs) > 0 && (v == "-C" || v == "--chdir" || strings.HasPrefix(v, "--chdir=")) {
+			// The reader cannot tell which directory the program runs in once a second operand is given: GNU env keeps the last one,
+			// and other implementations refuse the repeat, so the program's directory is not read.
+			return u, unreadablef("env with a second directory operand is not modelled")
+		}
+		if v == "-C" || v == "--chdir" {
+			if len(args) < 2 {
+				return u, unreadablef("env %s without a directory", v)
+			}
+			u.chdirs = append(u.chdirs, args[1])
+			args = args[2:]
+			continue
+		}
+		if strings.HasPrefix(v, "--chdir=") {
+			u.chdirs = append(u.chdirs, Word{Known: true, Value: strings.TrimPrefix(v, "--chdir=")})
 			args = args[1:]
 			continue
 		}

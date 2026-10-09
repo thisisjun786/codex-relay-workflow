@@ -1123,7 +1123,22 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
 				return unreadablef("a shell builtin named behind the external program %s", name)
 			}
-			if err := w.dispatch(inner, inherited, redirs, st.clone(), ictx); err != nil {
+			// env -C and --chdir move the program's own directory, not the shell's: the copy takes each operand in turn.
+			child := st.clone()
+			childRedirs := redirs
+			if len(u.chdirs) > 0 {
+				// The shell opens a redirection before env changes directory, so its file is placed from the command's own directory.
+				childRedirs = redirsFromOuter(redirs, st.dir)
+			}
+			for _, d := range u.chdirs {
+				if ictx.Feed.replacedIn([]Word{d}) {
+					// find or xargs replaces the string with a path only the run can name: the directory is unknown, as cd leaves it.
+					child.dir = unknownDir(child.dir)
+					continue
+				}
+				child.cd([]Word{d})
+			}
+			if err := w.dispatch(inner, inherited, childRedirs, child, ictx); err != nil {
 				return err
 			}
 			continue
@@ -1133,6 +1148,33 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 		}
 	}
 	return nil
+}
+
+// redirsFromOuter places the file operands of redirections in the directory the outer command runs in. The shell opens them before
+// env changes directory, so the program's own directory does not move them. Here-documents, here-strings and descriptor copies are
+// not files and stay as they are; a relative file the outer directory cannot place is unknown.
+func redirsFromOuter(redirs []Redir, outer Dir) []Redir {
+	out := make([]Redir, len(redirs))
+	copy(out, redirs)
+	for i, r := range redirs {
+		switch r.Op {
+		case "<<", "<<-", "<<<":
+			continue
+		case ">&", "<&":
+			if r.Target.Known && isDescriptorDup(r.Target.Value) {
+				continue
+			}
+		}
+		if !r.Target.Known || r.Target.Value == "" || path.IsAbs(r.Target.Value) {
+			continue
+		}
+		if !outer.Known {
+			out[i].Target = Word{Reason: "a relative file in a directory the reader cannot place"}
+			continue
+		}
+		out[i].Target = Word{Known: true, Value: path.Join(outer.Path, r.Target.Value)}
+	}
+	return out
 }
 
 // shellStateBuiltin is whether a word names a shell builtin that changes the shell's own directory, variables, functions or

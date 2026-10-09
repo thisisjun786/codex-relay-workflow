@@ -1185,6 +1185,36 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+CRW-910 issue (Linear description)	echo cd /tmp `rm -rf ../repo`	CRW-910-01	row	-
+CRW-910 issue (Linear description)	echo cd /tmp "$(rm -rf ../repo)"	CRW-910-02	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; bash 2>/dev/null -c "$X"	CRW-910-03	row	-
+CRW-910 issue (Linear description)	X='echo x > {MEMORY}/a'; bash 2>/dev/null -c "$X"	CRW-910-04	row	-
+CRW-910 issue (Linear description)	bash << 'EOF'	CRW-910-05	row	-
+CRW-910 issue (Linear description)	bash <<- EOF	CRW-910-06	row	-
+CRW-910 issue (Linear description)	bash << "EOF"	CRW-910-07	row	-
+CRW-910 issue (Linear description)	P=x; python3 << EOF	CRW-910-08	row	-
+CRW-910 issue (Linear description)	env -u HOME rm -rf ../repo	CRW-910-09	row	-
+CRW-910 issue (Linear description)	env --unset=HOME rm -rf ../repo	CRW-910-10	row	-
+CRW-910 issue (Linear description)	env -C . rm -rf ../repo	CRW-910-11	row	-
+CRW-910 issue (Linear description)	env --chdir . rm -rf ../repo	CRW-910-12	row	-
+CRW-910 issue (Linear description)	env -S 'rm -rf ../repo'	CRW-910-13	row	-
+CRW-910 issue (Linear description)	env -i rm -rf ../repo	CRW-910-14	row	-
+CRW-910 issue (Linear description)	X=rm; (	CRW-910-15	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; eval bash -c '"$X"'	CRW-910-16	row	-
+CRW-910 issue (Linear description)	X='rm -rf ../repo'; echo ${x:- #}; bash -c "$X"	CRW-910-17	row	-
+CRW-910 issue (Linear description)	X='echo x > {MEMORY}/a'; echo ${x:- #}; bash -c "$X"	CRW-910-18	row	-
+CRW-910 issue (Linear description)	bash 2>/dev/null -c "$(printf 'echo x > {MEMORY}/a')"	CRW-910-19	row	-
+CRW-910 issue (Linear description)	echo cd /tmp	CRW-910-20	row	-
+CRW-910 issue (Linear description)	bash </dev/null -c 'echo hi'	CRW-910-21	row	-
+CRW-910 issue (Linear description)	env --ignore-environment ls	CRW-910-22	row	-
+CRW-910 issue (Linear description)	env -v ls	CRW-910-23	row	-
+CRW-910 issue (Linear description)	env --chdir . ls	CRW-910-24	row	-
+CRW-910 issue (Linear description)	(cd /tmp); ls	CRW-910-25	row	-
+CRW-910 issue (Linear description)	cat << EOF	CRW-910-26	row	-
+CRW-910 issue (Linear description)	echo "$(true)" '$(rm -rf ../repo)'	CRW-910-27	row	-
+CRW-910 issue (Linear description)	echo "$(true)x" '$(rm -rf ../repo)'	CRW-910-28	row	-
+CRW-910 issue (Linear description)	env -C {CHECKOUT} rm -rf .	CRW-910-29	row	-
+CRW-910 issue (Linear description)	env -C {MEMORY} sh -c 'echo x > a'	CRW-910-30	row	-
 recheck-20261009-g4-RC-851-v3	python3 -c 'import builtins; builtins \<nl>.exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-01	row	-
 recheck-20261009-g4-RC-851-v3d	python3 -c 'import builtins; (builtins \<nl>.exec)("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-02	row	-
 added by CRW-851 (line-continuation variant of the 10-09 re-check RC-851-v3)	python3 -c 'import builtins; builtins.\<nl>exec("""open(file="<m>/a",mode="w")""")'	CRW-851-lc-03	row	-
@@ -1557,3 +1587,11 @@ linear-issue-CRW-917.json	true; python3 -c with a program that builds gh from em
 linear-issue-CRW-917.json	python3 -c with a program that names no post (control)	CRW-917-42-07	row	-
 linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with a NAME=value secret inside a string	CRW-917-42-08	row	-
 linear-issue-CRW-917.json	gh pr comment --body-file of a JSON-looking file with an escaped key name (raw text, control)	CRW-917-42-09	row	-
+CRW-910 pre-merge evaluation 39c72966 (d1: second -C operand)	env -C sub -C . rm -rf ../repo	CRW-910-E01	row	-
+CRW-910 pre-merge evaluation 39c72966 (d1: second --chdir operand)	env --chdir=sub --chdir=. rm -rf ../repo	CRW-910-E02	row	-
+CRW-910 pre-merge evaluation 39c72966 (d2: find {} in env -C, memory root)	find {MEMORY} -maxdepth 0 -exec env -C '{}' sh -c 'echo x > a' \;	CRW-910-E03	row	-
+CRW-910 pre-merge evaluation 39c72966 (d2: find {} in env -C, checkout)	find {CHECKOUT} -maxdepth 0 -exec env -C '{}' rm -rf . \;	CRW-910-E04	row	-
+CRW-910 pre-merge evaluation 39c72966 (control of d2)	find . -maxdepth 0 -exec env -C sub ls \;	CRW-910-E05	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect in outer dir, control)	env -C {MEMORY} ls > out.txt	CRW-910-E06	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect into memory root by name)	env -C {CHECKOUT} ls > {MEMORY}/out.txt	CRW-910-E07	row	-
+CRW-910 pre-merge evaluation 39c72966 (d3: redirect in memory outer dir)	cd {MEMORY} && env -C {CHECKOUT} ls > out.txt	CRW-910-E08	row	-
