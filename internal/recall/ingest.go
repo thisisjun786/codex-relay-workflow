@@ -52,6 +52,10 @@ type IndexFreshness struct {
 	// Verified is set when the counts were decided from file content (the explicit strong path),
 	// not from size and mtime alone. A zero value means metadata-only freshness.
 	Verified bool `json:"verified,omitempty"`
+	// RebuildRequired is set when a content check was asked for on an index of an older schema: it
+	// holds no checkpoints to check against, so the counts are metadata-only and the next writer
+	// rebuilds the index.
+	RebuildRequired bool `json:"rebuildRequired,omitempty"`
 }
 
 // KnownFile is a file's stored cursor. FileID and Checkpoint are empty in the metadata-only reads.
@@ -174,6 +178,12 @@ func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *Fres
 	if err != nil {
 		return IndexFreshness{}, err
 	}
+	// An index written before the cursor carried a file identity and a checkpoint has nothing to
+	// verify content against; the next writer rebuilds it. It is reported as such, from metadata.
+	rebuild := verify && !(filesHasColumn(db, "file_id") && filesHasColumn(db, "checkpoint"))
+	if rebuild {
+		verify = false
+	}
 	query := "SELECT path, mtime_ms, size FROM files"
 	if verify {
 		query = "SELECT path, mtime_ms, size, bytes_ingested, file_id, checkpoint FROM files"
@@ -196,7 +206,7 @@ func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *Fres
 		}
 		known[memoryStatusString(row["path"])] = prev
 	}
-	f := IndexFreshness{SourceFiles: float64(len(files)), IndexedFiles: float64(len(known)), Verified: verify}
+	f := IndexFreshness{SourceFiles: float64(len(files)), IndexedFiles: float64(len(known)), Verified: verify, RebuildRequired: rebuild}
 	paths := make(map[string]bool, len(files))
 	for _, file := range files {
 		paths[file.Path] = true

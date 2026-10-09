@@ -162,7 +162,8 @@ type recallCLIIndexReport struct {
 	ExtraFiles   float64 `json:"extraFiles"`
 	Truncated    bool    `json:"truncated"`
 	// Freshness is "content-verified" when the counts were decided from file content (--verify) and
-	// absent when they are metadata-only (size, mtime and file identity).
+	// absent when they are metadata-only (size, mtime and file identity). "rebuild-required" is an index
+	// of an older schema asked for --verify: it holds no checkpoints, the counts are metadata-only.
 	Freshness string `json:"freshness,omitempty"`
 }
 
@@ -178,6 +179,8 @@ func recallCLIStatusReportMode(db *RwDb, path, home string, budget *FreshnessBud
 	report := recallCLIIndexReport{status, fresh.SourceFiles, fresh.StaleFiles, fresh.MissingFiles, fresh.ChangedFiles, fresh.ExtraFiles, fresh.Truncated, ""}
 	if fresh.Verified {
 		report.Freshness = "content-verified"
+	} else if fresh.RebuildRequired {
+		report.Freshness = "rebuild-required"
 	}
 	return report, err
 }
