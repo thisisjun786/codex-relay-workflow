@@ -104,6 +104,20 @@ var improveUnlinkTemporary func(dirfd int, name string) error = func(dirfd int, 
 	return unix.Unlinkat(dirfd, name, 0)
 }
 
+// improveTemporaryStep runs before each step that writes the temporary file (write, sync, chmod, close,
+// rename) and answers the error that step should fail with, or nil. It is the seam a test uses to make one
+// step fail and prove the refusal removes the named temporary file. The step is skipped when the seam
+// answers an error. Production leaves it nil.
+var improveTemporaryStep func(step string) error
+
+// improveStepFails answers the error a test asked the named step to fail with, nil in production.
+func improveStepFails(step string) error {
+	if improveTemporaryStep != nil {
+		return improveTemporaryStep(step)
+	}
+	return nil
+}
+
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
@@ -652,17 +666,29 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 		}
 		return cause
 	}
+	if err := improveStepFails("write"); err != nil {
+		return discard(err)
+	}
 	if _, err := file.Write(data); err != nil {
+		return discard(err)
+	}
+	if err := improveStepFails("sync"); err != nil {
 		return discard(err)
 	}
 	if err := file.Sync(); err != nil {
 		return discard(err)
 	}
 	// The mode is set on the descriptor, not by spelling the name again.
+	if err := improveStepFails("chmod"); err != nil {
+		return discard(err)
+	}
 	if err := unix.Fchmod(fd, 0o600); err != nil {
 		return discard(err)
 	}
 	if !unnamed {
+		if err := improveStepFails("close"); err != nil {
+			return discard(err)
+		}
 		if err := file.Close(); err != nil {
 			return discard(err)
 		}
@@ -705,6 +731,9 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 			return errImproveNoUnnamedName
 		}
 		named = true
+	}
+	if err := improveStepFails("rename"); err != nil {
+		return discard(err)
 	}
 	if err := unix.Renameat(dirfd, name, dirfd, filepath.Base(fresh.Dest)); err != nil {
 		return discard(err)
