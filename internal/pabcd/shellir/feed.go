@@ -471,15 +471,12 @@ func globBracket(pattern string, i int) (end int, class string, ok bool) {
 // same in every dialect find reads (emacs, posix-basic, posix-extended, awk, egrep) and in Go's regexp is evaluated: literal
 // characters, ., *, a leading ^, a trailing $, an escaped . * [ ] ^ $ / \, and bracket expressions of characters, ranges and POSIX
 // classes. Anything else (a group, alternation, an interval, ?, +, an anchor or word escape such as \' \` \< \b, a letter escape, a
-// ^ or $ elsewhere, a backslash in a bracket, a collating symbol) is not read (known is false) and so never guards, unless the
-// pattern is made of nothing else than dots, stars, groups and anchors, which fits every path.
+// ^ or $ elsewhere, a backslash in a bracket, a collating symbol) is not read (known is false) and so never guards. An escaped
+// character is the literal it names (.*\* fits only paths that end in a star), and a match-all pattern (.*, ^.*$) is evaluated like
+// any other and fits every path; one with groups or + ((.*), .+) is not read, which guards nothing either.
 func regexMatch(pattern, s string, fold bool) (matches, known bool) {
 	if (!isASCII(s) || !isASCII(pattern)) && strings.ContainsAny(pattern, ".[") || fold && strings.Contains(pattern, "[^") {
 		// A locale decides what . and a bracket take outside ASCII, and a case-folded negated bracket has no bound the reader proves.
-		return true, true
-	}
-	if strings.Trim(pattern, ".*()^$|+?\\") == "" {
-		// Dots, stars, groups and anchors only (.*, (.*), ^.*$, .+): the pattern fits every path.
 		return true, true
 	}
 	goRe, ok := regexToGo(pattern)
