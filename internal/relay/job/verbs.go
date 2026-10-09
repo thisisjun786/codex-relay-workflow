@@ -317,10 +317,10 @@ func cliTail(arg *string, available int) int {
 
 // cliDrain selects and stamps under the store lock (deliver), so a drain and a hook never hand out one completion twice. Its text is
 // the relay's answer, which the dispatcher writes after it returns: the stamp still comes before that write. The text keeps the wake
-// budget as a JSON string, and a job it does not describe stays pending (CRW-1095).
+// budget as the JSON string the relay writes (wireSize), and a job it does not describe stays pending (CRW-1095).
 func cliDrain(cwd string, session *string, clock func() time.Time) string {
 	out, _ := deliver(cwd, session, clock, nil, func(recs []BgRecord) (string, []BgRecord) {
-		return fitWake(recs, completionBody, jsonSize)
+		return fitWake(recs, completionBody, wireSize, wireSize)
 	}, acceptAll)
 	return out
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // HookPayload keeps the oracle's optional unknown-valued fields. Source and
@@ -47,7 +48,7 @@ func PayloadCwd(p HookPayload, fallback string) string {
 
 // CompletionText is the text of a wake for recs: the jobs that fit the budget (fitWake), as a drain hands it over.
 func CompletionText(recs []BgRecord) string {
-	out, _ := fitWake(recs, completionBody, jsonSize)
+	out, _ := fitWake(recs, completionBody, wireSize, wireSize)
 	return out
 }
 
@@ -76,14 +77,14 @@ const (
 )
 
 // fitWake is the text wrap builds from the lines of the first jobs of recs that fit the budget, and those jobs. wrap answers the text
-// of n jobs and their lines as it is handed over, and size is what that text costs. A job whose command fits and that has no note
-// gets DescribeRecord's line.
-func fitWake(recs []BgRecord, wrap func(n int, lines []string) string, size func(string) int) (string, []BgRecord) {
+// of n jobs and their lines as it is handed over, size is what that text costs and lineSize what the lines cost, each in the spelling
+// the text is written in. A job whose command fits and that has no note gets DescribeRecord's line.
+func fitWake(recs []BgRecord, wrap func(n int, lines []string) string, size, lineSize func(string) int) (string, []BgRecord) {
 	lines := make([]string, len(recs))
 	for i, rec := range recs {
 		lines[i] = briefRecord(rec, WakeCommandBytes, WakeNoteBytes)
 	}
-	if out := wrap(len(recs), lines); len(recs) == 0 || jsonSize(strings.Join(lines, "\n")) <= WakeLinesBytes && size(out) <= WakeTextBytes {
+	if out := wrap(len(recs), lines); len(recs) == 0 || lineSize(strings.Join(lines, "\n")) <= WakeLinesBytes && size(out) <= WakeTextBytes {
 		return out, recs
 	}
 	for i, rec := range recs {
@@ -96,8 +97,19 @@ func fitWake(recs []BgRecord, wrap func(n int, lines []string) string, size func
 	}
 }
 
-// jsonSize is the size of s as a JSON string, the way the store's serializer spells it.
+// jsonSize is the size of s as a JSON string, the way the store's serializer spells it: the spelling of a hook's envelope, which
+// leaves a character past U+007F as it is.
 func jsonSize(s string) int { return len(quote(s)) }
+
+// wireSize is the size of s as a JSON string the way the relay writes a drain's answer: Python's json.dumps with ensure_ascii, where a
+// character past U+007E is \uXXXX, two of them past the BMP (CRW-1095).
+func wireSize(s string) int {
+	b, err := pyjson.Encode(s, pyjson.Options{})
+	if err != nil {
+		return 6*len(s) + 2 // no spelling is longer than six bytes for one
+	}
+	return len(b)
+}
 
 func envelopeSize(s string) int { return len(s) }
 
@@ -175,7 +187,7 @@ func completion(p HookPayload, cwd string, getenv func(string) string, clock fun
 					return blockEnvelope(body)
 				}
 				return contextEnvelope(event, body)
-			}, envelopeSize)
+			}, envelopeSize, jsonSize)
 		}, emit)
 		return out
 	})
@@ -216,7 +228,7 @@ func HandleSessionStart(p HookPayload, cwd string, getenv func(string) string, c
 				lines = append(lines, described...)
 			}
 			return contextEnvelope("SessionStart", strings.Join(append(lines, Affordance), "\n"))
-		}, envelopeSize)
+		}, envelopeSize, jsonSize)
 		return out
 	})
 }
