@@ -156,6 +156,10 @@ func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bo
 	return spawnFinalGateIdentity(spawnFinalGateObject(root, rel)["sourceIdentity"])
 }
 
+// spawnFinalGateSameDir decides whether two stats name one directory (device and inode); a seam of the tests, which make two spellings
+// of one directory stat alike the way a case-insensitive file system does.
+var spawnFinalGateSameDir = os.SameFile
+
 // spawnFinalGateBelow is the path of the absolute path abs relative to the working directory cwd, or false when cwd cannot be made
 // absolute or no ancestor of abs is cwd. cwd is made absolute, then resolved through its links; the ancestor of abs that names the
 // same directory (abs itself spelled through a link to cwd, or through the real path while cwd is the link) is the base, found from

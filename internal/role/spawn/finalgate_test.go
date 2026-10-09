@@ -357,6 +357,40 @@ func TestCheckFinalGatePrereqsReadsAnAbsoluteReceiptInsideCwd(t *testing.T) {
 	}
 }
 
+// On a case-insensitive file system (APFS, NTFS) a link to the working directory resolves to the spelling the link text holds, which
+// can differ in case from the spelling the receipt path uses for the same directory: the two are one directory by identity, not by
+// string. The seam makes two directories of a case-insensitive spelling stat alike, as such a file system does; the receipt is read
+// below the real working directory, and a directory of another name is still not the working directory.
+func TestCheckFinalGatePrereqsReadsAReceiptSpelledInAnotherCaseOfCwd(t *testing.T) {
+	const receipt = ".crw/evidence/test.json"
+	for _, c := range []struct {
+		name      string
+		spelling  func(real string) string // the directory the receipt path names
+		wantReads bool
+	}{
+		{"the other case of the directory name", func(real string) string {
+			return filepath.Join(filepath.Dir(real), strings.ToUpper(filepath.Base(real)))
+		}, true},
+		{"another directory name", func(real string) string { return filepath.Join(filepath.Dir(real), "other") }, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			real, alias := spawnFinalGateTestAliasTree(t)
+			spelled := c.spelling(real)
+			if err := os.Mkdir(spelled, 0o755); err != nil { // on a case-insensitive file system this is the working directory itself
+				t.Fatal(err)
+			}
+			recorded := filepath.Join(spelled, receipt)
+			spawnFinalGateTestReceiptPlan(t, real, recorded, filepath.Join(real, receipt))
+			defer func(sameDir func(a, b os.FileInfo) bool) { spawnFinalGateSameDir = sameDir }(spawnFinalGateSameDir)
+			spawnFinalGateSameDir = func(a, b os.FileInfo) bool { return os.SameFile(a, b) || strings.EqualFold(a.Name(), b.Name()) }
+			got := CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", alias, spawnFinalGateTestIdentity)
+			if got.OK != c.wantReads {
+				t.Fatalf("a receipt at %q with cwd %q: OK %v, want %v (%s)", recorded, alias, got.OK, c.wantReads, got.Reason)
+			}
+		})
+	}
+}
+
 // A receipt that leaves the working directory is refused, by name, by an alias of the working directory, or by a link, as before the
 // fix: every read stays below the os.Root of cwd (the oracle reads them, the port does not).
 func TestCheckFinalGatePrereqsKeepsAReceiptOutsideCwdRejected(t *testing.T) {
