@@ -96,6 +96,15 @@ func shellMetaTransforms() []shellMetaTransform {
 			}
 			return fmt.Sprintf("$'\\%03o'", c[0]) + c[1:]
 		}},
+		{"quoted-word", func(c string) string {
+			return shellMetaPerChar(c, func(b byte) string { return "\"" + string(b) + "\"" })
+		}},
+		{"hex-word", func(c string) string {
+			return shellMetaPerChar(c, func(b byte) string { return fmt.Sprintf("$'\\x%02x'", b) })
+		}},
+		{"octal-word", func(c string) string {
+			return shellMetaPerChar(c, func(b byte) string { return fmt.Sprintf("$'\\%03o'", b) })
+		}},
 		{"continuation", func(c string) string {
 			if i := strings.IndexByte(c, ' '); i >= 0 {
 				return c[:i] + " \\\n" + c[i+1:]
@@ -116,6 +125,24 @@ func shellMetaTransforms() []shellMetaTransform {
 		{"fd-alias", func(c string) string { return "exec 9>&2; " + c }},
 		{"fd-dup", func(c string) string { return "{ " + c + "; } 9>&1" }},
 	}
+}
+
+// shellMetaPerChar rewrites every character of the command's first word through quote, so each letter of the program name is
+// in its own quoting form (per-character quoting, ANSI-C hex and octal escapes). A text whose first word is not a plain
+// lower-case or digit name (a compound opener, an assignment) is returned as it is.
+func shellMetaPerChar(c string, quote func(byte) string) string {
+	end := 0
+	for end < len(c) && (c[end] >= 'a' && c[end] <= 'z' || c[end] >= '0' && c[end] <= '9') {
+		end++
+	}
+	if end == 0 || end < len(c) && c[end] != ' ' {
+		return c
+	}
+	var sb strings.Builder
+	for i := 0; i < end; i++ {
+		sb.WriteString(quote(c[i]))
+	}
+	return sb.String() + c[end:]
 }
 
 // shellMetaWrapper is a transform that puts a program word in front of the command it is given, so the command after it

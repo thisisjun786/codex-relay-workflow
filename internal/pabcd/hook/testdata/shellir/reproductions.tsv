@@ -710,3 +710,47 @@ added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewr
 added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	bash otherwriter.sh; ./gh pr view 1	CRW-1028-v4-04	row	-
 added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	./tmux new-session 'gh pr comment 1 -b x' (./tmux a binary)	CRW-1028-v4-05	row	-
 added by CRW-1028 (verifier round 4, shell and direct readings, direct ./gh rewrites, runner binaries by path)	./tmux ls (./tmux a binary)	CRW-1028-v4-06	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	{ :; } > {MEMORY}/n.md	CRW-1028-ev-d1-block	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	( : ) > {MEMORY}/n.md	CRW-1028-ev-d1-subshell	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	if :; then :; fi > {MEMORY}/n.md	CRW-1028-ev-d1-if	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	while false; do :; done > {MEMORY}/n.md	CRW-1028-ev-d1-while	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	cd ..; rm -rf {CHECKOUT}	CRW-1028-ev-d2-cd-unknown-abs	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	cd "$X"; rm -rf {CHECKOUT}	CRW-1028-ev-d2-cd-var-abs	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	cd $(pwd)/..; rm -rf {CHECKOUT}	CRW-1028-ev-d2-cd-sub-abs	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	bash -c 'CMD="rm -rf ../repo"; $CMD'	CRW-1028-ev-d3-split	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	CMD="rm -rf ../repo"; $CMD	CRW-1028-ev-d3-split-top	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	env cd /tmp; rm -rf ../repo	CRW-1028-ev-d4-env-cd	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	f() { cd /tmp; }; nice f; rm -rf ../repo	CRW-1028-ev-d4-nohup-func	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	while false; do cd /tmp; done; rm -rf ../repo	CRW-1028-ev-d5-while-false	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	for i in; do cd /tmp; done; rm -rf ../repo	CRW-1028-ev-d5-for	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	parallel rm -rf {} ::: {CHECKOUT}	CRW-1028-ev-d6-parallel	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	cd {MEMORY}; echo x > n.md	CRW-1028-ev-d7-cd-memory	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	f() { cd {MEMORY}; }; f; echo x > n.md	CRW-1028-ev-d7-func-cd	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	find . -depth -delete	CRW-1028-ev-d8-find-delete	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	find {CHECKOUT} -delete	CRW-1028-ev-d8-find-delete-abs	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'import shutil; shutil.rmtree("{CHECKOUT}")'	CRW-1028-ev-d8-python-rmtree	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post.json	CRW-1028-ev-d9-json-secret	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -X POST --input {TMP}/post2.json	CRW-1028-ev-d9-json-escaped	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'exec(br"""# coding note; coding: unicode_escape\n\x6fpen(file="{MEMORY}/n.md",mode="w")\n""")'	CRW-1028-ev-d10-double-coding	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	node -e 'require("fs").writeFileSync(process.argv[1],"x")' {MEMORY}/n.md	CRW-1028-ev-d11-node-argv	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'm="{MEMORY}/n.md"; f=open; f(m,"w").write("x")'	CRW-1028-ev-d11-python-f-open	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c 'import pathlib; pathlib.Path("{MEMORY}/"+"n.md").write_text("x")'	CRW-1028-ev-d11-python-path-computed	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	ruby -e 'File.write("{MEMORY}/n.md","x")'	CRW-1028-ev-d12-ruby	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	perl -e 'open(F,">","{MEMORY}/n.md"); print F "x"'	CRW-1028-ev-d12-perl	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	sed 'e echo x > {MEMORY}/n.md' <<<x	CRW-1028-ev-d12-sed-e	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -X POST --input -	CRW-1028-ev-d13-input-dash	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments -F body=@-	CRW-1028-ev-d13-F-body-dash	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments --input {TMP}/body-link	CRW-1028-ev-d14-link-outside	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh pr comment 1 --body-file {TMP}/body-link	CRW-1028-ev-d14-link-outside-body-file	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh api repos/o/r/issues/1/comments --input {TMP}/inner-link	CRW-1028-ev-d14-control-inside	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	sort --output={MEMORY}/n.md /tmp/input	CRW-1028-ev-d15-sort-output-eq	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	sort -o{MEMORY}/n.md /tmp/input	CRW-1028-ev-d15-sort-o-joined	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	sort --output {MEMORY}/n.md /tmp/input	CRW-1028-ev-d15-sort-output-sep	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	git -c 'diff.foo.command=sh -c "rm -rf {CHECKOUT}" --' diff --ext-diff	CRW-1028-ev-d16-git-diff-command	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	bash {TMP}/fifo	CRW-1028-ev-d17-fifo-bash	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	gh pr comment 1 --body-file {TMP}/fifo	CRW-1028-ev-d17-fifo-body-file	row	-
+added by CRW-1028 (evaluation 7b713d910 triggers d1 to d18)	python3 -c "print(\"f'}'\")"	CRW-1028-ev-d18-plain-string	row	-
+added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; bash refresh.sh (refresh.sh: echo refreshed > lint.sh)	CRW-1028-ev-overblock-01	row	-
+added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash lint.sh; bash refresh.sh'	CRW-1028-ev-overblock-02	row	-
+added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; x=$(bash refresh.sh)	CRW-1028-ev-overblock-03	row	-
+added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash refresh.sh; bash lint.sh'	CRW-1028-ev-overblock-04	row	-
