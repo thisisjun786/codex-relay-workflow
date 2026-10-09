@@ -7,8 +7,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// sweepCeiling bounds the last-resort descriptor sweep when the soft limit is unlimited or huge.
-const sweepCeiling = 1 << 20
+const (
+	// sweepFloor is the least the last-resort walk covers: 1<<20 is the kernel's default
+	// fs.nr_open, which no descriptor number reaches unless root raised it.
+	sweepFloor = 1 << 20
+	// sweepCap bounds the walk when a descriptor limit is unlimited or huge (about a second of
+	// fcntl calls).
+	sweepCap = 1 << 24
+)
 
 // fdSweep marks every descriptor above 2 close-on-exec. Each way of doing it is tried in turn and
 // the first that works wins, so the sweep never depends on one filesystem path being mounted: an
@@ -75,11 +81,15 @@ func sweepListing(dir string) bool {
 	return true
 }
 
-// descriptorLimit is the soft descriptor limit, which no open descriptor of this process can reach.
+// descriptorLimit is how far the last-resort walk goes. The soft limit alone is not a bound: it
+// only stops new descriptors, and one opened before the limit was lowered (by this process or by a
+// caller before the exec) stays open above it (CRW-1057 verification of 794b8188). The walk covers
+// the larger of the soft limit, the hard limit and the default fs.nr_open, up to sweepCap.
 func descriptorLimit() int {
+	n := uint64(sweepFloor)
 	var limit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil || limit.Cur > sweepCeiling {
-		return sweepCeiling
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err == nil {
+		n = max(n, limit.Cur, limit.Max)
 	}
-	return int(limit.Cur)
+	return int(min(n, sweepCap))
 }
