@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -362,20 +363,11 @@ type premergeGitResult struct {
 	code   int
 }
 
-// premergeGitEnv is the environment git runs in: the process's, without the variables that would point
-// git at another repository or index, and with the extra assignments after.
-func premergeGitEnv(extra ...string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		switch name {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_NAMESPACE":
-			continue
-		}
-		env = append(env, kv)
-	}
-	return append(env, extra...)
-}
+// premergeGitEnv is the environment git runs in: gitprobe's common base (the process's environment without the
+// variables that would point git at another repository, object store, index, namespace or discovery boundary,
+// or inject configuration), then the extra assignments once (the evaluation's own index and identity). The
+// transport and identity variables stay, because the evaluation fetches.
+func premergeGitEnv(extra ...string) []string { return gitprobe.Sanitize(nil, extra...) }
 
 // premergeGitRun runs git in repo and reports its exit status; an error is a git that could not run at all.
 func premergeGitRun(ctx context.Context, repo string, env []string, args ...string) (premergeGitResult, error) {
