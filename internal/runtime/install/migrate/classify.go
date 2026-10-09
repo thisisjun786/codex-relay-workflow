@@ -647,8 +647,9 @@ func classifyEvidenceTree(path string) bool {
 // classifyProducerTemp reports whether name is exactly the temporary shape a producer writes beside its final file: the CRW
 // shape "." + final + "." + 26 base32 characters + ".tmp" (crwdir/atomic.go:92) and the CXC shapes final + "." + pid + "." +
 // ms + ".tmp" and final + "." + pid + "." + uuid + ".tmp" (subagent-evidence.ts:221, state.ts:387,625). Every other ".tmp"
-// name is ordinary data. The final-name part must be non-empty, so a user file such as .123.1760000000000.tmp (an empty final
-// name) stays ordinary data; a dotfile final name such as .receipt.json is not empty and keeps its previous disposition.
+// name is ordinary data. The final-name part must be non-empty, so a user file such as .123.1760000000000.tmp or
+// .123.<uuid>.tmp (an empty final name before the pid) stays ordinary data; a dotfile final name such as .receipt.json is not
+// empty and keeps its previous disposition.
 func classifyProducerTemp(name string) bool {
 	core, ok := strings.CutSuffix(name, tempSuffix)
 	if !ok || core == "" {
@@ -664,6 +665,10 @@ func classifyProducerTemp(name string) bool {
 		return false
 	}
 	if classifyUUID(last) {
+		// A pid directly before the uuid needs a non-empty final name before it, as the millisecond shape does (CRW-1019).
+		if base, pid, cut := classifyCutLast(head, "."); cut && classifyPid(pid) {
+			return base != ""
+		}
 		return true
 	}
 	if classifyMillis(last) {
