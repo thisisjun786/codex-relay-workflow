@@ -149,3 +149,26 @@ func TestResumeSentLostAnswerStaysUncertain(t *testing.T) {
 		t.Errorf("the fake host read turn/start %d times, want 1", n)
 	}
 }
+
+// CRW-915: the connection is lost after the run's checks and before the turn/start frame is marked
+// transmitted (the seam retires the watch's socket exactly as the reader does when it loses it). The
+// frame was never written, so the refusal is an ordinary host_error and the host sees no turn/start.
+func TestResumeSentRetireBeforeTheMarkIsHostError(t *testing.T) {
+	host := resumeHost(t, "idle")
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	resumeSentTurnStartSeam = func(_ context.Context, client *appserver.Client) { client.RetireBeforeWrite("turn/start") }
+	defer func() { resumeSentTurnStartSeam = nil }()
+
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+	failure, ok := err.(*resumeFailure)
+	if !ok || failure.Reason != string(hostReadHostError) {
+		t.Fatalf("err = %v, want host_error", err)
+	}
+	if !strings.HasPrefix(failure.Detail, "turn/start was not sent: ") || !strings.HasSuffix(failure.Detail, "; no turn was started") {
+		t.Errorf("the refusal does not report an unsent turn/start: %q", failure.Detail)
+	}
+	if n := host.Count("turn/start"); n != 0 {
+		t.Errorf("the fake host received turn/start %d times, want 0", n)
+	}
+}

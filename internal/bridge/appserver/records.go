@@ -181,6 +181,23 @@ func (c *Client) FailBeforeWrite(method string) {
 	c.mu.Unlock()
 }
 
+// RetireBeforeWrite injects, once, the loss of the current connection as a reader sees it, at the
+// moment a method's request is past its first checks and before its frame is written: the watches
+// on that socket retire exactly as when the reader loses it. Intended for fake-host integration
+// tests of the window between the retire check and the write; it must be installed before
+// concurrent calls.
+func (c *Client) RetireBeforeWrite(method string) {
+	c.mu.Lock()
+	c.beforeWrite = func(actual string) error {
+		if actual == method {
+			c.beforeWrite = nil
+			c.subscriptions.lost(c.conn)
+		}
+		return nil
+	}
+	c.mu.Unlock()
+}
+
 // BoundAck sets the acknowledgement deadline for subsequently sent requests.
 func (c *Client) BoundAck(duration time.Duration) { c.bounds.Ack = duration }
 

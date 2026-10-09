@@ -154,9 +154,22 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 		return nil, injected
 	}
 	if watch != nil && method == "turn/start" {
+		// The retire check and the mark are one critical section: a reader that retires the watch's
+		// socket between the first check and here would otherwise leave Transmitted true for a frame
+		// that is then written to a closed socket and never reaches the host. A write that fails after
+		// this point may have sent part of the frame, and stays transmitted.
 		c.subscriptions.mu.Lock()
-		watch.transmitted = true
+		retired := watch.retired
+		if !retired {
+			watch.transmitted = true
+		}
 		c.subscriptions.mu.Unlock()
+		if retired {
+			c.mu.Lock()
+			delete(c.pending, key)
+			c.mu.Unlock()
+			return nil, &TransportError{Reason: "subscription watch retired; request withheld"}
+		}
 	}
 	if hook, ok := ctx.Value(sendHookKey{}).(func(string)); ok {
 		hook(method)
