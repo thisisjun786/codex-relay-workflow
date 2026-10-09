@@ -927,3 +927,13 @@ evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, fi
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed --in='{MEMORY}/*' -e p out.txt --in-place=.bak	CRW-941-D14	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i'{MEMORY}/*' p out.txt -ni	CRW-941-D15	row	-
 evaluation of 83a490cef (fix round 1 of the pre-merge evaluation of 101be077, finding d3 in the POSIX option scan)	sed -i.bak -e p out.txt -i	CRW-941-D16	row	-
+linear-issue-CRW-1059.json	bash -c 'bash lint.sh && bash refresh.sh'	CRW-1059-01	row	-
+linear-issue-CRW-1059.json	bash -c 'bash lint.sh || bash refresh.sh'	CRW-1059-02	row	-
+linear-issue-CRW-1059.json	bash -c 'bash lint.sh<newline>bash refresh.sh' (two lines of one carried text)	CRW-1059-03	row	-
+linear-issue-CRW-1059.json	x=$(bash lint.sh; bash refresh.sh)	CRW-1059-04	row	-
+linear-issue-CRW-1059.json	x=$(bash refresh.sh); bash lint.sh	CRW-1059-05	row	-
+linear-issue-CRW-1059.json	bash -c 'for i in 1 2; do bash lint.sh; bash refresh.sh; done'	CRW-1059-06	row	-
+linear-issue-CRW-1059.json	bash -c 'bash lint.sh | cat; bash refresh.sh'	CRW-1059-07	row	-
+linear-issue-CRW-1059.json	bash -c 'bash lint.sh & bash refresh.sh'	CRW-1059-08	row	-
+linear-issue-CRW-1059.json	bash -c 'f() { bash lint.sh; }; bash refresh.sh; f'	CRW-1059-09	row	-
+linear-issue-CRW-1059.json	bash -c 'bash lint.sh; bash refresh.sh; bash lint.sh'	CRW-1059-10	row	-
