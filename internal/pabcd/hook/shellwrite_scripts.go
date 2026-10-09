@@ -41,5 +41,5 @@ func shellIRScriptDests(e shellir.Exec, cwd string, resolve bool, depth int, out
 // This deliberately conservative lexical rule only expands read-only awk.
 // Any redirect/pipe or system/getline operation keeps the unknown destination.
 func shellIRAwkReadOnly(src string) bool {
-	return !strings.ContainsAny(src, ">|") && !regexp.MustCompile(`\bsystem\s*\(|\bgetline\b`).MatchString(src)
+	return !strings.ContainsAny(src, ">|") && !regexp.MustCompile(`\bsystem\s*\(`).MatchString(src) && !(strings.Contains(src, "<") && regexp.MustCompile(`\bgetline\b`).MatchString(src))
 }

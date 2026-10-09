@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -30,6 +31,7 @@ func TestCRW1085ReadableCommandsAtIngress(t *testing.T) {
 		{"[ -f x ]", true}, {"if [ -f f ]; then cat f; else echo y; fi", true},
 		{"bash -n x", true}, {"sh -n x", true}, {"sh x", true}, {"bash x", true},
 		{"awk 'END { print NR }' notes.txt", true}, {"awk -F: '{print $1}' notes.txt", true},
+		{"awk '{getline; print}' notes.txt", true},
 		{"python3 x.py", true}, {"python3 -u x.py", true}, {"test -f x", true}, {"ls", true},
 		{"python3 -m http.server", false}, {"sh missing", false},
 	}
@@ -62,5 +64,32 @@ func TestCRW1085ReadableCommandsAtIngress(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": dir, "tool_input": map[string]any{"command": "python3 -m unittest"}})
 	if out := worktreeLeg(t, "pre-tool-use-guarding-memory-write").Handle(harness.Call{Raw: string(raw)}); !strings.Contains(out, "deny") {
 		t.Fatal("protected discovery write allowed")
+	}
+}
+
+func TestCRW1085ProtectedCompileAndShellFIFO(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("HOME", cwd)
+	home := filepath.Join(cwd, "codex")
+	t.Setenv("CODEX_HOME", home)
+	root := filepath.Join(home, "memories")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "test_compile.py")
+	if err := os.WriteFile(file, []byte("print(1)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(cwd, "pipe.sh"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"python3 -m py_compile " + file, "sh pipe.sh"} {
+		raw, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd, "tool_input": map[string]any{"command": cmd}})
+		if out := worktreeLeg(t, "pre-tool-use-guarding-memory-write").Handle(harness.Call{Raw: string(raw)}); out == "" {
+			t.Errorf("protected write/unreadable FIFO allowed: %s", cmd)
+		}
+		if cmd == "sh pipe.sh" && hook.GitHubPostAnswer(strings.NewReader(string(raw))) == "" {
+			t.Error("FIFO allowed by GitHub guard")
+		}
 	}
 }

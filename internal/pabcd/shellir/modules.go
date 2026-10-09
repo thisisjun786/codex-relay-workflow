@@ -115,6 +115,12 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 				}
 				return nil
 			}
+			if d.Type()&os.ModeSymlink != 0 {
+				info, err := os.Stat(p)
+				if err != nil || info.IsDir() {
+					return unreadablef("discovery cannot prove a linked directory")
+				}
+			}
 			n := d.Name()
 			if strings.HasSuffix(n, ".py") && (strings.HasPrefix(n, "test") || strings.HasSuffix(n, "_test.py") || module == "pytest" && n == "conftest.py") {
 				files = append(files, p)
@@ -144,6 +150,11 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			return true, unreadablef("module file read refused")
 		}
 		total += len(body)
+		if module == "py_compile" {
+			// Explicit compilation writes bytecode even with Python -B.
+			name, args := fileRecord([]string{filepath.Join(filepath.Dir(file), "__pycache__")})
+			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: args, Dir: st.dir, Ctx: ctx})
+		}
 		w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Dir: st.dir, Ctx: ctx, Inline: &Inline{Language: "python", Source: Word{Known: true, Value: body}}})
 	}
 	return true, nil
