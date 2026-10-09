@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // CRW-1033. A node accepted on its pull request carries the forge slug of that pull request as its repository, a node
@@ -145,18 +143,30 @@ func TestIntegrationBatchMergesARefreshedPullRequestNodeAtItsStandHead(t *testin
 	if rec, err := k.sched.RecordBaseRefresh(context.Background(), "g", "a", "parent", RefreshInput{Checkout: k.repo.path}); err != nil || rec.HeadSHA != refreshed {
 		t.Fatalf("record base refresh = %v %+v", err, rec)
 	}
-	// the refreshed head is judged on its own pre-merge record (CRW-952): the record of the stand head is the one a revalidation at that head stores
-	raw := premergeAt(k.sched, context.Background(), "g", "a", refreshed)
-	digest, err := premerge.Digest(raw)
-	if err != nil {
+	// before the stand head has its own pre-merge record the batch leaves the node out: the record of the accepted head does not pass for the head it stands on now
+	if res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), k.integrateDeps(t)); err == nil || len(res.Merged) != 0 {
+		t.Fatalf("batch before the stand head's record = %v %+v; want node a left out", err, res)
+	}
+	// the refreshed head is judged on its own pre-merge record (CRW-952), given through dag-accept on the same pull request: a record of another head is refused, the
+	// record of the stand head is stored as the record the acceptance now stands on, and the same call again is refused as a second record of that head
+	pull := &PRRef{Repository: "owner/repo", Number: 11}
+	if _, err := k.accept("g", "a", AcceptInput{PullRequest: pull, Premerge: premergeAt(k.sched, context.Background(), "g", "a", accepted)}); refusalReasonOf(err) != "premerge_head_mismatch" {
+		t.Fatalf("dag-accept with the record of the accepted head = %v; want premerge_head_mismatch", err)
+	}
+	var event, criteria string
+	if err := k.s.DB.QueryRow("SELECT a.event_id, a.criteria_set_digest FROM dag_acceptances a WHERE a.plan_id = 'g' AND a.node_id = 'a' AND a.state = 'active'").Scan(&event, &criteria); err != nil {
 		t.Fatal(err)
 	}
-	var acceptance, event, criteria string
-	if err := k.s.DB.QueryRow("SELECT a.acceptance_id, a.event_id, a.criteria_set_digest FROM dag_acceptances a WHERE a.plan_id = 'g' AND a.node_id = 'a' AND a.state = 'active'").Scan(&acceptance, &event, &criteria); err != nil {
-		t.Fatal(err)
+	restood, err := k.accept("g", "a", AcceptInput{PullRequest: pull, Premerge: premergeAt(k.sched, context.Background(), "g", "a", refreshed)})
+	if err != nil || !restood.Replayed || restood.SupersededID != "" {
+		t.Fatalf("dag-accept with the record of the stand head = %v %+v; want the same acceptance with the stand head's record", err, restood)
 	}
-	k.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-a-stand', ?, ?, ?, 'verdict-turn', 1, 'parent', 't')", acceptance, criteria, event)
-	k.exec("INSERT INTO dag_revalidation_premerge (revalidation_id, acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at) VALUES ('rv-a-stand', ?, ?, ?, ?, ?, 'parent', 0, 't')", acceptance, digest, string(raw), refreshed, refreshed)
+	if _, err := k.accept("g", "a", AcceptInput{PullRequest: pull, Premerge: premergeAt(k.sched, context.Background(), "g", "a", refreshed)}); refusalReasonOf(err) != "disposition_conflict" || !strings.Contains(err.Error(), "already holds") {
+		t.Fatalf("a second record of the stand head = %v; want disposition_conflict", err)
+	}
+	if got := k.count("SELECT COUNT(*) FROM dag_acceptances WHERE plan_id = 'g' AND node_id = 'a' AND state = 'active' AND criteria_set_digest = ?", criteria); got != 1 {
+		t.Fatalf("%d active acceptances of a with its criteria; want the one acceptance", got)
+	}
 	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), k.integrateDeps(t))
 	if err != nil || len(res.Merged) != 1 || res.Merged[0].HeadSHA != refreshed || res.Merged[0].HeadSHA == accepted {
 		t.Fatalf("batch = %v %+v; want node a merged at the refreshed head %s (accepted %s)", err, res, refreshed, accepted)

@@ -407,12 +407,29 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			out.HeadSHA = a.HeadSHA
 			if effective == head.SetDigest {
 				if implementation && len(in.Premerge) > 0 {
-					// the attach path (CRW-952 answer 5): a record for an acceptance that has none is stored once
 					cn, _ := nodeOf(current, node)
 					stand, serr := s.standOf(txCtx, tx, a)
 					if serr != nil {
 						return serr
 					}
+					recordedHead, recorded, err := standingPremergeHead(txCtx, tx, existing)
+					if err != nil {
+						return err
+					}
+					if recorded && stand.RefreshID != "" && recordedHead != stand.Head {
+						// a recorded base refresh moved the acceptance to a head its stored record was not made for (CRW-1033): the record of the head it stands on now is judged there and
+						// appended as a re-validation of the same output under the same criteria, the record integration reads; the acceptance and its own record are left as they are
+						judged, err := judgePremerge(txCtx, in.Premerge, node, cn, stand.Head, premergeAttachPath(in))
+						if err != nil {
+							return err
+						}
+						if err := s.appendRevalidation(txCtx, tx, existing, head, actor, &judged); err != nil {
+							return err
+						}
+						out.Replayed = true
+						return nil
+					}
+					// the attach path (CRW-952 answer 5): a record for an acceptance that has none is stored once
 					if err := s.attachPremerge(txCtx, tx, in, existing, node, cn, stand.Head, actor); err != nil {
 						return err
 					}
@@ -439,19 +456,12 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 					return err
 				}
 			}
-			var last sql.NullInt64
-			if err := tx.QueryRowContext(txCtx, "SELECT MAX(reval_seq) FROM dag_acceptance_revalidations WHERE acceptance_id = ?", existing).Scan(&last); err != nil {
-				return err
-			}
-			seq := last.Int64 + 1
-			if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES (?,?,?,?,?,?,?,?)",
-				revalidationID(existing, seq), existing, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
-				return err
-			}
+			var judged *premergeJudgment
 			if implementation {
-				if err := store.RecordRevalidationPremerge(txCtx, s.Store, revalidationID(existing, seq), store.AcceptancePremergeRow{AcceptanceID: existing, RecordDigest: revalJudged.digest, RecordJSON: string(revalJudged.raw), EvaluatedHead: revalJudged.evaluatedHead, AcceptedHead: revalJudged.acceptedHead, RecordedBy: actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: s.now()}); err != nil {
-					return err
-				}
+				judged = &revalJudged
+			}
+			if err := s.appendRevalidation(txCtx, tx, existing, head, actor, judged); err != nil {
+				return err
 			}
 			out.Revalidated = true
 			return nil
