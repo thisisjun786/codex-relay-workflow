@@ -164,4 +164,17 @@ func TestIntegrationBatchMergesARefreshedPullRequestNodeAtItsStandHead(t *testin
 	if n := countStage(k.stageRows(), "marked"); n != 1 {
 		t.Fatalf("%d merged marks written; want 1", n)
 	}
+	// the observation that follows the batch ties the refreshed head and the merged mark of the acceptance together: the node is integrated at the head it stands on
+	var revision string
+	if err := k.s.DB.QueryRow("SELECT a.revision_hash FROM dag_acceptances a WHERE a.plan_id = 'g' AND a.node_id = 'a' AND a.state = 'active'").Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	var marks int
+	if err := k.s.DB.QueryRow("SELECT COUNT(*) FROM assignment_marks WHERE mark = 'merged' AND event_id = ? AND revision_hash = ?", event, revision).Scan(&marks); err != nil || marks != 1 {
+		t.Fatalf("%d merged marks on the acceptance's event and revision (%v); want 1", marks, err)
+	}
+	observed, err := k.sched.ObserveIntegration(context.Background(), "g", "a", "parent", []Target{{Repository: "owner/repo", BaseRef: "dev-int"}})
+	if err != nil || !observed.Integrated || len(observed.Observations) != 1 || observed.Observations[0].SubjectSHA != refreshed || !observed.Observations[0].IsAncestor {
+		t.Fatalf("observation after the batch = %v %+v; want the refreshed head %s integrated on dev-int", err, observed, refreshed)
+	}
 }
