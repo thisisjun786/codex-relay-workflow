@@ -12,7 +12,9 @@ Before choosing a surface, find out what owns the work. Read the binding the tas
 the task packet, the assignment record the relay holds for it, or the DAG node
 ([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).
 
-- **Managed** — a Linear issue the relay holds, or a DAG node. An independent lane for it is an
+- **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
+  or not. An issue with no assignment yet is not unmanaged: its first independent lane is the
+  managed start `crw-run` makes. An independent lane for it is an
   independent relay child, started and resumed through `crw-run`: the managed start, the DAG release
   and their bridge recovery, pair/profile, capacity and receipt rules. It is never a desktop
   `create_thread` lane. The relay refuses a second active or paused assignment of the same issue and
@@ -24,8 +26,9 @@ the task packet, the assignment record the relay holds for it, or the DAG node
   ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
   checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))
   and yields only after that readiness is established, never by arming a wake of its own.
-- **Unmanaged** — standalone PABCD with no relay-held issue, and bounded helper delegation inside
-  any task. The rest of this file applies as written.
+- **Unmanaged** — standalone PABCD with no Linear issue and no CRW execution binding, and bounded
+  helper delegation inside any task. A Linear issue with no assignment yet is not this case. The
+  rest of this file applies as written.
 - **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is
   not permission to take the unmanaged route for an independent lane: resolve the binding, or
   report that it is unresolved and keep to bounded helpers meanwhile. Nothing is forced the other

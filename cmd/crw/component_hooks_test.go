@@ -174,6 +174,15 @@ func (fallbackBrokenIO) Read(p []byte) (int, error) {
 }
 func (fallbackBrokenIO) Write([]byte) (int, error) { return 0, errors.New("write failure") }
 
+// fallbackFailingWriter fails every write and counts the attempts, so a test can tell an error handled at the writer from an input
+// that never reached the writer.
+type fallbackFailingWriter struct{ writes int }
+
+func (w *fallbackFailingWriter) Write([]byte) (int, error) {
+	w.writes++
+	return 0, errors.New("write failure")
+}
+
 type fallbackSignalReader struct {
 	in                io.Reader
 	started, finished chan struct{}
@@ -287,8 +296,12 @@ func TestFallbackHookObservationAndErrorOrder(t *testing.T) {
 		})
 	}
 	_ = fallbackComponentEnv(t)
-	if code := fallbackComponentHook(context.Background(), strings.NewReader(`{}`), fallbackBrokenIO{}); code != 0 {
+	failing := &fallbackFailingWriter{}
+	if code := fallbackComponentHook(context.Background(), strings.NewReader(`{"session_id":"fixture-session"}`), failing); code != 0 {
 		t.Fatal("writer error visible")
+	}
+	if failing.writes == 0 {
+		t.Fatal("the writer error case never reached the writer")
 	}
 }
 
