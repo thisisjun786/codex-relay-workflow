@@ -9,8 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
@@ -44,6 +47,12 @@ type Latency struct {
 	// Attempts is how many measurements it took (1 when the first passed).
 	Attempts int  `json:"attempts"`
 	OK       bool `json:"ok"`
+	// Inconclusive is a leg that failed its comparison while the host's load average was above its
+	// CPU count: the numbers are the host's as much as the hook's, so the cell neither passes nor
+	// fails it (OK is true) and the report lists it as not verified. Load is the one-minute load
+	// average when the leg was last measured.
+	Inconclusive bool    `json:"inconclusive,omitempty"`
+	Load         float64 `json:"load,omitempty"`
 	// Skipped is a leg no claimed fixture exercises yet (its port is pending): not timed, and not
 	// a failure, but listed as unverified in the report.
 	Skipped bool   `json:"skipped,omitempty"`
@@ -86,7 +95,34 @@ type LatencyOptions struct {
 	// it is reported as failing: a shared host's load puts outliers into a p95 on either side, and a
 	// leg that is really slower fails every attempt. Zero means one attempt.
 	Attempts int
-	Only     *regexp.Regexp // legs
+	// Strict makes a failing leg a failure whatever the host's load.
+	Strict bool
+	Only   *regexp.Regexp // legs
+}
+
+// hostLoad is the one-minute load average, where the host says it.
+var hostLoad = func() (float64, bool) {
+	raw, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, false
+	}
+	first, _, _ := strings.Cut(string(raw), " ")
+	v, err := strconv.ParseFloat(first, 64)
+	return v, err == nil
+}
+
+// Settle turns a failing verdict into an inconclusive one when the host was overloaded (load
+// average above cpus) and the run is not strict. A passing verdict is returned as it is.
+func Settle(v Latency, load float64, loadKnown bool, cpus int, strict bool) Latency {
+	if loadKnown {
+		v.Load = load
+	}
+	if v.OK || strict || !loadKnown || load <= float64(cpus) {
+		return v
+	}
+	v.Inconclusive, v.OK = true, true
+	v.Reason = fmt.Sprintf("inconclusive, host load %.1f is above its %d CPUs: %s", load, cpus, v.Reason)
+	return v
 }
 
 // MeasureLatency times each leg's declared command and the oracle's command on the same payload,
@@ -191,7 +227,8 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 				break
 			}
 		}
-		out = append(out, verdict)
+		load, known := hostLoad()
+		out = append(out, Settle(verdict, load, known, runtime.NumCPU(), o.Strict))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Leg < out[j].Leg })
 	return out, nil

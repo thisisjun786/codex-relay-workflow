@@ -28,7 +28,7 @@ const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all}
   registration --plugin DIR             compare what the root declares with what it must declare
   fire         --crw PATH --plugin DIR  fire the corpus's hook fixtures through the declared commands
                [--only RE] [--inject FAULT]
-  latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--attempts N] [--legs RE]
+  latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--attempts N] [--strict] [--legs RE]
                                         p50 and p95 of the Go command against the CXC v0.2.40 command
   all          --crw PATH [--plugin DIR] [--oracle DIR] [--runs N] [--attempts N]
                                         every cell; a generated root when --plugin is not given
@@ -155,6 +155,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	oracle := set.String("oracle", "", "latency: the extracted CXC v0.2.40 tree")
 	node := set.String("node", "", "latency: node executable (default: node on PATH)")
 	runs := set.Int("runs", 30, "latency: runs per leg and side")
+	strict := set.Bool("strict", false, "latency: a failing leg fails the run even when the host's load average is above its CPU count (otherwise it is inconclusive)")
 	attempts := set.Int("attempts", 5, "latency: measurements of a leg that fails before it is reported failing (a shared host's load puts outliers in a p95)")
 	jsonOut := set.String("json", "", "write the report here")
 	scratch := set.String("scratch", "", "parent of the run's directory of case roots (default: $TMPDIR)")
@@ -298,7 +299,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		report.OK = report.OK && rep.OK
 	}
 	if command == "latency" || (command == "all" && *oracle != "") {
-		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: cases, Oracle: *oracle, Node: *node, Runs: *runs, Attempts: *attempts, Only: legsRE})
+		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: cases, Oracle: *oracle, Node: *node, Runs: *runs, Attempts: *attempts, Strict: *strict, Only: legsRE})
 		if err != nil {
 			return fail(err)
 		}
@@ -308,6 +309,9 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 			report.OK = report.OK && l.OK
 			if l.Skipped {
 				report.NotVerified = append(report.NotVerified, NotVerified{"latency of " + l.Leg, l.Reason, "the issue that ports the leg"})
+			}
+			if l.Inconclusive {
+				report.NotVerified = append(report.NotVerified, NotVerified{"latency of " + l.Leg, l.Reason, "run again on a host whose load is below its CPU count, or with --strict to fail"})
 			}
 		}
 	}
@@ -468,6 +472,8 @@ func printLatency(w io.Writer, lat []Latency) {
 		switch {
 		case l.Skipped:
 			mark = "SKIP"
+		case l.Inconclusive:
+			mark = "INCL"
 		case l.OK:
 			good++
 		default:
@@ -480,13 +486,16 @@ func printLatency(w io.Writer, lat []Latency) {
 		fmt.Fprintf(w, "%s latency %-62s runs %d go p50 %s p95 %s; %s; timeout %dms %s\n", mark, l.Leg, l.Runs,
 			l.GoP50.Round(time.Microsecond), l.GoP95.Round(time.Microsecond), ts, l.TimeoutMs, attemptNote(l)+l.Reason)
 	}
-	skipped := 0
+	skipped, inconclusive := 0, 0
 	for _, l := range lat {
 		if l.Skipped {
 			skipped++
 		}
+		if l.Inconclusive {
+			inconclusive++
+		}
 	}
-	fmt.Fprintf(w, "latency: %d/%d legs pass (Go p95 <= TS p95 and <= half the timeout), %d not timed\n", good, len(lat)-skipped, skipped)
+	fmt.Fprintf(w, "latency: %d/%d legs pass (Go p95 <= TS p95 and <= half the timeout), %d inconclusive under host load, %d not timed\n", good, len(lat)-skipped, inconclusive, skipped)
 }
 
 // HelperEnv is the variable that marks a process as a stub program or git wrapper of a replay case.

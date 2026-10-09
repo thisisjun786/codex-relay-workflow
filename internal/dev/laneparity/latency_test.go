@@ -65,3 +65,37 @@ func TestJudge(t *testing.T) {
 		})
 	}
 }
+
+func TestSettle_aFailureUnderAnOverloadedHostIsInconclusiveUnlessStrict(t *testing.T) {
+	failing := Judge("leg", "f", 10, ms(80), ms(40))
+	if failing.OK {
+		t.Fatal("setup: the verdict should fail")
+	}
+	for _, c := range []struct {
+		name         string
+		v            Latency
+		load         float64
+		known        bool
+		cpus         int
+		strict       bool
+		ok, inconcl  bool
+		reasonSubstr string
+	}{
+		{"overloaded", failing, 44, true, 20, false, true, true, "host load 44.0 is above its 20 CPUs"},
+		{"load at the CPU count", failing, 20, true, 20, false, false, false, "above the TS p95"},
+		{"quiet host", failing, 3, true, 20, false, false, false, "above the TS p95"},
+		{"load unknown", failing, 0, false, 20, false, false, false, "above the TS p95"},
+		{"strict", failing, 44, true, 20, true, false, false, "above the TS p95"},
+		{"a pass stays a pass", Judge("leg", "f", 10, ms(5), ms(40)), 44, true, 20, false, true, false, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := Settle(c.v, c.load, c.known, c.cpus, c.strict)
+			if got.OK != c.ok || got.Inconclusive != c.inconcl || !strings.Contains(got.Reason, c.reasonSubstr) {
+				t.Errorf("%+v", got)
+			}
+			if c.known && got.Load != c.load {
+				t.Errorf("load %v", got.Load)
+			}
+		})
+	}
+}
