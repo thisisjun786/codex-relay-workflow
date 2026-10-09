@@ -155,3 +155,20 @@ func TestSingleSourceSearchKeepsTheNativeOrder(t *testing.T) {
 		}
 	})
 }
+
+// The limit applies to the merged list, never to a source's list before the merge: an exact match that is not the
+// native rank 1 of its source (here ClawHub's second row, the other sources having nothing) is still the top-1 of a
+// search over all sources.
+func TestMultiSourceTopOneIsFoundBeyondTheNativeRankOne(t *testing.T) {
+	cliHome(t)
+	rows := mergedRows(t, []string{"tdd", "--source", "all", "--limit", "1"}, mergeFetch(`{"skills":{}}`, nil, []string{"other0", "tdd"}))
+	if keys(rows) != "clawhub:tdd" {
+		t.Fatalf("top-1 = %s", keys(rows))
+	}
+	cliHome(t)
+	const jaw = `{"skills":{"tdd-active":{"name":"Active","description":"tdd tdd tdd tdd"},"tdd-old":{"name":"Old","description":"tdd"}}}`
+	rows = mergedRows(t, []string{"tdd", "--source", "all", "--limit", "1"}, mergeFetch(jaw, nil, []string{"other0", "tdd"}))
+	if keys(rows) != "clawhub:tdd" {
+		t.Fatalf("top-1 = %s", keys(rows))
+	}
+}
