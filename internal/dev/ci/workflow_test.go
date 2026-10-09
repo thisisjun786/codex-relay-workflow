@@ -360,13 +360,14 @@ var assignmentWord = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*=")
 var shellPrefixWords = map[string]bool{"!": true, "command": true, "nohup": true, "{": true, "}": true, "if": true, "then": true, "elif": true, "else": true, "do": true, "while": true, "until": true, "time": true, "exec": true, "builtin": true}
 
 // shellWrappers start a command whose program follows their options, the values of those options and,
-// for env, their assignments; wrappedCommand reads that program (CRW-983).
+// for env, their assignments; wrapperRunsNodeTest reads that program (CRW-983, CRW-1047).
 var shellWrappers = map[string]bool{"env": true, "sudo": true, "timeout": true, "xargs": true, "nice": true, "stdbuf": true}
 
-// shellWrapperArgs are the options each wrapper takes a value for; wrappedCommand skips the value so the
-// program after it is read (CRW-983).
+// shellWrapperArgs are the options each wrapper takes a value for, as listed; wrapperRunsNodeTest skips the
+// value so the program after it is read (CRW-983). env's -S is not listed: its value is a command line
+// (envSplitRuns). An option that is not listed is read both ways (CRW-1047).
 var shellWrapperArgs = map[string]map[string]bool{
-	"env":     {"-u": true, "-C": true, "-S": true},
+	"env":     {"-u": true, "-C": true},
 	"sudo":    {"-u": true, "-g": true, "-C": true, "-h": true, "-p": true, "-r": true, "-t": true, "-T": true, "-U": true},
 	"nice":    {"-n": true},
 	"timeout": {"-s": true, "-k": true},
@@ -374,28 +375,77 @@ var shellWrapperArgs = map[string]map[string]bool{
 	"stdbuf":  {"-i": true, "-o": true, "-e": true},
 }
 
-// wrappedCommand is the words a wrapper runs: the program and its arguments, after the wrapper's own
-// options, the values of those options and, for env, its assignments. Nil means the wrapper starts no
-// program (CRW-983).
-func wrappedCommand(name string, args []string) []string {
+// envSplitCluster matches the env option -S in its word: alone, joined to its value, or behind env's flags
+// -i, -0 and -v in one word (-iS, -iSVALUE).
+var envSplitCluster = regexp.MustCompile("^-[i0v]*S")
+
+// wrapperRunsNodeTest reports whether a wrapper runs a Node test: its program is read from args, the words
+// after the wrapper's name. The options are walked from the first word. A listed option skips its value; an
+// env assignment and a timeout duration are skipped; env -S and --split-string take a command line (CRW-983,
+// CRW-1047). An option the table does not list has no known value, so both readings are judged: the option
+// alone takes no value, and the option takes the next word. A node test under either reading is a finding.
+// A word that starts no option is the program, and the words from it on are judged as a command.
+func wrapperRunsNodeTest(name string, args []string, depth int) bool {
 	takes := shellWrapperArgs[name]
-	for len(args) > 0 {
-		w := args[0]
+	seen := map[int]bool{}
+	var walk func(i int) bool
+	walk = func(i int) bool {
+		if i >= len(args) || seen[i] {
+			return false
+		}
+		seen[i] = true
+		w := args[i]
 		switch {
 		case name == "env" && assignmentWord.MatchString(w):
-			args = args[1:]
-		case strings.HasPrefix(w, "-") && w != "-":
-			args = args[1:]
-			if takes[w] && len(args) > 0 {
-				args = args[1:]
+			return walk(i + 1)
+		case w == "--":
+			return commandRunsNodeTest(args[i+1:], depth+1)
+		case name == "env" && envSplitCluster.MatchString(w):
+			if rest := w[len(envSplitCluster.FindString(w)):]; rest != "" {
+				return envSplitRuns(rest, args[i+1:], depth)
 			}
+			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
+		case name == "env" && strings.HasPrefix(w, "--split-string="):
+			return envSplitRuns(strings.TrimPrefix(w, "--split-string="), args[i+1:], depth)
+		case name == "env" && w == "--split-string":
+			return i+1 < len(args) && envSplitRuns(args[i+1], args[i+2:], depth)
+		case takes[w]:
+			return walk(i + 2)
+		case strings.HasPrefix(w, "-") && w != "-":
+			if strings.Contains(w, "=") {
+				return walk(i + 1)
+			}
+			return walk(i+1) || walk(i+2)
 		case name == "timeout" && w != "" && w[0] >= '0' && w[0] <= '9':
-			args = args[1:]
+			return walk(i + 1)
 		default:
-			return args
+			return commandRunsNodeTest(args[i:], depth+1)
 		}
 	}
-	return nil
+	return walk(0)
+}
+
+// envSplitRuns reads the value of env -S as the command line env runs (CRW-1047). Each command the value
+// holds is read with env in front, so its own options and assignments are env's. The last command takes the
+// words after the value, which env appends to it. A value the reader cannot read whole is a finding.
+func envSplitRuns(value string, rest []string, depth int) bool {
+	cmds, err := shellCommands(value)
+	if err != nil {
+		return true
+	}
+	if len(cmds) == 0 {
+		cmds = []shellCommand{nil}
+	}
+	for k, cmd := range cmds {
+		words := append([]string{"env"}, cmd...)
+		if k == len(cmds)-1 {
+			words = append(words, rest...)
+		}
+		if commandRunsNodeTest(words, depth+1) {
+			return true
+		}
+	}
+	return false
 }
 
 // shellInterpreters are the shells whose -c option runs its argument as a script.
@@ -707,6 +757,9 @@ func nodeTestRun(text string, failClosed bool, depth int) bool {
 // commandRunsNodeTest reports whether one simple command is a Node test run, looking past its
 // assignments and prefix words to the program it names.
 func commandRunsNodeTest(cmd shellCommand, depth int) bool {
+	if depth > shellMaxDepth {
+		return true
+	}
 	words := []string(cmd)
 	for len(words) > 0 && (assignmentWord.MatchString(words[0]) || strings.HasPrefix(words[0], "-") || shellPrefixWords[words[0]]) {
 		words = words[1:]
@@ -717,7 +770,7 @@ func commandRunsNodeTest(cmd shellCommand, depth int) bool {
 	name, args := filepath.Base(words[0]), words[1:]
 	switch {
 	case shellWrappers[name]:
-		return commandRunsNodeTest(wrappedCommand(name, args), depth)
+		return wrapperRunsNodeTest(name, args, depth)
 	case strings.HasSuffix(name, "node"):
 		return hasTestFlag(args)
 	case shellInterpreters[name]:
@@ -1616,6 +1669,42 @@ func TestWorkflow_the_run_text_is_what_the_shell_receives(t *testing.T) {
 		{"a comment line after a continuation", "      - run: |\n          echo x \\\n          # note\n          node --test\n", true},
 	} {
 		if got := pythonInWorkflow("release.yml", row.body); (len(got) > 0) != row.found {
+			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
+		}
+	}
+}
+
+// CRW-1047, the CRW-983 residue. A wrapper option the table of value-taking options does not list has no
+// known value, so both readings are judged: the option alone takes no value, and the option takes the next
+// word. env -S's value is a command line the wrapper runs, so it is read as one. A log line that only names
+// node --test stays a log line under every reading.
+func TestWorkflow_a_wrapper_option_with_an_unlisted_value_hides_no_node_test(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		line  string
+		found bool
+	}{
+		{"sudo long option with a value", "      - run: sudo --user root node --test\n", true},
+		{"env long option with a value", "      - run: env --unset HOME node --test\n", true},
+		{"env -S with a command line", "      - run: env -S 'node --test'\n", true},
+		{"unknown option that is a flag", "      - run: sudo --foo node --test\n", true},
+		{"unknown option that takes the next word", "      - run: sudo --chdir /x node --test\n", true},
+		{"unknown env option that takes the next word", "      - run: env --chdir /x node --test\n", true},
+		{"env -S joined to its value", "      - run: env -S'node --test'\n", true},
+		{"env --split-string with a command line", "      - run: env --split-string='node --test'\n", true},
+		{"env -S with the test in the words after it", "      - run: env -S node --test\n", true},
+		{"env -S runs an echo, not the test", "      - run: env -S 'echo' node --test\n", false},
+		{"an echoed node test in an env -S value", "      - run: env -S \"echo node --test\"\n", false},
+		{"an echoed node test behind an env assignment", "      - run: env FOO=1 echo node --test\n", false},
+		{"an echoed node test behind an unlisted option", "      - run: sudo --user root echo node --test\n", false},
+		{"a log line behind an unlisted option", "      - run: sudo --user root printf '%s\\n' 'node --test'\n", false},
+		{"a log line naming a node test", "      - run: echo 'node --test'\n", false},
+		{"an option-cluster -S with the value joined", "      - run: env -iSnode --test\n", true},
+		{"env -S with two commands, the second a test", "      - run: env -S 'echo; node --test'\n", true},
+		{"env -S that does not close", "      - run: env -S 'node --test\n", true},
+		{"a double dash ends sudo's options", "      - run: sudo -- echo node --test\n", false},
+	} {
+		if got := pythonInWorkflow("release.yml", row.line); (len(got) > 0) != row.found {
 			t.Errorf("%s: found = %q, want found = %v", row.name, got, row.found)
 		}
 	}
