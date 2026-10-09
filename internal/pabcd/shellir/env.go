@@ -15,6 +15,22 @@ func Analyze(src, cwd string) (Result, error) {
 // AnalyzeEnv reads a command text as AnalyzeEnv's caller's environment shows it: a variable the walk does not
 // assign takes its value from lookup, and a leading ~ or ~/ expands to HOME when lookup knows HOME.
 func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, error) {
+	return analyze(src, cwd, lookup, false)
+}
+
+// AnalyzeScript reads the text of a script file that a shell runs from a program record that had Cdpath: with CDPATH possibly set
+// in the environment the script inherits, a cd to a bare name in it may land in a directory the text does not show.
+func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
+	return analyze(src, cwd, nil, cdpath)
+}
+
+// textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
+// a declaration may set it, and none of them is followed to its end, so the name in the text is enough.
+func textNamesCdpath(src string) bool {
+	return strings.Contains(strings.ToLower(src), "cdpath")
+}
+
+func analyze(src, cwd string, lookup func(string) (string, bool), cdpath bool) (Result, error) {
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -30,6 +46,7 @@ func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, er
 	}
 	st := newState(cwd)
 	st.lookup = lookup
+	st.cdpath = cdpath || textNamesCdpath(src)
 	w := &walker{}
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err

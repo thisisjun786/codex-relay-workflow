@@ -40,3 +40,36 @@ func TestCdUnderCDPATH(t *testing.T) {
 		})
 	}
 }
+
+// TestCdpathNames: the zsh cdpath array, and any other way the text names CDPATH (a read, a printf -v, a loop variable, a
+// declaration), search a bare-name cd the way CDPATH does (CRW-875).
+func TestCdpathNames(t *testing.T) {
+	for _, c := range []struct {
+		name, cmd string
+		known     bool
+	}{
+		{"zsh array", "cdpath=(/x); cd sub; rm a", false},
+		{"zsh array appended", "cdpath+=(/x); cd sub; rm a", false},
+		{"typeset array", "typeset -a cdpath; cdpath=(/x); cd sub; rm a", false},
+		{"lower-case scalar", "cdpath=/x; cd sub; rm a", false},
+		{"read", "read CDPATH <<< /x; cd sub; rm a", false},
+		{"printf -v", "printf -v CDPATH %s /x; cd sub; rm a", false},
+		{"loop variable", "for CDPATH in /x; do :; done; cd sub; rm a", false},
+		{"declare -n", "declare -n r=CDPATH; r=/x; cd sub; rm a", false},
+		{"built name", "n=CD; export \"${n}PATH=/x\"; cd sub; rm a", false},
+		{"inside bash -c", "bash -c 'CDPATH=/x; cd sub; rm a'", false},
+		{"inside eval", "eval 'cdpath=(/x)'; cd sub; rm a", false},
+		{"array, ./ target", "cdpath=(/x); cd ./sub; rm a", true},
+		{"control: another array", "arr=(/x); cd sub; rm a", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r, err := Analyze(c.cmd, "/work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := r.Execs[len(r.Execs)-1].Dir; got.Known != c.known {
+				t.Fatalf("%q: dir %+v, want known=%v", c.cmd, got, c.known)
+			}
+		})
+	}
+}

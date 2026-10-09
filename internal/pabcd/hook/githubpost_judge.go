@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -72,20 +73,34 @@ func githubPostJudgeArgv(words []string, cwd string) (githubPostSite, bool) {
 
 // githubPostJudgeText is the rule for one shell text.
 func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
-	return githubPostJudgeTextDepth(command, cwd, 0, nil)
+	return githubPostJudgeTextDepth(command, cwd, 0, nil, false)
 }
 
 // githubPostJudgeTextDepth judges a text that a script file holds; outer is the writes of the texts that run it, which also
-// happen before the script's own commands.
-func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites) (githubPostSite, bool) {
-	res, err := shellir.Analyze(command, cwd)
+// happen before the script's own commands. cdpath is whether CDPATH may be set where the script runs (shellir.Exec.Cdpath): the body
+// is read with it set, so a cd to a bare name in it is not a directory the guard knows.
+func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
+	res, err := shellir.AnalyzeScript(command, cwd, cdpath)
 	if err != nil {
-		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 	}
-	return githubPostJudgeExecs(res.Execs, depth, outer, depth > 0 && githubPostScriptLayout(command))
+	layoutLine, layout := 0, true
+	if depth > 0 {
+		layoutLine, layout = githubPostScriptLayout(command)
+	}
+	return githubPostJudgeExecs(res.Execs, depth, outer, layout, layoutLine)
 }
 
-func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrites, layout bool) (githubPostSite, bool) {
+// githubPostJudgeExecs judges the executions of a text; layoutLine is the line of the statement that breaks the layout of a script
+// (layout false). A refusal inside a script carries the line of the execution (or statement) that is refused, which the script
+// judge reports as script-file:line.
+func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrites, layout bool, layoutLine int) (site githubPostSite, denied bool) {
+	failLine := 0
+	defer func() {
+		if denied && site.line == 0 {
+			site.line = failLine
+		}
+	}()
 	// The closed rule: a post is judged only as one simple command. A post that sits behind a wrapper,
 	// a shell, a list, a pipe or a substitution is refused.
 	simple := len(execs) == 1 && githubPostPlainContext(execs[0].Ctx)
@@ -96,11 +111,13 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		// layout is whether the text is, statement by statement, plain simple commands each on a line of its own (no assignment,
 		// redirection, list, declaration, compound command or word with an expansion): what the execution records cannot show.
 		if !layout {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			failLine = layoutLine
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 		}
 		for _, e := range execs {
 			if !githubPostScriptLine(e) {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+				failLine = e.Line
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 			}
 		}
 	}
@@ -116,9 +133,10 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	writes := func() *githubPostWrites { return textWrites().at(i) }
 	for i = range execs {
 		e := execs[i]
+		failLine = e.Line
 		if e.Kind == shellir.KindScriptFile {
 			if textWrites().stale(i, e.Script.Value, e.Dir) {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 			}
 			if site, denied := githubPostJudgeScript(e, depth, writes().as(githubPostBodyKey(e.Script.Value, e.Dir))); denied {
 				return site, true
@@ -126,16 +144,16 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 			continue
 		}
 		if e.Inline != nil && githubPostInlineNamesPost(e.Inline.Source.Value) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 		}
 		// A runner's arguments are judged whatever runs it: an installed tmux, or ./tmux, a binary of any size the reader does not read.
 		if githubPostRunnerNamesPost(e) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 		}
 		direct := githubPostDirectPath(e)
 		// A file run by path (./gh among them) that the text, or a script body it runs before, writes is not the file read here.
-		if direct && textWrites().stale(i, e.Program.Value, e.Dir) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		if direct && githubPostDirectStale(textWrites(), i, e) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 		}
 		if direct && githubPostProgram(e.Name) != "gh" {
 			if site, denied := githubPostJudgeDirect(e, depth, writes().as(githubPostBodyKey(e.Program.Value, e.Dir))); denied {
@@ -158,10 +176,10 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		// A post of a script that passed the line rule is the whole command of its line, so what it reads is what the guard read
 		// unless something the script, or the text that runs it, writes reaches that file.
 		if !simple && !lines && githubPostPostSub(words) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 		}
 		if depth > 0 && len(reads) > 0 && writes().readsReach(reads) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
 		}
 		// ./gh is a file in the directory, which may be a script and not the installed gh: the file is read as well.
 		if direct {
@@ -201,8 +219,9 @@ func githubPostHasPost(execs []shellir.Exec) bool {
 // githubPostScriptLine is whether one execution of a script that holds a post is a line the rule allows: a plain command of its
 // own line that is a gh post (its form is judged by the caller) or a command of exception B. Exception B is a program named by a
 // bare word (or by an absolute path in a system bin directory) and run on literal words only: rg without --pre, --pre-glob or
-// --hostname-bin, grep, egrep, fgrep, cat, head, tail, wc, ls, echo, printf without an option, and git log, show, diff, grep, status
-// and commit with no option before the subcommand and no option that writes a file or runs a program. Every other line (a gh read,
+// --hostname-bin, grep, egrep, fgrep, cat, head, tail, wc, ls, echo, printf without an option, and git log, show, diff, grep and
+// status with no option before the subcommand and no option that writes a file or runs a program (git commit runs the hooks of the
+// repository, so it is not a reading subcommand). Every other line (a gh read,
 // another git subcommand, cd, an assignment, a script or an inline program) refuses the script.
 func githubPostScriptLine(e shellir.Exec) bool {
 	if e.Kind != shellir.KindCommand || e.Inline != nil || !githubPostPlainContext(e.Ctx) || !e.Program.Known ||
@@ -280,10 +299,22 @@ var githubPostGitValueOpts = map[string]struct{ required, optional string }{
 	"diff":   {"SGLnIO", "UlMCBX"},
 	"grep":   {"efABCm", "O"},
 	"status": {"", "u"},
-	"commit": {"mFcCt", "uS"},
 }
 
-// githubPostGitReadLine is git of exception B: log, show, diff, grep, status or commit as the first word (no option before the
+// githubPostGitFlags is the long options of exception B that take no value. A long option not in the list, written without =,
+// may take the next word as its value (--src-prefix X), and that word may be the --; so a -- that follows one is not read as
+// the end of the options.
+var githubPostGitFlags = map[string]bool{
+	"oneline": true, "stat": true, "numstat": true, "shortstat": true, "name-only": true, "name-status": true, "cached": true,
+	"staged": true, "no-index": true, "patch": true, "quiet": true, "color": true, "no-color": true, "summary": true,
+	"graph": true, "all": true, "abbrev-commit": true, "decorate": true, "follow": true, "merges": true, "no-merges": true,
+	"first-parent": true, "reverse": true, "raw": true, "check": true, "exit-code": true, "porcelain": true, "short": true,
+	"branch": true, "long": true, "cc": true, "no-ext-diff": true, "no-textconv": true, "count": true, "line-number": true,
+	"ignore-case": true, "files-with-matches": true, "fixed-strings": true, "extended-regexp": true, "word-regexp": true,
+	"invert-match": true, "untracked": true, "null": true, "no-patch": true, "no-color-moved": true, "full-index": true,
+}
+
+// githubPostGitReadLine is git of exception B: log, show, diff, grep or status as the first word (no option before the
 // subcommand), without an option that writes a file (--output, in any abbreviation git accepts) or that runs a program on the files
 // (-O, --open-files-in-pager). A short bundle is read option by option: an option that takes a value ends the bundle, so the O of
 // -SOrder or -eOpen is a value, and the word after an option whose value is required (-e -O) is that value.
@@ -295,19 +326,21 @@ func githubPostGitReadLine(args []string) bool {
 	if !ok {
 		return false
 	}
+	ambiguous := false // the previous word is a long option that may have taken this word as its value
 	for i := 1; i < len(args); i++ {
 		a := args[i]
+		prev := ambiguous
+		ambiguous = false
 		switch {
 		case a == "--":
-			return true // the words after -- are paths
+			// The words after -- are paths, unless this -- is the value of the option before it (--src-prefix -- --output=F).
+			return !prev
 		case strings.HasPrefix(a, "--"):
-			name := strings.TrimPrefix(a, "--")
-			if j := strings.IndexByte(name, '='); j >= 0 {
-				name = name[:j]
-			}
+			name, _, hasValue := strings.Cut(strings.TrimPrefix(a, "--"), "=")
 			if name != "" && (strings.HasPrefix("output", name) || strings.HasPrefix("open-files-in-pager", name)) {
 				return false
 			}
+			ambiguous = !hasValue && !githubPostGitFlags[name]
 		case len(a) > 1 && a[0] == '-':
 			for j := 1; j < len(a); j++ {
 				c := a[j]
@@ -333,30 +366,32 @@ func githubPostGitReadLine(args []string) bool {
 // statement is a call with no assignment before it, no redirection, no background, coprocess or negation, no trailing ;, and
 // only words of literal text (no parameter, command, arithmetic or process expansion); a list, pipe, declaration (export,
 // declare), loop, conditional, function, group or subshell is not a statement of that kind. The execution records of the reader
-// cannot show the assignments of a declaration or the separators of a line, so the rule reads them in the text.
-func githubPostScriptLayout(src string) bool {
+// cannot show the assignments of a declaration or the separators of a line, so the rule reads them in the text. badLine is the line
+// of the first statement that is not of that kind.
+func githubPostScriptLayout(src string) (badLine int, ok bool) {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
 	if err != nil {
-		return false
+		return 1, false
 	}
 	last := uint(0)
 	for _, st := range file.Stmts {
+		line := int(st.Pos().Line())
 		call, ok := st.Cmd.(*syntax.CallExpr)
 		if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 || len(st.Redirs) > 0 ||
 			st.Background || st.Coprocess || st.Negated || st.Semicolon.IsValid() {
-			return false
+			return line, false
 		}
 		if st.Pos().Line() <= last {
-			return false
+			return line, false
 		}
 		last = st.End().Line()
 		for _, w := range call.Args {
 			if !githubPostLiteralWord(w) {
-				return false
+				return line, false
 			}
 		}
 	}
-	return true
+	return 0, true
 }
 
 // githubPostLiteralWord is whether a word is made of literal text and quotes only.
@@ -389,7 +424,7 @@ func githubPostPlainContext(c shellir.Context) bool {
 
 // githubPostJudgeScript reads the file a shell or a sed or awk program runs and judges its text.
 func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
-	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand}
+	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}
 	if depth >= githubPostMaxScriptDepth || !e.Script.Known {
 		return unread, true
 	}
@@ -410,7 +445,19 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 		}
 		return githubPostSite{}, false
 	}
-	return githubPostJudgeTextDepth(body, cwd, depth+1, writes)
+	return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath))(e.Script.Value)
+}
+
+// githubPostLocate turns a refusal found inside a script into script-file:line, once: a refusal that already has a place (an
+// inner script's, or a file a post reads) keeps it.
+func githubPostLocate(site githubPostSite, denied bool) func(script string) (githubPostSite, bool) {
+	return func(script string) (githubPostSite, bool) {
+		if denied && site.place == githubPostWhereCommand && site.line > 0 {
+			site.place = script + ":" + strconv.Itoa(site.line)
+		}
+		site.line = 0
+		return site, denied
+	}
 }
 
 // githubPostInlineNamesPost is whether an interpreter's program text names a gh post. The program may run
@@ -444,8 +491,8 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 
 // githubPostJudgeWords is the rule for one gh command whose words the reader gave.
 func githubPostJudgeWords(words []string, cwd githubPostDir) (githubPostSite, bool) {
-	expansion := githubPostSite{githubPostRuleExpand, githubPostWhereCommand}
-	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand}
+	expansion := githubPostSite{githubPostRuleExpand, githubPostWhereCommand, 0}
+	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}
 	site, denied, handled := githubPostForm(words, cwd)
 	if handled && denied {
 		return site, true
@@ -550,32 +597,40 @@ func githubPostRunnerNamesPost(e shellir.Exec) bool {
 	return strings.Contains(joined, githubPostUnknownMark) || githubPostInlineNamesPost(joined)
 }
 
-// githubPostDirectPath is whether an exec runs a file by a relative path with a slash (./post.sh, scripts/post.sh, ../gh): the
-// file is in the directory the command runs in, not an installed program the guard knows by its name. An absolute path names an
-// installed program (/usr/bin/gh, /usr/bin/env) and is judged by its base name.
+// githubPostDirectPath is whether an exec runs a file by a path with a slash (./post.sh, scripts/post.sh, ../gh, /tmp/post.sh): the
+// file is read, whatever its directory. A binary (an installed gh, env, git) is not a script and is not judged; a script that is
+// not a binary is judged as one the shell runs. The directory the command runs in is not needed for an absolute path.
 func githubPostDirectPath(e shellir.Exec) bool {
-	return e.Kind == shellir.KindCommand && e.Inline == nil && e.Program.Known &&
-		strings.Contains(e.Program.Value, "/") && !filepath.IsAbs(e.Program.Value)
+	return e.Kind == shellir.KindCommand && e.Inline == nil && e.Program.Known && strings.Contains(e.Program.Value, "/")
 }
 
-// githubPostJudgeDirect reads the file a command runs by a relative path, as a script the shell runs: a file that is missing, not
+// githubPostScriptKnown is whether the file a script name opens is known: its directory is, or the name is absolute.
+func githubPostScriptKnown(name string, dir shellir.Dir) bool {
+	return dir.Known || filepath.IsAbs(name)
+}
+
+// githubPostJudgeDirect reads the file a command runs by a path, as a script the shell runs: a file that is missing, not
 // a regular file, or in a directory the reader does not know is unreadable. A binary (no #! line and a NUL in the first 4 KiB) is not
 // a script and is not judged, whatever its size; a script over 1 MiB is unreadable. A script with a shell shebang, or none (the shell
 // runs it), is judged as shell text; a script of another interpreter that names a post is refused (its lines cannot satisfy the line
 // rule).
 func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
-	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand}
-	if depth >= githubPostMaxScriptDepth || !e.Dir.Known {
+	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}
+	if depth >= githubPostMaxScriptDepth || !githubPostScriptKnown(e.Program.Value, e.Dir) {
 		return unread, true
 	}
-	body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+	cwd := e.Dir.Path
+	if !e.Dir.Known {
+		cwd = ""
+	}
+	body, kind := githubPostReadDirect(e.Program.Value, cwd)
 	switch kind {
 	case githubPostFileUnreadable:
 		return unread, true
-	case githubPostFileBinary:
+	case githubPostFileBinary, githubPostFileAbsent:
 		return githubPostSite{}, false
 	case githubPostFileShell:
-		return githubPostJudgeTextDepth(body, e.Dir.Path, depth+1, writes)
+		return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath))(e.Program.Value)
 	}
 	if githubPostScriptMentionsPost(body) {
 		return unread, true
@@ -591,6 +646,7 @@ const (
 	githubPostFileBinary                               // no #! line and a NUL in the first 4 KiB
 	githubPostFileShell                                // a #! line naming a shell, or none: the shell runs the text
 	githubPostFileOther                                // a #! line naming another interpreter
+	githubPostFileAbsent                               // an absolute path with no file: nothing runs, it is not a script
 )
 
 // githubPostDirectHead is how much of a file run by path decides whether it is a binary.
@@ -599,8 +655,20 @@ const githubPostDirectHead = 4096
 // githubPostReadDirect opens a file run by a relative path once and reads its head: a file whose head has no #! line and a NUL is a
 // binary and is read no further, so an executable of any size is not refused; any other file is a script, read whole up to 1 MiB.
 func githubPostReadDirect(name, dir string) (string, githubPostFileKind) {
-	file, ok := githubPostRegularFile(githubPostScriptPath(name, dir))
+	path := githubPostScriptPath(name, dir)
+	if filepath.IsAbs(name) {
+		// An installed program is often a link (/usr/bin/python3, /etc/alternatives): the file it names is the one that runs.
+		if r, err := filepath.EvalSymlinks(path); err == nil {
+			path = r
+		}
+	}
+	file, ok := githubPostRegularFile(path)
 	if !ok {
+		if filepath.IsAbs(name) {
+			if _, err := os.Lstat(path); os.IsNotExist(err) {
+				return "", githubPostFileAbsent
+			}
+		}
 		return "", githubPostFileUnreadable
 	}
 	defer file.Close()
@@ -666,6 +734,10 @@ type githubPostWrites struct {
 	existing map[int64][]os.FileInfo // the files a write reaches that exist already, by size: a hard link has another name and the same file
 	trees    []string                // paths below which a write may land (a copied directory)
 	unknown  bool                    // some write of the text's own records has a destination the reader cannot name
+	// hooked is whether a program ran that configuration, not the text, may make run (git: a hook, a diff or textconv driver,
+	// core.fsmonitor; rg: a --pre in its configuration): it may have written any file, so it reaches the files a post reads. It says
+	// nothing of a script the text runs, which a program of the repository does not rewrite (see unknown).
+	hooked bool
 	// unknownBodies holds the scripts (githubPostBodyKey) whose bodies write a destination the reader cannot name, or whose writes
 	// cannot be computed: an unknown write for every other script, not for the script itself (its own unknown write says nothing of
 	// its own file, as a known write to it does).
@@ -726,12 +798,22 @@ func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPo
 		t.bodies[i] = githubPostBody{key: key, writes: o}
 	})
 	for i, e := range execs {
+		if t.bodies[i].writes == nil && githubPostRunsConfigured(e) {
+			// A program that configuration makes run code writes, from the point it runs, wherever the files are.
+			t.bodies[i] = githubPostBody{writes: &githubPostWrites{hooked: true}}
+		}
 		if !githubPostInOrder(e.Ctx) {
 			t.ordered.merge(t.bodies[i].key, t.bodies[i].writes)
 			t.bodies[i] = githubPostBody{}
 		}
 	}
 	return t
+}
+
+// githubPostRunsConfigured is whether a record runs a program whose code the repository or the environment configures: git (hooks,
+// diff and textconv drivers, core.fsmonitor, core.pager) and rg (a --pre in its configuration file).
+func githubPostRunsConfigured(e shellir.Exec) bool {
+	return e.Kind == shellir.KindCommand && (e.Name == "git" || e.Name == "rg")
 }
 
 // githubPostTextWrites is the writes of one text, viewed from each of its executions in turn.
@@ -772,15 +854,40 @@ func (t *githubPostTextWrites) at(i int) *githubPostWrites {
 // stale is whether the script execution i runs is not the file read before the command: the writes before it reach it, or its own
 // body writes it (a shell reads a script as it runs it, so what the script appends to itself runs too).
 func (t *githubPostTextWrites) stale(i int, script string, dir shellir.Dir) bool {
-	if t.at(i).rewrites(script, dir) {
+	return t.staleIn(i, script, dir, true)
+}
+
+// staleIn is stale; with strict false a write to a destination the reader cannot name does not count, only a write that names the
+// file (or a tree it lies in).
+func (t *githubPostTextWrites) staleIn(i int, script string, dir shellir.Dir, strict bool) bool {
+	if t.at(i).rewritesIn(script, dir, strict) {
 		return true
 	}
 	own := t.bodies[i].writes
-	if own == nil || !dir.Known {
+	if own == nil || !githubPostScriptKnown(script, dir) {
 		return false
+	}
+	if !dir.Known {
+		dir.Path = ""
 	}
 	p := githubPostScriptPath(script, dir.Path)
 	return own.reaches(p) || own.underTree(p)
+}
+
+// githubPostDirectStale is stale for a file run by path. An installed binary named by its absolute path (/usr/bin/git, a Go
+// toolchain) is not a script, and only a write that names it makes it another file than the one that runs; a script, a missing
+// relative file or a binary named relatively is not the file read when any write of the text may reach it.
+func githubPostDirectStale(t *githubPostTextWrites, i int, e shellir.Exec) bool {
+	if filepath.IsAbs(e.Program.Value) {
+		cwd := e.Dir.Path
+		if !e.Dir.Known {
+			cwd = ""
+		}
+		if _, kind := githubPostReadDirect(e.Program.Value, cwd); kind == githubPostFileBinary || kind == githubPostFileAbsent {
+			return t.staleIn(i, e.Program.Value, e.Dir, false)
+		}
+	}
+	return t.stale(i, e.Program.Value, e.Dir)
 }
 
 // githubPostInOrder is whether an execution runs once, where the text puts it, after the executions before it and before the
@@ -814,8 +921,11 @@ func newGithubPostWrites(outer *githubPostWrites) *githubPostWrites {
 
 // githubPostBodyKey names a script a record runs: the file by the identity the kernel gives it, and the directory it runs in.
 func githubPostBodyKey(script string, dir shellir.Dir) string {
-	if !dir.Known {
+	if !githubPostScriptKnown(script, dir) {
 		return ""
+	}
+	if !dir.Known {
+		dir.Path = ""
 	}
 	return githubPostIdentity(githubPostScriptPath(script, dir.Path)) + "\x00" + dir.Path
 }
@@ -824,21 +934,27 @@ func githubPostBodyKey(script string, dir shellir.Dir) string {
 // already read (by script identity, directory and whether it runs by path or by a shell), so a text that runs one script many times
 // reads it once. body, when set, receives the writes of the body each record runs (by record index) instead of their merge here.
 func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[string]*githubPostWrites, body func(int, string, *githubPostWrites)) {
-	if body == nil {
+	// A text read whole (a script body that another text runs) writes through a configured program wherever it sits; a text read in
+	// order (body set) records it at the point the program runs (githubPostWritesOf).
+	whole := body == nil
+	if whole {
 		body = func(_ int, key string, o *githubPostWrites) { w.merge(key, o) }
 	}
 	for i, o := range execs {
+		if whole && githubPostRunsConfigured(o) {
+			w.hooked = true
+		}
 		if o.Kind == shellir.KindScriptFile {
 			switch o.Name {
 			case "sed", "awk", "gawk", "mawk", "nawk":
 				// a sed or awk program file is not shell text
 			default:
-				body(i, githubPostBodyKey(o.Script.Value, o.Dir), githubPostBodyWrites(o.Script, o.Dir, depth, memo, false))
+				body(i, githubPostBodyKey(o.Script.Value, o.Dir), githubPostBodyWrites(o.Script, o.Dir, o.Cdpath, depth, memo, false))
 			}
 			continue
 		}
 		if githubPostDirectPath(o) {
-			body(i, githubPostBodyKey(o.Program.Value, o.Dir), githubPostBodyWrites(o.Program, o.Dir, depth, memo, true))
+			body(i, githubPostBodyKey(o.Program.Value, o.Dir), githubPostBodyWrites(o.Program, o.Dir, o.Cdpath, depth, memo, true))
 		}
 		if o.Name == "ln" {
 			w.unknown = true
@@ -877,10 +993,14 @@ func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[str
 
 // githubPostBodyWrites is the writes of the body of a script a shell runs (direct: a file run by path, which may be a binary or a
 // script of another interpreter, whose writes are not read). A body the reader cannot read writes a file unknown.
-func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo map[string]*githubPostWrites, direct bool) *githubPostWrites {
+func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, cdpath bool, depth int, memo map[string]*githubPostWrites, direct bool) *githubPostWrites {
 	unknown := &githubPostWrites{unknown: true}
-	if !script.Known || !dir.Known || depth >= githubPostMaxScriptDepth {
+	if !script.Known || !githubPostScriptKnown(script.Value, dir) || depth >= githubPostMaxScriptDepth {
 		return unknown
+	}
+	cwd := dir.Path
+	if !dir.Known {
+		cwd = ""
 	}
 	// The memo key holds how the file runs as well: run by path, a #! line of another program makes the file that program's input
 	// (no writes read); run by a shell (bash f, source f), every line is shell text and the #! line a comment. One reading must not
@@ -889,6 +1009,9 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 	if direct {
 		key = githubPostBodyKey(script.Value, dir) + "\x00direct"
 	}
+	if cdpath {
+		key += "\x00cdpath" // a cd to a bare name in the body is not a directory the guard knows
+	}
 	if got, ok := memo[key]; ok {
 		return got
 	}
@@ -896,9 +1019,9 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 	var body string
 	if direct {
 		var kind githubPostFileKind
-		body, kind = githubPostReadDirect(script.Value, dir.Path)
+		body, kind = githubPostReadDirect(script.Value, cwd)
 		switch kind {
-		case githubPostFileBinary, githubPostFileOther:
+		case githubPostFileBinary, githubPostFileOther, githubPostFileAbsent:
 			memo[key] = nil
 			return nil
 		case githubPostFileUnreadable:
@@ -906,11 +1029,11 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 		}
 	} else {
 		var ok bool
-		if body, ok = githubPostReadScript(script.Value, dir.Path); !ok {
+		if body, ok = githubPostReadScript(script.Value, cwd); !ok {
 			return unknown
 		}
 	}
-	res, err := shellir.Analyze(body, dir.Path)
+	res, err := shellir.AnalyzeScript(body, cwd, cdpath)
 	if err != nil {
 		return unknown
 	}
@@ -928,6 +1051,9 @@ func (w *githubPostWrites) merge(key string, o *githubPostWrites) {
 	}
 	if o.unknown || len(o.unknownBodies) > 0 {
 		w.unknownBodies[key] = true
+	}
+	if o.hooked {
+		w.hooked = true
 	}
 	for f := range o.files {
 		w.files[f] = true
@@ -955,7 +1081,7 @@ func githubPostIdentity(p string) string {
 // to the file by any name or link, to a directory it lies in (a copied tree), or to a destination the reader cannot name.
 func (w *githubPostWrites) readsReach(files []string) bool {
 	for x := w; x != nil; x = x.outer {
-		if x.unknown || len(x.unknownBodies) > 0 {
+		if x.unknown || x.hooked || len(x.unknownBodies) > 0 {
 			return true
 		}
 		for _, p := range files {
@@ -975,8 +1101,16 @@ func (w *githubPostWrites) readsReach(files []string) bool {
 // one for every script but the one whose body makes it. In a body judged inside another, the writes around it are walked with the
 // script of each level excluded the same way.
 func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
-	if !dir.Known {
+	return w.rewritesIn(script, dir, true)
+}
+
+// rewritesIn is rewrites; with strict false only a write that names the script (or a tree it lies in) counts.
+func (w *githubPostWrites) rewritesIn(script string, dir shellir.Dir, strict bool) bool {
+	if !githubPostScriptKnown(script, dir) {
 		return false // the script is unreadable already
+	}
+	if !dir.Known {
+		dir.Path = ""
 	}
 	p := githubPostScriptPath(script, dir.Path)
 	self := githubPostBodyKey(script, dir)
@@ -984,11 +1118,11 @@ func (w *githubPostWrites) rewrites(script string, dir shellir.Dir) bool {
 		if x != w {
 			self = x.self
 		}
-		if x.unknown || x.reaches(p) || x.underTree(p) {
+		if x.reaches(p) || x.underTree(p) || strict && x.unknown {
 			return true
 		}
 		for key := range x.unknownBodies {
-			if key != self {
+			if strict && key != self {
 				return true
 			}
 		}

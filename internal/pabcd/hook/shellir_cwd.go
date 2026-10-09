@@ -34,7 +34,7 @@ func ShellCommandReadable(command, cwd string, env host.LookupEnv) bool {
 // reads with no environment (worktreeDelRead), so a program word such as $HOME/tool is unreadable to it whatever the session's
 // environment holds. The differential fuzz counts the unreadable cases of the worktreedel target by it (criterion c2g).
 func WorktreeGuardCommandReadable(command, cwd string) bool {
-	_, err := worktreeDelRead(command, shellirPayloadCwd(cwd))
+	_, err := worktreeDelRead(command, shellirPayloadCwd(cwd), false)
 	return err == nil
 }
 

