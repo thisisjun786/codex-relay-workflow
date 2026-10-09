@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -471,11 +473,28 @@ func TestReviewObserverIgnoresASignoffFromAChildItCannotName(t *testing.T) {
 // The observer takes the session lock first (the order every writer of this tree follows: session, then goalplan), and judges the
 // state it reads under it.
 func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testing.T) {
+	// The interleaving is ordered by events, never by the clock: the transition lets go only after the observer has reported that
+	// it found the lock held, and the observer's retry budget is the test's own (about ten seconds of 5 ms retries), so no
+	// timer on a loaded host can make the observer give up before the release. A wait that never starts fails after a bound.
+	const bound = 30 * time.Second
 	for _, verdict := range []string{"PASS", "FAIL"} {
 		t.Run(verdict, func(t *testing.T) {
 			e := reviewObsSeed(t, "rb", nil)
 			launch := e.open(t)
+			waiting := make(chan struct{})
+			var waitingOnce sync.Once
+			budget := make([]time.Duration, 2000)
+			for i := range budget {
+				budget[i] = 5 // milliseconds
+			}
+			restore := hook.SetReviewObserverSessionLock(func(cwd, session string, fn func() error) error {
+				return state.WithSessionLockObserved(cwd, session, fn, budget, func() { waitingOnce.Do(func() { close(waiting) }) })
+			})
+			defer restore()
+
 			entered, release := make(chan struct{}), make(chan struct{})
+			var releaseOnce sync.Once
+			releaseLock := func() { releaseOnce.Do(func() { close(release) }) }
 			done := make(chan error, 1)
 			go func() {
 				done <- state.WithSessionLock(e.cwd, e.session, func() error {
@@ -486,25 +505,58 @@ func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testin
 					return state.WriteState(e.cwd, st)
 				})
 			}()
-			<-entered
+			// Every exit, including a failed assertion, lets the transition go and waits for both goroutines before the seam is restored.
 			stopped := make(chan struct{})
+			started := false
+			defer func() {
+				releaseLock()
+				select {
+				case <-done:
+				case <-time.After(bound):
+				}
+				if started {
+					select {
+					case <-stopped:
+					case <-time.After(bound):
+					}
+				}
+			}()
+			select {
+			case <-entered:
+			case err := <-done:
+				t.Fatalf("the transition ended before it held the session lock: %v", err)
+			case <-time.After(bound):
+				t.Fatal("the transition never took the session lock")
+			}
+			started = true
 			go func() {
 				defer close(stopped)
 				e.stopRaw(t, map[string]any{"agent_id": "reviewer-1", "last_assistant_message": reviewObsSignoff(launch, verdict)})
 			}()
 			select {
+			case <-waiting:
 			case <-stopped:
 				t.Fatal("the observer must wait for the session lock the transition holds")
-			case <-time.After(60 * time.Millisecond):
+			case <-time.After(bound):
+				t.Fatal("the observer never reported waiting for the session lock")
+			}
+			select {
+			case <-stopped:
+				t.Fatal("the observer must wait for the session lock the transition holds")
+			default:
 			}
 			if r := e.round(t); r.Lane.Verdict != "" {
 				t.Fatalf("no verdict may land while the transition holds the session: %+v", r)
 			}
-			close(release)
+			releaseLock()
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
-			<-stopped
+			select {
+			case <-stopped:
+			case <-time.After(bound):
+				t.Fatal("the observer never finished after the session lock was released")
+			}
 			if r := e.round(t); r.Status != goalplan.ReviewInFlight || r.Lane.Verdict != "" {
 				t.Fatalf("the session left A before the observer judged: %+v", r)
 			}

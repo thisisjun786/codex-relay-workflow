@@ -59,7 +59,7 @@ func HandleReviewObserver(raw string) (out string) {
 	if state.ReadState(cwd, sessionID).Slug == "" {
 		return ""
 	}
-	_ = state.WithSessionLock(cwd, sessionID, func() error {
+	_ = reviewObserverSessionLock(cwd, sessionID, func() error {
 		st := state.ReadState(cwd, sessionID)
 		if st.Slug == "" {
 			return nil
@@ -73,6 +73,11 @@ func HandleReviewObserver(raw string) (out string) {
 	})
 	return ""
 }
+
+// reviewObserverSessionLock is the observer's session-lock entry. It is state.WithSessionLock; a test replaces it (export_test.go)
+// with a wait that reports when the observer is provably blocked on a held lock and that gives up on the test's own budget, so
+// the interleaving does not depend on the wall clock. Production never assigns it.
+var reviewObserverSessionLock = state.WithSessionLock
 
 type reviewObserver struct{ cwd, slug string }
 
