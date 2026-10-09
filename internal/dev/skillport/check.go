@@ -29,11 +29,12 @@ func entries(root, dir, suffix string) (map[string]bool, error) {
 	return found, err
 }
 
-// Check verifies every ported skill, one that has a record, against that record and returns how many it
-// looked at and the problems found, each as "<path>: <what is wrong>". A skill of the plugin without a
-// record is one CRW wrote itself (the skills root is shared since the activation move, CRW-392) and is
-// not looked at. No record is silent. With a
-// source it also checks that tree against the record origin and renders the originals again.
+// Check verifies every ported skill against its record and returns how many it looked at and the
+// problems found, each as "<path>: <what is wrong>". A ported skill is any skill of SkillsRoot but the
+// ones CRW wrote itself (OwnSkills, which share the root since the activation move, CRW-392), and any
+// record: a ported skill without a record and a record without its skill are refused. Nothing ported
+// and no record is silent. With a source it also checks that tree against the record origin and
+// renders the originals again.
 func Check(root string, src *Source) (int, []string) {
 	var problems []string
 	report := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
@@ -45,7 +46,15 @@ func Check(root string, src *Source) (int, []string) {
 	if err := errors.Join(err1, err2); err != nil {
 		return 0, []string{err.Error()}
 	}
-	names := slices.Sorted(maps.Keys(recorded))
+	set := map[string]bool{}
+	maps.Copy(set, recorded)
+	maps.Copy(set, staged)
+	for _, name := range OwnSkills {
+		if !recorded[name] {
+			delete(set, name)
+		}
+	}
+	names := slices.Sorted(maps.Keys(set))
 	if len(names) == 0 {
 		return 0, nil
 	}
@@ -63,8 +72,8 @@ func Check(root string, src *Source) (int, []string) {
 	var origin *Origin
 	for _, name := range names {
 		dir, rec := SkillsRoot+"/"+name, RecordDir+"/"+name+".json"
-		if !staged[name] {
-			report("%s: ported skill is missing", dir)
+		if !recorded[name] || !staged[name] {
+			report("%s: ported skill %s", dir, map[bool]string{true: "has no record", false: "is missing"}[staged[name]])
 			continue
 		}
 		skill, err := load(root, name)

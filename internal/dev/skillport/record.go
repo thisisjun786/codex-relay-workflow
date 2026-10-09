@@ -6,8 +6,8 @@
 // with the checked-in name table applied, as the corpus replay applies it, and records the digest of
 // every substituted original file in port/cxc/records/crw-<folder>.json. "skillport check" verifies the
 // ported skills against the records; crw-dev ci validate runs the same Check and validates them like the
-// plugin's other skills. A ported skill is one that has a record; the skills CRW wrote itself share the
-// directory and have none, so the check does not look at them.
+// plugin's other skills. The skills CRW wrote itself (OwnSkills) share the directory and have no record,
+// so the check does not look at them; every other skill there is a ported one and needs its record.
 // The ported skills were staged under port/cxc/skills until the activation move (CRW-392) put them in
 // the plugin. Offline, Check proves each staged file is what its record holds under
 // the pinned name table; a difference requires a justified edit recorded by "skillport edits --source DIR --reason TEXT NAME".
@@ -39,6 +39,11 @@ const (
 	RecordDir  = "port/cxc/records"
 	prefix     = "crw-"
 )
+
+// OwnSkills is the skills CRW wrote itself. They share SkillsRoot with the ported skills since the
+// activation move (CRW-392) and have no record, so Check does not look at them; every other skill in
+// SkillsRoot is a ported one and needs its record. A new skill of CRW's own is added here.
+var OwnSkills = []string{"crw-check", "crw-define", "crw-logic", "crw-next", "crw-plan", "crw-refactor", "crw-run", "crw-status", "crw-tidy"}
 
 // Origin names the original tree: the tag, its commit and the digest of the original skills
 // directory listing.

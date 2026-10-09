@@ -201,16 +201,31 @@ func TestMissingAndUnrecordedSkills(t *testing.T) {
 	expectProblem(t, "directory gone", f.problems(nil), "plugins/crw/skills/crw-kwrite: ported skill is missing")
 	g := newFixture(t)
 	g.stage(t)
-	// A skill without a record is one CRW wrote itself, which shares the plugin's skills root since the
-	// activation move (CRW-392): the check does not look at it.
-	put(t, filepath.Join(g.root, SkillsRoot, "crw-run/SKILL.md"), "x\n", 0o644)
+	// The skills CRW wrote itself share the plugin's skills root since the activation move (CRW-392) and
+	// have no record: the check does not look at them.
+	for _, name := range OwnSkills {
+		put(t, filepath.Join(g.root, SkillsRoot, name, "SKILL.md"), "x\n", 0o644)
+	}
 	if n, problems := Check(g.root, nil); n != 1 || len(problems) != 0 {
-		t.Errorf("a CRW skill beside the ported one: %d, %q", n, problems)
+		t.Errorf("the CRW skills beside the ported one: %d, %q", n, problems)
 	}
+	// Losing the record of a ported skill does not turn it into a CRW skill, even with an unrecorded change.
+	put(t, g.path("SKILL.md"), slurp(t, g.path("SKILL.md"))+"unrecorded\n", 0o644)
 	must(t, os.Remove(filepath.Join(g.root, RecordDir, "crw-kwrite.json")))
-	if n, problems := Check(g.root, nil); n != 0 || len(problems) != 0 {
-		t.Errorf("no record left: %d, %q", n, problems)
-	}
+	expectProblem(t, "record gone", g.problems(nil), "plugins/crw/skills/crw-kwrite: ported skill has no record")
+	h := newFixture(t)
+	h.stage(t)
+	must(t, os.Rename(filepath.Join(h.root, RecordDir, "crw-kwrite.json"), filepath.Join(h.root, RecordDir, "crw-other.json")))
+	got := h.problems(nil)
+	expectProblem(t, "record renamed", got, "plugins/crw/skills/crw-kwrite: ported skill has no record")
+	expectProblem(t, "record renamed", got, "plugins/crw/skills/crw-other: ported skill is missing")
+	k := newFixture(t)
+	k.stage(t)
+	must(t, os.Rename(filepath.Dir(k.path("SKILL.md")), filepath.Join(k.root, SkillsRoot, "crw-other")))
+	must(t, os.Remove(filepath.Join(k.root, RecordDir, "crw-kwrite.json")))
+	expectProblem(t, "skill renamed, record gone", k.problems(nil), "plugins/crw/skills/crw-other: ported skill has no record")
+	put(t, filepath.Join(k.root, SkillsRoot, "crw-another/SKILL.md"), "x\n", 0o644)
+	expectProblem(t, "unrecorded directory", k.problems(nil), "plugins/crw/skills/crw-another: ported skill has no record")
 }
 
 func TestRecordsShareAnOrigin(t *testing.T) {
