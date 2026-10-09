@@ -87,6 +87,22 @@ func relayReadProjectedField(t *testing.T, value any, key string) any {
 	return document[key]
 }
 
+// relayReadProjectedKey is one field of a projected value together with whether the document carries
+// the key at all, so an explicit null is told from a field that is missing.
+func relayReadProjectedKey(t *testing.T, value any, key string) (any, bool) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %#v: %v", value, err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("unmarshal %s: %v", data, err)
+	}
+	got, present := document[key]
+	return got, present
+}
+
 // relayReadSourceField is one field of a relay reader's own record.
 func relayReadSourceField(t *testing.T, record any, key string) any {
 	t.Helper()
@@ -991,8 +1007,51 @@ func TestRelayReadNewestReportWithoutPullRequestIsNoLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RelayReadState: %v", err)
 	}
-	if got := relayReadProjectedField(t, relayReadRelationshipByID(t, projection, "rel-1"), "pullRequest"); got != nil {
-		t.Fatalf("pullRequest = %#v, want null: the newest report names no pull request", got)
+	item := relayReadRelationshipByID(t, projection, "rel-1")
+	if got, present := relayReadProjectedKey(t, item, "pullRequest"); !present || got != nil {
+		t.Fatalf("pullRequest = %#v (present %v), want an explicit null: the newest report names no pull request", got, present)
+	}
+	if item.Read.State != relayReadReadOK {
+		t.Fatalf("read = %+v, want ok: a withdrawn link is a successful read of no pull request", item.Read)
+	}
+}
+
+// CRW-1042: before the later submission that names no pull request, the same head carries one: the
+// withdrawal above is a change of what the relay reads, not an absence from the start.
+func TestRelayReadReportWithPullRequestIsTheLinkUntilWithdrawn(t *testing.T) {
+	f := relayReadEverything(t)
+	f.relayReadWorkReport("evt-1", 1, "rel-1", 1, "hash-1", "owner/repo", 7)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	item := relayReadRelationshipByID(t, projection, "rel-1")
+	if item.PullRequest == nil || item.PullRequest.Number != 7 || item.Read.State != relayReadReadOK {
+		t.Fatalf("rel-1 = %+v, want pull request #7 and an ok read", item)
+	}
+}
+
+// CRW-1042: an acceptance that names a pull request number but has no forge identity recorded gives
+// no usable link: the repository of the acceptance row can be a local checkout, so the item is marked
+// unknown with a reason and carries no half-filled pull request.
+func TestRelayReadAcceptanceWithoutForgeIdentityIsUnknown(t *testing.T) {
+	f := relayReadEverything(t)
+	f.acceptance("plan-1", "A", "acc-1", "rel-1", dagReviewAt(0))
+	f.exec("UPDATE dag_acceptances SET repository = 'owner/repo', pr_number = 9 WHERE acceptance_id = 'acc-1'")
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	item := relayReadRelationshipByID(t, projection, "rel-1")
+	if item.Read.State != relayReadReadUnknown || item.Read.Reason == "" {
+		t.Fatalf("read = %+v, want unknown with a reason: the acceptance names #9 but records no forge repository", item.Read)
+	}
+	if item.PullRequest != nil {
+		t.Fatalf("pullRequest = %+v, want none rather than a number without a repository", item.PullRequest)
 	}
 }
 

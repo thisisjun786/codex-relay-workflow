@@ -788,7 +788,8 @@ func (s *Scheduler) outsideDenominator(ctx context.Context, q store.Querier, pla
 // RelationshipPullRequest is the pull request a relationship is about, read the way a node's link is
 // read (pullRequestOf): the active acceptance that names the relationship first, else the work report
 // of the relationship's current head. Nil when the store holds no link. It is an error when the
-// relationship is not in the store, or when more than one active acceptance names it.
+// relationship is not in the store, when more than one active acceptance names it, or when the link
+// has a number but no recorded repository.
 func (s *Scheduler) RelationshipPullRequest(ctx context.Context, q store.Querier, rid string) (*PullRequestLink, error) {
 	rel, found, err := loadRelationship(ctx, q, rid)
 	if err != nil {
@@ -801,7 +802,17 @@ func (s *Scheduler) RelationshipPullRequest(ctx context.Context, q store.Querier
 	if err != nil {
 		return nil, err
 	}
-	return s.pullRequestOf(ctx, q, rel, true, acc, hasAcc)
+	link, err := s.pullRequestOf(ctx, q, rel, true, acc, hasAcc)
+	if err != nil || link == nil {
+		return nil, err
+	}
+	// A number without the repository it belongs to names no pull request a consumer can use. An
+	// acceptance whose forge identity is not recorded keeps only a number (its own repository column
+	// can be a local checkout), so the link is unreadable, not a pull request with an empty repository.
+	if link.Repository == "" {
+		return nil, fmt.Errorf("relationship %s names pull request #%d from its %s but the store records no repository for it", rid, link.Number, link.Source)
+	}
+	return link, nil
 }
 
 // loadActiveAcceptanceOfRelationship is the active acceptance that names a relationship. The store
