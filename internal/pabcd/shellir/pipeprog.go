@@ -116,16 +116,16 @@ func printfText(args []string) (string, bool) {
 	return b.String(), true
 }
 
-// echoText evaluates an echo of plain words: an optional leading -n, and no backslash, which shells disagree on. A word
-// after the options is text even when it starts with a dash.
+// echoText evaluates an echo of plain words: any leading -n, and no other option (bash also reads -e and -E, which the
+// reader does not model), and no backslash, which shells disagree on. A word after the options is text.
 func echoText(args []string) (string, bool) {
 	newline := true
-	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
-		if args[0] != "-n" {
-			return "", false
-		}
+	for len(args) > 0 && args[0] == "-n" {
 		newline = false
 		args = args[1:]
+	}
+	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		return "", false
 	}
 	for _, a := range args {
 		if strings.Contains(a, "\\") {
@@ -139,15 +139,49 @@ func echoText(args []string) (string, bool) {
 	return out, true
 }
 
-// hasStdinRedirect reports a redirection of the program's own standard input (or a copy onto it): the program then reads
-// that file, not the pipe, and zsh with MULTIOS reads both, so the pipe is not the program.
+// hasStdinRedirect reports an input redirection of the program's own standard input, or an output copied onto descriptor 0:
+// the program then reads that file, not the pipe, and zsh with MULTIOS reads both, so the pipe is not the program. An output
+// redirection of standard output (>, >>, >&, >|) leaves standard input to the pipe.
 func hasStdinRedirect(redirs []Redir) bool {
 	for _, r := range redirs {
-		if r.Fd == "" || r.Fd == "0" {
+		if r.Fd != "" && r.Fd != "0" {
+			continue
+		}
+		switch r.Op {
+		case "<", "<>", "<<", "<<-", "<<<", "<&":
 			return true
+		case ">&", ">", ">>", ">|":
+			if r.Fd == "0" {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// stdinCopySource returns the descriptor that the last redirection of standard input copies (0<&N, <&N) and that
+// redirection's index, when the copy names a descriptor by number. Any other input redirection last gives none.
+func stdinCopySource(redirs []Redir) (string, int, bool) {
+	for i := len(redirs) - 1; i >= 0; i-- {
+		r := redirs[i]
+		if r.Fd != "" && r.Fd != "0" {
+			continue
+		}
+		switch r.Op {
+		case "<&":
+			if r.Target.Known && isDigits(r.Target.Value) {
+				return r.Target.Value, i, true
+			}
+			return "", 0, false
+		case "<", "<>", "<<", "<<-", "<<<":
+			return "", 0, false
+		case ">&", ">", ">>", ">|":
+			if r.Fd == "0" {
+				return "", 0, false
+			}
+		}
+	}
+	return "", 0, false
 }
 
 // fdAliasNumber returns the descriptor a path names when it names one of this process's descriptors: /dev/stdin (0),
@@ -176,6 +210,11 @@ func aliasProgram(path string, redirs []Redir, ctx Context, name string) (string
 		return "", unreadablef("%s reads its program from %s, a descriptor alias the reader does not model", name, path)
 	}
 	if n == "0" {
+		if ctx.inTextPipe && ctx.Stdin != StdinPipe {
+			// The alias is the pipe's standard input, which the command's own input redirection also sets: bash reads the
+			// redirection, zsh with MULTIOS reads both, so the text does not show one program.
+			return "", unreadablef("%s reads its program from %s, which an input redirection on a pipe also sets", name, path)
+		}
 		return stdinProgram(redirs, ctx.Stdin, name, ctx)
 	}
 	return fdBody(redirs, n, len(redirs), 0)

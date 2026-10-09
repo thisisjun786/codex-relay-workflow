@@ -75,7 +75,7 @@ open('{MEMORY}/a','w')
 PY
 then :; fi
 
-=== PR825-350f75c1-d5 | U
+=== PR825-350f75c1-d5 | U | deviation=none/allow/deny
 --why python3 has no program argument and runs the body copied onto its input through descriptor 3.
 python3 3<<'PY' <&3
 import shutil; shutil.rmtree('../repo')

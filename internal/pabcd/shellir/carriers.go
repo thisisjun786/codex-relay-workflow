@@ -394,7 +394,8 @@ loop:
 		}
 		switch {
 		case v == "--" || v == "-":
-			stdinMode = stdinMode || v == "-"
+			// bash, dash and zsh end the options at either, and the operand after it is the script file; only -s makes the
+			// operands positional parameters, so a lone - does not change stdinMode.
 			i++
 			break loop
 		case strings.HasPrefix(v, "--"):

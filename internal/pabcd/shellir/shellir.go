@@ -118,6 +118,9 @@ type Context struct {
 	Feed *Feed
 	// pipeSrc is what the left side of the pipe the command reads prints.
 	pipeSrc *pipeSource
+	// wrapRedirs says a wrapper around this command carries a redirection: the reader does not follow a pipe into a shell
+	// behind a redirected wrapper (exec with a redirection), so the piped program stays unreadable there.
+	wrapRedirs bool
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -813,8 +816,17 @@ func stdinKind(redirs []Redir, def string) string {
 // stdinProgram returns the text a program reads from standard input when that
 // text is a here-document or here-string the reader can see.
 func stdinProgram(redirs []Redir, stdin, name string, ctx Context) (string, error) {
-	if stdin == StdinPipe && ctx.pipeKnown && !hasStdinRedirect(redirs) {
+	if stdin == StdinPipe && ctx.pipeKnown && !hasStdinRedirect(redirs) && !ctx.wrapRedirs {
 		return ctx.pipeProgram, nil
+	}
+	if stdin == StdinUnknown && !ctx.wrapRedirs {
+		if fd, idx, ok := stdinCopySource(redirs); ok {
+			if ctx.inTextPipe {
+				// A copy onto standard input on the right of a pipe: zsh with MULTIOS reads the pipe too, so the copy is not the program.
+				return "", unreadablef("%s reads descriptor %s copied onto a pipe's standard input", name, fd)
+			}
+			return fdBody(redirs, fd, idx, 0)
+		}
 	}
 	if stdin == StdinHeredoc || stdin == StdinHerestring {
 		for i := len(redirs) - 1; i >= 0; i-- {
@@ -1087,10 +1099,19 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if ctx.Depth > MaxNestingDepth {
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
+	for _, r := range redirs {
+		if r.Fd == "" || r.Fd == "0" || r.Fd == "1" {
+			ctx.wrapRedirs = true // a redirection of standard input or output; a descriptor 2 copy leaves the pipe alone
+		}
+	}
 	if name == "busybox" && len(args) == 0 && ctx.Stdin != StdinNone && ctx.Stdin != StdinFile {
 		// A bare busybox names no applet. Behind a pipe, a here-document or a here-string the reader cannot prove
 		// what it runs, so it is refused; a bare busybox with nothing to read only prints its usage.
 		return unreadablef("busybox without an applet has standard input from %s", ctx.Stdin)
+	}
+	if name == "parallel" && ctx.Feed != nil {
+		// An operand feed (xargs, find) appends values to the ::: sources of parallel, and the reader does not see them.
+		return unreadablef("parallel receives operands from %s, which add to its ::: sources", ctx.Feed.Wrapper)
 	}
 	u, err := unwrapCommand(name, args)
 	if err != nil {
@@ -1109,7 +1130,16 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 			Args: u.record, Redirs: redirs, Dir: st.dir, Ctx: ctx})
 	}
 	if u.isShell {
-		// A shell string the wrapper runs is code the text shows: it is read by the same layer, as bash -c is.
+		// A shell string the wrapper runs is code the text shows: it is read by the same layer, as bash -c is. Each job of a
+		// parallel text is a shell of its own that starts where this text starts, so each line is read from a copy of the state.
+		if len(u.shellLines) > 0 {
+			for _, line := range u.shellLines {
+				if err := w.carried(line, st.clone(), ctx, u.shellCarrier); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		return w.carried(u.shell, st.clone(), ctx, u.shellCarrier)
 	}
 	if name == "xargs" {

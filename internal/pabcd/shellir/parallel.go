@@ -161,6 +161,7 @@ func parallelUnwrap(args []Word) (unwrapped, error) {
 	}
 	u.isShell = true
 	u.shell = strings.Join(lines, "\n")
+	u.shellLines = lines
 	u.shellCarrier = "parallel"
 	return u, nil
 }
@@ -224,21 +225,22 @@ func expandParallelWord(word string, row []string, seq int) (string, bool, error
 }
 
 // parallelTransform applies the path modifier of a placeholder: none, . (no extension), / (basename), // (dirname) or
-// /. (basename without extension), as GNU parallel does.
+// /. (basename without extension), as GNU parallel does. An extension is cut from the final path component only, so a
+// dot in a parent directory stays, and a name that is all extension (.bashrc) leaves an empty value the caller refuses.
 func parallelTransform(v, mod string) string {
 	base := v
 	if slash := strings.LastIndexByte(v, '/'); slash >= 0 {
 		base = v[slash+1:]
 	}
 	noExt := func(s string) string {
-		if dot := strings.LastIndexByte(s, '.'); dot > 0 {
+		if dot := strings.LastIndexByte(s, '.'); dot >= 0 {
 			return s[:dot]
 		}
 		return s
 	}
 	switch mod {
 	case ".":
-		return noExt(v)
+		return v[:len(v)-len(base)] + noExt(base)
 	case "/":
 		return base
 	case "//":

@@ -17,6 +17,9 @@ type unwrapped struct {
 	// feeds is the feed of each program in inner (find's actions); xopts are the options of xargs that decide its operands.
 	feeds []*Feed
 	xopts xargsOpts
+	// shellLines is the shell text of each job of a parallel text, one line per command line, when the wrapper runs each job
+	// in a shell of its own; shell holds the same lines joined by newlines.
+	shellLines []string
 }
 
 // unwrapCommand applies the option grammar of one wrapper. An option the
