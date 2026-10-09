@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -333,9 +334,11 @@ func TestTempRootLockCRW1045RefusedFlockInstallsUnlocked(t *testing.T) {
 }
 
 // CRW-1045 (3): two installs on one missing temp root are ordered by the lock on the directory that holds it.
-// The first is held inside its locked mkdir; the second must not reach its own mkdir until the first lets go.
-// The barrier replaces the timing the old test relied on: without the lock the second reaches its mkdir at
-// once and the test fails, with it the second waits and both installs succeed.
+// The first is held inside its locked mkdir. The flock seam then observes the second install asking for the
+// contested lock while the first holds it, and that the call is still blocked; only then is the first let go
+// and the second must reach its mkdir afterwards. An install that never asks for the lock is a failure of the
+// observation itself, not a pass by the absence of an event, so the result does not depend on how fast the
+// second goroutine is scheduled.
 func TestTempRootLockCRW1045ConcurrentInstallsAreOrderedByTheLock(t *testing.T) {
 	archive := syntheticArchive(t, []byte("gitleaks\n"))
 	sum := sha256.Sum256(archive)
@@ -350,9 +353,26 @@ func TestTempRootLockCRW1045ConcurrentInstallsAreOrderedByTheLock(t *testing.T) 
 
 	// An install whose temp root was removed under it tries its mkdir again, so a hook may run twice.
 	firstInside, firstGo, secondInside := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	var firstOnce, secondOnce sync.Once
+	secondAsked := make(chan struct{})
+	var firstOnce, secondOnce, askedOnce sync.Once
+	// held is true from the moment the first install is parked inside its mkdir until the test releases it,
+	// so a flock request made in that window is the second install's: the first makes none while parked.
+	var held atomic.Bool
+	var blocked atomic.Int32
+	saved := tempRootFlock
+	t.Cleanup(func() { tempRootFlock = saved })
+	tempRootFlock = func(fd, how int) error {
+		if !held.Load() {
+			return unix.Flock(fd, how)
+		}
+		askedOnce.Do(func() { close(secondAsked) })
+		blocked.Add(1)
+		defer blocked.Add(-1)
+		return unix.Flock(fd, how)
+	}
 	first := &Seams{URLBase: release.server.URL, MkdirTemp: func(dir, pattern string) (string, error) {
 		firstOnce.Do(func() {
+			held.Store(true)
 			close(firstInside)
 			<-firstGo
 		})
@@ -381,11 +401,30 @@ func TestTempRootLockCRW1045ConcurrentInstallsAreOrderedByTheLock(t *testing.T) 
 		results <- result{body, err}
 	}()
 	select {
+	case <-secondAsked:
 	case <-secondInside:
+		held.Store(false)
+		close(firstGo)
+		t.Fatal("the second install reached its mkdir without asking for the lock on the directory that holds the temp root")
+	case <-time.After(10 * time.Second):
+		held.Store(false)
+		close(firstGo)
+		t.Fatal("the second install never asked for the lock on the directory that holds the temp root")
+	}
+	// The second has asked for the contested lock; the kernel keeps that call blocked while the first holds it.
+	select {
+	case <-secondInside:
+		held.Store(false)
 		close(firstGo)
 		t.Fatal("the second install reached its mkdir while the first held the lock on the directory that holds the temp root")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
+	if blocked.Load() != 1 {
+		held.Store(false)
+		close(firstGo)
+		t.Fatalf("%d lock requests are waiting while the first install holds the lock, want the second install's one", blocked.Load())
+	}
+	held.Store(false)
 	close(firstGo)
 	for range 2 {
 		select {
