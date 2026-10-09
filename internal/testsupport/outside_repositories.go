@@ -28,41 +28,58 @@ func InsideRepository(dir string) bool {
 // fallbackTempParents are the places looked at, after TMPDIR, for a root outside every repository. They are system temporary locations a test may use; none of them is created.
 var fallbackTempParents = []string{"/var/tmp", "/dev/shm"}
 
-// TempParentOutsideRepositories answers the first of candidates that is an existing directory with no repository above it (InsideRepository). An empty candidate is skipped.
-func TempParentOutsideRepositories(candidates []string) (string, bool) {
+// cleanTempParents answers, in order, each of candidates that resolves (symlinks followed, as the destination guard reads the physical path) to an existing directory with no repository above it
+// (InsideRepository). An empty candidate is skipped; the paths answered are the resolved ones.
+func cleanTempParents(candidates []string) []string {
+	var clean []string
 	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
 		}
-		if abs, err := filepath.Abs(candidate); err == nil {
-			candidate = abs
-		}
-		if info, err := os.Stat(candidate); err != nil || !info.IsDir() || InsideRepository(candidate) {
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
 			continue
 		}
-		return candidate, true
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			continue
+		}
+		if info, err := os.Stat(resolved); err != nil || !info.IsDir() || InsideRepository(resolved) {
+			continue
+		}
+		clean = append(clean, resolved)
+	}
+	return clean
+}
+
+// TempParentOutsideRepositories answers the first of candidates that is an existing directory, once its symlinks are resolved, with no repository above it (InsideRepository). An empty candidate
+// is skipped.
+func TempParentOutsideRepositories(candidates []string) (string, bool) {
+	if clean := cleanTempParents(candidates); len(clean) > 0 {
+		return clean[0], true
 	}
 	return "", false
 }
 
 // MkdirTempOutsideRepositories makes the temporary directory of a test that creates a Git worktree, which the destination guard refuses below any repository. It is os.MkdirTemp(TMPDIR) when
 // nothing above TMPDIR is a repository, so the usual place and the isolation root keep serving. Otherwise (a host whose /tmp holds an empty .git, TMPDIR unset) it takes the first of
-// /var/tmp and /dev/shm that is clean, and when there is none the test is skipped with that reason: the guard is not weakened, and the test is not reported as a defect of the code under test.
-// The directory is removed when the test ends.
+// /var/tmp and /dev/shm in which a directory can be made and that is clean, and when there is none the test is skipped with that reason: the guard is not weakened, and the test is not reported as a
+// defect of the code under test. Candidates are judged by their physical path and the directory answered is that path, which is what the guard validates. The directory is removed when the test ends.
 func MkdirTempOutsideRepositories(t testing.TB, pattern string) string {
 	t.Helper()
-	parent, ok := TempParentOutsideRepositories(append([]string{os.TempDir()}, fallbackTempParents...))
-	if !ok {
-		t.Skipf("no temporary location outside every Git repository: %s and %v each have a .git (or a bare repository's HEAD and objects) among their ancestors, which the worktree destination guard refuses", os.TempDir(), fallbackTempParents)
-	}
-	dir, err := os.MkdirTemp(parent, pattern)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := RemoveTempTree(dir); err != nil {
-			t.Error(err)
+	candidates := append([]string{os.TempDir()}, fallbackTempParents...)
+	for _, parent := range cleanTempParents(candidates) {
+		dir, err := os.MkdirTemp(parent, pattern)
+		if err != nil {
+			continue // a clean location the test cannot write to: the next one is tried
 		}
-	})
-	return dir
+		t.Cleanup(func() {
+			if err := RemoveTempTree(dir); err != nil {
+				t.Error(err)
+			}
+		})
+		return dir
+	}
+	t.Skipf("no temporary location outside every Git repository where a directory can be made: %s and %v are each missing, unwritable or have a .git (or a bare repository's HEAD and objects) among their physical ancestors, which the worktree destination guard refuses", os.TempDir(), fallbackTempParents)
+	return ""
 }

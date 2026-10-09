@@ -75,3 +75,60 @@ func TestMkdirTempOutsideRepositoriesMakesACleanDirectory(t *testing.T) {
 		t.Fatalf("%s is inside a repository", dir)
 	}
 }
+
+// CRW-1034 (post-evaluation d2, d3): a candidate is judged by its physical path, and a clean location nobody can write to does not end the search.
+func TestTempParentOutsideRepositoriesJudgesThePhysicalPath(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	real := filepath.Join(base, "repo", "tmp")
+	if err := os.MkdirAll(filepath.Join(base, "repo", ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clean := filepath.Join(base, "clean-target")
+	if err := os.Mkdir(clean, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if testsupport.InsideRepository(clean) {
+		t.Skip("the temporary location of this host is below a repository marker")
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	cleanAlias := filepath.Join(base, "clean-alias")
+	if err := os.Symlink(clean, cleanAlias); err != nil {
+		t.Fatal(err)
+	}
+	// the alias has no marker above it, its target does: it is not clean, and the next candidate is answered
+	got, ok := testsupport.TempParentOutsideRepositories([]string{alias, cleanAlias})
+	want, _ := filepath.EvalSymlinks(clean)
+	if !ok || got != want {
+		t.Fatalf("got %q, %v; want the resolved clean path %q", got, ok, want)
+	}
+	if got, ok = testsupport.TempParentOutsideRepositories([]string{alias}); ok {
+		t.Fatalf("a symlink into a repository was answered: %q", got)
+	}
+}
+
+func TestMkdirTempOutsideRepositoriesAnswersAPhysicalPathWhenTMPDIRIsASymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if testsupport.InsideRepository(target) {
+		t.Skip("the temporary location of this host is below a repository marker")
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	dir := testsupport.MkdirTempOutsideRepositories(t, "crw-outside-")
+	if resolved, err := filepath.EvalSymlinks(dir); err != nil || resolved != dir {
+		t.Fatalf("%s is not a physical path (%q, %v)", dir, resolved, err)
+	}
+}
