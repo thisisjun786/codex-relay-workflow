@@ -842,3 +842,99 @@ func TestStopReleasesAnEventOfAnEarlierTurn(t *testing.T) {
 		t.Errorf("an unstamped state: %+v", a)
 	}
 }
+
+// A write of the counter that fails before the state is published is not a block, and the file stays as it was; a failure after the
+// publication (state.PublishedError: the directory sync) still has the counter on disk, so the block it was written for is answered.
+func TestStopStateWriteFailures(t *testing.T) {
+	failing := func(t *testing.T, write func(cwd string, next state.State) error) {
+		t.Helper()
+		old := stopWriteState
+		stopWriteState = write
+		t.Cleanup(func() { stopWriteState = old })
+	}
+
+	// before the publication: nothing on disk, no block
+	cwd, env := stopRig(t, "active")
+	stopInFlight(t, cwd, state.PhaseB)
+	before := stopStateBytes(t, cwd)
+	failing(t, func(string, state.State) error { return errors.New("no space left on device") })
+	if a := stopRun(cwd, env); a != (StopAnswer{}) {
+		t.Errorf("a write that failed before the publication: %+v", a)
+	}
+	if stopStateBytes(t, cwd) != before {
+		t.Errorf("a failed write changed the file")
+	}
+
+	// the write is the real one and the directory refuses the temp file (read-only): same answer, file kept
+	if os.Geteuid() != 0 {
+		failing(t, state.WriteState)
+		dir := filepath.Dir(state.StatePath(cwd, stopSID))
+		readOnly := func(cwd, sessionID string, fn func() error) error {
+			return state.WithSessionLock(cwd, sessionID, func() error {
+				if err := os.Chmod(dir, 0o500); err != nil {
+					return err
+				}
+				defer os.Chmod(dir, 0o700)
+				return fn()
+			})
+		}
+		if a := stopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "linux", env, readOnly); a != (StopAnswer{}) {
+			t.Errorf("a read-only sessions directory: %+v", a)
+		}
+		if stopStateBytes(t, cwd) != before {
+			t.Errorf("a read-only sessions directory changed the file")
+		}
+	}
+
+	// after the publication: the counter is on disk, so the block is answered
+	published := func(cwd string, next state.State) error {
+		if err := state.WriteState(cwd, next); err != nil {
+			return err
+		}
+		return &state.PublishedError{Err: errors.New("fsync the directory")}
+	}
+	failing(t, published)
+	a := stopRun(cwd, env)
+	if reason := stopBlockReason(t, a); reason == "" {
+		t.Errorf("a failure after the publication: %+v", a)
+	}
+	if s := state.ReadState(cwd, stopSID); s.StopBlockCount != 1 || s.StopBlockTotal != 1 {
+		t.Errorf("the published counter: %+v", s)
+	}
+}
+
+// A session id that is not canonical shares its file and lock with the canonical id it sanitises to ("s/1" and "s-1"): the Stop of
+// the one must neither spend the other's budget nor rewrite its sessionId. It releases, and the file is untouched.
+func TestStopReleasesANonCanonicalSessionID(t *testing.T) {
+	dir := t.TempDir()
+	cwd := filepath.Join(dir, "ws")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := sessionHookGoalsDB(t, filepath.Join(dir, "codex"),
+		"CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+		"INSERT INTO thread_goals (thread_id, status, objective) VALUES ('s/1', 'active', 'ship the feature')")
+	env := sessionHookEnv(map[string]string{"CRW_BIN": "CRW", "HOME": filepath.Join(dir, "home"), "CODEX_SQLITE_HOME": home})
+	sessionHookStateFile(t, cwd, "s-1", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseB, true })
+	path := state.StatePath(cwd, "s-1")
+	if state.StatePath(cwd, "s/1") != path {
+		t.Fatalf("the ids no longer share a file")
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"s/1", "s 1", "../s-1", ""} {
+		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: id}, "linux", env); a != (StopAnswer{}) {
+			t.Errorf("session id %q: %+v", id, a)
+		}
+		if after, _ := os.ReadFile(path); string(after) != string(before) {
+			t.Errorf("session id %q rewrote the file of s-1", id)
+		}
+	}
+	// the canonical id of the file, with a goal of its own, still drives its loop
+	sessionHookGoalsDB(t, filepath.Join(dir, "codex"), "INSERT INTO thread_goals (thread_id, status, objective) VALUES ('s-1', 'active', 'ship the feature')")
+	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: "s-1"}, "linux", env); stopBlockReason(t, a) == "" {
+		t.Errorf("the canonical id: %+v", a)
+	}
+}

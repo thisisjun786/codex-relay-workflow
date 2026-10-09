@@ -81,6 +81,12 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if env == nil {
 		env = os.LookupEnv
 	}
+	// A session id the state file name would rewrite ("s/1" is the file and the lock of "s-1") is not a session this writer may
+	// count against: the counter would be charged to, and the sessionId stamped over, another session's file. The oracle writes
+	// under the same sanitised name; the Go writers refuse such an id (state.IsCanonicalSessionID), and so does Stop: it releases.
+	if !state.IsCanonicalSessionID(p.SessionID) {
+		return StopAnswer{}
+	}
 	st := state.ReadState(p.Cwd, p.SessionID)
 	// guard 2a': the autonomous Stop loop is PABCD-only; the Interview is HITL-only and Stop never drives it.
 	if st.Phase == state.PhaseI {
@@ -131,6 +137,10 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	})
 }
 
+// stopWriteState is the counter write, a variable so that a test can fail it before and after the publication
+// (state.Published), which a file system rarely does on demand. Production leaves it state.WriteState.
+var stopWriteState = state.WriteState
+
 // stopDue judges again, inside the lock, what the decision outside it stood on and that the user can
 // change meanwhile: the goal is still ACTIVE (a pause releases), the bound goalplan still reads and does
 // not wait on an open decision (idle: it must still read and not wait; in flight: it must not wait), and
@@ -169,7 +179,7 @@ func stopCounted(p StopPayload, judged state.State, platform string, env host.Lo
 			return nil
 		}
 		next, outcome := stopBump(p.Cwd, fresh)
-		if err := state.WriteState(p.Cwd, next); err != nil && !state.Published(err) {
+		if err := stopWriteState(p.Cwd, next); err != nil && !state.Published(err) {
 			return nil
 		}
 		switch outcome {
