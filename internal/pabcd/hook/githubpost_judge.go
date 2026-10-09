@@ -87,16 +87,20 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	// The closed rule: a post is judged only as one simple command. A post that sits behind a wrapper,
 	// a shell, a list, a pipe or a substitution is refused.
 	simple := len(execs) == 1 && githubPostPlainContext(execs[0].Ctx)
-	var written *githubPostWrites
-	writes := func() *githubPostWrites {
+	var written *githubPostTextWrites
+	var i int
+	textWrites := func() *githubPostTextWrites {
 		if written == nil {
 			written = githubPostWritesOf(execs, outer)
 		}
 		return written
 	}
-	for _, e := range execs {
+	// writes is the view of the writes made before execution i runs: the text's own records, and the script bodies run before it.
+	writes := func() *githubPostWrites { return textWrites().at(i) }
+	for i = range execs {
+		e := execs[i]
 		if e.Kind == shellir.KindScriptFile {
-			if writes().rewrites(e.Script.Value, e.Dir) {
+			if textWrites().stale(i, e.Script.Value, e.Dir) {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 			}
 			if site, denied := githubPostJudgeScript(e, depth, writes().as(githubPostBodyKey(e.Script.Value, e.Dir))); denied {
@@ -113,7 +117,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		}
 		direct := githubPostDirectPath(e)
 		// A file run by path (./gh among them) that the text, or a script body it runs before, writes is not the file read here.
-		if direct && writes().rewrites(e.Program.Value, e.Dir) {
+		if direct && textWrites().stale(i, e.Program.Value, e.Dir) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 		}
 		if direct && githubPostProgram(e.Name) != "gh" {
@@ -487,10 +491,98 @@ func (w *githubPostWrites) reaches(p string) bool {
 // them, in this text and in the texts around it (bash writer.sh; bash post.sh). A body whose writes cannot be computed (unreadable,
 // over the limit, deeper than githubPostMaxScriptDepth) writes a file unknown. A binary or a script of another interpreter is a
 // program like any installed one: its writes are not read.
-func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPostWrites {
-	w := newGithubPostWrites(outer)
-	w.collect(execs, 0, map[string]*githubPostWrites{})
-	return w
+//
+// A body's writes happen when its script runs: they reach the executions after it (and the script itself, which a shell reads as it
+// runs: githubPostTextWrites.stale), not the ones that ran before (bash lint.sh; bash refresh.sh, where refresh.sh rewrites lint.sh, ran the lint.sh read here).
+// The text's own records are taken whole, wherever they sit. Where the text's order is not the order things run (githubPostInOrder:
+// a loop runs its body again, a pipe or a background job runs alongside, a function body runs where it is called, a carried text may
+// be run again), a body's writes reach every execution, and an execution there sees every body's writes.
+func githubPostWritesOf(execs []shellir.Exec, outer *githubPostWrites) *githubPostTextWrites {
+	t := &githubPostTextWrites{execs: execs, ordered: newGithubPostWrites(outer), bodies: make([]githubPostBody, len(execs))}
+	t.ordered.collect(execs, 0, map[string]*githubPostWrites{}, func(i int, key string, o *githubPostWrites) {
+		t.bodies[i] = githubPostBody{key: key, writes: o}
+	})
+	for i, e := range execs {
+		if !githubPostInOrder(e.Ctx) {
+			t.ordered.merge(t.bodies[i].key, t.bodies[i].writes)
+			t.bodies[i] = githubPostBody{}
+		}
+	}
+	return t
+}
+
+// githubPostTextWrites is the writes of one text, viewed from each of its executions in turn.
+type githubPostTextWrites struct {
+	execs []shellir.Exec
+	// ordered holds the own records' writes, the writes of the bodies out of order, and the bodies of the executions up to next.
+	ordered *githubPostWrites
+	next    int
+	full    *githubPostWrites // every write of the text, built when an execution out of order asks
+	bodies  []githubPostBody  // by execution: the body that execution runs, until it is merged
+}
+
+// githubPostBody is the writes of the script body one execution runs (nil: none, or a program whose writes are not read).
+type githubPostBody struct {
+	key    string
+	writes *githubPostWrites
+}
+
+// at is the view of the writes made before execution i runs: the writes around the body that execution runs, whose own writes happen
+// in their order inside it. The views are asked in the order of the executions; one asked earlier must not be held across a later ask.
+func (t *githubPostTextWrites) at(i int) *githubPostWrites {
+	if !githubPostInOrder(t.execs[i].Ctx) {
+		if t.full == nil {
+			t.full = t.ordered.clone()
+			for _, b := range t.bodies[t.next:] {
+				t.full.merge(b.key, b.writes)
+			}
+		}
+		return t.full
+	}
+	for ; t.next < i; t.next++ {
+		b := t.bodies[t.next]
+		t.ordered.merge(b.key, b.writes)
+	}
+	return t.ordered
+}
+
+// stale is whether the script execution i runs is not the file read before the command: the writes before it reach it, or its own
+// body writes it (a shell reads a script as it runs it, so what the script appends to itself runs too).
+func (t *githubPostTextWrites) stale(i int, script string, dir shellir.Dir) bool {
+	if t.at(i).rewrites(script, dir) {
+		return true
+	}
+	own := t.bodies[i].writes
+	if own == nil || !dir.Known {
+		return false
+	}
+	p := githubPostScriptPath(script, dir.Path)
+	return own.reaches(p) || own.underTree(p)
+}
+
+// githubPostInOrder is whether an execution runs once, where the text puts it, after the executions before it and before the
+// executions after it finish.
+func githubPostInOrder(c shellir.Context) bool {
+	return !c.Loop && !c.FuncBody && !c.Background && !c.Coprocess && !c.Pipeline && !c.CmdSubst && !c.ProcSubst && c.Carrier == ""
+}
+
+// clone is a copy of these writes that later merges into either do not reach the other.
+func (w *githubPostWrites) clone() *githubPostWrites {
+	c := *w
+	c.files = make(map[string]bool, len(w.files))
+	for k, v := range w.files {
+		c.files[k] = v
+	}
+	c.existing = make(map[int64][]os.FileInfo, len(w.existing))
+	for k, v := range w.existing {
+		c.existing[k] = append([]os.FileInfo(nil), v...)
+	}
+	c.unknownBodies = make(map[string]bool, len(w.unknownBodies))
+	for k, v := range w.unknownBodies {
+		c.unknownBodies[k] = v
+	}
+	c.trees = append([]string(nil), w.trees...)
+	return &c
 }
 
 func newGithubPostWrites(outer *githubPostWrites) *githubPostWrites {
@@ -507,20 +599,23 @@ func githubPostBodyKey(script string, dir shellir.Dir) string {
 
 // collect adds the writes of the records of one text; depth counts the script bodies around it, memo holds the writes of each body
 // already read (by script identity, directory and whether it runs by path or by a shell), so a text that runs one script many times
-// reads it once.
-func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[string]*githubPostWrites) {
-	for _, o := range execs {
+// reads it once. body, when set, receives the writes of the body each record runs (by record index) instead of their merge here.
+func (w *githubPostWrites) collect(execs []shellir.Exec, depth int, memo map[string]*githubPostWrites, body func(int, string, *githubPostWrites)) {
+	if body == nil {
+		body = func(_ int, key string, o *githubPostWrites) { w.merge(key, o) }
+	}
+	for i, o := range execs {
 		if o.Kind == shellir.KindScriptFile {
 			switch o.Name {
 			case "sed", "awk", "gawk", "mawk", "nawk":
 				// a sed or awk program file is not shell text
 			default:
-				w.merge(githubPostBodyKey(o.Script.Value, o.Dir), githubPostBodyWrites(o.Script, o.Dir, depth, memo, false))
+				body(i, githubPostBodyKey(o.Script.Value, o.Dir), githubPostBodyWrites(o.Script, o.Dir, depth, memo, false))
 			}
 			continue
 		}
 		if githubPostDirectPath(o) {
-			w.merge(githubPostBodyKey(o.Program.Value, o.Dir), githubPostBodyWrites(o.Program, o.Dir, depth, memo, true))
+			body(i, githubPostBodyKey(o.Program.Value, o.Dir), githubPostBodyWrites(o.Program, o.Dir, depth, memo, true))
 		}
 		if o.Name == "ln" {
 			w.unknown = true
@@ -597,7 +692,7 @@ func githubPostBodyWrites(script shellir.Word, dir shellir.Dir, depth int, memo 
 		return unknown
 	}
 	got := newGithubPostWrites(nil)
-	got.collect(res.Execs, depth+1, memo)
+	got.collect(res.Execs, depth+1, memo, nil)
 	memo[key] = got
 	return got
 }

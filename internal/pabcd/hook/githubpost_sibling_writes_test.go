@@ -198,3 +198,65 @@ func TestGitHubPostDirectBinaryOverTheScriptLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestLaterScriptWritesDoNotReachEarlierScripts: a script body's writes happen when that script runs, so they reach the executions
+// after it and nothing that ran before. bash lint.sh; bash refresh.sh, where refresh.sh rewrites lint.sh after lint.sh finished, runs
+// the lint.sh the guards read, and a later script whose destination the reader cannot name says nothing of an earlier one. Where the
+// order of two executions is not the order of the text (a loop runs its body again, a pipe or a background job runs alongside, a
+// function body runs where it is called), every body's writes still reach every script (CRW-1028 verifier round 5, finding 1).
+func TestLaterScriptWritesDoNotReachEarlierScripts(t *testing.T) {
+	r, cwd := round3Scene(t, map[string]string{
+		"lint.sh":    "echo lint\n",
+		"refresh.sh": "echo refreshed > lint.sh\n",
+		"build.sh":   "echo build > \"$OUT\"\n",
+		"writer.sh":  "cat evil.sh > post.sh\n",
+		"runner.sh":  "bash post.sh\n",
+		"outer.sh":   "bash writer.sh\n",
+		"after.sh":   "bash post.sh; bash writer.sh\n",
+	})
+	for _, c := range []struct {
+		cmd    string
+		denied bool
+	}{
+		{"bash lint.sh; bash refresh.sh", false},
+		{"bash lint.sh; OUT=out.log bash build.sh", false},
+		{"bash lint.sh && bash refresh.sh && echo ok", false},
+		{"bash post.sh; bash writer.sh", false},
+		{"bash runner.sh; bash writer.sh", false},
+		{"bash post.sh; bash outer.sh", false},
+		{"bash after.sh", false},
+		// the writer runs first: the later script is stale
+		{"bash refresh.sh; bash lint.sh", true},
+		{"OUT=out.log bash build.sh; bash lint.sh", true},
+		{"bash lint.sh; bash refresh.sh; bash lint.sh", true},
+		{"bash after.sh; bash post.sh", true},
+		{"bash writer.sh; bash runner.sh", true},
+		// order not given by the text
+		{"for i in 1 2; do bash lint.sh; bash refresh.sh; done", true},
+		{"while true; do bash lint.sh; OUT=x bash build.sh; done", true},
+		{"bash lint.sh | bash refresh.sh", true},
+		{"bash lint.sh & bash refresh.sh", true},
+		{"f() { bash lint.sh; }; bash refresh.sh; f", true},
+	} {
+		_, gh := githubPostJudgeText(c.cmd, cwd)
+		del := r.verdict(c.cmd).Deny
+		if gh != c.denied {
+			t.Errorf("github guard %q: denied=%v, want %v", c.cmd, gh, c.denied)
+		}
+		if del != c.denied {
+			t.Errorf("worktree guard %q: denied=%v, want %v", c.cmd, del, c.denied)
+		}
+	}
+	// a file run by path that a later script rewrites ran before the rewrite
+	for _, c := range []struct {
+		cmd    string
+		denied bool
+	}{
+		{"./post.sh; bash writer.sh", false},
+		{"bash writer.sh; ./post.sh", true},
+	} {
+		if _, gh := githubPostJudgeText(c.cmd, cwd); gh != c.denied {
+			t.Errorf("github guard %q: denied=%v, want %v", c.cmd, gh, c.denied)
+		}
+	}
+}
