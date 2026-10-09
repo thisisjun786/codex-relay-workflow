@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -251,5 +252,59 @@ func TestStoreFileDiagnosticRead_otherStoreClosingKeepsTheHolderLock(t *testing.
 	}
 	if err := insert("after"); err != nil {
 		t.Fatalf("the holder's connection stopped writing after the diagnostic read: %v", err)
+	}
+}
+
+// TestStoreFileDiagnosticRead_aSidecarOfADiagnosticOnlyReadIsNotClosed: the diagnostic read connects through the
+// held descriptor of the main database, but SQLite resolves that name and opens the real -wal and -shm beside
+// the store. When the last ordinary store closes while such a read is open, the sidecars are held by the
+// diagnostic connection alone: an artifact reader pointed at one must be refused rather than open and close a
+// descriptor of it, which would drop the read's POSIX locks on the shared-memory file.
+func TestStoreFileDiagnosticRead_aSidecarOfADiagnosticOnlyReadIsNotClosed(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	holder, err := fixtureOpen(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := holder.Querier(ctx).ExecContext(ctx, "INSERT INTO store_challenge(nonce,written_by,written_at) VALUES(?,?,?)", "n", "holder", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	shm := path + "-shm"
+	pid := os.Getpid()
+	var hashErr, closeErr error
+	var before, during, after int
+	var shmInode uint64
+	read := ReadOnlyRows(ctx, StateSelection{Path: dir}, "SELECT nonce FROM store_challenge", nil, func(RowScanner) error {
+		if closeErr = holder.Close(); closeErr != nil {
+			return nil
+		}
+		info, err := os.Stat(shm)
+		if err != nil {
+			hashErr = err
+			return nil
+		}
+		shmInode = info.Sys().(*syscall.Stat_t).Ino
+		before, _ = storeFileLocks(pid, shmInode)
+		_, _, _, hashErr = HashArtifact(ctx, shm, []string{dir}, false)
+		during, _ = storeFileLocks(pid, shmInode)
+		return nil
+	})
+	after, _ = storeFileLocks(pid, shmInode)
+	if !read.Readable || read.Detail != "" {
+		t.Fatalf("the diagnostic read failed: %+v", read)
+	}
+	if closeErr != nil {
+		t.Fatalf("closing the ordinary store: %v", closeErr)
+	}
+	if shmInode == 0 {
+		t.Skipf("no -shm stayed beside the store while the read was open: %v", hashErr)
+	}
+	if before < 1 {
+		t.Skipf("the diagnostic read's POSIX lock on the -shm is not visible before the artifact read (locks=%d)", before)
+	}
+	if hashErr == nil || during < 1 {
+		t.Fatalf("the artifact reader read a sidecar a diagnostic read holds (hash error %v, locks before %d, during %d, after the read %d)", hashErr, before, during, after)
 	}
 }
