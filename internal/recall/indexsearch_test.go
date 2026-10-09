@@ -243,6 +243,15 @@ func indexRankCompare(t *testing.T, got, want any) {
 		t.Fatalf("Node oracle differs\ngot: %v\nwant: %v", g, w)
 	}
 }
+
+// indexRankLaneScoreFixes lists, by case, the hit scores that the eligibility-first lanes change: the
+// oracle ranked a row behind rows the search excludes (another source, an older date), the port does not.
+var indexRankLaneScoreFixes = map[string]map[int]float64{
+	"fixture/trigram/5":  {0: 0.029513232968891315, 1: 0.029040652044353788, 2: 0.028727260331116933, 3: 0.028587823063299003},
+	"fixture/zebra/13":   {0: 0.02977260708619778},
+	"fixture/trigram/21": {1: 0.029040652044353788, 2: 0.028727260331116933, 3: 0.028587823063299003},
+}
+
 func TestIndexRankRecordedOracle(t *testing.T) {
 	// The recorded dates were made under UTC; pin the local zone so a non-UTC host (TZ=Asia/Seoul) reads the
 	// zone-less timestamps the same way.
@@ -288,6 +297,10 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 				}
 				if err != nil {
 					t.Fatal(err)
+				}
+				// port: fixed (docs/port-cxc/known-defects/CRW-1087.md): lane ranks are taken among the eligible rows.
+				for hit, score := range indexRankLaneScoreFixes[corpus.Name+"/"+c.Name+"/"+memoryNumberText(float64(i))] {
+					c.Out.(map[string]any)["hits"].([]any)[hit].(map[string]any)["score"] = score
 				}
 				indexRankCompare(t, indexRankNormalized(t, r, home), c.Out)
 			})

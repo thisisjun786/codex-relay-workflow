@@ -40,8 +40,11 @@ func indexRankRead(db *RwDb, sql string, params ...any) ([]indexRankRow, error) 
 	return stmt.All(params...)
 }
 
+// indexRankLaneRanks ranks one lane within the rows the query admits: the eligibility predicate
+// (role, source, cwd, date, synthetic, tool) is part of the lane's own query, ahead of its LIMIT,
+// so rows outside the scope cannot fill the pool and push an older relevant row out of it.
 // A missing or errored lane contributes nothing. Other query errors escape.
-func indexRankLaneRanks(db *RwDb, table string, words []string, anyMode bool, k float64) map[float64]float64 {
+func indexRankLaneRanks(db *RwDb, table string, words []string, anyMode bool, k float64, eligible string, eligibleParams []any) map[float64]float64 {
 	ranks := map[float64]float64{}
 	if len(words) == 0 {
 		return ranks
@@ -54,8 +57,10 @@ func indexRankLaneRanks(db *RwDb, table string, words []string, anyMode bool, k 
 	if anyMode {
 		joiner = " OR "
 	}
-	// table is supplied only by the two fixed lane calls below, never by input.
-	rows, err := indexRankRead(db, "SELECT rowid AS id FROM "+table+" WHERE "+table+" MATCH ? ORDER BY bm25("+table+") LIMIT ?", strings.Join(quoted, joiner), k)
+	// table is supplied only by the two fixed lane calls below, never by input; eligible is the
+	// fixed-fragment predicate of candidateFilter and its values are bound.
+	params := append(append([]any{strings.Join(quoted, joiner)}, eligibleParams...), k)
+	rows, err := indexRankRead(db, "SELECT "+table+".rowid AS id FROM "+table+" JOIN msgs m ON m.id = "+table+".rowid JOIN files f ON f.path = m.path WHERE "+table+" MATCH ? AND "+eligible+" ORDER BY bm25("+table+") LIMIT ?", params...)
 	if err != nil {
 		return ranks
 	}
@@ -103,8 +108,9 @@ func indexRankRows(db *RwDb, opts resolvedQuery) ([]indexRankRow, bool, error) {
 			triWords = append(triWords, w)
 		}
 	}
-	fts := indexRankLaneRanks(db, "msgs_fts", words, anyMode, k)
-	tri := indexRankLaneRanks(db, "msgs_tri", triWords, anyMode, k)
+	eligible, eligibleParams := candidateFilter(opts, false)
+	fts := indexRankLaneRanks(db, "msgs_fts", words, anyMode, k, eligible, eligibleParams)
+	tri := indexRankLaneRanks(db, "msgs_tri", triWords, anyMode, k, eligible, eligibleParams)
 	byID := map[float64]indexRankRow{}
 	ids := []float64{}
 	laneIDs := map[float64]bool{}
