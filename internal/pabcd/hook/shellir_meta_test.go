@@ -3,6 +3,7 @@ package hook
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -288,9 +289,24 @@ var shellMetaIgnored = map[string]bool{
 	"}": true, "(": true, ")": true, "!": true, "cd": true, "fn_m": true, "f": true, "[[": true, "[": true,
 }
 
+// shellMetaRun is what one traced execution returned: the program words the shell traced, how it ended (the exit status,
+// or -1 when it did not start or hit the time limit), and whether the time limit killed it.
+type shellMetaRun struct {
+	words    []string
+	exit     int
+	timedOut bool
+}
+
+// ranToEnd is whether the command ran to its end with status 0, so that every program in it that the shell reached ran.
+// A command that failed (a builtin that is not one, a missing program) stopped before or inside its base program, so its
+// trace is no evidence that the reader refused a harmless command.
+func (r shellMetaRun) ranToEnd() bool { return !r.timedOut && r.exit == 0 }
+
 // shellMetaTrace runs one command under the shell with its trace on, in dir, with recording stubs first on PATH and
-// only the system directories after them, and returns the program words the shell traced.
-func shellMetaTrace(t *testing.T, shell, cmd, dir, stubs string) []string {
+// only the system directories after them, and returns the program words the shell traced and how the run ended. For bash
+// the trace is exported to the bash processes the command starts (SHELLOPTS=xtrace), so a program run inside a nested
+// "bash -c" is traced too; a nested zsh is not traced (zsh has no such export), which is stated in the accounting.
+func shellMetaTrace(t *testing.T, shell, cmd, dir, stubs string) shellMetaRun {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -305,20 +321,30 @@ func shellMetaTrace(t *testing.T, shell, cmd, dir, stubs string) []string {
 		"CODEX_HOME=" + filepath.Join(dir, "codex-home"), "CRW_HOME=" + filepath.Join(dir, "crw-home"),
 		"TMPDIR=" + filepath.Join(dir, "tmp"), "LC_ALL=C",
 	}
+	if path.Base(shell) != "zsh" {
+		c.Env = append(c.Env, "SHELLOPTS=xtrace")
+	}
 	var stderr bytes.Buffer
 	c.Stderr = &stderr
-	_ = c.Run()
+	res := shellMetaRun{}
+	if err := c.Run(); err != nil {
+		res.exit = -1
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ctx.Err() == nil {
+			res.exit = ee.ExitCode()
+		}
+		res.timedOut = ctx.Err() != nil
+	}
 	re := shellMetaBashTrace
 	if path.Base(shell) == "zsh" {
 		re = shellMetaZshTrace
 	}
-	var out []string
 	for _, line := range strings.Split(stderr.String(), "\n") {
 		if m := re.FindStringSubmatch(line); m != nil {
-			out = append(out, m[1])
+			res.words = append(res.words, m[1])
 		}
 	}
-	return out
+	return res
 }
 
 // shellMetaReaderNames is the program names the reader lists for a command, and whether it lists a program it cannot
@@ -377,7 +403,7 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var checked, refused, unknown, refusedRun, refusedSkipped, refusedWords, overRefused int
+	var checked, refused, unknown, refusedRun, refusedSkipped, refusedWords, overRefused, refusedFailed, refusedTimedOut int
 	for _, base := range shellMetaBases() {
 		baseNames, _, _ := shellMetaReaderNames(base.cmd)
 		for _, v := range append([]string{base.cmd}, shellMetaVariants(base.cmd)...) {
@@ -395,9 +421,9 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 				}
 				refusedRun++
 				for _, shell := range shells {
-					words := shellMetaTrace(t, shell, v, dir, stubs)
+					run := shellMetaTrace(t, shell, v, dir, stubs)
 					harmless := true
-					for _, word := range words {
+					for _, word := range run.words {
 						name := path.Base(word)
 						if shellMetaIgnored[name] || strings.Contains(name, "=") {
 							continue
@@ -407,7 +433,17 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 							harmless = false
 						}
 					}
-					if harmless && shell == shells[0] {
+					if shell != shells[0] {
+						continue
+					}
+					switch {
+					case run.timedOut:
+						refusedTimedOut++
+					case !run.ranToEnd():
+						// the variant failed in the shell (for example "| builtin bash", which is no builtin): it never ran the
+						// base program, so it is no evidence of over-refusal
+						refusedFailed++
+					case harmless:
 						overRefused++
 					}
 				}
@@ -418,7 +454,7 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 				continue
 			}
 			for _, shell := range shells {
-				for _, word := range shellMetaTrace(t, shell, v, dir, stubs) {
+				for _, word := range shellMetaTrace(t, shell, v, dir, stubs).words {
 					name := path.Base(word)
 					if shellMetaIgnored[name] || strings.Contains(name, "=") {
 						continue
@@ -433,7 +469,9 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 	}
 	t.Logf("traced program words checked: %d; commands the reader refused: %d; commands with an unnamed program: %d", checked, refused, unknown)
 	t.Logf("refused commands run under the real shells: %d (skipped as not provably inside the sandbox: %d); program words they traced: %d; "+
-		"refused commands that ran only their base's programs and the wrapper words (over-refused): %d", refusedRun, refusedSkipped, refusedWords, overRefused)
+		"refused commands that ran to status 0 and traced only their base's programs and the wrapper words (over-refused, first shell, "+
+		"bash traced inside nested bash, nested zsh untraced): %d; failed in the shell (not counted): %d; timed out (not counted): %d",
+		refusedRun, refusedSkipped, refusedWords, overRefused, refusedFailed, refusedTimedOut)
 	if refused > 0 && refusedRun == 0 {
 		t.Errorf("the reader refused %d generated commands and none of them was run under the real shells", refused)
 	}
