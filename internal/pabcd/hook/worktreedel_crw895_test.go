@@ -240,6 +240,9 @@ func TestCRW895NamePatternCaseAndLocale(t *testing.T) {
 		{"리포", "find ../리포 -name '[[:print:]]*' -delete", true},
 		{"리포", "find ../리포 -name '??' -delete", true},
 		{"리포", "find ../리포 -name '*.o' -delete", false},
+		{"리포", "find ../리포 -name '리*' -delete", true},
+		{"리포", "find ../리포 -name '*포' -delete", true},
+		{"리포", "find ../리포 -name '나*' -delete", false},
 		{"repo", "find ../repo -name '[[.r.]]*' -delete", true},
 		{"repo", "find ../repo -name '[[=r=]]*' -delete", true},
 	} {

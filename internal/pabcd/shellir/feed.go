@@ -4,6 +4,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Feed says where the operands of a program come from when find, xargs or an outer wrapper runs it. The operands arrive at
@@ -27,8 +28,13 @@ type Feed struct {
 	Replace  string
 	Replaced bool
 	// Carried: the feed belongs to a wrapper outside the shell text this program stands in, so the program receives its operands
-	// only through the shell's positional parameters.
-	Carried bool
+	// through the shell's positional parameters, and through the text itself where the wrapper replaces a string in it (find's {},
+	// xargs -I's string). TextUses says a shell text between the wrapper and the program holds that string: the wrapper's operands
+	// can then set the directory or a variable any command of the text uses.
+	Carried  bool
+	TextUses bool
+	// Dir is the directory the wrapper runs in (find's start points are resolved from it, whatever directory a shell it runs moves to).
+	Dir Dir
 	// Outer is the feed of the wrapper that ran this wrapper (xargs started by find -exec).
 	Outer *Feed
 }
@@ -36,13 +42,45 @@ type Feed struct {
 // GuardedFor says whether a test stands before the action on every path that reaches it and leaves the start point out.
 func (f *Feed) GuardedFor(start string) bool { return chainsGuard(f.chains, start) }
 
-func (f *Feed) asCarried() *Feed {
+// ReplaceString is the string the wrapper replaces in the words of the program it runs: {} for find, the -I string for xargs while
+// the reader has not put a name in its place; "" for none.
+func (f *Feed) ReplaceString() string {
+	switch {
+	case f.Wrapper == "find":
+		return "{}"
+	case f.Wrapper == "xargs" && !f.Replaced:
+		return f.Replace
+	}
+	return ""
+}
+
+// replacedIn says whether a word holds the string a wrapper of this feed or an outer one replaces at run time.
+func (f *Feed) replacedIn(words []Word) bool {
+	for ; f != nil; f = f.Outer {
+		r := f.ReplaceString()
+		if r == "" {
+			continue
+		}
+		for _, w := range words {
+			if w.Known && strings.Contains(w.Value, r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// asCarried is the feed of a program in a shell text the wrapper runs; text is that shell text.
+func (f *Feed) asCarried(text string) *Feed {
 	if f == nil {
 		return nil
 	}
 	c := *f
 	c.Carried = true
-	c.Outer = f.Outer.asCarried()
+	if r := f.ReplaceString(); r != "" && strings.Contains(text, r) {
+		c.TextUses = true
+	}
+	c.Outer = f.Outer.asCarried(text)
 	return &c
 }
 
@@ -277,7 +315,8 @@ func chainsGuard(chains []findChain, start string) bool {
 // -mtime, -size, -empty, -type, a regular expression with groups) is taken as one that selects some files and leaves the start
 // point out, as is a negated test;
 // the name and path patterns and the regular expression are evaluated against the start point as find prints it, so -name '*' or
-// a pattern that fits the start point's own name does not leave it out.
+// a pattern that fits the start point's own name does not leave it out. A name or path pattern the reader cannot evaluate in every
+// locale (a collating symbol, an equivalence class) is taken as one that may fit the start point.
 func (t findTest) excludes(start string) bool {
 	if t.neg {
 		// A negated test keeps what it names out of the action (find . ! -name keep): it is read as one that selects.
@@ -286,17 +325,11 @@ func (t findTest) excludes(start string) bool {
 	var matches, known bool
 	switch t.name {
 	case "-name", "-iname":
-		p, s := t.operand, findBase(start)
-		if t.name == "-iname" {
-			p, s = strings.ToLower(p), strings.ToLower(s)
-		}
-		matches, known = globMatch(p, s)
+		matches, known = globMatch(t.operand, findBase(start), t.name == "-iname")
+		return known && !matches
 	case "-path", "-ipath", "-wholename", "-iwholename":
-		p, s := t.operand, start
-		if t.name == "-ipath" || t.name == "-iwholename" {
-			p, s = strings.ToLower(p), strings.ToLower(s)
-		}
-		matches, known = globMatch(p, s)
+		matches, known = globMatch(t.operand, start, t.name == "-ipath" || t.name == "-iwholename")
+		return known && !matches
 	case "-regex", "-iregex":
 		matches, known = regexMatch(t.operand, start, t.name == "-iregex")
 	default:
@@ -317,9 +350,20 @@ func findBase(start string) string {
 	return s[strings.LastIndexByte(s, '/')+1:]
 }
 
-// globMatch matches a find pattern (fnmatch without FNM_PATHNAME or FNM_PERIOD: * and ? match / and a leading dot too).
-func globMatch(pattern, s string) (matches, known bool) {
+// globMatch matches a find pattern (fnmatch without FNM_PATHNAME or FNM_PERIOD: * and ? match / and a leading dot too). fold is
+// -iname and -ipath (FNM_CASEFOLD): letters and ranges compare without case, while a POSIX class tests the character as it is
+// ([[:upper:]] fits Repo), so a class is read as fitting either case and a negated bracket, whose complement the reader cannot bound,
+// as fitting. matches errs toward true where the locale decides: with a byte outside ASCII in the name or the pattern, ? and a
+// bracket take a byte in the C locale and a character in UTF-8, and a class fits letters of other scripts ([[:alpha:]] fits 리포),
+// so such a pattern is read as fitting.
+func globMatch(pattern, s string, fold bool) (matches, known bool) {
+	if (!isASCII(s) || !isASCII(pattern)) && strings.ContainsAny(pattern, "?[") {
+		return true, true
+	}
 	var b strings.Builder
+	if fold {
+		b.WriteString(`(?i)`)
+	}
 	b.WriteString(`(?s)^`)
 	for i := 0; i < len(pattern); i++ {
 		switch c := pattern[i]; c {
@@ -343,10 +387,19 @@ func globMatch(pattern, s string) (matches, known bool) {
 			if class == "" {
 				return false, false
 			}
+			if fold && strings.HasPrefix(class, "[^") {
+				return true, true
+			}
 			b.WriteString(class)
 			i = end
 		default:
-			b.WriteString(regexp.QuoteMeta(string(c)))
+			// A letter outside ASCII is matched as the bytes of its UTF-8 spelling, as a name holds it.
+			r, size := utf8.DecodeRuneInString(pattern[i:])
+			if r == utf8.RuneError && size <= 1 && c >= 0x80 {
+				return true, true
+			}
+			b.WriteString(regexp.QuoteMeta(pattern[i : i+size]))
+			i += size - 1
 		}
 	}
 	b.WriteString(`$`)
@@ -420,6 +473,10 @@ func globBracket(pattern string, i int) (end int, class string, ok bool) {
 // share is evaluated; a pattern with grouping, alternation or repetition operators is not (known is false), unless it is made of
 // nothing else, which fits every path.
 func regexMatch(pattern, s string, fold bool) (matches, known bool) {
+	if (!isASCII(s) || !isASCII(pattern)) && strings.ContainsAny(pattern, ".[") || fold && strings.Contains(pattern, "[^") {
+		// A locale decides what . and a bracket take outside ASCII, and a case-folded negated bracket has no bound the reader proves.
+		return true, true
+	}
 	if strings.Trim(pattern, ".*()^$|+?\\") == "" {
 		// Dots, stars, groups and anchors only (.*, (.*), ^.*$, .+): the pattern fits every path.
 		return true, true
@@ -444,6 +501,15 @@ func regexMatch(pattern, s string, fold bool) (matches, known bool) {
 		return false, false
 	}
 	return re.MatchString(s), true
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func isAlnum(c byte) bool {

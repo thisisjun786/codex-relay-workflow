@@ -848,6 +848,11 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	case name == "su":
 		return w.suCall(words[1:], st, ctx)
 	case name == "cd":
+		if ctx.Feed.replacedIn(words[1:]) {
+			// The wrapper puts a name the reader does not know in place of its string (find's {} is each path it finds).
+			st.dir = unknownDir(st.dir)
+			return nil
+		}
 		st.cd(words[1:])
 		return nil
 	case name == "pushd" || name == "popd":
@@ -938,8 +943,9 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.Carrier = carrier
-	// The operands of a wrapper outside the text reach it only through the shell's positional parameters.
-	ctx.Feed = ctx.Feed.asCarried()
+	// The operands of a wrapper outside the text reach it through the shell's positional parameters, and through the text where the
+	// wrapper replaces a string in it (find's {}).
+	ctx.Feed = ctx.Feed.asCarried(text)
 	// A shell that runs the text starts a new text: a pipe of the text around it is not a pipe inside it, so an input
 	// redirection in it replaces the inherited input (zsh with MULTIOS joins a pipe and a file only within one pipeline).
 	ctx.inTextPipe = false
@@ -1025,6 +1031,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 			ictx.Feed = u.feeds[i]
 			if name == "find" {
 				ictx.Feed.Outer = ctx.Feed
+				ictx.Feed.Dir = st.dir
 			}
 		}
 		if external {

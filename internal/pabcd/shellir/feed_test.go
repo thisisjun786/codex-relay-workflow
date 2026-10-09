@@ -414,7 +414,7 @@ func TestGlobMatchPOSIXClasses(t *testing.T) {
 		{"[[:nosuch:]]*", "repo", false, false},
 		{"[[.a.]]*", "a", false, false},
 	} {
-		m, k := globMatch(c.pattern, c.s)
+		m, k := globMatch(c.pattern, c.s, false)
 		if m != c.matches || k != c.known {
 			t.Errorf("globMatch(%q, %q) = %v, %v; want %v, %v", c.pattern, c.s, m, k, c.matches, c.known)
 		}
@@ -451,6 +451,91 @@ func TestFilterPassesReadsFileOperands(t *testing.T) {
 	} {
 		if _, ok := filterPasses(c.name, words(c.args...)); ok != c.ok {
 			t.Errorf("filterPasses(%s %v) = %v, want %v", c.name, c.args, ok, c.ok)
+		}
+	}
+}
+
+// TestGlobMatchCaseAndLocale (third verification of f0857f317): -iname folds letters and ranges but tests a class against the name
+// as it is, and outside ASCII the locale decides what ? and a bracket take; where the reader cannot settle it the pattern fits.
+func TestGlobMatchCaseAndLocale(t *testing.T) {
+	for _, c := range []struct {
+		pattern, s string
+		fold       bool
+		matches    bool
+	}{
+		{"[[:upper:]]*", "Repo", true, true},
+		{"[[:upper:]]*", "Repo", false, true},
+		{"[[:upper:]]*", "repo", false, false},
+		{"repo", "Repo", true, true},
+		{"[r]epo", "Repo", true, true},
+		{"[a-z]*", "Repo", true, true},
+		{"[^[:lower:]]*", "Repo", true, true},
+		{"[!x]*", "Repo", true, true},
+		{"[[:digit:]]*", "Repo", true, false},
+		{"*.o", "Repo", true, false},
+		{"[[:alpha:]]*", "리포", false, true},
+		{"[[:print:]]*", "리포", true, true},
+		{"[[:digit:]]*", "리포", false, true},
+		{"??????", "리포", false, true},
+		{"*.o", "리포", false, false},
+		{"리*", "리포", false, true},
+		{"[리]*", "repo", false, true},
+	} {
+		m, k := globMatch(c.pattern, c.s, c.fold)
+		if !k || m != c.matches {
+			t.Errorf("globMatch(%q, %q, fold %v) = %v, %v; want %v, true", c.pattern, c.s, c.fold, m, k, c.matches)
+		}
+	}
+	for _, c := range []struct {
+		pattern, s string
+		fold       bool
+	}{
+		{`\.\./[[:alpha:]]*`, "../리포", false},
+		{`\.\./[^a-z]*`, "../Repo", true},
+	} {
+		if m, k := regexMatch(c.pattern, c.s, c.fold); !m || !k {
+			t.Errorf("regexMatch(%q, %q, fold %v) = %v, %v; want true, true", c.pattern, c.s, c.fold, m, k)
+		}
+	}
+	// A pattern the reader cannot evaluate is not a test that leaves the start point out.
+	for _, op := range []string{"[[.r.]]*", "[[=r=]]*", "[[:nosuch:]]*"} {
+		if (findTest{name: "-name", operand: op}).excludes("../repo") {
+			t.Errorf("-name %q leaves ../repo out; the reader cannot evaluate it", op)
+		}
+	}
+}
+
+// TestCarriedTextHoldingTheReplaceString (third verification of f0857f317): a shell text that holds find's {} anywhere carries the
+// feed to every program in it, the feed keeps the directory find runs in, and a cd to a word that holds {} leaves the directory unknown.
+func TestCarriedTextHoldingTheReplaceString(t *testing.T) {
+	res, err := Analyze(`find .. -maxdepth 0 -exec sh -c 'cd {}; rm -rf repo' \;`, "/w/slot/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range res.Execs {
+		if e.Name != "rm" {
+			continue
+		}
+		found = true
+		f := e.Ctx.Feed
+		if f == nil || f.Wrapper != "find" || !f.Carried || !f.TextUses || f.Dir.Path != "/w/slot/repo" || !f.Dir.Known {
+			t.Errorf("rm feed %+v, want a carried find feed that the text uses, from /w/slot/repo", f)
+		}
+		if e.Dir.Known {
+			t.Errorf("rm runs in %+v after cd {}, want an unknown directory", e.Dir)
+		}
+	}
+	if !found {
+		t.Fatal("no rm")
+	}
+	res, err = Analyze(`find . -name x -exec sh -c 'cd build; rm -f old.o' \;`, "/w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Execs {
+		if e.Name == "rm" && (e.Ctx.Feed == nil || e.Ctx.Feed.TextUses || !e.Dir.Known || e.Dir.Path != "/w/build") {
+			t.Errorf("rm %+v feed %+v: a text without {} carries no use of it and keeps its cd", e.Dir, e.Ctx.Feed)
 		}
 	}
 }

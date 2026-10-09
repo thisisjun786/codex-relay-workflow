@@ -216,11 +216,13 @@ func worktreeDelHasUnknownArg(e shellir.Exec) bool {
 // it (a name that resolves to the worktree, its slot or an ancestor, spelled other than .; a source the reader cannot read is
 // refused). The program's own operands are judged by its own verdict. A feed that belongs to a wrapper outside the shell text the
 // program stands in reaches it through the shell's positional parameters, and through the text itself where the wrapper replaces a
-// string in every word it runs (find's {}, xargs -I's string), so it applies when the program uses a parameter or holds that string.
+// string in it (find's {}, xargs -I's string), so it applies when the program uses a parameter or holds that string, and to every
+// program of a text that holds the string anywhere (cd {} sets the directory the rest of the text runs in). find's start points
+// are judged from the directory find runs in and from the one the program runs in.
 func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	for f := e.Ctx.Feed; f != nil; f = f.Outer {
-		if f.Carried && !f.Replaced && !worktreeDelHasUnknownArg(e) && !(f.Replace != "" && worktreeDelReplaceUsed(e, f.Replace)) &&
-			!(f.Wrapper == "find" && worktreeDelReplaceUsed(e, "{}")) {
+		if f.Carried && !f.Replaced && !f.TextUses && !worktreeDelHasUnknownArg(e) &&
+			!(f.Replace != "" && worktreeDelReplaceUsed(e, f.Replace)) && !(f.Wrapper == "find" && worktreeDelReplaceUsed(e, "{}")) {
 			continue
 		}
 		var v GuardVerdict
@@ -230,12 +232,40 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 			if deleter == "" {
 				continue
 			}
+			if v = worktreeDelJudgeFindWords(e, deleter, id); v.Deny {
+				return v
+			}
+			at := e
+			at.Dir = f.Dir
+			if v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, at, id, "-exec "+deleter); v.Deny {
+				return v
+			}
 			v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, e, id, "-exec "+deleter)
 		case "xargs":
 			v = worktreeDelJudgeXargs(f, e, id)
 		}
 		if v.Deny {
 			return v
+		}
+	}
+	return GuardVerdict{}
+}
+
+// worktreeDelJudgeFindWords refuses a word of a removal that find runs where {} stands after other text (../{}) or with a ..
+// component ({}/../..): find puts each path it finds in place of {}, at a depth the reader does not know, so such a word names a path
+// the start points do not bound. {} alone, ./{} and {} with a suffix ({}.tmp, {}/x) stay at or below the path find found.
+func worktreeDelJudgeFindWords(e shellir.Exec, deleter string, id WorktreeIdentity) GuardVerdict {
+	for _, a := range e.Args {
+		k := strings.Index(a.Value, "{}")
+		if !a.Known || k < 0 {
+			continue
+		}
+		climbs := false
+		for _, part := range strings.Split(a.Value, "/") {
+			climbs = climbs || part == ".."
+		}
+		if prefix := a.Value[:k]; climbs || prefix != "" && prefix != "./" {
+			return GuardVerdict{Deny: true, Reason: denyReason("find -exec "+deleter+" "+a.Value+" (a path find builds from {} that its start points do not bound)", id)}
 		}
 	}
 	return GuardVerdict{}
