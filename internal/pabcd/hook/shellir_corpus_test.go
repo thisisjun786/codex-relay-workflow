@@ -35,7 +35,7 @@ func shellCorpusRows() []shellCorpusRow {
 		{"CRW-765", "hash -p /bin/bash b", "U", "D"},
 		{"CRW-765", "ln -sf /bin/bash X", "A", "A"},
 		{"CRW-765", "alias b=bash", "U", "D"},
-		{"CRW-765", "python3 -m json.tool", "A", "A"},
+		{"CRW-765", "python3 -m json.tool", "U", "D"},
 		{"CRW-765", "sed -n$F -", "U", "D"},
 		{"CRW-765", "jq --from-file /dev/stdin", "A", "A"},
 		{"CRW-765", "grep -f /dev/stdin", "A", "A"},

@@ -1,5 +1,7 @@
 # CRW-894 fix round 1: the findings of the independent verifier on 4636e20a (d1 link boundary and relative aliases, benign relative scripts, d3 json.tool shadowing).
 # ../repo is the managed checkout.
+# CRW-894 fix round 3: python3 -m json.tool is refused as on dev (the working directory heads its module search path and json.tool imports
+# many standard modules through it, so no text proves what runs). A row that expected the module allowed records the deviation.
 
 === CRW-894-vf-01 | U
 --why python3 reads its program from the pipe through /proc/self/root/.. : the kernel follows the root link first, so the two dot-dot segments end at / and the path is /dev/stdin (verifier of 4636e20a, d1 link boundary).
@@ -159,21 +161,21 @@ cp evil.py json.py; printf x | python3 -m json.tool
 --why In a directory the reader does not know the module search path starts somewhere it cannot see: python3 -m json.tool is not proven.
 cd "$DIR"; printf x | python3 -m json.tool
 
-=== CRW-894-vf-35 | B
+=== CRW-894-vf-35 | B | deviation=attempt/deny/deny
 --why Control: a json directory with no __init__ is a namespace candidate the standard library package outranks.
 --file json/notes.txt
 x
 --cmd
 printf x | python3 -m json.tool
 
-=== CRW-894-vf-36 | B
+=== CRW-894-vf-36 | B | deviation=attempt/deny/deny
 --why Control: a file json.txt is not a module.
 --file json.txt
 x
 --cmd
 printf x | python3 -m json.tool
 
-=== CRW-894-vf-37 | B
+=== CRW-894-vf-37 | B | deviation=attempt/deny/deny
 --why Control: a file json.py in another directory is not on the module search path.
 --file sub/json.py
 print('local')

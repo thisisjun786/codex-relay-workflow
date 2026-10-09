@@ -96,8 +96,8 @@ func reproGotText(t *testing.T, cmd string) [3]string {
 }
 
 // TestPythonJSONToolRunsTheLocalModule: python3 -m json.tool puts the working directory first on the module search path, so a
-// json package there runs instead of the standard library (finding 3 of the verifier of 4636e20a). The rows
-// (rows/20-crw-894-verifier-4636e20a.txt) refuse that text, and allow it when the directory holds no such module.
+// json package there runs instead of the standard library (finding 3 of the verifier of 4636e20a). The reader therefore
+// refuses python -m json.tool in every directory (fix round 3; rows/19, 20 and 21 record each shape as refused).
 func TestPythonJSONToolRunsTheLocalModule(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not installed")
@@ -128,8 +128,8 @@ func TestPythonJSONToolRunsTheLocalModule(t *testing.T) {
 }
 
 // TestPythonJSONToolRunsALocalStandardModule (CRW-894, fix round 2): json.tool imports argparse after the working directory heads
-// the module search path, so a local argparse.py runs under the real python3; the reader refuses python -m json.tool in a
-// directory that holds any python module (row vr-31).
+// the module search path, so a local argparse.py runs under the real python3 (host evidence for the withdrawal of the json.tool
+// allow control: no text proves which modules json.tool imports; row vr-31).
 func TestPythonJSONToolRunsALocalStandardModule(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not installed")

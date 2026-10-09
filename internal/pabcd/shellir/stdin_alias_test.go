@@ -172,57 +172,41 @@ func TestShellStdinOption(t *testing.T) {
 	}
 }
 
-// TestPythonModuleJSONTool (CRW-894, d4): python -m json.tool runs no program: the issue's control is read. Any other module,
-// an operand of json.tool, an option outside the closed list, and a module together with a program are unreadable.
-func TestPythonModuleJSONTool(t *testing.T) {
-	for _, c := range []struct {
-		cmd        string
-		unreadable bool
-	}{
-		{"printf x | python3 -m json.tool", false},
-		{"printf x | python3 -mjson.tool", false},
-		{"printf x | python3 -B -m json.tool", false},
-		{"printf x | python3 -Bm json.tool", false},
-		{"printf x | python3 -m json.tool --sort-keys --no-ensure-ascii", false},
-		{"printf x | python3 -m json.tool --indent 2", false},
-		{"printf x | python3 -m json.tool --indent=4", false},
-		{"printf x | python3 -m json.tool --tab --compact --json-lines", false},
-		{"printf x | python3 -m json.tool --no-indent", false},
-		{"printf x | python3.11 -m json.tool", false},
-		{"python3 -m json.tool", false},
-		{"printf x | bash -c 'python3 /dev/./stdin'", true},
-		{"printf x | python3 -m json.tool in.json", true},
-		{"printf x | python3 -m json.tool - out.json", true},
-		{"printf x | python3 -m json.tool --indent", true},
-		{"printf x | python3 -m json.tool --indent x", true},
-		{"printf x | python3 -m json.tool --indent=-1", true},
-		{"printf x | python3 -m json.tool -c 'import os'", true},
-		{"printf x | python3 -m json.tool --unknown", true},
-		{"printf x | python3 -m json", true},
-		{"printf x | python3 -m json.tool.evil", true},
-		{"printf x | python3 -m pdb", true},
-		{"printf x | python3 -m code", true},
-		{"printf x | python3 -m runpy", true},
-		{"printf x | python3 -m http.server", true},
-		{"printf x | python3 -m", true},
-		{"printf x | python3 -m \"$M\"", true},
-		{"printf x | python3 -c 'print(1)' -m json.tool", true},
-		{"printf x | python3 -m json.tool -c 'print(1)'", true},
-		{"printf x | python3 -m json.tool \"$A\"", true},
+// TestPythonModuleIsRefused (CRW-894, fix round 3): python -m MODULE is refused, json.tool included. python -m puts the working
+// directory first on the module search path, and json.tool imports argparse, re, shutil, inspect and more through it, so no
+// text proves what runs (the issue's allow control for json.tool is withdrawn; known-defects/CRW-894.md). The reading with no
+// directory refuses it too.
+func TestPythonModuleIsRefused(t *testing.T) {
+	for _, cmd := range []string{
+		"printf x | python3 -m json.tool",
+		"printf x | python3 -mjson.tool",
+		"printf x | python3 -B -m json.tool",
+		"printf x | python3 -Bm json.tool",
+		"printf x | python3 -m json.tool --sort-keys --no-ensure-ascii",
+		"printf x | python3 -m json.tool --indent 2",
+		"printf x | python3.11 -m json.tool",
+		"python3 -m json.tool",
+		"printf x | python3 -m json.tool in.json",
+		"printf x | python3 -m json.tool -c 'import os'",
+		"printf x | python3 -m json",
+		"printf x | python3 -m json.tool.evil",
+		"printf x | python3 -m pdb",
+		"printf x | python3 -m code",
+		"printf x | python3 -m runpy",
+		"printf x | python3 -m http.server",
+		"printf x | python3 -m",
+		"printf x | python3 -m \"$M\"",
+		"printf x | python3 -c 'print(1)' -m json.tool",
+		"cat in.json | python3 -m json.tool > out.json",
 	} {
-		_, err := Analyze(c.cmd, "/work")
-		if got := err != nil; got != c.unreadable {
-			t.Errorf("%q: unreadable=%v, want %v (%v)", c.cmd, got, c.unreadable, err)
+		if _, err := Analyze(cmd, t.TempDir()); err == nil {
+			t.Errorf("%q is read; python -m is refused", cmd)
 		}
-	}
-	// the module is no program: no inline record, no script record
-	res, err := Analyze("printf x | python3 -m json.tool", "/work")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range res.Execs {
-		if e.Inline != nil || e.Kind == KindScriptFile {
-			t.Errorf("python -m json.tool produced a program record: %+v", e)
+		if _, err := Analyze(cmd, "/work"); err == nil {
+			t.Errorf("%q is read in a directory that does not exist; python -m is refused", cmd)
+		}
+		if _, err := AnalyzeNoDir(cmd); err == nil {
+			t.Errorf("%q is read with no directory; python -m is refused", cmd)
 		}
 	}
 }

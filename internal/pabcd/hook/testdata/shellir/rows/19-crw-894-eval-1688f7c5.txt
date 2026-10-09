@@ -1,5 +1,7 @@
 # CRW-894 after the evaluation of 1688f7c5: d1 (descriptor alias spellings), d2 (-s), d3 (shebangs of the shell family), d4 (python3 -m json.tool).
 # ../repo is the managed checkout.
+# CRW-894 fix round 3: python3 -m json.tool is refused as on dev (the working directory heads its module search path and json.tool imports
+# many standard modules through it, so no text proves what runs). A row that expected the module allowed records the deviation.
 
 === CRW-894-ev-01 | U
 --why python3 reads its program from the pipe through a dot segment in the alias path (d1 of the 1688f7c5 evaluation): the kernel resolves it to /dev/stdin.
@@ -294,31 +296,31 @@ print(1)
 --cmd
 ./runner.py
 
-=== CRW-894-ev-52 | B
+=== CRW-894-ev-52 | B | deviation=attempt/deny/deny
 --why The issue's control: python3 -m json.tool in a pipe (d4).
 printf x | python3 -m json.tool
 
-=== CRW-894-ev-53 | B
+=== CRW-894-ev-53 | B | deviation=attempt/deny/deny
 --why python3 -m json.tool with a flag reads JSON from the pipe.
 printf x | python3 -m json.tool --sort-keys
 
-=== CRW-894-ev-54 | B
+=== CRW-894-ev-54 | B | deviation=attempt/deny/deny
 --why python3 -m json.tool with a flag with an integer value reads JSON from the pipe.
 printf x | python3 -m json.tool --indent 2
 
-=== CRW-894-ev-55 | B
+=== CRW-894-ev-55 | B | deviation=attempt/deny/deny
 --why python3 -m json.tool with a flag with an attached value reads JSON from the pipe.
 printf x | python3 -m json.tool --indent=2
 
-=== CRW-894-ev-56 | B
+=== CRW-894-ev-56 | B | deviation=attempt/deny/deny
 --why python3 -m json.tool with two flags reads JSON from the pipe.
 printf x | python3 -m json.tool --no-ensure-ascii --tab
 
-=== CRW-894-ev-57 | B
+=== CRW-894-ev-57 | B | deviation=attempt/deny/deny
 --why The module name attached to -m.
 printf x | python3 -mjson.tool
 
-=== CRW-894-ev-58 | B
+=== CRW-894-ev-58 | B | deviation=attempt/deny/deny
 --why Combined flags before -m.
 printf x | python3 -B -m json.tool
 

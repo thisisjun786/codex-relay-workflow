@@ -1,5 +1,7 @@
 # CRW-894 fix round 2: the finding of the independent verifier on 5d41d266 (python3 -m json.tool imports a json module the
 # same text writes: a compiled extension, a copy tree, a redirection, or a writer the reader does not model).
+# CRW-894 fix round 3: python3 -m json.tool is refused as on dev (the working directory heads its module search path and json.tool imports
+# many standard modules through it, so no text proves what runs). A row that expected the module allowed records the deviation.
 
 === CRW-894-vr-01 | U
 --why The text copies a file to json.so, a compiled json extension module python3 -m json.tool then imports before the standard library (verifier of 5d41d266, P0).
@@ -178,29 +180,29 @@ x
 --cmd
 cat evil.so > "$N"; printf '{}' | python3 -m json.tool
 
-=== CRW-894-vr-26 | B
+=== CRW-894-vr-26 | B | deviation=attempt/deny/deny
 --why Control: the pipeline of the benign corpus, grep, tail and head around python3 -m json.tool, writes no file.
 --file alerts.jsonl
 {"pr": 737}
 --cmd
 grep '"pr": *737' alerts.jsonl | tail -1 | python3 -m json.tool | head -80
 
-=== CRW-894-vr-27 | B
+=== CRW-894-vr-27 | B | deviation=attempt/deny/deny
 --why Control: output to a file whose name is no module.
 --file in.json
 {}
 --cmd
 cat in.json | python3 -m json.tool > out.json
 
-=== CRW-894-vr-28 | B
+=== CRW-894-vr-28 | B | deviation=attempt/deny/deny
 --why Control: descriptor duplication writes no file.
 echo '{}' | python3 -m json.tool 2>&1 | head -5
 
-=== CRW-894-vr-29 | B
+=== CRW-894-vr-29 | B | deviation=attempt/deny/deny
 --why Control: a redirection to a file that is no json module, before python3 -m json.tool.
 echo '{}' > in.json; python3 -m json.tool < in.json
 
-=== CRW-894-vr-30 | B
+=== CRW-894-vr-30 | B | deviation=attempt/deny/deny
 --why Control: python3 -m json.tool in a subdirectory the text enters.
 --file sub/x.txt
 x
@@ -251,14 +253,14 @@ x
 --cmd
 cat evil.txt > re/__init__.py; printf '{}' | python3 -m json.tool
 
-=== CRW-894-vr-37 | B
+=== CRW-894-vr-37 | B | deviation=attempt/deny/deny
 --why Control: a python file in a subdirectory that is no package is not on the module search path.
 --file tools/gen.py
 print('local')
 --cmd
 printf '{}' | python3 -m json.tool
 
-=== CRW-894-vr-38 | B
+=== CRW-894-vr-38 | B | deviation=attempt/deny/deny
 --why Control: files that are no python modules.
 --file README.md
 x
