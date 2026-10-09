@@ -230,3 +230,68 @@ func TestWholeZoneOpenTakesNoWriteLock(t *testing.T) {
 		t.Fatalf("installDAGZone on a whole zone while another connection holds the write lock: %v", err)
 	}
 }
+
+// flakyQueryer answers the first `failures` reads of schema_meta with the driver's own SQLITE_SCHEMA error,
+// as QueryContext gives it when a peer open changed the schema under the read, and the later ones from db.
+type flakyQueryer struct {
+	db       *sql.DB
+	failures int
+	reads    int
+}
+
+func (f *flakyQueryer) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	f.reads++
+	if f.reads <= f.failures {
+		return nil, schemaChanged()
+	}
+	return f.db.QueryContext(ctx, query, args...)
+}
+
+// The ownership stamp read turns a failed read into an ownership refusal; the refusal keeps the driver's
+// error reachable, so the open's bounded retry sees the SQLITE_SCHEMA that the real QueryContext gave
+// (CRW-1054: the retry around the stamp read missed it, and the open answered store_owned_by_other).
+func TestStampReadRetriesSchemaChangedFromTheRealRead(t *testing.T) {
+	path := zoneLessStore(t)
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	q := &flakyQueryer{db: db, failures: 3}
+	var stamp interface{}
+	err = retrySchemaChanged(context.Background(), "ownership stamp", func() error {
+		s, e := stampOn(context.Background(), q)
+		stamp = s
+		return e
+	})
+	if err != nil {
+		t.Fatalf("stamp read answered %v, want it read again after SQLITE_SCHEMA", err)
+	}
+	if q.reads != 4 || stamp == nil {
+		t.Fatalf("%d reads, want the 3 refused and 1 run", q.reads)
+	}
+}
+
+func TestStampReadGivesUpOnSchemaChangedInTheFenceWords(t *testing.T) {
+	path := zoneLessStore(t)
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	q := &flakyQueryer{db: db, failures: 1 << 30}
+	err = retrySchemaChanged(context.Background(), "ownership stamp", func() error {
+		_, e := stampOn(context.Background(), q)
+		return e
+	})
+	var refused *RefusedError
+	if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+		t.Fatalf("final failure = %v, want the store_owned_by_other refusal", err)
+	}
+	if !strings.Contains(err.Error(), "ownership refused: read durable ownership: database schema has changed (17)") {
+		t.Fatalf("the refusal changed its words: %v", err)
+	}
+	if q.reads != schemaChangeRetries+1 {
+		t.Fatalf("%d reads, want the first and %d more", q.reads, schemaChangeRetries)
+	}
+}
