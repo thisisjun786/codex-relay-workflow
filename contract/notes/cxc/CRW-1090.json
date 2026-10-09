@@ -1,0 +1,17 @@
+{
+  "issue": "CRW-1090",
+  "intentionally-changed": [
+    {
+      "id": "hook__stop-checking-pabcd-continuation__context_pressure_tail_releases",
+      "reason": "CRW-1090: context pressure is read only from a compaction record Codex writes and lasts until the next user prompt; the oracle's phrase in an agent_message event is a quote and no longer releases, so the given carries the compacted record a real compaction leaves and the release is unchanged",
+      "given": {
+        "files": {
+          "ws/transcript.jsonl": "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}\n"
+        }
+      },
+      "set": {
+        "tree/ws/transcript.jsonl/content": "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}"
+      }
+    }
+  ]
+}

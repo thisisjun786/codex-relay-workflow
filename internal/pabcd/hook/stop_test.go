@@ -296,14 +296,20 @@ func TestStopReleasesForInterviewUnreadableGoalAndCorruptState(t *testing.T) {
 	}
 }
 
-// Recovery: a transcript whose tail shows compaction or a context-pressure recovery releases without a counter
-// write, so the recovery turn is not piled on and the budget is not spent.
+// Recovery: a transcript whose tail shows a compaction no user prompt has followed releases without a counter
+// write, so the recovery turn is not piled on and the budget is not spent. Since CRW-1090 the compaction is a
+// record Codex writes (the compacted record, its ContextCompaction item, the older context_compacted event), not
+// the oracle's phrases (TestCRW1090QuotedPressureDoesNotReleaseTheGoalStop).
 func TestStopContextPressureTailReleasesWithoutSpendingTheBudget(t *testing.T) {
-	for _, marker := range []string{"Your context window has been compacted.", "Compacted session handoff", "conversation history has been summarized"} {
+	for marker, line := range map[string]string{
+		"compacted":         `{"type":"compacted","payload":{"message":"","replacement_history":[]}}`,
+		"ContextCompaction": `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction","id":"c1"}}}`,
+		"context_compacted": `{"type":"event_msg","payload":{"type":"context_compacted"}}`,
+	} {
 		cwd, env := stopRig(t, "active")
 		stopInFlight(t, cwd, state.PhaseB)
 		transcript := filepath.Join(cwd, "transcript.jsonl")
-		if err := os.WriteFile(transcript, []byte(`{"type":"event_msg","payload":{"message":"`+marker+`"}}`+"\n"), 0o666); err != nil {
+		if err := os.WriteFile(transcript, []byte(line+"\n"), 0o666); err != nil {
 			t.Fatal(err)
 		}
 		before := stopStateBytes(t, cwd)

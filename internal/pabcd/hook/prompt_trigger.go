@@ -110,13 +110,16 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 
 	// R-11 transcript-grounded idempotency (passive modes only; the explicit trigger above already
 	// injected). The local injectedTurns flag dedups within a turn, but turn_id can churn or reset after
-	// compaction. Read the transcript tail and: suppress under context-pressure/compaction recovery
-	// (don't pile on), and skip when the current phase's stage marker is already present in the tail.
-	tail := host.ReadTranscriptTail(p.TranscriptPath, host.TailBytes)
-	if host.IsContextPressureTail(tail) && !agbrowseRequested {
-		return ""
-	}
-	if host.HasStageMarkerForPhase(tail, string(current.Phase)) {
+	// compaction, so the stage marker a hook injected into the context the model still has (the records
+	// after the last compaction) also counts as this phase's injection. CRW-1090 departs from the oracle
+	// here (docs/port-cxc/known-defects/CRW-1090.md): the oracle matched marker and pressure text anywhere
+	// in the raw tail, so a quote suppressed the injection, and the compacted record's own history made the
+	// prompt after a compaction skip the directive the compaction had removed. A cursor PostCompact reset
+	// (nil) is never set again from the tail: the full directive goes in. A prompt is the boundary of a
+	// compaction's recovery window (host.TranscriptGeneration.ContextPressure), so the oracle's pressure
+	// suppression has no case left here; the Stop leg keeps it.
+	generation := host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes)
+	if current.LastInjectedPhase != nil && generation.HasStageMarkerForPhase(string(current.Phase)) {
 		if turn != "" {
 			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerReinject(current.Phase, turn)) == promptSubmitFailed {
 				return ""

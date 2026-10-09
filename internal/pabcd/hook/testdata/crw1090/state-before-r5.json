@@ -1,0 +1,40 @@
+{
+  "phase": "P",
+  "sessionId": "01a1226a-1810-7731-b382-0fb87228ac8e",
+  "slug": "",
+  "updatedAt": "2026-10-09T20:48:40.601Z",
+  "flags": {
+    "interview": false,
+    "auditPassed": false,
+    "checkPassed": false
+  },
+  "supersededBy": null,
+  "injectedTurns": [
+    "01a1226a-5c2f-7f13-96ba-121d1e2505a0",
+    "01a1226a-e182-75c1-846b-49210d18dbc9",
+    "01a1226b-0edf-7873-ad27-71e9a0547dfb",
+    "01a1226c-7825-7100-b187-66bfc021fa32"
+  ],
+  "lastInjectedPhase": null,
+  "orchestrationActive": true,
+  "interview": null,
+  "stopBlockPhase": null,
+  "stopBlockCount": 0,
+  "stopBlockWorkPhaseId": null,
+  "stopMetricCursor": 0,
+  "stopBlockTotal": 0,
+  "stopBlockTurnId": "01a1226c-7825-7100-b187-66bfc021fa32",
+  "stopBlockCapNotified": false,
+  "loopArmSeen": false,
+  "idleEditNudges": 0,
+  "memoryWriteRequested": false,
+  "memoryWriteTurn": null,
+  "memoryWriteGrant": false,
+  "unverifiedSubagents": [],
+  "unverifiedCorrupt": false,
+  "phaseEntrySource": null,
+  "planUnit": null,
+  "planEpoch": null,
+  "checkEpoch": null,
+  "dcloseRecovery": null
+}

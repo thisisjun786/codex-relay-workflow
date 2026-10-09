@@ -2,31 +2,31 @@ package host
 
 import (
 	"os"
-	"strings"
 	"unicode/utf8"
 )
 
 // TailBytes is how much of a transcript's end is searched (TRANSCRIPT_SEARCH_BYTES).
 const TailBytes = 65_536
 
-// ContextPressureMarkers are the compaction and context-pressure recovery phrases, lowercase,
-// matched as substrings.
-func ContextPressureMarkers() []string {
-	return []string{"compacted session handoff", "context window has been compacted", "conversation history has been summarized"}
-}
-
 // ReadTranscriptTail is the last maxBytes of the transcript at path, decoded as Node's
 // Buffer.toString("utf8") does, or "" on any error: an unreadable transcript must not block Codex
 // (fail open). The whole file is read before it is cut, as the oracle does.
 func ReadTranscriptTail(path string, maxBytes int) string {
+	tail, _ := readTranscriptWindow(path, maxBytes)
+	return tail
+}
+
+// readTranscriptWindow is ReadTranscriptTail and whether the window starts at the file's first byte, so a
+// reader of whole records knows when the window's first line is the cut end of a longer one.
+func readTranscriptWindow(path string, maxBytes int) (string, bool) {
 	if path == "" || maxBytes <= 0 {
-		return ""
+		return "", false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return decodeUTF8(data[max(0, len(data)-maxBytes):])
+	return decodeUTF8(data[max(0, len(data)-maxBytes):]), len(data) <= maxBytes
 }
 
 // decodeUTF8 replaces each maximal invalid subpart with one U+FFFD (the WHATWG decoder Node uses);
@@ -70,40 +70,4 @@ func invalidSubpart(b []byte) int {
 		lo, hi = 0x80, 0xBF
 	}
 	return n
-}
-
-// HasStageMarkerForPhase is whether the tail already carries the hook's stage marker for phase, in
-// either emitted form: the directive head `[crw: PLAN]` or the compaction-immune header
-// `[crw — P: PLAN]` (the oracle's `[codexclaw...` markers after name-substitution rule R23).
-func HasStageMarkerForPhase(tail, phase string) bool {
-	var label string
-	switch phase {
-	case "I":
-		label = "INTERVIEW"
-	case "P":
-		label = "PLAN"
-	case "A":
-		label = "AUDIT"
-	case "B":
-		label = "BUILD"
-	case "C":
-		label = "CHECK"
-	case "D":
-		label = "DONE"
-	default:
-		return false
-	}
-	return strings.Contains(tail, "[crw: "+label+"]") || strings.Contains(tail, "[crw — "+phase+": "+label+"]")
-}
-
-// IsContextPressureTail is whether the tail shows a compaction or context-pressure recovery marker.
-func IsContextPressureTail(tail string) bool {
-	// JavaScript's toLowerCase uses full case mapping, which makes U+0130 "i" plus a combining dot.
-	lower := strings.ToLower(strings.ReplaceAll(tail, "\u0130", "i\u0307"))
-	for _, marker := range ContextPressureMarkers() {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
 }
