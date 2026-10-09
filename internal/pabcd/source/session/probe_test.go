@@ -178,3 +178,70 @@ func TestNativeUnreadableGitdirIsUnknownNotOutsideARepository(t *testing.T) {
 		t.Fatalf("binding changed: %v", err)
 	}
 }
+
+// CRW-1135 criterion 2 in an ordinary repository: when the native directory's own .git (or what git needs inside
+// it: HEAD, objects, refs) cannot be read, git skips it and answers with its discovery message, "not a git
+// repository (or any of the parent directories)", exactly as for a directory in no repository. The marker it
+// could not read makes the answer unknown: binding another repository is refused and writes nothing, an existing
+// binding keeps its bytes, and resolving and the gate refuse it, from the root and from a subdirectory.
+func TestNativeUnreadableOrdinaryGitdirIsUnknownNotOutsideARepository(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	for _, blocked := range []string{".git", ".git/HEAD", ".git/objects", ".git/refs"} {
+		for _, sub := range []string{"", "sub"} {
+			t.Run(blocked+"/"+sub, func(t *testing.T) {
+				base := hermetic(t)
+				main := newRepo(t, base, "main")
+				other := newRepo(t, base, "other")
+				wt := filepath.Join(base, "wt")
+				gitIn(t, main, "worktree", "add", "-q", "-b", "work", wt)
+				native := filepath.Join(main, sub)
+				must(t, os.MkdirAll(native, 0o755))
+				if _, err := Bind(native, "s2", wt); err != nil { // made while the repository is readable
+					t.Fatal(err)
+				}
+				path := filepath.Join(native, ".crw", "sources", "s2.json")
+				before, err := os.ReadFile(path)
+				must(t, err)
+
+				target := filepath.Join(main, blocked)
+				info, err := os.Stat(target)
+				must(t, err)
+				must(t, os.Chmod(target, 0))
+				t.Cleanup(func() { _ = os.Chmod(target, info.Mode().Perm()) })
+
+				if root, err := Bind(native, "s1", other); err != unknownNative {
+					t.Fatalf("bind from a repository whose %s is unreadable: %q, %v", blocked, root, err)
+				}
+				if _, err := os.Lstat(filepath.Join(native, ".crw", "sources", "s1.json")); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("a binding was written: %v", err)
+				}
+				if got, err := Resolve(native, "s2"); err != unknownNative {
+					t.Fatalf("resolve: %q, %v", got, err)
+				}
+				if res := CheckBound(native, "s2"); res.OK {
+					t.Fatalf("the gate passed: %+v", res)
+				}
+				must(t, os.Chmod(target, info.Mode().Perm()))
+				if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("binding changed: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// A .git that git can read and rejects (the empty directory a sandbox leaves behind, a stray HEAD-less one) is not
+// a repository to git, and not one here: a native directory below it is outside any repository and binds.
+func TestNativeBelowReadableNonRepositoryGitMarkerStillBinds(t *testing.T) {
+	base := hermetic(t)
+	plain := filepath.Join(base, "plain")
+	native := filepath.Join(plain, "native")
+	must(t, os.MkdirAll(filepath.Join(plain, ".git"), 0o755))
+	must(t, os.MkdirAll(filepath.Join(native, ".git", "objects"), 0o755))
+	other := newRepo(t, base, "other")
+	if root, err := Bind(native, "s1", other); err != nil || root != other {
+		t.Fatalf("native directory below non-repository .git markers: %q, %v", root, err)
+	}
+}

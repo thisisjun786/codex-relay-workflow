@@ -130,20 +130,90 @@ const (
 const unknownNative = refusal("Cannot tell whether the session's working directory is in a Git repository; the source binding was not changed. Retry once git can read the directory.")
 
 // nativeGitIdentity is the identity of the native cwd (the state directory need not be a repository). It is
-// nativeOutside only when git rev-parse --git-dir ran and said the directory is in no repository; any other failure
-// of that probe is unknownNative. When the probe succeeds, the identity's first error is returned, so a repository
-// whose identity cannot be resolved (a bare one) is not taken for no repository.
+// nativeOutside only when git rev-parse --git-dir ran and said the directory is in no repository and no Git marker
+// on git's search path was unreadable; any other failure of that probe is unknownNative. When the probe succeeds,
+// the identity's first error is returned, so a repository whose identity cannot be resolved (a bare one) is not
+// taken for no repository.
 func nativeGitIdentity(cwd string) (w worktree, repo nativeRepo, err error) {
 	if w, err = gitIdentityWith(nativeGit, cwd); err == nil {
 		return w, nativeInRepo, nil
 	}
 	if _, probeErr := nativeGit(cwd, "rev-parse", "--git-dir"); probeErr != nil {
-		if source.NotARepository(probeErr) {
+		if source.NotARepository(probeErr) && !unreadableGitMarker(cwd) {
 			return worktree{}, nativeOutside, nil
 		}
 		return worktree{}, nativeInRepo, unknownNative
 	}
 	return worktree{}, nativeInRepo, err
+}
+
+// unreadableGitMarker reports whether git's discovery from cwd passed a Git marker it could not read. git walks
+// from the physical cwd up through each parent on the same file system, and at each directory skips, without a
+// word, a .git it may not stat or a Git directory (that .git, or the directory itself as a bare repository) whose
+// HEAD it may not read or whose objects or refs it may not enter; it then answers with the same discovery message
+// as for a directory in no repository (CRW-1135). A marker git can read and rejects, such as the empty .git a
+// sandbox leaves behind, is not unreadable: git's answer stands. A cwd whose path cannot be resolved is
+// unreadable too.
+func unreadableGitMarker(cwd string) bool {
+	dir, err := filepath.Abs(cwd)
+	if err == nil {
+		dir, err = filepath.EvalSymlinks(dir)
+	}
+	if err != nil {
+		return true
+	}
+	start, err := os.Stat(dir)
+	if err != nil {
+		return true
+	}
+	for {
+		marker := filepath.Join(dir, ".git")
+		if info, err := os.Stat(marker); err != nil {
+			if !absent(err) {
+				return true
+			}
+		} else if info.IsDir() {
+			if unreadableGitDir(marker) {
+				return true
+			}
+		} else if syscall.Access(marker, 4) != nil { // R_OK: a gitfile git may not read
+			return true
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "HEAD")); !absent(err) && unreadableGitDir(dir) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		info, err := os.Stat(parent)
+		if err != nil {
+			return true
+		}
+		if info.Sys().(*syscall.Stat_t).Dev != start.Sys().(*syscall.Stat_t).Dev {
+			return false // git stops at the file system boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM is not inherited)
+		}
+		dir = parent
+	}
+}
+
+// unreadableGitDir reports whether git could not check gitDir as a Git directory: its HEAD exists but cannot be read,
+// or its objects or refs exist but cannot be entered, or one of them cannot even be looked up.
+func unreadableGitDir(gitDir string) bool {
+	for _, entry := range []struct {
+		name string
+		mode uint32
+	}{{"HEAD", 4}, {"objects", 1}, {"refs", 1}} { // R_OK, X_OK
+		if err := syscall.Access(filepath.Join(gitDir, entry.name), entry.mode); err != nil && !absent(err) {
+			return true
+		}
+	}
+	return false
+}
+
+// absent is an error saying the path does not exist, or that a component of it is not a directory.
+func absent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // bindingPath is the binding file of a session below cwd, refusing a state directory or sources directory that is not a
