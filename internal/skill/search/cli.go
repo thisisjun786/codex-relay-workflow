@@ -82,12 +82,12 @@ func ParseFlags(argv []string) Flags {
 		case a == "--help" || a == "-h":
 			f.Help = true
 		case a == "--source" || a == "--limit":
-			if i+1 >= len(argv) || argv[i+1] == "" {
+			if i+1 >= len(argv) || !isOptionValue(a, argv[i+1]) {
 				fail("option %s needs a value", a)
-				if i+1 < len(argv) {
+				if i+1 < len(argv) && argv[i+1] == "" {
 					i++ // the empty value belongs to the option
 				}
-				continue
+				continue // another option or "--" is read as itself, never as this value
 			}
 			i++
 			if a == "--source" {
@@ -106,6 +106,20 @@ func ParseFlags(argv []string) Flags {
 		}
 	}
 	return f
+}
+
+var negativeNumber = regexp.MustCompile(`^-(?:Infinity|(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$`)
+
+// isOptionValue tells whether token can be the value of option: not empty, and not an option or "--". --limit still
+// takes a negative number, which numberLimit raises to 1.
+func isOptionValue(option, token string) bool {
+	if token == "" {
+		return false
+	}
+	if token[0] != '-' || token == "-" {
+		return true
+	}
+	return option == "--limit" && negativeNumber.MatchString(token)
 }
 
 // Math.max(1, Number(token) || 10), including non-decimal integers and overflow.

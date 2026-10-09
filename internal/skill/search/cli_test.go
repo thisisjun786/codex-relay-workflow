@@ -50,7 +50,7 @@ func TestCLIFlags(t *testing.T) {
 		input string
 		limit float64
 	}{
-		{"0", 10}, {"-9", 1}, {"0.5", 1}, {"2.9", 2.9}, {"Infinity", math.Inf(1)}, {"-Infinity", 1}, {"NaN", 10}, {"1e999", math.Inf(1)}, {"0x10", 16}, {"0b11", 3}, {"0o17", 15}, {"2x", 10}, {"+0x10", 10}, {"  ", 10}, {"inf", 10}, {"infinity", 10}, {"0x_10", 10}, {"--json", 10}, {"\uFEFF2.5", 2.5}, {"1e20", 1e20}, {"1e21", 1e21},
+		{"0", 10}, {"-9", 1}, {"0.5", 1}, {"2.9", 2.9}, {"Infinity", math.Inf(1)}, {"-Infinity", 1}, {"NaN", 10}, {"1e999", math.Inf(1)}, {"0x10", 16}, {"0b11", 3}, {"0o17", 15}, {"2x", 10}, {"+0x10", 10}, {"  ", 10}, {"inf", 10}, {"infinity", 10}, {"0x_10", 10}, {"\uFEFF2.5", 2.5}, {"1e20", 1e20}, {"1e21", 1e21},
 	} {
 		t.Run(c.input, func(t *testing.T) {
 			if got := ParseFlags([]string{"--limit", c.input}); got.Limit != c.limit || got.JSON {

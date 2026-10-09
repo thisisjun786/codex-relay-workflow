@@ -127,3 +127,36 @@ func TestShowRefusesASourceItCannotQuery(t *testing.T) {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 }
+
+// An option that needs a value never takes another option, "--" or a flag-like word for it: the command ends with
+// status 2 before anything is read. A negative number is still a value of --limit.
+func TestOptionValueIsNeverAnotherOptionOrTheDoubleDash(t *testing.T) {
+	boom := func(url string) (string, error) {
+		t.Errorf("fetched %s", url)
+		return "", errors.New("no network expected")
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"search", "tdd", "--limit", "--refresh"}, "option --limit needs a value"},
+		{[]string{"search", "tdd", "--source", "--json"}, "option --source needs a value"},
+		{[]string{"search", "tdd", "--limit", "--", "--help"}, "option --limit needs a value"},
+		{[]string{"search", "tdd", "--source", "--"}, "option --source needs a value"},
+		{[]string{"show", "x", "--source", "--refresh"}, "option --source needs a value"},
+		{[]string{"search", "tdd", "--limit", "-x"}, "option --limit needs a value"},
+	} {
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			cliHome(t)
+			code, out, errOut := cliRun(c.args, boom)
+			if code != 2 || out != "" || !strings.Contains(errOut, c.want) {
+				t.Fatalf("%d %q %q", code, out, errOut)
+			}
+		})
+	}
+	for _, v := range []string{"-5", "-1.5", "-.5", "-Infinity", "-1e3"} {
+		if f := ParseFlags([]string{"--limit", v, "q"}); f.Err != "" || f.Limit != 1 || len(f.Rest) != 1 {
+			t.Errorf("--limit %s => %+v", v, f)
+		}
+	}
+}
