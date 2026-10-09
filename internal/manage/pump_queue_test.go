@@ -723,6 +723,32 @@ func TestPumpQueueRoundCancelledMidwayChangesNothingAfterwards(t *testing.T) {
 		{"legacy unknown record over a partly replaced set", func(t *testing.T, cfg *Config) {
 			pumpQueuePartialSetup(t, cfg, deliverStateUnknown)
 		}},
+		{"overlapping legacy records", func(t *testing.T, cfg *Config) {
+			// [a b] is accepted and [a b c] has no reachable receipt: a and b are completed and c is held.
+			for _, name := range []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt"} {
+				pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", name, name[:1]+"-body"), pumpTestNow.Add(-time.Hour))
+			}
+			pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"}, []string{"a-body", "b-body"}, pumpTestNow.Add(-30*time.Minute), deliverStateAccepted)
+			pumpQueueTestLegacyRecord(t, cfg, "parent-1", []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt"}, []string{"a-body", "b-body", "c-body"}, pumpTestNow.Add(-29*time.Minute), deliverStateUnknown)
+		}},
+		{"overlap pin that settles", func(t *testing.T, cfg *Config) {
+			// A stored overlap pin whose records the ledger settled: [a b] accepted, [b c] refused. a and
+			// b are completed and the pin lifts.
+			names := []string{"aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt", "cccccccccccccccc.txt"}
+			digests := map[string]string{}
+			for _, name := range names {
+				pumpQueueTestSetTime(t, pumpQueueTestNotice(t, cfg, "parent-1", name, name[:1]+"-body"), pumpTestNow.Add(-time.Hour))
+				digests[name] = pumpReview776TestDigest(name[:1] + "-body")
+			}
+			accepted := pumpQueueTestLegacyRecord(t, cfg, "parent-1", names[:2], []string{"a-body", "b-body"}, pumpTestNow.Add(-30*time.Minute), deliverStateAccepted)
+			refused := pumpQueueTestLegacyRecord(t, cfg, "parent-1", names[1:], []string{"b-body", "c-body"}, pumpTestNow.Add(-30*time.Minute), deliverStateRefused)
+			st := pumpTestReadStatePtr(t, cfg)
+			st.QueueAttempt["parent-1"] = pumpReview776QueuePin{LogicalID: accepted, Names: names, SHA256: digests, Legacy: true,
+				Overlap: []pumpReview776QueueLegacyRef{{LogicalID: accepted, Names: names[:2]}, {LogicalID: refused, Names: names[1:]}}}
+			if err := st.pumpSave(cfg); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"aside left by an interrupted move", func(t *testing.T, cfg *Config) {
 			dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
 			aside := filepath.Join(dir, pumpReview776AsideDir)
@@ -1037,6 +1063,20 @@ func TestPumpQueueOverlappingLegacyRecordsKeepAcceptedEvidence(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, pumpSentDir, name)); err != nil {
 			t.Errorf("the notice %s the accepted record carried did not reach sent/: %v", name, err)
 		}
+	}
+	// The replaced member is a notice no attempt carried: it is delivered exactly once, on its own,
+	// and completed, and the thread is left with nothing queued and no pin.
+	if messages := pumpQueueTestSentMessages(t, log); len(messages) != 1 || strings.Count(messages[0], "C-new") != 1 {
+		t.Errorf("the deliveries are %q, want exactly one carrying C-new", messages)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, c)); err != nil {
+		t.Errorf("the replaced member did not reach sent/: %v", err)
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 0 {
+		t.Errorf("notices left queued: %v", names)
+	}
+	if pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Errorf("a pin is left: %v", pin)
 	}
 }
 

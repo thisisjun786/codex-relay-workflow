@@ -164,6 +164,21 @@ type pumpReview776QueuePin struct {
 	// notice it never carried, and sending them under a new id could deliver one twice; the thread
 	// waits while the pin holds, which is the queue's rule for a pin.
 	Held bool `json:"held,omitempty"`
+	// Overlap is the evidence set of a pin taken over several pre-change records whose notice sets
+	// overlap. Each is reconciled on its own receipt every round, and the pin's names and digests are
+	// the notices any of them carried. A notice is completed once any record that carried it shows a
+	// delivery, and nothing is sent while a record that carried an undelivered notice is undetermined.
+	Overlap []pumpReview776QueueLegacyRef `json:"overlap,omitempty"`
+}
+
+// pumpReview776QueueLegacyRef is one pre-change record of an overlap pin: its logical id and the
+// notices it carried, those of its set that were not written again after it. Unprovable marks a
+// record over a whole set whose text is not the text on disk, so an accepted answer cannot show which
+// queued notice it carried and holds the thread instead of completing them.
+type pumpReview776QueueLegacyRef struct {
+	LogicalID  string   `json:"logical_id"`
+	Names      []string `json:"names"`
+	Unprovable bool     `json:"unprovable,omitempty"`
 }
 
 // pumpQueueRefusal is a queue thread's count of the refusals one batch id has taken. The next batch
