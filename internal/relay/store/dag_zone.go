@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // The additive DAG zone (D-01 of the DAG execution contract, docs/relay/dag-plans.md).
@@ -63,31 +64,33 @@ func installDAGZone(ctx context.Context, db *sql.DB) error {
 	})
 }
 
-// zoneObjectName finds the name a zone statement creates; every statement of dagZone is a
+// zoneObjectName finds the type and the name a zone statement creates; every statement of dagZone is a
 // CREATE ... IF NOT EXISTS of one table, index or trigger (TestDAGZoneStatementsNameWhatTheyCreate).
-var zoneObjectName = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|TRIGGER)\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z_0-9]*)`)
+var zoneObjectName = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX|TRIGGER)\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z_0-9]*)`)
 
-// zoneIncomplete is whether the catalog lacks an object the zone declares. A statement whose name cannot be
-// read counts as lacking, so the transaction runs it.
+// zoneIncomplete is whether the catalog lacks an object the zone declares, read by type and name: tables and
+// indexes share one namespace and triggers have their own, so a trigger named like a missing index does not
+// stand in for it (CRW-1054 evaluation d1). A statement whose type and name cannot be read counts as lacking,
+// so the transaction runs it.
 func zoneIncomplete(ctx context.Context, db *sql.DB) (bool, error) {
-	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master")
+	rows, err := db.QueryContext(ctx, "SELECT type, name FROM sqlite_master")
 	if err != nil {
 		return false, err
 	}
-	present := map[string]bool{}
+	present := map[[2]string]bool{}
 	for rows.Next() {
-		var name string
-		if err = rows.Scan(&name); err != nil {
+		var kind, name string
+		if err = rows.Scan(&kind, &name); err != nil {
 			break
 		}
-		present[name] = true
+		present[[2]string{strings.ToLower(kind), name}] = true
 	}
 	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
 		return false, err
 	}
 	for _, statement := range dagZone {
 		match := zoneObjectName.FindStringSubmatch(statement)
-		if match == nil || !present[match[1]] {
+		if match == nil || !present[[2]string{strings.ToLower(match[1]), match[2]}] {
 			return true, nil
 		}
 	}

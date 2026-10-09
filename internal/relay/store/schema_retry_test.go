@@ -156,10 +156,10 @@ func TestDAGZoneStatementsNameWhatTheyCreate(t *testing.T) {
 		if match == nil {
 			t.Fatalf("step %d names no object it creates: %.80s", i+1, statement)
 		}
-		if seen[match[1]] {
-			t.Fatalf("step %d creates %s a second time", i+1, match[1])
+		if seen[match[2]] {
+			t.Fatalf("step %d creates %s a second time", i+1, match[2])
 		}
-		seen[match[1]] = true
+		seen[match[2]] = true
 	}
 }
 
@@ -228,6 +228,38 @@ func TestWholeZoneOpenTakesNoWriteLock(t *testing.T) {
 	}
 	if err := installDAGZone(ctx, second.DB); err != nil {
 		t.Fatalf("installDAGZone on a whole zone while another connection holds the write lock: %v", err)
+	}
+}
+
+// The fast path that leaves a whole zone untouched reads each object by its type as well as its name:
+// tables and indexes share one namespace and triggers another, so a trigger named like a missing unique
+// index must not stand in for it (CRW-1054 evaluation d1). The next open creates the index again.
+func TestZoneCompletenessReadsTheObjectType(t *testing.T) {
+	path := zoneLessStore(t)
+	s, err := Open(context.Background(), path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"DROP INDEX dag_decisions_active",
+		"CREATE TRIGGER dag_decisions_active AFTER INSERT ON dag_decisions BEGIN SELECT 1; END",
+	} {
+		if _, err := s.DB.Exec(statement); err != nil {
+			_ = s.Close()
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var index int
+	if err := reopened.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='dag_decisions_active'").Scan(&index); err != nil || index != 1 {
+		t.Fatalf("after a reopen the unique index dag_decisions_active exists %d times (%v), want 1: a same-named trigger stood in for it", index, err)
 	}
 }
 
