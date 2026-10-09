@@ -316,7 +316,9 @@ func groupEnded(pid int) bool {
 }
 
 // ListRecords is every parseable record of the store, reconciled; other files are skipped (listRecords).
-func ListRecords(ws string, clock func() time.Time) ([]BgRecord, error) { return listRecords(ws, clock, false) }
+func ListRecords(ws string, clock func() time.Time) ([]BgRecord, error) {
+	return listRecords(ws, clock, false)
+}
 
 func listRecords(ws string, clock func() time.Time, held bool) ([]BgRecord, error) {
 	out := []BgRecord{}
