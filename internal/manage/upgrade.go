@@ -256,7 +256,8 @@ func (r *upgradeRunState) execute() (int, string) {
 // outrank a failed update, which in turn outranks its other findings. A configuration change comes
 // first, then the pointer-and-runtime mismatch the post-check exists to catch, then a service that
 // never came up running and matching; all three are exit 4, so a failed update can never hide them.
-// A service that is down is the host's wait, not a rollback, so it outranks the update's exit 1. A
+// A service that is down is the host's wait, not a rollback, so it outranks the update's exit 1; a
+// stop that was refused never reached the update, so its exit 2 stands. A
 // configuration file that could not be read is a finding of its own that still yields to a failed
 // update. Every reason that applied is kept in the record, so a run that both failed to update and
 // changed the configuration names both.
@@ -270,7 +271,7 @@ func (r *upgradeRunState) outcome(updateCode int, updateReason string, post upgr
 		return upgradeExitPostCheck, upgradeReasonConfigChanged
 	case post.mismatch:
 		return upgradeExitPostCheck, upgradeReasonRuntimeMismatch
-	case post.serviceNotReady:
+	case post.serviceNotReady && updateCode != upgradeExitRefused:
 		return upgradeExitPostCheck, upgradeReasonPostCheck
 	case updateCode != 0:
 		return updateCode, updateReason

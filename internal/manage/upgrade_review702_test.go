@@ -509,3 +509,27 @@ func TestUpgradeReview702ServiceWaitExhaustionOutranksUpdateFailure(t *testing.T
 		t.Errorf("the record does not name %q: %v", upgradeReasonUpdateFailed, reasons)
 	}
 }
+
+// TestUpgradeReview702ServiceWaitExhaustionKeepsAStopRefusal: a stop that was refused ends the run
+// before the update, so the service never going back to running and matching does not turn that
+// refusal into a post-check failure. The run exits 2 with service_stop_failed, installs nothing, and
+// the record still names the wait among its reasons.
+func TestUpgradeReview702ServiceWaitExhaustionKeepsAStopRefusal(t *testing.T) {
+	oldBudget, oldInterval := upgradeServiceBudget, upgradeServiceInterval
+	upgradeServiceBudget, upgradeServiceInterval = 50*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { upgradeServiceBudget, upgradeServiceInterval = oldBudget, oldInterval })
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		stopExit: 1, statusAnswers: []string{upgradeStatusUnknown}})
+	if code := h.run("--release-dir", h.release); code != upgradeExitRefused {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitRefused, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonStopFailed {
+		t.Errorf("reason %q, want %q", got, upgradeReasonStopFailed)
+	}
+	if joined := strings.Join(h.crwCalls(), " "); strings.Contains(joined, "install update") {
+		t.Errorf("a failed stop still installed: %q", joined)
+	}
+	if reasons := upgradeReview702Reasons(t, h); !slices.Contains(reasons, upgradeReasonPostCheck) {
+		t.Errorf("the record does not name %q: %v", upgradeReasonPostCheck, reasons)
+	}
+}
