@@ -157,8 +157,21 @@
     },
     {
       "file": "references/durable-goalplan.md",
-      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table.",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1111: the steer verb's line says what the idempotency key now does - the same batch again records the rows a failed append left out and applies nothing, another batch under a recorded key is refused, and the goalplan keeps each batch's ops with its annotate note, which show lists.",
       "hunks": [
+        {
+          "line": 92,
+          "old": [
+            "- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]`\n"
+          ],
+          "new": [
+            "- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]` — applies one\n",
+            "  batch once per `idempotencyKey`. Sending the same batch again under the same key applies nothing\n",
+            "  and records any ledger row the first attempt could not write; a different batch under a recorded\n",
+            "  key is refused, so give different content a new key. The goalplan keeps each batch's ops, an\n",
+            "  `annotate` note included, and `show` lists the notes.\n"
+          ]
+        },
         {
           "line": 105,
           "old": [
