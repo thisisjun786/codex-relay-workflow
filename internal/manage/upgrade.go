@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -170,10 +170,13 @@ type upgradeRunState struct {
 	cfg  *Config
 	opts upgradeOptions
 
-	dir     string // W
-	extract string // W/extract
-	archive string
-	commit  string
+	dir string // W
+	// installDir is W as the kernel resolves it: no link, no "..". The installer cleans every path
+	// it is given, so the arguments of its update name the pinned files through this spelling.
+	installDir string
+	extract    string // W/extract
+	archive    string
+	commit     string
 	// tree is the tree of the commit, as the forge reports it; the record must name it.
 	tree    string
 	state   string
@@ -204,7 +207,7 @@ type upgradeRunState struct {
 
 func (r *upgradeRunState) run() int {
 	r.started = r.e.Now().UTC()
-	r.dir = filepath.Join(r.cfg.StateDir, "upgrades", r.started.Format("20060102T150405Z"))
+	r.dir = crwconfig.JoinRoot(r.cfg.StateDir, "upgrades", r.started.Format("20060102T150405Z"))
 	if err := upgradeRunDir(r.dir); err != nil {
 		fmt.Fprintf(r.e.Stderr, "crw manage runtime-upgrade: error: %v\n", err)
 		return upgradeExitRefused
@@ -228,6 +231,9 @@ func (r *upgradeRunState) execute() (int, string) {
 		return code, reason
 	}
 	r.archive = archive
+	if code, reason = r.resolveRunDir(); code != 0 {
+		return code, reason
+	}
 
 	if code, reason = r.extractAndResolve(); code != 0 {
 		return code, reason
@@ -302,7 +308,7 @@ func (r *upgradeRunState) write(reason string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(r.dir, "record.json"), append(data, '\n'), 0o600)
+	return os.WriteFile(crwconfig.JoinRoot(r.dir, "record.json"), append(data, '\n'), 0o600)
 }
 
 func (r *upgradeRunState) note(step string, argv []string, code int, out string, err error) {

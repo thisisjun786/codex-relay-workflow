@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -82,7 +83,7 @@ func upgradeRunCommand(ctx context.Context, exe string, args ...string) (string,
 
 // upgradeRunDir creates the run directory exclusively, so two runs in one second never share it.
 func upgradeRunDir(dir string) error {
-	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+	if err := os.MkdirAll(rootDir(dir), 0o700); err != nil {
 		return err
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil {
@@ -106,22 +107,22 @@ func upgradeOutputHead(text string) string {
 // by the copy, and never again: the bytes that were checked are the bytes every later step reads,
 // so replacing an original after the check cannot change what is unpacked and run.
 func (r *upgradeRunState) verifySums() (string, int, string) {
-	matches, err := filepath.Glob(filepath.Join(r.opts.ReleaseDir, upgradeArchiveGlob))
+	matches, err := rootGlob(r.opts.ReleaseDir, upgradeArchiveGlob)
 	if err != nil || len(matches) == 0 {
 		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("no %s in %s", upgradeArchiveGlob, r.opts.ReleaseDir))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
 	name := filepath.Base(matches[0])
-	pinned := filepath.Join(r.dir, name)
+	pinned := crwconfig.JoinRoot(r.dir, name)
 	if err := upgradeCopy(matches[0], pinned, upgradeMaxArchiveBytes); err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	if err := upgradeCopy(filepath.Join(r.opts.ReleaseDir, upgradeSumsName), filepath.Join(r.dir, upgradeSumsName), upgradeSumsBytes); err != nil {
+	if err := upgradeCopy(crwconfig.JoinRoot(r.opts.ReleaseDir, upgradeSumsName), crwconfig.JoinRoot(r.dir, upgradeSumsName), upgradeSumsBytes); err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	sums, err := os.ReadFile(filepath.Join(r.dir, upgradeSumsName))
+	sums, err := os.ReadFile(crwconfig.JoinRoot(r.dir, upgradeSumsName))
 	if err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
@@ -212,14 +213,14 @@ func upgradeFileDigest(path string) (string, error) {
 // SHA. The unpacked crw's version is kept, because the post-check compares the installed runtime's
 // version with the one this archive carried.
 func (r *upgradeRunState) extractAndResolve() (int, string) {
-	r.extract = filepath.Join(r.dir, "extract")
+	r.extract = crwconfig.JoinRoot(r.dir, "extract")
 	if err := os.MkdirAll(r.extract, 0o700); err != nil {
 		return r.refuse(upgradeStepExtract, upgradeReasonExtractFailed, "", err)
 	}
 	if err := upgradeExtract(r.archive, r.extract); err != nil {
 		return r.refuse(upgradeStepExtract, upgradeReasonExtractFailed, "", err)
 	}
-	crw := filepath.Join(r.extract, "crw")
+	crw := crwconfig.JoinRoot(r.extract, "crw")
 	version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepExtract, crw, "--version")
 	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonExtractFailed
@@ -348,7 +349,7 @@ func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 		// snapshot reported for this host before this step moved ahead of it.
 		return r.refuse(upgradeStepAttempts, upgradeReasonPointer, "", err)
 	}
-	relay := filepath.Join(pointer, "bin", "codex-session-relay")
+	relay := crwconfig.JoinRoot(pointer, "bin", "codex-session-relay")
 	state := r.cfg.Relay.State
 	socket := r.cfg.Relay.Socket
 	answer, out, code, err := r.doctorAnswer(relay, state, socket)
@@ -411,7 +412,7 @@ func (r *upgradeRunState) snapshot() (int, string) {
 	if err != nil {
 		return r.refuse(upgradeStepSnapshot, upgradeReasonPointer, "", err)
 	}
-	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepSnapshot, filepath.Join(pointer, "bin", "crw"), "install", "status"); err != nil || code != 0 {
+	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepSnapshot, crwconfig.JoinRoot(pointer, "bin", "crw"), "install", "status"); err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonPointer
 	}
 	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
@@ -420,6 +421,21 @@ func (r *upgradeRunState) snapshot() (int, string) {
 	}
 	r.beforeConfig = digest
 	r.note(upgradeStepSnapshot, nil, 0, pointer+"\n"+digest, nil)
+	return 0, ""
+}
+
+// resolveRunDir records the run directory's physical path for the installer. Management builds W
+// from the configured state directory as raw text, so a link followed by ".." keeps the meaning the
+// kernel gives it; crw install update cleans --from and --backup-state-to (filepath.Abs), which
+// would read the archive and checksums of a different directory than the one this run pinned and
+// verified, or find none after the service was stopped. The physical path has nothing to clean.
+// A run directory that cannot be resolved is refused before anything is stopped.
+func (r *upgradeRunState) resolveRunDir() (int, string) {
+	dir, err := filepath.EvalSymlinks(r.dir)
+	if err != nil {
+		return r.refuse(upgradeStepSums, upgradeReasonSumsFailed, "", fmt.Errorf("the run directory %s: %w", r.dir, err))
+	}
+	r.installDir = dir
 	return 0, ""
 }
 
@@ -434,16 +450,18 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	}
 	r.previous = pointer
 	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepStop,
-		filepath.Join(pointer, "bin", "codex-session-relay"),
+		crwconfig.JoinRoot(pointer, "bin", "codex-session-relay"),
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonStopFailed
 	}
-	args := []string{"install", "update", "--from", r.archive, "--state", r.state,
-		"--socket", r.cfg.Relay.Socket, "--backup-state-to", filepath.Join(r.dir, "state-backup")}
+	// The pinned archive and the backup are named through the physical run directory: the installer
+	// cleans both, and the directory the kernel resolves is the one whose checksums were verified.
+	args := []string{"install", "update", "--from", crwconfig.JoinRoot(r.installDir, filepath.Base(r.archive)), "--state", r.state,
+		"--socket", r.cfg.Relay.Socket, "--backup-state-to", crwconfig.JoinRoot(r.installDir, "state-backup")}
 	if r.opts.Issue != "" {
 		args = append(args, "--issue", r.opts.Issue)
 	}
-	out, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
+	out, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, crwconfig.JoinRoot(r.extract, "crw"), args...)
 	if err != nil {
 		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
 	}
@@ -498,7 +516,7 @@ func (r *upgradeRunState) start() {
 	for i, runtime := range candidates {
 		// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
-		argv := []string{filepath.Join(runtime, "bin", "codex-session-relay"),
+		argv := []string{crwconfig.JoinRoot(runtime, "bin", "codex-session-relay"),
 			"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start"}
 		out, stderr, code, err := upgradeRunCommand(ctx, argv[0], argv[1:]...)
 		cancel()
@@ -631,7 +649,7 @@ func (r *upgradeRunState) verifyInstallTarget(post *upgradePostCheck) {
 		// did not land leaves the pointer on the runtime it replaced, whose version is the previous
 		// one by design: that is the rollback, not a mismatch.
 		if r.promoted {
-			version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
+			version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, crwconfig.JoinRoot(pointer, "bin", "crw"), "--version")
 			got := strings.TrimSpace(version)
 			if err != nil || code != 0 || got != r.version {
 				r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
@@ -656,7 +674,7 @@ func (r *upgradeRunState) mismatch(post *upgradePostCheck) {
 func (r *upgradeRunState) waitForService(runtime string) bool {
 	ctx, cancel := context.WithTimeout(r.ctx, upgradeServiceBudget)
 	defer cancel()
-	relay := filepath.Join(runtime, "bin", "codex-session-relay")
+	relay := crwconfig.JoinRoot(runtime, "bin", "codex-session-relay")
 	last := ""
 	for {
 		out, code, err := r.command(ctx, upgradeCommandTimeout, upgradeStepPostCheck, relay,
@@ -721,7 +739,7 @@ func upgradeSameDirectory(a, b string) bool {
 
 // upgradePointerTarget is where the runtime pointer resolves, as a real path.
 func upgradePointerTarget(e *Env) (string, error) {
-	path := filepath.Join(coreHomeDir(e, "HOME", ""), upgradeRuntimeDir, "current")
+	path := crwconfig.JoinRoot(coreHomeDir(e, "HOME", ""), upgradeRuntimeDir, "current")
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", fmt.Errorf("the runtime pointer %s: %w", path, err)
@@ -734,7 +752,7 @@ func upgradePointerTarget(e *Env) (string, error) {
 }
 
 func upgradeConfigPath(e *Env) string {
-	return filepath.Join(coreHomeDir(e, "CODEX_HOME", ".codex"), "config.toml")
+	return crwconfig.JoinRoot(coreHomeDir(e, "CODEX_HOME", ".codex"), "config.toml")
 }
 
 // upgradeExtract unpacks a tar.gz into dir, refusing an entry that escapes it or names a symlink.
@@ -762,14 +780,14 @@ func upgradeExtract(archive, dir string) error {
 		if filepath.IsAbs(header.Name) || clean == ".." || strings.HasPrefix(clean, "../") {
 			return fmt.Errorf("the archive entry %q is not a path inside the extract directory", header.Name)
 		}
-		target := filepath.Join(dir, header.Name)
+		target := crwconfig.JoinRoot(dir, filepath.FromSlash(clean))
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o700); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			if err := os.MkdirAll(rootDir(target), 0o700); err != nil {
 				return err
 			}
 			// A name already a symlink would be followed outside the directory.
