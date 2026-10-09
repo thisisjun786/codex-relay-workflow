@@ -3,6 +3,8 @@ package recall
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -281,6 +283,9 @@ func HandleSessionStart(status, cwd, src string, opts SessionStartOptions, deps 
 		switch result.Outcome {
 		case CwdContextHits:
 			parts = append(parts, result.Text)
+			if deps.Rendered != nil {
+				deps.Rendered(result.Refs)
+			}
 		case CwdContextUnavailable:
 			parts = append(parts, "Recall unavailable for this project — the index could not be read. Run `crw recall chat index --status` to inspect it.")
 		}
@@ -365,6 +370,8 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 	}
 	p, _ := v.(map[string]any)
 	var answer string
+	var deps RecallContextDeps
+	var rendered []string
 	switch event {
 	case "user-prompt-submit":
 		inv, err := host.Invocation(env)
@@ -400,7 +407,8 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 			return 0
 		}
 		src, _ := p["source"].(string)
-		deps := DefaultRecallDeps(env)
+		deps = DefaultRecallDeps(env)
+		deps.Rendered = func(refs []string) { rendered = refs }
 		if invalidCwd {
 			// The oracle catches basename's type error before any context reader runs.
 			cwd = "invalid-cwd"
@@ -414,7 +422,36 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 		return harness.Interrupted
 	}
 	if answer != "" {
-		_, _ = io.WriteString(out, answer)
+		// The entries this answer carries are counted once it has been written. A write that failed
+		// shows nothing and counts nothing; one that succeeded is not proof the model read it, which
+		// the next start's ordinary repeat penalty already accepts.
+		if _, err := io.WriteString(out, answer); err == nil && len(rendered) > 0 {
+			recallHookCountHits(deps, rendered)
+		}
 	}
 	return 0
+}
+
+// recallHookCountHits raises the history of the rendered refs in one transaction, retrying a failed
+// attempt under the same event identity so that an attempt whose outcome is unknown cannot count twice.
+// A history that cannot be written changes nothing about the answer, which is already out.
+func recallHookCountHits(deps RecallContextDeps, refs []string) {
+	if deps.OpenHitCounts == nil {
+		return
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return
+	}
+	event := hex.EncodeToString(id[:])
+	store, err := deps.OpenHitCounts()
+	if err != nil || store == nil {
+		return
+	}
+	defer func() { _ = store.Close() }()
+	for attempt := 0; attempt < 3; attempt++ {
+		if store.Bump(event, refs) == nil {
+			return
+		}
+	}
 }

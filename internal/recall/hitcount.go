@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -41,22 +42,85 @@ func readHitCounts(db *RwDb, refs []string) map[string]float64 {
 	return counts
 }
 
+const hitCountUpsert = `INSERT INTO recall_hit_counts (ref, hit_count, last_hit_at) VALUES (?, 1, ?)
+     ON CONFLICT(ref) DO UPDATE SET hit_count = hit_count + 1, last_hit_at = excluded.last_hit_at`
+
+// bumpHitCounts counts each ref once per occurrence, all in one transaction: a failure part way leaves
+// the history as it was.
 func bumpHitCounts(db *RwDb, refs []string, atISO string) error {
 	if len(refs) == 0 {
 		return nil
 	}
-	stmt, err := db.Prepare(`INSERT INTO recall_hit_counts (ref, hit_count, last_hit_at) VALUES (?, 1, ?)
-     ON CONFLICT(ref) DO UPDATE SET hit_count = hit_count + 1, last_hit_at = excluded.last_hit_at`)
+	return ingestTransaction(db, func() error { return bumpHitRefs(db, refs, atISO) })
+}
+
+func bumpHitRefs(db *RwDb, refs []string, atISO string) error {
+	stmt, err := db.Prepare(hitCountUpsert)
 	if err != nil {
 		return err
 	}
-	// Each ref commits separately, including duplicates; errors stop the loop.
 	for _, ref := range refs {
 		if _, err = stmt.Run(ref, atISO); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// The events table keeps the identity of recent counting events, so that counting one event twice (a
+// retry after an unknown outcome) changes nothing. It is bounded in age and in number.
+const (
+	hitEventTTL  = 24 * time.Hour
+	hitEventKeep = 1000
+)
+
+// recordHitEvent counts refs for one event, once: the event is recorded and the counts are raised in
+// the same transaction, so either both happen or neither, and a second call with the event does nothing.
+func recordHitEvent(db *RwDb, event string, refs []string, atISO string) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	return ingestTransaction(db, func() error {
+		if err := db.Exec("CREATE TABLE IF NOT EXISTS recall_hit_events (event TEXT PRIMARY KEY, at TEXT NOT NULL)"); err != nil {
+			return err
+		}
+		stmt, err := db.Prepare("INSERT OR IGNORE INTO recall_hit_events (event, at) VALUES (?, ?)")
+		if err != nil {
+			return err
+		}
+		recorded, err := stmt.Run(event, atISO)
+		if err != nil {
+			return err
+		}
+		if recorded.Changes == 0 {
+			return nil
+		}
+		if err = bumpHitRefs(db, refs, atISO); err != nil {
+			return err
+		}
+		prune, err := db.Prepare("DELETE FROM recall_hit_events WHERE at < ? OR event NOT IN (SELECT event FROM recall_hit_events ORDER BY at DESC, rowid DESC LIMIT ?)")
+		if err != nil {
+			return err
+		}
+		_, err = prune.Run(hitEventCutoff(atISO), hitEventKeep)
+		return err
+	})
+}
+
+// forgetHitEvent drops a counted event once nothing can retry it any more; events of an invocation that
+// died first are removed by the age and number bounds above.
+func forgetHitEvent(db *RwDb, event string) {
+	if stmt, err := db.Prepare("DELETE FROM recall_hit_events WHERE event = ?"); err == nil {
+		_, _ = stmt.Run(event)
+	}
+}
+
+func hitEventCutoff(atISO string) string {
+	at, err := time.Parse("2006-01-02T15:04:05.000Z", atISO)
+	if err != nil {
+		return ""
+	}
+	return at.Add(-hitEventTTL).Format("2006-01-02T15:04:05.000Z")
 }
 
 // Number(row.hit_count) over SQLite's result domain. INTEGER affinity permits TEXT/BLOB.
