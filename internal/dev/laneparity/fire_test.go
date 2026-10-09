@@ -4,6 +4,7 @@ package laneparity
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -223,5 +224,40 @@ func TestMeasureLatency_againstTheOracle(t *testing.T) {
 	}
 	if len(lat) != 1 || !lat[0].Oracle || lat[0].TSP95 <= 0 || !lat[0].OK {
 		t.Fatalf("%+v", lat)
+	}
+}
+
+func TestRun_aPassingReportOfTheSameKeyStandsInForARun(t *testing.T) {
+	o := fireFixture(t)
+	report := filepath.Join(t.TempDir(), "report.json")
+	args := func(extra ...string) []string {
+		return append([]string{"fire", "--crw", o.CRW, "--plugin", o.Plugin, "--scratch", o.Scratch, "--only", slice.String(), "--json", report}, extra...)
+	}
+	var out, errs bytes.Buffer
+	if code := Run(args(), &out, &errs); code != 0 || strings.Contains(out.String(), "reused") {
+		t.Fatalf("first run exits %d: %s %s", code, out.String(), errs.String())
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep Report
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK || rep.Key == "" || rep.Test.PID == 0 || rep.Test.Scratch == "" || rep.Test.LeftBehind != 0 || rep.Fire == nil || len(rep.NotVerified) == 0 {
+		t.Fatalf("report %+v", rep.Test)
+	}
+	if _, err := os.Stat(rep.Test.Scratch); err == nil {
+		t.Errorf("the run directory %s was not removed", rep.Test.Scratch)
+	}
+	out.Reset()
+	if code := Run(args("--reuse", report), &out, &errs); code != 0 || !strings.Contains(out.String(), "reused") {
+		t.Errorf("the same key must be reused, exit %d: %s", code, out.String())
+	}
+	out.Reset()
+	other := append(args("--reuse", report), "--runs", "7") // an option the key holds
+	if code := Run(other, &out, &errs); code != 0 || strings.Contains(out.String(), "reused") {
+		t.Errorf("another option must not reuse, exit %d: %s", code, out.String())
 	}
 }

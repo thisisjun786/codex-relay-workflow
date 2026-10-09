@@ -3,6 +3,8 @@
 package laneparity
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,7 +32,8 @@ const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all}
   all          --crw PATH [--plugin DIR] [--oracle DIR] [--runs N] [--attempts N]
                                         every cell; a generated root when --plugin is not given
 
-common flags: --repo DIR (default: the git top level) --json FILE (the report) --scratch DIR (case roots)
+common flags: --repo DIR (default: the git top level) --json FILE (the report) --scratch DIR (parent of the run's case roots)
+              --reuse FILE (a passing report of the same build, plugin root, criteria and options stands in for a run)
 
 The crw build for the fire and latency cells is built the way TestDomain/cxc builds it (go build -trimpath
 -ldflags "-X main.recallTestClock=1767225600000 -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor.retrustTestClock=1767225600000" ./cmd/crw).
@@ -44,7 +48,23 @@ type Report struct {
 	Fire         *FireReport         `json:"fire,omitempty"`
 	Latency      []Latency           `json:"latency,omitempty"`
 	NotVerified  []NotVerified       `json:"notVerified"`
-	OK           bool                `json:"ok"`
+	// Key identifies the artifact, plugin root, criteria and options a run judged: a report with the
+	// same key already holds the evidence (--reuse).
+	Key  string      `json:"key"`
+	Test ReportOwner `json:"test"`
+	OK   bool        `json:"ok"`
+}
+
+// ReportOwner records who ran the cells and where their state lived: the owner and process, the
+// storage paths, and how they were cleaned up. No shared database and no live session is used.
+type ReportOwner struct {
+	User    string `json:"user"`
+	PID     int    `json:"pid"`
+	Scratch string `json:"scratch"`
+	// LeftBehind is the number of entries still in the scratch directory when the cells had run
+	// (case roots are removed by the engine as each case ends: zero is the expected value).
+	LeftBehind int    `json:"leftBehind"`
+	Cleanup    string `json:"cleanup"`
 }
 
 // ReportCRW names the build under test.
@@ -117,7 +137,8 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	runs := set.Int("runs", 30, "latency: runs per leg and side")
 	attempts := set.Int("attempts", 3, "latency: measurements of a leg that fails before it is reported failing (a shared host's load puts outliers in a p95)")
 	jsonOut := set.String("json", "", "write the report here")
-	scratch := set.String("scratch", "", "parent of the case roots (default: $TMPDIR)")
+	scratch := set.String("scratch", "", "parent of the run's directory of case roots (default: $TMPDIR)")
+	reuse := set.String("reuse", "", "a report: when it judged the same build, plugin root, criteria and options and passed, its evidence stands and nothing is run")
 	if err := set.Parse(args); err != nil {
 		return 2
 	}
@@ -192,17 +213,24 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	if file, _, derr := cxccorpus.LoadDeclarations(root); derr == nil {
 		report.Spec = file.Oracle + ", " + cxccorpus.Declarations
 	}
+	// Every case root and a generated plugin root live in one directory of this run, removed at the end.
+	run, err := os.MkdirTemp(*scratch, "crw-parity-run-")
+	if err != nil {
+		return fail(err)
+	}
+	defer os.RemoveAll(run)
+	cases := filepath.Join(run, "cases")
+	if err := os.Mkdir(cases, 0o700); err != nil {
+		return fail(err)
+	}
+	report.Test = ReportOwner{User: os.Getenv("USER"), PID: os.Getpid(), Scratch: run,
+		Cleanup: "each case root is removed as its case ends and the run directory when the run ends; nothing outside the run directory is written, and no shared database, live session, Codex home or runtime is used"}
 	pluginRoot := *plugin
 	if pluginRoot == "" {
 		if command != "all" {
 			return fail(fmt.Errorf("--plugin is required"))
 		}
-		tmp, err := os.MkdirTemp(*scratch, "crw-parity-plugin-")
-		if err != nil {
-			return fail(err)
-		}
-		defer os.RemoveAll(tmp)
-		pluginRoot = filepath.Join(tmp, "crw")
+		pluginRoot = filepath.Join(run, "plugin", "crw")
 		if err := GeneratePluginRoot(pluginRoot, filepath.Join(root, "plugins", "crw"), bin, expected); err != nil {
 			return fail(err)
 		}
@@ -211,6 +239,21 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	report.Plugin.Root = pluginRoot
 	if report.Plugin.Digest, err = PluginDigest(pluginRoot); err != nil {
 		return fail(err)
+	}
+	if report.Key, err = ReportKey(root, report.CRW.SHA256, report.Plugin.Digest, command, *only, *legs, *inject, *oracle, *runs, *attempts); err != nil {
+		return fail(err)
+	}
+	if *reuse != "" {
+		if prior, ok := reusable(*reuse, report.Key); ok {
+			fmt.Fprintf(stdout, "reused: %s judged this build, plugin root, criteria and options (key %.16s) and passed\n", *reuse, report.Key)
+			if *jsonOut != "" && *jsonOut != *reuse {
+				raw, _ := json.MarshalIndent(prior, "", "  ")
+				if err := os.WriteFile(*jsonOut, append(raw, '\n'), 0o644); err != nil {
+					return fail(err)
+				}
+			}
+			return 0
+		}
 	}
 	if command == "all" {
 		rep, err := registration(pluginRoot, expected)
@@ -222,7 +265,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		report.OK = report.OK && rep.OK
 	}
 	if command == "fire" || command == "all" {
-		rep, err := Fire(FireOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: *scratch, Only: onlyRE, Fault: *inject})
+		rep, err := Fire(FireOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: cases, Only: onlyRE, Fault: *inject})
 		if err != nil {
 			return fail(err)
 		}
@@ -231,7 +274,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		report.OK = report.OK && rep.OK
 	}
 	if command == "latency" || (command == "all" && *oracle != "") {
-		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: *scratch, Oracle: *oracle, Node: *node, Runs: *runs, Attempts: *attempts, Only: legsRE})
+		lat, err := MeasureLatency(LatencyOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: cases, Oracle: *oracle, Node: *node, Runs: *runs, Attempts: *attempts, Only: legsRE})
 		if err != nil {
 			return fail(err)
 		}
@@ -242,6 +285,13 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 			if l.Skipped {
 				report.NotVerified = append(report.NotVerified, NotVerified{"latency of " + l.Leg, l.Reason, "the issue that ports the leg"})
 			}
+		}
+	}
+	if left, err := os.ReadDir(cases); err == nil {
+		report.Test.LeftBehind = len(left)
+		if len(left) > 0 {
+			fmt.Fprintf(stdout, "FAIL cleanup: %d entr(ies) left in %s\n", len(left), cases)
+			report.OK = false
 		}
 	}
 	for _, n := range report.NotVerified {
@@ -263,6 +313,50 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return exitCode(report.OK)
+}
+
+// ReportKey identifies what a run judged: the build, the plugin root's declarations, the corpus
+// files the cells read (K1, the rename and normalisation tables, the status files and the hook
+// fixtures) and the command and options.
+func ReportKey(root, crw, plugin string, parts ...any) (string, error) {
+	sum := sha256.New()
+	fmt.Fprintf(sum, "crw=%s\nplugin=%s\nopts=%v\n", crw, plugin, parts)
+	var paths []string
+	for _, glob := range []string{
+		filepath.Join(root, cxccorpus.SchemaDir, "*.json"),
+		filepath.Join(root, "contract", "notes", "cxc", "*.json"),
+		filepath.Join(root, cxccorpus.FixtureDir, "hook__*.json"),
+	} {
+		hits, err := filepath.Glob(glob)
+		if err != nil {
+			return "", err
+		}
+		paths = append(paths, hits...)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		rel, _ := filepath.Rel(root, path)
+		fmt.Fprintf(sum, "%s\x00%d\x00", rel, len(raw))
+		sum.Write(raw)
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+// reusable reads a report and returns it when it passed and carries the key.
+func reusable(path, key string) (Report, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Report{}, false
+	}
+	var prior Report
+	if json.Unmarshal(raw, &prior) != nil {
+		return Report{}, false
+	}
+	return prior, prior.OK && prior.Key == key && key != ""
 }
 
 func exitCode(ok bool) int {

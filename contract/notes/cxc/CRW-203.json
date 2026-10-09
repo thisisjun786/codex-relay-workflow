@@ -1,0 +1,37 @@
+{
+  "issue": "CRW-203",
+  "intentionally-changed": [
+    {
+      "id": "hook__session-start-bootstrapping-pabcd-state__observes_hook_invocation_record",
+      "reason": "the hook invocation record names the crw plugin: the manifest it digests is .codex-plugin/plugin.json (crw has no components/<name>/dist/cli.js entry), its version is the crw manifest's, and the file is named by the sha256 of that record's slot, so the oracle's record file is removed and crw's is set; the record's fields, mode 0600 and directories are unchanged (internal/harness/observation.go)",
+      "remove": [
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/37990bf2bf0c0e5c2c022cc30113440d31bc36f57d8f2ce088a1ca5e50eae309.json"
+      ],
+      "set": {
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/type": "file",
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/mode": "0600",
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/form": "json-line",
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/sha256": "",
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/size": "",
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/target": "",
+        "tree/codex/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/0ce9963a0ee8764b1611b5490e868bc4fe2303a54a0d412c6db39f452e550054.json/content": "{\"schemaVersion\":1,\"sessionId\":\"rec-s1\",\"agentId\":null,\"component\":\"pabcd-state\",\"event\":\"session-start\",\"observedAt\":\"<TS>\",\"pluginRoot\":\"${PLUGIN_ROOT}\",\"pluginVersion\":\"<VERSION>\",\"manifestDigest\":\"<DIGEST>\",\"entrypoint\":\".codex-plugin/plugin.json\",\"entrypointDigest\":\"<DIGEST>\",\"outcome\":\"invoked\"}"
+      }
+    },
+    {
+      "id": "hook__session-start-detecting-managed-worktree__unmanaged_and_root_are_silent",
+      "reason": "the hook invocation record names the crw plugin: the manifest it digests is .codex-plugin/plugin.json (crw has no components/<name>/dist/cli.js entry), its version is the crw manifest's, and the file is named by the sha256 of that record's slot, so the oracle's record file is removed and crw's is set; the record's fields, mode 0600 and directories are unchanged (internal/harness/observation.go)",
+      "remove": [
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/a00153857876f7bfc1cd71d7283055749bbe78ccb7d2059b69d2dce534339f5f.json"
+      ],
+      "set": {
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/type": "file",
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/mode": "0600",
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/form": "json-line",
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/sha256": "",
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/size": "",
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/target": "",
+        "tree/home/elsewhere/crw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/6949609073387d922d3f8b83affe9fc81b985bc22baba07c2fd8cd1e60a32c7d.json/content": "{\"schemaVersion\":1,\"sessionId\":\"rec-s1\",\"agentId\":null,\"component\":\"pabcd-state\",\"event\":\"worktree-guard\",\"observedAt\":\"<TS>\",\"pluginRoot\":\"${PLUGIN_ROOT}\",\"pluginVersion\":\"<VERSION>\",\"manifestDigest\":\"<DIGEST>\",\"entrypoint\":\".codex-plugin/plugin.json\",\"entrypointDigest\":\"<DIGEST>\",\"outcome\":\"invoked\"}"
+      }
+    }
+  ]
+}

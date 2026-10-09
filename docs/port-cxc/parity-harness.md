@@ -45,6 +45,16 @@ root from K1 (`plugin-root`): the files of `plugins/crw` with a manifest and hoo
 each command starting the crw under test as `crw hook <event> --leg <leg>`. That root exists so the harness does not
 wait for the activation PR (CRW-392); pointing `--plugin` at the real root checks the real declarations.
 
+## Evidence and cleanup
+
+The report (`--json`) records the build (path and sha256), the plugin root (path and digest of its manifest and hook
+files), the oracle revision of K1, the run id every receipt carries, the owner, process and run directory of the test,
+and how it was cleaned up: every case root is removed as its case ends, the run directory (a generated plugin root and the
+case roots, under `--scratch` or `$TMPDIR`) when the run ends, and the number of entries left behind must be zero or the run
+fails. No shared database, live session, Codex home or installed runtime is used. The report's `key` is a digest of the build,
+the plugin root, the corpus files the cells read and the options; `--reuse FILE` stands a passing report of the same key in for
+a run, so evidence of the same artifact, revision and criteria is not produced twice.
+
 ## Faults
 
 `fire --inject <fault>` injects a fault and succeeds only when the run turns red for it. The faults are the ways
