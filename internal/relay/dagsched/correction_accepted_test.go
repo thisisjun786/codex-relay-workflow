@@ -424,7 +424,8 @@ func TestTheCorrectionReasonDoesNotLoosenTheStaleRouteGate(t *testing.T) {
 			t.Fatalf("the route of A = %q, want %q: the premise", got, rvRevalidate)
 		}
 		prepared := k.rvPrepare("sr", "A")
-		acOpenByHand(t, k, ridA, prepared.DispatchRequestID, "accepted_result_correction", 2, true)
+		// a generation opened and bound before generation-open and generation-bind asked the route (CRW-1036): dag-correct still refuses to record it
+		openAndBindUnguarded(t, k, ridA, prepared.DispatchRequestID, "accepted_result_correction")
 		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "A", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" {
 			t.Fatalf("a revalidation recorded as a correction = %v, want disposition_conflict", err)
 		} else if !strings.Contains(err.Error(), "revalidate") {

@@ -2,6 +2,7 @@ package dagsched
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"sort"
@@ -262,4 +263,36 @@ func (s *Scheduler) storePremerge(ctx context.Context, acceptanceID, acceptedHea
 		AcceptanceID: acceptanceID, RecordDigest: j.digest, RecordJSON: string(j.raw), EvaluatedHead: j.evaluatedHead,
 		AcceptedHead: acceptedHead, RecordedBy: actor, CoordinatorEpoch: epoch, RecordedAt: s.now(),
 	})
+}
+
+// standingPremergeHead is the head the pre-merge record an acceptance stands on was stored for: the latest re-validation's record, else the acceptance's own
+// (premergeOfAcceptance reads them in that order). false when the acceptance holds neither.
+func standingPremergeHead(ctx context.Context, q store.Querier, acceptanceID string) (string, bool, error) {
+	var head string
+	has, err := queryOne(ctx, q, "SELECT p.accepted_head FROM dag_acceptance_revalidations r JOIN dag_revalidation_premerge p ON p.revalidation_id = r.revalidation_id WHERE r.acceptance_id = ? ORDER BY r.reval_seq DESC LIMIT 1", []any{acceptanceID}, &head)
+	if err != nil || has {
+		return head, has, err
+	}
+	has, err = queryOne(ctx, q, "SELECT accepted_head FROM dag_acceptance_premerge WHERE acceptance_id = ?", []any{acceptanceID}, &head)
+	return head, has, err
+}
+
+// appendRevalidation appends the next re-validation of an acceptance, ruled by head's verdict under head's criteria, and the pre-merge record it was judged on when
+// judged is not nil (an implementation node).
+func (s *Scheduler) appendRevalidation(ctx context.Context, q store.Querier, acceptanceID string, head verifiedHead, actor string, judged *premergeJudgment) error {
+	var last sql.NullInt64
+	if err := q.QueryRowContext(ctx, "SELECT MAX(reval_seq) FROM dag_acceptance_revalidations WHERE acceptance_id = ?", acceptanceID).Scan(&last); err != nil {
+		return err
+	}
+	seq := last.Int64 + 1
+	id := revalidationID(acceptanceID, seq)
+	if _, err := q.ExecContext(ctx, "INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES (?,?,?,?,?,?,?,?)",
+		id, acceptanceID, head.SetDigest, head.EventID, head.VerdictTurn, seq, actor, s.now()); err != nil {
+		return err
+	}
+	if judged == nil {
+		return nil
+	}
+	return store.RecordRevalidationPremerge(ctx, s.Store, id, store.AcceptancePremergeRow{AcceptanceID: acceptanceID, RecordDigest: judged.digest, RecordJSON: string(judged.raw), EvaluatedHead: judged.evaluatedHead,
+		AcceptedHead: judged.acceptedHead, RecordedBy: actor, CoordinatorEpoch: s.ExpectedEpoch, RecordedAt: s.now()})
 }

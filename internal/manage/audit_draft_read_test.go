@@ -133,12 +133,12 @@ func TestAuditListDraftsReadsEachDraftOnceUnderTheIdentityCheck(t *testing.T) {
 	improveProposeTestConfigure(t, w, map[string]any{})
 	path := auditDraftReadTestDraft(t, w, "aaaa", "original")
 	e := improveProposeTestEnv(w, &strings.Builder{}, &strings.Builder{})
-	listed, err := auditListDrafts(e, coreDefaults(e))
+	listed, err := auditListDrafts(e, coreDefaults(e), AuditListOptions{})
 	if err != nil || len(listed) != 1 {
 		t.Fatalf("the listing: %+v err %v, want the one draft", listed, err)
 	}
 	swapped, _ := auditDraftReadTestSwapOnce(t, w, path, "substitute")
-	_, err = auditListDrafts(e, coreDefaults(e))
+	_, err = auditListDrafts(e, coreDefaults(e), AuditListOptions{})
 	if !*swapped {
 		t.Fatal("the read seam never ran during the listing")
 	}

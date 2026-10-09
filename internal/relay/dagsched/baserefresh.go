@@ -327,24 +327,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		return out, refuse(contract.RefusalDispositionConflict, "the merges between %s and %s resolved these files by hand: [%s]; no mechanical rule proved those resolutions. Name exactly them (--resolved) to accept them, after reading them; you named [%s]",
 			short(acc.HeadSHA), short(pr.HeadSHA), strings.Join(resolved, ", "), strings.Join(named, ", "))
 	}
-	steps := make([]any, len(proof.Steps))
-	for i, st := range proof.Steps {
-		list := make([]any, len(st.Resolved))
-		for j, r := range st.Resolved {
-			entry := map[string]any{"path": r.Path, "blob": r.Blob}
-			if r.Rule != "" {
-				entry["rule"] = r.Rule
-			}
-			list[j] = entry
-		}
-		steps[i] = map[string]any{"previous": st.Previous, "base_parent": st.BaseParent, "head": st.Head, "tree": st.Tree, "resolved": list}
-	}
-	proofJSON := dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "accepted_head": acc.HeadSHA, "steps": steps})
-	pathList := make([]any, len(resolved))
-	for i, p := range resolved {
-		pathList[i] = p
-	}
-	resolvedJSON := dag.Canonical(pathList)
+	proofJSON, resolvedJSON := refreshRecordJSON(acc.HeadSHA, proof, resolved)
 	out.RelationshipID, out.Generation, out.HeadSHA = rel.ID, rel.Generation, pr.HeadSHA
 	out.BaseRepository, out.BaseRef, out.BaseTipSHA, out.Steps, out.Resolved = acc.Repository, pr.BaseRef, tip.SHA, proof.Steps, resolved
 
@@ -511,4 +494,26 @@ func (s *Scheduler) refreshCarries(ctx context.Context, q store.Querier, plan, n
 		return false, err
 	}
 	return stand.RefreshID != "" && stand.RelationshipID == rel.ID && stand.Generation == rel.Generation, nil
+}
+
+// refreshRecordJSON is the canonical proof and resolved-path bodies a refresh stores, built from the chain the proof walked from the accepted head.
+func refreshRecordJSON(accepted string, proof *refreshProof, resolved []string) (proofJSON, resolvedJSON string) {
+	steps := make([]any, len(proof.Steps))
+	for i, st := range proof.Steps {
+		list := make([]any, len(st.Resolved))
+		for j, r := range st.Resolved {
+			entry := map[string]any{"path": r.Path, "blob": r.Blob}
+			if r.Rule != "" {
+				entry["rule"] = r.Rule
+			}
+			list[j] = entry
+		}
+		steps[i] = map[string]any{"previous": st.Previous, "base_parent": st.BaseParent, "head": st.Head, "tree": st.Tree, "resolved": list}
+	}
+	proofJSON = dag.Canonical(map[string]any{"schema": SchemaBaseRefresh, "accepted_head": accepted, "steps": steps})
+	pathList := make([]any, len(resolved))
+	for i, p := range resolved {
+		pathList[i] = p
+	}
+	return proofJSON, dag.Canonical(pathList)
 }
