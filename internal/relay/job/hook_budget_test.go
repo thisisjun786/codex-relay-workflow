@@ -58,10 +58,16 @@ func TestBgHookEventReconcilesEachRecordOnce(t *testing.T) {
 		name string
 		run  func() string
 	}{
-		{"session-start", func() string { return HandleSessionStart(HookPayload{SessionID: "S2", Cwd: ws}, ws, hookEnv(nil), noon) }},
+		{"session-start", func() string {
+			return HandleSessionStart(HookPayload{SessionID: "S2", Cwd: ws}, ws, hookEnv(nil), noon)
+		}},
 		{"stop", func() string { return HandleStop(HookPayload{SessionID: "S1", Cwd: ws}, ws, hookEnv(nil), noon) }},
-		{"prompt", func() string { return HandleUserPromptSubmit(HookPayload{SessionID: "S1", Cwd: ws}, ws, hookEnv(nil), noon) }},
-		{"session-start again", func() string { return HandleSessionStart(HookPayload{SessionID: "S3", Cwd: ws}, ws, hookEnv(nil), noon) }},
+		{"prompt", func() string {
+			return HandleUserPromptSubmit(HookPayload{SessionID: "S1", Cwd: ws}, ws, hookEnv(nil), noon)
+		}},
+		{"session-start again", func() string {
+			return HandleSessionStart(HookPayload{SessionID: "S3", Cwd: ws}, ws, hookEnv(nil), noon)
+		}},
 	} {
 		event.run()
 		if n := calls(t, log); n != running {
