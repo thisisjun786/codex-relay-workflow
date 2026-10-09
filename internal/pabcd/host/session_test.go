@@ -585,3 +585,30 @@ func TestResolveNativeSessionSeesPathsAsNodeDoes(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1136: the note of the root policy reaches the caller with the session, and with a refusal (an empty HOME read
+// the working directory's .codex before; now it reads the account home, and the person is told so). A root given
+// by CODEX_HOME carries no note.
+func TestResolveNativeSessionCarriesTheRootNote(t *testing.T) {
+	f := newFixture(t)
+	account := filepath.Join(f.root, "account")
+	f.home = filepath.Join(account, ".codex")
+	if err := os.MkdirAll(f.home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.db("5", nil)
+	emptyHome := envOf(map[string]string{"CODEX_THREAD_ID": child, "HOME": ""})
+	lookup := func() (string, error) { return account, nil }
+	got, err := resolveNativeSession(f.cwd, emptyHome, lookup)
+	if err != nil || !strings.Contains(got.Note, "HOME is set but empty") || !strings.Contains(got.Note, account) {
+		t.Errorf("session under an empty HOME: %+v, %v", got, err)
+	}
+	f.db("6", map[string]any{"archived": 1})
+	got, err = resolveNativeSession(f.cwd, emptyHome, lookup)
+	if err == nil || err.Error() != "Native session is archived or has an invalid archive flag." || !strings.Contains(got.Note, "HOME is set but empty") {
+		t.Errorf("refusal under an empty HOME: %+v, %v", got, err)
+	}
+	if got, _ := resolveNativeSession(f.cwd, envOf(map[string]string{"CODEX_THREAD_ID": child, "CODEX_HOME": f.home}), lookup); got.Note != "" {
+		t.Errorf("a root given by CODEX_HOME has a note: %q", got.Note)
+	}
+}

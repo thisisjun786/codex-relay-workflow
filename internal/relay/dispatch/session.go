@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -42,6 +43,9 @@ func runSessionCommand(_ context.Context, _ Services, args Args) (any, error) {
 		opts.SourceRoot = args.Positionals[1]
 	}
 	result := session.Run(opts, cwd, os.LookupEnv)
+	if result.Note != "" {
+		fmt.Fprintln(os.Stderr, "crw: "+result.Note)
+	}
 	answer := contract.OrderedObject{{Key: "out", Value: result.Out}}
 	if result.Code != 0 {
 		return nil, &PayloadExit{Payload: answer, Code: result.Code}

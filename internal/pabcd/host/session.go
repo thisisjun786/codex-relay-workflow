@@ -16,7 +16,11 @@ type Refusal string
 func (r Refusal) Error() string { return string(r) }
 
 // NativeSession is a Codex session whose id and working directory the thread database confirms.
-type NativeSession struct{ SessionID, Cwd, DBPath string }
+//
+// Note is the diagnostic of the root policy (Root.Note) when the databases were read under a root other than the
+// one an earlier reading took (an empty HOME); it is set on a refusal too, because a refusal is when the person
+// needs it. A caller shows it on stderr.
+type NativeSession struct{ SessionID, Cwd, DBPath, Note string }
 
 const (
 	noThreadID    = Refusal("CODEX_THREAD_ID is absent. Run this command inside the native Codex session.")
@@ -67,30 +71,31 @@ func resolveNativeSession(cwd string, env LookupEnv, account func() (string, err
 	if err != nil {
 		return NativeSession{}, relativeRoot
 	}
+	refuse := func(err error) (NativeSession, error) { return NativeSession{Note: root.Note}, err }
 	dbPath, err := newestStateDB(root)
 	if err != nil {
-		return NativeSession{}, err
+		return refuse(err)
 	}
 	db, err := openReadOnly(dbPath)
 	if err != nil {
-		return NativeSession{}, unreadable
+		return refuse(unreadable)
 	}
 	defer db.Close()
 	rows, err := db.Query(ThreadQuery, id)
 	if err != nil {
-		return NativeSession{}, unreadable
+		return refuse(unreadable)
 	}
 	defer rows.Close()
 	if !rows.Next() {
 		if rows.Err() != nil { // a lock, or a malformed file: never an older database
-			return NativeSession{}, unreadable
+			return refuse(unreadable)
 		}
-		return NativeSession{}, noRow
+		return refuse(noRow)
 	}
 	names, err := rows.Columns()
 	var field [4]any
 	if err != nil || rows.Scan(&field[0], &field[1], &field[2], &field[3]) != nil || !safe(field[:]...) {
-		return NativeSession{}, unreadable
+		return refuse(unreadable)
 	}
 	// JavaScript reads the columns as properties of the row, which keep the case the table declares,
 	// so a column declared ID, CWD, ARCHIVED or SOURCE leaves the field it names missing.
@@ -101,29 +106,29 @@ func resolveNativeSession(cwd string, env LookupEnv, account func() (string, err
 	}
 	rowID, rowCwd, archived, source := field[0], field[1], field[2], field[3]
 	if got, _ := rowID.(string); got != id {
-		return NativeSession{}, noRow
+		return refuse(noRow)
 	}
 	if !isZero(archived) {
-		return NativeSession{}, archivedRow
+		return refuse(archivedRow)
 	}
 	if kind, _ := source.(string); kind != "cli" && kind != "vscode" && kind != "exec" && kind != "mcp" {
-		return NativeSession{}, notRootSource
+		return refuse(notRootSource)
 	}
 	// node:sqlite hands TEXT to JavaScript decoded as UTF-8 with U+FFFD for each invalid sequence, so
 	// the path the oracle resolves is not always the bytes stored (a known defect, kept).
 	stored, _ := rowCwd.(string)
 	stored = decodeUTF8([]byte(stored))
 	if !filepath.IsAbs(stored) {
-		return NativeSession{}, badStoredCwd
+		return refuse(badStoredCwd)
 	}
 	storedCanonical, err := canonical(stored)
 	if err != nil {
-		return NativeSession{}, noStoredCwd
+		return refuse(noStoredCwd)
 	}
 	if storedCanonical != canonicalCwd {
-		return NativeSession{}, otherCwd
+		return refuse(otherCwd)
 	}
-	return NativeSession{SessionID: id, Cwd: canonicalCwd, DBPath: dbPath}, nil
+	return NativeSession{SessionID: id, Cwd: canonicalCwd, DBPath: dbPath, Note: root.Note}, nil
 }
 
 // newestStateDB is the highest-numbered state_<N>.sqlite in root (ties in name order), which must
