@@ -4,6 +4,7 @@ package ci
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,9 +15,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -61,6 +64,8 @@ type localOptions struct {
 	script int
 	// hostOS and hostArch name the platform the run judges itself on; empty is this host. Only tests set them.
 	hostOS, hostArch string
+	// buildInfo reports the build record of the running binary; nil means runtime/debug.ReadBuildInfo. Only tests set it.
+	buildInfo func() (*debug.BuildInfo, bool)
 }
 
 // platform is the operating system and architecture the run records and judges itself on.
@@ -176,6 +181,13 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 		return verificationRecord{}, false, err
 	} else if differs != "" {
 		return verificationRecord{}, false, fmt.Errorf("engine_differs_from_commit: the engine source (%s) differs from %s; run from a checkout of that commit", differs, shortHash(current.HeadCommit))
+	}
+	// CRW-1025: a prebuilt binary carries the plan and the executor it was compiled from, which a clean
+	// checkout does not describe; the build record it was stamped with must name the verified engine.
+	if differs, err := localBinaryDiffers(opts, current.HeadCommit); err != nil {
+		return verificationRecord{}, false, err
+	} else if differs != "" {
+		return verificationRecord{}, false, fmt.Errorf("engine_differs_from_commit: the running crw-dev binary %s; build it from a clean checkout of %s (make crw-dev) or run go run -tags dev ./cmd/crw-dev ci local", differs, shortHash(current.HeadCommit))
 	}
 	// CRW-1027 (merged into CRW-1025): the secrets step is linux x64 only, so a plan that carries it is refused
 	// on any other host before a step runs or a record is reused.
@@ -924,9 +936,9 @@ var localCompiledExt = []string{".go", ".s", ".S", ".c", ".h", ".cc", ".cpp", ".
 // localEngineDiffers names the engine source the caller's tree holds that the commit does not. The working
 // tree is compared with the commit's blobs byte for byte, never through the index (assume-unchanged and
 // skip-worktree marks hide an edit from git diff, and the exclude files hide a new file from git status) and
-// never through Git's line-ending normalisation or clean filters (hash-object --no-filters: Go compiles the raw
-// bytes, which a filter could map back to the committed blob), so every engine file the commit holds must
-// exist with its bytes, every other file under the engine paths is a difference, and an ignored file is let
+// never through Git's line-ending normalisation or clean filters (the raw bytes are hashed in place: Go compiles
+// the raw bytes, which a filter could map back to the committed blob), so every engine file the commit holds must
+// exist with its bytes as a regular file (a FIFO or device is a difference and is never opened), every other file under the engine paths is a difference, and an ignored file is let
 // through only when Go does not compile it (a log, a coverage file).
 // An empty result means the caller runs the commit's engine.
 func localEngineDiffers(root, commit string) (string, error) {
@@ -986,7 +998,7 @@ func localEngineDiffers(root, commit string) (string, error) {
 			return "", err
 		}
 	}
-	var names, hashed []string
+	var names []string
 	for path := range disk {
 		want, inCommit := committed[path]
 		switch {
@@ -1003,12 +1015,15 @@ func localEngineDiffers(root, commit string) (string, error) {
 				names = append(names, path)
 			}
 		default:
-			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
-			if err != nil || info.Mode()&fs.ModeSymlink != 0 {
-				names = append(names, path)
-				continue
+			// Only a regular file is read, and it is opened without blocking: a FIFO or device that replaced
+			// a tracked file is a difference, and opening a FIFO with no writer would wait for ever.
+			oid, same, err := localRawBlobID(filepath.Join(root, filepath.FromSlash(path)), len(want.oid) == 64)
+			if err != nil {
+				return "", err
 			}
-			hashed = append(hashed, path)
+			if !same || oid != want.oid {
+				names = append(names, path)
+			}
 		}
 	}
 	for path := range committed {
@@ -1016,29 +1031,108 @@ func localEngineDiffers(root, commit string) (string, error) {
 			names = append(names, path)
 		}
 	}
-	sort.Strings(hashed)
-	if len(hashed) > 0 {
-		cmd := exec.Command("git", "hash-object", "--no-filters", "--stdin-paths")
-		cmd.Dir = root
-		cmd.Stdin = strings.NewReader(strings.Join(hashed, "\n") + "\n")
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		got, err := cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("git hash-object: %w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		oids := strings.Fields(string(got))
-		if len(oids) != len(hashed) {
-			return "", fmt.Errorf("git hash-object returned %d ids for %d files", len(oids), len(hashed))
-		}
-		for i, path := range hashed {
-			if oids[i] != committed[path].oid {
-				names = append(names, path)
-			}
-		}
-	}
 	sort.Strings(names)
 	return strings.Join(names, ", "), nil
+}
+
+// localRawBlobID is the Git blob id of the file's raw bytes (what Go compiles, with no line-ending
+// normalisation or filter). same is false when the path is not a regular file, or stopped being one between
+// the checks: nothing is read from it then. sha256 selects the repository's object format.
+func localRawBlobID(path string, sha256Format bool) (oid string, same bool, err error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if !before.Mode().IsRegular() {
+		return "", false, nil
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+		return "", false, nil
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", false, err
+	}
+	header := fmt.Sprintf("blob %d\x00", len(data))
+	if sha256Format {
+		sum := sha256.New()
+		sum.Write([]byte(header))
+		sum.Write(data)
+		return hex.EncodeToString(sum.Sum(nil)), true, nil
+	}
+	sum := sha1.New()
+	sum.Write([]byte(header))
+	sum.Write(data)
+	return hex.EncodeToString(sum.Sum(nil)), true, nil
+}
+
+// localBinaryDiffers names why the running binary is not the verified commit's engine, or returns "". go
+// build stamps the revision it built from and whether the tree was modified; a binary built from a modified
+// tree, or from a revision whose engine paths differ from the commit's (or that this repository does not
+// hold), executes a plan and an executor the commit does not define. A binary without a revision (go run, go
+// test, -buildvcs=false) is compiled from the working tree that localEngineDiffers has compared with the
+// commit.
+func localBinaryDiffers(opts localOptions, commit string) (string, error) {
+	read := opts.buildInfo
+	if read == nil {
+		read = debug.ReadBuildInfo
+	}
+	info, ok := read()
+	if !ok || info == nil {
+		return "", nil
+	}
+	var revision, modified string
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value
+		}
+	}
+	if revision == "" {
+		return "", nil
+	}
+	if modified == "true" {
+		return fmt.Sprintf("was built from a modified tree (revision %s)", shortHash(revision)), nil
+	}
+	if revision == commit {
+		return "", nil
+	}
+	args := append([]string{"ls-tree", "-z"}, "REV", "--")
+	args = append(args, localEngineSources...)
+	listing := func(rev string) (string, error) {
+		args[2] = rev
+		out, err := runGit(opts.Root, args...)
+		return string(out), err
+	}
+	built, err := listing(revision + "^{commit}")
+	if err != nil {
+		return fmt.Sprintf("was built from revision %s, which this repository does not hold", shortHash(revision)), nil
+	}
+	verified, err := listing(commit)
+	if err != nil {
+		return "", err
+	}
+	if built != verified {
+		return fmt.Sprintf("was built from revision %s, whose engine source differs from %s", shortHash(revision), shortHash(commit)), nil
+	}
+	return "", nil
 }
 
 // localCompiledExtension reports whether Go compiles a file with this name's extension.

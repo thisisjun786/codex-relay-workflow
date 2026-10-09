@@ -258,8 +258,16 @@ func pushOnlyScopeProblem(text string) string {
 			return "the CRW scope paragraph no longer says " + strconv.Quote(want)
 		}
 	}
+	// The three phrases may survive inside a paragraph that retires them or requires a pull request.
+	if hit := pushOnlyScopeContradiction.FindString(flat); hit != "" {
+		return "the CRW scope paragraph retires the rule or requires a pull request: " + strconv.Quote(hit)
+	}
 	return ""
 }
+
+// pushOnlyScopeContradiction matches the forms in which the scope paragraph would retire the push-only rule
+// or ask internal work for a pull request. It is a phrase check, not a reading of the paragraph.
+var pushOnlyScopeContradiction = regexp.MustCompile(`(?i)\b(obsolete|retired|superseded|no longer|not anymore)\b|\b(must|should|needs? to|requires?|required to|has to|have to)\b[^.]*\bpull requests?\b|\b(submit|open|opens|create|creates|file|files)\b (a|the|one|its) (pull request|PR)\b`)
 
 func TestPushOnlyWording_StackedPrsKeepsItsCRWScope(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(pushOnlyStackedPrs)))
@@ -278,11 +286,14 @@ func TestPushOnlyWording_ScopeGuardCatchesTheParagraphGoing(t *testing.T) {
 		text string
 		ok   bool
 	}{
-		"present":         {body + scope + "## Rules\n\nUse ordinary pull requests by default.\n", true},
-		"paragraph gone":  {body + "## Rules\n\nUse ordinary pull requests by default.\n", false},
-		"requires a PR":   {body + "CRW scope: CRW internal work is push-only. Internal work opens a pull request.\n\n## Rules\n", false},
-		"moved below":     {body + "## Rules\n\n" + scope, false},
-		"rules now apply": {body + "CRW scope: CRW internal work is push-only. Internal work opens no pull request. The rules below apply to it.\n\n## Rules\n", false},
+		"present":                   {body + scope + "## Rules\n\nUse ordinary pull requests by default.\n", true},
+		"paragraph gone":            {body + "## Rules\n\nUse ordinary pull requests by default.\n", false},
+		"requires a PR":             {body + "CRW scope: CRW internal work is push-only. Internal work opens a pull request.\n\n## Rules\n", false},
+		"moved below":               {body + "## Rules\n\n" + scope, false},
+		"rules now apply":           {body + "CRW scope: CRW internal work is push-only. Internal work opens no pull request. The rules below apply to it.\n\n## Rules\n", false},
+		"phrases retired":           {body + "CRW scope: The old phrases \"push-only\", \"opens no pull request\", and \"do not apply to it\" are obsolete. Internal work must submit a pull request.\n\n## Rules\n", false},
+		"phrases quoted as history": {body + "CRW scope: CRW internal work is push-only, opens no pull request and the rules below do not apply to it, which no longer holds.\n\n## Rules\n", false},
+		"requires one":              {body + "CRW scope: CRW internal work is push-only. Internal work opens no pull request, but a change requires a pull request before the rules below do not apply to it.\n\n## Rules\n", false},
 	} {
 		if got := pushOnlyScopeProblem(c.text) == ""; got != c.ok {
 			t.Errorf("%s: scope accepted = %v, want %v", name, got, c.ok)
