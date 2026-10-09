@@ -275,3 +275,15 @@ python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_
 === CRW-951-exec-09-decoded-getattr-call | E
 --why Verifier round 3 keep: a real decoded getattr call is a run-time name and stays an attempt.
 python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x67etattr(p, \"write_text\")(\"x\")")'
+
+=== CRW-951-exec-10-decoded-mode-open-data | R
+--why Verifier round 3 (same class, P2): an io.open("w") text in a string of a decoded exec program is data, not an open on a module.
+python3 -c 'import os; exec("print(\"\x69o.open(\x27w\x27)\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-11-decoded-subscript-data | R
+--why Verifier round 3 (same class, P2): a computed subscript text a[i] in a string of a decoded exec program is data.
+python3 -c 'import os; exec("print(\"a\x5bi]\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-12-decoded-subscript-call | E
+--why Verifier round 3 keep: a real computed subscript in a decoded exec program stays an attempt.
+python3 -c 'import os; k="w"; exec("os.__dict__\x5bk]")'

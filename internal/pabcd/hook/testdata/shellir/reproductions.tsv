@@ -823,3 +823,6 @@ added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'imp
 added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; exec("print(\"\x67etattr\")"); print(os.path.exists("{MEMORY}/n.md"))'	CRW-951-exec-07-decoded-runtime-name-data	row	-
 added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_bytes(b\"x\")")'	CRW-951-exec-08-decoded-write-bytes-call	row	-
 added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x67etattr(p, \"write_text\")(\"x\")")'	CRW-951-exec-09-decoded-getattr-call	row	-
+added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; exec("print(\"\x69o.open(\x27w\x27)\")"); print(os.path.exists("{MEMORY}/n.md"))'	CRW-951-exec-10-decoded-mode-open-data	row	-
+added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; exec("print(\"a\x5bi]\")"); print(os.path.exists("{MEMORY}/n.md"))'	CRW-951-exec-11-decoded-subscript-data	row	-
+added by CRW-951 (fix round 4: verifier P1 finding of 72bc2e989)	python3 -c 'import os; k="w"; exec("os.__dict__\x5bk]")'	CRW-951-exec-12-decoded-subscript-call	row	-
