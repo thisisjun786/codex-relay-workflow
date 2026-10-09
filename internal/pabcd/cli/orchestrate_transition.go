@@ -316,6 +316,17 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
 			return orchestrateCommitOutcome{}, err
 		}
+		// CRW-1113: the drain before the lock may have met a busy goalplan lock and left a kept reviewer sign-off behind, so the
+		// kept sign-offs are applied again here, inside the lock this publication holds (the session lock is held by the caller).
+		// The binding below is judged on the plan as the drain leaves it: a kept FAIL refuses, a kept PASS counts, and none is
+		// left to be deleted after the session has moved to B.
+		if cur.Phase == state.PhaseA && to == state.PhaseB {
+			var unapplied int
+			if plan, unapplied = hook.DrainReviewObserverInboxInLock(cwd, sessionID, plan); unapplied > 0 {
+				return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) +
+					"; a reviewer sign-off was kept but its verdict could not be written to the plan, so the review binding cannot be judged. Retry the transition. Nothing was written."}}, nil
+			}
+		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
 			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}}, nil
 		}

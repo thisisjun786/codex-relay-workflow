@@ -189,15 +189,19 @@ func (o reviewObserver) drainEntry(plan *goalplan.Goalplan, st state.State, sess
 }
 
 // drainInbox runs inside the goalplan write lock, with the session lock held by the caller. pending are the entries to judge, oldest
-// first; every one that reached a decision is removed.
-func (o reviewObserver) drainInbox(plan *goalplan.Goalplan, st state.State, sessionID string, pending []reviewInboxItem) {
+// first; every one that reached a decision is removed. kept counts those that stayed because their plan write failed.
+func (o reviewObserver) drainInbox(plan *goalplan.Goalplan, st state.State, sessionID string, pending []reviewInboxItem) (next *goalplan.Goalplan, kept int) {
 	for _, item := range pending {
 		var retry bool
 		plan, retry = o.drainEntry(plan, st, sessionID, item.entry)
-		if !retry && item.path != "" {
+		switch {
+		case retry:
+			kept++
+		case item.path != "":
 			_ = os.Remove(item.path)
 		}
 	}
+	return plan, kept
 }
 
 // DrainReviewObserverInbox applies the sign-offs the review observer kept for sessionID to the audit round they name. The caller holds
@@ -216,9 +220,34 @@ func DrainReviewObserverInbox(cwd, sessionID string) {
 	observer := reviewObserver{cwd: cwd, slug: st.Slug}
 	_, _ = goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
 		observer.dropUnreadable(unreadable)
-		observer.drainInbox(plan, st, sessionID, pending)
+		_, _ = observer.drainInbox(plan, st, sessionID, pending)
 		return "", nil
 	}, nil)
+}
+
+// DrainReviewObserverInboxInLock is DrainReviewObserverInbox for a caller that already holds the session lock and the goalplan write
+// lock (the A>B publication does): it applies the kept sign-offs to plan, which the caller read inside its lock, writes the plan the
+// same way a live sign-off does, and returns the plan as it stands afterwards, which the caller judges. It takes no lock and never
+// fails. kept counts the entries a valid verdict of which could not be written: they stay for the next drain, and the caller must not
+// move the session on past a verdict it could not record.
+func DrainReviewObserverInboxInLock(cwd, sessionID string, plan *goalplan.Goalplan) (next *goalplan.Goalplan, kept int) {
+	next = plan
+	defer func() {
+		if recover() != nil {
+			next, kept = plan, 0
+		}
+	}()
+	st := state.ReadState(cwd, sessionID)
+	if st.Slug == "" || plan == nil {
+		return plan, 0
+	}
+	pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
+	if len(pending) == 0 && len(unreadable) == 0 {
+		return plan, 0
+	}
+	observer := reviewObserver{cwd: cwd, slug: st.Slug}
+	observer.dropUnreadable(unreadable)
+	return observer.drainInbox(plan, st, sessionID, pending)
 }
 
 // dropUnreadable removes inbox files that are not one of ours, with one bounded row each: they can never be judged.

@@ -63,10 +63,10 @@ func HandleReviewObserver(raw string) (out string) {
 	}
 	// CRW-1113 (port: fixed): a missed recording is no longer a lost sign-off. The sign-off is kept first (reviewobserver_inbox.go),
 	// then published when the locks allow, and an entry that was not published is drained at the next legitimate hook or transition.
-	// An inbox that cannot keep it is reported in the ledger when the locks allow and never read as an approval; the sign-off is
-	// still tried once in memory. A child with no agent id has nothing to be kept under and is ignored below, as before.
+	// An inbox that cannot keep it is reported in the ledger at once, whether or not a lock is free (the row is an append, which takes
+	// no lock), and is never read as an approval; the sign-off is still tried once in memory. A child with no agent id has nothing to
+	// be kept under and is ignored below, as before.
 	agentID := field("agent_id")
-	var keepErr error
 	var inMemory []reviewInboxItem
 	if signoff != nil {
 		entry := reviewObserverNewEntry(sessionID, unlocked, goalplan.ReadGoalplan(cwd, unlocked.Slug), agentID, signoff)
@@ -74,8 +74,10 @@ func HandleReviewObserver(raw string) (out string) {
 		case agentID == "":
 			inMemory = append(inMemory, reviewInboxItem{entry: entry})
 		default:
-			if keepErr = reviewObserverInboxPut(cwd, entry); keepErr != nil {
+			if keepErr := reviewObserverInboxPut(cwd, entry); keepErr != nil {
 				inMemory = append(inMemory, reviewInboxItem{entry: entry})
+				reviewObserver{cwd: cwd, slug: unlocked.Slug}.note(reviewObserverInboxFailed,
+					reviewObserverBounded("the sign-off could not be kept: "+keepErr.Error()), nil, nil)
 			}
 		}
 	}
@@ -87,14 +89,11 @@ func HandleReviewObserver(raw string) (out string) {
 		observer := reviewObserver{cwd: cwd, slug: st.Slug}
 		pending, unreadable := reviewObserverInboxRead(cwd, sessionID)
 		_, _ = goalplan.WithGoalplanWriteLock(cwd, st.Slug, func(plan *goalplan.Goalplan) (string, error) {
-			if keepErr != nil {
-				observer.note(reviewObserverInboxFailed, reviewObserverBounded("the sign-off could not be kept: "+keepErr.Error()), nil, nil)
-			}
 			if signoff == nil {
 				observer.observeUnparsed(plan, st)
 			}
 			observer.dropUnreadable(unreadable)
-			observer.drainInbox(plan, st, sessionID, append(pending, inMemory...))
+			_, _ = observer.drainInbox(plan, st, sessionID, append(pending, inMemory...))
 			return "", nil
 		}, nil)
 		return nil
@@ -184,7 +183,9 @@ func (o reviewObserver) observe(plan *goalplan.Goalplan, st state.State, session
 		ignore("the round audited work-phase " + audited + ", but " + current + " is active")
 		return plan, false
 	}
-	if e.WorkPhaseID != *active {
+	// An entry kept while the plan could not be read has no work-phase of its own (reviewObserverNewEntry); it is bound to the round's,
+	// which the check above has just shown to be the active one, as a live sign-off was before the inbox.
+	if e.WorkPhaseID != "" && e.WorkPhaseID != *active {
 		ignore("the sign-off arrived for work-phase " + e.WorkPhaseID + ", but " + *active + " is active")
 		return plan, false
 	}

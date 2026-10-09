@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -257,18 +258,107 @@ func TestReviewObserverInboxFailureIsADiagnosticNotAnApproval(t *testing.T) {
 			t.Fatalf("one bounded diagnostic row: %q", ledger)
 		}
 	})
-	t.Run("lock held", func(t *testing.T) {
-		e := reviewObsSeed(t, "rb", nil)
-		launch := e.open(t)
-		broken(e, t)
-		release := e.holdGoalplanLock(t)
-		e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
-		release()
-		e.stop(t, reviewObsType("explorer"), "other-1", "nothing")
-		if r := e.round(t); r.Status != goalplan.ReviewInFlight || r.Lane.Verdict != "" {
-			t.Fatalf("a sign-off the inbox could not keep is not read as an approval: %+v", r)
+	// The diagnostic does not wait for a lock: with the sign-off lost to a busy lock and an inbox that cannot keep it, the failure is
+	// still said once, bounded, before the child is released.
+	for name, hold := range map[string]func(reviewObsEnv, *testing.T) func(){
+		"goalplan lock held": reviewObsEnv.holdGoalplanLock,
+		"session lock held":  reviewObsEnv.holdSessionLock,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := reviewObsSeed(t, "rb", nil)
+			launch := e.open(t)
+			broken(e, t)
+			release := hold(e, t)
+			e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
+			ledger := e.ledger(t)
+			if got := strings.Count(ledger, "review_signoff_inbox_failed"); got != 1 || len(ledger) > 2000 {
+				t.Fatalf("one bounded diagnostic row although no lock was free: %d rows, %q", got, ledger)
+			}
+			release()
+			e.stop(t, reviewObsType("explorer"), "other-1", "nothing")
+			if r := e.round(t); r.Status != goalplan.ReviewInFlight || r.Lane.Verdict != "" {
+				t.Fatalf("a sign-off the inbox could not keep is not read as an approval: %+v", r)
+			}
+			if got := strings.Count(e.ledger(t), "review_signoff_inbox_failed"); got != 1 {
+				t.Fatalf("the diagnostic is written once: %d", got)
+			}
+		})
+	}
+}
+
+// A plan the first, unlocked read could not open (a writer's rename window, a transient permission error) is not a plan whose
+// work-phase differs: the sign-off keeps no work-phase then, and the drain, which reads the plan under the locks, binds it to the
+// round's own work-phase. It used to be kept with an empty one and refused for that, so a legitimate sign-off was deleted.
+func TestReviewObserverTransientlyUnreadablePlanDoesNotDestroyASignoff(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	e := reviewObsSeed(t, "rb", nil)
+	launch := e.open(t)
+	dir, err := goalplan.GoalplanDir(e.cwd, e.slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, goalplan.GoalplanFile)
+	if err := os.Chmod(file, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(file, 0o644) })
+	if goalplan.ReadGoalplan(e.cwd, e.slug) != nil {
+		t.Fatal("setup: the plan must be unreadable for the first read")
+	}
+	// The plan is readable again by the time the session lock is taken.
+	restore := hook.SetReviewObserverSessionLock(func(cwd, sessionID string, fn func() error) error {
+		if err := os.Chmod(file, 0o644); err != nil {
+			t.Fatal(err)
 		}
+		return state.WithSessionLock(cwd, sessionID, fn)
 	})
+	defer restore()
+	e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
+	r := e.round(t)
+	if r.Status != goalplan.ReviewApproved || r.Lane.Verdict != goalplan.VerdictPass || r.Lane.ReviewerSession == nil || *r.Lane.ReviewerSession != "reviewer-1" {
+		t.Fatalf("a legitimate sign-off survives one unreadable look at the plan: %+v\n%s", r, e.ledger(t))
+	}
+	if strings.Contains(e.ledger(t), "sign-off arrived for work-phase") {
+		t.Fatalf("no work-phase mismatch is claimed: %q", e.ledger(t))
+	}
+}
+
+// The same kept entry still refuses a sign-off that belongs to a work-phase other than the one active, so an unknown work-phase is
+// resolved from the round and never waves a stale one through.
+func TestReviewObserverUnknownWorkPhaseEntryStillFollowsTheRound(t *testing.T) {
+	e := reviewObsSeed(t, "rb", nil)
+	launch := e.open(t)
+	release := e.holdGoalplanLock(t)
+	e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "PASS"))
+	release()
+	files := e.inboxFiles(t)
+	if len(files) != 1 {
+		t.Fatal("the sign-off is kept")
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(files[0], []byte(strings.Replace(string(raw), `"workPhaseId":"wp0"`, `"workPhaseId":""`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := goalplan.ReadGoalplan(e.cwd, e.slug)
+	other := "wp-other"
+	plan.WorkPhases = append(plan.WorkPhases, goalplan.GoalplanWorkPhase{ID: other, Title: "other", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}})
+	plan.ActiveWorkPhaseID = &other
+	plan.WorkPhases[0].Status = goalplan.WorkPhaseDone
+	if err := goalplan.WriteGoalplan(e.cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	e.stop(t, reviewObsType("explorer"), "other-1", "nothing")
+	if r := e.round(t); r.Status == goalplan.ReviewApproved || r.Lane.Verdict == goalplan.VerdictPass {
+		t.Fatalf("an entry for the old work-phase approves nothing: %+v", r)
+	}
+	if got := len(e.inboxFiles(t)); got != 0 {
+		t.Fatalf("refused entry dropped: %d", got)
+	}
 }
 
 // A kept entry that is not one of ours cannot be judged: it is removed with one row, and the entries after it still drain.
