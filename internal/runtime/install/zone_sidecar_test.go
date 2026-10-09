@@ -543,7 +543,8 @@ func TestTheBackupStillRefusesWhatChangedOtherwise(t *testing.T) {
 			want: "changed",
 		},
 		"a log that was not copied holds commits in the second listing": {
-			setup: func(t *testing.T, h *host) {},
+			// the gate's own reads leave no log in the state directory (CRW-837), so the empty one the test drops is put there
+			setup: func(t *testing.T, h *host) { putSidecar(t, h, sidecarWalName, 32) },
 			step: func(t *testing.T, h *host, step string) error {
 				switch step {
 				case "listed":
@@ -593,9 +594,7 @@ func TestTheBackupStillRefusesWhatChangedOtherwise(t *testing.T) {
 	}
 }
 
-// The branch a log takes when it is absent from the first listing and appears in the second cannot be reached end to
-// end: the swap gate's own read of the store leaves an empty relay.sqlite3-wal in the state directory before the
-// backup's first listing, so the listing always holds a -wal. It is pinned here, white-box, against the two pieces the
+// The branch a log takes when it is absent from the first listing and appears in the second is pinned here, white-box, against the two pieces the
 // end-to-end path uses: the comparison of two listings (which leaves both sidecars out, so the appearance is not a
 // change) and the record that reading produces for the manifest.
 //

@@ -198,3 +198,11 @@ func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
 func WriteExecutable(target string, body []byte, mode os.FileMode) error {
 	return writeExecutable(target, body, mode)
 }
+
+// ReplaceStateBackupRoom makes the state-directory backup's free-space check go through room until restored: a test makes the filesystem seem too small for
+// the first listing of the state directory and large enough for a smaller one (CRW-837).
+func ReplaceStateBackupRoom(room func(parent string, need int64) error) (restore func()) {
+	saved := stateBackupRoom
+	stateBackupRoom = room
+	return func() { stateBackupRoom = saved }
+}

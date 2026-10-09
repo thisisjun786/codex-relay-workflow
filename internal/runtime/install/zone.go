@@ -47,6 +47,10 @@ var stateBackupStep = func(step string) error { return nil }
 // one twice would change them.
 var stateBackupListed = func() error { return nil }
 
+// stateBackupRoom is a seam: the free-space check the backup makes before it copies a byte (enoughRoom). A test makes the filesystem seem too small for the
+// first listing and large enough for a smaller one (CRW-837).
+var stateBackupRoom = enoughRoom
+
 // stateBackupVerified is a seam: it is called once every byte of the copy is in place and verified, and before the
 // integrity gate opens its scratch duplicate. A test damages the copy here to prove the gate refuses it (CRW-862).
 var stateBackupVerified = func() error { return nil }
@@ -105,9 +109,9 @@ const walHeaderBytes = 32
 
 // storeSidecarWal is the manifest's reading of the store's write-ahead log from what happened to it while the backup
 // was made: its bytes were copied, it was listed and had gone by its copy, it was absent from the first listing and
-// appeared in the second so it was not copied, or it was absent from both listings. The appeared reading cannot be
-// reached end to end — the swap gate's own read of the store leaves an empty log in the state directory before the
-// first listing — so it is pinned by the white-box test that calls this through export_test.go.
+// appeared in the second so it was not copied, or it was absent from both listings. The appeared reading is pinned by the
+// white-box test that calls this through export_test.go (CRW-837: the gate's own reads leave no empty log in the state
+// directory now, so a log that appears after the first listing is a real arrival, not the gate's own).
 func storeSidecarWal(copied, gone, appeared bool) string {
 	switch {
 	case gone:
@@ -259,14 +263,29 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 	if err := stateBackupListed(); err != nil {
 		return failure(false, "%v", err)
 	}
-	var total int64
-	for _, e := range entries {
-		total += e.Size
-	}
 	// The integrity gate duplicates the copied store beside the backup before the manifest is written, so
 	// the destination's filesystem must hold the backup and that scratch duplicate at once (CRW-862).
-	if err := enoughRoom(filepath.Dir(dest), total+scratchNeed(entries)); err != nil {
-		return failure(false, "%v", err)
+	needOf := func(list []backedUp) int64 {
+		var total int64
+		for _, e := range list {
+			total += e.Size
+		}
+		return total + scratchNeed(list)
+	}
+	roomErr := stateBackupRoom(filepath.Dir(dest), needOf(entries))
+	var walWasListed bool
+	if roomErr != nil {
+		// The refusal rests on the first listing, and the store's log is a file another connection checkpoints away at any moment: a large log that is gone
+		// now makes the need smaller than the listing says. The state directory is read once more, still before any byte is copied, and the check is made
+		// again only when that listing needs less; the guarantee of room before the copy is kept, and a log that is still there refuses as before.
+		if relisted, relistedSkipped, err := listState(source, selection.DBPath()); err == nil && needOf(relisted) < needOf(entries) {
+			walWasListed = listingHasWal(entries) && !listingHasWal(relisted)
+			entries, skipped = relisted, relistedSkipped
+			roomErr = stateBackupRoom(filepath.Dir(dest), needOf(entries))
+		}
+	}
+	if roomErr != nil {
+		return failure(false, "%v", roomErr)
 	}
 	// the nearest directory that exists now: the directories made below it are synced, up to it, once the backup is whole
 	existing := filepath.Dir(dest)
@@ -283,7 +302,7 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 		return failure(false, "the backup directory could not be created: %v", err)
 	}
 	copied := make([]backedUp, 0, len(entries))
-	var walCopied, walGone bool
+	walCopied, walGone := false, walWasListed
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			return failure(true, "interrupted while copying: %v", err)
