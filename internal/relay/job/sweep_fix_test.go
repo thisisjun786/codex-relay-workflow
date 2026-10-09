@@ -3,7 +3,9 @@ package job
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -104,5 +106,80 @@ func TestAFailedOnKeepsTheEnabledAtTime(t *testing.T) {
 	}
 	if _, err := os.Lstat(EnabledAtPath(ws)); !os.IsNotExist(err) {
 		t.Errorf("a failed on left an enabled-at that was not there: %v", err)
+	}
+}
+
+// CRW-1134, verification fix round 2.
+
+// Two ons that both read the switch off before either took the lock: the second must see the first one's ON under the lock and
+// leave the enabled-at time alone, or a job that ended between the two would never wake.
+func TestConcurrentOnsEnableOnce(t *testing.T) {
+	ws := workspace(t)
+	store(t, ws)
+	put(t, DisabledPath(ws), "2026-09-09T00:00:00.000Z\n")
+	r := finished(ws, "between", "2026-09-09T00:02:00.000Z")
+	r.SessionID = sp("S1")
+	save(t, ws, r)
+	var mu sync.Mutex
+	minute := 0
+	clock := func() time.Time { // 00:01, 00:03, 00:05, ...
+		mu.Lock()
+		defer mu.Unlock()
+		minute += 2
+		return time.Date(2026, 9, 9, 0, minute-1, 0, 0, time.UTC)
+	}
+	unlock, err := lockStore(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs := make([]string, 2)
+	var wg sync.WaitGroup
+	for i := range outs {
+		wg.Go(func() {
+			res, err := RunCLI([]string{"on"}, ws, os.LookupEnv, clock)
+			if err != nil {
+				t.Errorf("on: %v", err)
+			}
+			outs[i] = fmt.Sprint(res.Out)
+		})
+	}
+	time.Sleep(300 * time.Millisecond) // both ons are past their switch read and wait on the lock
+	unlock()
+	wg.Wait()
+	if got := get(t, EnabledAtPath(ws)); got != "2026-09-09T00:01:00.000Z\n" {
+		t.Errorf("enabled-at %q after two ons, want the first one's time; answers %q", got, outs)
+	}
+	if !strings.Contains(outs[0]+outs[1], "이미 ON") {
+		t.Errorf("neither on saw the other: %q", outs)
+	}
+	if n := strings.Count(get(t, filepath.Join(BGDir(ws), LedgerFile)), `"enabled"`); n != 1 {
+		t.Errorf("%d enabled rows", n)
+	}
+	if out := HandleStop(HookPayload{SessionID: "S1", Cwd: ws}, ws, hookEnv(nil), noon); !strings.Contains(out, "between") {
+		t.Errorf("the job that ended after the first on does not wake: %q", out)
+	}
+}
+
+// An enabled-at that does not read cannot be put back, so on stops before it changes anything.
+func TestAnOnThatCannotReadEnabledAtChangesNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file without read permission")
+	}
+	ws := workspace(t)
+	store(t, ws)
+	put(t, EnabledAtPath(ws), "2026-09-09T00:01:00.000Z\n")
+	if err := os.Chmod(EnabledAtPath(ws), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(EnabledAtPath(ws), 0o600) })
+	mkdir(t, DisabledPath(ws)) // an off switch that cannot be removed
+	if r, err := RunCLI([]string{"on"}, ws, os.LookupEnv, time.Now); err == nil && r.Code == 0 {
+		t.Fatalf("on reported success: %+v", r)
+	}
+	if err := os.Chmod(EnabledAtPath(ws), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(t, EnabledAtPath(ws)); got != "2026-09-09T00:01:00.000Z\n" {
+		t.Errorf("enabled-at after a failed on: %q", got)
 	}
 }

@@ -239,9 +239,6 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 	if _, err := EnsureDir(cwd); err != nil {
 		return "", err
 	}
-	if verb == "on" && !ReadDisabledState(cwd).Disabled {
-		return "bg wake 이미 ON", nil
-	}
 	path, event := DisabledPath(cwd), "disabled"
 	out := "bg wake OFF (이 워크트리). 다시 켜려면: crw relay job on"
 	if verb == "on" {
@@ -250,9 +247,20 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 	}
 	// The switch and the enabled-at time change together under the store lock, and a failed on leaves both as they were: a
 	// completion that ended while the wake was off is held back by that time, so a time written by an on that did not turn the wake on
-	// would hide completions from the wake that is still off (CRW-1134).
+	// would hide completions from the wake that is still off (CRW-1134). Whether the wake is already on is decided under the same
+	// lock: two ons that both read it off would otherwise both write the time, and the second would hide the completions that ended
+	// between them.
+	already := false
 	err := withLock(cwd, false, func() error {
+		if verb == "on" && !ReadDisabledState(cwd).Disabled {
+			already = true
+			return nil
+		}
 		prev, prevErr := readText(path)
+		if verb == "on" && prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
+			// A time that does not read cannot be put back after a failure, so nothing is changed.
+			return fmt.Errorf("the enabled-at time %s does not read: %w", path, prevErr)
+		}
 		if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
 			return err
 		}
@@ -260,30 +268,33 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 			return nil
 		}
 		if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
-			restoreText(cwd, path, prev, prevErr)
-			return err
+			return errors.Join(err, restoreText(cwd, path, prev, prevErr))
 		}
 		// RemovePath ignores what it cannot remove (a directory): the switch would stay off while on says ON (CRW-1134).
 		if _, err := os.Lstat(DisabledPath(cwd)); !errors.Is(err, os.ErrNotExist) {
-			restoreText(cwd, path, prev, prevErr)
-			return fmt.Errorf("the off switch %s cannot be removed, so the wake stays off", DisabledPath(cwd))
+			return errors.Join(fmt.Errorf("the off switch %s cannot be removed, so the wake stays off", DisabledPath(cwd)), restoreText(cwd, path, prev, prevErr))
 		}
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
+	if already {
+		return "bg wake 이미 ON", nil
+	}
 	_ = appendLedger(cwd, Event{{"event", event}}, clock)
 	return out, nil
 }
 
-// restoreText puts a file back as readText found it: its text, or no file when it was not there.
-func restoreText(cwd, path, prev string, prevErr error) {
+// restoreText puts a file back as readText found it: its text, or no file when it was not there. Its error is the restore's.
+func restoreText(cwd, path, prev string, prevErr error) error {
 	if prevErr == nil {
-		_ = AtomicWrite(cwd, path, prev)
-	} else if errors.Is(prevErr, os.ErrNotExist) {
-		_ = RemovePath(cwd, path)
+		return AtomicWrite(cwd, path, prev)
 	}
+	if err := RemovePath(cwd, path); err != nil {
+		return fmt.Errorf("the enabled-at time %s could not be put back: %w", path, err)
+	}
+	return nil
 }
 
 func cliTail(arg *string, available int) int {
