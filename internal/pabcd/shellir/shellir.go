@@ -106,7 +106,10 @@ type Context struct {
 	inTextPipe bool
 	// Carrier names the construct that re-read this text, for example "bash -c".
 	Carrier string
-	Depth   int
+	// Feed names the run-time carrier whose input feeds this text through the shells it runs (find -exec sh -c): the program
+	// it runs gets its operands at run time even though Carrier names the shell.
+	Feed  string
+	Depth int
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -954,6 +957,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if name == "xargs" || name == "find" || name == "parallel" || name == "entr" {
 		// The operands of these programs arrive at run time, so the inner program is marked.
 		ctx.Carrier = name
+		ctx.Feed = name
 	}
 	if u.recordName != "" {
 		// The wrapper's own file operand is a write of its own (script transcript, strace -o FILE).
