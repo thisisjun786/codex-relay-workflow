@@ -152,7 +152,8 @@ func TestPromptDcloseCloseRowKeyAbsenceIsNotNull(t *testing.T) {
 // TestPromptDcloseLoneSurrogateRowIsNotTheReplacementCharacterRow is the U02-F02 case: the ledgers
 // hold "wp-\ud800" (a lone surrogate JSON.parse keeps) and the current id holds the real U+FFFD, so
 // neither stored row is this close's row and both are written. A stored row that holds the
-// real U+FFFD (as an escape or as the character) is the row, and nothing is added.
+// real U+FFFD (as an escape, as the character or as raw invalid UTF-8 bytes that read as one U+FFFD)
+// is the row, and nothing is added.
 func TestPromptDcloseLoneSurrogateRowIsNotTheReplacementCharacterRow(t *testing.T) {
 	const id = "wp-�"
 	cases := []struct {
@@ -164,6 +165,11 @@ func TestPromptDcloseLoneSurrogateRowIsNotTheReplacementCharacterRow(t *testing.
 		{"lone surrogate escape", `wp-\ud800`, 2, 2},
 		{"U+FFFD escape", `wp-\ufffd`, 1, 1},
 		{"U+FFFD character", "wp-�", 1, 1},
+		// Raw bytes, never an escape: the incomplete multi-byte prefix E0 A0 is ONE U+FFFD to Node's
+		// readFileSync utf8 (WHATWG maximal subpart, source.DecodeUTF8) and TWO to a per-byte
+		// replacement, so this case fails when the hook reader drops DecodeUTF8 (the CLI control is
+		// TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement).
+		{"raw incomplete multi-byte prefix E0 A0", "wp-\xe0\xa0", 1, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
