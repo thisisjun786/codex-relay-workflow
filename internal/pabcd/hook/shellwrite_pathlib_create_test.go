@@ -1,6 +1,8 @@
 package hook
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,6 +91,67 @@ func TestPathlibCreateRealGate(t *testing.T) {
 				t.Errorf("the GitHub post guard answered %s", out)
 			}
 		})
+	}
+}
+
+// A computed receiver without a protected string still writes relative to the
+// command's effective directory. The grant belongs to the session cwd, even
+// after the command changes directory.
+func TestPathlibCreateEffectiveDirectory(t *testing.T) {
+	for _, method := range []string{"touch", "mkdir"} {
+		for _, receiver := range []string{
+			`Path("x")`, `Path(name)`, `Path(".").joinpath("x")`, `(Path(".") / "x")`, `p`, `Path(f"{name}")`,
+		} {
+			for _, scene := range []string{"cwd-memory", "cwd-memory-child", "cd-memory", "cd-unknown", "cwd-linked-memory", "cd-linked-memory", "cwd-work", "cd-work"} {
+				t.Run(method+"/"+receiver+"/"+scene, func(t *testing.T) {
+					cwd, root, env := gateScene(t)
+					child := filepath.Join(root, "child")
+					if err := os.MkdirAll(child, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					link := filepath.Join(filepath.Dir(cwd), "memory-link")
+					if err := os.Symlink(root, link); err != nil {
+						t.Fatal(err)
+					}
+					prefix := ""
+					wantWrite := true
+					switch scene {
+					case "cwd-memory":
+						cwd = root
+					case "cwd-memory-child":
+						cwd = child
+					case "cd-memory":
+						prefix = "cd '" + root + "'; "
+					case "cd-unknown":
+						prefix = `cd "$DEST"; `
+					case "cwd-linked-memory":
+						cwd = link
+					case "cd-linked-memory":
+						prefix = "cd '" + link + "'; "
+					case "cwd-work":
+						wantWrite = false
+					case "cd-work":
+						prefix = "cd '" + cwd + "'; "
+						cwd, wantWrite = root, false
+					}
+					program := `from pathlib import Path; name="x"; p=Path("x"); ` + receiver + "." + method + "()"
+					payload := gateBash(t, cwd, prefix+"python3 -c '"+program+"'")
+					if out := HandleMemoryWriteGate(payload, env); strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
+						t.Errorf("without grant: %q, want attempt=%v", out, wantWrite)
+					}
+					gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+					if out := HandleMemoryWriteGate(payload, env); out != "" {
+						t.Fatalf("with grant: %q", out)
+					}
+					if got := state.ReadState(cwd, gateSession).MemoryWriteGrant; got == wantWrite {
+						t.Errorf("grant kept=%v, want %v", got, !wantWrite)
+					}
+					if out := HandleMemoryWriteGate(payload, env); strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
+						t.Errorf("after grant: %q, want attempt=%v", out, wantWrite)
+					}
+				})
+			}
+		}
 	}
 }
 

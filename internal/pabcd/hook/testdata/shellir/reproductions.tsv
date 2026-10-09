@@ -1739,3 +1739,13 @@ CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	bash 
 CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	for ((i=0; $(bash lint.sh; echo 1) && i<2; i+=$(bash refresh.sh; echo 1))); do :; done	CRW-1059-18	row	-
 CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash refresh.sh) bash lint.sh	CRW-1059-19	row	-
 CRW-1059 evaluation of 0ef1b43d (post-evaluation round, findings d1 to d3)	X=$(bash lint.sh) bash refresh.sh	CRW-1059-20	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path("x").touch()'	CRW-951-fix6-touch-cd-relative	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(name).touch()'	CRW-951-fix6-touch-cd-computed	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(".").joinpath("x").touch()'	CRW-951-fix6-touch-cd-chain	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	python3 -c 'from pathlib import Path; name="x"; Path("x").touch()'	CRW-951-fix6-touch-work-relative	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	python3 -c 'from pathlib import Path; name="x"; Path(name).touch()'	CRW-951-fix6-touch-work-computed	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path("x").mkdir()'	CRW-951-fix6-mkdir-cd-relative	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'	CRW-951-fix6-mkdir-cd-computed	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(".").joinpath("x").mkdir()'	CRW-951-fix6-mkdir-cd-chain	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	python3 -c 'from pathlib import Path; name="x"; Path("x").mkdir()'	CRW-951-fix6-mkdir-work-relative	row	-
+added by CRW-951 (fix6: effective-directory P0 regression on 556a265bd)	python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'	CRW-951-fix6-mkdir-work-computed	row	-
