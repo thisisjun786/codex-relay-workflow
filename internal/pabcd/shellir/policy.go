@@ -22,12 +22,17 @@ func isShell(name string) bool {
 
 // isCodeEnvName lists the environment names that make a program run code the
 // text does not show. The list is closed; tests pin it. SHELL picks the shell that
-// flock -c, script -c, watch and entr -s run their string with.
+// flock -c, script -c, watch and entr -s run their string with. RIPGREP_CONFIG_PATH names
+// a configuration whose --pre runs a program; GIT_EXTERNAL_DIFF names the program git diff
+// runs; GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT, GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM give
+// git configuration keys (diff.external, core.pager) the text does not show.
 func isCodeEnvName(name string) bool {
 	switch name {
 	case "BASH_ENV", "ENV", "ZDOTDIR", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_SSH_COMMAND",
 		"PAGER", "GIT_PAGER", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONSTARTUP", "PYTHONPATH",
-		"NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "npm_config_script_shell", "SHELL":
+		"NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "npm_config_script_shell", "SHELL",
+		"RIPGREP_CONFIG_PATH", "GIT_EXTERNAL_DIFF", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM":
 		return true
 	}
 	return false

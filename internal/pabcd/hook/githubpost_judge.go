@@ -226,8 +226,9 @@ func githubPostScriptLine(e shellir.Exec) bool {
 	case "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "echo":
 		return true
 	case "printf":
-		// printf -v assigns a variable (PATH among them).
-		return len(args) == 0 || !strings.HasPrefix(args[0], "-")
+		// printf -v assigns a variable (PATH among them), and zsh printf %n stores a count in the variable it names: only a
+		// format of plain conversions is read.
+		return len(args) == 0 || githubPostPrintfFormat(args[0])
 	case "rg":
 		for _, a := range args {
 			switch {
@@ -257,29 +258,72 @@ func githubPostInstalledName(e shellir.Exec) bool {
 	return false
 }
 
+// githubPostPrintfFormat is whether a printf format is text, escapes and plain conversions only: %% or % with flags, a decimal
+// width and precision and one of the conversions s d i o u x X f F e E g G a A c b q. Any other directive (%n, which zsh reads as
+// an assignment of the count printed so far to the variable it names, a positional %1$, a * width, %(...)T) refuses the line, and
+// so does a first word that is an option (printf -v assigns a variable).
+func githubPostPrintfFormat(f string) bool {
+	if strings.HasPrefix(f, "-") {
+		return false
+	}
+	return githubPostPrintfPlain.MatchString(f)
+}
+
+// githubPostPrintfPlain matches a format whose every % starts a plain conversion.
+var githubPostPrintfPlain = regexp.MustCompile(`^(?:[^%]|%%|%[-+ #0]*[0-9]*(?:\.[0-9]*)?[sdiouxXfFeEgGaAcbq])*$`)
+
+// githubPostGitValueOpts is, per subcommand of exception B, the short options that take a value: required ones (the rest of the
+// bundle, else the next word) and optional ones (the rest of the bundle only), the way git's option parsers read them.
+var githubPostGitValueOpts = map[string]struct{ required, optional string }{
+	"log":    {"SGLnIO", "UlMCBX"},
+	"show":   {"SGLnIO", "UlMCBX"},
+	"diff":   {"SGLnIO", "UlMCBX"},
+	"grep":   {"efABCm", "O"},
+	"status": {"", "u"},
+	"commit": {"mFcCt", "uS"},
+}
+
 // githubPostGitReadLine is git of exception B: log, show, diff, grep, status or commit as the first word (no option before the
 // subcommand), without an option that writes a file (--output, in any abbreviation git accepts) or that runs a program on the files
-// (-O, --open-files-in-pager).
+// (-O, --open-files-in-pager). A short bundle is read option by option: an option that takes a value ends the bundle, so the O of
+// -SOrder or -eOpen is a value, and the word after an option whose value is required (-e -O) is that value.
 func githubPostGitReadLine(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	switch args[0] {
-	case "log", "show", "diff", "grep", "status", "commit":
-	default:
+	opts, ok := githubPostGitValueOpts[args[0]]
+	if !ok {
 		return false
 	}
-	for _, a := range args[1:] {
-		if strings.HasPrefix(a, "--") {
+	for i := 1; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return true // the words after -- are paths
+		case strings.HasPrefix(a, "--"):
 			name := strings.TrimPrefix(a, "--")
-			if i := strings.IndexByte(name, '='); i >= 0 {
-				name = name[:i]
+			if j := strings.IndexByte(name, '='); j >= 0 {
+				name = name[:j]
 			}
 			if name != "" && (strings.HasPrefix("output", name) || strings.HasPrefix("open-files-in-pager", name)) {
 				return false
 			}
-		} else if strings.HasPrefix(a, "-") && strings.Contains(a, "O") {
-			return false
+		case len(a) > 1 && a[0] == '-':
+			for j := 1; j < len(a); j++ {
+				c := a[j]
+				if c == 'O' {
+					return false
+				}
+				if strings.IndexByte(opts.optional, c) >= 0 {
+					break
+				}
+				if strings.IndexByte(opts.required, c) >= 0 {
+					if j == len(a)-1 {
+						i++ // the value is the next word
+					}
+					break
+				}
+			}
 		}
 	}
 	return true

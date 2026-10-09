@@ -359,8 +359,8 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-31 | Q
---why A prefix assignment on an exception B line can change what the program runs (RIPGREP_CONFIG_PATH names a config with --pre): the script is refused.
+=== CRW-875-22-31 | U
+--why A prefix assignment on an exception B line can change what the program runs (RIPGREP_CONFIG_PATH names a config with --pre): the script is refused, by the reader too (a code-bearing environment name).
 --file {TMP}/b.md
 hello
 --file {TMP}/w.sh
@@ -372,8 +372,8 @@ gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
 
-=== CRW-875-22-31b | Q
---why An export line is a command of the script that is neither form A nor exception B: the script is refused.
+=== CRW-875-22-31b | U
+--why An export line is a command of the script that is neither form A nor exception B: the script is refused, by the reader too (a code-bearing environment name).
 --file {TMP}/b.md
 hello
 --file {TMP}/w.sh
@@ -578,6 +578,158 @@ hello
 cp /dev/null $1
 --file post.sh
 ./grep -c hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-40 | Q
+--why zsh printf %n stores the count of characters printed so far in the named variable: printf '%n' PATH sets PATH to 0.
+--file {TMP}/b.md
+hello
+--file post.sh
+printf '%n' PATH
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+zsh -f post.sh
+
+=== CRW-875-22-40b | Q
+--why A %n after another conversion, and a positional %1$n, assign a variable as well.
+--file {TMP}/b.md
+hello
+--file post.sh
+printf '%s%1$n' x PATH
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+zsh -f post.sh
+
+=== CRW-875-22-40c | Q
+--why A conversion the line rule does not know the meaning of (%(...)T, a * width) is refused rather than read.
+--file {TMP}/b.md
+hello
+--file post.sh
+printf '%*s' 3 x
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-40d | T
+--why printf with a format of plain conversions (%s, %d, %%, flags and widths) and escapes prints only.
+--file {TMP}/b.md
+hello
+--file post.sh
+printf '%-10s %3d%%\n' posting 1
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+zsh -f post.sh
+
+=== CRW-875-22-41 | U
+--why RIPGREP_CONFIG_PATH names a configuration whose --pre runs a program: an assignment before the shell that runs the script is refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file {TMP}/rg.cfg
+--pre={TMP}/w.sh
+--file post.sh
+rg hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+RIPGREP_CONFIG_PATH={TMP}/rg.cfg bash post.sh
+
+=== CRW-875-22-41b | U
+--why An export of RIPGREP_CONFIG_PATH before the script runs is refused the same way.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file {TMP}/rg.cfg
+--pre={TMP}/w.sh
+--file post.sh
+rg hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+export RIPGREP_CONFIG_PATH={TMP}/rg.cfg; bash post.sh
+
+=== CRW-875-22-41c | U
+--why env RIPGREP_CONFIG_PATH=... bash post.sh passes the same configuration.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file {TMP}/rg.cfg
+--pre={TMP}/w.sh
+--file post.sh
+rg hello {TMP}/b.md
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+env RIPGREP_CONFIG_PATH={TMP}/rg.cfg bash post.sh
+
+=== CRW-875-22-41d | U
+--why GIT_EXTERNAL_DIFF names the program git diff runs: an assignment before the script that holds git diff is refused.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git diff
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+GIT_EXTERNAL_DIFF={TMP}/w.sh bash post.sh
+
+=== CRW-875-22-41e | U
+--why GIT_CONFIG_COUNT with GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0 set a configuration key (diff.external, core.pager) for git.
+--file {TMP}/b.md
+hello
+--file {TMP}/w.sh
+#!/bin/sh
+cp /dev/null $1
+--file post.sh
+git diff
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0={TMP}/w.sh bash post.sh
+
+=== CRW-875-22-42 | T
+--why The O of git log -SOrder is the value of -S, not the option -O.
+--file {TMP}/b.md
+hello
+--file post.sh
+git log -SOrder
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-42b | T
+--why The O of git grep -eOpen is the pattern of -e, and the -O after -e is its separate pattern.
+--file {TMP}/b.md
+hello
+--file post.sh
+git grep -eOpen
+git grep -e -O
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-42c | Q
+--why In git grep -lO the O is an option of the bundle (-l takes no value): -O runs a program on the files.
+--file {TMP}/b.md
+hello
+--file post.sh
+git grep -lO hello
+gh pr comment 1 --body-file {TMP}/b.md
+--cmd
+bash post.sh
+
+=== CRW-875-22-42d | Q
+--why A context count bundled before O (git grep -3O) is a number option; the O after it is -O.
+--file {TMP}/b.md
+hello
+--file post.sh
+git grep -3O hello
 gh pr comment 1 --body-file {TMP}/b.md
 --cmd
 bash post.sh
