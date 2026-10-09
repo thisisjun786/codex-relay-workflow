@@ -271,10 +271,12 @@ func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
 		scenario, _ := op["scenario"].(string)
 		surface, _ := op["surface"].(string)
 		presented, _ := op["presented"].(string)
+		found := false
 		for _, criterion := range plan.Criteria {
 			if criterion.Scenario != scenario {
 				continue
 			}
+			found = true
 			have := string(criterion.Surface)
 			if have == "" {
 				have = "logic"
@@ -283,6 +285,12 @@ func loopAddOpConflict(plan *goalplan.Goalplan, op map[string]any) string {
 				quoted, _ := json.Marshal(scenario)
 				return "a criterion with scenario " + string(quoted) + " is already registered with another surface or presentation"
 			}
+		}
+		// A key without its criterion (the state an old command left behind) shows no surface or presentation to compare
+		// with: only the default retry (logic, no presentation) is the legacy retry the key stays for.
+		if !found && (surface != "logic" || presented != "") {
+			quoted, _ := json.Marshal(scenario)
+			return "a criterion with scenario " + string(quoted) + " has a recorded key but is not in the plan, so its --surface and --presented cannot be checked against what was registered"
 		}
 		return ""
 	}
