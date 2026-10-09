@@ -265,6 +265,49 @@ func haltFaultPoint(point string) error {
 	return haltFault(point)
 }
 
+// SiteError is an error that carries where the relay met it: HaltSiteWrite for a statement the relay itself
+// issued to change the store, HaltSiteObservation for its own read of it. Its text is the wrapped error's, so
+// nothing that matches on the message moves, and errors.As still reaches the failure underneath, so the
+// classifier (CorruptingFailure) is not affected. A caller that holds only a step's error and has to decide
+// which site to write on the marker asks SiteOf (CRW-945).
+type SiteError struct {
+	Site string
+	Err  error
+}
+
+func (e *SiteError) Error() string { return e.Err.Error() }
+func (e *SiteError) Unwrap() error { return e.Err }
+
+// AtSite says err was met at site. A nil error stays nil.
+func AtSite(site string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &SiteError{Site: site, Err: err}
+}
+
+// SiteOf is the site err was marked with, or fallback when it carries none.
+func SiteOf(err error, fallback string) string {
+	var marked *SiteError
+	if errors.As(err, &marked) {
+		return marked.Site
+	}
+	return fallback
+}
+
+// DetectedCorruption is a failure of the corrupting class that was recognised from the text of a reading
+// (CorruptingDetail) and not from a SQLite error, because the observation that saw it did not keep the
+// error: the omission observer reads the store through ReadOnlyRows, which reports a failure as a field.
+// Err is why the observer is returning it now - the marker it tried to publish could not be written. The
+// classifier sees through it, so the daemon halts on it as it halts on the SQLite error itself (CRW-945).
+type DetectedCorruption struct {
+	Cause CorruptingCause
+	Err   error
+}
+
+func (e *DetectedCorruption) Error() string { return e.Err.Error() }
+func (e *DetectedCorruption) Unwrap() error { return e.Err }
+
 // HaltClearKind is the journal kind of the row a clear writes (CRW-885).
 const HaltClearKind = "store_halt_cleared"
 

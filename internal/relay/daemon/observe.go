@@ -75,6 +75,11 @@ type endedTurn struct {
 // settleDeferred settles the ends that waited for the reads of the pass.
 func (o *pass) settleDeferred(ctx context.Context) {
 	for _, e := range o.deferred {
+		if o.d.haltedStore {
+			// A settlement halted the store: the ends still waiting are left to the next daemon, which reads
+			// them again (CRW-945).
+			break
+		}
 		o.d.settle(ctx, e.r, e.turn, o.report)
 	}
 	o.deferred = nil
@@ -135,14 +140,14 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}
 	// Whatever ends the loop (the budget, the time, a failure), the failed and interrupted ends it has read are
 	// settled before it returns, as each was when it was read. A cancelled context refuses every store call, and
-	// leaves them to the next tick.
+	// leaves them to the next tick; a store this process has halted refuses nothing but is not written (CRW-945).
 	defer func() {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && !d.haltedStore {
 			o.settleDeferred(ctx)
 		}
 	}()
 	for _, next := range order {
-		if o.reads >= budget || o.spent() {
+		if d.haltedStore || o.reads >= budget || o.spent() {
 			break
 		}
 		if o.used[next.class][next.p.id] >= share {
@@ -250,11 +255,19 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 	if ended {
 		var err error
 		if ownEvent, err = d.ownReceipt(ctx, r.ID, turn); err != nil {
+			// The lookup is the relay's own read of the store: a failure of the corrupting class halts the
+			// store at the observation site rather than waiting for a note nobody acts on (CRW-945).
+			if d.halted(ctx, report, store.HaltSiteObservation, err) {
+				return
+			}
 			report.Notes = append(report.Notes, "own receipt lookup failed for "+turn.TurnID+": "+err.Error())
 			return
 		}
 		if ownEvent == "" {
 			if laterTurn, laterEvent, err = d.laterReceipt(ctx, r.ID, turn); err != nil {
+				if d.halted(ctx, report, store.HaltSiteObservation, err) {
+					return
+				}
 				report.Notes = append(report.Notes, "later receipt lookup failed for "+turn.TurnID+": "+err.Error())
 				return
 			}

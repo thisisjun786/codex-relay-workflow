@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"strings"
 )
 
@@ -133,6 +134,12 @@ func ReconcilePass(ctx context.Context, rc *Reconciler, adapter Adapter, budget 
 		}
 		outcome, err := rc.ReconcileAttempt(ctx, id, adapter, &now)
 		if err != nil {
+			// A failure of the class that halts the relay's writes (CRW-848) ends the pass and reaches the
+			// caller, which marks the store: recording it as the attempt's retry reason would write on, and
+			// the next attempt would be tried, against a store the pass has just seen damaged (CRW-945).
+			if _, corrupting := store.CorruptingFailure(err); corrupting {
+				return err
+			}
 			text := err.Error()
 			if err := markGate(ctx, rc, id, nil, true, text); err != nil {
 				return err

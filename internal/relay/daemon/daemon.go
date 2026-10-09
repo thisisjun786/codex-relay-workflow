@@ -127,7 +127,15 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		}
 		return r, err
 	}
+	if d.haltedStore {
+		// A settlement of the observation pass halted the store and the pass ended on it (CRW-945): nothing
+		// after it - the sweep, the requeue, the reconciliation, the delivery - is attempted on that store.
+		return r, nil
+	}
 	if err := d.sweep(ctx, &r); err != nil && d.halted(ctx, &r, store.HaltSiteObservation, err) {
+		return r, nil
+	}
+	if d.haltedStore {
 		return r, nil
 	}
 	if err := d.requeue(ctx, &r, now); err != nil && d.halted(ctx, &r, store.HaltSiteObservation, err) {
@@ -266,7 +274,9 @@ func (d *Daemon) halted(ctx context.Context, r *Report, site string, err error) 
 	if !ok {
 		return false
 	}
-	cause.Site = site
+	// The step that met the failure knows whether it was reading or writing; the caller's site is the one
+	// of the sub-pass it called, which is right only when the sub-pass does both (CRW-945).
+	cause.Site = store.SiteOf(err, site)
 	reason := ""
 	if recordErr := store.RecordHalt(ctx, d.Store.Path, cause); recordErr != nil {
 		reason = "store writes are halted, and the halt marker could not be written: " + recordErr.Error()
@@ -277,6 +287,21 @@ func (d *Daemon) halted(ctx context.Context, r *Report, site string, err error) 
 	// must not let the next pass treat the damaged store as healthy.
 	d.haltedStore, d.haltReason = true, reason
 	r.Notes = append(r.Notes, reason)
+	return true
+}
+
+// adoptMarker takes over a halt marker that appeared during the pass, from the observation path or another
+// process, as this process's own halt, and reports whether there was one.
+func (d *Daemon) adoptMarker(r *Report) bool {
+	if d.haltedStore {
+		return true
+	}
+	state := store.HaltStateAt(d.Store.Path)
+	if !state.Present {
+		return false
+	}
+	d.haltedStore, d.haltReason = true, haltNote(state)
+	r.Notes = append(r.Notes, d.haltReason)
 	return true
 }
 
@@ -306,7 +331,7 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 		_, err := d.Delivery.Enqueue(ctx, event, row.Get("kind").(string), row.Get("recipient_task_id").(string))
 		if err != nil {
 			if _, corrupting := store.CorruptingFailure(err); corrupting {
-				return err
+				return store.AtSite(store.HaltSiteWrite, err)
 			}
 			r.Notes = append(r.Notes, "requeue refused for "+event+": "+err.Error())
 			err = d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
@@ -314,7 +339,7 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 			})
 			if err != nil {
 				if _, corrupting := store.CorruptingFailure(err); corrupting {
-					return err
+					return store.AtSite(store.HaltSiteWrite, err)
 				}
 				r.Notes = append(r.Notes, "requeue intent failed for "+event+": "+err.Error())
 			}
@@ -334,6 +359,12 @@ func (d *Daemon) sweep(ctx context.Context, r *Report) error {
 	batch, err := d.Sweeper.Sweep(ctx, "crw")
 	if err != nil {
 		return sweepFailure(r, err)
+	}
+	// The sweep's readings may have published the halt marker (the omission observer does, CRW-848): the
+	// marker is the halt, so the recording that follows is not attempted on a store the sweep has just seen
+	// damaged (CRW-945).
+	if d.adoptMarker(r) {
+		return nil
 	}
 	answer, err := d.Sweeper.RecordAll(ctx, d.Faults, batch)
 	if err != nil {

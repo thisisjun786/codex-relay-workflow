@@ -9,6 +9,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // ManagedReadingRequest is the complete omitted.observe selector set. Selection
@@ -76,6 +78,12 @@ func (sw *Sweeper) ManagedReadings(ctx context.Context, selection any, observer 
 		var reason string
 		object, ok := reading.(map[string]any)
 		if err != nil {
+			// A failure of the class that halts the relay's writes (CRW-848) is the sweep's failure, not a
+			// gap in one reading: the daemon marks the store on it and nothing more is read or recorded
+			// (CRW-945). Any other failure stays the gap it has been.
+			if _, corrupting := store.CorruptingFailure(err); corrupting {
+				return answer, err
+			}
 			reason = err.Error()
 		} else if !ok || object == nil {
 			reason = "the observer returned no reading"
