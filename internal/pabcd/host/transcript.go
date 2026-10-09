@@ -1,7 +1,10 @@
 package host
 
 import (
+	"errors"
+	"io"
 	"os"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -10,7 +13,8 @@ const TailBytes = 65_536
 
 // ReadTranscriptTail is the last maxBytes of the transcript at path, decoded as Node's
 // Buffer.toString("utf8") does, or "" on any error: an unreadable transcript must not block Codex
-// (fail open). The whole file is read before it is cut, as the oracle does.
+// (fail open). Only the tail is read (CRW-1160): the oracle read the whole file to cut its last
+// 64 KiB, so a long session paid the whole transcript in I/O and memory on every prompt and Stop.
 func ReadTranscriptTail(path string, maxBytes int) string {
 	tail, _ := readTranscriptWindow(path, maxBytes)
 	return tail
@@ -19,14 +23,49 @@ func ReadTranscriptTail(path string, maxBytes int) string {
 // readTranscriptWindow is ReadTranscriptTail and whether the window starts at the file's first byte, so a
 // reader of whole records knows when the window's first line is the cut end of a longer one.
 func readTranscriptWindow(path string, maxBytes int) (string, bool) {
+	return readTranscriptWindowWith(path, maxBytes, nil)
+}
+
+// transcriptTailSeams let a test act between the stat and the read (an append, a truncation, a rename) and
+// see what the read touches. Production passes nil.
+type transcriptTailSeams struct {
+	afterStat func()
+	reader    func(io.ReaderAt) io.ReaderAt
+}
+
+// readTranscriptWindowWith opens the file once, without waiting (O_NONBLOCK: a FIFO with no writer would
+// hold the open), refuses anything but a regular file by fstat of that descriptor, and reads the last
+// min(size, maxBytes) bytes of the size it saw with one ReadAt. A file that changes after the stat is read
+// as it then is, best effort: an append past the stat is not seen, a truncation leaves a short read, a
+// rename keeps the open file; the read never widens to the whole file. Any error is "" (fail open).
+func readTranscriptWindowWith(path string, maxBytes int, seams *transcriptTailSeams) (string, bool) {
 	if path == "" || maxBytes <= 0 {
 		return "", false
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", false
 	}
-	return decodeUTF8(data[max(0, len(data)-maxBytes):]), len(data) <= maxBytes
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	if seams != nil && seams.afterStat != nil {
+		seams.afterStat()
+	}
+	var r io.ReaderAt = f
+	if seams != nil && seams.reader != nil {
+		r = seams.reader(f)
+	}
+	size := info.Size()
+	start := max(0, size-int64(maxBytes))
+	buf := make([]byte, size-start)
+	n, err := r.ReadAt(buf, start)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", false
+	}
+	return decodeUTF8(buf[:n]), start == 0
 }
 
 // decodeUTF8 replaces each maximal invalid subpart with one U+FFFD (the WHATWG decoder Node uses);
