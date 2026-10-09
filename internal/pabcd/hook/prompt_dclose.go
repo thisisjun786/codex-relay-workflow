@@ -1085,22 +1085,12 @@ func promptDcloseWriteMarker(cwd string, held state.State, closePhaseID string, 
 	return state.WriteState(cwd, next)
 }
 
-// promptDcloseHasGoalplanRow is hasGoalplanRow (:628-632): a row of the bound plan's ledger with
-// this event and detail. An absent file has no row; a line that is not a JSON object matches
-// nothing, where the oracle's JSON.parse throws and the same D request can never finish. A
-// directory the slug cannot be resolved to is unreadable, not absent: the row's presence is unknown
-// and a caller must not append (CRW-869, finding 1).
-func promptDcloseHasGoalplanRow(cwd, slug, event, detail string) (bool, error) {
-	have, err := promptDcloseHasGoalplanRows(cwd, slug, nil, []promptDcloseGoalplanRow{{event: goalplan.GoalplanLedgerEvent(event), detail: detail}})
-	if err != nil {
-		return false, err
-	}
-	return have[0], nil
-}
-
-// promptDcloseHasGoalplanRows answers hasGoalplanRow for every row of rows in one streamed pass over the
-// bound plan's ledger (CRW-1103): the oracle reads the whole ledger once per row (:628-632). open is the
-// read seam a test counts; nil is os.Open.
+// promptDcloseHasGoalplanRows is hasGoalplanRow (:628-632) - a row of the bound plan's ledger with this
+// event and detail - answered for every row of rows in one streamed pass over that ledger (CRW-1103: the
+// oracle reads the whole ledger once per row). An absent file has no row; a line that is not a JSON object
+// matches nothing, where the oracle's JSON.parse throws and the same D request can never finish. A directory
+// the slug cannot be resolved to is unreadable, not absent: the row's presence is unknown and a caller must
+// not append (CRW-869, finding 1). open is the read seam a test counts; nil is os.Open.
 func promptDcloseHasGoalplanRows(cwd, slug string, open func(string) (*os.File, error), rows []promptDcloseGoalplanRow) ([]bool, error) {
 	have := make([]bool, len(rows))
 	if len(rows) == 0 {
@@ -1130,7 +1120,7 @@ func promptDcloseHasGoalplanRows(cwd, slug string, open func(string) (*os.File, 
 
 // promptDcloseHasPabcdCloseRow is hasPabcdCloseRow (:634-645): the PABCD close row of this
 // session, this check cycle and this closed work phase, where the closed phase is JSON null when
-// the id is empty. A row of a damaged line matches nothing, as in promptDcloseHasGoalplanRow, and
+// the id is empty. A row of a damaged line matches nothing, as in promptDcloseHasGoalplanRows, and
 // an unreadable ledger is unreadable, not absent (CRW-869, finding 1).
 func promptDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch *string, closedWorkPhaseID string) (bool, error) {
 	return promptDcloseHasPabcdCloseRowOpen(cwd, sessionID, checkEpoch, closedWorkPhaseID, nil)
@@ -1159,7 +1149,7 @@ func promptDcloseClosedKey(closedWorkPhaseID string) *string {
 	return &closedWorkPhaseID
 }
 
-// promptDcloseAnyRow reads the JSON-object lines of a JSONL file and reports whether any of them
+// promptDcloseAnyRowOpen reads the JSON-object lines of a JSONL file and reports whether any of them
 // satisfies match. The answer has three states, by construction: present (true, nil), absent
 // (false, nil) for a file that is not there, and unreadable (false, err) for any other read error
 // (CRW-869, finding 1). A line that is not a JSON object and a blank line match nothing.
@@ -1167,13 +1157,9 @@ func promptDcloseClosedKey(closedWorkPhaseID string) *string {
 // The file is read the way the oracle's readFileSync(path, "utf8") and JSON.parse read it
 // (CRW-1073): the bytes are decoded as UTF-8 first, and a lone surrogate escape stays a lone
 // surrogate, where encoding/json folds it into U+FFFD and a stored "closed wp-\ud800" row then
-// compared equal to a U+FFFD close and the close skipped the row it owed.
-func promptDcloseAnyRow(path string, match func(map[string]any) bool) (bool, error) {
-	return promptDcloseAnyRowOpen(path, nil, match)
-}
-
-// promptDcloseAnyRowOpen is promptDcloseAnyRow with the read seam: the file is streamed and the read
-// stops at the first match, because the chat close skips a damaged line rather than refusing it.
+// compared equal to a U+FFFD close and the close skipped the row it owed. The file is streamed and
+// the read stops at the first match, because the chat close skips a damaged line rather than refusing
+// it (CRW-1103); open is the read seam, nil is os.Open.
 func promptDcloseAnyRowOpen(path string, open func(string) (*os.File, error), match func(map[string]any) bool) (bool, error) {
 	found := false
 	err := promptDcloseScanRows(path, open, func(row map[string]any) bool {
