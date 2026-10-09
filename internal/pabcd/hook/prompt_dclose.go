@@ -285,8 +285,8 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		held, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable {
 			// The leading snapshot already matched this close's marker, so a matching retry may
-			// already have published its marker and committed its goalplan before this stricter
-			// reread failed. The refusal names them instead of denying them (CRW-930, d1).
+			// already have published its marker before this stricter reread failed. The refusal
+			// names the marker and leaves the goalplan unknown rather than denying either (CRW-930, d1).
 			outcome.refusal = promptDclosePartialRefusal(promptDcloseStateRefusal(),
 				promptDcloseRecoveryPublishedAt(recovering), nil)
 			return nil
@@ -354,7 +354,7 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 	if err != nil {
 		// The oracle holds no session lock; a lock that stays busy answers the D-close text with the
 		// busy reason and writes nothing. A matching retry's first attempt may already have published
-		// its marker and committed its goalplan, so the answer names them too (CRW-930, d3).
+		// its marker, so the answer names the marker and leaves the goalplan unknown (CRW-930, d3).
 		return promptDcloseRefusalNaming(promptDcloseNotApplied(err.Error()),
 			promptDcloseRecoveryPublishedAt(recovering)), true
 	}
@@ -436,8 +436,8 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 			promptDcloseRecoveryPublishedAt(recovering))}
 	case "unreadable":
 		// "unreadable" also covers a plan that read cleanly and was refused for what a revival would
-		// lose, so the plan is read here too: its commit is still on disk and the refusal must name it
-		// (CRW-930, d2).
+		// lose. The plan is read here too, but its shape cannot prove the first attempt's commit, so
+		// the refusal names the inherited marker and leaves the goalplan unknown (CRW-930, d2).
 		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(
 			promptDcloseGoalplanUnreadable(locked.Reason),
 			promptDcloseRecoveryPublishedAt(recovering), nil)}
@@ -980,9 +980,9 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	case goalplan.WorkPhaseCloseFixedOK:
 		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: promptDcloseString(closed.ClosedID), plan: closed.Plan}, writePlan: true}, "", false
 	case goalplan.WorkPhaseCloseFixedAlreadyDone:
-		// The settled shape is already on disk, so the first attempt of this close committed the plan:
-		// this invocation rewrites nothing, but the plan is one of the artifacts the close published and
-		// every later refusal must name it (CRW-930, d1).
+		// The settled shape is already on disk, but it cannot prove that the first attempt of this close
+		// committed the plan. This invocation rewrites nothing, and every later refusal leaves the goalplan
+		// unknown rather than naming it as published (CRW-930, d1; promptDcloseRecoveryPublishedAt).
 		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: closePhaseID, plan: plan}}, "", false
 	}
 	// already_done and any other answer: the close settled on the fixed target, and the plan is

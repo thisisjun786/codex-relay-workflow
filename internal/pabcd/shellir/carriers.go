@@ -1,13 +1,14 @@
 package shellir
 
 import (
+	"path"
 	"slices"
 	"strings"
 )
 
 // shellFlagLetters are the single-letter options a shell accepts before its
 // program. A letter outside this set is refused.
-const shellFlagLetters = "abefhiklmnprtuvxBCDEHPTs"
+const shellFlagLetters = "abefhiklmnprtuvxBCDEHPT"
 
 func shellLongOption(v string) bool {
 	switch v {
@@ -55,6 +56,7 @@ func (w *walker) suCall(args []Word, st *state, ctx Context) error {
 }
 
 type interpSpec struct {
+	repl      string   // letters that keep the interpreter reading commands from standard input after its program (python -i, node -i)
 	code      string   // letters whose argument is program text
 	consume   string   // letters whose argument is not program text
 	flags     string   // letters with no argument
@@ -65,9 +67,9 @@ type interpSpec struct {
 func interpreterSpec(lang string) interpSpec {
 	switch lang {
 	case "python":
-		return interpSpec{code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
+		return interpSpec{repl: "i", code: "c", consume: "WX", flags: "BbdEhiIOPqRsSuvxV", attach: true}
 	case "node":
-		return interpSpec{code: "ep", consume: "r", flags: "ci", longFlags: nodeLongFlags}
+		return interpSpec{repl: "i", code: "ep", consume: "r", flags: "ci", longFlags: nodeLongFlags}
 	case "perl":
 		return interpSpec{code: "eE", flags: "wWXnpsTtUcSaFlvi", attach: true}
 	case "ruby":
@@ -79,7 +81,7 @@ func interpreterSpec(lang string) interpSpec {
 // interpreterInline returns the program an interpreter runs when the text
 // shows it. A script file operand is not judged here, except for awk -f and
 // sed -f, whose file the caller reads as a script record.
-func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx Context) (*Inline, *Word, error) {
+func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir Dir, ctx Context) (*Inline, *Word, error) {
 	lang := interpreterLanguage(name)
 	switch lang {
 	case "awk":
@@ -87,9 +89,14 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 	case "sed":
 		return sedInline(name, args, redirs, ctx)
 	}
-	codes, operand, err := clusterInterp(name, args, interpreterSpec(lang))
+	codes, operand, repl, err := clusterInterp(name, args, interpreterSpec(lang))
 	if err != nil {
 		return nil, nil, err
+	}
+	if repl && stdinCarriesProgram(ctx.Stdin) {
+		// -i keeps the interpreter reading commands from standard input after its script or program, so the pipe (or the
+		// here-document) is a program whatever the script operand or the -c string shows.
+		return nil, nil, unreadablef("%s -i reads commands from standard input (%s) after its program", name, ctx.Stdin)
 	}
 	if len(codes) > 1 {
 		return nil, nil, unreadablef("%s receives more than one program", name)
@@ -104,7 +111,7 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 	if operand < len(args) && args[operand].Value != "-" {
 		// A script operand named through a file-descriptor alias runs the text of that descriptor (a here-string or a
 		// pipe the text shows): the reader cannot follow the alias, so the program is unreadable.
-		if args[operand].Known && fdAliasPath(args[operand].Value) {
+		if args[operand].Known && fdAliasPath(args[operand].Value, dir) {
 			return nil, nil, unreadablef("%s reads its program from %s, a file-descriptor alias", name, args[operand].Value)
 		}
 		return nil, nil, nil
@@ -120,6 +127,15 @@ func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, ctx
 	return &Inline{Language: lang, Source: Word{Known: true, Value: text}}, nil, nil
 }
 
+// stdinCarriesProgram is whether standard input is something a program could be read from that the text does not name as a file.
+func stdinCarriesProgram(stdin string) bool {
+	switch stdin {
+	case StdinPipe, StdinHeredoc, StdinHerestring, StdinUnknown:
+		return true
+	}
+	return false
+}
+
 // nodeLongFlags are the long options of node that take no value; any other long option may take one, which would move the
 // script operand, so it stays unreadable.
 var nodeLongFlags = []string{"--no-warnings", "--no-deprecation", "--trace-warnings", "--trace-deprecation", "--throw-deprecation",
@@ -127,7 +143,7 @@ var nodeLongFlags = []string{"--no-warnings", "--no-deprecation", "--trace-warni
 
 // lastStdinFile is the file the last input redirection of a statement names, when it is a file the reader knows and not a
 // descriptor alias.
-func lastStdinFile(redirs []Redir) (string, bool) {
+func lastStdinFile(redirs []Redir, dir Dir) (string, bool) {
 	for i := len(redirs) - 1; i >= 0; i-- {
 		r := redirs[i]
 		if r.Fd != "" && r.Fd != "0" {
@@ -135,7 +151,7 @@ func lastStdinFile(redirs []Redir) (string, bool) {
 		}
 		switch r.Op {
 		case "<":
-			if r.Target.Known && !fdAliasPath(r.Target.Value) {
+			if r.Target.Known && !fdAliasPath(r.Target.Value, dir) {
 				return r.Target.Value, true
 			}
 			return "", false
@@ -203,7 +219,7 @@ func opaqueHas(set []string, v string) bool {
 // descriptor alias, or in a code option. The options are read by the interpreter's own grammar (opaqueGrammars): an option
 // value is no script file, and an option outside the grammar is unreadable. A script file operand is not judged, as for the
 // interpreters the port reads.
-func opaqueInterpreter(name string, args []Word, redirs []Redir, ctx Context) error {
+func opaqueInterpreter(name string, args []Word, redirs []Redir, dir Dir, ctx Context) error {
 	if len(args) == 1 && args[0].Known {
 		switch args[0].Value {
 		case "--version", "-v", "-V", "--help", "-h":
@@ -216,18 +232,22 @@ options:
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !a.Known {
-			operand = true // a word the reader cannot read stands for the script (a residual shared with every interpreter)
+			if stdinCarriesProgram(ctx.Stdin) {
+				// the word may name a descriptor alias, and then the interpreter runs what the pipe or the here-document carries
+				return unreadablef("%s has a word that is not known (%s) and standard input is %s", name, a.Reason, ctx.Stdin)
+			}
+			operand = true // a word the reader cannot read stands for the script (a residual of every interpreter with no pipe)
 			break
 		}
 		v := a.Value
 		switch {
-		case v == "-" || fdAliasPath(v):
+		case v == "-" || fdAliasPath(v, dir):
 			return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, v)
 		case v == "--":
 			// the word after -- is the script operand, which is judged as one before the options end (php -- /dev/stdin)
 			if i+1 < len(args) {
 				operand = true
-				if next := args[i+1]; next.Known && (next.Value == "-" || fdAliasPath(next.Value)) {
+				if next := args[i+1]; next.Known && (next.Value == "-" || fdAliasPath(next.Value, dir)) {
 					return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, next.Value)
 				}
 			}
@@ -245,7 +265,7 @@ options:
 				return unreadablef("%s option %s has a value that is not known (%s)", name, v, args[i].Reason)
 			}
 			if opaqueHas(grammar.script, v) {
-				if w := args[i].Value; w == "-" || fdAliasPath(w) {
+				if w := args[i].Value; w == "-" || fdAliasPath(w, dir) {
 					return unreadablef("%s reads its program from standard input or a descriptor alias (%s)", name, w)
 				}
 				operand = true
@@ -357,10 +377,10 @@ func isPythonName(name string) bool {
 func isInterpreter(name string) bool { return interpreterLanguage(name) != "" }
 
 // shellCall reads a shell invocation. Options keep being read after -c, so the -c string is the first operand
-// after the options, not the word that follows -c. The operand is a script file unless -c is set; without an
-// operand the program comes from standard input.
+// after the options, not the word that follows -c. The operand is a script file unless -c or -s is set; without an
+// operand, and with -s, the program comes from standard input (with -s the operands are positional parameters, not a script).
 func (w *walker) shellCall(name string, args []Word, redirs []Redir, st *state, ctx Context) error {
-	cmdMode := false
+	cmdMode, stdinMode := false, false
 	i := 0
 loop:
 	for i < len(args) {
@@ -381,16 +401,23 @@ loop:
 			i++
 			for k := 1; k < len(v); k++ {
 				c := v[k]
-				if c == 'c' {
+				switch c {
+				case 'c':
 					cmdMode = true
-					continue
-				}
-				if c == 'o' || c == 'O' {
-					i++
-					break
-				}
-				if strings.IndexByte(shellFlagLetters, c) < 0 {
-					return unreadablef("%s option -%c is not modelled", name, c)
+				case 's':
+					stdinMode = true // +s is read like -s: the reader does not take a reading that lets a pipe through
+				case 'o', 'O':
+					i++ // -o and -O take the next word as their value
+					if strings.ContainsAny(v[k+1:], "cs") {
+						// bash goes on reading flags after -o (-oc posix is -o posix -c), zsh reads the rest of the word as the option
+						// name: a -c or -s behind -o is read one way by one shell and the other way by the other, so it is refused.
+						return unreadablef("%s option cluster %s has -c or -s behind -o", name, v)
+					}
+					k = len(v)
+				default:
+					if strings.IndexByte(shellFlagLetters, c) < 0 {
+						return unreadablef("%s option -%c is not modelled", name, c)
+					}
 				}
 			}
 		default:
@@ -411,7 +438,7 @@ loop:
 		}
 		return w.carried(text, st.clone(), ctx, name+" -c")
 	}
-	if operand != nil {
+	if operand != nil && !stdinMode {
 		return w.scriptFile(name, *operand, st, ctx)
 	}
 	if file, ok := stdinIsFile(ctx); ok && ctx.Carrier != "" {
@@ -450,15 +477,16 @@ func interpreterLanguage(name string) string {
 	return ""
 }
 
-// clusterInterp reads interpreter options. It returns the program words it found and the index of the first operand.
+// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand, and whether an option keeps the interpreter reading commands from standard input (-i). An option it does not model (python -m, which puts the working directory first on the module search path) is unreadable.
 // Node's --eval and --print take the program as the next word or after an =.
-func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, error) {
+func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, bool, error) {
 	var codes []Word
+	repl := false
 	i := 0
 	for i < len(args) {
 		v, err := knownValue(args[i], name+" option")
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		if v == "--" {
 			i++
@@ -466,7 +494,7 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, erro
 		}
 		if v == "--eval" || v == "--print" {
 			if i+1 >= len(args) {
-				return nil, 0, unreadablef("%s %s without a program", name, v)
+				return nil, 0, false, unreadablef("%s %s without a program", name, v)
 			}
 			codes = append(codes, args[i+1])
 			i += 2
@@ -482,7 +510,7 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, erro
 				i++
 				continue
 			}
-			return nil, 0, unreadablef("%s option %s is not modelled", name, v)
+			return nil, 0, false, unreadablef("%s option %s is not modelled", name, v)
 		}
 		if v == "-" || len(v) < 2 || v[0] != '-' {
 			break
@@ -494,13 +522,13 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, erro
 			switch {
 			case strings.IndexByte(spec.code, c) >= 0:
 				if !last && !spec.attach {
-					return nil, 0, unreadablef("%s option -%c must stand alone", name, c)
+					return nil, 0, false, unreadablef("%s option -%c must stand alone", name, c)
 				}
 				if !last {
 					codes = append(codes, Word{Known: true, Value: v[k+1:]})
 				} else {
 					if i >= len(args) {
-						return nil, 0, unreadablef("%s -%c without a program", name, c)
+						return nil, 0, false, unreadablef("%s -%c without a program", name, c)
 					}
 					codes = append(codes, args[i])
 					i++
@@ -509,28 +537,157 @@ func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, erro
 			case strings.IndexByte(spec.consume, c) >= 0:
 				if last {
 					if i >= len(args) {
-						return nil, 0, unreadablef("%s -%c without a value", name, c)
+						return nil, 0, false, unreadablef("%s -%c without a value", name, c)
 					}
 					i++
 				}
 				k = len(v)
 			case strings.IndexByte(spec.flags, c) >= 0:
+				if strings.IndexByte(spec.repl, c) >= 0 {
+					repl = true
+				}
 			default:
-				return nil, 0, unreadablef("%s option -%c is not modelled", name, c)
+				return nil, 0, false, unreadablef("%s option -%c is not modelled", name, c)
 			}
 		}
 	}
-	return codes, i, nil
+	return codes, i, repl, nil
 }
 
 // fdAliasPath reports a path that names a file descriptor of this process, so that reading it reads what the shell gave
-// that descriptor: /dev/stdin, /dev/fd/N and /proc/<pid>/fd/N (and /proc/self/fd/N).
-func fdAliasPath(p string) bool {
+// that descriptor: /dev/stdin, /dev/fd/N and /proc/<pid>/fd/N (and /proc/self/fd/N). The kernel resolves a path one component
+// at a time, so the check does too: a dot segment and a doubled slash are nothing, a dot-dot segment steps back from the
+// directory reached so far, and the process links /proc/<pid>/root and /proc/<pid>/cwd are replaced by their target the
+// moment they are reached, before the next component (so /proc/self/root/../../dev/stdin is /dev/stdin, not /proc/dev/stdin).
+// A relative path is placed in the directory the command runs in. In a directory the reader does not know, a relative path is
+// the alias when some directory could make it one: its last component is stdin, or a descriptor number that stands alone or
+// follows fd (dev/stdin, fd/0, proc/self/fd/0, 0); an ordinary script path (../tools/gen.py, build/fd/gen.py) is not.
+func fdAliasPath(p string, dir Dir) bool {
+	if p == "" {
+		return false
+	}
+	if dir.Unset && !path.IsAbs(p) {
+		return false // a reading with no directory: the readings that have one judge a relative path
+	}
+	w := aliasWalk{abs: path.IsAbs(p), dir: dir}
+	if !w.abs && dir.Known {
+		w.abs = true
+		if w.feed(dir.Path) {
+			return true
+		}
+	}
+	if w.feed(p) {
+		return true
+	}
+	if w.abs {
+		return false
+	}
+	return relativeFdAlias(w.stack)
+}
+
+// aliasWalk is the directory fdAliasPath has reached: the components of an absolute path (abs), or the components of a path
+// relative to a directory the reader does not know (leading ".." components are kept).
+type aliasWalk struct {
+	abs   bool
+	stack []string
+	dir   Dir
+	depth int
+}
+
+// feed moves the walk along a path. It reports true as soon as the walk is at a descriptor alias, or at a link whose target
+// the reader cannot say (the cwd of another process, or of this one when the directory is unknown).
+func (w *aliasWalk) feed(p string) bool {
+	w.depth++
+	if w.depth > 8 {
+		return true // directories that name process links to each other, deeper than the check follows
+	}
+	for _, c := range strings.Split(p, "/") {
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if n := len(w.stack); n > 0 && w.stack[n-1] != ".." {
+				w.stack = w.stack[:n-1]
+			} else if !w.abs {
+				w.stack = append(w.stack, "..")
+			}
+			continue
+		}
+		w.stack = append(w.stack, c)
+		if w.abs && absFdAlias(w.stack) {
+			return true
+		}
+		if pid, link := procLink(w.stack); link != "" {
+			switch link {
+			case "root":
+				w.abs, w.stack = true, nil
+			case "cwd":
+				if (pid != "self" && pid != "thread-self") || !w.dir.Known {
+					return true
+				}
+				w.abs, w.stack = true, nil
+				if w.feed(w.dir.Path) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// procLink names the process link a walk has just reached: /proc/<pid>/root, /proc/<pid>/cwd, or the same below
+// /proc/<pid>/task/<tid>. It returns the pid component and the link name, or an empty link.
+func procLink(s []string) (pid, link string) {
+	for len(s) > 0 && s[0] == ".." {
+		s = s[1:]
+	}
+	if len(s) == 0 || s[0] != "proc" {
+		return "", ""
+	}
 	switch {
-	case p == "/dev/stdin", strings.HasPrefix(p, "/dev/fd/"):
+	case len(s) == 3 && (s[2] == "root" || s[2] == "cwd"):
+		return s[1], s[2]
+	case len(s) == 5 && s[2] == "task" && (s[4] == "root" || s[4] == "cwd"):
+		return s[1], s[4]
+	}
+	return "", ""
+}
+
+// absFdAlias is whether an absolute path (as components) is, or is below, a descriptor alias.
+func absFdAlias(s []string) bool {
+	switch {
+	case len(s) >= 2 && s[0] == "dev" && s[1] == "stdin":
 		return true
-	case strings.HasPrefix(p, "/proc/") && strings.Contains(p, "/fd/"):
+	case len(s) >= 3 && s[0] == "dev" && s[1] == "fd":
 		return true
+	case len(s) >= 4 && s[0] == "proc" && s[2] == "fd":
+		return true
+	case len(s) >= 6 && s[0] == "proc" && s[2] == "task" && s[4] == "fd":
+		return true
+	}
+	return false
+}
+
+// relativeFdAlias is whether a relative path in a directory the reader does not know could be a descriptor alias: the
+// directory could be /, /dev, /dev/fd, /proc/self or /proc/self/fd (or below any directory, with leading dot-dot components).
+func relativeFdAlias(s []string) bool {
+	for len(s) > 0 && s[0] == ".." {
+		s = s[1:]
+	}
+	n := len(s)
+	if n == 0 {
+		return false
+	}
+	if s[n-1] == "stdin" {
+		return true
+	}
+	if isDigits(s[n-1]) && n == 1 {
+		return true
+	}
+	for i := 0; i+1 < n; i++ {
+		if s[i] == "fd" && isDigits(s[i+1]) {
+			return true
+		}
 	}
 	return false
 }

@@ -1,6 +1,9 @@
 package hook
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // A Node or Python program that holds a file API may write through a name the destination reader cannot attribute: a
 // destructured or aliased write function, a bracket or computed name, getattr, or a rebinding. Such a write has an unknown
@@ -30,6 +33,7 @@ func shellIRWriteNames(tok string) bool {
 // destination: a bare or unattached write name, a run-time name (getattr, __import__, eval, ...), or a computed subscript.
 func shellIRStructuralWriteUnknown(src string, python bool) bool {
 	spans := shellIRTokenSpans(src)
+	imports := shellIRFromImportsOf(src, python)
 	if !python {
 		// A Node program that evaluates text (eval, new Function, vm) runs code the program does not show, with the file APIs
 		// among it: the destination is unknown whether or not the program names a file API itself.
@@ -57,6 +61,9 @@ func shellIRStructuralWriteUnknown(src string, python bool) bool {
 		}
 		if !shellIRWriteNames(tok) {
 			continue
+		}
+		if imports.skips(sp[0]) || imports.calls(tok) {
+			continue // a from-import of shutil or os binds this name, and the reader names the destination of each call to it (CRW-900 D4)
 		}
 		if shellIRPrevNonSpace(src, sp[0]) != '.' {
 			return true
@@ -144,12 +151,12 @@ func shellIRPyUnattributedCall(src string, sp [2]int, name string) bool {
 			return false // dict.copy() and list.copy() take no argument
 		}
 		recv := shellIRPyReceiverIdent(src, sp[0])
-		return recv != "shutil" && !shellIRPyImportAlias(src, recv, "shutil")
+		return !(recv == "shutil" && shellIRPyPlainModule(src, "shutil")) && !shellIRPyImportAlias(src, recv, "shutil")
 	case "rename", "renames", "symlink", "link":
 		recv := shellIRPyReceiverIdent(src, sp[0])
-		return !shellIRPyPathCallReceiver(src, sp[0]) && recv != "os" && !shellIRPyImportAlias(src, recv, "os")
+		return !shellIRPyPathCallReceiver(src, sp[0]) && !(recv == "os" && shellIRPyPlainModule(src, "os")) && !shellIRPyImportAlias(src, recv, "os")
 	case "replace":
-		if recv := shellIRPyReceiverIdent(src, sp[0]); recv == "os" || shellIRPyImportAlias(src, recv, "os") || shellIRPyPathCallReceiver(src, sp[0]) {
+		if recv := shellIRPyReceiverIdent(src, sp[0]); (recv == "os" && shellIRPyPlainModule(src, "os")) || shellIRPyImportAlias(src, recv, "os") || shellIRPyPathCallReceiver(src, sp[0]) {
 			return false
 		}
 		// str.replace takes two or more arguments; Path.replace takes one (an argument unpacking may carry more).
@@ -325,12 +332,13 @@ func shellIRPyModeOpenOnModule(src string, spans [][2]int) bool {
 	return false
 }
 
-// shellIRPyImportAlias reports that ident is an alias bound only by "import module as ident": a fresh name (never os, shutil, io,
-// Path or pathlib, whose meaning the readers force) whose every occurrence is that alias or the receiver of a dot call. Any other
+// shellIRPyImportAlias reports that ident is an alias bound only by "import module as ident": a name (never io, Path or pathlib,
+// whose meaning the readers force; os and shutil may be the alias of each other, CRW-900 D2) whose every occurrence is that alias
+// or the receiver of a dot call. Any other
 // occurrence (an assignment, a parameter, a loop target, an argument) may rebind it.
 func shellIRPyImportAlias(src, ident, module string) bool {
 	switch ident {
-	case "", "os", "shutil", "io", "Path", "pathlib":
+	case "", "io", "Path", "pathlib":
 		return false
 	}
 	bound := false
@@ -341,12 +349,10 @@ func shellIRPyImportAlias(src, ident, module string) bool {
 		before := strings.TrimRight(src[:sp[0]], " \t")
 		switch {
 		case strings.HasSuffix(before, "as") && !(len(before) > 2 && worktreeDelIdentRune(rune(before[len(before)-3]))):
-			if !strings.HasSuffix(strings.TrimRight(before[:len(before)-2], " \t"), module) {
-				return false
-			}
-			// The import reader reads a statement that starts with import: not one after the colon of a compound header.
-			start := strings.LastIndexAny(before, ";\n\r") + 1
-			if !strings.HasPrefix(strings.TrimSpace(before[start:]), "import ") {
+			// The statement must be exactly "import module as ident": a statement after the colon of a compound header counts
+			// (CRW-900 D1), and a longer import list does not.
+			start := strings.LastIndexAny(before, ";\n\r:") + 1
+			if strings.TrimSpace(before[start:len(before)-2]) != "import "+module {
 				return false
 			}
 			bound = true
@@ -356,4 +362,169 @@ func shellIRPyImportAlias(src, ident, module string) bool {
 		}
 	}
 	return bound
+}
+
+// shellIRFromImports is what the from-imports of shutil and os in a Python program bind for the structural check: the offsets
+// of the imported and alias tokens of each copy, rename or link import that ends its statement, and the local names those
+// imports bind. A local name is kept only when every use of it is a call of that name.
+type shellIRFromImports struct {
+	skip  map[int]bool
+	local map[string]bool
+}
+
+// shellIRFromHeadRe matches the start of a from-import of shutil or os: at the start of the program, or after a semicolon, a
+// line break or a compound header's colon. The imported names follow it.
+var shellIRFromHeadRe = regexp.MustCompile(`(?:^|[:;\r\n])[ \t]*from[ \t]+(shutil|os)[ \t]+import[ \t]+`)
+
+// shellIRFromItem is one name of a from-import list: the imported name, its alias (if any) and the offsets of both tokens.
+type shellIRFromItem struct {
+	name, alias     string
+	nameAt, aliasAt int
+}
+
+// shellIRFromItems reads a from-import list that starts at off: name [as alias] items separated by commas, ending at the end of
+// the statement. Any other shape (a parenthesised list, a star, a missing comma) is not read.
+func shellIRFromItems(src string, off int) ([]shellIRFromItem, bool) {
+	var items []shellIRFromItem
+	ident := func(p int) int {
+		for p < len(src) && (src[p] == '_' || src[p] >= 'a' && src[p] <= 'z' || src[p] >= 'A' && src[p] <= 'Z' || src[p] >= '0' && src[p] <= '9') {
+			p++
+		}
+		return p
+	}
+	skipSpace := func(p int) int {
+		for p < len(src) && (src[p] == ' ' || src[p] == '\t') {
+			p++
+		}
+		return p
+	}
+	p := off
+	for {
+		p = skipSpace(p)
+		end := ident(p)
+		if end == p {
+			return nil, false
+		}
+		item := shellIRFromItem{name: src[p:end], nameAt: p}
+		p = skipSpace(end)
+		if strings.HasPrefix(src[p:], "as") && p+2 < len(src) && (src[p+2] == ' ' || src[p+2] == '\t') {
+			p = skipSpace(p + 2)
+			end = ident(p)
+			if end == p {
+				return nil, false
+			}
+			item.alias, item.aliasAt = src[p:end], p
+			p = skipSpace(end)
+		}
+		items = append(items, item)
+		if p < len(src) && src[p] == ',' {
+			p++
+			continue
+		}
+		if p == len(src) || src[p] == ';' || src[p] == '\n' || src[p] == '\r' {
+			return items, true
+		}
+		return nil, false
+	}
+}
+
+// shellIRFromImportsOf reads the from-imports of a Python program: each name a from-import of shutil or os binds to a copy,
+// rename or link function, in a statement that ends after the list. Any other name is left out, so it stays a bare write name.
+func shellIRFromImportsOf(src string, python bool) shellIRFromImports {
+	out := shellIRFromImports{skip: map[int]bool{}, local: map[string]bool{}}
+	if !python {
+		return out
+	}
+	type cand struct {
+		local string
+		at    []int
+	}
+	var cands []cand
+	for _, m := range shellIRFromHeadRe.FindAllStringSubmatchIndex(src, -1) {
+		items, ok := shellIRFromItems(src, m[1])
+		if !ok {
+			continue
+		}
+		module := src[m[2]:m[3]]
+		for _, item := range items {
+			if !shellWriteCopyFunc(module, item.name) {
+				continue
+			}
+			c := cand{local: item.name, at: []int{item.nameAt}}
+			if item.alias != "" {
+				c.local = item.alias
+				c.at = append(c.at, item.aliasAt)
+			}
+			cands = append(cands, c)
+		}
+	}
+	active := make([]bool, len(cands))
+	for i := range active {
+		active[i] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		out.skip, out.local = map[int]bool{}, map[string]bool{}
+		for i, c := range cands {
+			if active[i] {
+				for _, at := range c.at {
+					out.skip[at] = true
+				}
+				out.local[c.local] = true
+			}
+		}
+		for i, c := range cands {
+			if active[i] && !shellIRFromUsesAreCalls(src, c.local, out.skip) {
+				active[i], changed = false, true
+			}
+		}
+	}
+	return out
+}
+
+// shellIRFromUsesAreCalls reports that every use of local outside the import tokens skip names is a call of it: a name whose
+// value is taken (f = c, g(c)) may be a write the text does not show, so the import is not accepted.
+func shellIRFromUsesAreCalls(src, local string, skip map[int]bool) bool {
+	for _, use := range shellIRTokenSpans(src) {
+		if src[use[0]:use[1]] != local || skip[use[0]] {
+			continue
+		}
+		if shellIRNextNonSpace(src, use[1]) != '(' || shellIRPrevNonSpace(src, use[0]) == '.' || strings.HasSuffix(strings.TrimRight(src[:use[0]], " \t"), "def") {
+			return false
+		}
+	}
+	return true
+}
+
+// skips reports that the token at offset is an imported or alias name of a from-import the check accepts.
+func (f shellIRFromImports) skips(offset int) bool {
+	return f.skip[offset]
+}
+
+// calls reports that tok is a local name of an accepted from-import: each of its uses is a call, so the reader names them.
+func (f shellIRFromImports) calls(tok string) bool {
+	return f.local[tok]
+}
+
+// shellIRPyPlainModule reports that ident still names the module it is named for: every use of it is a plain import (import os,
+// shutil), or the receiver of a dot call. A parameter, an assignment, an alias or a loop target may rebind the name, so a call
+// on it is then not the module's function, and the reader's binding does not show it (CRW-900 post-evaluation d2).
+func shellIRPyPlainModule(src, ident string) bool {
+	for _, sp := range shellIRTokenSpans(src) {
+		if src[sp[0]:sp[1]] != ident || shellIRNextNonSpace(src, sp[1]) == '.' {
+			continue
+		}
+		before := strings.TrimRight(src[:sp[0]], " \t")
+		if strings.HasSuffix(before, "import") && (len(before) == 6 || !worktreeDelIdentRune(rune(before[len(before)-7]))) {
+			continue
+		}
+		if strings.HasSuffix(before, ",") {
+			start := strings.LastIndexAny(before, ";\n\r:") + 1
+			if strings.HasPrefix(strings.TrimSpace(before[start:]), "import ") {
+				continue
+			}
+		}
+		return false
+	}
+	return true
 }

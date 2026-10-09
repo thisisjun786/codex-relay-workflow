@@ -215,6 +215,24 @@ func writeFile(path string, data []byte) error {
 	return nil
 }
 
+// writtenStampLead is how far past the real clock a written entry's mtime is set.
+const writtenStampLead = time.Hour
+
+// stampWritten gives a file a step wrote, and the directory that holds it, a modification time ahead of the clock.
+// The oracle runs under a frozen clock that starts at Epoch, so everything the run itself writes is newer than
+// the clock and an age read from it is 0 (goalplanWriteLockStatus clamps at 0: a held lock reads ageMs=0). A
+// Go replay reads the real clock, where a fresh file is a few milliseconds old; stamping it ahead of that clock
+// restores the oracle's reading without changing what the file holds.
+func stampWritten(path string) error {
+	when := time.Now().Add(writtenStampLead)
+	for _, entry := range []string{path, filepath.Dir(path)} {
+		if err := os.Chtimes(entry, when, when); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Runtime is what differs between recording the Node oracle and replaying a Go build.
 type Runtime interface {
 	// Setup puts the runtime's programs, scripts and environment variables into the case.
@@ -299,6 +317,9 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 				path, err := casePath(c, rel)
 				if err == nil {
 					err = writeFile(path, []byte(c.Expand(step.Write[rel])))
+				}
+				if err == nil {
+					err = stampWritten(path)
 				}
 				if err != nil {
 					return Expect{}, fmt.Errorf("%s: step %d: %w", s.ID, i, err)
