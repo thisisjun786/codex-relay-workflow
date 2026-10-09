@@ -474,7 +474,14 @@ func shellWriteExecProgram(rs []rune, spans [][2]int, depth int, outer shellWrit
 			// literal with no declaration decodes as UTF-8, which is what this reader already reads.
 			return nil, shellWriteExecUnreadableWhat
 		}
-		return shellWriteExecScanIn(shellVerbWithoutComments(program, true), true, depth+1, outer)
+		more, inner := shellWriteExecScanIn(shellVerbWithoutComments(program, true), true, depth+1, outer)
+		// The text a literal exec, eval or compile runs gets the same structural write analysis as a top-level program, read in
+		// the scope that holds it (it inherits the names and imports of the enclosing text); a write the enclosing text
+		// already makes unknown is not counted twice (CRW-951, E2).
+		if enclosing := string(rs); shellIRStructuralWriteUnknown(enclosing+"\n"+program, true) && !shellIRStructuralWriteUnknown(enclosing, true) {
+			more = append(more, shellIRUnknownDest)
+		}
+		return more, inner
 	}
 	return nil, shellWriteExecUnreadableWhat
 }
@@ -1467,7 +1474,7 @@ func shellWriteEscapeUnquote(body []rune, quote rune) string {
 
 // shellWriteEscapePath is what a Path(...) call names: posixpath.join of its string literal arguments (a trailing comma leaves a
 // blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
-// that is no literal, or an f-string with a field, leaves the rest of the path unknown, so the call names the literal prefix, the
+// that is no literal, or an f-string with a field (never read as its own text), leaves the rest of the path unknown, so the call names the literal prefix, the
 // directory the write lands under (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix
 // names nothing. Such a call, and one with a single argument, also keeps the earlier reading, its first argument when that is a
 // literal, read as that reading did (shellWriteEscapeLiteral), so the join never names fewer destinations than before; only a call
@@ -1480,10 +1487,15 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 			continue
 		}
 		part, ok := shellVerbLiteral(rs[span[0]:span[1]])
-		if parts++; parts == 1 {
+		// An f-string with a replacement field is a computed part: its text with the braces in it is no path (CRW-951, E1).
+		field := shellWriteEscapeField(rs[span[0]:span[1]])
+		if field {
+			ok = false
+		}
+		if parts++; parts == 1 && !field {
 			head, _ = shellWriteEscapeLiteral(rs[span[0]:span[1]], true)
 		}
-		dynamic = dynamic || !ok || shellWriteEscapeField(rs[span[0]:span[1]])
+		dynamic = dynamic || !ok
 		switch {
 		case !ok:
 			known = false

@@ -206,12 +206,12 @@ python3 -c 'import os; print(f"p.touch()", os.path.exists("{MEMORY}/n.md"))'
 --why E5: doubled braces are literal braces, so f"{{p.touch()}}" is data.
 python3 -c 'import os; print(f"{{p.touch()}}", os.path.exists("{MEMORY}/n.md"))'
 
-=== CRW-951-runs-text-01-string-exec-word | B
---why E6: the word exec inside a string is data and does not switch off the string reading.
+=== CRW-951-runs-text-01-string-exec-word | R
+--why E6: the word exec inside a string is data and does not switch off the string reading (the worktree guard's own raw exec word check, unchanged, still denies).
 python3 -c 'import os; print("exec p.touch()", os.path.exists("{MEMORY}/n.md"))'
 
-=== CRW-951-runs-text-02-comment-execute-word | B
---why E6: the word execute in a comment is data.
+=== CRW-951-runs-text-02-comment-execute-word | R
+--why E6: the word execute in a comment is data (the worktree guard's own raw exec word check, unchanged, still denies).
 python3 -c 'import os; print(os.path.exists("{MEMORY}/n.md")) # execute p.touch()'
 
 === CRW-951-runs-text-03-fstring-field-call | W

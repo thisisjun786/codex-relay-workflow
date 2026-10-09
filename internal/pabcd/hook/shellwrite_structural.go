@@ -1,6 +1,9 @@
 package hook
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // A Node or Python program that holds a file API may write through a name the destination reader cannot attribute: a
 // destructured or aliased write function, a bracket or computed name, getattr, or a rebinding. Such a write has an unknown
@@ -41,16 +44,13 @@ func shellIRPyRunsText(tok string) bool {
 	return strings.HasPrefix(tok, "exec") || strings.HasPrefix(tok, "spawn") || strings.HasPrefix(tok, "popen") || strings.HasPrefix(tok, "posix_spawn")
 }
 
-// shellIRPyDataMask marks (by byte offset of src) the text of a Python program that is only data: a # comment and the body of a
-// string literal without an f in its prefix. An f-string stays code, since its replacement fields are program text, and so
-// does every string of a program that names a call which runs text (shellIRPyRunsText): the mask is nil then, and every offset
-// is read as code. It is the same string and comment reading as shellVerbWithoutComments and shellWriteTripleScanRegion.
+// shellIRPyDataMask marks (by byte offset of src) the text of a Python program that is only data: a # comment, the body of a
+// string literal without an f in its prefix, and the literal text of an f-string (its doubled braces included); the replacement
+// fields of an f-string are program text and stay unmarked (an f-string the walk cannot read is code as a whole). The mask is built
+// first and then asked whether the program runs text: only a token outside that data (shellIRPyRunsText) switches the mask off
+// (nil, every offset is code), so the word exec in a string or a comment does not (CRW-951, E5 and E6). It is the same string and
+// comment reading as shellVerbWithoutComments and shellWriteTripleScanRegion.
 func shellIRPyDataMask(src string, spans [][2]int) []bool {
-	for _, sp := range spans {
-		if shellIRPyRunsText(src[sp[0]:sp[1]]) {
-			return nil
-		}
-	}
 	rs := []rune(src)
 	offs := make([]int, len(rs)+1)
 	for i, n := 0, 0; i <= len(rs); i++ {
@@ -60,28 +60,45 @@ func shellIRPyDataMask(src string, spans [][2]int) []bool {
 		}
 	}
 	mask := make([]bool, len(src)+1)
-	mark := func(from, to int) {
+	set := func(from, to int, v bool) {
 		for k := offs[from]; k < offs[to]; k++ {
-			mask[k] = true
+			mask[k] = v
 		}
 	}
 	for i := 0; i < len(rs); {
 		switch c := rs[i]; {
 		case c == '\'' || c == '"':
-			end := shellWriteTripleScanRegion(rs, i, true)
-			if !shellWriteFStringPrefix(rs, i) {
-				mark(i, end)
+			if shellWriteFStringPrefix(rs, i) {
+				end, fields, bad := shellWriteFStringRegion(rs, i, 0)
+				if end > len(rs) {
+					end = len(rs)
+				}
+				if !bad {
+					set(i, end, true)
+					for _, f := range fields {
+						set(f[0], f[1], false)
+					}
+				}
+				i = end
+				continue
 			}
+			end := shellWriteTripleScanRegion(rs, i, true)
+			set(i, end, true)
 			i = end
 		case c == '#':
 			end := i + 1
 			for end < len(rs) && rs[end] != '\n' && rs[end] != '\r' {
 				end++
 			}
-			mark(i, end)
+			set(i, end, true)
 			i = end
 		default:
 			i++
+		}
+	}
+	for _, sp := range spans {
+		if !mask[sp[0]] && shellIRPyRunsText(src[sp[0]:sp[1]]) {
+			return nil
 		}
 	}
 	return mask
@@ -226,7 +243,13 @@ func shellIRPyUnattributedCall(src string, sp [2]int, name string) bool {
 	case "mkdir":
 		// os.mkdir(path) is a different call that this reader has never judged (CRW-951 scope: the pathlib methods only).
 		recv := shellIRPyReceiverIdent(src, sp[0])
-		return !shellIRPyPathCallReceiver(src, sp[0]) && recv != "os" && !shellIRPyImportAlias(src, recv, "os")
+		if shellIRPyPathCallReceiver(src, sp[0]) {
+			return false
+		}
+		if recv == "os" {
+			return !shellIRPyOsIsModule(src)
+		}
+		return !shellIRPyImportAlias(src, recv, "os")
 	case "rename", "renames", "symlink", "link":
 		recv := shellIRPyReceiverIdent(src, sp[0])
 		return !shellIRPyPathCallReceiver(src, sp[0]) && recv != "os" && !shellIRPyImportAlias(src, recv, "os")
@@ -438,4 +461,36 @@ func shellIRPyImportAlias(src, ident, module string) bool {
 		}
 	}
 	return bound
+}
+
+// shellIRPyOsImport matches the statement text before an occurrence of os that makes it a module in an import statement: import
+// os, import os.path, import sys, os, import a as b, os. An "as" before the name (import sys as os) binds the name to another module.
+var shellIRPyOsImport = regexp.MustCompile(`^\s*import\s+(?:[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?\s*,\s*)*$`)
+
+// shellIRPyOsIsModule reports that the name os of the program is the os module for sure: every occurrence of the token os is in an
+// import statement that binds the module, or is the receiver of a dot call (os.mkdir, os.path.exists). Any other occurrence (an
+// assignment, a parameter, a loop, with or except target, a def or class name, the word in a string or a comment) may rebind the
+// name to something else, and then the receiver is unknown (CRW-951, E3). Data text is not excused: a string may name the binding.
+func shellIRPyOsIsModule(src string) bool {
+	spans := shellIRTokenSpans(src)
+	seen := false
+	for _, sp := range spans {
+		if src[sp[0]:sp[1]] != "os" {
+			continue
+		}
+		if shellIRPrevNonSpace(src, sp[0]) == '.' {
+			return false // x.os is an attribute of something else, not the name
+		}
+		if shellIRNextNonSpace(src, sp[1]) == '.' {
+			// os.mkdir: but a dotted name in an import statement (import os.path) is also read below, so both are fine.
+			seen = true
+			continue
+		}
+		start := strings.LastIndexAny(src[:sp[0]], ";\n\r") + 1
+		if !shellIRPyOsImport.MatchString(src[start:sp[0]]) {
+			return false
+		}
+		seen = true
+	}
+	return seen
 }
