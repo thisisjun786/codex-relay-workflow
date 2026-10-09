@@ -253,7 +253,7 @@ func landingRef(observations []string) string {
 // ExecutionIntegrated says, for the relationship whose merged mark is (event, generation, revision), whether it executed a plan node and whether every node it executed has landed (CRW-429: the cleanup
 // of a finished child waits for this). applicable is false for a relationship that executed no node. For a node, integrated needs its active acceptance to stand on exactly that mark (its own head, or
 // after a recorded base refresh the later generation) and every target to contain the head with the merged mark on that revision (nodeIntegrated); another relationship's acceptance, none, and another
-// event, generation or revision all answer not integrated. It opens no transaction: call it inside one for one snapshot.
+// event, generation or revision all answer not integrated. A non_pr node has no head to land, so for it the accepted revision standing on the mark is the whole answer. It opens no transaction: call it inside one for one snapshot.
 func (s *Scheduler) ExecutionIntegrated(ctx context.Context, relationship, event string, generation int64, revision string) (applicable, integrated bool, err error) {
 	q := s.Store.Q(ctx)
 	if present, err := tableExists(ctx, q, "dag_node_executions"); err != nil || !present {
@@ -276,6 +276,10 @@ func (s *Scheduler) ExecutionIntegrated(ctx context.Context, relationship, event
 		stand, err := s.standOf(ctx, q, acc)
 		if err != nil || stand.RelationshipID != relationship || stand.Generation != generation || stand.EventID != event || stand.RevisionHash != revision {
 			return true, false, err
+		}
+		if n, ok := nodeOf(snap, node); ok && n.Kind == dag.NodeNonPR {
+			// a non_pr node (a decision document) has no head to land and nothing to observe: the merged mark on the revision its acceptance stands on is its integration (CRW-1036)
+			continue
 		}
 		if landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc); err != nil || !landed {
 			return true, false, err

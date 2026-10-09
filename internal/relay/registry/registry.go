@@ -793,6 +793,12 @@ func supersedeOlderDeliveries(ctx context.Context, s *store.Store, rid string, n
 	return err
 }
 
+// HandOpenedGenerationGuard is the check a generation opened or bound by hand passes before the registry writes it (CRW-1036). The registry knows no plan, so
+// the DAG scheduler installs it: it refuses a generation that can neither be recorded (dag-correct) nor accepted (dag-accept), for example one opened for an
+// accepted node whose route is a re-validation. It is nil when the scheduler is not linked in. reason is the reason the generation is opened under, and
+// generation the number of the one being bound (0 for one about to be opened).
+var HandOpenedGenerationGuard func(ctx context.Context, s *store.Store, relationship, reason string, generation int64) error
+
 // OpenGeneration is registry.open_generation.
 func (r *Registry) OpenGeneration(ctx context.Context, rid, dispatchRequest, reason string, dispatchTurn sql.NullString) (Generation, error) {
 	if !contains(reasons, reason) {
@@ -811,6 +817,12 @@ func (r *Registry) OpenGeneration(ctx context.Context, rid, dispatchRequest, rea
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Generation{}, err
+	}
+	if HandOpenedGenerationGuard != nil {
+		// a generation that is only being replayed was checked when it was opened; a new one is checked before anything is written
+		if err := HandOpenedGenerationGuard(ctx, r.Store, rid, reason, 0); err != nil {
+			return Generation{}, err
+		}
 	}
 	var number int64
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
@@ -893,6 +905,15 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number int64, tur
 			return current, nil
 		}
 		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, quote.Value(nullable(current.DispatchTurnID)))
+	}
+	if HandOpenedGenerationGuard != nil {
+		var reason sql.NullString
+		if err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number).Scan(&reason); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Generation{}, err
+		}
+		if err := HandOpenedGenerationGuard(ctx, r.Store, rid, reason.String, number); err != nil {
+			return Generation{}, err
+		}
 	}
 	now := r.now()
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {

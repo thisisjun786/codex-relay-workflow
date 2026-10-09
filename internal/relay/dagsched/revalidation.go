@@ -412,6 +412,11 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 	case rel.Status != "active":
 		return ActionHold, fmt.Sprintf("relationship %s of %s is %s: resume it (relationship-resume) before a ruling or a correction can reach its child", short(rel.ID), n.NodeID, rel.Status), nil
 	case !ignoreOpen && hasAcc && rel.Generation > standGeneration:
+		if text, err := s.openGenerationDeadEnd(ctx, q, plan, snap, n, st, rel); err != nil {
+			return "", "", err
+		} else if text != "" {
+			return ActionHold, text, nil
+		}
 		return ActionHold, fmt.Sprintf("generation %d of relationship %s is open, a correction of %s that goes to its child: record it with dag-correct if that is not done yet, wait for its report, then accept it with dag-accept --supersedes %s",
 			rel.Generation, short(rel.ID), n.NodeID, short(acc.AcceptanceID)), nil
 	}
@@ -423,8 +428,18 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 		}
 		switch {
 		case changed == nil && unavailable == "":
-			return ActionRevalidate, fmt.Sprintf("only the criteria of %s changed: what it consumed and its output are as they were. Rule the same output again under the plan's criteria and accept it again with dag-accept: "+
-				"the acceptance is re-verified, with no new generation and no new child", n.NodeID), nil
+			text := fmt.Sprintf("only the criteria of %s changed: what it consumed and its output are as they were. Rule the same output again under the plan's criteria and accept it again with dag-accept: "+
+				"the acceptance is re-verified, with no new generation and no new child", n.NodeID)
+			if found {
+				drift, err := criteriaRegistrationDrift(ctx, q, rel, n)
+				if err != nil {
+					return "", "", err
+				}
+				if drift != "" {
+					text += ". " + drift
+				}
+			}
+			return ActionRevalidate, text, nil
 		case changed == nil:
 			return ActionHold, unavailable + ": the output cannot be ruled again as it stands, and a correction cannot be prepared until the inputs are there again", nil
 		}
