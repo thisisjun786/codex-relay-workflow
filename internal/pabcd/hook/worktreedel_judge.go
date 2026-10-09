@@ -165,10 +165,14 @@ func worktreeDelJudgeFindStarts(starts []shellir.Word, guarded func(string) bool
 
 // worktreeDelTargetKind says whether a target, taken from dir, is an ancestor of the managed worktree (the slot root or a
 // directory above it) or the worktree itself (the checkout, the directory the command runs in, or a directory between). A
-// relative target from an unknown directory cannot be placed, so it counts as an ancestor.
+// relative target from an unknown directory cannot be placed, so it counts as an ancestor; an absolute target names the same path
+// from every directory and is judged as itself, from the checkout when the directory is not known.
 func worktreeDelTargetKind(target string, dir shellir.Dir, id WorktreeIdentity) (ancestor, self bool) {
 	if !dir.Known {
-		return true, false
+		if !strings.HasPrefix(target, "/") || id.CheckoutRoot == "" {
+			return true, false
+		}
+		dir = shellir.Dir{Known: true, Path: id.CheckoutRoot}
 	}
 	if !isProtectedTarget(target, dir.Path, id, true) {
 		return false, false

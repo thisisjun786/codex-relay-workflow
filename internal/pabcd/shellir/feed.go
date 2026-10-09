@@ -311,12 +311,12 @@ func chainsGuard(chains []findChain, start string) bool {
 	return true
 }
 
-// excludes says whether the test is false for the start point. A test the reader cannot evaluate against a directory's name (-newer,
-// -mtime, -size, -empty, -type, a regular expression with groups) is taken as one that selects some files and leaves the start
-// point out, as is a negated test;
-// the name and path patterns and the regular expression are evaluated against the start point as find prints it, so -name '*' or
-// a pattern that fits the start point's own name does not leave it out. A name or path pattern the reader cannot evaluate in every
-// locale (a collating symbol, an equivalence class) is taken as one that may fit the start point.
+// excludes says whether the test is false for the start point. A test on something other than the start point's name or path
+// (-newer, -mtime, -size, -empty, -type) is taken as one that selects some files and leaves the start point out, as is a negated
+// test; the name and path patterns and the regular expression are evaluated against the start point as find prints it, so -name '*'
+// or a pattern that fits the start point's own name does not leave it out. A name, path or regular-expression pattern the reader
+// cannot evaluate (a collating symbol, an equivalence class, a regular expression with groups or alternation) never guards: it may
+// fit the start point.
 func (t findTest) excludes(start string) bool {
 	if t.neg {
 		// A negated test keeps what it names out of the action (find . ! -name keep): it is read as one that selects.
@@ -335,10 +335,8 @@ func (t findTest) excludes(start string) bool {
 	default:
 		return true
 	}
-	if !known {
-		return true
-	}
-	return !matches
+	// A regular expression the reader cannot evaluate guards nothing: only a predicate proven to leave the start point out does.
+	return known && !matches
 }
 
 // findBase is the name find matches -name against for a start point: its last component as written.
