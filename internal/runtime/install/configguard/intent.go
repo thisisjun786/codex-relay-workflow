@@ -151,18 +151,43 @@ func newIntent(home, op, path string, base *InstallManifest) (*installIntent, er
 	return in, nil
 }
 
-func (in *installIntent) publish(step string, unsynced *error) error {
+// publish writes the intent. Unlike txPublish it counts a publication whose directory sync failed as a failure: the intent is
+// what makes the effects after it recoverable, so no effect may run on an intent that may not survive a power failure
+// (CRW-1153). The caller stops, and an intent no effect depends on is removed with abandon.
+func (in *installIntent) publish(step string) error {
 	b, err := json.MarshalIndent(in, "", "  ")
 	if err != nil {
 		return err
 	}
-	return txPublish(step, intentPath(in.home), append(b, '\n'), unsynced)
+	if err := txStep(step); err != nil {
+		return err
+	}
+	if _, _, err := activationReadFile(intentPath(in.home)); err != nil {
+		return err
+	}
+	if err := activationCrwdirPublish(intentPath(in.home), append(b, '\n')); err != nil {
+		if crwdir.Published(err) {
+			// A plain error: the intent is in place but not known to be durable, which is not a published change.
+			return fmt.Errorf("the change intent %s may not survive a power failure (%v), so nothing was changed", intentPath(in.home), err)
+		}
+		return err
+	}
+	return nil
 }
 
-// attempt marks effect i attempted and publishes the intent before the effect runs.
-func (in *installIntent) attempt(i int, unsynced *error) error {
+// abandon removes an intent no effect depends on. It is best effort: a leftover intent without an attempted effect records
+// nothing.
+func (in *installIntent) abandon() { _ = os.Remove(intentPath(in.home)) }
+
+// attempt marks effect i attempted and publishes the intent before the effect runs. An intent that could not be made durable
+// leaves the effect unattempted: it does not run.
+func (in *installIntent) attempt(i int) error {
 	in.Effects[i].Attempted = true
-	return in.publish("intent", unsynced)
+	if err := in.publish("intent"); err != nil {
+		in.Effects[i].Attempted = false
+		return err
+	}
+	return nil
 }
 
 // closeIntent removes the intent once the manifest that records its effects is committed.

@@ -70,19 +70,48 @@ func configLinkTarget(path string) string {
 	return path
 }
 
-// configIdentityAfterRunner re-proves, after the Codex CLI ran, that the config file and its directory are the ones the
-// command pinned before it (CRW-1144). The directory must be the same directory. When the CLI replaced the caller's
-// config.toml, so that the path now names a file the held lock does not guard, the command takes that file's lock as well
-// and re-checks under it: another CRW writer that reached the new file first makes it wait and then refuse, and nothing more
-// is published. It answers the extra lock to release, nil when the held one still guards the path.
-func configIdentityAfterRunner(lock *crwdir.ConfigLock, path string, dir os.FileInfo) (*crwdir.ConfigLock, error) {
+// configLocks is the set of config locks one command holds: the one it took before it read anything, and the ones it took
+// later on files the Codex CLI put in place of the caller's config.toml (CRW-1144).
+type configLocks struct {
+	main  *crwdir.ConfigLock
+	extra []*crwdir.ConfigLock
+}
+
+// recheck re-proves, after the Codex CLI ran, that the config file and its directory are the ones the command pinned before
+// it (CRW-1144). The directory must be the same directory. When the CLI replaced the caller's config.toml, so that the path
+// now names a file no held lock guards, the command takes that file's lock as well and re-checks under it: another CRW writer
+// that reached the new file first makes it wait and then refuse, and nothing more is published. A command that runs the CLI
+// more than once calls it after every run, before the next effect.
+func (c *configLocks) recheck(path string, dir os.FileInfo) error {
+	extra, err := c.acquire(path, dir)
+	if extra != nil {
+		c.extra = append(c.extra, extra)
+	}
+	return err
+}
+
+// releaseExtra releases the locks taken after the first; the first is the caller's to release.
+func (c *configLocks) releaseExtra() {
+	for _, l := range c.extra {
+		l.Release()
+	}
+	c.extra = nil
+}
+
+func (c *configLocks) acquire(path string, dir os.FileInfo) (*crwdir.ConfigLock, error) {
 	if dir != nil {
 		if live, err := os.Stat(filepath.Dir(path)); err != nil || !os.SameFile(live, dir) {
 			return nil, fmt.Errorf("the directory of %s changed while codex ran; nothing more was published", path)
 		}
 	}
-	if lock.HoldsSidecar(configLinkTarget(path)) {
+	target := configLinkTarget(path)
+	if c.main.HoldsSidecar(target) {
 		return nil, nil
+	}
+	for _, l := range c.extra {
+		if l.HoldsSidecar(target) {
+			return nil, nil
+		}
 	}
 	extra, err := crwdir.LockConfig(path, activationLockWait)
 	if err != nil {
@@ -93,4 +122,10 @@ func configIdentityAfterRunner(lock *crwdir.ConfigLock, path string, dir os.File
 		return nil, fmt.Errorf("%s changed again while its new lock was taken; nothing more was published", path)
 	}
 	return extra, nil
+}
+
+// configIdentityAfterRunner is recheck for a command that runs the CLI once: it answers the extra lock to release, nil when
+// the held one still guards the path.
+func configIdentityAfterRunner(lock *crwdir.ConfigLock, path string, dir os.FileInfo) (*crwdir.ConfigLock, error) {
+	return (&configLocks{main: lock}).acquire(path, dir)
 }

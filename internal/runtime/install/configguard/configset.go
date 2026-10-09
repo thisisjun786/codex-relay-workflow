@@ -100,6 +100,12 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; run 'crw install features enable' first. " +
 			"Without it there is nowhere to record the previous value, and 'crw install features disable' could not revert this key."}, nil
 	}
+	// A manifest a completed deactivation released owns nothing any more (CRW-1145): a key set into it would be recorded
+	// beside records that no longer describe ownership, and the next deactivation would take the release marker for the
+	// answer and leave the new key. A new install record starts with 'crw install features enable'.
+	if m.ReleasedAt != nil {
+		return ConfigSetOutcome{Reason: "the install was released by 'crw install features disable', so there is no live record to keep this key in; run 'crw install features enable' to start a new one."}, nil
+	}
 	pre, exists, err := activationReadFile(target)
 	if err != nil {
 		return ConfigSetOutcome{}, err
@@ -190,7 +196,9 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 			return ConfigSetOutcome{}, err
 		}
 		in.Effects = []intentEffect{effect}
-		if err := in.publish("intent", &unsynced); err != nil {
+		// config.toml changes only on an intent known to be durable (CRW-1153); until then nothing depends on it.
+		if err := in.publish("intent"); err != nil {
+			in.abandon()
 			return ConfigSetOutcome{}, err
 		}
 		if err := txPublish("config", target, []byte(res.Content), &unsynced); err != nil {

@@ -528,11 +528,15 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// Oracle parity: marker failure never gates uninstall, including early exits. The
 	// marker API itself refuses unreadable records rather than replacing their consent data.
 	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
+	// unsynced is the durability error of a record this command published: it is in place and kept, and the command reports
+	// it (CRW-1153) instead of a success the directory sync did not back.
+	var unsynced, recoveryDur error
+	durability := func() error { return errors.Join(recoveryDur, txDurability(unsynced)) }
 	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}, Recovered: []string{}}
 	noManifest := func() (*DeactivateResult, error) {
 		markOptedOut()
 		r.NoManifest = true
-		return r, nil
+		return r, durability()
 	}
 	// An interrupted change is recorded first, under the lock of the config file it is about, so this deactivation reverts
 	// what that change did (CRW-1153).
@@ -553,6 +557,8 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			return nil, err
 		}
 		r.Recovered = recovered
+		// A record in place whose directory sync failed is reported with this command's result (CRW-1153).
+		recoveryDur = err
 	}
 	// The first reading decides only whether and where to lock; the reading every decision below uses
 	// is taken after the lock is held (CRW-877).
@@ -570,7 +576,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	released := func() (*DeactivateResult, error) {
 		markOptedOut()
 		r.Released = true
-		return r, nil
+		return r, durability()
 	}
 	if m.ReleasedAt != nil {
 		return released()
@@ -671,7 +677,10 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 				return nil, err
 			}
 		}
-		if err := deactivateTableKeys(path, *content, m, r, guard); err != nil {
+		if err := deactivateTableKeys(path, *content, m, r, guard); crwdir.Published(err) {
+			// The restored file is in place; its directory sync is reported at the end.
+			unsynced = errors.Join(unsynced, err)
+		} else if err != nil {
 			return nil, err
 		}
 	}
@@ -727,11 +736,17 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		if err != nil {
 			return r, err
 		}
-		if err := activationPublish(manifestPath(deps.CodexHome), b); err != nil {
+		if _, _, err := activationReadFile(manifestPath(deps.CodexHome)); err != nil {
+			return r, fmt.Errorf("everything crw owned was reverted, but the release could not be recorded in the install manifest: %w", err)
+		}
+		if err := activationCrwdirPublish(manifestPath(deps.CodexHome), b); crwdir.Published(err) {
+			// The release is in place and kept; it is not known to be durable, which the command reports.
+			unsynced = errors.Join(unsynced, fmt.Errorf("%s: %w", manifestPath(deps.CodexHome), err))
+		} else if err != nil {
 			return r, fmt.Errorf("everything crw owned was reverted, but the release could not be recorded in the install manifest: %w", err)
 		}
 	}
-	return r, nil
+	return r, durability()
 }
 
 // deactivateUnresolved reports a key the deactivation left because its provenance could not be proven.
@@ -788,7 +803,10 @@ func deactivateTableKeys(path, content string, m *InstallManifest, r *Deactivate
 		r.RestoredKeys = append(r.RestoredKeys, id)
 	}
 	if changed {
-		return configLockPathsPublishChecked(path, []byte(content), guard)
+		if _, _, e := activationReadFile(path); e != nil {
+			return e
+		}
+		return crwdir.PublishChecked(path, []byte(content), guard)
 	}
 	return nil
 }

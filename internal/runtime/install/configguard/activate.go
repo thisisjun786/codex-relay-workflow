@@ -310,6 +310,21 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		m.Flags[key] = f
 		m.flagOrder = append(m.flagOrder, key)
 	}
+	// The baseline of a carried activation holds every record the install already has, so a stop before an effect runs (a hard
+	// flag failure, a refused publication) commits the ownership it started from, not less (CRW-1153): a record leaves the
+	// manifest only when its own effect says so.
+	if carried {
+		for _, key := range manifestOrder(prior.flagOrder, prior.Flags) {
+			if _, ok := m.Flags[key]; !ok {
+				m.Flags[key] = prior.Flags[key]
+				m.flagOrder = append(m.flagOrder, key)
+			}
+		}
+		for _, id := range manifestOrder(prior.tableOrder, prior.TableKeys) {
+			m.TableKeys[id] = prior.TableKeys[id]
+			m.tableOrder = append(m.tableOrder, id)
+		}
+	}
 	// The managed keys are planned on the pre-image: a key already at its value is recorded as it is, a key to change is an
 	// effect of the transaction, and a key in a form the editor does not touch is left alone.
 	var effects []intentEffect
@@ -338,7 +353,9 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 			continue
 		}
 		m.TableKeys[id] = TableKeyRecord{entry.Table, entry.Key, priorValue, "true", owned}
-		m.tableOrder = append(m.tableOrder, id)
+		if !slices.Contains(m.tableOrder, id) {
+			m.tableOrder = append(m.tableOrder, id)
+		}
 	}
 	// An activation of a carried install that has nothing to change writes no backup and no manifest (CRW-1145). A soft flag
 	// that failed before is off, so it is in toEnable and its explicit retry still runs.
@@ -387,9 +404,15 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		return nil, e
 	}
 	in.Effects = effects
-	if e = in.publish("intent", &unsynced); e != nil {
+	// No effect runs on an intent that may not survive a power failure (CRW-1153): nothing has been changed yet, so the intent is
+	// taken back and the command stops.
+	if e = in.publish("intent"); e != nil {
+		in.abandon()
 		return nil, e
 	}
+	// The locks this command holds on config.toml: the one it took first, and the ones it takes when the CLI replaces the file.
+	locks := &configLocks{main: lock}
+	defer locks.releaseExtra()
 	// From here on every stop commits what was done: the manifest records the effects in place, or, when it cannot be
 	// written, the intent stays for the next explicit command.
 	finish := func(cause error) (*InstallManifest, error) {
@@ -410,11 +433,12 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// so the deactivation reverts them (CRW-1153).
 	var hardErr error
 	ran := false
+	exitedZero := map[string]bool{}
 	for i, effect := range in.Effects {
 		if effect.Kind != intentFlag || hardErr != nil {
 			continue
 		}
-		if e = in.attempt(i, &unsynced); e != nil {
+		if e = in.attempt(i); e != nil {
 			return finish(e)
 		}
 		ran = true
@@ -423,6 +447,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		f := m.Flags[effect.Name]
 		if r.ExitCode == 0 {
 			f.EnabledByCodexclaw = true
+			exitedZero[effect.Name] = true
 		} else {
 			f.EnableFailed = true
 			f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
@@ -431,46 +456,53 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 			}
 		}
 		m.Flags[effect.Name] = f
+		// The CLI may have replaced config.toml or its directory (CRW-1144): the next effect, and the manifest, are written only
+		// under a lock that guards the file the caller's path names now. Otherwise nothing more runs, and the intent stays for
+		// the explicit retry to record what the CLI did.
+		if err := locks.recheck(path, dirInfo); err != nil {
+			return nil, fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
+		}
 	}
-	// An exit 0 is not proof (CRW-1143): the flags are read back from the same config, and only a flag observed enabled is
-	// crw's. A list that cannot be read proves nothing either way, so nothing is committed as changed or unchanged: the
-	// intent stays for the next explicit command to measure and record.
+	// An exit 0 is not proof, and a nonzero exit is not proof of no change (CRW-1143): the flags are read back from the same
+	// config, and a flag observed enabled is crw's whatever the process said, while the failure stays reported. A list that
+	// cannot be read proves nothing either way, so nothing is committed as changed or unchanged: the intent stays for the next
+	// explicit command to measure and record.
 	if ran {
 		observed, err := ReadFeatureStates(deps.Run)
 		if err != nil {
 			return nil, fmt.Errorf("the flags were asked to change but could not be read back (%w); the change is kept in %s, and the next 'crw install features enable' or 'disable' records what is in place", err, intentPath(deps.CodexHome))
 		}
 		for _, effect := range in.Effects {
-			f := m.Flags[effect.Name]
-			if effect.Kind != intentFlag || !f.EnabledByCodexclaw || observed[effect.Name] == FeatureEnabled {
+			if effect.Kind != intentFlag || !effect.Attempted {
 				continue
 			}
-			f.EnabledByCodexclaw, f.EnableFailed = false, true
-			f.Failure = &FailureRecord{0, "codex features enable exited 0, but the flag reads " + string(observed[effect.Name])}
-			m.Flags[effect.Name] = f
-			if hardErr == nil && !slices.Contains(SoftFeatures(), DeclaredFeature(effect.Name)) {
-				hardErr = fmt.Errorf("codex features enable %s exited 0, but the flag reads %s; the flags observed enabled are recorded, and 'crw install features disable' reverts them", effect.Name, observed[effect.Name])
+			f := m.Flags[effect.Name]
+			switch {
+			case observed[effect.Name] == FeatureEnabled:
+				f.EnabledByCodexclaw = true
+			case exitedZero[effect.Name]:
+				f.EnabledByCodexclaw, f.EnableFailed = false, true
+				f.Failure = &FailureRecord{0, "codex features enable exited 0, but the flag reads " + string(observed[effect.Name])}
+				if hardErr == nil && !slices.Contains(SoftFeatures(), DeclaredFeature(effect.Name)) {
+					hardErr = fmt.Errorf("codex features enable %s exited 0, but the flag reads %s; the flags observed enabled are recorded, and 'crw install features disable' reverts them", effect.Name, observed[effect.Name])
+				}
+			default:
+				continue
 			}
+			m.Flags[effect.Name] = f
+		}
+		if err := locks.recheck(path, dirInfo); err != nil {
+			return nil, fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
 		}
 	}
 	if hardErr != nil {
 		return finish(hardErr)
 	}
-	// The CLI may have replaced config.toml or its directory (CRW-1144): the key is published only under a lock that guards
-	// the file the caller's path names now. Otherwise nothing more is published, and the intent stays for the explicit retry
-	// to record what the CLI did.
-	if ran {
-		extra, err := configIdentityAfterRunner(lock, path, dirInfo)
-		if err != nil {
-			return nil, fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
-		}
-		defer extra.Release()
-	}
 	for i, effect := range in.Effects {
 		if effect.Kind != intentKey {
 			continue
 		}
-		if e = in.attempt(i, &unsynced); e != nil {
+		if e = in.attempt(i); e != nil {
 			return finish(e)
 		}
 		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
