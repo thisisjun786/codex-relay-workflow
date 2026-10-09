@@ -78,6 +78,9 @@ type decision struct {
 	// when the thread's turn, if any, was not recognised as this creation's.
 	turn string
 	rec  reconciliation
+	// silent is a stop that is only an answer: reconcileCreation returns it without recording an
+	// attempt marker or a managed_start_observed row, so a repeat decides again from the start.
+	silent bool
 }
 
 // attemptID is the bridge operation id of creation attempt n of a request: attempt 0 is the request's own id, and each later one derives from
@@ -193,6 +196,9 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 		return nil, nil
 	}
 	r.reconciled = &d.rec
+	if d.silent {
+		return r.unrecordedIncomplete(), nil
+	}
 	return nil, nil
 }
 
@@ -305,8 +311,11 @@ func (r *startRun) abandonOrphan(ctx context.Context, base reconciliation, threa
 		var inconclusive *orphanReadInconclusive
 		if errors.As(err, &inconclusive) {
 			// The orphan could not be read again, so nothing is decided about it: this call stops
-			// with the existing unobservable state and creates nothing. A repeat decides again.
-			return base.stopped(reconUnobserved, "%s", inconclusive.Error()), nil
+			// with the existing unobservable state, creates nothing and writes nothing - no attempt
+			// marker, no journal row, no receipt. A repeat decides again.
+			stop := base.stopped(reconUnobserved, "%s", inconclusive.Error())
+			stop.silent = true
+			return stop, nil
 		}
 		return decision{}, err
 	}
@@ -632,10 +641,19 @@ func standbyTurnInput(row map[string]any) string {
 }
 
 // standbyMessageText is one user message's standby text, or "" when the message is not the
-// bootstrap alone (standbyTurnInput).
+// bootstrap alone (standbyTurnInput). A field that is present is read as it is: an explicitly empty
+// item text, an item text that is not text, and content that is not a list are inputs that cannot be
+// read, and none of them is taken for an absent field.
 func standbyMessageText(message map[string]any) string {
-	parts := standbyMessageParts(message)
-	if text := pyjson.Text(message["text"]); text != "" {
+	parts, readable := standbyMessageParts(message)
+	if !readable {
+		return ""
+	}
+	if value, present := message["text"]; present {
+		text, ok := value.(string)
+		if !ok || text == "" {
+			return ""
+		}
 		if len(parts) == 0 {
 			return text
 		}
@@ -650,15 +668,22 @@ func standbyMessageText(message map[string]any) string {
 	return ""
 }
 
-// standbyMessageParts is a message's content as a list of parts; a message that carries none reads as no
-// parts, whatever shape the host left behind.
-func standbyMessageParts(message map[string]any) []map[string]any {
-	content, _ := message["content"].([]any)
+// standbyMessageParts is a message's content as a list of parts; a message without a content key reads
+// as no parts. A content that is present and is not a list is not readable.
+func standbyMessageParts(message map[string]any) ([]map[string]any, bool) {
+	value, present := message["content"]
+	if !present {
+		return nil, true
+	}
+	content, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
 	parts := make([]map[string]any, 0, len(content))
 	for _, part := range content {
 		parts = append(parts, pyjson.Map(part))
 	}
-	return parts
+	return parts, true
 }
 
 // standbyRecheck is when a recognised standby turn that is still in progress is looked at again: the grace period after the later of the
