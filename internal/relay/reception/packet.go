@@ -219,6 +219,7 @@ func checkEnvelope(region any) error {
 	}
 	return nil
 }
+
 // checkLoopWorkflowMode refuses a policy whose workflow names the loop under another mode: the loop
 // arms a goalplan, so its mode is loop. The workflow is read as words, so crw-loop and CRW Loop name
 // it and crw-loopback does not.
