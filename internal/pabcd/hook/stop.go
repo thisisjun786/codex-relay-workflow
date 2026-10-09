@@ -127,7 +127,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	}
 	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State) string {
 		if plateau := stopObjectivePlateau(p.Cwd, p.SessionID); plateau.Flat {
-			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID)
+			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID, renderAdvisory)
 		}
 		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(p.Cwd, fresh), p.SessionID, platform, env)
 		if renderAdvisory != "" {
@@ -508,8 +508,9 @@ func stopGoalIdleBlock(cwd string, st state.State, sessionID, platform string, e
 }
 
 // stopPlateauDivergeBlock is buildPlateauDivergeBlock (hook.ts:1740-1771): the block that replaces the
-// continuation when a maximize objective's latest metric values do not improve.
-func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd, sessionID string) string {
+// continuation when a maximize objective's latest metric values do not improve. advisory is the render/native observation
+// advisory of the same Stop ("" when none applies); it follows the block text.
+func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd, sessionID, advisory string) string {
 	values := "n/a"
 	if len(plateau.Values) > 0 {
 		texts := make([]string, len(plateau.Values))
@@ -557,7 +558,13 @@ func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd
 		}
 	}
 	lines = append(lines, "Anchor rule (LOOP-CANDIDATE-ANCHOR-01): source candidates from domain-state evidence (logs, trajectories, instance analysis) — a candidate list of threshold/guard tweaks on existing levers is parameter-space anchoring; regenerate. Quote the previous cycle's D conclusion before proposing (LOOP-CONTINUITY-01). Record each candidate WITH its changeClass. Check whether evaluation instances are fixed/enumerable (LOOP-INSTANCE-CHECK-01).")
-	return stopEnvelope(strings.Join(lines, "\n"))
+	reason := strings.Join(lines, "\n")
+	// Port deviation (known-defects CRW-192): the oracle returns this block before it appends the render advisory, so the soft
+	// warning of the same Stop was lost exactly when the model is told to re-plan; it follows the block like every other reason.
+	if advisory != "" {
+		reason += "\n\n" + advisory
+	}
+	return stopEnvelope(reason)
 }
 
 // stopNumberText is a finite number as JavaScript prints it in a template literal.

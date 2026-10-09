@@ -547,7 +547,7 @@ func TestStopPlateauBlockNamesDiscardedCandidates(t *testing.T) {
 	for _, title := range []string{"raise the threshold", "lower the threshold", "widen the guard"} {
 		if _, err := metric.RecordDivergenceCandidate(cwd, metric.CandidateInput{SessionID: stopSID, Kind: metric.KindStrong1, Title: title,
 			Rationale: "r", SourceURLs: []string{"https://example.com/a"}, Status: &discarded, ChangeClass: &class}); err != nil {
-			t.Skipf("the candidate ledger refused the fixture row: %v", err)
+			t.Fatalf("the candidate ledger refused the fixture row %q: %v", title, err)
 		}
 	}
 	got := stopBlockReason(t, stopRun(cwd, env))
@@ -556,6 +556,76 @@ func TestStopPlateauBlockNamesDiscardedCandidates(t *testing.T) {
 			t.Errorf("missing %q in %q", want, got)
 		}
 	}
+}
+
+// A plateau block at C keeps the render and native observation advisories of the same Stop (CRW port deviation: the oracle's
+// plateau branch returns before the advisory is appended, hook.ts:1861-1863, so the soft warning was lost for the one case that
+// asks the model to re-plan; the block text itself is unchanged and the advisory follows it after a blank line).
+func TestStopPlateauBlockKeepsTheObservationAdvisories(t *testing.T) {
+	plateau := func(t *testing.T, more ...func(*state.State)) (string, host.LookupEnv) {
+		t.Helper()
+		cwd, env := stopRig(t, "active")
+		stopInFlight(t, cwd, state.PhaseC, more...)
+		if err := metric.WriteObjectiveKind(cwd, stopSID, metric.Maximize); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := metric.RecordObjectiveMetric(cwd, metric.RecordInput{SessionID: stopSID, MetricName: "score", Value: 0.5, Source: metric.OperatorEntered}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return cwd, env
+	}
+	const anchor = "Check whether evaluation instances are fixed/enumerable (LOOP-INSTANCE-CHECK-01)."
+	modified := func(cwd string) {
+		appendRow(cwd, RenderObsRow{TS: "2026-01-01T00:00:00.000Z", Kind: ArtifactModified, Detail: "page.html", SessionID: stopSID})
+	}
+
+	t.Run("render", func(t *testing.T) {
+		cwd, env := plateau(t)
+		modified(cwd)
+		got := stopBlockReason(t, stopRun(cwd, env))
+		if !strings.HasPrefix(got, "[crw — objective plateau] You are mid-cycle at C (") || !strings.HasSuffix(got, anchor+"\n\n"+RenderGroundingAdvisory()) {
+			t.Errorf("plateau block without the render advisory: %q", got)
+		}
+	})
+	t.Run("observed", func(t *testing.T) {
+		cwd, env := plateau(t)
+		modified(cwd)
+		appendRow(cwd, RenderObsRow{TS: "2026-01-01T00:00:01.000Z", Kind: Observation, Detail: "shot", SessionID: stopSID})
+		got := stopBlockReason(t, stopRun(cwd, env))
+		if !strings.HasSuffix(got, anchor) || strings.Contains(got, "advisory") {
+			t.Errorf("an observed render grew an advisory: %q", got)
+		}
+	})
+	t.Run("native and render", func(t *testing.T) {
+		cwd, env := plateau(t, func(s *state.State) { s.Slug = "native" })
+		stopWritePlan(t, cwd, "native", func(p *goalplan.Goalplan) {
+			p.Criteria = []goalplan.GoalplanCriterion{{ID: "c1", Scenario: "s", ExpectedEvidence: "e", Status: goalplan.CriterionOpen, Surface: goalplan.SurfaceDesktop, Presented: goalplan.PresentedNative}}
+		})
+		modified(cwd)
+		got := stopBlockReason(t, stopRun(cwd, env))
+		i := strings.Index(got, "[crw advisory — D5.2] The active desktop criteria c1 declare presented: \"native\"")
+		if !strings.HasPrefix(got, "[crw — objective plateau]") || i < 0 || !strings.Contains(got[:i], anchor+"\n\n") || !strings.HasSuffix(got, "\n\n"+RenderGroundingAdvisory()) {
+			t.Errorf("plateau block without both advisories: %q", got)
+		}
+	})
+	t.Run("not at C", func(t *testing.T) {
+		cwd, env := stopRig(t, "active")
+		stopInFlight(t, cwd, state.PhaseB)
+		if err := metric.WriteObjectiveKind(cwd, stopSID, metric.Maximize); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := metric.RecordObjectiveMetric(cwd, metric.RecordInput{SessionID: stopSID, MetricName: "score", Value: 0.5, Source: metric.OperatorEntered}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		modified(cwd)
+		if got := stopBlockReason(t, stopRun(cwd, env)); !strings.HasSuffix(got, anchor) {
+			t.Errorf("phase B grew an advisory: %q", got)
+		}
+	})
 }
 
 // The render advisory (C-RENDER-GROUNDING-01): at C, an interactive session gets additionalContext and never a
