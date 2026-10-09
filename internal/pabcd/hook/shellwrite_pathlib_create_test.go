@@ -197,6 +197,19 @@ func TestPathlibOtherWritesEffectiveDirectory(t *testing.T) {
 	}
 }
 
+func TestPathlibCreateResolvedWithoutEnvironment(t *testing.T) {
+	for _, tc := range []struct{ command, want string }{
+		{`python3 -c 'from pathlib import Path; Path("/w/x").touch()'`, "/w/x"},
+		{`python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'`, ""},
+		{`cd "$DEST"; python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'`, shellIRUnknownDest},
+	} {
+		dests, ok := shellIRWriteDestsResolved(tc.command, "/w", nil)
+		if !ok || strings.Join(dests, ",") != tc.want {
+			t.Fatalf("no-environment reading of %q: %q, readable=%v, want %q", tc.command, dests, ok, tc.want)
+		}
+	}
+}
+
 // The frozen CRW-951 promise permits computed create receivers when the program
 // has no protected reference. Mentioning the protected area makes them attempts.
 func TestPathlibCreateProtectedReference(t *testing.T) {

@@ -72,6 +72,9 @@ func shellIRPyProtectedDir(dir shellir.Dir, lookup func(string) (string, bool)) 
 	if !dir.Known || dir.Path == "" {
 		return true
 	}
+	if lookup == nil {
+		lookup = func(string) (string, bool) { return "", false }
+	}
 	g := newMemoryGateEnv(lookup)
 	root, ok := g.root()
 	if !ok {
