@@ -119,8 +119,101 @@ type pumpState struct {
 	// sent/ did not finish. The next round completes the move before anything else, so an
 	// accepted notice is never sent twice.
 	QueueAccepted map[string][]string `json:"queue_accepted"`
+	// PRSeq is the counter a detected PR change is numbered with. The event id carries it, so a
+	// transition that happens twice mints two ids and the second is not dropped as one the sent
+	// set already holds.
+	PRSeq int `json:"pr_seq"`
+	// QueueAttempt is a queue thread's batch whose delivery ended neither accepted nor refused.
+	// While it is set the batch's notice names, body and logical id are frozen, so the next round
+	// reconciles the same request id instead of forming a new batch around a notice that may
+	// already have gone.
+	QueueAttempt map[string]pumpReview776QueuePin `json:"queue_attempt"`
+
+	// QueueRefused is a queue thread's count of the refusals one batch id has taken. The next batch
+	// of that id is sent under the count as an ordinal, so the ledger's refusal of the earlier id is
+	// not replayed. A state written before the key existed reads as no refusals.
+	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
+
+	// QueueLegacyChecked marks a queue thread whose queue was searched for the pre-change ledger
+	// records that could have carried its notices and left nothing to answer for beyond a pin that holds
+	// the whole evidence: no record, only records that settled as never delivered, the one provable record
+	// the pin adopts, a provable pin that answers for every record found, or an overlap pin whose records
+	// all settled with nothing left waiting. A thread with a ledger record that could have carried a text
+	// it may still send and that neither the search nor the pin answers for is never marked. The
+	// pre-change pump no longer writes such records, so the search runs until then, and never
+	// again; a thread holding a pin it has not been marked for (one another build left) is searched before
+	// that pin is acted on. A state written before the key existed reads as no thread searched.
+	QueueLegacyChecked map[string]bool `json:"queue_legacy_checked"`
 
 	extra map[string]json.RawMessage
+}
+
+// pumpReview776QueuePin is one frozen queue batch: the notice names it carried, the body it sent
+// and the logical id it was tried under. The names are what an accepted retry records as the
+// membership, so a notice queued after the pin was taken is not moved to sent/. SHA256 is each
+// member's delivered body digest, so an accepted batch moves only the members still carrying the
+// text it sent.
+type pumpReview776QueuePin struct {
+	LogicalID string            `json:"logical_id"`
+	Names     []string          `json:"names"`
+	Body      string            `json:"body"`
+	SHA256    map[string]string `json:"sha256,omitempty"`
+	Accepted  bool              `json:"accepted,omitempty"`
+	// Base is the batch id the pin's logical id carries before any refusal ordinal is appended. A
+	// refusal is counted against it. A pin without it (written before the ordinal existed) is counted
+	// against its logical id.
+	Base string `json:"base,omitempty"`
+	// Legacy marks a pin taken for pre-change ledger records whose body the ledger does not store. An
+	// overlap pin carries it with digests that only tell a notice the producer wrote again from the one
+	// the records were matched against; a notice is completed only when a record that proves its text
+	// shows it delivered. A legacy pin without an overlap (one an earlier build of the queue wrote) cannot
+	// prove which notices its attempt carried, so it holds the thread.
+	Legacy bool `json:"legacy,omitempty"`
+	// Held marks a pin whose pre-change attempt the ledger accepted but whose text is not
+	// recoverable. The attempt covered the pin's names, so completing them by name could archive a
+	// notice it never carried, and sending them under a new id could deliver one twice; the thread
+	// waits while the pin holds, which is the queue's rule for a pin.
+	Held bool `json:"held,omitempty"`
+	// Overlap is the evidence set of a pin taken over the pre-change records that carried queued
+	// notices, when there are several or one cannot prove its text. Each is reconciled on its own
+	// receipt every round, and the pin's names and digests are the notices any of them carried. A notice
+	// is completed once a provable record that carried it shows a delivery, and nothing is sent while a
+	// record that carried an unproven notice is undetermined. A record that cannot prove its text marks
+	// the pin Held: the thread sends nothing until an operator settles it, and the provable records are
+	// still reconciled under the hold.
+	Overlap []pumpReview776QueueLegacyRef `json:"overlap,omitempty"`
+	// Judged lists the pre-change records the search that took an overlap pin matched over the queue
+	// and found to answer for nothing queued: refused with proof of its text, or written before every
+	// member it names was written again. An overlap pin never replays a text, so they stay answered while
+	// it holds, and a later round that cannot match them by name (a member completed, or a queue past the
+	// search's limit) does not hold on them as records nothing answers for.
+	Judged []string `json:"judged,omitempty"`
+}
+
+// pumpReview776QueueLegacyRef is one pre-change record of an overlap pin: its logical id, the names
+// its id hashes (Members) and the notices it carried (Names), those of its members that were not
+// written again after it. Unprovable marks a record that cannot prove which text it carried -- one that
+// carried only part of its members, or one whose message digest is not the digest of its members' text
+// on disk -- with the Reason for the operator. Such a record holds the thread: its answer never
+// completes a notice and never lets one be sent, while a notice another, provable record shows
+// delivered is still completed.
+type pumpReview776QueueLegacyRef struct {
+	LogicalID  string   `json:"logical_id"`
+	Names      []string `json:"names"`
+	Members    []string `json:"members,omitempty"`
+	Unprovable bool     `json:"unprovable,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	// Accepted marks the attempt of a pin the queue already held as accepted when the search folded that
+	// pin into the evidence set: the pin's own accepted mark is its answer, whatever the ledger says.
+	Accepted bool `json:"accepted,omitempty"`
+}
+
+// pumpQueueRefusal is a queue thread's count of the refusals one batch id has taken. The next batch
+// of that id is sent under the ordinal, so the ledger's refusal of the earlier id is not replayed. A
+// state without the key reads as no refusals.
+type pumpQueueRefusal struct {
+	ID    string `json:"id"`
+	Count int    `json:"count"`
 }
 
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its
@@ -136,7 +229,10 @@ func pumpNewState() pumpState {
 	return pumpState{
 		Offsets: map[string]int64{}, PRs: map[string]string{}, Sources: map[string]string{},
 		Cursors: map[string]string{}, Sent: map[string]bool{},
-		QueueAccepted: map[string][]string{}, extra: map[string]json.RawMessage{},
+		QueueAccepted: map[string][]string{}, QueueAttempt: map[string]pumpReview776QueuePin{},
+		QueueRefused:       map[string]pumpQueueRefusal{},
+		QueueLegacyChecked: map[string]bool{},
+		extra:              map[string]json.RawMessage{},
 	}
 }
 
@@ -178,6 +274,14 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.Attempt)
 		case "queue_accepted":
 			err = json.Unmarshal(value, &st.QueueAccepted)
+		case "pr_seq":
+			err = json.Unmarshal(value, &st.PRSeq)
+		case "queue_attempt":
+			err = json.Unmarshal(value, &st.QueueAttempt)
+		case "queue_refused":
+			err = json.Unmarshal(value, &st.QueueRefused)
+		case "queue_legacy_checked":
+			err = json.Unmarshal(value, &st.QueueLegacyChecked)
 		default:
 			// A key this file does not name belongs to a later node; it is preserved on write.
 			st.extra[key] = value
@@ -204,6 +308,15 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 	if st.QueueAccepted == nil {
 		st.QueueAccepted = map[string][]string{}
 	}
+	if st.QueueAttempt == nil {
+		st.QueueAttempt = map[string]pumpReview776QueuePin{}
+	}
+	if st.QueueRefused == nil {
+		st.QueueRefused = map[string]pumpQueueRefusal{}
+	}
+	if st.QueueLegacyChecked == nil {
+		st.QueueLegacyChecked = map[string]bool{}
+	}
 	return st, nil
 }
 
@@ -229,6 +342,8 @@ func (st pumpState) pumpSave(cfg *Config) error {
 		{"offsets", st.Offsets}, {"pending", st.Pending}, {"first_at", st.FirstAt},
 		{"prs", st.PRs}, {"sources", st.Sources}, {"cursors", st.Cursors}, {"sent", st.Sent},
 		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
+		{"pr_seq", st.PRSeq}, {"queue_attempt", st.QueueAttempt},
+		{"queue_refused", st.QueueRefused}, {"queue_legacy_checked", st.QueueLegacyChecked},
 	} {
 		if err := put(field.key, field.value); err != nil {
 			return err
@@ -354,16 +469,39 @@ func pumpDue(pending []pumpEvent, firstAt *float64, now time.Time, s pumpSetting
 // events is split into stable prefixes rather than forming a batch that can never be accepted.
 const pumpBatchLimit = 90000
 
-// pumpBatchPrefix is the longest prefix of the pending events whose body stays inside the batch
-// limit. The prefix is stable for a given pending set, so the frozen attempt and its logical id
-// are stable across rounds.
+// pumpBatchPrefix is the longest prefix of the delivery order whose body stays inside the batch
+// limit. An urgent round delivers the urgent events (question, dag) first in their collected
+// order, then the rest in their collected order, so an urgent event collected last still lands in
+// the first batch. The order is deterministic for a given pending set, so the frozen attempt and
+// its logical id are stable across rounds.
 func pumpBatchPrefix(events []pumpEvent, now time.Time, urgent bool, footer string) []pumpEvent {
+	if urgent {
+		events = pumpReview776UrgentFirst(events)
+	}
 	for n := len(events); n > 0; n-- {
 		if len(pumpBody(events[:n], now, urgent, footer)) <= pumpBatchLimit {
 			return events[:n]
 		}
 	}
 	return events[:1]
+}
+
+// pumpReview776UrgentFirst is the urgent delivery order: the urgent events in their collected
+// order first, then the rest in their collected order. It is a stable partition, so the same
+// pending set always produces the same order and therefore the same logical id.
+func pumpReview776UrgentFirst(events []pumpEvent) []pumpEvent {
+	ordered := make([]pumpEvent, 0, len(events))
+	for _, ev := range events {
+		if ev.Kind == pumpKindQuestion || ev.Kind == pumpKindDag {
+			ordered = append(ordered, ev)
+		}
+	}
+	for _, ev := range events {
+		if ev.Kind != pumpKindQuestion && ev.Kind != pumpKindDag {
+			ordered = append(ordered, ev)
+		}
+	}
+	return ordered
 }
 
 // pumpBody is the delivered text: the issue's first line, the event bodies, then the configured
@@ -420,6 +558,10 @@ func pumpCollect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pump
 // state.
 func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry bool) (int, error) {
 	now := e.Now()
+	if err := ctx.Err(); err != nil {
+		// A cancelled round makes no durable change: nothing is collected, saved or delivered.
+		return 1, err
+	}
 	st, err := pumpLoadState(cfg)
 	if err != nil {
 		return 1, err
