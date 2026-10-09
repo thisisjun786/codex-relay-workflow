@@ -148,12 +148,35 @@ func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) sourc
 func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bool) {
 	rel := filepath.Clean(spawnFinalGateFSPath(path))
 	if filepath.IsAbs(rel) {
-		var err error
-		if rel, err = filepath.Rel(cwd, rel); err != nil {
+		var ok bool
+		if rel, ok = spawnFinalGateBelow(cwd, rel); !ok {
 			return source.Identity{}, false
 		}
 	}
 	return spawnFinalGateIdentity(spawnFinalGateObject(root, rel)["sourceIdentity"])
+}
+
+// spawnFinalGateBelow is the path of the absolute path abs relative to the working directory cwd, or false when cwd cannot be made
+// absolute or the directory of abs cannot be compared with it. cwd is made absolute, then resolved through its links, so a relative
+// working directory and a symbolic link to the real directory name the same tree as the receipt's path does, whichever spelling the
+// receipt uses: the directory of abs is resolved the same way. A path that leaves the tree stays outside it here and os.Root refuses
+// it, so the boundary is kept.
+func spawnFinalGateBelow(cwd, abs string) (string, bool) {
+	base, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		base = resolved
+	}
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		abs = filepath.Join(dir, filepath.Base(abs))
+	}
+	rel, err := filepath.Rel(base, abs)
+	if err != nil {
+		return "", false
+	}
+	return rel, true
 }
 
 // spawnFinalGateFSPath is path as Node's fs reads a string: a lone surrogate, which pyjson keeps as the three WTF-8 bytes of its code
