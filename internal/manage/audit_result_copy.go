@@ -100,20 +100,27 @@ func auditResultCopyWrite(path string, data []byte) error {
 }
 
 // auditResultCopyFor makes the copy a row carries and fills the row's id, copy path and digest.
-// The copy is the bundle's grade.json as the grade left it, read here under the same lock and
-// marker that cover the grade, and it is written before the row is appended: a row never names a
-// copy that is not there. A result with no grade.json to copy (a hand-built result, and the
-// statuses that leave none) gets neither an id nor a copy and is recorded as rows were before.
+// The copy is made from the bytes the grade read and validated (AuditResult.graded), not from a
+// grade.json read again later: a batch grades several bundles before any row is recorded, and a
+// file another process changed or removed in between must neither be copied as this result nor
+// cost the row its copy. A result built by hand has no such bytes and is copied from the
+// bundle's grade.json as it stands. A new ok row that has nothing to copy is refused by name and
+// is not appended, so no ok row exists without its copy. The statuses that carry no result
+// (invalid, timeout) have neither an id nor a copy.
 func auditResultCopyFor(e *Env, cfg *Config, result AuditResult, row *auditLedgerRow) error {
-	if result.Status != auditStatusOK || result.Bundle == "" {
+	if result.Status != auditStatusOK {
 		return nil
 	}
-	data, err := os.ReadFile(crwconfig.JoinRoot(result.Bundle, auditGradeFile))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+	data := result.graded
+	if data == nil {
+		if result.Bundle == "" {
+			return fmt.Errorf("result_copy_unavailable: the ok result of %s names no bundle to copy a result from", result.Subject)
 		}
-		return err
+		read, err := os.ReadFile(crwconfig.JoinRoot(result.Bundle, auditGradeFile))
+		if err != nil {
+			return fmt.Errorf("result_copy_unavailable: the ok result of %s has no readable %s: %w", result.Subject, auditGradeFile, err)
+		}
+		data = read
 	}
 	id := auditRowID(result.Subject, result.Head, result.GradedAt)
 	path := auditResultCopyPath(e, cfg, id)

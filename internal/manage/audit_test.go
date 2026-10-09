@@ -83,7 +83,8 @@ func auditSectionConfig(t *testing.T, stateDir string, section map[string]any) *
 	return cfg
 }
 
-// C1: the ledger row carries exactly the keys the issue fixes, no more and no fewer, with
+// C1: the ledger row carries exactly the keys the issue fixes (an ok row also its CRW-838 id, copy path
+// and digest), no more and no fewer, with
 // the severity counts and the score taken from the result.
 func TestAuditLedgerRowCarriesTheFixedKeys(t *testing.T) {
 	e, _, _ := auditEnv(t)
@@ -91,7 +92,7 @@ func TestAuditLedgerRowCarriesTheFixedKeys(t *testing.T) {
 	cfg := auditSectionConfig(t, state, nil)
 	results := []AuditResult{{
 		Mode: auditModePR, Subject: "s", Head: "h", Issue: "CRW-1", Pair: "p", Phase: "live", Round: "r2",
-		Status: auditStatusOK, Score: 6, GradedAt: "2026-01-01T00:00:00Z", Bundle: "b",
+		Status: auditStatusOK, Score: 6, GradedAt: "2026-01-01T00:00:00Z", Bundle: "b", graded: []byte(crw838JSONFirst),
 		Defects: []AuditDefect{{Severity: "P2", What: "w", Where: "f.go:1"}},
 	}}
 	if _, err := auditRecord(e, cfg, results); err != nil {
@@ -105,7 +106,7 @@ func TestAuditLedgerRowCarriesTheFixedKeys(t *testing.T) {
 	for key := range rows[0] {
 		got = append(got, key)
 	}
-	want := strings.Split("mode subject head issue pair phase round status score p0 p1 p2 p3 graded_at bundle", " ")
+	want := strings.Split("mode subject head issue pair phase round status score p0 p1 p2 p3 graded_at bundle id result result_sha256", " ")
 	sort.Strings(got)
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -147,12 +148,12 @@ func TestAuditAlertsOnlyForP0AndP1(t *testing.T) {
 	state := t.TempDir()
 	cfg := auditSectionConfig(t, state, nil)
 	results := []AuditResult{
-		{Mode: auditModePR, Subject: "a", Issue: "CRW-1", Status: auditStatusOK, Score: 4, GradedAt: "t",
+		{Mode: auditModePR, Subject: "a", Issue: "CRW-1", Status: auditStatusOK, Score: 4, GradedAt: "t", graded: []byte(crw838JSONFirst),
 			Defects: []AuditDefect{
 				{Severity: "P1", What: "wrong", Where: "a.go:2", Repro: "run it"},
 				{Severity: "P2", What: "weak test", Where: "a_test.go:3"},
 			}},
-		{Mode: auditModePR, Subject: "b", Issue: "CRW-2", Status: auditStatusOK, Score: 8, GradedAt: "t",
+		{Mode: auditModePR, Subject: "b", Issue: "CRW-2", Status: auditStatusOK, Score: 8, GradedAt: "t", graded: []byte(crw838JSONFirst),
 			Defects: []AuditDefect{{Severity: "P3", What: "nit", Where: "b.go:1"}}},
 		{Mode: auditModePR, Subject: "c", Issue: "CRW-3", Status: auditStatusTimeout, GradedAt: "t"},
 	}
@@ -199,7 +200,7 @@ func TestAuditWritesNoAlertFileWhenNothingReachedP0OrP1(t *testing.T) {
 	state := t.TempDir()
 	cfg := auditSectionConfig(t, state, nil)
 	results := []AuditResult{
-		{Mode: auditModePR, Status: auditStatusOK, Score: 9, GradedAt: "t",
+		{Mode: auditModePR, Status: auditStatusOK, Score: 9, GradedAt: "t", graded: []byte(crw838JSONFirst),
 			Defects: []AuditDefect{{Severity: "P2", What: "w", Where: "f.go:1"}}},
 		{Mode: auditModePR, Status: auditStatusInvalid, GradedAt: "t"},
 	}
@@ -225,7 +226,7 @@ func TestAuditRecordSeparatesATornTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := auditSectionConfig(t, state, nil)
-	results := []AuditResult{{Mode: auditModePR, Subject: "new", Status: auditStatusOK, Score: 7, GradedAt: "t"}}
+	results := []AuditResult{{Mode: auditModePR, Subject: "new", Status: auditStatusOK, Score: 7, GradedAt: "t", graded: []byte(crw838JSONFirst)}}
 	if _, err := auditRecord(e, cfg, results); err != nil {
 		t.Fatal(err)
 	}

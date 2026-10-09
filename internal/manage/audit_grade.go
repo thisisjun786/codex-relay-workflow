@@ -490,10 +490,15 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 		return result
 	}
 	result.Status = auditStatusInvalid
-	doc, ok := auditParseResult(grade)
+	data, err := os.ReadFile(grade)
+	if err != nil {
+		return result
+	}
+	doc, ok := auditParseResultBytes(data)
 	if !ok {
 		return result
 	}
+	result.graded = data
 	result.Status = auditStatusOK
 	result.Score = *doc.Score
 	result.Criteria = make([]AuditCriterion, 0, len(doc.Criteria))

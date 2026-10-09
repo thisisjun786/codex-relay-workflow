@@ -98,6 +98,9 @@ type AuditResult struct {
 	BundleGiven string           `json:"bundleGiven,omitempty"`
 	Criteria    []AuditCriterion `json:"criteria"`
 	Defects     []AuditDefect    `json:"defects"`
+	// graded is the grade.json bytes the grade read and validated for an ok result. The row's copy
+	// is made from them, so it is the result this grade scored whatever happens to the file after.
+	graded []byte
 }
 
 // auditLedgerRow is one line of the ledger, in the key order the issue fixes. The score is
