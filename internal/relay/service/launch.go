@@ -77,6 +77,10 @@ func (s *Service) launch(cmd *exec.Cmd) error {
 			return errors.Join(ErrEmbeddedNUL, log.Close())
 		}
 	}
+	// The daemon keeps every descriptor it inherits, so the caller's own (CRW-1057) stay out of it.
+	if err = closeOnExecInherited(); err != nil {
+		return errors.Join(err, log.Close())
+	}
 	err = cmd.Start()
 	return errors.Join(err, log.Close())
 }
