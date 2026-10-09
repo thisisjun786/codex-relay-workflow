@@ -91,11 +91,17 @@ validation-location findings belong to `dev-architecture` §4.
 Tool findings go first (Automated Pre-Scan item 3); then manual findings sorted
 `Critical > High > Medium > Low > Style`; then a dedicated `blocking_issues` block; verdict last.
 For dispatched plan-audit (PABCD A-gate) reviews the verdict is additionally
-machine-scannable: end the reply with a final line `VERDICT: PASS`,
-`VERDICT: GO-WITH-FIXES (blockers=N)`, or `VERDICT: FAIL` (mapping:
-Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES; Request-changes /
-Block -> FAIL). The dispatching agent's exit rule is AUDIT-LOOP-01
-(`crw-pabcd` §A): FAIL always triggers another round.
+machine-scannable: end the reply with exactly two final lines, `LAUNCH: <the launch id the
+packet gave you>` and then `VERDICT: PASS`, `VERDICT: GO-WITH-FIXES (blockers=N)`, or
+`VERDICT: FAIL` (mapping: Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES;
+Request-changes / Block -> FAIL). `N` is the number of blocking findings you went ahead
+with, a whole number from 1 to 9999; name them as `(blockers=N; findings=c1,r2)` when
+that helps. The same grammar is what the PABCD observer records and what the relay
+renders in a report. A bare `VERDICT: GO-WITH-FIXES` still counts, with no count; a count
+on `PASS` or `FAIL`, or a count that is zero, negative or not a number, is no verdict at
+all, and the round stays open. The dispatching agent's exit rule is AUDIT-LOOP-01
+(`crw-pabcd` §A): FAIL always triggers another round, and each blocker of a
+GO-WITH-FIXES is folded into the plan or rebutted in the attest's `auditResidual`.
 Every finding carries a concrete `trigger`, `impact`, and `path:line` (FAMILY-CITE-01) — no
 finding on a hunch. Do not file pre-existing debt unless the patch worsened it. When a change
 introduces a value/type/message crossing a module boundary, trace the consumer side before

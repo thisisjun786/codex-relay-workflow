@@ -571,3 +571,95 @@ func TestReviewObserverWaitsForTheSessionLockAndJudgesTheStateItLeaves(t *testin
 		})
 	}
 }
+
+// CRW-1116 (port: fixed): the verdict line the reviewer skill and the relay renderer write, `GO-WITH-FIXES (blockers=N)`, is
+// recorded with its meaning and its count; the oracle read it as no sign-off at all and left the round in flight.
+func TestReviewObserverRecordsTheBlockerCountOfAGoWithFixesVerdict(t *testing.T) {
+	cases := []struct {
+		name, verdict string
+		status        goalplan.ReviewRoundStatus
+		want          goalplan.Verdict
+		blockers      int
+		findings      []string
+	}{
+		{"pass", "PASS", goalplan.ReviewApproved, goalplan.VerdictPass, 0, nil},
+		{"fail", "FAIL", goalplan.ReviewChangesRequested, goalplan.VerdictFail, 0, nil},
+		{"near-pass", "NEAR-PASS", goalplan.ReviewApproved, goalplan.VerdictNearPass, 0, nil},
+		{"bare go-with-fixes", "GO-WITH-FIXES", goalplan.ReviewApproved, goalplan.VerdictNearPass, 0, nil},
+		{"decorated go-with-fixes", "GO-WITH-FIXES (blockers=1)", goalplan.ReviewApproved, goalplan.VerdictNearPass, 1, nil},
+		{"decorated with a larger count", "go-with-fixes (blockers=12)", goalplan.ReviewApproved, goalplan.VerdictNearPass, 12, nil},
+		{"decorated with findings", "GO-WITH-FIXES (blockers=2; findings=c1,r2)", goalplan.ReviewApproved, goalplan.VerdictNearPass, 2, []string{"c1", "r2"}},
+		{"a malformed count", "GO-WITH-FIXES (blockers=two)", goalplan.ReviewInFlight, "", 0, nil},
+		{"a negative count", "GO-WITH-FIXES (blockers=-1)", goalplan.ReviewInFlight, "", 0, nil},
+		{"a zero count", "GO-WITH-FIXES (blockers=0)", goalplan.ReviewInFlight, "", 0, nil},
+		{"a missing count", "GO-WITH-FIXES (blockers=)", goalplan.ReviewInFlight, "", 0, nil},
+		{"a count on a pass", "PASS (blockers=1)", goalplan.ReviewInFlight, "", 0, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := reviewObsSeed(t, "v", nil)
+			launch := e.open(t)
+			e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, c.verdict))
+			r := e.round(t)
+			if r.Status != c.status || r.Lane.Verdict != c.want || r.Lane.Blockers != c.blockers || strings.Join(r.Lane.Findings, ",") != strings.Join(c.findings, ",") {
+				t.Fatalf("%s: %+v", c.verdict, r)
+			}
+			if c.status == goalplan.ReviewInFlight && !strings.Contains(e.ledger(t), "review_signoff_unparsed") {
+				t.Fatalf("an unusable verdict line is noted: %q", e.ledger(t))
+			}
+		})
+	}
+}
+
+// A decorated verdict goes through the same bindings a bare one does.
+func TestReviewObserverDecoratedVerdictKeepsTheBindings(t *testing.T) {
+	decorated := func(launch string) string { return reviewObsSignoff(launch, "GO-WITH-FIXES (blockers=2)") }
+	t.Run("wrong launch", func(t *testing.T) {
+		e := reviewObsSeed(t, "wl", nil)
+		e.open(t)
+		e.stop(t, reviewObsType("explorer"), "r1", decorated("r9-00000000000000"))
+		if e.round(t).Status != goalplan.ReviewInFlight || !strings.Contains(e.ledger(t), "belongs to no plan_audit round") {
+			t.Fatal(e.ledger(t))
+		}
+	})
+	t.Run("wrong reviewer", func(t *testing.T) {
+		e := reviewObsSeed(t, "wr", nil)
+		launch := e.open(t)
+		e.stop(t, nil, "reviewer-1", reviewObsSignoff(launch, "FAIL"))
+		e.stop(t, nil, "bystander", decorated(launch))
+		r := e.round(t)
+		if r.Lane.Verdict != goalplan.VerdictFail || r.Lane.Blockers != 0 || *r.Lane.ReviewerSession != "reviewer-1" {
+			t.Fatalf("%+v", r)
+		}
+	})
+	t.Run("old epoch", func(t *testing.T) {
+		e := reviewObsSeed(t, "oe", nil)
+		launch := e.open(t)
+		s, _ := state.ReadStateStrict(e.cwd, e.session)
+		epoch := "e-probe-2"
+		s.PlanEpoch = &epoch
+		if err := state.WriteState(e.cwd, s); err != nil {
+			t.Fatal(err)
+		}
+		e.stop(t, reviewObsType("explorer"), "e1", decorated(launch))
+		if e.round(t).Status != goalplan.ReviewInFlight || !strings.Contains(e.ledger(t), "re-planned") {
+			t.Fatal(e.ledger(t))
+		}
+	})
+	t.Run("changed plan", func(t *testing.T) {
+		e := reviewObsSeed(t, "cp", nil)
+		launch := e.open(t)
+		plan := goalplan.ReadGoalplan(e.cwd, e.slug)
+		plan.WorkPhases[0].Status = goalplan.WorkPhaseDone
+		plan.WorkPhases = append(plan.WorkPhases, goalplan.GoalplanWorkPhase{ID: "wp1", Title: "next", Status: goalplan.WorkPhasePending, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}})
+		next := "wp1"
+		plan.ActiveWorkPhaseID = &next
+		if err := goalplan.WriteGoalplan(e.cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+		e.stop(t, nil, "e1", decorated(launch))
+		if e.round(t).Status != goalplan.ReviewInFlight || !strings.Contains(e.ledger(t), "the round audited work-phase wp0, but wp1 is active") {
+			t.Fatal(e.ledger(t))
+		}
+	})
+}
