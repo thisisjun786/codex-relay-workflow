@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -68,9 +69,10 @@ type Reading struct {
 
 // Read decides the switch for a hook. No file is off, so an installation stays silent until the
 // switch is turned; cxc is off and crw on. A switch that is there but cannot be read (an error
-// other than its absence, a file over MaxBytes, a document that does not parse, an active value
-// that is neither state), and a Codex home that cannot be resolved, are on: a protective guard is
-// never silenced by a damaged switch. Problem then says why.
+// other than its absence, a link whose target is gone, an entry that is not a regular file, a file
+// over MaxBytes, a document that does not parse, an active value that is neither state), and a
+// Codex home that cannot be resolved, are on: a protective guard is never silenced by a damaged
+// switch. Problem then says why. Read never waits on the switch file.
 func Read(env host.LookupEnv) Reading {
 	codexHome, err := CodexHome(env)
 	if err != nil {
@@ -79,7 +81,7 @@ func Read(env host.LookupEnv) Reading {
 	r := Reading{CodexHome: codexHome}
 	state, err := readState(Path(codexHome))
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, errAbsent):
 		return r
 	case err != nil:
 		r.On, r.Problem = true, err.Error()
@@ -92,13 +94,34 @@ func Read(env host.LookupEnv) Reading {
 	return r
 }
 
+// errAbsent is a switch path with nothing at it: no entry, not a link whose target is gone.
+var errAbsent = fmt.Errorf("switch absent: %w", fs.ErrNotExist)
+
+// readState reads the switch document. It never waits on the file: the open is non-blocking, and
+// the opened handle must be a regular file, so a FIFO, a device or a socket is a read error at
+// once, whether it is the entry or the target of a link, and whatever a writer does with it.
+// ENOENT is an absent switch only when nothing is at the path; a link whose target is gone is
+// there and cannot be read.
 func readState(path string) (State, error) {
 	var s State
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {
+				return s, errAbsent
+			}
+			return s, fmt.Errorf("%s: %w", path, err)
+		}
 		return s, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return s, err
+	}
+	if !info.Mode().IsRegular() {
+		return s, fmt.Errorf("%s is not a regular file (%s)", path, info.Mode().Type())
+	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
 		return s, err
