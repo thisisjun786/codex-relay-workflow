@@ -64,13 +64,45 @@ func readOnlyURIError(path string) error {
 		return nil
 	}
 	query, _, _ = strings.Cut(query, "#")
+	// SQLite splits on the raw & and the first raw =, then percent-decodes key and value alike, so
+	// `%6Dode=memory` is a mode request. It applies every mode it finds (the last one wins): all must be ro.
 	for _, pair := range strings.Split(query, "&") {
-		if key, value, _ := strings.Cut(pair, "="); key == "mode" && value != "ro" {
-			return fmt.Errorf("a read-only open refuses the URI mode %q", value)
+		rawKey, rawValue, _ := strings.Cut(pair, "=")
+		if strings.Contains(strings.ToLower(pair), "%00") {
+			return errors.New("a read-only open refuses a URI query holding an encoded NUL")
+		}
+		if sqliteURIDecode(rawKey) == "mode" {
+			if value := sqliteURIDecode(rawValue); value != "ro" {
+				return fmt.Errorf("a read-only open refuses the URI mode %q", value)
+			}
 		}
 	}
 	return nil
 }
+
+// sqliteURIDecode is SQLite's percent decoding: a % followed by two hex digits is that byte, any other
+// % stays as it is.
+func sqliteURIDecode(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHexDigit(s[i+1]) && isHexDigit(s[i+2]) {
+			v, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			b.WriteByte(byte(v))
+			i += 2
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
 func openDbReadWrite(path string) (*RwDb, error) {
 	return openDb(path, sqlite.SQLITE_OPEN_READWRITE|sqlite.SQLITE_OPEN_CREATE)
 }

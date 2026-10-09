@@ -237,7 +237,7 @@ func TestRolloutHeadReadAndFailures(t *testing.T) {
 			t.Fatal("file error swallowed", path)
 		}
 	}
-	if dirs := safeDirs(filepath.Join(home, "missing")); len(dirs) != 0 {
+	if dirs := safeDirs(filepath.Join(home, "missing"), func(string, error) {}); len(dirs) != 0 {
 		t.Fatal(dirs)
 	}
 	if files, err := ListRolloutFiles(filepath.Join(home, "missing"), 0); err != nil || len(files) != 0 {

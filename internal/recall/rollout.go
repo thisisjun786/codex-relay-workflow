@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -161,6 +163,19 @@ func rolloutCompare(a, b string) int {
 // representable calendar excludes nothing; a directory or archive file whose date is not a calendar
 // date has no age to compare, so a window leaves it out, and no window lists it.
 func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFile, error) {
+	files, _, err := listRolloutFiles(home, days, now...)
+	return files, err
+}
+
+// listRolloutFiles is ListRolloutFiles that also reports the directories it could not read. A file
+// under one of them is unaccounted for, not gone: the refresh must not prune its rows.
+func listRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFile, []string, error) {
+	unread := []string{}
+	note := func(dir string, err error) {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+			unread = append(unread, dir)
+		}
+	}
 	clock := time.Now()
 	if len(now) != 0 {
 		clock = now[0]
@@ -186,6 +201,7 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 		}
 		names, err := os.ReadDir(dir)
 		if err != nil {
+			note(dir, err)
 			return
 		}
 		for _, entry := range names {
@@ -197,17 +213,21 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 	}
 	root := sessionsDir(home)
 	if _, err := os.Stat(root); err == nil {
-		for _, year := range safeDirs(root) {
-			for _, month := range safeDirs(filepath.Join(root, year)) {
-				for _, day := range safeDirs(filepath.Join(root, year, month)) {
+		for _, year := range safeDirs(root, note) {
+			for _, month := range safeDirs(filepath.Join(root, year), note) {
+				for _, day := range safeDirs(filepath.Join(root, year, month), note) {
 					add(filepath.Join(root, year, month, day), year+"-"+month+"-"+day)
 				}
 			}
 		}
+	} else {
+		note(root, err)
 	}
 	archive := filepath.Join(home, "archived_sessions")
 	if _, err := os.Stat(archive); err == nil {
-		if names, err := os.ReadDir(archive); err == nil {
+		if names, err := os.ReadDir(archive); err != nil {
+			note(archive, err)
+		} else {
 			for _, entry := range names {
 				name := source.DecodeUTF8([]byte(entry.Name()))
 				date := DateFromRolloutName(name)
@@ -216,6 +236,8 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 				}
 			}
 		}
+	} else {
+		note(archive, err)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if c := rolloutCompare(out[i].Date, out[j].Date); c != 0 {
@@ -223,13 +245,14 @@ func ListRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 		}
 		return rolloutCompare(filepath.Base(out[i].Path), filepath.Base(out[j].Path)) > 0
 	})
-	return out, nil
+	return out, unread, nil
 }
 
-func safeDirs(dir string) []string {
+func safeDirs(dir string, note func(string, error)) []string {
 	entries, err := os.ReadDir(dir)
 	out := []string{}
 	if err != nil {
+		note(dir, err)
 		return out
 	}
 	for _, entry := range entries {
