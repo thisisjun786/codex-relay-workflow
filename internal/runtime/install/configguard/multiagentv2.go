@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -103,52 +102,6 @@ func ReadMultiAgentV2State(deps MultiAgentV2Deps) MultiAgentV2State {
 	return MultiAgentV2State{version, enabled, MultiAgentV2StatusContext()}
 }
 
-// Shield complete multiline values from the oracle helper's trim/filter and
-// blank-line compression. Restoring raw blocks also preserves mixed internal EOLs.
-func multiAgentV2Preserve(pre, post string, enabled bool) (string, bool) {
-	prefix := "CRW_MULTI_AGENT_STRING_"
-	for strings.Contains(pre, prefix) || strings.Contains(post, prefix) {
-		prefix += "_"
-	}
-	pairs := []string{}
-	shield := func(content string) string {
-		lines := text.SplitLines(content)
-		mask := tomlInString(append(lines, "")) // sentinel detects an opener at EOF
-		raw := text.SplitLinesByteExact(content)
-		out := make([]string, 0, len(raw))
-		for i := 0; i < len(raw); i++ {
-			if !mask[i] && mask[i+1] {
-				end := i
-				for end+1 < len(raw) && mask[end+1] {
-					end++
-				}
-				block := strings.Join(raw[i:end+1], "\n")
-				suffix := ""
-				if end+1 < len(raw) && strings.HasSuffix(block, "\r") {
-					block = strings.TrimSuffix(block, "\r")
-					suffix = "\r"
-				}
-				token := fmt.Sprintf("%s%d_", prefix, len(pairs)/2)
-				pairs = append(pairs, token, block)
-				out = append(out, token+suffix)
-				i = end
-			} else {
-				out = append(out, raw[i])
-			}
-		}
-		return strings.Join(out, "\n")
-	}
-	a, b := shield(pre), shield(post)
-	if strings.Contains(pre, "\r\n") && !strings.Contains(a, "\r\n") {
-		a += "\r\n" // retain the helper's original EOL choice after shielding
-	}
-	repaired, changed := PreserveMultiAgentV2Table(a, b, enabled)
-	if !changed {
-		return "", false
-	}
-	return strings.NewReplacer(pairs...).Replace(repaired), true
-}
-
 // SetMultiAgentV2State refuses unreadable pre/post images and publishes repairs
 // atomically. The injected runner remains responsible for its own settings writes.
 func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*MultiAgentV2Change, error) {
@@ -189,6 +142,10 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	if multiAgentV2EnabledIn(string(pre)) == want {
 		return &MultiAgentV2Change{version, want, false, MultiAgentV2StatusContext()}, nil
 	}
+	// Tuning the Codex CLI would drop and crw cannot put back exactly is refused before the runner runs (CRW-1141).
+	if _, _, err := multiAgentV2Tuning(string(pre)); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	op := "disable"
 	if want {
 		op = "enable"
@@ -203,28 +160,49 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 		if err != nil {
 			return nil, fmt.Errorf("%w; the runner's change is in place, the multi_agent_v2 tuning repair was not written", err)
 		}
-		defer extra.Release()
+		if extra != nil {
+			defer extra.Release()
+		}
 	}
+	// An exit 0 is not proof (CRW-1143): the file the runner left is measured, not guessed. A file that is gone, unreadable or
+	// not TOML is a failed measurement, never a verified disabled flag.
 	post, exists, err := activationReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if exists {
-		if repaired, changed := multiAgentV2Preserve(string(pre), string(post), want); changed {
-			// The repair is a candidate like any other edit: one that does not decode is not published (CRW-1141).
-			if err := validateConfig(path, repaired); err != nil {
-				return nil, fmt.Errorf("the multi_agent_v2 tuning repair would leave config.toml invalid, so it was not written: %w", err)
-			}
-			if err := activationPublish(path, []byte(repaired)); err != nil {
-				return nil, err
-			}
+	if !exists && !want {
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but %s is gone, so the flag cannot be read; the runner's change is in place", op, path)
+	}
+	if err := validateConfig(path, string(post)); err != nil {
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but the file it left cannot be read: %w", op, err)
+	}
+	var unsynced error
+	repaired, changed, err := multiAgentV2Preserve(string(pre), string(post), want)
+	if err != nil {
+		return nil, fmt.Errorf("%w; the runner's change is in place and the multi_agent_v2 tuning was not written back", err)
+	}
+	if changed {
+		if _, _, err := activationReadFile(path); err != nil {
+			return nil, err
 		}
+		if err := activationCrwdirPublish(path, []byte(repaired)); crwdir.Published(err) {
+			unsynced = err
+		} else if err != nil {
+			return nil, err
+		}
+		post = []byte(repaired)
 	}
-	// An exit 0 is not proof (CRW-1143): the state is read back from the same config, and a runner that changed nothing,
-	// removed the file or wrote the other value is not a change.
-	state := ReadMultiAgentV2State(deps)
-	if state.V2Enabled != want {
-		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but config.toml still reads %s", op, state.Version)
+	enabled := multiAgentV2EnabledIn(string(post))
+	if enabled != want {
+		state := MultiAgentV1
+		if enabled {
+			state = MultiAgentV2
+		}
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but config.toml still reads %s", op, state)
 	}
-	return &MultiAgentV2Change{state.Version, state.V2Enabled, multiAgentV2EnabledIn(string(pre)) != state.V2Enabled, state.MultiAgentV2Context}, nil
+	version = MultiAgentV1
+	if enabled {
+		version = MultiAgentV2
+	}
+	return &MultiAgentV2Change{version, enabled, multiAgentV2EnabledIn(string(pre)) != enabled, MultiAgentV2StatusContext()}, txDurability(unsynced)
 }

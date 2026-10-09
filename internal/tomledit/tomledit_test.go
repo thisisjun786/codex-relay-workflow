@@ -2,6 +2,8 @@ package tomledit
 
 import (
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -182,3 +184,30 @@ func TestStateString(t *testing.T) {
 func ptr(s string) *string { return &s }
 
 func samePtr(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+
+func TestStatementsLocateHeadersAndKeysOutsideStrings(t *testing.T) {
+	in := "[a]\nx = \"\"\"\n[not.a.header]\n\"\"\"\n[ \"b\" . c ] # t\ny.z = 1\n[[d]]\n"
+	got, err := Statements(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		table, array bool
+		path         string
+		text         string
+	}
+	var rows []row
+	for _, st := range got {
+		rows = append(rows, row{st.Table, st.ArrayTable, strings.Join(st.Path, "."), in[st.Start:st.End]})
+	}
+	want := []row{
+		{true, false, "a", "[a]\n"},
+		{false, false, "a.x", "x = \"\"\"\n[not.a.header]\n\"\"\"\n"},
+		{true, false, "b.c", "[ \"b\" . c ] # t\n"},
+		{false, false, "b.c.y.z", "y.z = 1\n"},
+		{false, true, "d", "[[d]]\n"},
+	}
+	if !reflect.DeepEqual(rows, want) {
+		t.Fatalf("statements = %#v", rows)
+	}
+}
