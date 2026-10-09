@@ -986,3 +986,11 @@ verifier of 5d41d266 (CRW-894 fix round 2)	cat in.json | python3 -m json.tool > 
 verifier of 5d41d266 (CRW-894 fix round 2)	echo '{}' | python3 -m json.tool 2>&1 | head -5	CRW-894-vr-28	row	-
 verifier of 5d41d266 (CRW-894 fix round 2)	echo '{}' > in.json; python3 -m json.tool < in.json	CRW-894-vr-29	row	-
 verifier of 5d41d266 (CRW-894 fix round 2)	cd sub && printf '{}' | python3 -m json.tool	CRW-894-vr-30	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-31	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-32	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-33	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-34	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.txt > argparse.py; printf '{}' | python3 -m json.tool	CRW-894-vr-35	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	cat evil.txt > re/__init__.py; printf '{}' | python3 -m json.tool	CRW-894-vr-36	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-37	row	-
+verifier of 5d41d266 (CRW-894 fix round 2)	printf '{}' | python3 -m json.tool	CRW-894-vr-38	row	-

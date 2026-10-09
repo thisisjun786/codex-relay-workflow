@@ -206,3 +206,63 @@ echo '{}' > in.json; python3 -m json.tool < in.json
 x
 --cmd
 cd sub && printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-31 | U
+--why json.tool imports argparse after the working directory heads the module search path: a local argparse.py runs (real python3.14 prints its marker; verifier of 5d41d266, same cause as the P0).
+--file argparse.py
+print('local')
+--cmd
+printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-32 | U
+--why A local re.py shadows the re module json.tool imports.
+--file re.py
+print('local')
+--cmd
+printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-33 | U
+--why A local compiled shutil extension shadows the shutil module json.tool imports.
+--file shutil.cpython-312-x86_64-linux-gnu.so
+x
+--cmd
+printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-34 | U
+--why A local inspect package shadows the inspect module json.tool imports.
+--file inspect/__init__.py
+print('local')
+--cmd
+printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-35 | U
+--why The text writes argparse.py before python3 -m json.tool runs.
+--file evil.txt
+print('local')
+--cmd
+cat evil.txt > argparse.py; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-36 | U
+--why The text writes the __init__ of a directory re, which python3 -m json.tool then imports as re.
+--file evil.txt
+print('local')
+--file re/notes.txt
+x
+--cmd
+cat evil.txt > re/__init__.py; printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-37 | B
+--why Control: a python file in a subdirectory that is no package is not on the module search path.
+--file tools/gen.py
+print('local')
+--cmd
+printf '{}' | python3 -m json.tool
+
+=== CRW-894-vr-38 | B
+--why Control: files that are no python modules.
+--file README.md
+x
+--file setup.cfg
+x
+--cmd
+printf '{}' | python3 -m json.tool

@@ -87,3 +87,47 @@ func TestPythonModuleJSONToolWrites(t *testing.T) {
 		t.Errorf("AnalyzeNoDir refuses the copy before json.tool: %v", err)
 	}
 }
+
+// TestPythonModuleJSONToolStdlibShadow (CRW-894, fix round 2): json.tool imports argparse, re, shutil, inspect, locale and more
+// after the working directory heads the module search path (python3.14 runs a local argparse.py, re.py, shutil.py), and the
+// list changes from version to version. So the module is proven only when the directory holds no python module at all (a
+// .py, .pyc, .pyw, .pyd or .so file, or a directory with an __init__) and the text writes none there.
+func TestPythonModuleJSONToolStdlibShadow(t *testing.T) {
+	const j = "printf '{}' | python3 -m json.tool"
+	for _, c := range []struct {
+		name       string
+		files      []string
+		cmd        string
+		unreadable bool
+	}{
+		{"argparse.py", []string{"argparse.py"}, j, true},
+		{"re.py", []string{"re.py"}, j, true},
+		{"shutil extension", []string{"shutil.cpython-312-x86_64-linux-gnu.so"}, j, true},
+		{"inspect package", []string{"inspect/__init__.py"}, j, true},
+		{"compiled package", []string{"locale/__init__.pyc"}, j, true},
+		{"setup.py", []string{"setup.py"}, j, true},
+		{"sourceless pyc", []string{"dis.pyc"}, j, true},
+		{"written argparse.py", nil, "cat evil.txt > argparse.py; " + j, true},
+		{"written package init", []string{"re/notes.txt"}, "cat evil.txt > re/__init__.py; " + j, true},
+		{"written init in a directory the text does not show yet", nil, "cat evil.txt > copy/__init__.py; " + j, true},
+		{"python file in a plain subdirectory", []string{"tools/gen.py"}, j, false},
+		{"no modules", []string{"README.md", "setup.cfg", "data.json"}, j, false},
+		{"written file that is no module", nil, "cat in.json > out.txt; " + j, false},
+		{"written init deeper down", nil, "cat evil.txt > a/b/__init__.py; " + j, false},
+	} {
+		dir := t.TempDir()
+		for _, f := range c.files {
+			p := filepath.Join(dir, f)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := Analyze(c.cmd, dir)
+		if got := err != nil; got != c.unreadable {
+			t.Errorf("%s: unreadable=%v, want %v (%v)", c.name, got, c.unreadable, err)
+		}
+	}
+}
