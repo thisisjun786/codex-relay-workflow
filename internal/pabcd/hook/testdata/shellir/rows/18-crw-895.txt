@@ -1,0 +1,342 @@
+# CRW-895: find -delete, find -exec/-execdir/-ok/-okdir and xargs/parallel deletions, as the issue and the 10-09 re-check list them.
+# ../repo is the managed checkout itself, .. is the slot root (an ancestor). Format: see shellwrite_repro_test.go.
+
+=== CRW-895-a1 | R
+--why The issue: find -delete on the checkout itself with no test before the action.
+find ../repo -delete
+
+=== CRW-895-a2 | R
+--why The issue: find from the slot root (an ancestor) runs rm -rf on what it finds.
+find .. -maxdepth 0 -name repo -exec rm -rf {} +
+
+=== CRW-895-a3 | R
+--why The issue: xargs rm -rf with the checkout named on the left of the pipe.
+echo ../repo | xargs rm -rf
+
+=== CRW-895-a4 | U
+--why The issue: find "$PWD" -exec rm -rf. $PWD is not a known word, so the reader refuses it in every gate (the worktree guard denies, as the issue asks).
+find "$PWD" -exec rm -rf {} +
+
+=== CRW-895-a5 | R
+--why The issue: find from the slot root deletes with no test.
+find .. -delete
+
+=== CRW-895-a6 | R
+--why The issue: printf names the checkout for xargs rm -rf.
+printf '%s\n' ../repo | xargs rm -rf
+
+=== CRW-895-a7 | R
+--why The issue: an unreadable left side (a variable) fails closed, with a non-recursive rm too.
+echo "$X" | xargs rm
+
+=== CRW-895-a7b | R
+--why The same with rm -rf.
+echo "$X" | xargs rm -rf
+
+=== CRW-895-c1 | B
+--why The issue control: a start equal to the worktree with a test before the action.
+find . -name '*.o' -delete
+
+=== CRW-895-c2 | B
+--why The issue control: a start inside the worktree.
+find build -delete
+
+=== CRW-895-c3 | B
+--why The issue control: a test before a non-recursive rm.
+find . -type f -name '*.tmp' -exec rm {} +
+
+=== CRW-895-c4 | B
+--why The issue control: a find list is not a named path.
+find . -name '*.o' | xargs rm
+
+=== CRW-895-c5 | B
+--why The issue control, exactly as the issue body spells it (with -f).
+git ls-files -z | xargs -0 rm -f
+
+=== CRW-895-c5b | B
+--why The issue body control without -f (the independent verifier).
+git ls-files -z | xargs -0 rm
+
+=== CRW-895-c6 | B
+--why The issue control: ls lists names the guard does not read.
+ls | xargs rm
+
+=== CRW-895-c7 | B
+--why find . -type f -delete: a -type test comes before the action (the 10-09 re-check).
+find . -type f -delete
+
+=== CRW-895-c8 | B
+--why A -newer test before -delete.
+find . -newer x -delete
+
+=== CRW-895-c9 | B
+--why A -path test before -delete with the checkout spelled ../repo.
+find ../repo -path '*/build/*' -delete
+
+=== CRW-895-c10 | B
+--why A test before -delete with the absolute checkout path.
+find {CHECKOUT} -name '*.o' -delete
+
+=== CRW-895-c11 | B
+--why A parenthesised test group before the action.
+find . \( -name '*.o' -o -name '*.a' \) -delete
+
+=== CRW-895-c12 | B
+--why A negated test before the action.
+find . ! -name keep -delete
+
+=== CRW-895-c13 | B
+--why -execdir after a test.
+find . -name '*.tmp' -execdir rm {} +
+
+=== CRW-895-c14 | B
+--why A start under the worktree with rmdir.
+find build -empty -exec rmdir {} +
+
+=== CRW-895-c15 | B
+--why Names inside the worktree are not the worktree.
+echo build ../repo/build | xargs rm
+
+=== CRW-895-c16 | B
+--why The current directory spelled . is allowed (the issue rule excepts it).
+echo . | xargs rm
+
+=== CRW-895-c17 | B
+--why find that only prints is not a deletion.
+find .. -name repo -print
+
+=== CRW-895-c18 | B
+--why find -exec of a program that does not delete.
+find .. -exec ls {} +
+
+=== CRW-895-c19 | B
+--why xargs with a program that does not delete.
+echo ../repo | xargs ls
+
+=== CRW-895-c20 | B
+--why xargs rm with the operand in the command and no named left side.
+xargs rm ./build
+
+=== CRW-895-c21 | B
+--why Standard input from /dev/null names nothing.
+xargs rm < /dev/null
+
+=== CRW-895-c22 | B
+--why Names of a sibling directory of the checkout.
+echo ../other | xargs rm
+
+=== CRW-895-c23 | B
+--why A test before the action with a find option in front of the start.
+find -L . -name '*.o' -delete
+
+=== CRW-895-c24 | B
+--why A pattern that spells -delete is the argument of -name, not an action.
+find .. -name -delete
+
+=== CRW-895-d1 | R
+--why The 10-09 re-check: -exec rmdir from the slot root (an ancestor).
+find .. -exec rmdir {} +
+
+=== CRW-895-d2 | R
+--why The 10-09 re-check: -exec shred on the checkout with no test.
+find ../repo -exec shred {} +
+
+=== CRW-895-d3 | R
+--why The 10-09 re-check: -exec unlink on the checkout with no test.
+find ../repo -exec unlink {} \;
+
+=== CRW-895-d4 | R
+--why The 10-09 re-check (real impact): -exec git worktree remove on the checkout.
+find ../repo -exec git worktree remove {} \;
+
+=== CRW-895-d5 | R
+--why The independent verifier: -okdir is a listed action.
+find ../repo -okdir rm -rf {} \;
+
+=== CRW-895-d6 | R
+--why -execdir rm -rf with the checkout and no test.
+find ../repo -execdir rm -rf {} +
+
+=== CRW-895-d7 | R
+--why -ok rm -rf with the checkout and no test.
+find ../repo -ok rm -rf {} \;
+
+=== CRW-895-d8 | R
+--why -exec with a non-recursive rm and the checkout with no test.
+find ../repo -exec rm {} +
+
+=== CRW-895-d9 | R
+--why A test does not help when the start is an ancestor.
+find .. -name repo -exec rm {} +
+
+=== CRW-895-d10 | R
+--why The absolute slot root as the start with a -name test.
+find {CHECKOUT}/.. -name repo -delete
+
+=== CRW-895-d11 | R
+--why An option before the start must not hide it.
+find -L ../repo -delete
+
+=== CRW-895-d12 | R
+--why After -o the -delete is reached without the test.
+find ../repo -name a -o -delete
+
+=== CRW-895-d13 | R
+--why The current directory with no test.
+find . -exec rm {} +
+
+=== CRW-895-d14 | R
+--why -execdir git worktree remove from an ancestor.
+find .. -name repo -execdir git worktree remove {} \;
+
+=== CRW-895-d15 | R
+--why git -C before worktree remove under find.
+find ../repo -exec git -C .. worktree remove {} \;
+
+=== CRW-895-d16 | R
+--why The absolute checkout path with no test and -exec rmdir.
+find {CHECKOUT} -exec rmdir {} +
+
+=== CRW-895-d17 | R
+--why Two starts, the second is the checkout.
+find build ../repo -delete
+
+=== CRW-895-d18 | R
+--why find with the here-string and -delete (CRW-1011 shape) with the slot root.
+find .. <<<x -delete
+
+=== CRW-895-e1 | R
+--why The 10-09 re-check (real impact): xargs git worktree remove with the checkout on the left.
+echo ../repo | xargs git worktree remove
+
+=== CRW-895-e2 | R
+--why xargs rm (non-recursive) with the checkout on the left.
+echo ../repo | xargs rm
+
+=== CRW-895-e3 | R
+--why xargs rmdir (the independent verifier).
+echo ../repo | xargs rmdir
+
+=== CRW-895-e4 | R
+--why xargs unlink with the checkout on the left.
+echo ../repo | xargs unlink
+
+=== CRW-895-e5 | R
+--why xargs shred with the checkout on the left.
+echo ../repo | xargs shred
+
+=== CRW-895-e6 | R
+--why An unreadable left side from a command substitution (the independent verifier).
+echo "$(cat list.txt)" | xargs rm
+
+=== CRW-895-e7 | R
+--why ~ is the home, a spelling that is not . (the independent verifier); the tilde is not a known word.
+echo ~ | xargs rm
+
+=== CRW-895-e8 | R
+--why xargs -a reads the names from a file: unreadable.
+xargs -a list.txt rm
+
+=== CRW-895-e9 | R
+--why A here-string names the checkout.
+xargs rm <<< ../repo
+
+=== CRW-895-e10 | R
+--why A here-document names the checkout.
+xargs rm << EOF
+../repo
+EOF
+
+=== CRW-895-e11 | R
+--why The absolute checkout path on the left.
+echo {CHECKOUT} | xargs rm
+
+=== CRW-895-e12 | R
+--why The slot root is an ancestor.
+echo .. | xargs rm
+
+=== CRW-895-e13 | R
+--why printf with a backslash-n inside one word.
+printf '../repo\n' | xargs rm
+
+=== CRW-895-e14 | R
+--why printf with NUL separators and xargs -0.
+printf '../repo\0' | xargs -0 rm
+
+=== CRW-895-e15 | R
+--why xargs -I with a replacement string.
+echo ../repo | xargs -I{} rm {}
+
+=== CRW-895-e16 | R
+--why cat passes the pipe through.
+echo ../repo | cat | xargs rm
+
+=== CRW-895-e17 | R
+--why $PWD is not a known word.
+echo $PWD | xargs rm
+
+=== CRW-895-e18 | R
+--why Standard input from a file is unreadable (the same as -a).
+xargs rm < list.txt
+
+=== CRW-895-e19 | R
+--why The checkout with a trailing dot segment is still the checkout.
+echo ../repo/. | xargs rm
+
+=== CRW-895-e20 | R
+--why A second name on the line.
+echo build ../repo | xargs rmdir
+
+=== CRW-895-e21 | R
+--why A file list that find prints from the checkout start is the checkout.
+find ../repo -type f | xargs rm
+
+=== CRW-895-e22 | R
+--why sed rewrites a known list into names the guard cannot read.
+echo build | sed s/build/../repo/ | xargs rm
+
+=== CRW-895-e23 | R
+--why A subshell producer is not read.
+(echo ../repo) | xargs rm
+
+=== CRW-895-e24 | R
+--why xargs git worktree remove with a here-string.
+xargs git worktree remove <<< {CHECKOUT}
+
+=== CRW-895-e25 | R
+--why A nested sh -c carries the pipe: xargs sh -c with rm and the placeholder.
+echo ../repo | xargs -I{} sh -c 'rm {}'
+
+=== CRW-895-e26 | R
+--why nohup echo carries the words.
+nohup echo ../repo | xargs rm
+
+=== CRW-895-e27 | R
+--why cat with a here-document names the checkout.
+cat << EOF | xargs rm
+../repo
+EOF
+
+=== CRW-895-p1 | U
+--why parallel runs the program its operands name at run time: unreadable in every gate (the independent verifier: git worktree remove).
+echo ../repo | parallel git worktree remove
+
+=== CRW-895-p2 | U
+--why parallel rmdir.
+echo ../repo | parallel rmdir
+
+=== CRW-895-p3 | U
+--why parallel unlink.
+echo ../repo | parallel unlink
+
+=== CRW-895-p4 | U
+--why parallel shred.
+echo ../repo | parallel shred
+
+=== CRW-895-p5 | U
+--why parallel rm -rf.
+echo ../repo | parallel rm -rf
+
+=== CRW-895-p6 | U
+--why parallel rm with a safe left side is refused too (the reader does not model parallel; an accepted over-refusal).
+ls | parallel rm

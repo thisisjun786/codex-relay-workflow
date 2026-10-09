@@ -758,3 +758,87 @@ added by CRW-1028 (over-block of sequential script executions in a carried text)
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash lint.sh; bash refresh.sh'	CRW-1028-ev-overblock-02	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash lint.sh; x=$(bash refresh.sh)	CRW-1028-ev-overblock-03	row	-
 added by CRW-1028 (over-block of sequential script executions in a carried text)	bash -c 'bash refresh.sh; bash lint.sh'	CRW-1028-ev-overblock-04	row	-
+linear-issue-CRW-895.json	find ../repo -delete	CRW-895-a1	row	-
+linear-issue-CRW-895.json	find .. -maxdepth 0 -name repo -exec rm -rf {} +	CRW-895-a2	row	-
+linear-issue-CRW-895.json	echo ../repo | xargs rm -rf	CRW-895-a3	row	-
+linear-issue-CRW-895.json	find "$PWD" -exec rm -rf {} +	CRW-895-a4	row	-
+linear-issue-CRW-895.json	find .. -delete	CRW-895-a5	row	-
+linear-issue-CRW-895.json	printf '%s\n' ../repo | xargs rm -rf	CRW-895-a6	row	-
+linear-issue-CRW-895.json	echo "$X" | xargs rm	CRW-895-a7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo "$X" | xargs rm -rf	CRW-895-a7b	row	-
+linear-issue-CRW-895.json	find . -name '*.o' -delete	CRW-895-c1	row	-
+linear-issue-CRW-895.json	find build -delete	CRW-895-c2	row	-
+linear-issue-CRW-895.json	find . -type f -name '*.tmp' -exec rm {} +	CRW-895-c3	row	-
+linear-issue-CRW-895.json	find . -name '*.o' | xargs rm	CRW-895-c4	row	-
+linear-issue-CRW-895.json	git ls-files -z | xargs -0 rm -f	CRW-895-c5	row	-
+independent verifier of the 10-09 re-check (CRW-895)	git ls-files -z | xargs -0 rm	CRW-895-c5b	row	-
+linear-issue-CRW-895.json	ls | xargs rm	CRW-895-c6	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find . -type f -delete	CRW-895-c7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find . -newer x -delete	CRW-895-c8	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -path '*/build/*' -delete	CRW-895-c9	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find {CHECKOUT} -name '*.o' -delete	CRW-895-c10	row	-
+added by CRW-895 (a shape the issue rules imply)	find . \( -name '*.o' -o -name '*.a' \) -delete	CRW-895-c11	row	-
+added by CRW-895 (a shape the issue rules imply)	find . ! -name keep -delete	CRW-895-c12	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -name '*.tmp' -execdir rm {} +	CRW-895-c13	row	-
+added by CRW-895 (a shape the issue rules imply)	find build -empty -exec rmdir {} +	CRW-895-c14	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build ../repo/build | xargs rm	CRW-895-c15	row	-
+added by CRW-895 (a shape the issue rules imply)	echo . | xargs rm	CRW-895-c16	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -print	CRW-895-c17	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -exec ls {} +	CRW-895-c18	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs ls	CRW-895-c19	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm ./build	CRW-895-c20	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm < /dev/null	CRW-895-c21	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../other | xargs rm	CRW-895-c22	row	-
+added by CRW-895 (a shape the issue rules imply)	find -L . -name '*.o' -delete	CRW-895-c23	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name -delete	CRW-895-c24	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find .. -exec rmdir {} +	CRW-895-d1	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec shred {} +	CRW-895-d2	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec unlink {} \;	CRW-895-d3	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -exec git worktree remove {} \;	CRW-895-d4	row	-
+independent verifier of the 10-09 re-check (CRW-895)	find ../repo -okdir rm -rf {} \;	CRW-895-d5	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -execdir rm -rf {} +	CRW-895-d6	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -ok rm -rf {} \;	CRW-895-d7	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec rm {} +	CRW-895-d8	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -exec rm {} +	CRW-895-d9	row	-
+added by CRW-895 (a shape the issue rules imply)	find {CHECKOUT}/.. -name repo -delete	CRW-895-d10	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find -L ../repo -delete	CRW-895-d11	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	find ../repo -name a -o -delete	CRW-895-d12	row	-
+added by CRW-895 (a shape the issue rules imply)	find . -exec rm {} +	CRW-895-d13	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. -name repo -execdir git worktree remove {} \;	CRW-895-d14	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -exec git -C .. worktree remove {} \;	CRW-895-d15	row	-
+added by CRW-895 (a shape the issue rules imply)	find {CHECKOUT} -exec rmdir {} +	CRW-895-d16	row	-
+added by CRW-895 (a shape the issue rules imply)	find build ../repo -delete	CRW-895-d17	row	-
+added by CRW-895 (a shape the issue rules imply)	find .. <<<x -delete	CRW-895-d18	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | xargs git worktree remove	CRW-895-e1	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs rm	CRW-895-e2	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | xargs rmdir	CRW-895-e3	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs unlink	CRW-895-e4	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs shred	CRW-895-e5	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo "$(cat list.txt)" | xargs rm	CRW-895-e6	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ~ | xargs rm	CRW-895-e7	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs -a list.txt rm	CRW-895-e8	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs rm <<< ../repo	CRW-895-e9	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	xargs rm << EOF\n../repo\nEOF	CRW-895-e10	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo {CHECKOUT} | xargs rm	CRW-895-e11	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo .. | xargs rm	CRW-895-e12	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	printf '../repo\n' | xargs rm	CRW-895-e13	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	printf '../repo\0' | xargs -0 rm	CRW-895-e14	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo ../repo | xargs -I{} rm {}	CRW-895-e15	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | cat | xargs rm	CRW-895-e16	row	-
+recheck-20261009/g5 (10-09 re-check of CRW-895)	echo $PWD | xargs rm	CRW-895-e17	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs rm < list.txt	CRW-895-e18	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo/. | xargs rm	CRW-895-e19	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build ../repo | xargs rmdir	CRW-895-e20	row	-
+added by CRW-895 (a shape the issue rules imply)	find ../repo -type f | xargs rm	CRW-895-e21	row	-
+added by CRW-895 (a shape the issue rules imply)	echo build | sed s/build/../repo/ | xargs rm	CRW-895-e22	row	-
+added by CRW-895 (a shape the issue rules imply)	(echo ../repo) | xargs rm	CRW-895-e23	row	-
+added by CRW-895 (a shape the issue rules imply)	xargs git worktree remove <<< {CHECKOUT}	CRW-895-e24	row	-
+added by CRW-895 (a shape the issue rules imply)	echo ../repo | xargs -I{} sh -c 'rm {}'	CRW-895-e25	row	-
+added by CRW-895 (a shape the issue rules imply)	nohup echo ../repo | xargs rm	CRW-895-e26	row	-
+added by CRW-895 (a shape the issue rules imply)	cat << EOF | xargs rm\n../repo\nEOF	CRW-895-e27	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel git worktree remove	CRW-895-p1	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rmdir	CRW-895-p2	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel unlink	CRW-895-p3	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel shred	CRW-895-p4	row	-
+independent verifier of the 10-09 re-check (CRW-895)	echo ../repo | parallel rm -rf	CRW-895-p5	row	-
+added by CRW-895 (a shape the issue rules imply)	ls | parallel rm	CRW-895-p6	row	-
