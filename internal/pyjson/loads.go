@@ -123,11 +123,26 @@ type decoder struct {
 	i     int
 	o     LoadOptions
 	depth int
+	// closable is set once a Deep reading has checked that the document closes every container it opens.
+	closable bool
+	// from is where the Deep reading's value starts: the text before it is space and the text the value's closing
+	// leaves behind it is what Trailing allows, neither of which the reading reads as the value.
+	from int
 }
 
-// open enters a container, refusing it past MaxDepth unless the reading is Deep.
+// open enters a container, refusing it past MaxDepth unless the reading is Deep, and refusing a Deep
+// reading's container that the document is too short to close.
 func (d *decoder) open() error {
 	d.depth++
+	if d.o.Deep && d.depth > MaxDepth && !d.closable {
+		// Past what encoding/json reads, a reading is only worth its memory when the document can close what
+		// it opens; a document that cannot is refused before anything is allocated for it. Checked once, on the
+		// value alone: what follows it is left unread when Trailing allows it, and refused after the value when not.
+		d.closable = true
+		if !closes(d.s[d.from:]) {
+			return errSyntax
+		}
+	}
 	if !d.o.Deep && d.depth > MaxDepth {
 		// A reading that accepts what encoding/json refuses (a Python reading, the constants)
 		// read the document through encoding/json only after checking it, so its depth refusal
@@ -174,9 +189,13 @@ func (d *decoder) value() (any, error) {
 	}
 	rest := d.s[d.i:]
 	switch c := rest[0]; {
-	case c == '{':
-		return d.object()
-	case c == '[':
+	case c == '{' || c == '[':
+		if d.o.Deep {
+			return d.deep()
+		}
+		if c == '{' {
+			return d.object()
+		}
 		return d.array()
 	case c == '"':
 		return d.str()
@@ -225,62 +244,96 @@ func constantRefusal(word string) error {
 	return errors.New("invalid character '" + word[:1] + "' looking for beginning of value")
 }
 
+// objectBuilder collects the fields of the object being read: the part of an object reading that does not depend on
+// how its values are read, so the recursive reading and the Deep one assign fields alike.
+type objectBuilder struct {
+	fields     Object
+	fieldMap   map[string]any
+	index      map[string]int
+	repeated   string
+	isRepeated bool
+}
+
+func (d *decoder) newObject() *objectBuilder {
+	b := &objectBuilder{}
+	if d.o.Map {
+		b.fieldMap = map[string]any{}
+	} else {
+		b.fields = Object{}
+	}
+	return b
+}
+
+// add is the assignment of the field key: item.
+func (b *objectBuilder) add(d *decoder, key string, item any) {
+	if d.o.Unique && !b.isRepeated {
+		if d.o.Map {
+			_, b.isRepeated = b.fieldMap[key]
+		} else {
+			_, b.isRepeated = b.fields.Lookup(key)
+		}
+		if b.isRepeated {
+			b.repeated = key
+		}
+	}
+	switch {
+	case d.o.Map:
+		b.fieldMap[key] = item
+	case d.o.Repeats:
+		b.fields = append(b.fields, Field{Key: key, Value: item})
+	default:
+		b.fields, b.index = assign(b.fields, b.index, key, item)
+	}
+}
+
+// done is the closed object, or the refusal of one that repeats a key under Unique.
+func (b *objectBuilder) done(d *decoder) (any, error) {
+	if b.isRepeated {
+		return nil, &RepeatedKey{Key: b.repeated}
+	}
+	return d.made(b.fields, b.fieldMap), nil
+}
+
+// key reads the `"key":` that starts a field.
+func (d *decoder) key() (string, error) {
+	d.space()
+	if d.i >= len(d.s) || d.s[d.i] != '"' {
+		return "", errSyntax
+	}
+	key, err := d.str()
+	if err != nil {
+		return "", err
+	}
+	d.space()
+	if d.i >= len(d.s) || d.s[d.i] != ':' {
+		return "", errSyntax
+	}
+	d.i++
+	return key.(string), nil
+}
+
 func (d *decoder) object() (any, error) {
 	if err := d.open(); err != nil {
 		return nil, err
 	}
 	defer func() { d.depth-- }()
 	d.i++
-	var fields Object
-	var fieldMap map[string]any
-	var index map[string]int
-	repeated, isRepeated := "", false
-	if d.o.Map {
-		fieldMap = map[string]any{}
-	} else {
-		fields = Object{}
-	}
+	b := d.newObject()
 	d.space()
 	if d.i < len(d.s) && d.s[d.i] == '}' {
 		d.i++
-		return d.made(fields, fieldMap), nil
+		return b.done(d)
 	}
 	for {
-		d.space()
-		if d.i >= len(d.s) || d.s[d.i] != '"' {
-			return nil, errSyntax
-		}
-		key, err := d.str()
+		key, err := d.key()
 		if err != nil {
 			return nil, err
 		}
-		d.space()
-		if d.i >= len(d.s) || d.s[d.i] != ':' {
-			return nil, errSyntax
-		}
-		d.i++
 		item, err := d.value()
 		if err != nil {
 			return nil, err
 		}
-		if d.o.Unique && !isRepeated {
-			if d.o.Map {
-				_, isRepeated = fieldMap[key.(string)]
-			} else {
-				_, isRepeated = fields.Lookup(key.(string))
-			}
-			if isRepeated {
-				repeated = key.(string)
-			}
-		}
-		switch {
-		case d.o.Map:
-			fieldMap[key.(string)] = item
-		case d.o.Repeats:
-			fields = append(fields, Field{Key: key.(string), Value: item})
-		default:
-			fields, index = assign(fields, index, key.(string), item)
-		}
+		b.add(d, key, item)
 		d.space()
 		if d.i >= len(d.s) {
 			return nil, errSyntax
@@ -290,14 +343,144 @@ func (d *decoder) object() (any, error) {
 			d.i++
 		case '}':
 			d.i++
-			if isRepeated {
-				return nil, &RepeatedKey{Key: repeated}
-			}
-			return d.made(fields, fieldMap), nil
+			return b.done(d)
 		default:
 			return nil, errSyntax
 		}
 	}
+}
+
+// frame is a container a Deep reading has opened and not closed: an array's items so far, or an object being built
+// and the key whose value is being read.
+type frame struct {
+	array  bool
+	items  []any
+	object *objectBuilder
+	key    string
+}
+
+// deep reads the container at d.i and everything inside it without recursion, so how deeply a document nests
+// costs heap and no goroutine stack (a stack overflow is a fatal error no recover answers, and a hook's input
+// can nest as deep as its size bound allows). It reads exactly what object and array read, in the same order and with
+// the same refusals.
+func (d *decoder) deep() (any, error) {
+	var stack []frame
+	d.space()
+	d.from = d.i
+	for {
+		d.space()
+		if d.i >= len(d.s) {
+			return nil, errSyntax
+		}
+		var value any
+		switch c := d.s[d.i]; c {
+		case '[', '{':
+			if err := d.open(); err != nil {
+				return nil, err
+			}
+			d.i++
+			d.space()
+			closer := byte(']')
+			if c == '{' {
+				closer = '}'
+			}
+			if d.i < len(d.s) && d.s[d.i] == closer {
+				d.i++
+				d.depth--
+				if c == '[' {
+					value = []any{}
+				} else {
+					value, _ = d.newObject().done(d)
+				}
+				break
+			}
+			f := frame{array: c == '[', items: []any{}}
+			if c == '{' {
+				f.object = d.newObject()
+				key, err := d.key()
+				if err != nil {
+					return nil, err
+				}
+				f.key = key
+			}
+			stack = append(stack, f)
+			continue
+		default:
+			scalar, err := d.value()
+			if err != nil {
+				return nil, err
+			}
+			value = scalar
+		}
+		// value is complete: it is the next item of the container on top, and a container it closes is
+		// the value of the one below it.
+		for {
+			if len(stack) == 0 {
+				return value, nil
+			}
+			top := &stack[len(stack)-1]
+			if top.array {
+				top.items = append(top.items, value)
+			} else {
+				top.object.add(d, top.key, value)
+			}
+			d.space()
+			if d.i >= len(d.s) {
+				return nil, errSyntax
+			}
+			c := d.s[d.i]
+			if c == ',' {
+				d.i++
+				if !top.array {
+					key, err := d.key()
+					if err != nil {
+						return nil, err
+					}
+					top.key = key
+				}
+				break
+			}
+			if (top.array && c != ']') || (!top.array && c != '}') {
+				return nil, errSyntax
+			}
+			d.i++
+			d.depth--
+			if top.array {
+				value = top.items
+			} else {
+				var err error
+				if value, err = top.object.done(d); err != nil {
+					return nil, err
+				}
+			}
+			stack[len(stack)-1] = frame{}
+			stack = stack[:len(stack)-1]
+		}
+	}
+}
+
+// closes is whether the value s starts with can close every container it opens: counting the openers and closers
+// outside strings from its first opener, the count comes back to zero. What follows that point is not the value, so
+// it is not looked at. It does not read the value, so it accepts what is not JSON; it refuses only a value whose
+// text ends with containers no closer is left to close.
+func closes(s string) bool {
+	open, inString := 0, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case inString && c == '\\':
+			i++
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == '[' || c == '{':
+			open++
+		case c == ']' || c == '}':
+			if open--; open == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (d *decoder) made(fields Object, fieldMap map[string]any) any {
@@ -524,28 +707,38 @@ func goWalk(doc string, trailing Trailing) error {
 		var value any
 		return decoder.Decode(&value)
 	}
-	var walk func() error
-	walk = func() error {
-		token, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		delim, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		for decoder.More() {
-			if delim == '{' {
+	// The walk reads the value token by token with the open containers kept in a slice, not in calls: the
+	// document can nest as deep as its size allows, and each level would cost a stack frame.
+	walk := func() error {
+		var open []json.Delim
+		for {
+			token, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if delim, ok := token.(json.Delim); ok {
+				open = append(open, delim)
+			}
+			// A scalar, or the container just opened, is read; what follows is the rest of the containers
+			// open: another item of each, or its closing token.
+			for len(open) > 0 {
+				if decoder.More() {
+					if open[len(open)-1] == '{' {
+						if _, err := decoder.Token(); err != nil {
+							return err
+						}
+					}
+					break
+				}
 				if _, err := decoder.Token(); err != nil {
 					return err
 				}
+				open = open[:len(open)-1]
 			}
-			if err := walk(); err != nil {
-				return err
+			if len(open) == 0 {
+				return nil
 			}
 		}
-		_, err = decoder.Token()
-		return err
 	}
 	if err := walk(); err != nil {
 		return err

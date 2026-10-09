@@ -143,3 +143,34 @@ func TestGoalsDatabaseIsOpenedReadOnly(t *testing.T) {
 		t.Error("a write through a read-only open succeeded")
 	}
 }
+
+// getGoalActiveStatus reads row.status, and SQLite keeps the column name the table declares, so a
+// thread_goals column declared STATUS or Status leaves the property undefined: unreadable, whatever
+// the row holds (oracle goal-active.ts:70-74, replayed with node:sqlite for CRW-1077).
+func TestGoalActiveStatusColumnNameCaseIsUnreadable(t *testing.T) {
+	declared := func(column string) string {
+		path := filepath.Join(t.TempDir(), GoalsDBFilename)
+		seed(t, path, "CREATE TABLE thread_goals (thread_id TEXT, "+column+" TEXT)")
+		seed(t, path, "INSERT INTO thread_goals VALUES ('paused-thread', 'paused'), ('active-thread', 'active')")
+		return path
+	}
+	for _, column := range []string{"STATUS", "Status"} {
+		path := declared(column)
+		for _, thread := range []string{"paused-thread", "active-thread"} {
+			got := GoalActiveStatus(thread, path)
+			if got != GoalUnreadable || !SuppressesInterview(got) {
+				t.Errorf("column %s, %s: %s, want unreadable and suppressing", column, thread, got)
+			}
+		}
+		if got := GoalActiveStatus("no-such-thread", path); got != GoalInactive { // no row: nothing to read
+			t.Errorf("column %s, no row: %s, want inactive", column, got)
+		}
+	}
+	// Control: the lower-case column keeps its answers.
+	path := declared("status")
+	for thread, want := range map[string]GoalStatus{"paused-thread": GoalInactive, "active-thread": GoalActive} {
+		if got := GoalActiveStatus(thread, path); got != want {
+			t.Errorf("column status, %s: %s, want %s", thread, got, want)
+		}
+	}
+}
