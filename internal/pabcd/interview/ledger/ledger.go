@@ -109,11 +109,12 @@ func DimensionsBackedByAnswers(cwd, sessionID string) map[interview.Dimension]bo
 		if scan.Event != state.ScanCompleted {
 			continue
 		}
-		var o struct {
-			Map map[string]any `json:"map"`
-		}
-		_ = json.Unmarshal(scan.Raw, &o)
-		for q, dimension := range o.Map {
+		// JSON.parse of the row, as eachRow reads it: only the exact key "map", the last of a repeated one, and no merging; a struct
+		// field would also take "MAP" or "Map" and merge repeats into one map.
+		row, _ := parseJSON(string(scan.Raw))
+		o, _ := row.(map[string]any)
+		m, _ := o["map"].(map[string]any)
+		for q, dimension := range m {
 			if s, ok := dimension.(string); ok && s != "" {
 				attribution[q] = s
 			}

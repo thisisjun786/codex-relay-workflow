@@ -447,3 +447,30 @@ func TestOnlyThisSessionsRowsBackADimensionOrSuppressACapture(t *testing.T) {
 		t.Fatalf("the capture wrote %d rows next to a foreign row with its event id; want 2", n)
 	}
 }
+
+// A scan row attributes a question only through its exact "map" key, the last one when the key repeats, as JSON.parse reads it: a key
+// spelt in another case, or an earlier repeat merged into a later one, backs nothing (the decoder before 80015f930 read it so).
+func TestOnlyTheExactMapKeyOfAScanRowAttributes(t *testing.T) {
+	head := "{'ts':'t','sessionId':'s','event':'scan_completed','roundId':1,'contradictionCount':0,'highContradictionCount':0,"
+	evidence := j("{'ts':'t','sessionId':'s','event':'question_asked','questionId':'q1','eventId':'t:q1:question_asked','question':'?'}\n" +
+		"{'ts':'t','sessionId':'s','event':'answer_recorded','questionId':'q1','eventId':'t:q1:answer_recorded','answers':['x']}\n")
+	goal := map[interview.Dimension]bool{"goal": true}
+	none := map[interview.Dimension]bool{}
+	for name, c := range map[string]struct {
+		members string
+		want    map[interview.Dimension]bool
+	}{
+		"the exact key":                           {"'map':{'q1':'goal'}", goal},
+		"an upper-case key alone":                 {"'MAP':{'q1':'goal'}", none},
+		"a title-case key alone":                  {"'Map':{'q1':'goal'}", none},
+		"an upper-case key before an empty":       {"'MAP':{'q1':'goal'},'map':{}", none},
+		"an empty exact key before an upper":      {"'map':{},'MAP':{'q1':'goal'}", none},
+		"a repeated key whose last is empty":      {"'map':{'q1':'goal'},'map':{}", none},
+		"a repeated key whose last attributes":    {"'map':{},'map':{'q1':'goal'}", goal},
+		"a repeated question whose last is blank": {"'map':{'q1':'goal','q1':''}", none},
+	} {
+		cwd := t.TempDir()
+		writeLedger(t, cwd, "s", evidence+j(head+c.members+"}\n"))
+		wantEq(t, name+": backed", DimensionsBackedByAnswers(cwd, "s"), c.want)
+	}
+}
