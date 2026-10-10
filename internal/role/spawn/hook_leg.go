@@ -3,6 +3,9 @@ package spawn
 import (
 	"context"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -53,6 +56,11 @@ func RunHook(ctx context.Context, in io.Reader, out io.Writer, env host.LookupEn
 }
 
 func runHook(ctx context.Context, in io.Reader, out io.Writer, env host.LookupEnv) int {
+	// A reader that went away must reach the write as an error: the Go runtime ends a process whose standard output breaks with
+	// SIGPIPE unless the signal is handled, which would end the hook with no status after the event committed (CRW-1122).
+	pipe := make(chan os.Signal, 1)
+	signal.Notify(pipe, syscall.SIGPIPE)
+	defer signal.Stop(pipe)
 	raw, overflow := harness.ReadStdin(in)
 	if ctx.Err() != nil {
 		return harness.Interrupted

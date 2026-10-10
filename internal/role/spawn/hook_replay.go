@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // This file makes the hook safe to apply again to one hook event (CRW-1121). The oracle's answer is not: a reapplied message got the
@@ -88,42 +89,101 @@ func spawnHookReplayKind(obj map[string]any) string {
 	return "root"
 }
 
+// spawnHookReplayed is a recorded answer with the managed dispatch source its event was issued for ("" for a direct spawn).
+type spawnHookReplayed struct{ answer, source string }
+
 // spawnHookReplayLookup is the recorded answer of the event toolUseID in the key directory of obj's grant scope when the event's
 // tool_input (as JSON.stringify writes it) is the input that event was first given or the updatedInput of its recorded answer.
-func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string) (string, bool) {
+func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string) (spawnHookReplayed, bool) {
 	key, ok := spawnGrantKey(obj)
 	if !ok {
-		return "", false
+		return spawnHookReplayed{}, false
 	}
 	dir := spawnGrantOpen(tmpRoot, os.Getuid(), key, false)
 	if dir == nil {
-		return "", false
+		return spawnHookReplayed{}, false
 	}
 	defer dir.Close()
 	file, err := dir.OpenFile(spawnHookReplayName(toolUseID), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return "", false
+		return spawnHookReplayed{}, false
 	}
 	defer file.Close()
 	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > spawnHookReplayMax {
-		return "", false
+		return spawnHookReplayed{}, false
 	}
 	data, err := io.ReadAll(io.LimitReader(file, spawnHookReplayMax+1))
 	if err != nil {
-		return "", false
+		return spawnHookReplayed{}, false
 	}
 	kind, data, ok := bytes.Cut(data, []byte("\n"))
 	if !ok || string(kind) != spawnHookReplayKind(obj) {
-		return "", false
+		return spawnHookReplayed{}, false
+	}
+	source, data, ok := bytes.Cut(data, []byte("\n"))
+	if !ok {
+		return spawnHookReplayed{}, false
 	}
 	first, answer, ok := bytes.Cut(data, []byte("\n"))
 	if !ok {
-		return "", false
+		return spawnHookReplayed{}, false
 	}
 	if string(first) == input || spawnHookReplayUpdated(string(answer)) == input {
-		return string(answer), true
+		return spawnHookReplayed{answer: string(answer), source: string(source)}, true
 	}
-	return "", false
+	return spawnHookReplayed{}, false
+}
+
+// spawnHookReplayCurrent is the recorded answer when it still holds, else the deny the event gets now. The packet and the grant of
+// the answer are kept, but the permission to run is the current one: the managed attempt the event was issued for must still be the
+// claimed, current attempt of an active dispatch (an attempt issued to this very call stays issuable to it), and the final gate's
+// prerequisites must still be in place for the packet the answer carries (CRW-1122; the lookup used to return before either check).
+func spawnHookReplayCurrent(r spawnHookReplayed, sessionID, cwd string) string {
+	if r.source != "" {
+		sel, err := role.NewManagedSpawnResolver(cwd).Preview(sessionID, r.source)
+		if err == nil && sel == nil {
+			err = errors.New("invalid managed dispatch marker")
+		}
+		if err != nil {
+			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
+		}
+	}
+	if gate := CheckFinalGatePrereqs(spawnHookReplayPacket(r.answer), sessionID, cwd, nil); !gate.OK {
+		reason := gate.Reason
+		if reason == "" {
+			reason = "final gate prerequisites are missing"
+		}
+		return DenyEnvelope(reason)
+	}
+	return r.answer
+}
+
+// spawnHookReplayPacket is the text of the packet an allow answer carries, the text the final gate judges: its text items joined by
+// a blank line, or its message.
+func spawnHookReplayPacket(answer string) string {
+	v, err := pyjson.Loads(answer, pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
+	if err != nil {
+		return ""
+	}
+	o, _ := v.(pyjson.Object)
+	out, _ := o.Get("hookSpecificOutput").(pyjson.Object)
+	updated, ok := out.Get("updatedInput").(pyjson.Object)
+	if !ok {
+		return ""
+	}
+	if items, ok := updated.Get("items").([]any); ok {
+		var texts []string
+		for _, item := range items {
+			if o, ok := item.(pyjson.Object); ok && o.Get("type") == "text" {
+				if text, ok := o.Get("text").(string); ok {
+					texts = append(texts, text)
+				}
+			}
+		}
+		return strings.Join(texts, "\n\n")
+	}
+	message, _ := updated.Get("message").(string)
+	return message
 }
 
 // spawnHookReplayUpdated is the updatedInput of a recorded allow answer as JSON.stringify writes it, or "".
@@ -142,10 +202,10 @@ func spawnHookReplayUpdated(answer string) string {
 }
 
 // spawnHookReplayRecord writes the answer of the event toolUseID, which minted a grant in obj's scope or spent one: the kind of its
-// spawner, the event's input as JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
+// spawner, the managed dispatch source line it was issued for (empty for a direct spawn), the event's input as JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
 // record holds no digest or clock, so it is the same text for the same event. A record that exists is kept, and a record that
 // cannot be written is skipped: the event then only loses the replay.
-func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, input, answer string) {
+func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, source, input, answer string) {
 	key, ok := spawnGrantKey(obj)
 	if !ok {
 		return
@@ -164,7 +224,7 @@ func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, input, answer
 	if err != nil {
 		return
 	}
-	_, err = file.WriteString(spawnHookReplayKind(obj) + "\n" + input + "\n" + answer)
+	_, err = file.WriteString(spawnHookReplayKind(obj) + "\n" + source + "\n" + input + "\n" + answer)
 	if closeErr := file.Close(); err == nil && closeErr == nil && dir.Rename(tmp, name) == nil {
 		return // published whole, so a reader never sees a partial answer
 	}

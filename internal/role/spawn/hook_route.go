@@ -3,6 +3,7 @@ package spawn
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -277,8 +279,14 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	message := a.updatedMessage
 	// A prompt that already follows the guard is not inserted again, in the single-message form as in the items form (CRW-1121;
 	// the oracle checked the items form only, so a reapplied message got the prompt twice).
-	if prompt != "" && !(message == a.guard+"\n\n"+prompt || strings.HasPrefix(message, a.guard+"\n\n"+prompt+"\n\n")) {
-		message = spawnHookRoutePrompt(message, a.guard, prompt, a.validItems, a.v2Spawn)
+	if prompt != "" {
+		forms := a.promptForms
+		if forms == nil {
+			forms = []string{prompt}
+		}
+		if lead, ok := strings.CutPrefix(message, a.guard+"\n\n"); !ok || !spawnHookPromptLeads(lead, forms) {
+			message = spawnHookRoutePrompt(message, a.guard, prompt, a.validItems, a.v2Spawn)
+		}
 	}
 	promptChanged := !a.encryptedV2Message && prompt != ""
 	message = a.trustPrefix + message
@@ -375,10 +383,15 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
 	// The record carries the digest of the input this answer gives, so that input delivered again is known as this event (CRW-1121).
 	if a.evidenceAssignment != nil && !a.evidenceRecorded {
+		spawnHookBeforePersist()
 		if a.inputText != "" {
 			a.evidenceAssignment.AnswerInput = spawnHookDigest(spawnHookRouteStringify(updated))
 		}
-		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
+		// The record is created, never replaced: an event named after itself that another delivery registered first (and whose child
+		// may have claimed it) keeps that record, and this delivery answers with it (CRW-1121, CRW-1124).
+		if err := a.evidenceAssignment.PersistNew(a.cwd); errors.Is(err, evidence.ErrAssignmentExists) {
+			a.evidenceRecorded = true
+		} else if err != nil {
 			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
 		}
 	}
@@ -387,11 +400,17 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		output = append(output, pyjson.Field{Key: "additionalContext", Value: context})
 	}
 	answer := a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
+	if a.supersedes != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
+		a.supersedes.Remove(a.cwd) // no child holds it and no packet names it any more (CRW-1121)
+	}
 	if a.replay != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
 		a.replay(answer) // CRW-1121: the same event again gets this answer
 	}
 	return answer
 }
+
+// spawnHookBeforePersist runs before the route writes the event's evidence assignment; a test acts there.
+var spawnHookBeforePersist = func() {}
 
 // finish commits what an answer that lets the spawn run needs, after every refusal has been checked and the answer is written
 // (CRW-1118, CRW-1122): a subagent's grant is reserved, the managed attempt is issued (:1094-1097), and the grant is spent. A
@@ -503,6 +522,12 @@ func spawnHookRoutePrompt(message, guard, prompt string, items, v2 bool) string 
 		return message[:at+end] + "\n\n" + prompt + message[at+end:]
 	}
 	return message + "\n\n" + prompt
+}
+
+// spawnHookPromptLeads reports whether s starts with the prompt in one of its forms.
+func spawnHookPromptLeads(s string, forms []string) bool {
+	_, ok := spawnHookPromptLead(s, forms)
+	return ok
 }
 
 // spawnHookRouteItems is :1053-1064: the first text item takes the message (or a new text item goes first when there is none), and the

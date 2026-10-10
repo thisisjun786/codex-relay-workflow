@@ -342,3 +342,33 @@ func TestAssignmentPersistFailureAfterThePublicationLeavesNoOpenRecord(t *testin
 		t.Fatalf("an unrelated child after the refused spawn judged %v, want the native root", got)
 	}
 }
+
+// PersistNew creates a record and never replaces one: a later registration of the same id leaves the claimed record as it is.
+func TestPersistNewDoesNotReplaceARecord(t *testing.T) {
+	r := newAssignTestRig(t)
+	a, err := NewAssignment(assignTestSession, r.tree, AssignTree, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PersistNew(r.cwd); err != nil {
+		t.Fatal(err)
+	}
+	claimed := a
+	claimed.Status, claimed.AgentID = AssignmentClaimed, "worker"
+	if err := claimed.Persist(r.cwd); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(r.recordPath(a.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PersistNew(r.cwd); !errors.Is(err, ErrAssignmentExists) {
+		t.Fatalf("PersistNew over a record = %v", err)
+	}
+	if after, _ := os.ReadFile(r.recordPath(a.ID)); string(after) != string(before) {
+		t.Fatalf("the record changed:\n%s\n%s", before, after)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(r.recordPath(a.ID)), "*.tmp")); len(left) != 0 {
+		t.Fatalf("temporary files left: %v", left)
+	}
+}

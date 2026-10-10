@@ -62,7 +62,9 @@ type spawnHookAssembly struct {
 	replay             func(answer string)         // records the answer of an event that minted a grant, or nil
 	settings           role.SettingsSnapshot       // the event's one read of the helper role settings
 	evidenceAssignment *evidence.Assignment        // CRW-1115: the evidence assignment the packet asked for, written once the spawn is allowed
+	supersedes         *evidence.Assignment        // this call's open assignment for an input it no longer carries: removed once the edited input is allowed
 	evidenceRecorded   bool                        // evidenceAssignment is the record an earlier delivery of this event wrote: kept as it is
+	promptForms        []string                    // the forms the role's prompt override can have in a reapplied message: as written, and as the hook's own normalization leaves it (CRW-1121)
 	guardReapplied     bool                        // guardReapplied: the message already starts with this surface's guard, so the hook runs over its own output (:983)
 }
 
@@ -110,9 +112,10 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	if a.toolUseID != nil && *a.toolUseID != "" && !spawnHookRouteDeep(toolInput) {
 		a.inputText = spawnHookRouteStringify(toolInput)
 		tool := *a.toolUseID
-		record = func(answer string) { spawnHookReplayRecord(obj, tmpRoot, tool, a.inputText, answer) }
-		if answer, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
-			return stop(answer)
+		// The record holds the managed dispatch source the event was issued for, read when the answer is recorded.
+		record = func(answer string) { spawnHookReplayRecord(obj, tmpRoot, tool, a.dispatchSource, a.inputText, answer) }
+		if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
+			return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj)))
 		}
 	}
 
@@ -169,8 +172,8 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 			}
 			if release != nil {
 				commit.unlock = release
-				if answer, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
-					return stop(answer)
+				if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
+					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj)))
 				}
 			}
 		}
@@ -244,8 +247,8 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 			}
 			if release != nil {
 				commit.unlock = release
-				if answer, ok := spawnHookReplayLookup(obj, tmpRoot, *a.toolUseID, a.inputText); ok {
-					return stop(answer)
+				if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, *a.toolUseID, a.inputText); ok {
+					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj)))
 				}
 			}
 		}
@@ -297,6 +300,7 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		return stop(spawnHookSettingsDeny(err)) // the oracle's throw, caught by its outer catch
 	}
 	a.resolution = resolution
+	a.promptForms = spawnHookPromptForms(resolution.PromptOverride, skillsDir)
 
 	// A single message carries the bodies of the skills it mentions (:943); a v2 message that got none, within the size cap, gets the
 	// self-load instruction instead (:956-964). Text inside a closed inlined block never counts as a marker (:951).
@@ -365,6 +369,45 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	return a, "", false
 }
 
+// spawnHookPromptForms are the spellings a role's prompt override can have in a message that carries the hook's earlier answer: as it
+// was inserted (trimmed), and as the hook's own normalization leaves it when it reads that message again (control markers stripped,
+// runs of blank lines collapsed, skill mentions rewritten). Both are the same prompt, so neither is inserted a second time (CRW-1121).
+func spawnHookPromptForms(prompt *string, skillsDir string) []string {
+	if prompt == nil || text.Trim(*prompt) == "" {
+		return nil
+	}
+	forms := []string{text.Trim(*prompt)}
+	for _, preserve := range []bool{false, true} {
+		form := StripControlMarkers(forms[0], preserve)
+		if skillsDir != "" {
+			form = NormalizeSkillMentions(form, skillsDir)
+		}
+		if form != "" && !slices.Contains(forms, form) {
+			forms = append(forms, form)
+		}
+	}
+	return forms
+}
+
+// spawnHookPromptLead is the form of the prompt that s starts with: s is that form, or the form is followed by a blank line.
+func spawnHookPromptLead(s string, forms []string) (string, bool) {
+	for _, form := range forms {
+		if s == form || strings.HasPrefix(s, form+"\n\n") {
+			return form, true
+		}
+	}
+	return "", false
+}
+
+// spawnHookReplayCwd is the working directory of an event: obj.cwd, else the process's.
+func spawnHookReplayCwd(obj map[string]any) string {
+	if cwd, _ := obj["cwd"].(string); cwd != "" {
+		return cwd
+	}
+	wd, _ := syscall.Getwd()
+	return wd
+}
+
 // spawnHookSettingsDeny is the answer for a settings read that failed: an unusable store or role, or a store path that cannot be
 // resolved, denies the recognized spawn with the store's error, whose text names the repair (CRW-1119; the oracle's catch printed
 // nothing, so the spawn ran on the main model without its configured routing). Any other failure keeps the oracle's empty output.
@@ -408,12 +451,18 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time, serialize 
 	if a.guardReapplied && err == nil {
 		rest := strings.TrimPrefix(a.updatedMessage, a.guard)
 		rest = strings.TrimPrefix(rest, "\n\n")
-		if prompt := a.resolution.PromptOverride; prompt != nil && text.Trim(*prompt) != "" {
-			rest = strings.TrimPrefix(rest, text.Trim(*prompt)+"\n\n")
+		for _, form := range a.promptForms {
+			if after, ok := strings.CutPrefix(rest, form+"\n\n"); ok {
+				rest = after
+				break
+			}
 		}
 		if id, ok := evidence.LeadingAssignmentID(rest); ok {
 			recorded, readable := evidence.RecordedAssignment(a.cwd, a.sessionID, id)
-			if readable && recorded.RegisteredBy(toolUseID, worktree, mode) {
+			// An open record answers the input it was registered for (the digest of the input it answered the call with), not another
+			// input of the same call: an edit made before the child claimed it is a dispatch of its own (CRW-1121).
+			if readable && recorded.RegisteredBy(toolUseID, worktree, mode) &&
+				(a.inputText == "" || recorded.AnswerInput == "" || recorded.AnswerInput == spawnHookDigest(a.inputText)) {
 				return ""
 			}
 			// The input this call was answered with, delivered again, is the same event even after its child claimed the record: it
@@ -425,6 +474,9 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time, serialize 
 			stale := ""
 			if readable {
 				stale = EvidenceAssignmentBlock(recorded.ID, recorded.Root, recorded.Mode == evidence.AssignNone)
+				if toolUseID != "" && recorded.ToolUseID == toolUseID && recorded.Status == evidence.AssignmentOpen && recorded.AgentID == "" {
+					a.supersedes = &recorded // this call's earlier registration, no child has it: the edited input replaces it
+				}
 			}
 			after, isBlock := strings.CutPrefix(rest, stale)
 			if stale == "" || !isBlock || after != "" && !strings.HasPrefix(after, "\n\n") {
@@ -466,10 +518,8 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time, serialize 
 	// whose block was taken out above): the route inserts the prompt only where it does not follow the guard yet, so a block put
 	// between them would get the prompt a second time (CRW-1121).
 	anchor := a.guard
-	if prompt := a.resolution.PromptOverride; prompt != nil && text.Trim(*prompt) != "" {
-		if withPrompt := a.guard + "\n\n" + text.Trim(*prompt); a.updatedMessage == withPrompt || strings.HasPrefix(a.updatedMessage, withPrompt+"\n\n") {
-			anchor = withPrompt
-		}
+	if form, ok := spawnHookPromptLead(strings.TrimPrefix(a.updatedMessage, a.guard+"\n\n"), a.promptForms); ok && strings.HasPrefix(a.updatedMessage, a.guard+"\n\n") {
+		anchor = a.guard + "\n\n" + form
 	}
 	if a.updatedMessage == anchor {
 		a.updatedMessage = anchor + "\n\n" + block

@@ -208,6 +208,38 @@ func (a Assignment) Persist(cwd string) error {
 	return err
 }
 
+// ErrAssignmentExists is PersistNew's answer for an id that already has a record.
+var ErrAssignmentExists = errors.New("the evidence assignment is already recorded")
+
+// PersistNew is Persist that never replaces a record: an id that already has one is ErrAssignmentExists and that record is left as it
+// is. The spawn hook names the assignment of an event after the event, so two deliveries of it that run together (no event lock could
+// be had) write the same path, and the later one must not put an open record over the claimed one of the first.
+func (a Assignment) PersistNew(cwd string) error {
+	dir, err := ensureRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, a.ID+".json")
+	err = writeRecordWith(path, a, func(tmp, final string) error {
+		if err := os.Link(tmp, final); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return ErrAssignmentExists
+			}
+			return err
+		}
+		return os.Remove(tmp)
+	})
+	if err == nil || errors.Is(err, ErrAssignmentExists) {
+		return err
+	}
+	if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() {
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			return fmt.Errorf("%w; the published record %s could not be removed and stays open until it is removed: %v", err, path, rmErr)
+		}
+	}
+	return err
+}
+
 // Remove deletes the assignment's record under cwd, best effort: the spawn that would have used it was refused after the record was
 // written, and nothing may be left that no packet names.
 func (a Assignment) Remove(cwd string) {
@@ -268,7 +300,10 @@ var (
 // file is removed. The data is fsynced before the rename and the directory after it, so a record that this returns nil for survives
 // a power failure whole (CRW-1110: a verdict moved beside the main list is the only copy once the list is shortened). An error
 // from the directory sync is returned although the rename has happened: the record is in place, but not known to be durable.
-func writeRecord(path string, v any) error {
+func writeRecord(path string, v any) error { return writeRecordWith(path, v, crwdir.Rename) }
+
+// writeRecordWith is writeRecord publishing the synced temp file with publish, which takes the temp file over (renames or links it).
+func writeRecordWith(path string, v any, publish func(tmp, final string) error) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -286,7 +321,7 @@ func writeRecord(path string, v any) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := crwdir.Rename(tmp, path); err != nil {
+	if err := publish(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
