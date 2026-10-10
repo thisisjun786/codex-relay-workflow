@@ -120,3 +120,36 @@ func TestCRW1088PlateauIsJudgedOnTheActiveWorkPhaseOncePerWindow(t *testing.T) {
 		t.Errorf("a new flat window: %s", got)
 	}
 }
+
+// Progress is judged on the active work phase too (and the legacy default scope): a finished work phase's rising row
+// does not recharge the budget the active work phase spent, an active work phase's rising row recharges it once.
+func TestCRW1088InactiveWorkPhaseImprovementDoesNotRecharge(t *testing.T) {
+	cwd, env := stopRig(t, "active")
+	stopInFlight(t, cwd, state.PhaseB, func(s *state.State) { s.Slug = "phases" })
+	stopWritePlan(t, cwd, "phases", func(p *goalplan.Goalplan) {
+		p.WorkPhases = []goalplan.GoalplanWorkPhase{stopWorkPhase("wp-old", "Old", goalplan.WorkPhaseDone), stopWorkPhase("wp-new", "New", goalplan.WorkPhaseInProgress)}
+	})
+	old, cur := ptr("wp-old"), ptr("wp-new")
+	crw1088Record(t, cwd, "score", 1, old)
+	blocked := func() bool { return strings.Contains(stopRun(cwd, env).Stdout, `"decision":"block"`) }
+	for i := 0; i < StopMaxBlocks; i++ {
+		if !blocked() {
+			t.Fatalf("Stop %d released inside the budget", i+1)
+		}
+	}
+	if blocked() {
+		t.Fatal("the budget was not spent")
+	}
+	crw1088Record(t, cwd, "score", 2, old) // the finished work phase improves: no recharge
+	if blocked() {
+		t.Fatalf("an inactive work phase's rising row recharged the budget (count %v)", crw1088Count(t, cwd))
+	}
+	crw1088Record(t, cwd, "score", 1, cur)
+	crw1088Record(t, cwd, "score", 2, cur) // the active work phase improves: one recharge
+	if !blocked() {
+		t.Fatal("the active work phase's rising row did not recharge the budget")
+	}
+	if got := crw1088Count(t, cwd); got != 1 {
+		t.Errorf("count %v after the recharge, want 1", got)
+	}
+}

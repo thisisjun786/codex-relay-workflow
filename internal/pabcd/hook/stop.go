@@ -309,17 +309,40 @@ func stopObserveProgress(st state.State, snap stopSnapshot) stopProgress {
 	rows := snap.rows
 	// High-water: a hand-truncated ledger must not let restored rows replay as new observations.
 	cursor := math.Max(st.StopMetricCursor, float64(len(rows)))
-	if float64(len(rows)) > st.StopMetricCursor {
-		improved = metric.JudgeNewRows(rows, int(st.StopMetricCursor), stopPlateauNoiseFloor) == metric.JudgmentImproving
-	}
 	var workPhaseID *string
 	if snap.plan != nil {
 		workPhaseID = goalplan.EffectiveActiveWorkPhaseID(snap.plan)
+	}
+	if float64(len(rows)) > st.StopMetricCursor {
+		// The cursor counts the whole ledger; only the rows of the active work phase (and the legacy default scope)
+		// are judged, so a finished work phase's rising row does not recharge the budget the active one spent.
+		scoped, from := rows, int(st.StopMetricCursor)
+		if snap.plan != nil {
+			scoped, from = stopScopeRows(rows, from, workPhaseID)
+		}
+		improved = metric.JudgeNewRows(scoped, from, stopPlateauNoiseFloor) == metric.JudgmentImproving
 	}
 	phaseChanged := st.StopBlockPhase == nil || *st.StopBlockPhase != st.Phase
 	workChanged := !stopSameText(st.StopBlockWorkPhaseID, workPhaseID)
 	newTurn := st.StopBlockTotal == 0
 	return stopProgress{progressed: phaseChanged || workChanged || improved || newTurn, metricCursor: cursor, workPhaseID: workPhaseID}
+}
+
+// stopScopeRows is the rows of a bound goalplan's judgment scope: the active work phase's and the legacy default
+// work phase's (what `metric record` writes without --work-phase). from is a position in rows; the second result is
+// the position in the scoped rows of the first row at or after it, so rows before the cursor stay old.
+func stopScopeRows(rows []metric.Record, from int, active *string) ([]metric.Record, int) {
+	scoped, scopedFrom := make([]metric.Record, 0, len(rows)), 0
+	for i, r := range rows {
+		if r.WorkPhaseID != metric.DefaultWorkPhaseID && (active == nil || r.WorkPhaseID != *active) {
+			continue
+		}
+		if i < from {
+			scopedFrom++
+		}
+		scoped = append(scoped, r)
+	}
+	return scoped, scopedFrom
 }
 
 func stopSameText(a, b *string) bool {
@@ -356,10 +379,7 @@ func stopObjectivePlateau(cwd string, st state.State, snap stopSnapshot) (metric
 		return none, ""
 	}
 	if snap.plan != nil {
-		active := goalplan.EffectiveActiveWorkPhaseID(snap.plan)
-		rows = slices.DeleteFunc(slices.Clone(rows), func(r metric.Record) bool {
-			return r.WorkPhaseID != metric.DefaultWorkPhaseID && (active == nil || r.WorkPhaseID != *active)
-		})
+		rows, _ = stopScopeRows(rows, 0, goalplan.EffectiveActiveWorkPhaseID(snap.plan))
 	}
 	plateau := metric.PlateauOf(rows, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
 	if len(rows) == 0 {
