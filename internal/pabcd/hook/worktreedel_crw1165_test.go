@@ -106,6 +106,12 @@ func TestCRW1165CdOrExitProvesOnlyTheOneForm(t *testing.T) {
 		"cd "+o+" || exit 1; cd "+r.checkout+" || exit 1; rm -rf .",
 		"cd "+o+" || exit 1; cd .. ; rm -rf ../.codex/worktrees",
 	)
+	// a script file is a text of its own: the form at its top proves the cd for the rest of the script, and only there
+	wtWrite(t, filepath.Join(o, "exit1.sh"), "cd "+o+" || exit 1\nrm -rf .\n")
+	wtWrite(t, filepath.Join(o, "bare.sh"), "cd "+o+" || exit\nrm -rf .\n")
+	wtWrite(t, filepath.Join(o, "group.sh"), "{ cd "+o+" || exit 1; }\nrm -rf .\n")
+	r.allowed(t, "bash "+filepath.Join(o, "exit1.sh"))
+	r.denied(t, "bash "+filepath.Join(o, "bare.sh"), "bash "+filepath.Join(o, "group.sh"))
 	r.intact(t)
 }
 
