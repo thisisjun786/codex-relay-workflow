@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
@@ -76,14 +76,14 @@ func writeFailure(out string, record Failure, written map[string]bool) (string, 
 		return name, false, nil
 	}
 	written[name] = true
-	if err := homeguard.MkdirAll(filepath.Join(out, failureDir), 0o755); err != nil {
+	if err := homeguard.MkdirAll(crwconfig.JoinRoot(out, failureDir), 0o755); err != nil {
 		return "", false, err
 	}
 	raw, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return "", false, err
 	}
-	if err := homeguard.WriteFile(filepath.Join(out, filepath.FromSlash(name)), append(raw, '\n'), 0o644); err != nil {
+	if err := homeguard.WriteFile(crwconfig.JoinRoot(out, name), append(raw, '\n'), 0o644); err != nil {
 		return "", false, err
 	}
 	return name, true, nil

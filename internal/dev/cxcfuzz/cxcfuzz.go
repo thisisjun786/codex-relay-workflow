@@ -35,6 +35,17 @@ func DefaultOutRoot(getenv func(string) string) (string, error) {
 	return crwconfig.JoinRoot(file.Roots()[crwconfig.RootScratch].Path, "fuzz"), nil
 }
 
+// DefaultOut is the output directory of one campaign of the target started at now when --out is not
+// given: below DefaultOutRoot, joined as spelled. A scratch_root that mixes a symbolic link and ".."
+// names the directory the filesystem gives that spelling, which a cleaning join would turn into another.
+func DefaultOut(getenv func(string) string, target string, now time.Time) (string, error) {
+	root, err := DefaultOutRoot(getenv)
+	if err != nil {
+		return "", err
+	}
+	return crwconfig.JoinRoot(root, target, now.UTC().Format("20060102T150405Z")), nil
+}
+
 // DefaultWorkers and DefaultTimeout are the issue's defaults.
 const (
 	DefaultWorkers = 4
@@ -176,12 +187,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if *out != "" {
 		cfg.Out = *out
 	} else {
-		root, err := DefaultOutRoot(os.Getenv)
+		dir, err := DefaultOut(os.Getenv, target.Name, time.Now())
 		if err != nil {
 			fmt.Fprintf(stderr, "crw-dev fuzz: the output directory: %v\n", err)
 			return 1
 		}
-		cfg.Out = filepath.Join(root, target.Name, time.Now().UTC().Format("20060102T150405Z"))
+		cfg.Out = dir
 	}
 	if err := homeguard.Refuse(cfg.Out); err != nil {
 		fmt.Fprintf(stderr, "crw-dev fuzz: the output directory: %v\n", err)
@@ -495,7 +506,7 @@ func writeDivergence(out string, d Divergence, written map[string]bool) error {
 		return nil
 	}
 	written[name] = true
-	dir := filepath.Join(out, DivergenceDir)
+	dir := crwconfig.JoinRoot(out, DivergenceDir)
 	if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -503,7 +514,7 @@ func writeDivergence(out string, d Divergence, written map[string]bool) error {
 	if err != nil {
 		return err
 	}
-	return homeguard.WriteFile(filepath.Join(dir, name), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(crwconfig.JoinRoot(dir, name), append(raw, '\n'), 0o644)
 }
 
 // writeSummary writes <out>/summary.json.
@@ -512,7 +523,7 @@ func writeSummary(out string, summary Summary) error {
 	if err != nil {
 		return err
 	}
-	return homeguard.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(crwconfig.JoinRoot(out, "summary.json"), append(raw, '\n'), 0o644)
 }
 
 // repositoryRoot is the checkout holding the working directory: the first parent with a go.mod.

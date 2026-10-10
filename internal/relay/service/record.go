@@ -262,11 +262,26 @@ func (s *Service) logPath() string {
 // openLog opens the daemon log for appending, making a configured log directory first.
 func (s *Service) openLog() (*os.File, error) {
 	if s.LogFile != "" {
-		if err := os.MkdirAll(filepath.Dir(s.LogFile), 0o700); err != nil {
+		// the directory is cut off the spelling, not cleaned out of it: a log_root that mixes a
+		// symbolic link and ".." names the directory the filesystem gives that spelling
+		if err := os.MkdirAll(rawDir(s.LogFile), 0o700); err != nil {
 			return nil, err
 		}
 	}
 	return os.OpenFile(s.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+}
+
+// rawDir is the part of path before its last separator, kept as spelled. filepath.Dir cleans the
+// result, which turns "link/../x" into "x" and names another directory when link is a symbolic link.
+func rawDir(path string) string {
+	cut := strings.LastIndex(path, "/")
+	switch {
+	case cut < 0:
+		return "."
+	case cut == 0:
+		return "/"
+	}
+	return path[:cut]
 }
 
 // stateFile is selection.path / name: joined as spelled, so a '..' after a symlink in the

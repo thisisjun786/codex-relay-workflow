@@ -104,3 +104,38 @@ func TestMergeBuildToolEnvPlacesTheOwnedDirectoryUnderBuildWork(t *testing.T) {
 		t.Error("the owned directory was also made under the scratch root")
 	}
 }
+
+// CRW-958 fix round 3: a build_work spelled through a symbolic link and ".." means the directory the
+// filesystem resolves it to. The owned directory, the go tool's temporary directory and the cleanup
+// all stay on that disk, and nothing is made at the lexically cleaned place.
+func TestMergeBuildToolEnvKeepsTheRawSpellingOfBuildWork(t *testing.T) {
+	t.Setenv("GOENV", "off")
+	base := t.TempDir()
+	for _, dir := range []string{"a", "b/deep"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "b", "deep"), filepath.Join(base, "a", "link")); err != nil {
+		t.Fatal(err)
+	}
+	spelled, real, cleaned := base+"/a/link/../root", filepath.Join(base, "b", "root"), filepath.Join(base, "a", "root")
+	env, cleanup, err := mergeBuildToolEnv(context.Background(), []string{"HOME=/caller"}, t.TempDir(), crwconfig.ToolRoots{BuildWork: spelled}, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp, _ := mbsValue(env, "GOTMPDIR")
+	if !strings.HasPrefix(tmp, spelled+"/") {
+		t.Errorf("GOTMPDIR=%q is not below the raw build_work %q", tmp, spelled)
+	}
+	if entries, _ := os.ReadDir(real); len(entries) != 1 {
+		t.Errorf("the owned directory is not on the real disk %s: %d entries", real, len(entries))
+	}
+	if _, err := os.Stat(cleaned); err == nil {
+		t.Errorf("the lexically cleaned directory %s was made", cleaned)
+	}
+	cleanup()
+	if entries, _ := os.ReadDir(real); len(entries) != 0 {
+		t.Errorf("the run left %d entries in %s", len(entries), real)
+	}
+}

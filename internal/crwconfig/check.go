@@ -328,8 +328,10 @@ func checkRelay(file *File, path string, getenv func(string) string, add func(Le
 		return
 	}
 	for _, entry := range entries {
-		dir := filepath.Join(path, entry.Name())
-		db := filepath.Join(dir, "relay.sqlite3")
+		// joined as spelled, like the relay's own selection: a relay_state that mixes a symbolic link
+		// and ".." names the directory the filesystem gives that spelling
+		dir := rootJoin(path, entry.Name())
+		db := rootJoin(dir, "relay.sqlite3")
 		if _, err := os.Lstat(db); err != nil {
 			continue
 		}
@@ -339,7 +341,7 @@ func checkRelay(file *File, path string, getenv func(string) string, add func(Le
 		}
 		home := filepath.Dir(realDB)
 		for _, name := range relaySidecars {
-			side := filepath.Join(dir, name)
+			side := rootJoin(dir, name)
 			if _, err := os.Lstat(side); err != nil {
 				continue
 			}
@@ -543,7 +545,7 @@ func registeredRelayStores(getenv func(string) string) []placement {
 		registry = rootJoin(getenv("HOME"), ".codex-session-relay", "scopes")
 	}
 	if registry != "" {
-		claims, _ := filepath.Glob(filepath.Join(registry, "*.json"))
+		claims, _ := filepath.Glob(rootJoin(registry, "*.json"))
 		for _, claim := range claims {
 			raw, err := os.ReadFile(claim)
 			if err != nil {
