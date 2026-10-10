@@ -433,3 +433,41 @@ func TestReviewObserverInboxDropsAnUnreadableEntryAndDrainsTheRest(t *testing.T)
 		t.Fatalf("one row says so: %q", e.ledger(t))
 	}
 }
+
+// Every finding reference the dev parser accepts must fit in a kept inbox entry.
+func TestReviewObserverInboxDrainsTheMaximumFindingReferences(t *testing.T) {
+	e := reviewObsSeed(t, "maximum-findings", nil)
+	launch := e.open(t)
+	findings := make([]string, goalplan.MaxFindingRefs)
+	for i := range findings {
+		findings[i] = "c" + strings.Repeat("x", goalplan.MaxFindingRefLength-1)
+	}
+	release := e.holdGoalplanLock(t)
+	t.Cleanup(func() {
+		if release != nil {
+			release()
+		}
+	})
+	e.stop(t, nil, "reviewer-1", reviewObsSignoff(launch, "GO-WITH-FIXES (blockers=9999; findings="+strings.Join(findings, ",")+")"))
+	files := e.inboxFiles(t)
+	if len(files) != 1 {
+		t.Fatalf("one kept verdict: %v", files)
+	}
+	info, err := os.Stat(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() <= 4096 {
+		t.Fatalf("the maximum parsed references must exceed the old inbox limit: %d", info.Size())
+	}
+	release()
+	release = nil
+	e.stop(t, nil, "other", "nothing")
+	r := e.round(t)
+	if r.Status != goalplan.ReviewApproved || r.Lane.Blockers != 9999 || strings.Join(r.Lane.Findings, ",") != strings.Join(findings, ",") {
+		t.Fatalf("the valid maximum verdict was lost: %+v", r)
+	}
+	if len(e.inboxFiles(t)) != 0 {
+		t.Fatal("the recorded verdict stayed in the inbox")
+	}
+}

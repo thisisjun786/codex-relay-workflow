@@ -45,7 +45,8 @@ const (
 	reviewObserverInboxDir     = "review-inbox"
 	reviewObserverInboxMax     = 64
 	reviewObserverInboxReadMax = 4 * reviewObserverInboxMax
-	reviewObserverInboxMaxSize = 4096
+	// Keep the original identity budget plus CRW-1116's maximum JSON finding list and count fields.
+	reviewObserverInboxMaxSize = 4096 + goalplan.MaxFindingRefs*(goalplan.MaxFindingRefLength+3) + 64
 	reviewObserverDetailMax    = 200
 	reviewObserverLockWait     = 2 * time.Second
 
