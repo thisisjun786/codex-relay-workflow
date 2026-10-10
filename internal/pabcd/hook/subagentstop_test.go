@@ -308,10 +308,12 @@ func TestSubagentStopPersistenceFailuresAndCorruptCounter(t *testing.T) {
 // Two agents that stop at the same moment each record their terminal verdict under the session lock:
 // neither verdict is lost. The lock's wait budget is the oracle's (about 250 ms, state.WithSessionLock),
 // so a holder the host has not scheduled for that long makes the other stop give up, which the product
-// answers with a stop that records nothing and raises the corruption sentinel. That give-up is a
-// property of the host's load, not of the lock; the case proves that concurrent stops lose no verdict
-// that was committed, so a stop whose own verdict is absent after it returned is run again (CRW-1172),
-// bounded, and any other failure (an error, a blocked stop) fails at once.
+// answers with a stop that records nothing, raises the corruption sentinel (unverifiedCorrupt) and, if
+// that lock gives up too, writes the unrecordable marker. That give-up is a property of the host's load,
+// not of the lock, and it always leaves one of those two traces. The case therefore reruns a stop whose
+// verdict is absent only while a trace of a give-up exists; an absent verdict with no give-up trace is a
+// verdict a committed write lost (a lost update), and fails at once (CRW-1172). Any other failure (an
+// error, a blocked stop) fails at once as well.
 func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 	cwd := subagentStopWorkspace(t)
 	agents := []string{"racer-a", "racer-b"}
@@ -327,6 +329,9 @@ func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 			}
 		}
 		return false
+	}
+	gaveUp := func() bool {
+		return state.ReadState(cwd, "s1").UnverifiedCorrupt || evidence.UnrecordableVerdictStatus(cwd, "s1").Present
 	}
 	const gaveUpLimit = 50
 	var wg sync.WaitGroup
@@ -348,6 +353,10 @@ func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 					return
 				}
 				if recorded(agent) {
+					return
+				}
+				if !gaveUp() {
+					errors <- fmt.Errorf("%s: the stop returned without its verdict and no lock give-up left a trace: a recorded verdict was lost", agent)
 					return
 				}
 			}

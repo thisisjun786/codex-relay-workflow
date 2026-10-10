@@ -274,15 +274,18 @@ func TestTimeoutIsRecordedAndTheNextRequestProceeds(t *testing.T) {
 // A worker that takes a long time to become ready is not a timeout case: its start-up is charged to
 // the startup deadline, not to the first case's deadline. This is the defect the issue reports -- on a
 // slow runner the shim's boot exceeded the 5 s per-case deadline and the agreement test counted a
-// case as a timeout. Red before the fix: the first case times out at 50 ms.
+// case as a timeout. Red before the fix: the first case times out. The case deadline is long enough
+// for a ready worker to answer on a loaded host and the boot delay is three times it, so the boot
+// outlasts the deadline by construction (CRW-1172).
 func TestStartupDelayIsNotChargedToTheCaseDeadline(t *testing.T) {
+	const perCase = 400 * time.Millisecond
 	target := helperTarget(t, func(rng *rand.Rand, size int) any {
 		return pyjson.Object{{Key: "text", Value: "ok"}}
 	})
 	out := t.TempDir()
 	summary, err := Campaign(Config{Target: target, Cases: 2, Seed: 1, Workers: 1, Out: out,
-		Timeout: 50 * time.Millisecond, StartupTimeout: 5 * time.Second,
-		Env: helperEnvForBoot(750 * time.Millisecond)})
+		Timeout: perCase, StartupTimeout: 20 * time.Second,
+		Env: helperEnvForBoot(3 * perCase)})
 	if err != nil {
 		t.Fatal(err)
 	}
