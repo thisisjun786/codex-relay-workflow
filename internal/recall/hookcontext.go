@@ -462,6 +462,14 @@ func hookContextLatest(entries []hookContextEntry) string {
 	return latest.Format("2006-01-02")
 }
 
+// hookContextNoticeLabel is what the staleness notice names for entries: their newest date, or an unknown date.
+func hookContextNoticeLabel(entries []hookContextEntry) string {
+	if latest := hookContextLatest(entries); latest != "" {
+		return latest
+	}
+	return "an unknown date"
+}
+
 // hookContextRendered renders the entries and reports, with the text, the refs of the entries the text
 // carries: an entry the budget leaves out is neither shown nor counted, and a budget that fits none is empty.
 func hookContextRendered(name string, entries []hookContextEntry, budget int, invocation string) CwdContextResult {
@@ -472,19 +480,22 @@ func hookContextRendered(name string, entries []hookContextEntry, budget int, in
 	for i, e := range entries {
 		lines[i] = e.lines
 	}
-	// The staleness notice is always there; it names the newest date, or says there is none to name.
-	latest := hookContextLatest(entries)
-	label := latest
-	if label == "" {
-		label = "an unknown date"
-	}
+	// The staleness notice is always there; it names the newest date among the entries shown, or says
+	// there is none to name. The unknown-date notice is longer than a date, so it can leave out another
+	// entry: render again over the entries admitted until the notice matches them (each pass admits no
+	// more than the last, so this ends).
+	label := hookContextNoticeLabel(entries)
 	block, admitted := renderCwdBlock(name, lines, budget, label, invocation)
+	for admitted > 0 {
+		shown := hookContextNoticeLabel(entries[:admitted])
+		if shown == label {
+			break
+		}
+		label = shown
+		block, admitted = renderCwdBlock(name, lines[:admitted], budget, label, invocation)
+	}
 	if admitted == 0 {
 		return CwdContextResult{Outcome: CwdContextEmpty}
-	}
-	// The notice names the newest date shown. Dates are ten units wide, so naming another costs the same.
-	if shown := hookContextLatest(entries[:admitted]); shown != "" && latest != "" && shown != latest {
-		block, _ = renderCwdBlock(name, lines[:admitted], budget, shown, invocation)
 	}
 	refs := make([]string, admitted)
 	for i := range refs {

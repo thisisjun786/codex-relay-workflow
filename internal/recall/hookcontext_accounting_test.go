@@ -110,6 +110,33 @@ func TestHookContextDatesAreParsedBeforeTheyAreCompared(t *testing.T) {
 	}
 }
 
+// The notice names the newest date among the entries shown, never one of an entry the budget left out:
+// shown entries that are all undated say "an unknown date", and the longer notice still fits the budget
+// and keeps the refs equal to the entries shown.
+func TestHookContextNoticeNamesOnlyShownDates(t *testing.T) {
+	sessions := accountingSessions(5)
+	sessions[0].Date = "invalid"
+	sessions[1].Date = "invalid"
+	r := BuildCwdContextResult("/repo", accountingDeps(&hookContextCalls{}, sessions), RecallBudget{Chars: 800, TopN: 5, Snippet: 100})
+	if len(r.Refs) != 2 || strings.Contains(r.Text, "as of 2026-09-09") || !strings.Contains(r.Text, "as of an unknown date,") {
+		t.Fatalf("an unshown date named the undated entries shown: %+v", r)
+	}
+	for chars := 500; chars <= 1300; chars++ {
+		r := BuildCwdContextResult("/repo", accountingDeps(&hookContextCalls{}, sessions), RecallBudget{Chars: chars, TopN: 5, Snippet: 100})
+		shown := strings.Count(r.Text, "  •")
+		if shown != len(r.Refs) || (r.Text != "" && len(hookContextUnits(r.Text, nil))+1 > chars) {
+			t.Fatalf("budget %d: %d shown, refs %v, %d units", chars, shown, r.Refs, len(hookContextUnits(r.Text, nil)))
+		}
+		want := "as of an unknown date,"
+		if shown > 2 {
+			want = "as of 2026-09-09,"
+		}
+		if shown > 0 && !strings.Contains(r.Text, want) {
+			t.Fatalf("budget %d: %d shown but the notice is not %q: %s", chars, shown, want, r.Text)
+		}
+	}
+}
+
 func TestHookContextClipAndCountsAreBounded(t *testing.T) {
 	long := hookContextUnits(strings.Repeat("x", 50), nil)
 	for n, want := range map[int]string{-5: "", 0: "", 1: ".", 2: "..", 3: "...", 4: "x...", 50: strings.Repeat("x", 50), 60: strings.Repeat("x", 50)} {
