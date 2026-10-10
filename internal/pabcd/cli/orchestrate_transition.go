@@ -567,17 +567,19 @@ func orchestrateCommitRunContext(ctx context.Context, a OrchestrateCliArgs, sess
 
 // orchestrateTransitionGoalStatus is the host goal status of the session's thread, read from the goals database
 // the hooks read (CODEX_SQLITE_HOME, else CODEX_HOME, else the account home). A path that cannot be resolved is
-// unreadable, which suppresses the Interview as it does for the hooks.
+// unreadable, which suppresses the Interview as it does for the hooks. Unlike the hooks it also reads a goals path
+// that cannot be inspected (not merely absent) as unreadable, because a write is gated on the answer.
 func orchestrateTransitionGoalStatus(sessionID string) host.GoalStatus {
 	path, err := host.GoalsDBPath(os.LookupEnv)
 	if err != nil {
 		return host.GoalUnreadable
 	}
-	return host.GoalActiveStatus(sessionID, path)
+	return host.GoalActiveStatusFailClosed(sessionID, path)
 }
 
 // orchestrateTransitionGoalRefusal is the refusal of an entry to I while goal mode owns the thread: it names the
-// goal-mode next command (P to start a cycle from rest, the current phase otherwise).
+// goal-mode next command (P to start a cycle from rest, the current phase otherwise). It leaves the phase and the
+// state file as they were; recovery of an earlier writer's pending ledger row (CRW-1097) has already run.
 func orchestrateTransitionGoalRefusal(verb fsm.OrchestrateVerb, cur state.State, sessionID string, status host.GoalStatus) CliResult {
 	why := "an active host goal owns this session"
 	if status == host.GoalUnreadable {
@@ -588,7 +590,7 @@ func orchestrateTransitionGoalRefusal(verb fsm.OrchestrateVerb, cur state.State,
 		next = "Goal mode is PABCD-only: start the cycle with `crw pabcd orchestrate P --session " + sessionID + "`."
 	}
 	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) +
-		"; the Interview (I) is HITL-only and never runs while a host goal is active: " + why + ". " + next + " Nothing was written."}
+		"; the Interview (I) is HITL-only and never runs while a host goal is active: " + why + ". " + next + " The session state was not changed."}
 }
 
 // orchestrateTransitionApply is the ported body, run while the caller holds the session lock.

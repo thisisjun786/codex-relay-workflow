@@ -44,6 +44,19 @@ func orchestrateGoalWorld(t *testing.T, id, status string) string {
 	return cwd
 }
 
+// orchestrateGoalSeed adds an active-goal row for id to the database orchestrateGoalWorld built.
+func orchestrateGoalSeed(t *testing.T, id, status string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(os.Getenv("CODEX_SQLITE_HOME"), host.GoalsDBFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO thread_goals (thread_id, status, objective) VALUES (?, ?, 'ship the feature')", id, status); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // CRW-1179: the host goal firewall holds on the CLI entry to Interview, not only on the UserPromptSubmit hint.
 func TestOrchestrateTransitionRefusesInterviewUnderAnActiveGoal(t *testing.T) {
 	t.Run("idle-to-I-active-goal", func(t *testing.T) {
@@ -58,7 +71,7 @@ func TestOrchestrateTransitionRefusesInterviewUnderAnActiveGoal(t *testing.T) {
 		if got.Code != 1 || !strings.HasPrefix(got.Output, "orchestrate I: current=IDLE session="+id+"; ") ||
 			!strings.Contains(got.Output, "active host goal") ||
 			!strings.Contains(got.Output, "crw pabcd orchestrate P --session "+id) ||
-			!strings.Contains(got.Output, "Nothing was written.") {
+			!strings.Contains(got.Output, "The session state was not changed.") {
 			t.Fatalf("refusal: %+v", got)
 		}
 		after, err := os.ReadFile(state.StatePath(cwd, id))
@@ -93,6 +106,21 @@ func TestOrchestrateTransitionRefusesInterviewUnderAnActiveGoal(t *testing.T) {
 			t.Fatal("the fail-closed refusal wrote state")
 		}
 	})
+	t.Run("uninspectable-goals-path-fails-closed", func(t *testing.T) {
+		// CRW-1179 d1: a goals path the process cannot inspect (a symlink loop here) is not "no goals".
+		id := "goal-loop"
+		cwd := orchestrateTransitionRoot(t)
+		loop := filepath.Join(t.TempDir(), "loop")
+		if err := os.Symlink("loop", loop); err != nil {
+			t.Skip(err)
+		}
+		t.Setenv("CODEX_SQLITE_HOME", loop)
+		orchestrateTransitionSession(t, cwd, id, `{"phase":"IDLE"}`)
+		got := orchestrateTransitionRun(t, cwd, "I", "--session", id)
+		if got.Code != 1 || !strings.Contains(got.Output, "cannot be read") || state.ReadState(cwd, id).Phase != state.PhaseIdle {
+			t.Fatalf("loop: %+v", got)
+		}
+	})
 	t.Run("no-goal-enters-I", func(t *testing.T) {
 		for name, status := range map[string]string{"no database": "", "paused": "paused", "complete": "complete"} {
 			id := "goal-none"
@@ -125,6 +153,10 @@ func TestOrchestrateTransitionRefusesInterviewUnderAnActiveGoal(t *testing.T) {
 			t.Fatalf("I>P under a goal: %+v", got)
 		}
 		id = "goal-leave-i-reset"
+		orchestrateGoalSeed(t, id, "active") // the reset target owns an active goal too
+		if host.GoalActiveStatus(id, filepath.Join(os.Getenv("CODEX_SQLITE_HOME"), host.GoalsDBFilename)) != host.GoalActive {
+			t.Fatal("the reset target's goal is not active")
+		}
 		orchestrateTransitionSession(t, cwd, id, `{"phase":"I","orchestrationActive":true}`)
 		if got := orchestrateTransitionRun(t, cwd, "reset", "--session", id); got.Code != 0 || state.ReadState(cwd, id).Phase != state.PhaseIdle {
 			t.Fatalf("reset from I under a goal: %+v", got)

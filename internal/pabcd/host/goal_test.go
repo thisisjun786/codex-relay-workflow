@@ -185,3 +185,59 @@ func TestGoalActiveStatusColumnNameCaseIsUnreadable(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1179: the entry-to-Interview caller asks whether the goals database can be told apart from a missing one.
+// A path the process cannot inspect (a symlink loop, a directory it cannot search) is unreadable, never "no goals";
+// only a genuinely absent file is inactive. GoalActiveStatus keeps the oracle's existsSync answer for the hooks.
+func TestGoalActiveStatusFailClosedTellsAbsenceFromAnInspectionFailure(t *testing.T) {
+	dir := t.TempDir()
+	if got := GoalActiveStatusFailClosed("t1", filepath.Join(dir, GoalsDBFilename)); got != GoalInactive {
+		t.Errorf("an absent database: %q", got)
+	}
+	if got := GoalActiveStatusFailClosed("t1", filepath.Join(dir, "no-such-dir", GoalsDBFilename)); got != GoalInactive {
+		t.Errorf("an absent directory: %q", got)
+	}
+	if got := GoalActiveStatusFailClosed("", filepath.Join(dir, GoalsDBFilename)); got != GoalInactive {
+		t.Errorf("no thread: %q", got)
+	}
+	loop := filepath.Join(dir, "loop")
+	if err := os.Symlink("loop", loop); err != nil {
+		t.Skip(err)
+	}
+	if got := GoalActiveStatusFailClosed("t1", filepath.Join(loop, GoalsDBFilename)); got != GoalUnreadable {
+		t.Errorf("a symlink loop in the path: %q, want unreadable", got)
+	}
+	if got := GoalActiveStatus("t1", filepath.Join(loop, GoalsDBFilename)); got != GoalInactive {
+		t.Errorf("the hook reader keeps the oracle's answer: %q", got)
+	}
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(dir, "locked")
+		if err := os.Mkdir(locked, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := goalsDBIn(t, locked, map[string]string{"t1": "active"})
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+		if got := GoalActiveStatusFailClosed("t1", path); got != GoalUnreadable {
+			t.Errorf("a directory without search permission: %q, want unreadable", got)
+		}
+	}
+	if got := GoalActiveStatusFailClosed("t1", goalsDB(t, map[string]string{"t1": "active"})); got != GoalActive {
+		t.Errorf("an active row: %q", got)
+	}
+	if got := GoalActiveStatusFailClosed("t1", goalsDB(t, map[string]string{"t1": "paused"})); got != GoalInactive {
+		t.Errorf("a paused row: %q", got)
+	}
+}
+
+func goalsDBIn(t *testing.T, dir string, rows map[string]string) string {
+	t.Helper()
+	path := filepath.Join(dir, GoalsDBFilename)
+	seed(t, path, goalsSchema)
+	for thread, status := range rows {
+		seed(t, path, "INSERT INTO thread_goals VALUES (?, 'g-'||?, 'obj', ?)", thread, thread, status)
+	}
+	return path
+}

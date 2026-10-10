@@ -1,6 +1,10 @@
 package host
 
-import "os"
+import (
+	"errors"
+	"io/fs"
+	"os"
+)
 
 // GoalsDBFilename is GOALS_DB_FILENAME (codex-rs/state/src/lib.rs:82). The goal table, thread_goals,
 // is keyed by thread_id, which is the hook payload's session_id.
@@ -34,10 +38,26 @@ func goalsDBPath(env LookupEnv, account func() (string, error)) (string, error) 
 // (getGoalActiveStatus). A missing database, or any error while checking that it exists, means
 // Codex is not using goals.
 func GoalActiveStatus(threadID, dbPath string) GoalStatus {
+	return goalActiveStatus(threadID, dbPath, false)
+}
+
+// GoalActiveStatusFailClosed is GoalActiveStatus for a caller that gates a write on the answer (the entry to
+// Interview of `orchestrate I`, CRW-1179): only a database that is absent (the file, or a directory on its path,
+// does not exist) means Codex is not using goals. A path the process cannot inspect (EACCES on a directory without
+// search permission, ELOOP, ENOTDIR, an I/O error) is unreadable, so an active goal that owns the thread is not
+// hidden by the failed lookup. The hooks keep GoalActiveStatus, the oracle's existsSync answer.
+func GoalActiveStatusFailClosed(threadID, dbPath string) GoalStatus {
+	return goalActiveStatus(threadID, dbPath, true)
+}
+
+func goalActiveStatus(threadID, dbPath string, failClosed bool) GoalStatus {
 	if threadID == "" {
 		return GoalInactive
 	}
 	if _, err := os.Stat(dbPath); err != nil {
+		if failClosed && !errors.Is(err, fs.ErrNotExist) {
+			return GoalUnreadable
+		}
 		return GoalInactive
 	}
 	db, err := openReadOnly(dbPath)
