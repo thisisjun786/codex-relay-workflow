@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -302,12 +303,52 @@ func repositoryRoot() (string, error) {
 	return resolve(strings.TrimSpace(string(out))), nil
 }
 
+// goModTidyCheck is the go.mod and go.sum part of validate: `go mod tidy -diff` must print nothing, so a
+// checkout whose module files differ from what go mod tidy writes fails here. It runs offline (GOPROXY=off,
+// GONOPROXY=none, GOSUMDB=off, GOTOOLCHAIN=local, GOWORK=off): GONOPROXY=none overrides an inherited GOPRIVATE
+// or GONOPROXY, whose patterns name modules go would otherwise fetch directly past GOPROXY=off, and GOSUMDB=off
+// keeps go from asking the checksum database for a go.sum line it lacks, so a missing line is reported as the
+// difference it is (go mod tidy would add it) and the hashes are taken from the cached module files. When the module cache lacks a module the import graph needs, it returns
+// a note that the check was skipped instead of an error; with no go command on PATH it does the same.
+func goModTidyCheck(root string) (errs []string, note string) {
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		return nil, ""
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		return nil, "go mod tidy check skipped: no go command on PATH"
+	}
+	cmd := exec.Command("go", "mod", "tidy", "-diff")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",
+		"GOTOOLCHAIN=local", "GOWORK=off")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil, "go.mod and go.sum match go mod tidy."
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return []string{"go mod tidy -diff: " + err.Error()}, ""
+	}
+	if stdout.Len() > 0 {
+		return []string{"go.mod or go.sum is not what go mod tidy writes; run go mod tidy and commit the result:\n" +
+			strings.TrimRight(stdout.String(), "\n")}, ""
+	}
+	if strings.Contains(stderr.String(), "module lookup disabled by GOPROXY=off") {
+		return nil, "go mod tidy check skipped: the module cache lacks a module the import graph needs " +
+			"(offline, GOPROXY=off); run go mod download and rerun to check go.mod and go.sum."
+	}
+	return []string{"go mod tidy -diff: " + strings.TrimSpace(stderr.String())}, ""
+}
+
 // Validate is `crw-dev ci validate`: skill metadata, local link paths, no Python outside skill assets,
-// the generated case sections of the dispatch-verification reference matching their data files, and no
-// blob over 2 MiB brought into the history.
+// the generated case sections of the dispatch-verification reference matching their data files, no
+// blob over 2 MiB brought into the history, and go.mod and go.sum as go mod tidy writes them.
 func Validate(args []string, stdout, stderr io.Writer) int {
 	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, that Python sits only in skill assets, "+
-		"and that no blob over 2 MiB comes into the history (BLOB_RANGE_BASE and GITHUB_EVENT_NAME give the range; see docs/CI.md).",
+		"that no blob over 2 MiB comes into the history (BLOB_RANGE_BASE and GITHUB_EVENT_NAME give the range; see docs/CI.md), "+
+		"and that go.mod and go.sum are what go mod tidy writes (offline; skipped with a note when the module cache is incomplete).",
 		args, stdout, stderr); code >= 0 {
 		return code
 	}
@@ -361,12 +402,17 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	if err := refactorBacklogError(root); err != nil {
 		errs = append(errs, err.Error())
 	}
+	modErrs, modNote := goModTidyCheck(root)
+	errs = append(errs, modErrs...)
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(errs, "\n"))
 	}
 	fmt.Fprintf(stdout, "Validated %d skills, local link paths and no Python outside skill assets.\n", count)
 	if blobSummary != "" {
 		fmt.Fprintln(stdout, blobSummary)
+	}
+	if modNote != "" {
+		fmt.Fprintln(stdout, modNote)
 	}
 	return 0
 }
