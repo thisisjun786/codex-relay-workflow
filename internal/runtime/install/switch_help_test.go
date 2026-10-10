@@ -25,15 +25,16 @@ func TestInstallSwitchHelpDescribesCXCAsTheEmergencyStop(t *testing.T) {
 			t.Errorf("switch --help still contains %q:\n%s", banned, help)
 		}
 	}
-	for _, want := range []string{"emergency", "hooks"} {
+	for _, want := range []string{"emergency", "hooks", "when one is missing", "is left as it is", "only what the switch recorded"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("switch --help lacks %q:\n%s", want, help)
 		}
 	}
 }
 
-// The conflict note names `switch cxc` as the emergency stop, not as a way back to CXC.
-func TestInstallSwitchStatusConflictNoteNamesCXCAsEmergencyStop(t *testing.T) {
+// The JSON document keeps the conflict note it had before CRW-1256 (the output is not part of the
+// wording change); the human status text carries the emergency-stop explanation.
+func TestInstallSwitchStatusConflictKeepsJSONNoteAndExplainsEmergencyStopInText(t *testing.T) {
 	h := newSwitchHome(t, switchConfig)
 	// A damaged switch.json reads as on, so with both plugins enabled it is a conflict.
 	if err := os.MkdirAll(filepath.Dir(hookswitch.Path(h.home)), 0o777); err != nil {
@@ -46,16 +47,54 @@ func TestInstallSwitchStatusConflictNoteNamesCXCAsEmergencyStop(t *testing.T) {
 	if s.State != "conflict" {
 		t.Fatalf("status = %+v, want a conflict", s)
 	}
-	var note string
+	const jsonNote = "both the CRW hooks and the CXC plugin are on: run `crw install switch crw` (CXC off) or `crw install switch cxc`"
+	var found bool
 	for _, n := range s.Notes {
-		if strings.Contains(n, "crw install switch cxc") {
-			note = n
+		if n == jsonNote {
+			found = true
+		}
+		if strings.Contains(n, "emergency") {
+			t.Errorf("JSON note %q changed wording", n)
 		}
 	}
-	if note == "" {
-		t.Fatalf("no conflict note names `crw install switch cxc`: %+v", s.Notes)
+	if !found {
+		t.Fatalf("JSON notes lack the unchanged conflict note: %+v", s.Notes)
 	}
-	if strings.Contains(note, "return to CXC") || !strings.Contains(note, "emergency") {
-		t.Fatalf("conflict note = %q, want the emergency stop wording", note)
+	code, out, errOut := h.run("status")
+	if code != 0 || errOut != "" {
+		t.Fatalf("status: exit %d stderr=%q", code, errOut)
+	}
+	if strings.Contains(out, "return to CXC") || !strings.Contains(out, "emergency stop") || !strings.Contains(out, "hooks off") {
+		t.Fatalf("human status lacks the emergency-stop explanation:\n%s", out)
+	}
+}
+
+// With the CXC plugin gone, active=cxc is the common emergency state; the human status says what it means
+// and the JSON values stay as they were.
+func TestInstallSwitchStatusActiveCXCExplainsHooksOffInText(t *testing.T) {
+	h := newSwitchHome(t, "[plugins.\"crw@crw\"]\nenabled=true\n")
+	if code, _, errOut := h.run("cxc"); code != 0 {
+		t.Fatalf("switch cxc: exit %d stderr=%q", code, errOut)
+	}
+	s := h.status()
+	if s.State != "off" || s.Switch.Active != "cxc" {
+		t.Fatalf("status = state %q active %q, want off / cxc", s.State, s.Switch.Active)
+	}
+	for _, n := range s.Notes {
+		if strings.Contains(n, "emergency") {
+			t.Errorf("JSON note %q gained wording", n)
+		}
+	}
+	code, out, errOut := h.run("status")
+	if code != 0 || errOut != "" {
+		t.Fatalf("status: exit %d stderr=%q", code, errOut)
+	}
+	if !strings.Contains(out, "active=cxc") || !strings.Contains(out, "emergency stop") || !strings.Contains(out, "hooks are off") || strings.Contains(out, "return to CXC") {
+		t.Fatalf("human status does not explain active=cxc as hooks off:\n%s", out)
+	}
+	// The switch result text ends in the same status.
+	code, out, _ = h.run("cxc")
+	if code != 0 || !strings.Contains(out, "emergency stop") {
+		t.Fatalf("switch cxc text lacks the explanation (exit %d):\n%s", code, out)
 	}
 }

@@ -26,13 +26,15 @@ const switchUsage = "Usage:\n" +
 	"  --codex-home <dir>     the Codex home (default $CODEX_HOME or ~/.codex)\n" +
 	"  --plugin-root <dir>    the installed CRW plugin package whose hook trust status reports\n" +
 	"  --help / -h / help in any argument position prints this text and writes nothing.\n\n" +
-	"switch writes $CODEX_HOME/crw/switch.json, sets [plugins.\"codexclaw@codexclaw\"] enabled = false\n" +
-	"(crw@crw is never touched), and replaces agents/executor.toml and agents/architect.toml with the\n" +
-	"CRW role files. Every value it changes is recorded first in the `switch` section of\n" +
-	"$CODEX_HOME/.crw-install.json, config.toml and each role file are copied to a timestamped .crw-<ts>.bak\n" +
-	"before they change, and a step that fails undoes the steps before it. `switch cxc` is the emergency\n" +
-	"stop of the ported hooks: it turns them off and puts the recorded values back byte for byte. It does not\n" +
-	"re-activate CXC. `features disable` does not touch the switch.\n"
+	"switch writes $CODEX_HOME/crw/switch.json and sets [plugins.\"codexclaw@codexclaw\"] enabled = false\n" +
+	"(crw@crw is never touched). `switch crw` also puts the CRW role file in place of agents/executor.toml and\n" +
+	"agents/architect.toml when one is missing, or is an older CXC file; a CRW role file already there, or a\n" +
+	"file of another owner, is left as it is. Every value or file it changes is recorded first in the `switch`\n" +
+	"section of $CODEX_HOME/.crw-install.json, config.toml and each role file it replaces are copied to a\n" +
+	"timestamped .crw-<ts>.bak before they change, and a step that fails undoes the steps before it.\n" +
+	"`switch cxc` is the emergency stop of the ported hooks: it turns them off and puts back, byte for byte,\n" +
+	"only what the switch recorded as changed. It does not re-activate CXC. `features disable` does not touch\n" +
+	"the switch.\n"
 
 // The four states status reports.
 const (
@@ -217,6 +219,9 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 	fmt.Fprintf(stdout, "state: %s\n", status.State)
 	if status.Switch.Active != "" {
 		fmt.Fprintf(stdout, "switch.json: active=%s changedAt=%s by=%s\n", status.Switch.Active, status.Switch.ChangedAt, status.Switch.By)
+		if status.Switch.Active == "cxc" {
+			fmt.Fprintln(stdout, "  active=cxc is the emergency stop: the ported CRW hooks are off. It does not mean CXC is active.")
+		}
 	} else if status.Switch.Error != "" {
 		fmt.Fprintf(stdout, "switch.json: %s\n", status.Switch.Error)
 	} else {
@@ -251,6 +256,10 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 	}
 	for _, n := range status.Notes {
 		fmt.Fprintf(stdout, "note: %s\n", n)
+	}
+	if status.State == switchStateConflict {
+		// Human text only: the Notes of the JSON document keep their wording.
+		fmt.Fprintln(stdout, "note: `crw install switch cxc` is the emergency stop: it turns the ported CRW hooks off; it does not re-activate CXC")
 	}
 	return OK
 }
@@ -297,7 +306,7 @@ func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 	switch {
 	case surfaceCRW && surfaceCXC:
 		s.State = switchStateConflict
-		s.Notes = append(s.Notes, "both the CRW hooks and the CXC plugin are on: run `crw install switch crw` (CXC off), or `crw install switch cxc` (emergency stop: the CRW hooks off)")
+		s.Notes = append(s.Notes, "both the CRW hooks and the CXC plugin are on: run `crw install switch crw` (CXC off) or `crw install switch cxc`")
 	case surfaceCRW:
 		s.State = switchStateCRW
 	case surfaceCXC:
