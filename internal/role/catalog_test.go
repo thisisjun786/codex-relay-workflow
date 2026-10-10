@@ -147,6 +147,8 @@ func TestNativeCatalogPaths(t *testing.T) {
 		{"blank", `model_catalog_json = ' '`, ""},
 		{"tilde-trailing-slash", "model_catalog_json = '~/models.json/'", filepath.Join(root, "models.json") + "/"},
 		{"tilde-empty-remainder", "model_catalog_json = '~/'", root},
+		// The oracle joins and resolves lexically (catalog.ts:67-75), so a link followed by ".." names the link's directory.
+		{"symlink-traversal", "model_catalog_json = 'link/../custom.json'", filepath.Join(codex, "custom.json")},
 		{"comment-cr", "model_catalog_json = 'models.json' # a\rb", ""},
 		{"comment-line-separator", "model_catalog_json = 'models.json' # a\u2028b", ""},
 	} {

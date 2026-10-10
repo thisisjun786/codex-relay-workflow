@@ -60,7 +60,9 @@ const mcpToolNativeMaxAge = 24 * time.Hour
 const mcpToolProbeTimeout = 5 * time.Second
 
 // CatalogIsAuthoritative is mcp.ts:84-93. fetchedAt is not an authority signal:
-// fresh OCX is authoritative; every other source checks the native file's mtime.
+// fresh OCX is authoritative; every other source checks the mtime of the native file the catalog was
+// read from: the one its reader resolved when the request started (CRW-1132), and for a catalog that
+// carries none, the one env selects now.
 func CatalogIsAuthoritative(c LiveCatalog, now time.Time, env host.LookupEnv) bool {
 	if c.Status != "fresh" {
 		return false
@@ -68,7 +70,10 @@ func CatalogIsAuthoritative(c LiveCatalog, now time.Time, env host.LookupEnv) bo
 	if c.Source == ModelOcx {
 		return true
 	}
-	p := NativeCatalogPath(env)
+	p := c.nativePath
+	if !c.sourced {
+		p = NativeCatalogPath(env)
+	}
 	if p == "" {
 		return false
 	}

@@ -42,6 +42,11 @@ type LiveCatalog struct {
 	Message   string      `json:"message,omitempty"`
 	raw       object
 	fetchedMS int64
+	// nativePath is the native catalog file the reader that produced this catalog resolved for its
+	// source, set when sourced is true. CatalogIsAuthoritative judges that file, not the one the
+	// configuration names when it is asked (CRW-1132).
+	nativePath string
+	sourced    bool
 }
 
 func (c LiveCatalog) MarshalJSON() ([]byte, error) {
@@ -126,6 +131,12 @@ func resolveCatalogSource(env host.LookupEnv) catalogSource {
 	return s
 }
 
+// stamp records on a catalog the native file of the source it answers for.
+func (s catalogSource) stamp(c LiveCatalog) LiveCatalog {
+	c.nativePath, c.sourced = s.nativePath, true
+	return c
+}
+
 // sourceKey names the source a cached or pending catalog belongs to: what the reader resolves from the
 // environment, not the raw variables alone (CRW-1132; the oracle hashed CODEX_HOME, the catalog path,
 // PATH and OPENCODEX_HOME as written, so a shared CRW_HOME with another HOME merged two native homes).
@@ -188,7 +199,7 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	cached := cachedCatalog(path, key, now().UnixMilli())
 	if !o.ForceRefresh && cached != nil && now().UnixMilli()-cached.fetchedMS < CatalogTTLMS {
 		r.mu.Unlock()
-		return *cached, nil
+		return src.stamp(*cached), nil
 	}
 	q := &catalogRequest{done: make(chan struct{})}
 	if r.pending == nil {
@@ -196,7 +207,7 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	}
 	r.pending[pendingKey] = q
 	r.mu.Unlock()
-	c := queryCatalog(path, key, src, environ, env, now, o, cached)
+	c := src.stamp(queryCatalog(path, key, src, environ, env, now, o, cached))
 	r.mu.Lock()
 	q.catalog = c
 	delete(r.pending, pendingKey)

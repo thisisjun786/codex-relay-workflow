@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -69,6 +71,27 @@ func entryKey(raw json.RawMessage) string {
 }
 func isRoutedSlug(key string) bool { return strings.Contains(key, "/") }
 
+// readConfigFile reads a native configuration file that must be a regular file. It is opened without
+// blocking and checked once open, so a FIFO nobody writes (or a link to one) or a device is no
+// configuration instead of a wait that no timeout bounds: an OCX answer and a cache hit do not depend on
+// this file, and the reader reaches it before either (CRW-1132, CRW-1120). The error is not "not
+// exist": the caller selects nothing, as for a directory.
+func readConfigFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, &os.PathError{Op: "read", Path: path, Err: syscall.EINVAL}
+	}
+	return io.ReadAll(f)
+}
+
 // NativeCatalogPath scans only root-level model_catalog_json. A basic string is read with TOML's
 // escapes (tomlBasicString), not JSON's (CRW-1132; the oracle decoded it with JSON.parse); a malformed
 // selected key fails closed.
@@ -88,7 +111,7 @@ func NativeCatalogPath(env host.LookupEnv) string {
 		}
 		home = filepath.Join(h, ".codex")
 	}
-	b, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	b, err := readConfigFile(filepath.Join(home, "config.toml"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return ""
 	}
