@@ -1005,3 +1005,220 @@ func TestSelfHealEvidenceRecordingReturnsAtTheDeadlineDuringASlowPublication(t *
 		t.Fatal("the publication never started, so the test did not stall it")
 	}
 }
+
+// CRW-1169: the failure paths of a recording drop an older record, and that drop shares the
+// recording's deadline too: a marker lock held past it does not hold the caller, whose result is the
+// same as when the drop finished.
+func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheMarkerLockIsHeld(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, home string) (cwd string, run CodexRunner)
+	}{
+		{"config unreadable", func(t *testing.T, home string) (string, CodexRunner) {
+			if err := os.Remove(filepath.Join(home, "config.toml")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(home, "config.toml"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return selfHealEvidenceCwd(t, home), (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+		}},
+		{"unknown working directory", func(t *testing.T, home string) (string, CodexRunner) {
+			return "", (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+		}},
+		{"listing fails", func(t *testing.T, home string) (string, CodexRunner) {
+			return selfHealEvidenceCwd(t, home), func([]string) CodexRunResult { return CodexRunResult{ExitCode: 1} }
+		}},
+		{"no readable version", func(t *testing.T, home string) (string, CodexRunner) {
+			return selfHealEvidenceCwd(t, home), (&selfHealEvidenceRunner{listing: selfHealReportSoftOn}).run
+		}},
+		{"layer moved while measuring", func(t *testing.T, home string) (string, CodexRunner) {
+			// Only a project layer changes: the version, the user config and the listing all hold, so
+			// the call reaches the final layer rejection and nothing else.
+			cwd := selfHealEvidenceCwd(t, home)
+			selfHealEvidenceWriteProjectConfig(t, cwd, "model = \"before\"\n")
+			inner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+			return cwd, func(args []string) CodexRunResult {
+				selfHealEvidenceWriteProjectConfig(t, cwd, "model = \"after\"\n")
+				return inner.run(args)
+			}
+		}},
+		{"config moved while measuring", func(t *testing.T, home string) (string, CodexRunner) {
+			inner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+			return selfHealEvidenceCwd(t, home), func(args []string) CodexRunResult {
+				if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("model = \"other\"\n"), 0o644); err != nil {
+					t.Error(err)
+				}
+				return inner.run(args)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := selfHealReportTempHome(t)
+			selfHealReportWriteConfig(t, home)
+			selfHealEvidenceRecord(t, home, &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn})
+			older, err := ReadSelfHealMarkerFile(home)
+			if err != nil || older == nil || older.Probe == nil {
+				t.Fatalf("the older record was not written: %+v %v", older, err)
+			}
+			cwd, run := tc.setup(t, home)
+			// The default lock wait outlasts the 200ms deadline below; the abandoned drop reads it, so it
+			// is not changed here.
+			unlock, err := lockSelfHealMarker(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			returned := make(chan error, 1)
+			start := time.Now()
+			go func() {
+				returned <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx})
+			}()
+			select {
+			case err := <-returned:
+				if err != nil {
+					t.Fatalf("the abandoned drop changed the command's result: %v", err)
+				}
+				// The caller returns at the deadline: no grace is added after the context ends (a margin of
+				// 150ms covers scheduling, well under the 250ms an added wait would cost).
+				if elapsed := time.Since(start); elapsed > 350*time.Millisecond {
+					t.Fatalf("the recording returned after %v, past its 200ms deadline plus the scheduling margin", elapsed)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the failed recording outlived its deadline while the marker lock was held")
+			}
+			// The abandoned drop finishes once the lock frees, from the marker it reads under it: the
+			// older record is gone (it no longer describes the flags the command changed), nothing else.
+			unlock()
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				after, err := ReadSelfHealMarkerFile(home)
+				if err == nil && after != nil && after.Probe == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("the abandoned drop never retired the older record: %+v %v", after, err)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
+	}
+}
+
+// CRW-1169 correction: the deadline bounds how long the caller waits, never whether a failed
+// recording retires the oracle's mtime cache. A legacy-only marker (no probeEvidence) whose recording
+// already ran out of time, with the marker lock free, is retired before the call returns, like the
+// synchronous drop retired it, so the next SessionStart does not return "cached" over flags the
+// command just changed.
+func TestSelfHealEvidenceFailedRecordingPastTheDeadlineStillRetiresTheLegacyCache(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+	}{
+		{"deadline already ended", func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, cancel
+		}},
+		{"deadline ends while the listing runs", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := selfHealReportTempHome(t)
+			path := selfHealReportWriteConfig(t, home)
+			selfHealReportWriteMarker(t, home, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
+				selfHealReportMarkerMtimeMs(t, path)+"}\n")
+			cwd := selfHealEvidenceCwd(t, home)
+			var ctx context.Context
+			run := (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+			if tc.ctx != nil {
+				c, cancel := tc.ctx()
+				defer cancel()
+				ctx = c
+			} else {
+				c, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				ctx = c
+				inner := run
+				run = func(args []string) CodexRunResult {
+					if len(args) > 0 && args[0] == "features" {
+						<-c.Done()
+						return CodexRunResult{ExitCode: 1}
+					}
+					return inner(args)
+				}
+			}
+			if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx}); err != nil {
+				t.Fatal(err)
+			}
+			// The marker lock is free, so the retirement is done before the call returns: a CLI that
+			// exits right after it (enable renders and exits) cannot lose it to an unfinished goroutine.
+			marker, err := ReadSelfHealMarkerFile(home)
+			if err != nil || marker == nil || marker.Probe != nil || (marker.AllEnabled != nil && *marker.AllEnabled) {
+				t.Fatalf("the failed recording returned with the legacy cache still authoritative: %+v %v", marker, err)
+			}
+			// The project layer now turns a soft flag off while config.toml and its mtime are unchanged.
+			runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
+			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: runner.run})
+			if runner.listings() != 1 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
+				t.Fatalf("the hook trusted the cache after a failed recording: %+v %v", outcomes, runner.calls)
+			}
+		})
+	}
+}
+
+// CRW-1169 round 5: with the marker lock free, a filesystem that stalls on the drop's own write does
+// not hold the caller past a deadline that was still running when the drop began: the call returns
+// at the deadline, and the drop, left running, still retires the legacy cache once the write goes on.
+func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheRetirementStalls(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	path := selfHealReportWriteConfig(t, home)
+	cwd := selfHealEvidenceCwd(t, home)
+	selfHealReportWriteMarker(t, home, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
+		selfHealReportMarkerMtimeMs(t, path)+"}\n")
+	entered, done, release := stallSelfHealPublication(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	run := (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+	failing := func(args []string) CodexRunResult {
+		if len(args) > 0 && args[0] == "features" {
+			return CodexRunResult{ExitCode: 1}
+		}
+		return run(args)
+	}
+	returned := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		returned <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: failing, Ctx: ctx})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the failed recording never reached the marker write, so the test did not stall it")
+	}
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatalf("the stalled drop changed the command's result: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed > 350*time.Millisecond {
+			t.Fatalf("the recording returned after %v, past its 200ms deadline plus the scheduling margin", elapsed)
+		}
+	case <-time.After(time.Second):
+		release()
+		t.Fatal("the failed recording waited on a stalled retirement past its 200ms deadline")
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stalled write never finished after it was released")
+	}
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil || (marker.AllEnabled != nil && *marker.AllEnabled) {
+		t.Fatalf("the drop left running did not retire the legacy cache: %+v %v", marker, err)
+	}
+}

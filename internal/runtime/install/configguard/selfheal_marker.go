@@ -217,6 +217,12 @@ var selfHealMarkerLockWait = activationLockWait
 // nothing in CODEX_HOME (the recorded home trees of the disable cases are compared whole); it is a
 // different file from config.toml's sidecar lock, so it never contends with the activation's.
 func lockSelfHealMarker(home string) (func(), error) {
+	return lockSelfHealMarkerWithin(home, selfHealMarkerLockWait)
+}
+
+// lockSelfHealMarkerWithin is lockSelfHealMarker with its own wait; a wait of zero tries the lock
+// once and returns errSelfHealMarkerBusy at once when another writer holds it.
+func lockSelfHealMarkerWithin(home string, wait time.Duration) (func(), error) {
 	if err := os.MkdirAll(home, 0777); err != nil {
 		return nil, err
 	}
@@ -224,7 +230,7 @@ func lockSelfHealMarker(home string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	deadline := time.Now().Add(selfHealMarkerLockWait)
+	deadline := time.Now().Add(wait)
 	for {
 		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
