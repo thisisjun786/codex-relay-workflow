@@ -378,6 +378,19 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정해요 그리고 워커가 테스트하게 해", LoopScopeCurrentTask},
 		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정합니다", LoopScopeCurrentTask},
 		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정할게", LoopScopeCurrentTask},
+		// CRW-1173: the -요 endings 끝내요, 끝나요 and 바꿔요 are finite verbs, so the -고 chain ends at them (the causative after
+		// them is not this chain's); a bare 그리고 and a sequence marker are connectives of the chain and do not end it, and a
+		// noun ending like 요 (안내요, 실내요, 바나나요, 가요, 대중가요, 개요, 필요) is no finite verb and keeps the causative.
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 끝내요 수정하도록 해", LoopScopeCurrentTask},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 끝나요 수정하게 해", LoopScopeCurrentTask},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 바꿔요 수정하도록 해", LoopScopeCurrentTask},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 안내요 수정하도록 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 실내요 수정하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 바나나요 테스트하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 가요 수정하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 대중가요 수정하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 그리고 수정하도록 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 그다음 수정하도록 해", LoopScopeProject},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {

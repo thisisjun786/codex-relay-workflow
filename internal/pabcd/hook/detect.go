@@ -650,7 +650,9 @@ func finiteKorean(w string) bool {
 	case '해':
 		return !detectorRE(`^(?:위해|대해|통해|관해|의해|인해|이해|피해|방해|손해|오해|견해|재해|침해|저해|장해)$`).MatchString(string(r))
 	case '요':
-		return prev != 0 && strings.ContainsRune("해세줘봐돼게래네데까지죠어아워와여쳐려겨", prev)
+		// 끝내요, 끝나요, 바꿔요 (CRW-1173): whole verb stems, not the syllable before 요, which a noun ending like 안내요 shares.
+		return prev != 0 && strings.ContainsRune("해세줘봐돼게래네데까지죠어아워와여쳐려겨", prev) ||
+			detectorRE(`(?:끝내|끝나|바꿔)요$`).MatchString(string(r))
 	case '다':
 		return prev != 0 && strings.ContainsRune("니한했된됐는었았였겠렸쳤갔왔졌냈봤", prev)
 	case '라':
