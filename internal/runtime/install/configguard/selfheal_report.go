@@ -30,8 +30,10 @@ import (
 // user's Codex configuration, so the port keeps the diagnosis and drops every write: it reads the
 // declared state, and when a soft flag crw declares is off it says so once per key, naming the
 // command the user can run. There is no enable call, no marker write, no manifest write and no
-// backup. The rest of the oracle's rule (the opt-out marker, the all-enabled cache, a key the user
-// turned off after a heal, an unreadable listing) is kept exactly, including its silence.
+// backup. The rest of the oracle's rule (the opt-out marker, a key the user turned off after a heal,
+// an unreadable listing) is kept exactly, including its silence. The one intended difference is the oracle's all-enabled
+// cache: a marker that carries no probe evidence (allEnabled, cachedKeys, configMtimeMs only) is measured like any other and
+// does not answer silently (CRW-1185); the consent guards before the measurement are unchanged.
 //
 // Fail-open, as the oracle: every failure path exits 0 without output, because a config-guard
 // problem must never stop a session from starting.

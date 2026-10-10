@@ -670,7 +670,7 @@ func TestSelfHealEvidenceFailedRecordingCannotResurrectTheLegacyCache(t *testing
 
 // probeEvidence that does not parse (an older form without layersSha256, or a damaged record) is not
 // the same as no probeEvidence at all: the legacy cache beside it does not vouch, and a marker that
-// never carried probeEvidence keeps the oracle's cache hit.
+// never carried probeEvidence is measured too (CRW-1185: the report no longer trusts the legacy cache).
 func TestSelfHealEvidenceUnparsableRecordDoesNotRestoreTheLegacyCache(t *testing.T) {
 	home := selfHealReportTempHome(t)
 	path := selfHealReportWriteConfig(t, home)
