@@ -41,9 +41,9 @@ func must(t *testing.T, in Input) Record {
 
 func TestClassifyPathSets(t *testing.T) {
 	low := map[string]string{
-		"docs/relay/risk-tier.md":                             "docs_prose",
-		"docs/port-cxc/known-defects/CRW-1041.md":             "docs_prose",
-		"internal/skill/search/testdata/ranking.json":         "testdata_data",
+		"docs/relay/risk-tier.md":                     "docs_prose",
+		"docs/port-cxc/known-defects/CRW-1041.md":     "docs_prose",
+		"internal/skill/search/testdata/ranking.json": "testdata_data",
 	}
 	for p, rule := range low {
 		if v := Classify(p); v.Tier != Low || v.Rule != rule {
