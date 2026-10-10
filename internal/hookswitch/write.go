@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // This file is the writing side of the switch file, which crw install switch (CRW-201) uses: the
@@ -101,11 +102,39 @@ func WriteRaw(codexHome string, b []byte) error {
 	if err != nil {
 		return err
 	}
-	if d, derr := os.Open(dir); derr == nil {
-		_ = d.Sync()
-		_ = d.Close()
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("%w: %s is in place but the sync of %s failed: %w", ErrNotDurable, path, dir, err)
 	}
 	return nil
+}
+
+// ErrNotDurable is the error of a WriteRaw (or Write) whose file was renamed into place but whose
+// directory could not be synced: the new file is published and a reader sees it, and a power loss
+// may still undo the rename. A directory that does not support a sync (EINVAL, ENOTSUP, ENOSYS) is
+// not an error: there is nothing to confirm there.
+var ErrNotDurable = errors.New("switch file published, durability not confirmed")
+
+// syncDir opens a directory and syncs it; it is a variable so a test can inject a failure.
+var syncDir = func(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return classifySyncError(err)
+}
+
+// classifySyncError is nil for the answer of a directory that cannot be synced at all (EINVAL on a
+// filesystem that gives a directory no sync, ENOTSUP, ENOSYS): there is nothing to confirm there, so
+// it is not a failure. Any other error, including a failed open, is returned.
+func classifySyncError(err error) error {
+	if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ENOSYS) {
+		return nil
+	}
+	return err
 }
 
 // Remove deletes the switch file; an absent file is not an error.

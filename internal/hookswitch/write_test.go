@@ -3,8 +3,11 @@
 package hookswitch
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -94,5 +97,75 @@ func TestRemoveToleratesAnAbsentFile(t *testing.T) {
 	}
 	if _, err := os.Stat(Path(home)); !os.IsNotExist(err) {
 		t.Fatalf("file remains: %v", err)
+	}
+}
+
+// CRW-1163: the directory sync is part of the publication, and its failure is reported as a file
+// that is in place with its durability unconfirmed.
+func TestWriteRawReportsADirectorySyncFailureAsPublishedNotDurable(t *testing.T) {
+	for name, injected := range map[string]error{
+		"open fails": &os.PathError{Op: "open", Path: "dir", Err: syscall.EACCES},
+		"sync fails": &os.PathError{Op: "sync", Path: "dir", Err: syscall.EIO},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			was := syncDir
+			t.Cleanup(func() { syncDir = was })
+			syncDir = func(string) error { return injected }
+			err := WriteRaw(home, []byte("{\"active\":\"crw\"}\n"))
+			if !errors.Is(err, ErrNotDurable) || !errors.Is(err, injected) {
+				t.Fatalf("WriteRaw = %v, want ErrNotDurable wrapping %v", err, injected)
+			}
+			if !strings.Contains(err.Error(), "in place") {
+				t.Fatalf("the message does not say the file is published: %v", err)
+			}
+			// The file is published whole, with no temporary file left behind.
+			if b, rerr := os.ReadFile(Path(home)); rerr != nil || string(b) != "{\"active\":\"crw\"}\n" {
+				t.Fatalf("published file = %q, %v", b, rerr)
+			}
+			if entries, _ := os.ReadDir(filepath.Dir(Path(home))); len(entries) != 1 {
+				t.Fatalf("a temporary file was left behind: %v", entries)
+			}
+			// Write carries it too.
+			if werr := Write(home, State{Active: CXC, ChangedAt: "a", By: "b"}); !errors.Is(werr, ErrNotDurable) {
+				t.Fatalf("Write = %v", werr)
+			}
+		})
+	}
+}
+
+// A directory that cannot be synced at all is not a failure to report: nothing can be confirmed.
+func TestWriteRawAcceptsAFilesystemThatCannotSyncADirectory(t *testing.T) {
+	for _, errno := range []syscall.Errno{syscall.EINVAL, syscall.ENOTSUP, syscall.ENOSYS} {
+		home := t.TempDir()
+		was := syncDir
+		t.Cleanup(func() { syncDir = was })
+		syncDir = func(dir string) error {
+			// The real function's own rule, applied to an error the filesystem gives.
+			return classifySyncError(&os.PathError{Op: "sync", Path: dir, Err: errno})
+		}
+		if err := WriteRaw(home, []byte("{}")); err != nil {
+			t.Errorf("%v: WriteRaw = %v", errno, err)
+		}
+	}
+	// And the real sync of a real directory succeeds.
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Fatalf("syncDir of a directory = %v", err)
+	}
+}
+
+func TestSyncDirReportsAnOpenFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens any directory")
+	}
+	dir := filepath.Join(t.TempDir(), "d")
+	if err := os.Mkdir(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDir(dir); err == nil {
+		t.Fatal("syncDir opened a directory that cannot be read")
+	}
+	if err := syncDir(filepath.Join(dir, "absent")); err == nil {
+		t.Fatal("syncDir of a missing directory = nil")
 	}
 }
