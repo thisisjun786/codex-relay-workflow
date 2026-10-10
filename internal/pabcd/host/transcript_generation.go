@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -29,21 +30,31 @@ type TranscriptGeneration struct {
 // ReadTranscriptGeneration reads the last maxBytes of the transcript at path as whole JSONL records. Nothing readable is
 // an empty generation: no marker, no pressure (fail open, as ReadTranscriptTail).
 func ReadTranscriptGeneration(path string, maxBytes int) TranscriptGeneration {
-	return ParseTranscriptGeneration(readTranscriptWindow(path, maxBytes))
+	w := readTranscriptBytes(path, maxBytes, nil)
+	return parseTranscriptGeneration(w.data, w.whole)
 }
 
-// ParseTranscriptGeneration reads tail as JSONL records. whole says the tail starts at the transcript's first byte; when it
-// does not, the first line is the cut end of a longer record and is dropped, so only whole records count. A line that is
-// not a JSON object is skipped.
+// ParseTranscriptGeneration reads tail as JSONL records. whole says the tail's first line is a whole record (the tail
+// starts the transcript or the line after a newline); when it is not, that line is the cut end of a longer record and is
+// dropped, so only whole records count. A line that is not a JSON object is skipped.
 func ParseTranscriptGeneration(tail string, whole bool) TranscriptGeneration {
-	lines := strings.Split(tail, "\n")
-	if !whole && len(lines) > 0 {
-		lines = lines[1:]
-	}
+	return parseTranscriptGeneration([]byte(tail), whole)
+}
+
+func parseTranscriptGeneration(tail []byte, whole bool) TranscriptGeneration {
 	var g TranscriptGeneration
-	for _, line := range lines {
+	for first := true; len(tail) > 0; first = false {
+		line := tail
+		if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+			line, tail = tail[:i], tail[i+1:]
+		} else {
+			tail = nil
+		}
+		if first && !whole {
+			continue
+		}
 		var record transcriptRecord
-		if strings.TrimSpace(line) == "" || json.Unmarshal([]byte(line), &record) != nil {
+		if len(bytes.TrimSpace(line)) == 0 || json.Unmarshal(line, &record) != nil {
 			continue
 		}
 		switch {
@@ -58,6 +69,33 @@ func ParseTranscriptGeneration(tail string, whole bool) TranscriptGeneration {
 		}
 	}
 	return g
+}
+
+// ContextPressureScanBytes is how far back TranscriptContextPressure looks for the compaction or the user prompt that
+// decides it. Tool output between them is not bounded, so the tail alone ends the recovery window by scrolling the
+// compaction out of reach (CRW-1090 evaluation d2); a transcript with neither in this reach reads as no pressure, as
+// an unreadable one does.
+const ContextPressureScanBytes = 16 << 20
+
+// TranscriptContextPressure is whether the transcript at path shows a compaction that no user prompt has followed
+// (TranscriptGeneration.ContextPressure), read from a window of the transcript's end that widens, four times each round
+// from TailBytes up to ContextPressureScanBytes, until it holds a compaction or a user prompt. A user prompt in the
+// window with no compaction after it ends any pressure, and a compaction with no prompt after it is pressure, whatever
+// the window holds before them, so the first window that holds either decides; one that holds neither widens, and a
+// window that starts the file or reaches the limit without either is no pressure. The Stop leg asks this; the passive
+// prompt reads only the injected markers, which a compaction before the window cannot make stale.
+func TranscriptContextPressure(path string) bool {
+	for window := TailBytes; ; window *= 4 {
+		window = min(window, ContextPressureScanBytes)
+		w := readTranscriptBytes(path, window, nil)
+		g := parseTranscriptGeneration(w.data, w.whole)
+		if g.compacted || g.userTurn {
+			return g.ContextPressure()
+		}
+		if w.covered || window >= ContextPressureScanBytes {
+			return false
+		}
+	}
 }
 
 // HasStageMarkerForPhase is whether a hook injected the stage marker for phase in this generation, in either emitted

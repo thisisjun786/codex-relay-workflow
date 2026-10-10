@@ -83,13 +83,13 @@ func (c countingReader) ReadAt(p []byte, off int64) (int, error) {
 }
 
 // TestReadTranscriptTailReadsAtMostTheWindow is CRW-1160 end condition 1: on a 64 MiB transcript the reader touches
-// at most TailBytes.
+// at most TailBytes and the one byte before them, which says whether the window starts at a record.
 func TestReadTranscriptTailReadsAtMostTheWindow(t *testing.T) {
 	path := bigTranscript(t, "\n{\"tail\":true}\n")
 	var read int64
-	got, whole := readTranscriptWindowWith(path, TailBytes, &transcriptTailSeams{reader: func(r io.ReaderAt) io.ReaderAt { return countingReader{r, &read} }})
-	if read > TailBytes || read == 0 || whole || len(got) == 0 {
-		t.Errorf("read %d bytes (whole %v, %d decoded), want at most %d", read, whole, len(got), TailBytes)
+	got, _ := readTranscriptWindowWith(path, TailBytes, &transcriptTailSeams{reader: func(r io.ReaderAt) io.ReaderAt { return countingReader{r, &read} }})
+	if read > TailBytes+1 || read == 0 || len(got) == 0 {
+		t.Errorf("read %d bytes (%d decoded), want at most %d", read, len(got), TailBytes+1)
 	}
 }
 
@@ -205,4 +205,74 @@ func TestReadTranscriptTailUnderAChangingFile(t *testing.T) {
 			t.Errorf("open descriptors %d before, %d after", before, after)
 		}
 	})
+}
+
+// TestReadTranscriptGenerationKeepsTheFirstRecordOfAnAlignedWindow is CRW-1160 evaluation d1: a window that starts at a
+// record boundary (the byte before it is the newline that ended the previous record) holds a whole first record, so the
+// marker in it counts; a window that starts inside a record still drops that record's cut end.
+func TestReadTranscriptGenerationKeepsTheFirstRecordOfAnAlignedWindow(t *testing.T) {
+	record := devRecord("[crw: PLAN]\nWrite a diff-level plan")
+	file := writeTail(t, strings.Repeat("a", 100)+"\n"+record)
+	if !ReadTranscriptGeneration(file, len(record)).HasStageMarkerForPhase("P") {
+		t.Error("a window that starts at a record boundary dropped its first, whole record")
+	}
+	if ReadTranscriptGeneration(file, len(record)-1).HasStageMarkerForPhase("P") {
+		t.Error("a window that starts inside the record read it")
+	}
+	if !ReadTranscriptGeneration(file, len(record)+1).HasStageMarkerForPhase("P") {
+		t.Error("a window that starts at the newline before the record dropped it")
+	}
+	if tail := ReadTranscriptTail(file, len(record)); tail != record {
+		t.Errorf("the tail is not the last %d bytes: %q", len(record), tail)
+	}
+}
+
+// TestContextPressureOutlivesTheTailWindow is CRW-1090 evaluation d2: a compaction no user prompt has followed is pressure
+// however much is appended after it, until a prompt is recorded; the scan widens past the 64 KiB tail to find the
+// boundary and stops at ContextPressureScanBytes (a transcript with neither in that reach reads as no pressure).
+func TestContextPressureOutlivesTheTailWindow(t *testing.T) {
+	compaction := `{"type":"compacted","payload":{"message":"","replacement_history":[]}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction"}}}` + "\n"
+	user := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}` + "\n"
+	filler := func(n int) string {
+		return strings.Repeat(`{"type":"response_item","payload":{"type":"function_call_output","output":"`+strings.Repeat("w", 900)+`"}}`+"\n", n)
+	}
+	for _, c := range []struct {
+		name, content string
+		want          bool
+	}{
+		{"compaction at the end", compaction, true},
+		{"compaction, then 200 KiB of tool output", compaction + filler(220), true},
+		{"compaction, 3 MiB of tool output", compaction + filler(3300), true},
+		{"compaction, a prompt, then 200 KiB", compaction + user + filler(220), false},
+		{"a prompt, then 200 KiB, no compaction", user + filler(220), false},
+		{"no compaction at all", filler(220), false},
+		{"a prompt, a compaction, then 200 KiB", user + compaction + filler(220), true},
+	} {
+		if got := TranscriptContextPressure(writeTail(t, c.content)); got != c.want {
+			t.Errorf("%s: pressure %v, want %v", c.name, got, c.want)
+		}
+	}
+	// Beyond the scan reach the boundary is not looked for.
+	if TranscriptContextPressure(bigTranscript(t, "\n")) {
+		t.Error("a 64 MiB transcript with no boundary read as pressure")
+	}
+	if !TranscriptContextPressure(bigTranscript(t, "\n"+compaction)) {
+		t.Error("a compaction at the end of a 64 MiB transcript did not read as pressure")
+	}
+	path := filepath.Join(t.TempDir(), "far.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(compaction); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(ContextPressureScanBytes + 4<<20); err != nil {
+		t.Fatal(err)
+	}
+	if TranscriptContextPressure(path) {
+		t.Error("a compaction beyond the scan reach read as pressure")
+	}
 }

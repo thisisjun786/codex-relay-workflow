@@ -20,8 +20,9 @@ func ReadTranscriptTail(path string, maxBytes int) string {
 	return tail
 }
 
-// readTranscriptWindow is ReadTranscriptTail and whether the window starts at the file's first byte, so a
-// reader of whole records knows when the window's first line is the cut end of a longer one.
+// readTranscriptWindow is ReadTranscriptTail and whether the window's first line is a whole record: the window starts
+// at the file's first byte, or at the first byte after a newline. A reader of whole records drops the first line of
+// a window for which this is false (it is the cut end of a longer record) and keeps it otherwise.
 func readTranscriptWindow(path string, maxBytes int) (string, bool) {
 	return readTranscriptWindowWith(path, maxBytes, nil)
 }
@@ -33,23 +34,39 @@ type transcriptTailSeams struct {
 	reader    func(io.ReaderAt) io.ReaderAt
 }
 
-// readTranscriptWindowWith opens the file once, without waiting (O_NONBLOCK: a FIFO with no writer would
-// hold the open), refuses anything but a regular file by fstat of that descriptor, and reads the last
-// min(size, maxBytes) bytes of the size it saw with one ReadAt. A file that changes after the stat is read
-// as it then is, best effort: an append past the stat is not seen, a truncation leaves a short read, a
-// rename keeps the open file; the read never widens to the whole file. Any error is "" (fail open).
 func readTranscriptWindowWith(path string, maxBytes int, seams *transcriptTailSeams) (string, bool) {
+	w := readTranscriptBytes(path, maxBytes, seams)
+	return decodeUTF8(w.data), w.whole
+}
+
+// transcriptWindow is the bytes readTranscriptBytes read: the last bytes of the file, whether the first line of them is a
+// whole record, and whether they start the file (nothing precedes them).
+type transcriptWindow struct {
+	data    []byte
+	whole   bool
+	covered bool
+}
+
+// readTranscriptBytes opens the file once, without waiting (O_NONBLOCK: a FIFO with no writer would
+// hold the open), refuses anything but a regular file by fstat of that descriptor, and reads the last
+// min(size, maxBytes) bytes of the size it saw with one ReadAt, preceded by the one byte before them when
+// there is one: a window is cut mid-record unless that byte is a newline, which this reads without widening
+// the window (CRW-1160 evaluation d1: whether the window starts at byte zero does not say whether its first record
+// is cut). A file that changes after the stat is read as it then is, best effort: an append past the stat is not
+// seen, a truncation leaves a short read, a rename keeps the open file; the read never widens to the whole file.
+// Any error is an empty window (fail open).
+func readTranscriptBytes(path string, maxBytes int, seams *transcriptTailSeams) transcriptWindow {
 	if path == "" || maxBytes <= 0 {
-		return "", false
+		return transcriptWindow{}
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return "", false
+		return transcriptWindow{}
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return "", false
+		return transcriptWindow{}
 	}
 	if seams != nil && seams.afterStat != nil {
 		seams.afterStat()
@@ -60,12 +77,20 @@ func readTranscriptWindowWith(path string, maxBytes int, seams *transcriptTailSe
 	}
 	size := info.Size()
 	start := max(0, size-int64(maxBytes))
-	buf := make([]byte, size-start)
-	n, err := r.ReadAt(buf, start)
+	from := max(0, start-1) // the byte before the window says whether it starts a record
+	buf := make([]byte, size-from)
+	n, err := r.ReadAt(buf, from)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", false
+		return transcriptWindow{}
 	}
-	return decodeUTF8(buf[:n]), start == 0
+	buf = buf[:n]
+	if start == 0 {
+		return transcriptWindow{data: buf, whole: true, covered: true}
+	}
+	if len(buf) == 0 {
+		return transcriptWindow{}
+	}
+	return transcriptWindow{data: buf[1:], whole: buf[0] == '\n'}
 }
 
 // decodeUTF8 replaces each maximal invalid subpart with one U+FFFD (the WHATWG decoder Node uses);
