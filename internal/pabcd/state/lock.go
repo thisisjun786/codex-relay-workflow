@@ -9,11 +9,37 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// sessionLockPatience is how long, in nanoseconds, WithSessionLock keeps waiting for a held lock after its schedule is used up; 0 (all
+// production ever runs) gives up with the busy error after the oracle's schedule. A test that races callers it cannot reach through the
+// sleep seam (a hook, a command) sets it with WaitForSessionLock so the holder's release, not the time a holder takes on a loaded
+// host, decides who is inside (CRW-1181).
+var sessionLockPatience atomic.Int64
+
+// sessionLockPatienceDelay is the sleep between attempts once the schedule is used up (the schedule's longest delay).
+const sessionLockPatienceDelay = 40 * time.Millisecond
+
+// WaitForSessionLock makes every later wait for a session lock go on, after the oracle's schedule is used up, until the holder
+// releases it or guard has passed since the wait began (a hang guard, not the expected wait); it returns the call that puts the
+// previous patience back. It is for tests; production never calls it.
+func WaitForSessionLock(guard time.Duration) (restore func()) {
+	previous := sessionLockPatience.Swap(int64(guard))
+	return func() { sessionLockPatience.Store(previous) }
+}
+
+// sessionLockSleep is the sleep a caller without a seam of its own uses. It is a test seam; production keeps time.Sleep.
+var sessionLockSleep = time.Sleep
+
+// sessionLockNow is the clock the patience guard of WaitForSessionLock is judged on. It is a test seam, so a test that advances a
+// virtual clock in sessionLockSleep reaches the guard by the waits the code schedules and not by the wall clock; production keeps
+// time.Now (CRW-1181).
+var sessionLockNow = time.Now
 
 // WithSessionLock runs fn holding the session's exclusive lock, the file <state file>.lock (withSessionLock). The session id must
 // be canonical: an id that sanitising would rewrite, or an empty one, is refused with ErrNonCanonicalSessionID before anything is
@@ -63,7 +89,7 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 // unchanged.
 func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
 	retryDelays, onBusy := lockWaitProbe()
-	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, time.Sleep, retryDelays, onBusy)
+	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, sessionLockSleep, retryDelays, onBusy)
 }
 
 // orchestrateInterruptLockContext is the acquisition both entries share. retryDelays is a test seam: a
@@ -101,6 +127,7 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		schedule = retryDelays
 	}
 	var held *sessionLock
+	waitStarted := sessionLockNow()
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -110,7 +137,8 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, fs.ErrExist) || attempt >= len(schedule) {
+		patient := attempt >= len(schedule) && errors.Is(err, fs.ErrExist) && sessionLockNow().Sub(waitStarted) < time.Duration(sessionLockPatience.Load())
+		if !patient && (!errors.Is(err, fs.ErrExist) || attempt >= len(schedule)) {
 			if sessionLockOutcome != nil {
 				sessionLockOutcome(err)
 			}
@@ -130,7 +158,10 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		if attempt == 0 && onBusy != nil {
 			onBusy()
 		}
-		delay := schedule[attempt] * time.Millisecond
+		delay := sessionLockPatienceDelay
+		if attempt < len(schedule) {
+			delay = schedule[attempt] * time.Millisecond
+		}
 		if ctx.Done() == nil {
 			sleep(delay) // a context that can never end keeps the caller's seam
 			continue

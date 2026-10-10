@@ -42,11 +42,18 @@ func WithAckBound(ctx context.Context, d time.Duration) context.Context {
 }
 
 // ackBound is the ack bound this call uses: the context's when it holds a positive one, else the
-// client's configured bound. A caller that already holds an earlier deadline keeps it, so a raised
+// client's stage bound for this method when a test set one (BoundAckOn), else the client's configured
+// bound. A caller that already holds an earlier deadline keeps it, so a raised
 // bound never reports itself as the wait that expired.
-func (c *Client) ackBound(ctx context.Context) time.Duration {
+func (c *Client) ackBound(ctx context.Context, method string) time.Duration {
 	d, ok := ctx.Value(ackBoundKey{}).(time.Duration)
 	if !ok || d <= 0 {
+		c.mu.Lock()
+		stage, staged := c.stageAck[method]
+		c.mu.Unlock()
+		if staged {
+			return stage
+		}
 		return c.bounds.Ack
 	}
 	if deadline, ok := ctx.Deadline(); ok {
@@ -155,6 +162,7 @@ type pending struct {
 type Client struct {
 	socket        string
 	bounds        PhaseBounds
+	stageAck      map[string]time.Duration
 	maxFrame      int
 	info          map[string]any
 	connectGate   chan struct{}
@@ -213,6 +221,23 @@ func (c *Client) RetireBeforeWrite(method string) {
 
 // BoundAck sets the acknowledgement deadline for subsequently sent requests.
 func (c *Client) BoundAck(duration time.Duration) { c.bounds.Ack = duration }
+
+// BoundAckOn sets the acknowledgement deadline of one method's requests, leaving every other method on
+// the client's own bound. It is the test seam for an interruption aimed at one stage of a multi-call
+// operation, which BoundAck (every request) cannot aim; production never sets it. A non-positive
+// duration clears the stage bound.
+func (c *Client) BoundAckOn(method string, duration time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if duration <= 0 {
+		delete(c.stageAck, method)
+		return
+	}
+	if c.stageAck == nil {
+		c.stageAck = map[string]time.Duration{}
+	}
+	c.stageAck[method] = duration
+}
 
 // Info is the initialize result of the current connection (rpc.py AppServer.info).
 func (c *Client) Info() map[string]any { c.mu.Lock(); defer c.mu.Unlock(); return c.info }

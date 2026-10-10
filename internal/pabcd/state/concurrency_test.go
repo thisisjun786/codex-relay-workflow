@@ -80,12 +80,27 @@ func TestHelperProcess(t *testing.T) {
 		_ = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old)
 		fmt.Printf("ran=%v efbig=%v", ran, errors.Is(lockErr, syscall.EFBIG))
 	case "inc": // CRW-1094: mutual exclusion between processes, decided by the lock and not by the clock
+		// The lock gives up after its retry schedule (10 attempts), and four processes that fsync a
+		// state file 15 times each on a loaded host held it longer than the widened schedule in all
+		// (a child exited 1 on the busy answer after 28 s, CRW-1181). A busy answer ran nothing, so
+		// the increment is asked for again, as the hook's caller would; what is asserted (60 updates,
+		// no lock left) is still decided by the lock alone. The repetition is bounded by a hang
+		// guard, not by the time the holders take.
+		guard := time.Now().Add(4 * time.Minute)
 		for i := 0; i < 15 && err == nil; i++ {
-			err = withSessionLock(cwd, "conc", func() error {
-				c := ReadState(cwd, "conc")
-				c.IdleEditNudges++
-				return WriteState(cwd, c)
-			}, lockBudgetSleep())
+			for {
+				ran := false
+				err = withSessionLock(cwd, "conc", func() error {
+					ran = true
+					c := ReadState(cwd, "conc")
+					c.IdleEditNudges++
+					return WriteState(cwd, c)
+				}, lockBudgetSleep())
+				if ran || !errors.Is(err, fs.ErrExist) || time.Now().After(guard) {
+					break
+				}
+				err = nil
+			}
 		}
 	}
 	if err != nil {

@@ -94,3 +94,100 @@ func TestLockWaitBudgetDecidesWhetherASlowHolderBlocksTheWriter(t *testing.T) {
 		})
 	}
 }
+
+// WaitForSessionLock (CRW-1181) is the seam through which a test that cannot reach the sleep seam of withSessionLock (a hook, a
+// command) makes the real WithSessionLock wait for its holder's release instead of giving up after the oracle's schedule. The
+// test runs WithSessionLock itself against a holder that lets go only once the waiter's virtual clock (sessionLockSleep, which
+// records the delay and does not sleep) passes the whole schedule, so it is decided by the wait the code schedules and not by a
+// wall clock: without the seam the call gives up with the busy error, with it the call enters after the release, and removing the
+// seam's connection to WithSessionLock fails the second leg.
+func TestWaitForSessionLockOutlastsTheScheduleThroughWithSessionLock(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		patient bool
+	}{
+		{"the oracle's schedule gives up", false},
+		{"a patient wait reaches the release", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			held, release, released := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			letGo := func() { once.Do(func() { close(release) }) }
+			go func() {
+				defer close(released)
+				_ = WithSessionLock(cwd, "counter", func() error {
+					close(held)
+					<-release
+					return nil
+				})
+			}()
+			<-held
+			t.Cleanup(letGo)
+			slept := time.Duration(0)
+			previous := sessionLockSleep
+			sessionLockSleep = func(d time.Duration) {
+				slept += d
+				if slept > lockBudgetScheduleTotal {
+					letGo()
+					<-released // the holder is out and its lock removed before the next attempt
+				}
+			}
+			t.Cleanup(func() { sessionLockSleep = previous })
+			if tc.patient {
+				defer WaitForSessionLock(time.Minute)()
+			}
+			entered := false
+			err := WithSessionLock(cwd, "counter", func() error { entered = true; return nil })
+			if !tc.patient {
+				if !errors.Is(err, fs.ErrExist) || entered || slept != lockBudgetScheduleTotal {
+					t.Fatalf("the oracle's schedule: err %v entered %v slept %v", err, entered, slept)
+				}
+				letGo()
+				<-released
+				return
+			}
+			if err != nil || !entered || slept <= lockBudgetScheduleTotal {
+				t.Fatalf("a patient wait: err %v entered %v slept %v", err, entered, slept)
+			}
+		})
+	}
+	if got := sessionLockPatience.Load(); got != 0 {
+		t.Fatalf("patience %d after the restore, want 0", got)
+	}
+}
+
+// The patience ends at its guard: a holder that never lets go is answered with the busy error once the guard has passed. The guard is
+// judged on a virtual clock (sessionLockNow) that the sleep seam advances by each delay the code schedules and that never sleeps, so
+// neither a loaded host nor slow lock-file I/O moves it. The guard outlasts the oracle's whole schedule, so the wait goes on past it
+// with the patience delay, and the busy error comes back on the first attempt the clock reaches the guard: after the schedule's
+// delays and as many patience delays as fit below the guard, without fn ever running.
+func TestWaitForSessionLockGivesUpAtItsGuard(t *testing.T) {
+	cwd := t.TempDir()
+	held, release, released := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(released)
+		_ = WithSessionLock(cwd, "counter", func() error { close(held); <-release; return nil })
+	}()
+	<-held
+	t.Cleanup(func() { close(release); <-released })
+	const guard = time.Second // a hang guard well past the schedule's 250 ms
+	virtual := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	start := virtual
+	previousNow, previousSleep := sessionLockNow, sessionLockSleep
+	var calls int
+	sessionLockNow = func() time.Time { return virtual }
+	sessionLockSleep = func(d time.Duration) { calls++; virtual = virtual.Add(d) }
+	t.Cleanup(func() { sessionLockNow, sessionLockSleep = previousNow, previousSleep })
+	defer WaitForSessionLock(guard)()
+	err := WithSessionLock(cwd, "counter", func() error { t.Error("entered a held lock"); return nil })
+	// 250 ms of schedule, then patience delays while the clock is below the guard: 250+19*40 = 1010 ms is the first at or past it
+	patienceDelays := int((guard - lockBudgetScheduleTotal + sessionLockPatienceDelay - 1) / sessionLockPatienceDelay)
+	wantCalls, wantSlept := lockBudgetScheduleLen+patienceDelays, lockBudgetScheduleTotal+time.Duration(patienceDelays)*sessionLockPatienceDelay
+	if !errors.Is(err, fs.ErrExist) || calls != wantCalls || virtual.Sub(start) != wantSlept {
+		t.Fatalf("err %v after %d sleeps and %v, want the busy error after %d sleeps and %v", err, calls, virtual.Sub(start), wantCalls, wantSlept)
+	}
+}
+
+// lockBudgetScheduleLen is the number of delays in the oracle's retry schedule.
+const lockBudgetScheduleLen = 10

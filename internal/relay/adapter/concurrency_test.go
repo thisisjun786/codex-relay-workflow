@@ -11,6 +11,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
+// stepWait bounds one step that is already under way (a send reaching the held host call, a caller
+// settling after the release). The steps behind it are a ledger store opened and written and a
+// goroutine started, so a single five-second timer started before them, shared by the later
+// waits, failed on a loaded host (CRW-1181). Each wait gets its own, sized to turn a hang into a
+// failure and nothing more.
+const stepWait = 90 * time.Second
+
 type heldRPC struct{ entered, release chan struct{} }
 
 func (r *heldRPC) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
@@ -56,11 +63,11 @@ func concurrencyCase(t *testing.T, kind string) {
 			done <- plain(r)
 		}
 	}()
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+	entered := time.NewTimer(stepWait)
+	defer entered.Stop()
 	select {
 	case <-rpc.entered:
-	case <-timer.C:
+	case <-entered.C:
 		t.Fatal("RPC not reached")
 	}
 	result := map[string]any{}
@@ -95,9 +102,11 @@ func concurrencyCase(t *testing.T, kind string) {
 	} else {
 		close(rpc.release)
 	}
+	settled := time.NewTimer(stepWait)
+	defer settled.Stop()
 	select {
 	case result["a"] = <-done:
-	case <-timer.C:
+	case <-settled.C:
 		t.Fatal("caller not settled")
 	}
 	expectJSON(t, "concurrency", result)

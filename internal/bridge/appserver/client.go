@@ -178,7 +178,7 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 		c.retire(ws)
 		return nil, err
 	}
-	ackBound := c.ackBound(ctx)
+	ackBound := c.ackBound(ctx, method)
 	ack, cancel := context.WithTimeout(ctx, ackBound)
 	defer cancel()
 	var result outcome
