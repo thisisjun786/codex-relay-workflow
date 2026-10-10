@@ -302,7 +302,7 @@ func batchRunReport(_ context.Context, e *Env, args []string) int {
 // batchWriteFile writes a report through a private temporary file in its directory, synced before the
 // rename that commits it, so a morning reader sees the old report or the whole new one.
 func batchWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
+	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("the report directory: %w", err)
 	}
