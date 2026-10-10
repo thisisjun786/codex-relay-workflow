@@ -25,12 +25,16 @@ func pumpSignalTestPins(t *testing.T, f *pumpSignalFixture) map[string]int64 {
 		t.Fatal(err)
 	}
 	var doc struct {
-		Pins map[string]int64 `json:"pins"`
+		Pins map[string]pumpSignalDagPin `json:"pins"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("pin file %q: %v", raw, err)
 	}
-	return doc.Pins
+	pins := map[string]int64{}
+	for path, pin := range doc.Pins {
+		pins[path] = pin.At
+	}
+	return pins
 }
 
 // A refusal the parent appends while the first reading of its rollout runs is not history. The

@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -78,12 +79,15 @@ type dagHostScope struct {
 // history ends. The caller's offsets become durable only after the review, so the boundary must
 // not be taken again by every review that finds no offsets: a refusal that arrived after the first
 // reading would then fall inside a later boundary and be taken for history. pin returns the boundary
-// already kept for path, or keeps size durably and returns it, before the reading classifies any
-// refusal against it. An error means no durable boundary, and the refusal reading is not taken.
+// already kept for path when it was kept for this same file (file, its device and inode) and is not
+// past its size, or keeps one durably and returns it, before the reading classifies any refusal
+// against it. size and file come from the descriptor the reading then scans, so the boundary, the
+// identity and the scan are of one file whatever replaces the path meanwhile. An error means no
+// durable boundary, and the refusal reading is not taken.
 type dagHostOffsetStore interface {
 	load() (dagHostOffsets, error)
 	save(dagHostOffsets) error
-	pin(path string, size int64) (int64, error)
+	pin(path, file string, size int64) (int64, error)
 }
 
 // The two context keys the host readings travel on.
@@ -187,7 +191,7 @@ func dagHostSortedParents(parents map[string]string) []dagHostParent {
 // start there would re-report refusals an earlier check already reported.
 func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostScope) error {
 	cfg := scope.config()
-	offsets := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}
+	offsets := dagHostOffsets{Offsets: map[string]int64{}, Files: map[string]string{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}
 	offsetsRead, refusalsMeasured := false, false
 	if scope.store != nil {
 		state, err := scope.store.load()
@@ -310,21 +314,47 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 		})
 		return
 	}
+	// The size, the identity and the scan all come from this one descriptor, so a rollout that is
+	// renamed over or cut short while it is read cannot give the reading another file's boundary.
+	file, err := os.Open(path)
+	if err != nil {
+		in.review.Checks = append(in.review.Checks, Check{
+			Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured, Detail: err.Error(),
+		})
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		in.review.Checks = append(in.review.Checks, Check{
+			Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured, Detail: err.Error(),
+		})
+		return
+	}
+	size, identity := info.Size(), dagHostFileIdentity(info)
 	start := int64(0)
 	firstSight := false
 	pinned := int64(-1)
 	if offsetsRead {
 		seen, ok := offsets.Offsets[path]
+		if known := offsets.Files[path]; ok && !dagHostSameFile(known, identity) {
+			// Another file now holds the path: the offsets and the reported ids are the old file's.
+			// The new file is read from its start and its refusals are reported, as a rollout shorter
+			// than its offset is; none of it is taken for history.
+			seen = 0
+			delete(offsets.Reported, path)
+			delete(offsets.Unparsed, path)
+		}
 		if !ok {
 			// A rollout this review has not seen before is read once from its start: the call whose
 			// answer has not arrived is then remembered, so a refusal that arrives after this check is
 			// still reported. The refusals already in its history are not.
 			firstSight = true
 			if store != nil {
-				info, err := os.Stat(path)
-				if err == nil {
-					pinned, err = store.pin(path, info.Size())
+				if dagHostBeforePin != nil {
+					dagHostBeforePin(path)
 				}
+				pinned, err = store.pin(path, identity, size)
 				if err != nil {
 					in.review.Checks = append(in.review.Checks, Check{
 						Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured,
@@ -332,12 +362,15 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 					})
 					return
 				}
+				if dagHostAfterPin != nil {
+					dagHostAfterPin(path)
+				}
 			}
 		} else {
 			start = seen
 		}
 	}
-	reading, err := dagHostRolloutRefusals(path, start)
+	reading, err := dagHostRolloutRefusals(file, path, start, size)
 	if err != nil {
 		in.review.Checks = append(in.review.Checks, Check{
 			Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured, Detail: err.Error(),
@@ -345,9 +378,9 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 		return
 	}
 	if pinned >= 0 {
-		// The kept boundary, not this reading's own size, separates the history: it was fixed no later
-		// than this reading began, so a refusal appended after it is reported by every reading until
-		// the offsets that record it are saved.
+		// The kept boundary, not this reading's own size, separates the history: it was fixed for this
+		// file no later than this reading began, so a refusal appended after it is reported by every
+		// reading until the offsets that record it are saved.
 		reading.boundary = pinned
 	}
 	if reading.tooLong {
@@ -380,6 +413,11 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 	}
 	if offsetsRead {
 		offsets.Offsets[path] = reading.resume
+		if identity != "" {
+			offsets.Files[path] = identity
+		} else {
+			delete(offsets.Files, path)
+		}
 		offsets.Reported[path] = dagHostResumeRefusalIDs(reading)
 		offsets.Unparsed[path] = dagHostResumeUnparsedIDs(reading)
 	}
@@ -1017,21 +1055,43 @@ func dagHostJSExpressionEnd(source string, start int) int {
 // It is nil outside tests.
 var dagHostAfterBoundary func(path string)
 
-// dagHostRolloutRefusals reads the rollout from start to its end and reports the relay dag-
-// refusals it finds, with the offset the next check resumes from. The resume offset never advances
-// past a relay call whose output has not been seen, so a call and its output split across two checks
-// are still paired; a rollout shorter than the saved offset was replaced, so it is read from its
-// start rather than skipped. A reading that cannot be taken is an error, never a partial answer.
-func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return dagHostRolloutReading{resume: start}, err
+// dagHostBeforePin and dagHostAfterPin are test seams around the first-sight pin of a reading that
+// already holds its descriptor, so a test can replace or cut short the rollout at either point. They
+// are nil outside tests.
+var dagHostBeforePin, dagHostAfterPin func(path string)
+
+// dagHostFileIdentity names the file a descriptor holds (device and inode), so a file that was
+// replaced by another is told from the same file grown or cut short, whatever the new one's size.
+// It is empty where the platform gives no inode.
+func dagHostFileIdentity(info os.FileInfo) string {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return fmt.Sprintf("%d:%d", uint64(stat.Dev), uint64(stat.Ino))
 	}
-	defer f.Close()
-	size, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return dagHostRolloutReading{resume: start}, err
+	return ""
+}
+
+// dagHostSameFile reports whether two identities can name the same file: an unknown one (empty) can,
+// and two known ones do when their inodes agree. The device is not compared: a path stays on one file
+// system, whose device number a remount or a reboot may renumber, and taking that for a replacement
+// would report the whole history of every rollout again.
+func dagHostSameFile(a, b string) bool {
+	if a == "" || b == "" {
+		return true
 	}
+	_, inodeA, _ := strings.Cut(a, ":")
+	_, inodeB, _ := strings.Cut(b, ":")
+	return inodeA == inodeB
+}
+
+// dagHostRolloutRefusals reads the open rollout f (at path) from start to its end and reports the
+// relay dag- refusals it finds, with the offset the next check resumes from. size is the file's size
+// when the reading began, taken from f. The resume offset never advances past a relay call whose
+// output has not been seen, so a call and its output split across two checks are still paired; a
+// line without its newline is still being written and is not read until it has one; a rollout
+// shorter than the saved offset was replaced, so it is read from its start rather than skipped. A
+// reading that cannot be taken is an error, never a partial answer: a file that ends before size
+// was cut short while it was read.
+func dagHostRolloutRefusals(f *os.File, path string, start, size int64) (dagHostRolloutReading, error) {
 	if start > size {
 		start = 0
 	}
@@ -1067,6 +1127,16 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 				// still advances; the caller reports the unmeasured line.
 				reading.tooLong = true
 				continue
+			}
+			if readErr != nil {
+				// Nor is a line without its newline parsed, even when it already holds complete JSON:
+				// an answer read from it would mark its call seen and could be taken for history, and
+				// the resume offset would then pass the call line. Its call stays pending, so the next
+				// reading starts at the call and pairs it with the finished answer.
+				if errors.Is(readErr, io.EOF) {
+					break
+				}
+				return dagHostRolloutReading{resume: start}, fmt.Errorf("read the rollout: %w", readErr)
 			}
 			var entry dagHostRolloutEntry
 			if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &entry) == nil && entry.Type == "response_item" {
@@ -1116,6 +1186,9 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 			}
 			return dagHostRolloutReading{resume: start}, fmt.Errorf("read the rollout: %w", readErr)
 		}
+	}
+	if offset < size {
+		return dagHostRolloutReading{resume: start}, fmt.Errorf("the rollout %s was cut short while it was read (%d of %d bytes)", path, offset, size)
 	}
 	// A relay call whose output has not arrived stays pending: the next check re-reads it from its
 	// own line, so the call and its output are paired even when they are written in different runs.
@@ -1179,12 +1252,14 @@ func dagHostOutputText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// dagHostOffsets is the offset file's content: the resume offset of each rollout and the call ids
-// of the refusals already reported for it, plus the document's other keys verbatim, so a rewrite
-// does not drop a key this build does not name. A file written before this build holds no
-// "reported" member and reads as an empty list.
+// dagHostOffsets is the offset file's content: the resume offset of each rollout, the file each
+// offset was read from (device and inode, see dagHostFileIdentity) and the call ids of the refusals
+// already reported for it, plus the document's other keys verbatim, so a rewrite does not drop a key
+// this build does not name. A file written before this build holds no "reported" or "files" member
+// and reads as an empty list; an offset without a file is taken for the file the path holds.
 type dagHostOffsets struct {
 	Offsets  map[string]int64
+	Files    map[string]string
 	Reported map[string][]string
 	Unparsed map[string][]string
 	raw      map[string]json.RawMessage
@@ -1232,7 +1307,7 @@ func dagHostStateLock(ctx context.Context, stateDir string) (func(), error) {
 func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	data, err := os.ReadFile(crwconfig.JoinRoot(stateDir, dagHostStateFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}, nil
+		return dagHostOffsets{Offsets: map[string]int64{}, Files: map[string]string{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}, nil
 	}
 	if err != nil {
 		return dagHostOffsets{}, err
@@ -1241,13 +1316,21 @@ func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return dagHostOffsets{}, fmt.Errorf("the offset file %s is not readable: %w", dagHostStateFile, err)
 	}
-	state := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: raw}
+	state := dagHostOffsets{Offsets: map[string]int64{}, Files: map[string]string{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: raw}
 	if held, ok := raw["offsets"]; ok {
 		if err := json.Unmarshal(held, &state.Offsets); err != nil {
 			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable offsets member: %w", dagHostStateFile, err)
 		}
 		if state.Offsets == nil {
 			state.Offsets = map[string]int64{}
+		}
+	}
+	if held, ok := raw["files"]; ok {
+		if err := json.Unmarshal(held, &state.Files); err != nil {
+			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable files member: %w", dagHostStateFile, err)
+		}
+		if state.Files == nil {
+			state.Files = map[string]string{}
 		}
 	}
 	if held, ok := raw["reported"]; ok {
@@ -1287,6 +1370,14 @@ func dagHostSaveOffsets(ctx context.Context, stateDir string, state dagHostOffse
 	if err != nil {
 		return err
 	}
+	files := state.Files
+	if files == nil {
+		files = map[string]string{}
+	}
+	identities, err := json.Marshal(files)
+	if err != nil {
+		return err
+	}
 	unparsed, err := json.Marshal(state.Unparsed)
 	if err != nil {
 		return err
@@ -1296,6 +1387,7 @@ func dagHostSaveOffsets(ctx context.Context, stateDir string, state dagHostOffse
 		document[key] = value
 	}
 	document["offsets"] = offsets
+	document["files"] = identities
 	document["reported"] = reported
 	document["reported_unparsed"] = unparsed
 	data, err := json.Marshal(document)

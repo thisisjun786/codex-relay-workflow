@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -199,10 +198,14 @@ func pumpSignalDagLast(st *pumpState) []pumpSignalTuple {
 // the size at each reading that finds no offsets, a pump that ended or failed to save before its
 // offsets reached disk would take the next reading's larger size as the boundary, and a refusal
 // that arrived in between (one the first reading even collected) would read as history. A boundary
-// is written once and dropped once the saved pump state holds the rollout's offsets; it is only
-// taken again when the rollout is shorter than it (a replaced file). A rollout only grows, so the
-// boundary is never past what any first-sight reading's own size would be: writing it before the
-// pending events can only make a reading report more, never less. A dry run writes none.
+// is kept with the file it was taken from (device and inode of the descriptor the reading scans),
+// written once, and dropped once the saved pump state holds the rollout's offsets. A rollout only
+// grows, so a boundary of the same file is never past what any first-sight reading's own size would
+// be: writing it before the pending events can only make a reading report more, never less. A
+// boundary is never applied to another file: when the path holds another file, or the same file cut
+// below the boundary, it was replaced after the pump first saw it, nothing in it can be told to be
+// older than that, and the boundary becomes 0 so every refusal it holds is reported. A dry run writes
+// none.
 type pumpSignalDagOffsetStore struct {
 	st  *pumpState
 	dir string
@@ -211,12 +214,13 @@ type pumpSignalDagOffsetStore struct {
 
 type pumpSignalDagOffsets struct {
 	Offsets  map[string]int64    `json:"offsets"`
+	Files    map[string]string   `json:"files,omitempty"`
 	Reported map[string][]string `json:"reported"`
 	Unparsed map[string][]string `json:"reported_unparsed"`
 }
 
 func (o pumpSignalDagOffsetStore) load() (dagHostOffsets, error) {
-	state := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}}
+	state := dagHostOffsets{Offsets: map[string]int64{}, Files: map[string]string{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}}
 	var held pumpSignalDagOffsets
 	// A value that cannot be decoded reads as no offsets: each rollout is then first seen, so its
 	// history is not replayed.
@@ -225,6 +229,9 @@ func (o pumpSignalDagOffsetStore) load() (dagHostOffsets, error) {
 	}
 	if held.Offsets != nil {
 		state.Offsets = held.Offsets
+	}
+	if held.Files != nil {
+		state.Files = held.Files
 	}
 	if held.Reported != nil {
 		state.Reported = held.Reported
@@ -236,7 +243,7 @@ func (o pumpSignalDagOffsetStore) load() (dagHostOffsets, error) {
 }
 
 func (o pumpSignalDagOffsetStore) save(state dagHostOffsets) error {
-	encoded, err := json.Marshal(pumpSignalDagOffsets{Offsets: state.Offsets, Reported: state.Reported, Unparsed: state.Unparsed})
+	encoded, err := json.Marshal(pumpSignalDagOffsets{Offsets: state.Offsets, Files: state.Files, Reported: state.Reported, Unparsed: state.Unparsed})
 	if err != nil {
 		return err
 	}
@@ -244,26 +251,60 @@ func (o pumpSignalDagOffsetStore) save(state dagHostOffsets) error {
 	return nil
 }
 
-// pin is the rollout's kept first-sight boundary, or size, kept now (see the type). A kept boundary
-// past the rollout's end belongs to a file that was replaced or cut short, and would take the new
-// file's refusals up to the old size for history; it is taken again at the size the file has now,
-// so a boundary is never past the size a reading of the rollout sees.
-func (o pumpSignalDagOffsetStore) pin(path string, size int64) (int64, error) {
+// pin is the rollout's kept first-sight boundary, or one kept now (see the type). file and size are
+// the identity and the size of the descriptor the reading scans. A boundary kept for the same file
+// and not past its size is the boundary. With none kept, the boundary is size. A boundary kept for
+// another file, or past the end of this one, belongs to a file that was replaced or cut short; it
+// would take the new content's refusals up to the old size for history, so the boundary becomes 0.
+// A boundary kept before identities were (no file) is taken for this file while it is not past its
+// size, and is kept again with the identity.
+func (o pumpSignalDagOffsetStore) pin(path, file string, size int64) (int64, error) {
 	pins, err := pumpSignalDagLoadPins(o.dir)
 	if err != nil {
 		return 0, err
 	}
-	if at, ok := pins[path]; ok && at <= size {
-		return at, nil
+	boundary := size
+	if kept, ok := pins[path]; ok {
+		same := dagHostSameFile(kept.File, file)
+		if same && kept.At <= size && (kept.File != "" || file == "") {
+			return kept.At, nil
+		}
+		boundary = 0
+		if same && kept.At <= size {
+			boundary = kept.At
+		}
 	}
 	if o.dry {
-		return size, nil
+		return boundary, nil
 	}
-	pins[path] = size
+	pins[path] = pumpSignalDagPin{At: boundary, File: file}
 	if err := pumpSignalDagSavePins(o.dir, pins); err != nil {
 		return 0, err
 	}
-	return size, nil
+	return boundary, nil
+}
+
+// pumpSignalDagPin is one kept boundary: the size the rollout's history ends at and the file
+// (device and inode) it was taken from. A boundary file written before identities were holds a bare
+// number, which reads as a boundary without a file.
+type pumpSignalDagPin struct {
+	At   int64  `json:"at"`
+	File string `json:"file,omitempty"`
+}
+
+func (p *pumpSignalDagPin) UnmarshalJSON(data []byte) error {
+	var at int64
+	if err := json.Unmarshal(data, &at); err == nil {
+		*p = pumpSignalDagPin{At: at}
+		return nil
+	}
+	type plain pumpSignalDagPin
+	var held plain
+	if err := json.Unmarshal(data, &held); err != nil {
+		return err
+	}
+	*p = pumpSignalDagPin(held)
+	return nil
 }
 
 // pumpSignalDagPinPath is the boundary file of a state directory.
@@ -277,33 +318,33 @@ func pumpSignalDagPinPath(dir string) (string, error) {
 // pumpSignalDagLoadPins reads the boundaries. An absent file is none; one that cannot be read or
 // decoded is an error rather than none, so a damaged file never moves a boundary later and lets a
 // refusal pass as history: the refusal reading of a first-seen rollout waits until it is repaired.
-func pumpSignalDagLoadPins(dir string) (map[string]int64, error) {
+func pumpSignalDagLoadPins(dir string) (map[string]pumpSignalDagPin, error) {
 	path, err := pumpSignalDagPinPath(dir)
 	if err != nil {
 		return nil, err
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]int64{}, nil
+		return map[string]pumpSignalDagPin{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	var doc struct {
-		Pins map[string]int64 `json:"pins"`
+		Pins map[string]pumpSignalDagPin `json:"pins"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("the boundary file %s is not readable: %w", pumpSignalDagPinFile, err)
 	}
 	if doc.Pins == nil {
-		doc.Pins = map[string]int64{}
+		doc.Pins = map[string]pumpSignalDagPin{}
 	}
 	return doc.Pins, nil
 }
 
 // pumpSignalDagSavePins writes the boundaries atomically and durably (temporary file, fsync,
 // rename, directory sync), never through a symlink.
-func pumpSignalDagSavePins(dir string, pins map[string]int64) error {
+func pumpSignalDagSavePins(dir string, pins map[string]pumpSignalDagPin) error {
 	path, err := pumpSignalDagPinPath(dir)
 	if err != nil {
 		return err
@@ -312,7 +353,7 @@ func pumpSignalDagSavePins(dir string, pins map[string]int64) error {
 		return errors.New("the boundary file is a symlink; refusing to write through it")
 	}
 	data, err := json.Marshal(struct {
-		Pins map[string]int64 `json:"pins"`
+		Pins map[string]pumpSignalDagPin `json:"pins"`
 	}{pins})
 	if err != nil {
 		return err
@@ -478,21 +519,26 @@ func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 
 // pumpSignalCapacityRecord is what the pump keeps, under its own Cursors and in the same write as
 // the pending events, about the last alert event it made for a plan: the epoch the capacity state
-// had when the alert was judged (Base), the generation of the capacity state file it was judged on
-// (State, see capacityLoadState), the epoch put in the event id (Epoch), the waiting set (Waiting)
-// and whether the alert is settled (Committed): its alerted state was committed, or the record was
-// superseded because the plan left the settings.
+// had when the alert was judged (Base), the lifecycle of the plan's entry in the capacity state
+// (Lifecycle, see capacityPlanState), the epoch put in the event id (Epoch), the waiting set
+// (Waiting) and whether the alert is settled (Committed): its alerted state was committed, a later
+// read found it reflected in the state, or the record was superseded because the plan left the
+// settings.
 //
 // The capacity state file alone cannot give an event id that is stable and also never reused: a
 // plan removed from the settings and added again, or a state file that is gone, restarts its epoch
 // at 1 and would rebuild the id of an alert already sent, which the sent set then swallows. The
-// record is what keeps the id apart. Only a retry of the same judgement reuses its epoch: an
-// unsettled record, the same state file generation (no commit of any kind was made since), the same
-// base and the same waiting set. That is how a lost commit converges on the same id. Any other alert
-// takes an epoch above the record's, so the epoch of a plan's events only grows.
+// record is what keeps the id apart. Only a retry of the same alert reuses its epoch: an unsettled
+// record, the same lifecycle of the plan's entry, the same base and the same waiting set. That is
+// how a lost or refused commit converges on the same id, also when another writer (the command
+// line) saved the state in between without alerting this plan: the commit's conflict check is
+// against every write of the file (capacityCommitState), the alert's identity only against the
+// plan's own lifecycle and alert epoch. A plan registered again or a state file that was lost
+// starts a new lifecycle. Any other alert takes an epoch above the record's, so the epoch of a
+// plan's events only grows.
 type pumpSignalCapacityRecord struct {
 	Base      int    `json:"base"`
-	State     string `json:"state"`
+	Lifecycle string `json:"lifecycle"`
 	Epoch     int    `json:"epoch"`
 	Waiting   string `json:"waiting"`
 	Committed bool   `json:"committed"`
@@ -519,19 +565,31 @@ func pumpSignalWaitingHash(waiting []string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep. state
-// is the generation of the capacity state the report was judged on.
-func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan, state string) (int, pumpSignalCapacityRecord) {
+// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep.
+func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan) (int, pumpSignalCapacityRecord) {
 	base, hash := plan.AlertEpoch-1, pumpSignalWaitingHash(plan.Waiting)
 	epoch := plan.AlertEpoch
 	if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok {
-		if !rec.Committed && rec.State == state && rec.Base == base && rec.Waiting == hash {
+		if !rec.Committed && rec.Lifecycle == plan.lifecycle && rec.Base == base && rec.Waiting == hash {
 			epoch = rec.Epoch
 		} else if rec.Epoch >= epoch {
 			epoch = rec.Epoch + 1
 		}
 	}
-	return epoch, pumpSignalCapacityRecord{Base: base, State: state, Epoch: epoch, Waiting: hash}
+	return epoch, pumpSignalCapacityRecord{Base: base, Lifecycle: plan.lifecycle, Epoch: epoch, Waiting: hash}
+}
+
+// pumpSignalCapacitySettle settles the record of every judged plan whose state already reflects a
+// later alert of the same lifecycle: the commit was made (by this pump, whose record of it was lost,
+// or by the command line). The record is then not reused, whatever happens to the state file later.
+func pumpSignalCapacitySettle(st *pumpState, report CapacityReport) {
+	for _, plan := range report.Plans {
+		if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok && !rec.Committed &&
+			rec.Lifecycle == plan.lifecycle && plan.committedEpoch > rec.Base {
+			rec.Committed = true
+			pumpSignalCapacityStore(st, plan.Plan, rec)
+		}
+	}
 }
 
 // pumpSignalCapacitySupersede settles the record of every plan the report no longer judges: a plan
@@ -612,13 +670,14 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 	}
 	st.Cursors[pumpSignalCapacityReadKey] = strconv.FormatInt(now.Unix(), 10)
 	pumpSignalCapacitySupersede(st, report)
+	pumpSignalCapacitySettle(st, report)
 	res := pumpSourceResult{Status: pumpSourceOK}
 	var alerted []string
 	for _, plan := range report.Plans {
 		if !plan.Alert {
 			continue
 		}
-		epoch, rec := pumpSignalCapacityEpoch(st, plan, report.stateStamp)
+		epoch, rec := pumpSignalCapacityEpoch(st, plan)
 		pumpSignalCapacityStore(st, plan.Plan, rec)
 		alerted = append(alerted, plan.Plan)
 		res.Events = append(res.Events, pumpEvent{ID: pumpSignalCapacityID(plan, epoch), Kind: pumpKindLow, Text: pumpSignalCapacityText(plan)})
@@ -678,15 +737,6 @@ func pumpSignalAuditLines(file *os.File, start int64) ([]pumpSignalAuditLine, in
 	return lines, offset, nil
 }
 
-// pumpSignalFileIdentity names the file a descriptor holds (device and inode), so a queue file that
-// was replaced by another is told from the same file grown, whatever the new one's size.
-func pumpSignalFileIdentity(info os.FileInfo) string {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return fmt.Sprintf("%d:%d", uint64(stat.Dev), uint64(stat.Ino))
-	}
-	return ""
-}
-
 func pumpSignalAuditText(row auditAlertRow) string {
 	score := "none"
 	if row.Score != nil {
@@ -724,7 +774,7 @@ func (pumpSignalAuditSource) Collect(_ context.Context, e *Env, cfg *Config, st 
 	}
 	start := st.Offsets[pumpSignalAuditOffsetKey]
 	epoch, _ := strconv.Atoi(st.Cursors[pumpSignalAuditEpochKey])
-	identity, known := pumpSignalFileIdentity(info), st.Cursors[pumpSignalAuditFileKey]
+	identity, known := dagHostFileIdentity(info), st.Cursors[pumpSignalAuditFileKey]
 	// A different file, or one shorter than what was read, is a replacement: it is read from its
 	// start, and the ids carry a new epoch so they cannot collide with the ones the old file
 	// produced. A state that predates the identity adopts the file it finds.

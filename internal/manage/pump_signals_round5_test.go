@@ -65,8 +65,10 @@ func TestPumpSignalDagRefusalOfAFailedRoundIsSavedUnderTheSameId(t *testing.T) {
 }
 
 // A kept boundary beyond the end of the rollout belongs to a file that was replaced or cut short:
-// it would take the new file's refusals up to the old size for history. The boundary becomes the
-// size the file has now, so a refusal appended after the first reading of the new file is reported.
+// it would take the new file's refusals up to the old size for history. Nothing in the file can be
+// told to be older than the pump's first sight of the path, so the boundary becomes 0 (a boundary
+// file written before identities were holds a bare number, which still reads), and a refusal
+// appended after the first reading of the new file is reported.
 func TestPumpSignalDagBoundaryPastTheEndIsTakenAgain(t *testing.T) {
 	f, rollout, _ := pumpSignalHostDag(t, dagHostResponseItem(t, map[string]any{"type": "message", "role": "user"}))
 	if err := os.MkdirAll(f.cfg.StateDir, 0o700); err != nil {
@@ -83,12 +85,8 @@ func TestPumpSignalDagBoundaryPastTheEndIsTakenAgain(t *testing.T) {
 	if res := (pumpSignalDagSource{}).Collect(context.Background(), f.e, f.cfg, &first, pumpSettingsFrom(f.cfg)); len(res.Events) != 0 {
 		t.Fatalf("first sight reported the history: %+v", res.Events)
 	}
-	info, err := os.Stat(rollout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := pumpSignalTestPins(t, f)[rollout]; got != info.Size() {
-		t.Fatalf("boundary = %d, want the rollout's size %d", got, info.Size())
+	if got, ok := pumpSignalTestPins(t, f)[rollout]; !ok || got != 0 {
+		t.Fatalf("boundary = %d (kept %v), want 0 for the replaced file", got, ok)
 	}
 	// The pending save never happened; the refusal arrives before the next process reads.
 	dagHostAppendRollout(t, rollout, pumpSignalRefusalCall(t, "call-new", "dag-release --plan p1", "stale")...)

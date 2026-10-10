@@ -42,11 +42,6 @@ type CapacityReport struct {
 	Actions  CapacityActions  `json:"actions"`
 	Child429 CapacityChild429 `json:"child_429"`
 	Plans    []CapacityPlan   `json:"plans"`
-
-	// stateStamp names the generation of the capacity state the judgement was made on (see
-	// capacityLoadState). It is not part of the document; the pump keeps it beside an alert so a
-	// retry of the same judgement is told from a later alert over another state.
-	stateStamp string
 }
 
 type CapacityLane struct {
@@ -89,6 +84,13 @@ type CapacityPlan struct {
 	// zone holds no plan to read. The branches field is null beside it, which is how a reader tells
 	// "nobody could look" from the empty list of a plan nothing can be detached from.
 	BranchesUnmeasured string `json:"branches_unmeasured,omitempty"`
+
+	// lifecycle names the plan's entry in the capacity state (capacityPlanState.Lifecycle) and
+	// committedEpoch is the alert epoch that entry held when the plan was judged. Neither is part of
+	// the document: the pump keeps them beside an alert so a retry of the same judgement is told from
+	// a later alert of another lifecycle, and a commit it lost track of from one it never made.
+	lifecycle      string
+	committedEpoch int
 }
 
 // MarshalJSON keeps a plan's three answers about its branches apart in the document: the key is
@@ -143,6 +145,12 @@ type capacityPlanState struct {
 	Alerted    []string `json:"alerted"`
 	AlertedAt  float64  `json:"alerted_at"`
 	AlertEpoch int      `json:"alert_epoch"`
+	// Lifecycle names this entry from the evaluation that created it until the plan leaves the
+	// state: a save that only carries the entry forward keeps it, and an entry made anew (a plan
+	// registered again, a state file that was lost) takes another. It is derived from the stamp of the
+	// state the creating evaluation read (capacityLifecycle), so every evaluation of that same state
+	// names the new entry alike and a retry converges on it.
+	Lifecycle string `json:"lifecycle,omitempty"`
 }
 
 type capacityState struct {
@@ -274,7 +282,6 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 
 	statePath := crwconfig.JoinRoot(cfg.StateDir, capacityStateFile)
 	previous, stamp := capacityLoadState(statePath)
-	report.stateStamp = stamp
 	next := capacityState{Plans: map[string]capacityPlanState{}}
 	// With no configured plan there is nothing to read from the relay, so a host whose relay state
 	// cannot be resolved still gets an empty judgement rather than a read failure.
@@ -315,6 +322,11 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 			Held: waiting.Held, Ceiling: waiting.Ceiling, HostMemory: hostMemory, ReceiptWait: receipt, Reasons: []string{}}
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
+		if entry := next.Plans[ref.Plan]; entry.Lifecycle == "" {
+			entry.Lifecycle = capacityLifecycle(stamp, ref.Plan)
+			next.Plans[ref.Plan] = entry
+		}
+		plan.lifecycle, plan.committedEpoch = next.Plans[ref.Plan].Lifecycle, previous.Plans[ref.Plan].AlertEpoch
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
 		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, zoneReason)
 		if err != nil {
@@ -364,7 +376,8 @@ func capacityPersist(next *capacityState, before capacityPlanState, plan Capacit
 	// The last alert is carried forward whether or not this run may alert again, so a hold that
 	// sees a different waiting set does not erase the suppression of the set that was alerted.
 	entry := capacityPlanState{Since: since, Waiting: append([]string(nil), plan.Waiting...),
-		Alerted: append([]string(nil), before.Alerted...), AlertedAt: before.AlertedAt, AlertEpoch: before.AlertEpoch}
+		Alerted: append([]string(nil), before.Alerted...), AlertedAt: before.AlertedAt, AlertEpoch: before.AlertEpoch,
+		Lifecycle: before.Lifecycle}
 	next.Plans[plan.Plan] = entry
 	return waitingMinutes, alert
 }
@@ -424,6 +437,14 @@ const (
 	capacityStampAbsent     = "absent"
 	capacityStampUnreadable = "unreadable"
 )
+
+// capacityLifecycle names a plan entry made anew by an evaluation of the state stamped stamp. Every
+// write draws a new revision, so an entry made over another generation of the file has another
+// name, while every evaluation of one generation names it alike.
+func capacityLifecycle(stamp, plan string) string {
+	sum := sha256.Sum256([]byte(stamp + "\x00" + plan))
+	return hex.EncodeToString(sum[:8])
+}
 
 // capacityCommitState writes next as the generation after base, under an exclusive lock on the
 // state's lock file, and refuses when the file is no longer the generation base names or cannot be
