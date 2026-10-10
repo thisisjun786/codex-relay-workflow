@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -449,9 +450,16 @@ func recallHookCountHits(deps RecallContextDeps, refs []string) {
 		return
 	}
 	defer func() { _ = store.Close() }()
-	for attempt := 0; attempt < 3; attempt++ {
+	// The hook has a deadline of its own and the answer is already out: counting is best effort within
+	// a short budget. A retry starts only while the budget lasts, and each attempt waits for the write
+	// lock no longer than the store's busy bound, so the tail after the answer stays a few seconds at most.
+	deadline := time.Now().Add(recallHookCountBudget)
+	for attempt := 0; attempt < 3 && (attempt == 0 || time.Now().Before(deadline)); attempt++ {
 		if store.Bump(event, refs) == nil {
 			return
 		}
 	}
 }
+
+// recallHookCountBudget bounds the time the hook spends counting its rendered entries after the answer.
+var recallHookCountBudget = 2 * time.Second
