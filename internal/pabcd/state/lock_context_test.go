@@ -190,13 +190,14 @@ func TestSessionLockOutcomeReportsAcquiredAndBusyGiveUp(t *testing.T) {
 	}, time.Sleep, []time.Duration{}); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := StatePath(cwd, "s") + ".lock"
-	if err := createExclusive(lockPath, "999999"); err != nil {
+	// CRW-1094 reclaims a dead owner's lock; hold the kernel lock to prove a busy give-up.
+	held, err := trySessionLock(SessionLockPath(cwd, "s"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = removeFile(lockPath) }()
+	defer held.release()
 	outcomes = nil
-	err := orchestrateInterruptLockContext(context.Background(), cwd, "s", func() error { t.Error("fn ran on a busy lock"); return nil }, time.Sleep, []time.Duration{})
+	err = orchestrateInterruptLockContext(context.Background(), cwd, "s", func() error { t.Error("fn ran on a busy lock"); return nil }, time.Sleep, []time.Duration{})
 	if !errors.Is(err, fs.ErrExist) || len(outcomes) != 1 || !errors.Is(outcomes[0], fs.ErrExist) {
 		t.Fatalf("busy give-up returned %v with outcomes %v; want one fs.ErrExist", err, outcomes)
 	}
