@@ -69,7 +69,7 @@ func TestMemoryGateRefusesToRewriteARecordTheReaderChanged(t *testing.T) {
 			t.Run(name+"/"+kind, func(t *testing.T) {
 				cwd, _, env := gateScene(t)
 				before := memoryRecordsSeed(t, cwd, kind, list)
-				if reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env)); !strings.Contains(reason, "cannot rewrite") {
+				if reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env)); !strings.Contains(reason, "authorization-state") {
 					t.Errorf("reason: %s", reason)
 				}
 				if after, _ := os.ReadFile(state.StatePath(cwd, gateSession)); string(after) != string(before) {

@@ -39,6 +39,23 @@ func indexOracle(t *testing.T) map[string]any {
 	}
 	return want
 }
+
+// indexPortDeviations applies the recorded port: fixed schema changes to the oracle recording: schema
+// version 4, the unique (path, ord) index replacing msgs(path) (docs/port-cxc/known-defects/CRW-1154.md),
+// and the file identity and checkpoint columns (CRW-1083.md).
+func indexPortDeviations(want map[string]any) {
+	want["version"] = "4"
+	schema := want["schema"].([]any)
+	for i, row := range schema {
+		entry := row.(map[string]any)
+		switch entry["name"] {
+		case "idx_msgs_path":
+			schema[i] = map[string]any{"type": "index", "name": "idx_msgs_path_ord", "sql": "CREATE UNIQUE INDEX idx_msgs_path_ord ON msgs(path, ord)"}
+		case "files":
+			entry["sql"] = strings.Replace(entry["sql"].(string), "repo_key TEXT\n)", "repo_key TEXT,\n  file_id TEXT,\n  checkpoint TEXT\n)", 1)
+		}
+	}
+}
 func indexRows(t *testing.T, db *RwDb, q string) []map[string]any {
 	t.Helper()
 	rows, err := recallStmt(t, db, q).All()
@@ -55,10 +72,10 @@ func TestIndexPath(t *testing.T) {
 		{map[string]string{"CRW_HOME": "relative crw", "HOME": "fallback"}, filepath.Join("relative crw", "recall", "index.sqlite")},
 		{map[string]string{"CRW_HOME": "  root  ", "HOME": "fallback"}, filepath.Join("  root  ", "recall", "index.sqlite")},
 		{map[string]string{"CRW_HOME": "\uFEFF \t", "HOME": "fallback"}, filepath.Join("fallback", ".crw", "recall", "index.sqlite")},
-		{map[string]string{"HOME": ""}, filepath.Join(".crw", "recall", "index.sqlite")},
+		{map[string]string{"HOME": ""}, ""}, // port: fixed (CRW-1123): an empty HOME names no home
 	} {
 		got, err := indexPath(func(k string) (string, bool) { v, ok := c.env[k]; return v, ok })
-		if err != nil || got != c.want {
+		if (c.want == "") != (err != nil) || got != c.want {
 			t.Errorf("%v: %q %v, want %q", c.env, got, err, c.want)
 		}
 	}
@@ -66,8 +83,9 @@ func TestIndexPath(t *testing.T) {
 func TestIndexOracle(t *testing.T) {
 	db, path := indexTestDB(t)
 	want := indexOracle(t)
+	indexPortDeviations(want)
 	got := map[string]any{"version": IndexSchemaVersion}
-	got["schema"] = indexRows(t, db, "SELECT type,name,sql FROM sqlite_master WHERE name IN ('meta','files','msgs','idx_msgs_path','idx_msgs_ts','idx_files_repo_key','msgs_fts','msgs_tri','msgs_ai','msgs_ad','recall_hit_counts') ORDER BY name")
+	got["schema"] = indexRows(t, db, "SELECT type,name,sql FROM sqlite_master WHERE name IN ('meta','files','msgs','idx_msgs_path_ord','idx_msgs_ts','idx_files_repo_key','msgs_fts','msgs_tri','msgs_ai','msgs_ad','recall_hit_counts') ORDER BY name")
 	fresh, err := indexStatus(db, "fixture-index")
 	if err != nil {
 		t.Fatal(err)

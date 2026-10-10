@@ -112,7 +112,7 @@ func unknownPart(p syntax.WordPart, quoted, first bool, st *state) string {
 		if first && strings.HasPrefix(x.Value, "~") && !st.tildeKnown(x.Value) {
 			return "tilde expansion"
 		}
-		if strings.ContainsAny(x.Value, "*?[") {
+		if strings.ContainsAny(x.Value, "*?[") && x.Value != "[" {
 			return "pathname pattern"
 		}
 		return ""

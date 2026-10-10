@@ -92,14 +92,13 @@ func TestRecallSQLiteOpens(t *testing.T) {
 		}
 		_ = r.Close()
 	}
-	uri, err := openDbReadOnly("file:recall-memory?mode=memory")
-	if err != nil {
-		t.Fatal(err)
+	// port: fixed (CRW-1123, :392): the read-only API does not accept a URI that makes the open in-memory or writable.
+	for _, uri := range []string{"file:recall-memory?mode=memory", "file:x?mode=rwc"} {
+		if d, err := openDbReadOnly(uri); err == nil {
+			_ = d.Close()
+			t.Fatal(uri, "opened through the read-only API")
+		}
 	}
-	if err := uri.Exec("CREATE TABLE uri_memory(x)"); err != nil {
-		t.Fatal(err)
-	}
-	_ = uri.Close()
 	if _, err := openDbReadWrite(":memory:\x00ignored"); err == nil || !strings.Contains(err.Error(), "without null bytes") {
 		t.Fatal("NUL path accepted", err)
 	}
@@ -233,7 +232,6 @@ func TestRecallSQLiteNamedOrderAndCachedAmbiguity(t *testing.T) {
 		want float64
 	}{
 		{NamedParams{{"x", 1}, {"$x", 2}}, 2}, {NamedParams{{"$x", 2}, {"x", 1}}, 1},
-		{NamedParams{{"$x\x00tail", 7}}, 7}, {NamedParams{{"x\x00tail", 7}}, 7},
 	} {
 		if got := recallRow(t, s, c.args)["x"]; got != c.want {
 			t.Fatal(got, c.want)
@@ -245,13 +243,11 @@ func TestRecallSQLiteNamedOrderAndCachedAmbiguity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, key := range []string{"?1\x00tail", "1\x00tail"} {
-		if got := recallRow(t, recallStmt(t, d, "SELECT ?1 AS x"), NamedParams{{key, 7}})["x"]; got != float64(7) {
-			t.Fatal(key, got)
+	// port: fixed (CRW-1123, :397): a name with a NUL byte is refused, not read up to the NUL.
+	for _, key := range []string{"?1\x00tail", "1\x00tail", "unknown\x00tail", "$x\x00tail"} {
+		if _, err := recallStmt(t, d, "SELECT ?1 AS x").Get(NamedParams{{key, 7}}); err == nil || !strings.Contains(err.Error(), "null byte") {
+			t.Fatal(key, err)
 		}
-	}
-	if _, err := s.Get(NamedParams{{"unknown\x00tail", 1}}); err == nil || err.Error() != "Unknown named parameter 'unknown\x00tail'" {
-		t.Fatal("unknown-name diagnostic lost original key", err)
 	}
 	if _, err := s.Get(map[string]any{"x": 1, "$x": 2}); err == nil {
 		t.Fatal("unordered aliases silently chose a write value")
@@ -284,14 +280,11 @@ func TestRecallSQLiteNamedOrderAndCachedAmbiguity(t *testing.T) {
 				return err
 			}
 		}
-		if err := call(); err == nil {
-			t.Fatal("first ambiguity did not throw")
-		}
-		if err := call(); err != nil {
-			t.Fatal("partial alias cache was lost", err)
-		}
-		if row := recallRow(t, a, NamedParams{{"x", 3}}); row["x"] != float64(3) || row["y"] != nil {
-			t.Fatal(row)
+		// port: fixed (CRW-1123, :396): the ambiguity is found before anything is cached, so it is found every time.
+		for range 3 {
+			if err := call(); err == nil {
+				t.Fatal("the ambiguity stopped throwing")
+			}
 		}
 	}
 	if _, err := recallStmt(t, d, "SELECT 1").Get(true); err == nil || err.Error() != "Provided value cannot be bound to SQLite parameter 1." {

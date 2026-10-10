@@ -2,13 +2,14 @@ package hook
 
 // The worktree deletion guard reads a command through the shared command reader (internal/pabcd/shellir).
 // Every program the reader shows is judged: a recursive rm, an rmdir, or a git worktree remove whose target is
-// the session's own worktree, its slot, or an ancestor of the directory the command runs in is denied. A text
+// the session's original worktree, its slot, or their ancestors is denied. A text
 // the reader cannot read is denied, and so is a removal whose target the reader cannot evaluate. A find that deletes
 // (-delete, or -exec and its kin running rm, rmdir, unlink, shred or git worktree remove) is judged by its start points
 // and a test before the action, and the same programs run by xargs by the names on its standard input (CRW-895).
 
 import (
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -26,17 +27,20 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 	if !id.Managed || text.Trim(command) == "" {
 		return GuardVerdict{}
 	}
+	if id.cwd == "" && shellirPayloadCwd(cwd) != "" {
+		id.cwd = canonicalize(cwd)
+	}
 	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil, false)
 }
 
 // worktreeDelRead is the guard's reading of a text: the shared reader with no environment, so a variable is unknown whatever the
 // session's environment holds. The differential fuzz counts the commands this reading refuses (WorktreeGuardCommandReadable).
 func worktreeDelRead(command, cwd string, cdpath bool) (shellir.Result, error) {
-	return shellir.AnalyzeScript(command, cwd, cdpath)
+	return shellir.AnalyzeScriptProvenDirectory(command, cwd, cdpath)
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
-	return GuardVerdict{Deny: true, Reason: denyReason("a command the guard cannot read", id)}
+	return GuardVerdict{Deny: true, Reason: "[crw: WORKTREE-GUARD-03] cannot analyze this command (analysis-unavailable). Run a smaller command with literal paths, or inspect the script and use supported shell commands so the guard can check its targets. See $crw:crw-worktree-guardian."}
 }
 
 // worktreeDelJudgeText judges one text; outer is the writes of the texts that run it (a script file's body), which happen before
@@ -138,6 +142,9 @@ func worktreeDelJudgeFind(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		if a.Name != "-delete" {
 			continue
 		}
+		if a.FollowLinks {
+			return worktreeDelUnreadable(id)
+		}
 		if v := worktreeDelJudgeFindStarts(starts, a.GuardedFor, e, id, "-delete"); v.Deny {
 			return v
 		}
@@ -165,8 +172,8 @@ func worktreeDelJudgeFindStarts(starts []shellir.Word, guarded func(string) bool
 	return GuardVerdict{}
 }
 
-// worktreeDelTargetKind says whether a target, taken from dir, is an ancestor of the managed worktree (the slot root or a
-// directory above it) or the worktree itself (the checkout, the directory the command runs in, or a directory between). A
+// worktreeDelTargetKind resolves a target from dir, then compares it to the fixed
+// session roots: their ancestor (including the slot) or the checkout itself. A
 // relative target from an unknown directory cannot be placed, so it counts as an ancestor; an absolute target names the same path
 // from every directory and is judged as itself, from the checkout when the directory is not known.
 func worktreeDelTargetKind(target string, dir shellir.Dir, id WorktreeIdentity) (ancestor, self bool) {
@@ -176,15 +183,15 @@ func worktreeDelTargetKind(target string, dir shellir.Dir, id WorktreeIdentity) 
 		}
 		dir = shellir.Dir{Known: true, Path: id.CheckoutRoot}
 	}
-	if !isProtectedTarget(target, dir.Path, id, true) {
+	if !isProtectedTarget(target, dir.Path, id) {
 		return false, false
 	}
 	resolved := strings.TrimSuffix(canonicalize(resolveFrom(dir.Path, target)), "/")
 	if resolved == "" || resolved == id.SlotRoot && id.SlotRoot != "" {
 		return true, false
 	}
-	for _, root := range []string{id.SlotRoot, id.CheckoutRoot} {
-		if root != "" && strings.HasPrefix(root, resolved+"/") {
+	for _, root := range protectedWorktreeRoots(id) {
+		if root != "" && strings.HasPrefix(canonicalize(root), resolved+"/") {
 			return true, false
 		}
 	}
@@ -237,6 +244,9 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 			deleter, _ := worktreeDelDeleter(e)
 			if deleter == "" {
 				continue
+			}
+			if f.FollowLinks {
+				return worktreeDelUnreadable(id)
 			}
 			if v = worktreeDelJudgeFindWords(f, e, deleter, id); v.Deny {
 				return v
@@ -314,7 +324,7 @@ func worktreeDelNameProtected(name string, dir shellir.Dir, id WorktreeIdentity)
 	if name == "." {
 		return false
 	}
-	return !dir.Known || isProtectedTarget(name, dir.Path, id, true)
+	return !dir.Known || isProtectedTarget(name, dir.Path, id)
 }
 
 // worktreeDelJudgeXargs judges the program xargs runs. With -I and names the reader proves, the reader has already read the
@@ -632,10 +642,13 @@ func mvSources(args []string, stopAtOperand bool) (sources []string, ok bool) {
 // relative target from an unknown directory cannot be placed, so it is protected.
 func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdentity) bool {
 	if !e.Dir.Known {
-		// The directory is unknown, so the target may name the managed checkout whatever its spelling: protected.
-		return true
+		// An absolute target is independent of a failed cd. Relative targets
+		// still cannot be placed against the fixed protection set.
+		if !filepath.IsAbs(target) {
+			return true
+		}
 	}
-	return isProtectedTarget(target, e.Dir.Path, id, true)
+	return isProtectedTarget(target, e.Dir.Path, id)
 }
 
 // gitGlobalTakesValue names the git global options that take their value in the next word.

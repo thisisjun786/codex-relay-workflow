@@ -26,6 +26,12 @@ func TestRemoteURLRecordedGrids(t *testing.T) {
 		if row.Key != nil {
 			want = *row.Key
 		}
+		if row.Classification == "intentionally-changed" { // port: fixed (CRW-1123, :449): an encoded separator keeps its segment
+			if want == row.Port {
+				t.Fatalf("%s no longer demonstrates its declared change", row.Raw)
+			}
+			want = row.Port
+		}
 		if row.Classification == "platform-difference" {
 			if want == row.Port {
 				t.Fatalf("%s no longer demonstrates its declared platform difference", row.Raw)

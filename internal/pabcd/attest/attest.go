@@ -48,6 +48,8 @@ type Attestation struct {
 	AuditVerdict  string   `json:"auditVerdict,omitempty"`
 	AuditResidual string   `json:"auditResidual,omitempty"`
 	AuditRounds   *float64 `json:"auditRounds,omitempty"`
+	// AuditBlockers is the structured disposition of the reviewer's recorded blockers (CRW-1116): one entry per blocker.
+	AuditBlockers []BlockerDisposition `json:"auditBlockers,omitempty"`
 	// C>D: the pasted tail of the command that was run and its exit status (nil is not a number).
 	CheckOutput string   `json:"checkOutput,omitempty"`
 	ExitCode    *float64 `json:"exitCode,omitempty"`
@@ -59,6 +61,37 @@ type Attestation struct {
 	// The one work phase this cycle advances; the test receipt a bound session needs on C>D.
 	WorkPhaseID     string `json:"workPhaseId,omitempty"`
 	TestReceiptPath string `json:"testReceiptPath,omitempty"`
+}
+
+// The two dispositions a blocker of a GO-WITH-FIXES round can get at the A>B edge (AUDIT-LOOP-01).
+const (
+	DispositionFolded   = "folded"
+	DispositionRebutted = "rebutted"
+)
+
+// BlockerDisposition is what became of blocker number Blocker (1-based, as the reviewer numbered them): folded into the plan or
+// rebutted, with the reason. The disposition word is a fixed token, not prose, so it reads the same in any language.
+type BlockerDisposition struct {
+	Blocker     int    `json:"blocker"`
+	Disposition string `json:"disposition"`
+	Reason      string `json:"reason"`
+}
+
+// DisposesBlockers reports whether the attestation gives each of the n recorded blockers exactly one disposition, folded or
+// rebutted, with a nonempty reason. It checks the form only; whether a reason is sound is the main agent's judgment.
+func (a *Attestation) DisposesBlockers(n int) bool {
+	if a == nil || len(a.AuditBlockers) != n {
+		return false
+	}
+	seen := make(map[int]bool, n)
+	for _, d := range a.AuditBlockers {
+		if d.Blocker < 1 || d.Blocker > n || seen[d.Blocker] || d.Reason == "" ||
+			d.Disposition != DispositionFolded && d.Disposition != DispositionRebutted {
+			return false
+		}
+		seen[d.Blocker] = true
+	}
+	return true
 }
 
 // Result is attest.ts AttestResult. Reasons lists every failing requirement of the edge in declaration order and Reason is the
@@ -120,6 +153,22 @@ func Coerce(v any) *Attestation {
 		if s, ok := p.(string); ok && text.Trim(s) != "" {
 			att.PlanPaths = append(att.PlanPaths, text.Trim(s))
 		}
+	}
+	listed, _ := rec["auditBlockers"].([]any)
+	for _, entry := range listed {
+		d, ok := entry.(map[string]any)
+		if !ok {
+			// A non-object entry is kept as an empty disposition, which DisposesBlockers refuses, so a malformed list never reads as a shorter valid one.
+			att.AuditBlockers = append(att.AuditBlockers, BlockerDisposition{})
+			continue
+		}
+		var blocker int
+		if f := finite(d["blocker"]); f != nil && *f == math.Trunc(*f) && *f >= 1 && *f <= 9999 {
+			blocker = int(*f)
+		}
+		reason, _ := d["reason"].(string)
+		word, _ := d["disposition"].(string)
+		att.AuditBlockers = append(att.AuditBlockers, BlockerDisposition{Blocker: blocker, Disposition: lowerJS(text.Trim(word)), Reason: text.Trim(reason)})
 	}
 	return att
 }

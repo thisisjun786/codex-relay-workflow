@@ -22,7 +22,10 @@ func TestCommandExecutable(t *testing.T) {
 		{`crw hook session-start --leg x`, crw, true},
 		{`"$CRW_BIN" hook session-start --leg x`, crw, true},
 		{`${CRW_BIN} hook stop --leg x`, crw, true},
-		{`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, "", false},
+		// the installed runtime the shipped plugin starts is the build under test: the harness links it in the HOME of every step
+		{`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, crw, true},
+		{`"${HOME}/.local/share/crw-runtime/current/bin/crw" hook x --leg y`, crw, true},
+		{`"$HOME/.local/share/crw-runtime/other/bin/crw" hook x --leg y`, "", false},
 		{`exit 0`, "", false},
 		{`./crw hook x --leg y`, "", false},
 		{`true`, "", false},

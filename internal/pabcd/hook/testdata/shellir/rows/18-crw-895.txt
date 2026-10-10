@@ -125,7 +125,7 @@ xargs rm < /dev/null
 --why Names of a sibling directory of the checkout.
 echo ../other | xargs rm
 
-=== CRW-895-c23 | B
+=== CRW-895-c23 | B | deviation=none/allow/deny
 --why A test before the action with a find option in front of the start.
 find -L . -name '*.o' -delete
 

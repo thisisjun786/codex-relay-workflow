@@ -94,14 +94,15 @@ func TestHitCountsCoercionOracle(t *testing.T) {
 		t.Fatal("NOT NULL count weakened")
 	}
 }
-func TestHitCountsWriteErrorKeepsPriorCommits(t *testing.T) {
+func TestHitCountsWriteErrorKeepsNoPartialCommit(t *testing.T) {
 	db, _ := indexTestDB(t)
 	recallSQL(t, db, "CREATE TRIGGER fail_hit BEFORE INSERT ON recall_hit_counts WHEN new.ref='fail' BEGIN SELECT RAISE(ABORT,'hit refused'); END;")
 	if err := bumpHitCounts(db, []string{"first", "fail", "last"}, "stamp"); err == nil || err.Error() != "hit refused" {
 		t.Fatal(err)
 	}
-	if got := readHitCounts(db, []string{"first", "fail", "last"}); !reflect.DeepEqual(got, map[string]float64{"first": 1}) {
-		t.Fatal("batch parity", got)
+	// port: fixed (known-defects/CRW-1089.md): the oracle committed "first" before "fail" refused.
+	if got := readHitCounts(db, []string{"first", "fail", "last"}); len(got) != 0 {
+		t.Fatal("part of a refused batch stayed", got)
 	}
 	recallSQL(t, db, "DROP TABLE recall_hit_counts")
 	if len(readHitCounts(db, []string{"first"})) != 0 {

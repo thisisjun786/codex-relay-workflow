@@ -82,7 +82,7 @@ func TestRunBackgroundKeepsExtraFiles(t *testing.T) {
 	}
 	defer f.Close()
 	out := childDescriptors(t, ws, func(cmd *exec.Cmd) error {
-		cmd.ExtraFiles = []*os.File{f}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, f) // after the launch gate, which is descriptor 3
 		return cmd.Start()
 	})
 	if !strings.Contains(out, passed) {

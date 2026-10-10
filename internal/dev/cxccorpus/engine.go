@@ -268,10 +268,13 @@ type RunOptions struct {
 	Rules   *Normaliser   // normalises every output
 	Timeout time.Duration // per step; a minute when zero
 	Keep    bool          // keep the case root for inspection
-	// Seed, when set, puts a harness's own files into the case after the given and before the first
-	// step; the undo it returns takes them out again before the tree is observed, so the observation
-	// is the scenario's alone (crw-dev parity's hook switch, CRW-392).
-	Seed func(c *Case) (undo func() error, err error)
+	// Seed, when set, puts a harness's own files into the case after the given and before each step
+	// that starts a process, with the environment that process is started with (the case's, the
+	// given's and the step's own, unset names removed), so a file the process looks for under a home
+	// the step names itself is put there too. The undos it returns run in reverse after the last step
+	// and before the tree is observed, so the observation is the scenario's alone (crw-dev parity's
+	// hook switch and runtime link, CRW-392, CRW-1082).
+	Seed func(c *Case, env []string) (undo func() error, err error)
 }
 
 // RunScenario runs a scenario once in a fresh case root and returns its normalised outcome. A case
@@ -297,12 +300,7 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 	if err := setUp(c, s.Given, rt); err != nil {
 		return Expect{}, fmt.Errorf("%s: given: %w", s.ID, err)
 	}
-	var undo func() error
-	if o.Seed != nil {
-		if undo, err = o.Seed(c); err != nil {
-			return Expect{}, fmt.Errorf("%s: seed: %w", s.ID, err)
-		}
-	}
+	var undos []func() error
 	session := o.Rules.NewSession(c.bind)
 	var results []StepResult
 	for i, step := range s.Steps {
@@ -338,14 +336,14 @@ func RunScenario(rt Runtime, o RunOptions, s Scenario) (expect Expect, err error
 			results = append(results, StepResult{Action: "write", StdoutForm: "empty"})
 			continue
 		}
-		raw, err := runStep(rt, o.Timeout, c, s, step)
+		raw, err := runStep(rt, o.Timeout, c, s, step, o.Seed, &undos)
 		if err != nil {
 			return Expect{}, fmt.Errorf("%s: step %d: %w", s.ID, i, err)
 		}
 		results = append(results, shapeStep(session, raw))
 	}
-	if undo != nil {
-		if err := undo(); err != nil {
+	for i := len(undos) - 1; i >= 0; i-- {
+		if err := undos[i](); err != nil {
 			return Expect{}, fmt.Errorf("%s: unseed: %w", s.ID, err)
 		}
 	}
@@ -616,12 +614,21 @@ type rawResult struct {
 	elapsed        time.Duration
 }
 
-func runStep(rt Runtime, timeout time.Duration, c *Case, s Scenario, step Step) (rawResult, error) {
+func runStep(rt Runtime, timeout time.Duration, c *Case, s Scenario, step Step, seed func(*Case, []string) (func() error, error), undos *[]func() error) (rawResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd, stdin, err := command(ctx, rt, c, s, step)
 	if err != nil {
 		return rawResult{}, err
+	}
+	if seed != nil {
+		undo, err := seed(c, cmd.Env)
+		if undo != nil {
+			*undos = append(*undos, undo)
+		}
+		if err != nil {
+			return rawResult{}, fmt.Errorf("seed: %w", err)
+		}
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdin = bytes.NewReader(stdin)

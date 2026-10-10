@@ -195,7 +195,7 @@ func TestCreatedSessionLockEarlierAttemptKeepsItsAgent(t *testing.T) {
 	_, err := CheckedDispatch(context.Background(), ws, createdArchivedReport("task-one", first, "child-a"), env, h)
 	check(t, err)
 	next := dispatchTestCall(t, ws, env, map[string]any{"action": "report", "dispatchId": "task-one", "attemptId": first, "outcome": "failed", "error": "insufficient_quota", "executionState": "stopped", "agentId": "child-a", "reconciliation": "first child stopped; partial work inspected"})
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "dispatchId": "task-one", "attemptId": next.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "dispatchId": "task-one", "attemptId": next.AttemptID})
 	_, err = CheckedDispatch(context.Background(), ws, createdArchivedReport("task-one", next.AttemptID, "child-b"), env, h)
 	check(t, err)
 	_, err = CheckedDispatch(context.Background(), ws, createdLockStop("task-one", next.AttemptID, "child-b"), env, h)

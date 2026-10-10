@@ -2,6 +2,7 @@
 package skill
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -12,6 +13,11 @@ const skillUsage = "usage: crw skill {hook-probe,issue-ready,issue-size,parent-t
 
 // Run dispatches `crw skill` commands.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return RunContext(context.Background(), args, stdin, stdout, stderr)
+}
+
+// RunContext is Run under the caller's context; the remote reads of search and show end when it does.
+func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, skillUsage)
 		fmt.Fprintln(stderr, "crw skill: error: a command is required")
@@ -19,7 +25,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "search", "show":
-		return search.Run(args, nil, stdout, stderr)
+		return search.RunContext(ctx, args, nil, stdout, stderr)
 	case "hook-probe":
 		return runHookProbe(args[1:], stdout, stderr)
 	case "pair-choice":

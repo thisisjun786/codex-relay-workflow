@@ -320,7 +320,7 @@ func unwrapFind(args []Word) (unwrapped, error) {
 			continue
 		}
 		u.inner = append(u.inner, a.Command)
-		u.feeds = append(u.feeds, &Feed{Wrapper: "find", Starts: starts, chains: a.chains})
+		u.feeds = append(u.feeds, &Feed{Wrapper: "find", Starts: starts, chains: a.chains, FollowLinks: a.FollowLinks})
 	}
 	return u, nil
 }

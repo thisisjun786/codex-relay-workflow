@@ -23,7 +23,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Separate code/PR review from Linear delivery checking and logical-consistency audits without changing the upstream review process.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Separate code/PR review from Linear delivery checking and logical-consistency audits without changing the upstream review process. CRW-1116: the plan-audit verdict contract names the two closing lines (LAUNCH, then VERDICT) and the GO-WITH-FIXES (blockers=N) form the PABCD observer now parses and records.",
       "hunks": [
         {
           "line": 4,
@@ -35,15 +35,38 @@
           ]
         },
         {
-          "line": 19,
+          "line": 20,
           "new": [
-            "\n",
             "## CRW ownership boundary\n",
             "\n",
             "`crw-dev-code-reviewer` reviews code changes and pull requests.\n",
             "`crw-check` checks delivery against the canonical Linear requirements and issue criteria.\n",
             "`crw-logic` finds contradictions and broken invariants across specifications and evidence.\n",
-            "Use the skill that owns the requested judgment; code review does not certify Linear delivery.\n"
+            "Use the skill that owns the requested judgment; code review does not certify Linear delivery.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 91,
+          "old": [
+            "machine-scannable: end the reply with a final line `VERDICT: PASS`,\n",
+            "`VERDICT: GO-WITH-FIXES (blockers=N)`, or `VERDICT: FAIL` (mapping:\n",
+            "Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES; Request-changes /\n",
+            "Block -> FAIL). The dispatching agent's exit rule is AUDIT-LOOP-01\n",
+            "(`crw-pabcd` §A): FAIL always triggers another round.\n"
+          ],
+          "new": [
+            "machine-scannable: end the reply with exactly two final lines, `LAUNCH: <the launch id the\n",
+            "packet gave you>` and then `VERDICT: PASS`, `VERDICT: GO-WITH-FIXES (blockers=N)`, or\n",
+            "`VERDICT: FAIL` (mapping: Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES;\n",
+            "Request-changes / Block -> FAIL). `N` is the number of blocking findings you went ahead\n",
+            "with, a whole number from 1 to 9999; name them as `(blockers=N; findings=c1,r2)` when\n",
+            "that helps. The same grammar is what the PABCD observer records and what the relay\n",
+            "renders in a report. A bare `VERDICT: GO-WITH-FIXES` still counts, with no count; a count\n",
+            "on `PASS` or `FAIL`, or a count that is zero, negative or not a number, is no verdict at\n",
+            "all, and the round stays open. The dispatching agent's exit rule is AUDIT-LOOP-01\n",
+            "(`crw-pabcd` §A): FAIL always triggers another round, and each blocker of a\n",
+            "GO-WITH-FIXES is folded into the plan or rebutted, which the main agent records in the attest's `auditBlockers`.\n"
           ]
         }
       ]

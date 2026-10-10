@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -26,27 +27,65 @@ func shellIRWriteDestsResolved(command, cwd string, lookup func(string) (string,
 }
 
 func shellIRDests(command, cwd string, lookup func(string) (string, bool), resolve bool) (dests []string, ok bool) {
-	res, err := shellir.AnalyzeEnv(command, cwd, lookup)
+	read := shellir.AnalyzeEnv
+	if resolve {
+		read = shellir.AnalyzeEnvProvenDirectory
+	}
+	res, err := read(command, cwd, lookup)
 	if err != nil {
 		return nil, false
 	}
-	for _, e := range res.Execs {
+	return shellIRDestsResult(res, cwd, lookup, resolve, 0, nil), true
+}
+
+func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (string, bool), resolve bool, depth int, outer *githubPostWrites) []string {
+	var dests []string
+	writes := githubPostWritesOf(res.Execs, outer)
+	for i, e := range res.Execs {
 		if e.Kind == shellir.KindScriptFile {
-			dests = append(dests, shellIRUnknownDest)
+			if writes.stale(i, e.Script.Value, e.Dir) {
+				dests = append(dests, shellIRUnknownDest)
+			} else {
+				dests = append(dests, shellIRScriptDests(e, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))...)
+			}
 			continue
 		}
-		own := shellIRExecDests(e)
+		if depth > 0 && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+			// A direct child of an admitted shell file must also be read.
+			// Only a bounded shell program has a destination reader here.
+			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {
+				continue // A proven missing child has no body to execute.
+			}
+			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+			if kind != githubPostFileShell || writes.stale(i, e.Program.Value, e.Dir) {
+				dests = append(dests, shellIRUnknownDest)
+			} else {
+				child := e
+				child.Kind, child.Name, child.Script = shellir.KindScriptFile, "sh", e.Program
+				dests = append(dests, shellIRScriptDests(child, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
+			}
+			continue
+		}
+		protectDir := false
+		if resolve && e.Inline != nil && e.Inline.Language == "python" {
+			protectDir = shellIRPyProtectedDir(e.Dir, lookup)
+		}
+		own := shellIRExecDestsIn(e, protectDir)
 		if resolve {
 			own = shellIRResolve(own, e.Dir, cwd)
 		}
 		dests = append(dests, own...)
 	}
-	return shellIRUnique(dests), true
+	return shellIRUnique(dests)
 }
 
 // shellIRExecDests returns the destinations one program record writes: its redirections, the files its verb names and the writes
 // of its inline program, as written (relative ones are not joined to a directory).
 func shellIRExecDests(e shellir.Exec) []string {
+	return shellIRExecDestsIn(e, false)
+}
+
+func shellIRExecDestsIn(e shellir.Exec, protectDir bool) []string {
 	var own []string
 	for _, r := range e.Redirs {
 		if shellIRWriteRedir(r.Op) {
@@ -54,7 +93,26 @@ func shellIRExecDests(e shellir.Exec) []string {
 		}
 	}
 	own = append(own, shellIRVerbDests(e)...)
-	return append(own, shellIRLanguageDests(e)...)
+	return append(own, shellIRLanguageDests(e, protectDir)...)
+}
+
+// A computed Python destination may be relative to its effective directory.
+// Reuse the memory gate's lexical and physical path reading, including symlinks.
+// An unknown directory cannot establish the outside-directory control.
+func shellIRPyProtectedDir(dir shellir.Dir, lookup func(string) (string, bool)) bool {
+	if !dir.Known || dir.Path == "" {
+		return true
+	}
+	if lookup == nil {
+		lookup = func(string) (string, bool) { return "", false }
+	}
+	g := newMemoryGateEnv(lookup)
+	root, ok := g.root()
+	if !ok {
+		return false
+	}
+	_, hit := g.hit(dir.Path, "", root)
+	return hit
 }
 
 // shellIRResolve joins each relative destination to the directory its program runs in. A program in the payload's own
@@ -190,7 +248,10 @@ func shellIRStrings(ws []shellir.Word) []string {
 // The programs come from the shared reader's records, so a program a nested shell -c or eval runs is included. A command
 // the reader cannot read is itself unreadable.
 func shellIRFStringUnreadable(command string) (string, bool) {
-	res, err := shellir.AnalyzeNoDir(command)
+	return shellIRFStringResult(shellir.AnalyzeNoDir(command))
+}
+
+func shellIRFStringResult(res shellir.Result, err error) (string, bool) {
 	if err != nil {
 		return "the command reader refused it", true
 	}
@@ -298,7 +359,7 @@ func shellIRTeeDests(args []shellir.Word) []string {
 
 // shellIRLanguageDests reads the writes of an interpreter's program with the language readers. perl and ruby with -i also
 // edit their file operands, whether or not the program is inline. An inline program with no reader is unknown.
-func shellIRLanguageDests(e shellir.Exec) []string {
+func shellIRLanguageDests(e shellir.Exec, protectDir bool) []string {
 	var out []string
 	if n := filepath.Base(e.Name); n == "perl" || n == "ruby" {
 		out = append(out, shellIRInPlaceFiles(e.Args)...)
@@ -313,16 +374,21 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 	switch e.Inline.Language {
 	case "python", "node":
 		isPy := e.Inline.Language == "python"
-		res := shellVerbScriptWritesIn(src, true, isPy)
+		res := shellVerbScriptWritesInDir(src, true, isPy, protectDir)
 		if un := shellVerbUnescape(src); un != src {
-			res = append(res, shellVerbScriptWritesIn(un, true, isPy)...)
+			res = append(res, shellVerbScriptWritesInDir(un, true, isPy, protectDir)...)
 		}
 		// A writer whose destination is not a literal, and a Python open bound to a name, write to a destination the text
 		// does not show: unknown (CRW-998, CRW-851).
-		if shellIRDynamicWrite(src, isPy) {
+		if shellIRDynamicWrite(src, isPy, protectDir) {
 			res = append(res, shellIRUnknownDest)
 		}
 		return append(out, res...)
+	case "awk":
+		if shellIRAwkReadOnly(src) {
+			return out
+		}
+		return append(out, shellIRUnknownDest)
 	case "sed":
 		return append(out, shellVerbSedWrites(shellIRStrings(e.Args))...)
 	case "perl", "ruby":
@@ -335,8 +401,8 @@ func shellIRLanguageDests(e shellir.Exec) []string {
 
 // shellIRDynamicWrite is whether a Node or Python program calls a writer with a first argument that is no string literal,
 // or binds open to a name (f = open) so that its calls are not visible as open(...).
-func shellIRDynamicWrite(src string, python bool) bool {
-	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknown(src, python) {
+func shellIRDynamicWrite(src string, python, protectDir bool) bool {
+	if shellIRNodeDynamicWrite.MatchString(src) || shellIRStructuralWriteUnknownFrom(src, 0, python, protectDir) {
 		return true
 	}
 	return python && shellIRPyOpenAlias.MatchString(src)

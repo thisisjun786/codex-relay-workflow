@@ -1100,12 +1100,13 @@ func TestOrchestrateDcloseFailsClosedOnADamagedLedger(t *testing.T) {
 	}
 }
 
-// TestOrchestrateDcloseUnboundOrderIsTheOracles pins the departure the unbound close keeps on purpose
-// (docs/port-cxc/known-defects/CRW-756.md, port: kept): the oracle publishes IDLE before it appends the
-// done row, so an append that fails leaves the session resting with no record of the close, and the FSM
-// has no IDLE -> D edge for a retry to use. The issue states that order as the answer, so the port keeps
-// it, and this test holds the shape so a later issue changes it deliberately.
-func TestOrchestrateDcloseUnboundOrderIsTheOracles(t *testing.T) {
+// TestOrchestrateDcloseUnboundRowSurvivesAFailedAppend is CRW-1097's answer to the departure CRW-756
+// kept: the oracle publishes IDLE before it appends the done row, so an append that failed left the
+// session resting with no record of the close, and the FSM has no IDLE -> D edge for a retry to use. The
+// row is now prepared in the session's ledger outbox before IDLE is published: the close answers success
+// with the pending warning, the retry is still refused, and the next locked call of the session records
+// the row exactly once.
+func TestOrchestrateDcloseUnboundRowSurvivesAFailedAppend(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
 	id := "cycle-hitl-order"
 	s := state.DefaultState(id, "")
@@ -1114,36 +1115,42 @@ func TestOrchestrateDcloseUnboundOrderIsTheOracles(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A ledger path that cannot be appended to, so the state write succeeds and the append fails.
-	if err := os.MkdirAll(filepath.Join(cwd, ".crw", "ledger.jsonl"), 0o700); err != nil {
+	ledgerDir := filepath.Join(cwd, ".crw", "ledger.jsonl")
+	if err := os.MkdirAll(ledgerDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	zero := float64(0)
 	att := &attest.Attestation{From: state.PhaseC, To: state.PhaseD, Did: "ran the suite", CheckOutput: "722 pass", ExitCode: &zero}
 
-	if _, err := orchestrateDclose(cwd, id, "", state.ReadState(cwd, id), att, false, orchestrateDcloseSeam{}); err == nil {
-		t.Fatal("a failed append was reported as success")
+	got, err := orchestrateDclose(cwd, id, "", state.ReadState(cwd, id), att, false, orchestrateDcloseSeam{})
+	if err != nil || got.Code != 0 || !strings.Contains(got.Output, "warning: ledger row for C -> IDLE could not be written: ") ||
+		!strings.Contains(got.Output, "kept pending") {
+		t.Fatalf("an applied close whose append failed answered (%+v, %v); want success with the pending warning", got, err)
 	}
-	// The oracle's order: the state is already published when the append fails.
 	if state.ReadState(cwd, id).Phase != state.PhaseIdle {
-		t.Fatal("the unbound close did not publish IDLE before the append")
+		t.Fatal("the unbound close did not publish IDLE")
 	}
-	if rows := orchestrateTransitionLedger(t, cwd); len(rows) != 0 {
-		t.Fatalf("a row survived a failed append: %+v", rows)
+	if err := os.Remove(ledgerDir); err != nil {
+		t.Fatal(err)
 	}
-	// And the FSM refuses the retry that would restore it, which is the defect the record names.
-	got := orchestrateTransitionRun(t, cwd, "D", "--session", id, "--attest",
+	// The FSM still refuses the retry; the call takes the session lock and records the pending row.
+	retry := orchestrateTransitionRun(t, cwd, "D", "--session", id, "--attest",
 		"{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests passed\",\"exitCode\":0}")
-	if got.Code == 0 {
-		t.Fatalf("a retry of the unbound close was accepted: %+v", got)
+	if retry.Code == 0 {
+		t.Fatalf("a retry of the unbound close was accepted: %+v", retry)
+	}
+	orchestrateTransitionRun(t, cwd, "reset", "--session", id)
+	rows := orchestrateTransitionLedger(t, cwd)
+	if len(rows) != 1 || rows[0]["from"] != "C" || rows[0]["to"] != "IDLE" || rows[0]["reason"] != "done" || rows[0]["evidence"] != "ran the suite" {
+		t.Fatalf("the ledger after the next calls: %+v, want exactly the close's done row", rows)
 	}
 }
 
-// TestOrchestrateDcloseAllDoneStateWriteFailureReconciles covers the Devin review finding on this pull
-// request: the all-done branch appends its C -> IDLE row inside the first lock and the IDLE state write
-// happens later, so a write that fails before publication leaves a done row beside a session still at C.
-// That order is the oracle §40 Z2 decision (deferring the row to a second lock could lose it for good),
-// and the leftover state is one the same D request reconciles: the row guard finds the row, the retry
-// skips it, and the state reaches IDLE with exactly one row. This test is that reconciliation.
+// TestOrchestrateDcloseAllDoneStateWriteFailureReconciles covers the Devin review finding of CRW-756 as
+// CRW-1097 answers it: the oracle appended the all-done close's C -> IDLE row inside the first lock, before
+// the IDLE state write, so a write that failed before the publication left a done row beside a session
+// still at C. The row is now prepared in the session's ledger outbox with the IDLE write, so the failed
+// write leaves no row at all, and the same D request closes the cycle with exactly one.
 func TestOrchestrateDcloseAllDoneStateWriteFailureReconciles(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
 	id, slug := "all-done-state-failure", "all-done-state-failure-plan"
@@ -1170,8 +1177,8 @@ func TestOrchestrateDcloseAllDoneStateWriteFailureReconciles(t *testing.T) {
 	if state.ReadState(cwd, id).Phase != state.PhaseC {
 		t.Fatal("the failed write moved the session")
 	}
-	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 1 {
-		t.Fatalf("done rows = %d, want the row the all-done branch wrote inside the lock", n)
+	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 0 {
+		t.Fatalf("done rows = %d, want none: the close did not happen", n)
 	}
 
 	// The same request reconciles: no second row, and the state reaches IDLE.

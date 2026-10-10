@@ -121,6 +121,29 @@ func TestChatScanScopeAndMetadata(t *testing.T) {
 	}
 }
 
+type chatScanFixedCase struct {
+	Index                        int
+	Fn, Query, Kind, OracleError string
+	Out                          json.RawMessage
+}
+
+func chatScanPortFixed(t *testing.T) map[int]chatScanFixedCase {
+	t.Helper()
+	data, err := os.ReadFile("testdata/chatscan/port-fixed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []chatScanFixedCase
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	out := map[int]chatScanFixedCase{}
+	for _, r := range rows {
+		out[r.Index] = r
+	}
+	return out
+}
+
 func TestChatScanOracle(t *testing.T) {
 	data, err := os.ReadFile("testdata/chatscan/oracle.json")
 	if err != nil {
@@ -142,7 +165,15 @@ func TestChatScanOracle(t *testing.T) {
 	if len(cases) < 200 {
 		t.Fatalf("incomplete recorder: %d cases", len(cases))
 	}
+	fixed := chatScanPortFixed(t)
 	for i, c := range cases {
+		if f, ok := fixed[i]; ok {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1123.md): the oracle's recorded result and the port's.
+			if f.Fn != c.Fn || f.Query != c.Query || f.Kind != c.Kind || f.OracleError != c.Error {
+				t.Fatalf("case %d: the port-fixed record is for another case", i)
+			}
+			c.Error, c.Out = "", f.Out
+		}
 		t.Run(c.Fn+"/"+c.Query+"/"+c.Kind+"/"+string(rune(i+0x100)), func(t *testing.T) {
 			var got any
 			var callErr error

@@ -33,8 +33,10 @@ func accountHome() (string, error) {
 	return account.HomeDir, nil
 }
 
-// CodexSQLiteHome is the directory of the host's databases: CODEX_SQLITE_HOME, else CODEX_HOME,
-// else ~/.codex. An empty value counts as unset, as the oracle's `a || b` does.
+// CodexSQLiteHome is the oracle's reading of the databases' directory: CODEX_SQLITE_HOME, else
+// CODEX_HOME, else ~/.codex under Home. An empty value counts as unset, as the oracle's `a || b` does.
+// The native session and goals readers of this package use CodexSQLiteRoot instead (CRW-1136); this
+// stays for the role package's created check until that package moves to CodexSQLiteRoot.
 func CodexSQLiteHome(env LookupEnv) (string, error) {
 	for _, key := range []string{"CODEX_SQLITE_HOME", "CODEX_HOME"} {
 		if value, _ := env(key); value != "" {

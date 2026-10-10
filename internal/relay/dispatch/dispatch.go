@@ -215,7 +215,7 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	}
 	ctx, admitted := store.WithAdmitted(ctx)
 	defer func() { _ = admitted.Release() }()
-	global := globals{argv0: argv0, modules: root.Values["kind-module"], admitted: admitted}
+	global := globals{argv0: argv0, stderr: stderr, modules: root.Values["kind-module"], admitted: admitted}
 	if values := root.Values["state"]; len(values) > 0 {
 		global.state = values[0]
 	}
@@ -243,6 +243,7 @@ func parsedLine(stdout, stderr io.Writer, prog, name string, parsed argparse.Res
 // globals are the root parser's options.
 type globals struct {
 	argv0, state, socket string
+	stderr               io.Writer
 	modules              []string
 	admitted             *store.Admitted
 }
@@ -256,7 +257,7 @@ func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 	if readOnly {
 		ctx = store.WithReadOnlyCommand(ctx)
 	}
-	services := Services{SocketPath: g.socket, AdapterRequested: g.socket != "", Program: selection.Program(g.argv0)}
+	services := Services{SocketPath: g.socket, AdapterRequested: g.socket != "", Program: selection.Program(g.argv0), Stderr: g.stderr}
 	selected := !c.Unselected && (c.SelectsNoStore == nil || !c.SelectsNoStore(args))
 	if !c.Unselected {
 		// A state directory that cannot be resolved (a ~user with no home, a relative --state

@@ -267,7 +267,7 @@ func TestRunBackgroundRefusesWhatItCannotRun(t *testing.T) {
 	}
 }
 
-func TestRunBackgroundSpawnFailureSettlesFailed(t *testing.T) { // oracle spawn.ts:114-125: the error event comes after the running record
+func TestRunBackgroundSpawnFailureSettlesFailed(t *testing.T) { // oracle spawn.ts:114-125; CRW-1134: the failed record is what is returned
 	ws := workspace(t)
 	var seen *exec.Cmd
 	rec, err := runBackground(ws, RunOptions{Command: []string{"true"}}, ticking(), func(cmd *exec.Cmd) error {
@@ -278,14 +278,13 @@ func TestRunBackgroundSpawnFailureSettlesFailed(t *testing.T) { // oracle spawn.
 	if seen == nil || seen.Dir != ws || seen.SysProcAttr == nil || !seen.SysProcAttr.Setsid || seen.Stdin != nil || seen.Stdout != nil || seen.Stderr != nil {
 		t.Errorf("the shell is not started detached, in the workspace, with no stdio: %+v", seen)
 	}
-	if err != nil || rec.Status != StatusRunning || rec.PID != nil || rec.StartToken != nil || rec.StartedAt != "2026-09-09T00:10:00.000Z" ||
-		onDisk.Status != StatusFailed || onDisk.ExitCode != nil || onDisk.EndedAt == nil || *onDisk.EndedAt != "2026-09-09T00:10:00.003Z" {
+	if err != nil || !reflect.DeepEqual(rec, onDisk) || rec.Status != StatusFailed || rec.PID != nil || rec.StartToken != nil || rec.StartedAt != "2026-09-09T00:10:00.000Z" ||
+		rec.ExitCode != nil || rec.EndedAt == nil {
 		t.Fatalf("%+v %v file %+v", rec, err, onDisk)
 	}
-	// oracle order of the clock: startedAt, record write, ledger, endedAt, record write, ledger
 	rows := ledger(t, ws)
-	if len(rows) != 2 || !strings.HasPrefix(rows[0], "{\"at\":\"2026-09-09T00:10:00.002Z\",\"event\":\"registered\"") || !strings.HasSuffix(rows[0], ",\"pid\":null,\"command\":[\"true\"]}") ||
-		rows[1] != "{\"at\":\"2026-09-09T00:10:00.005Z\",\"event\":\"completed\",\"id\":\""+rec.ID+"\",\"exitCode\":null,\"detail\":\"spawn failed\"}" {
+	if len(rows) != 2 || !strings.Contains(rows[0], ",\"event\":\"registered\",") || !strings.HasSuffix(rows[0], ",\"pid\":null,\"command\":[\"true\"]}") ||
+		!strings.HasSuffix(rows[1], ",\"event\":\"completed\",\"id\":\""+rec.ID+"\",\"exitCode\":null,\"detail\":\"spawn failed\"}") {
 		t.Errorf("ledger %q", rows)
 	}
 }
@@ -422,30 +421,32 @@ func TestCancelNeverSignalsAnUnsafePid(t *testing.T) {
 	for _, pid := range []int{0, 1, int(big), int(big) + 1, -(1 << 30)} {
 		ws := workspace(t)
 		r := mk(ws, "u")
-		r.PID = &pid
+		r.PID, r.StartToken = &pid, sp("Thu Jan  1 00:00:00 2026")
 		save(t, ws, r)
 		pending(t, ws, "u")
 		var calls []int
 		got, err := cancel(ws, r, noonClock, func(p int, _ syscall.Signal) error { calls = append(calls, p); return nil })
-		if err != nil || got.Status != StatusCancelled || len(calls) != 0 {
+		var unproven ErrOwnerUnproven
+		if !errors.As(err, &unproven) || got.Status != StatusRunning || len(calls) != 0 {
 			t.Errorf("pid %d: %+v %v signalled %v", pid, got, err, calls)
 		}
 	}
 }
 
-func TestCancelSignalsOnlyTheProcessItStarted(t *testing.T) { // oracle spawn.ts:153-160
+func TestCancelSignalsOnlyTheProcessItStarted(t *testing.T) { // oracle spawn.ts:153-160; CRW-1155 for a token that does not match
 	needPS(t)
 	live := child(t).Process.Pid
 	token, _ := ProcessStartToken(live)
 	for name, c := range map[string]struct {
 		token  *string
 		exit   string
-		calls  []int
+		calls  []string
 		status BgStatus
+		err    bool
 	}{
-		"another process owns the pid":    {sp("not its token"), "", nil, StatusCancelled},
-		"the start token matches":         {&token, "", []int{-live}, StatusCancelled},
-		"a finished job is not signalled": {nil, "0", nil, StatusComplete},
+		"another process owns the pid":    {sp("not its token"), "", nil, StatusRunning, true},
+		"the start token matches":         {&token, "", []string{fmt.Sprintf("%d:%d", -live, syscall.SIGTERM)}, StatusCancelled, false},
+		"a finished job is not signalled": {nil, "0", nil, StatusComplete, false},
 	} {
 		ws := workspace(t)
 		r := mk(ws, "t")
@@ -455,10 +456,10 @@ func TestCancelSignalsOnlyTheProcessItStarted(t *testing.T) { // oracle spawn.ts
 		if err := os.Chtimes(ExitPath(ws, "t"), noon(), noon()); err != nil {
 			t.Fatal(err)
 		}
-		var calls []int
-		got, err := cancel(ws, r, noonClock, func(p int, _ syscall.Signal) error { calls = append(calls, p); return nil })
-		if err != nil || got.Status != c.status || !reflect.DeepEqual(calls, c.calls) {
-			t.Errorf("%s: %+v %v signalled %v, want %v %v", name, got, err, calls, c.status, c.calls)
+		s := &signals{probe: syscall.ESRCH} // the group is gone once it is asked
+		got, err := cancel(ws, r, noonClock, s.kill)
+		if (err != nil) != c.err || got.Status != c.status || !reflect.DeepEqual(s.calls, c.calls) {
+			t.Errorf("%s: %+v %v signalled %v, want %v %v", name, got, err, s.calls, c.status, c.calls)
 		}
 	}
 }
@@ -478,27 +479,5 @@ func TestCancelActsOnTheWorkspaceNotTheRecordsCwd(t *testing.T) { // registry.go
 	}
 	if onDisk, _ := ReadRecord(ws, "w"); onDisk.Status != StatusCancelled {
 		t.Errorf("the calling workspace's record is %+v", onDisk)
-	}
-}
-
-func TestCancelFallsBackToThePid(t *testing.T) { // oracle spawn.ts:164-170
-	ws, live := workspace(t), child(t).Process.Pid
-	r := mk(ws, "f")
-	r.PID = &live
-	save(t, ws, r)
-	type call struct {
-		pid int
-		sig syscall.Signal
-	}
-	var calls []call
-	got, err := cancel(ws, r, noonClock, func(p int, sig syscall.Signal) error {
-		calls = append(calls, call{p, sig})
-		if p < 0 {
-			return syscall.EPERM
-		}
-		return nil
-	})
-	if err != nil || got.Status != StatusCancelled || !reflect.DeepEqual(calls, []call{{-live, syscall.SIGTERM}, {live, syscall.SIGTERM}}) {
-		t.Errorf("%+v %v signalled %v", got, err, calls)
 	}
 }

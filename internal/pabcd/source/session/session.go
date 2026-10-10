@@ -5,7 +5,7 @@
 // CheckBound refuses a cycle whose source identity cannot be resolved.
 //
 // It is a subpackage of source because state imports source, and Resolve reads the session state. Git runs as a child
-// process with the routing variables removed. Errors the oracle throws as messages are returned with that text; an
+// process under gitprobe's read-only probe policy. Errors the oracle throws as messages are returned with that text; an
 // operating-system failure the oracle lets through is returned as Go reports it, in Go's words.
 package session
 
@@ -22,6 +22,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -74,28 +75,26 @@ func canonical(path string) (string, error) {
 	return source.DecodeUTF8([]byte(resolved)), err
 }
 
-// gitProbeEnv is the environment without the routing variables, so a stray GIT_DIR cannot redirect a probe. These four and no
-// more: the source identity removes two more, but a GIT_OBJECT_DIRECTORY that does not exist makes git take the directory for
-// no repository, and the oracle's probes fail with it.
-func gitProbeEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(entry string) bool {
-		name, _, _ := strings.Cut(entry, "=")
-		return slices.Contains([]string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}, name)
-	})
-}
-
 // probeOutputLimit is the default maxBuffer of execFileSync: a probe whose stdout and stderr together pass it fails.
 const probeOutputLimit = 1 << 20
 
-// git runs git in cwd and returns its trimmed stdout; a failure to start, a non-zero exit, a signal and too much output are all
-// one error.
+// git runs git in cwd under gitprobe's read-only probe policy, as the bridge verifies its worktrees (every inherited
+// GIT_* variable removed, no prompt, no hooks, no file system monitor, gitprobe.Timeout), and returns its trimmed
+// stdout. The oracle removed four routing variables and no more, so an inherited GIT_OBJECT_DIRECTORY that does not
+// exist failed every probe of a valid worktree (CRW-1135). Messages are in the C locale so NotARepository can read
+// them. A failure to start, a non-zero exit, a signal, the time limit and too much output are all errors.
 func git(cwd string, args ...string) (string, error) {
-	out, err := source.Run(cwd, gitProbeEnv(), probeOutputLimit, "git", args...)
+	out, err := source.Probe(cwd, source.ProbeOptions{Limit: probeOutputLimit, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}}, args...)
 	return text.Trim(source.DecodeUTF8(out)), err
 }
 
 // gitIdentity is the worktree identity of cwd, or an error: a repository is mandatory on the source side.
-func gitIdentity(cwd string) (worktree, error) {
+func gitIdentity(cwd string) (worktree, error) { return gitIdentityWith(git, cwd) }
+
+// nativeGit is the git the native side's probes run; a test replaces it to fail the native probes alone.
+var nativeGit = git
+
+func gitIdentityWith(run func(string, ...string) (string, error), cwd string) (worktree, error) {
 	var w worktree
 	for _, probe := range []struct {
 		into *string
@@ -105,7 +104,7 @@ func gitIdentity(cwd string) (worktree, error) {
 		{&w.commonDir, []string{"rev-parse", "--path-format=absolute", "--git-common-dir"}},
 		{&w.gitDir, []string{"rev-parse", "--absolute-git-dir"}},
 	} {
-		out, err := git(cwd, probe.args...)
+		out, err := run(cwd, probe.args...)
 		if err == nil {
 			*probe.into, err = canonical(out)
 		}
@@ -116,17 +115,113 @@ func gitIdentity(cwd string) (worktree, error) {
 	return w, nil
 }
 
-// nativeGitIdentity is the identity of the native cwd (the state directory need not be a repository), with isRepo false when
-// git rev-parse --git-dir fails, for any reason: the oracle takes that failure for "not inside a repository". When it succeeds,
-// the first error is returned, so a repository whose identity cannot be resolved (a bare one) is not taken for no repository.
-func nativeGitIdentity(cwd string) (w worktree, isRepo bool, err error) {
-	if w, err = gitIdentity(cwd); err == nil {
-		return w, true, nil
+// nativeRepo is what the native cwd's probes established: in a repository, or in none because git said so. A git
+// that could not answer is neither: nativeGitIdentity returns unknownNative.
+type nativeRepo int
+
+const (
+	nativeInRepo nativeRepo = iota
+	nativeOutside
+)
+
+// unknownNative is the refusal when the native cwd's repository cannot be established: git could not start, ran out
+// of time, could not enter the directory or failed otherwise. The oracle took any such failure for "not inside a
+// repository" and skipped its same-repository check (CRW-1135).
+const unknownNative = refusal("Cannot tell whether the session's working directory is in a Git repository; the source binding was not changed. Retry once git can read the directory.")
+
+// nativeGitIdentity is the identity of the native cwd (the state directory need not be a repository). It is
+// nativeOutside only when git rev-parse --git-dir ran and said the directory is in no repository and no Git marker
+// on git's search path was unreadable; any other failure of that probe is unknownNative. When the probe succeeds,
+// the identity's first error is returned, so a repository whose identity cannot be resolved (a bare one) is not
+// taken for no repository.
+func nativeGitIdentity(cwd string) (w worktree, repo nativeRepo, err error) {
+	if w, err = gitIdentityWith(nativeGit, cwd); err == nil {
+		return w, nativeInRepo, nil
 	}
-	if _, probeErr := git(cwd, "rev-parse", "--git-dir"); probeErr != nil {
-		return worktree{}, false, nil
+	if _, probeErr := nativeGit(cwd, "rev-parse", "--git-dir"); probeErr != nil {
+		if source.NotARepository(probeErr) && !unreadableGitMarker(cwd) {
+			return worktree{}, nativeOutside, nil
+		}
+		return worktree{}, nativeInRepo, unknownNative
 	}
-	return worktree{}, true, err
+	return worktree{}, nativeInRepo, err
+}
+
+// unreadableGitMarker reports whether git's discovery from cwd passed a Git marker it could not read. git walks
+// from the physical cwd up through each parent on the same file system, and at each directory skips, without a
+// word, a .git it may not stat or a Git directory (that .git, or the directory itself as a bare repository) whose
+// HEAD it may not read or whose objects or refs it may not enter; it then answers with the same discovery message
+// as for a directory in no repository (CRW-1135). A marker git can read and rejects, such as the empty .git a
+// sandbox leaves behind, is not unreadable: git's answer stands. A cwd whose path cannot be resolved is
+// unreadable too.
+func unreadableGitMarker(cwd string) bool {
+	dir, err := filepath.Abs(cwd)
+	if err == nil {
+		dir, err = filepath.EvalSymlinks(dir)
+	}
+	if err != nil {
+		return true
+	}
+	start, err := os.Stat(dir)
+	if err != nil {
+		return true
+	}
+	for {
+		marker := filepath.Join(dir, ".git")
+		if info, err := os.Stat(marker); err != nil {
+			if !absent(err) {
+				return true
+			}
+		} else if info.IsDir() {
+			if unreadableGitDir(marker) {
+				return true
+			}
+		} else if syscall.Access(marker, 4) != nil { // R_OK: a gitfile git may not read
+			return true
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "HEAD")); !absent(err) && unreadableGitDir(dir) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		info, err := os.Stat(parent)
+		if err != nil {
+			return true
+		}
+		if info.Sys().(*syscall.Stat_t).Dev != start.Sys().(*syscall.Stat_t).Dev {
+			return false // git stops at the file system boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM is not inherited)
+		}
+		dir = parent
+	}
+}
+
+// unreadableGitDir reports whether git could not check gitDir as a Git directory: it looks like one (HEAD, objects and
+// refs all exist, or cannot even be looked up) and its HEAD cannot be read or its objects or refs cannot be entered.
+// git tests objects and refs before HEAD, so a directory without them is no Git directory whatever its HEAD is: an
+// unrelated file named HEAD that cannot be read is not unreadable Git metadata (CRW-1135).
+func unreadableGitDir(gitDir string) bool {
+	entries := []struct {
+		name string
+		mode uint32
+	}{{"HEAD", 4}, {"objects", 1}, {"refs", 1}} // R_OK, X_OK
+	for _, entry := range entries {
+		if _, err := os.Lstat(filepath.Join(gitDir, entry.name)); absent(err) {
+			return false
+		}
+	}
+	for _, entry := range entries {
+		if err := syscall.Access(filepath.Join(gitDir, entry.name), entry.mode); err != nil && !absent(err) {
+			return true
+		}
+	}
+	return false
+}
+
+// absent is an error saying the path does not exist, or that a component of it is not a directory.
+func absent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // bindingPath is the binding file of a session below cwd, refusing a state directory or sources directory that is not a
@@ -233,7 +328,7 @@ func Resolve(cwd, sessionID string) (string, error) {
 	if pinned != "" && binding.SourceRoot != pinned {
 		return "", refusal("Source binding differs from the session's pinned worktree.")
 	}
-	native, isRepo, err := nativeGitIdentity(cwd)
+	native, repo, err := nativeGitIdentity(cwd)
 	if err != nil {
 		return "", err
 	}
@@ -244,7 +339,7 @@ func Resolve(cwd, sessionID string) (string, error) {
 	// The three source clauses detect a moved or re-pointed worktree and are unconditional; only the native clause is
 	// conditional, because a native cwd outside any repository has no common directory to compare (#109).
 	if source.root != binding.SourceRoot || source.commonDir != binding.CommonDir || source.gitDir != binding.GitDir ||
-		(isRepo && native.commonDir != binding.CommonDir) {
+		(repo == nativeInRepo && native.commonDir != binding.CommonDir) {
 		return "", refusal("Bound source worktree moved or its repository identity changed.")
 	}
 	return binding.SourceRoot, nil
@@ -267,7 +362,7 @@ func Bind(cwd, sessionID, target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	native, isRepo, err := nativeGitIdentity(cwd)
+	native, repo, err := nativeGitIdentity(cwd)
 	if err != nil {
 		return "", err
 	}
@@ -278,14 +373,14 @@ func Bind(cwd, sessionID, target string) (string, error) {
 	if source.root != sourceRoot {
 		return "", refusal("Source must be the root of a Git repository or worktree.")
 	}
-	if isRepo {
+	if repo == nativeInRepo {
 		if source.commonDir != native.commonDir || source.gitDir == native.gitDir {
 			return "", refusal("Source must be a linked worktree root in the native session's repository.")
 		}
 	} else if nativeCwd == sourceRoot || strings.HasPrefix(nativeCwd, sourceRoot+string(filepath.Separator)) {
-		// #109: the oracle calls this a defensive invariant that cannot fire, but it does when git cannot see the repository
-		// from the native cwd (GIT_CEILING_DIRECTORIES). An ancestor binding would sweep the session's siblings into the
-		// certified tree, so the check stays.
+		// #109: the oracle calls this a defensive invariant that cannot fire, and it did when an inherited
+		// GIT_CEILING_DIRECTORIES hid the repository from the native cwd; the probes no longer inherit it (CRW-1135), but an
+		// ancestor binding would sweep the session's siblings into the certified tree, so the check stays.
 		return "", refusal("Source root must not contain the session's own working directory; bind the repository itself, not an ancestor of it.")
 	}
 	previous, err := readBinding(cwd, sessionID)

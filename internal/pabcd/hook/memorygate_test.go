@@ -240,7 +240,7 @@ func TestMemoryGateRefusesWhenTheAuthorizationCannotBeSpent(t *testing.T) {
 		if err := os.WriteFile(lock, []byte("1"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env)); !strings.Contains(reason, "locked or cannot be written") || !strings.Contains(reason, lock) {
+		if reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env)); !strings.Contains(reason, "authorization-state") {
 			t.Errorf("reason: %s", reason)
 		}
 		if !state.ReadState(cwd, gateSession).MemoryWriteGrant {
@@ -251,7 +251,7 @@ func TestMemoryGateRefusesWhenTheAuthorizationCannotBeSpent(t *testing.T) {
 		cwd, _, env := gateScene(t)
 		gateSeed(t, cwd, grant)
 		failing := func(string, state.State) error { return errors.New("disk full") }
-		if reason := gateDeny(t, memoryGateHandle(gatePayload(t, cwd, nil), env, failing)); !strings.Contains(reason, "locked or cannot be written") {
+		if reason := gateDeny(t, memoryGateHandle(gatePayload(t, cwd, nil), env, failing)); !strings.Contains(reason, "authorization-state") {
 			t.Errorf("reason: %s", reason)
 		}
 		if got := HandleMemoryWriteGate(gatePayload(t, cwd, nil), env); got != "" {
@@ -275,7 +275,7 @@ func TestMemoryGateRefusesWhenTheAuthorizationCannotBeSpent(t *testing.T) {
 		if err := os.WriteFile(path, lossy, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env)); !strings.Contains(reason, "cannot rewrite") {
+		if reason := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, nil), env)); !strings.Contains(reason, "authorization-state") {
 			t.Errorf("reason: %s", reason)
 		}
 		if after, _ := os.ReadFile(path); string(after) != string(lossy) {

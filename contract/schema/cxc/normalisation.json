@@ -134,6 +134,18 @@
       "regex": "(\"(?:manifestDigest|entrypointDigest)\"\\s*:\\s*)\"[0-9a-f]{64}\"",
       "replace": "${1}\"<DIGEST>\"",
       "why": "digests of the Node payload files; a Go build digests its own binary, so these never compare"
+    },
+    {
+      "name": "recall-file-identity",
+      "regex": "(\"file_id\"\\s*:\\s*)\"[0-9]+:[0-9]+\"",
+      "replace": "${1}\"<FILE_ID>\"",
+      "why": "the device and inode a Go recall index stores for each rollout (CRW-1083); the oracle's index has no such column, and the value is the host's"
+    },
+    {
+      "name": "recall-prefix-checkpoint",
+      "regex": "(\"checkpoint\"\\s*:\\s*)\"1:[0-9a-f]{64}\"",
+      "replace": "${1}\"<CHECKPOINT>\"",
+      "why": "the digest of the indexed prefix of a rollout that a Go recall index stores (CRW-1083); it covers file text that holds the case's absolute paths"
     }
   ],
   "alias": [

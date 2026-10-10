@@ -23,9 +23,10 @@ import (
 // This file ports fallback-dispatch.ts:1-234 (CXC v0.2.40). Ordered records keep
 // foreign members, as the role store does. The existing global store replaces
 // the project layer; OS/JSON errors have Go text. The assignment additionally
-// refuses a linked .crw or an unrelated git root. Status/Action retain raw JSON:
-// upstream validates String(status), then compares its original value strictly.
-// Managed spawn and created-report issuance checks belong to the next slice.
+// refuses a linked .crw or an unrelated git root. A stored status must be one of
+// the literal enum strings (CRW-1127): upstream validates String(status), so a
+// singleton array passed and then failed every strict comparison. The created
+// report's issuance and correlation checks live at the checked boundary.
 const dispatchMaxInput = 64 * 1024
 
 // DispatchCandidate is a primary or first fallback; nil inherits the session.
@@ -33,6 +34,12 @@ type DispatchCandidate struct {
 	Model  *string     `json:"model"`
 	Effort *EffortName `json:"effort"`
 	raw    object
+}
+
+func (c *DispatchCandidate) UnmarshalJSON(data []byte) (err error) {
+	type plain DispatchCandidate
+	c.raw, err = dispatchRawDecode(data, (*plain)(c))
+	return err
 }
 
 func (c DispatchCandidate) MarshalJSON() ([]byte, error) {
@@ -60,7 +67,21 @@ type DispatchAttempt struct {
 	Reconciliation *string              `json:"reconciliation"`
 	SpawnIssued    bool                 `json:"spawnIssued"`
 	ToolUseID      *string              `json:"toolUseId"`
-	raw            object
+	// PriorChildren are the children of the session the host already showed with this attempt's dispatch marker when the spawn
+	// hook issued the attempt: whatever the issued call creates comes after them, so none of them is its result. It only
+	// refuses a child; an issuance that could not read the host records nothing, and a child is tied to the call only by the
+	// host's result of it (createdCheckTie). It is omitted when empty, which keeps the record the oracle's when the host shows
+	// no marked child.
+	PriorChildren []string `json:"priorChildren,omitempty"`
+	// Termination is set by the checked boundary when a handoff relied on an observed end of the child; the parity ledger
+	// never writes it, and a stored one is kept as it was read.
+	Termination *DispatchTermination `json:"termination,omitempty"`
+	// Receipt is set by the checked boundary when it accepts a created report (see DispatchReceipt); a stored one is decoded.
+	Receipt *DispatchReceipt `json:"receipt,omitempty"`
+	// Cleanup is set by the checked boundary for a child a policy stop left recorded (see DispatchCleanup); a stored one is
+	// decoded.
+	Cleanup *DispatchCleanup `json:"cleanup,omitempty"`
+	raw     object
 }
 
 func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
@@ -71,6 +92,15 @@ func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
 	o := slices.Clone(a.raw)
 	for _, m := range []member{{"claimed", a.Claimed}, {"agentId", a.AgentID}, {"observedModel", a.ObservedModel}, {"code", a.Code}, {"status", a.Status}, {"reconciliation", a.Reconciliation}, {"taskFailure", a.TaskFailure}} {
 		o.set(m.key, m.value)
+	}
+	if a.Termination != nil {
+		o.set("termination", a.Termination)
+	}
+	if a.Receipt != nil {
+		o.set("receipt", a.Receipt)
+	}
+	if a.Cleanup != nil {
+		o.set("cleanup", a.Cleanup)
 	}
 	return o.MarshalJSON()
 }
@@ -393,15 +423,15 @@ func dispatchCandidate(raw json.RawMessage) (DispatchCandidate, error) {
 func dispatchEqual[T comparable](a, b *T) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
+
+// dispatchStatus accepts only a JSON string literal that is one of allowed; anything else is errNotObject, which the caller
+// words as an invalid status.
 func dispatchStatus(raw json.RawMessage, allowed ...string) (any, error) {
-	s, err := jsString(raw)
-	if err != nil {
-		return nil, err
-	}
-	if !slices.Contains(allowed, s) {
+	s, ok := stringOf(raw)
+	if !ok || !slices.Contains(allowed, s) {
 		return nil, errNotObject
 	}
-	return dispatchValue(raw)
+	return s, nil
 }
 func dispatchRead(path, session, id string) (Dispatch, error) {
 	d := Dispatch{}
@@ -487,6 +517,9 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 			return d, errors.New("invalid spawn issuance")
 		}
 		a.SpawnIssued = string(spawn) == "true"
+		if prior := dispatchRaw(a.raw, "priorChildren"); prior != nil && json.Unmarshal(prior, &a.PriorChildren) != nil {
+			return d, errors.New("invalid spawn issuance")
+		}
 		if a.Status, err = dispatchStatus(dispatchRaw(a.raw, "status"), "ready", "claimed", "running", "reconcile", "failed", "complete"); err != nil {
 			if errors.Is(err, errNotObject) {
 				return d, errors.New("invalid attempt status")
@@ -499,6 +532,24 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 		}{{"agentId", &a.AgentID}, {"observedModel", &a.ObservedModel}, {"code", &a.Code}, {"reconciliation", &a.Reconciliation}, {"toolUseId", &a.ToolUseID}} {
 			if *field.dst, err = dispatchNullable(dispatchRaw(a.raw, field.key), field.key); err != nil {
 				return d, err
+			}
+		}
+		if receipt := dispatchRaw(a.raw, "receipt"); receipt != nil && string(receipt) != "null" {
+			a.Receipt = &DispatchReceipt{}
+			if json.Unmarshal(receipt, a.Receipt) != nil {
+				return d, errors.New("invalid attempt receipt")
+			}
+		}
+		if cleanup := dispatchRaw(a.raw, "cleanup"); cleanup != nil && string(cleanup) != "null" {
+			a.Cleanup = &DispatchCleanup{}
+			if json.Unmarshal(cleanup, a.Cleanup) != nil {
+				return d, errors.New("invalid attempt cleanup")
+			}
+		}
+		if termination := dispatchRaw(a.raw, "termination"); termination != nil && string(termination) != "null" {
+			a.Termination = &DispatchTermination{}
+			if json.Unmarshal(termination, a.Termination) != nil {
+				return d, errors.New("invalid attempt termination")
 			}
 		}
 		tf := dispatchRaw(a.raw, "taskFailure")
@@ -602,8 +653,17 @@ func dispatchRun(cwd string, input any, env host.LookupEnv, before func(string, 
 // dispatchPinnedRun is the ledger operation itself: the directory is pinned once and the lock, the read and the save all
 // work on it. check (nil: none) runs before each publication and after is the callback of dispatchPinnedDir.
 func dispatchPinnedRun(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string)) (DispatchResult, error) {
-	return dispatchPinnedRunHeld(cwd, input, env, check, after, false)
+	return dispatchPinnedRunHeld(cwd, input, env, check, after, false, nil)
 }
+
+// dispatchReporter applies a report to the record read under the lock, before it is saved; an error leaves the record as it
+// was. nil is the parity ledger's own dispatchReport; the checked boundary passes one that reads the host first.
+type dispatchReporter func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error)
+
+// dispatchGate is asked before a failed or task_failed report hands an attempt whose child is recorded on to the next
+// candidate or to the main session. nil proceeds; a result stops there and is saved with the record as the gate left it
+// (reconcile); an error refuses the report and nothing is written.
+type dispatchGate func(d *Dispatch) (*DispatchResult, error)
 
 // dispatchSessionLock names the lock of a whole session directory (dir.lock adds ".lock"). A created report holds it, before
 // the lock of its own record, from the scan of the sibling records to the write of its own, so that two dispatches of one
@@ -612,7 +672,8 @@ const dispatchSessionLock = ".session"
 
 // dispatchPinnedRunHeld is dispatchPinnedRun with lockSession: when set, the session lock is taken before the lock of the
 // record and given back after it. A held lock is the same immediate refusal as a held record lock; nothing is stolen.
-func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string), lockSession bool) (out DispatchResult, err error) {
+// report (nil: dispatchReport) applies a report once the attempt and its claim have been checked.
+func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check dispatchPinnedCheck, after func(string), lockSession bool, report dispatchReporter) (out DispatchResult, err error) {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -725,14 +786,19 @@ func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check disp
 	if !a.Claimed {
 		return out, errors.New("claim the attempt before reporting an outcome")
 	}
-	out, err = dispatchReport(&d, b)
+	if report == nil {
+		report = func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+			return dispatchReport(d, b, nil)
+		}
+	}
+	out, err = report(dir, name, &d, b)
 	if err != nil {
 		return out, err
 	}
 	err = dispatchSave(dir, name, &d, check)
 	return out, err
 }
-func dispatchReport(d *Dispatch, b map[string]any) (DispatchResult, error) {
+func dispatchReport(d *Dispatch, b map[string]any, gate dispatchGate) (DispatchResult, error) {
 	a := &d.Attempts[len(d.Attempts)-1]
 	none := DispatchResult{}
 	if dispatchIs(b["outcome"], "created") {
@@ -761,7 +827,7 @@ func dispatchReport(d *Dispatch, b map[string]any) (DispatchResult, error) {
 		return dispatchResult(d, nil, ""), nil
 	}
 	if dispatchIs(b["outcome"], "task_failed") {
-		return dispatchTaskFailed(d, b)
+		return dispatchTaskFailed(d, b, gate)
 	}
 	unavailable := dispatchIs(b["outcome"], "unavailable")
 	if !unavailable && !dispatchIs(b["outcome"], "failed") {
@@ -797,7 +863,7 @@ func dispatchReport(d *Dispatch, b map[string]any) (DispatchResult, error) {
 	if dispatchIs(b["executionState"], "stopped") && (a.AgentID == nil || *a.AgentID == "") {
 		return none, errors.New("record created agent before stopped handoff")
 	}
-	return dispatchHandoff(d), nil
+	return dispatchGatedHandoff(d, gate)
 }
 func dispatchProviderDecision(d *Dispatch, f FailureDecision) (DispatchResult, bool) {
 	if f.Action == "stop" {
@@ -810,6 +876,20 @@ func dispatchProviderDecision(d *Dispatch, f FailureDecision) (DispatchResult, b
 	}
 	return DispatchResult{}, false
 }
+
+// dispatchGatedHandoff asks gate (when there is one and the attempt recorded a child) before dispatchHandoff.
+func dispatchGatedHandoff(d *Dispatch, gate dispatchGate) (DispatchResult, error) {
+	if a := d.Attempts[len(d.Attempts)-1]; gate != nil && a.AgentID != nil && *a.AgentID != "" {
+		r, err := gate(d)
+		if err != nil {
+			return DispatchResult{}, err
+		}
+		if r != nil {
+			return *r, nil
+		}
+	}
+	return dispatchHandoff(d), nil
+}
 func dispatchHandoff(d *Dispatch) DispatchResult {
 	d.Attempts[len(d.Attempts)-1].Status = "failed"
 	if len(d.Attempts) == len(d.Candidates) {
@@ -819,7 +899,7 @@ func dispatchHandoff(d *Dispatch) DispatchResult {
 	}
 	return dispatchResult(d, nil, "")
 }
-func dispatchTaskFailed(d *Dispatch, b map[string]any) (DispatchResult, error) {
+func dispatchTaskFailed(d *Dispatch, b map[string]any, gate dispatchGate) (DispatchResult, error) {
 	a := &d.Attempts[len(d.Attempts)-1]
 	none := DispatchResult{}
 	if v, present := b["error"]; present {
@@ -854,5 +934,5 @@ func dispatchTaskFailed(d *Dispatch, b map[string]any) (DispatchResult, error) {
 	a.Reconciliation = &s
 	a.Code = nil
 	a.TaskFailure = failure
-	return dispatchHandoff(d), nil
+	return dispatchGatedHandoff(d, gate)
 }

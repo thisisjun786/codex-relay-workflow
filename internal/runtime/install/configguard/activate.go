@@ -310,6 +310,10 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 	carried := activationCarries(prior, path)
 	toEnable := FeaturesToEnable(state)
 	m := &InstallManifest{Version: 2, ConfigPath: path, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}, Recovered: recovered}
+	if prior != nil {
+		// The switch section survives activation independently of feature ownership (CRW-201).
+		m.Switch = prior.Switch
+	}
 	for _, k := range DeclaredFeatures() {
 		key := string(k)
 		f := FlagRecord{PriorEnabled: state[key]}

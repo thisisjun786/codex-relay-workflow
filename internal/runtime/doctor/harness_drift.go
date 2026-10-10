@@ -202,10 +202,11 @@ func harnessDriftNullMember(key string) error {
 
 // harnessDriftReadJSON is the oracle's readFileSync + JSON.parse (doctor.ts:549, :568): the file's
 // bytes as Buffer.toString("utf8") holds them, parsed the way JSON.parse does, or the engine
-// error the catch clauses report. The depth is the manifest-target reader's (Deep), not the
-// hook-trust reader's shallower cap: a document JSON.parse accepts must not read as unparseable.
+// error the catch clauses report. The read is bounded (harnessReadLimit, a regular file, no wait
+// on a FIFO) and so is the depth (pyjson.MaxDepth): a document past either is refused with its
+// reason, not read whole (CRW-1152).
 func harnessDriftReadJSON(path string) (any, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := harnessReadBounded(path)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +214,7 @@ func harnessDriftReadJSON(path string) (any, error) {
 }
 
 func harnessDriftParse(raw []byte) (any, error) {
-	return pyjson.Loads(hookTrustEntriesUTF8(raw), pyjson.LoadOptions{Surrogates: true, Deep: true})
+	return harnessParseBounded(hookTrustEntriesUTF8(raw), pyjson.LoadOptions{Surrogates: true})
 }
 
 // harnessDriftRunKilled reads a run the timeout or a signal ended, as against one that never

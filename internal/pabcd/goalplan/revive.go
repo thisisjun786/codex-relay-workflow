@@ -1,6 +1,7 @@
 package goalplan
 
 import (
+	"math"
 	"path"
 	"strings"
 
@@ -76,7 +77,61 @@ func reviveLane(raw any) *ReviewLane {
 	return &ReviewLane{
 		LaunchID: id, ReviewerSession: textPtr(r, "reviewerSession"), WorkspaceRoot: textPtr(r, "workspaceRoot"),
 		ArtifactSha256: textPtr(r, "artifactSha256"), Verdict: verdictOf(r["verdict"]), SourceIdentity: reviveSourceIdentity(r["sourceIdentity"]),
+		Blockers: reviveBlockers(r["blockers"]), Findings: reviveFindingRefs(r["findings"]),
 	}
+}
+
+// MaxBlockers is the largest blocker count a verdict line carries (the relay renderer's limit, REVIEW-OUTPUT-01).
+const MaxBlockers = 9999
+
+// MaxFindingRefs and MaxFindingRefLength bound the finding references a sign-off names.
+const (
+	MaxFindingRefs      = 99
+	MaxFindingRefLength = 120
+)
+
+// ValidFindingRef reports whether s can be a finding reference: ASCII letters, digits and . _ : / # - , starting with a letter
+// or a digit. A reference rides in a verdict line, so nothing that separates or closes the line's fields is allowed.
+func ValidFindingRef(s string) bool {
+	if s == "" || len(s) > MaxFindingRefLength {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case i > 0 && (c == '.' || c == '_' || c == ':' || c == '/' || c == '#' || c == '-'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// reviveBlockers is a stored blocker count: a whole number from 1 to MaxBlockers, otherwise absent (0).
+func reviveBlockers(raw any) int {
+	n, ok := jsNumber(raw)
+	if !ok || n != math.Trunc(n) || n < 1 || n > MaxBlockers {
+		return 0
+	}
+	return int(n)
+}
+
+// reviveFindingRefs is a stored list of finding references: all valid, or none.
+func reviveFindingRefs(raw any) []string {
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 || len(list) > MaxFindingRefs {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok || !ValidFindingRef(s) {
+			return nil
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // reviveReviewRounds rebuilds the review rounds. A round missing its identity, purpose, plan hash or lane is dropped rather than
@@ -106,10 +161,11 @@ func reviveReviewRounds(raw any) []ReviewRoundState {
 		workPhase, _ := text(r, "workPhaseId")
 		unit, _ := text(r, "planUnit")
 		epochID, _ := text(r, "planEpoch")
+		supersededBy, _ := text(r, "supersededBy")
 		out = append(out, ReviewRoundState{
 			RoundID: id, Purpose: ReviewPurpose(purpose), PlanPath: planPath, PlanSha256: planSha, Status: ReviewRoundStatus(status), Lane: *lane,
 			OpenedAt: timestamp(r, "openedAt"), ClosedAt: textPtr(r, "closedAt"), OwnerSessionID: owner, WorkPhaseID: workPhase,
-			PlanUnit: unit, PlanEpoch: epochID, PlanFiles: revivePlanFiles(r["planFiles"]),
+			PlanUnit: unit, PlanEpoch: epochID, PlanFiles: revivePlanFiles(r["planFiles"]), SupersededBy: supersededBy,
 		})
 	}
 	return out

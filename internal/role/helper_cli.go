@@ -32,7 +32,16 @@ type HelperCommand struct {
 	Run  func([]string, io.Reader, io.Writer, host.LookupEnv) int
 }
 
+// helperCLIVerbs are the verbs whose own --help or -h is the helper's help (CRW-1117). A flag value can never be such a bare
+// token, because a value that starts with '-' is written --flag=value.
+var helperCLIVerbs = []string{"list", "get", "set", "reset", "register"}
+
+func helperCLIHelpToken(arg string) bool { return arg == "--help" || arg == "-h" }
+
 func ParseHelperArgs(args []string) HelperArgs {
+	if len(args) > 0 && slices.Contains(helperCLIVerbs, args[0]) && slices.ContainsFunc(args[1:], helperCLIHelpToken) {
+		return HelperArgs{Action: "help"}
+	}
 	if helperCLIArg(args, 0) == "register" {
 		if len(args) == 2 && (args[1] == "executor" || args[1] == "architect") {
 			return HelperArgs{Action: "register", Role: RoleName(args[1])}
@@ -53,6 +62,9 @@ func ParseHelperArgs(args []string) HelperArgs {
 func helperCLIProjectArgs(args []string) HelperArgs {
 	sub := helperCLIArg(args, 0)
 	if len(args) == 0 || sub == "list" {
+		if len(args) > 1 {
+			return HelperArgs{Action: "list", Err: fmt.Sprintf("list takes no arguments (got '%s')", args[1])}
+		}
 		return HelperArgs{Action: "list"}
 	}
 	if sub == "help" || sub == "--help" || sub == "-h" {
@@ -73,6 +85,9 @@ func helperCLIProjectArgs(args []string) HelperArgs {
 			return parsed
 		}
 		parsed.Role = role
+		if sub == "get" && len(args) > 2 {
+			parsed.Err = fmt.Sprintf("get takes exactly one role (got '%s')", args[2])
+		}
 		if sub == "set" {
 			parsed.Patch, parsed.Err = helperCLISetArgs(args)
 		}
@@ -82,26 +97,40 @@ func helperCLIProjectArgs(args []string) HelperArgs {
 	return parsed
 }
 
+// helperCLIValueFlags take a value: the next argument, which must not start with '-', or the text after '=' in --flag=value.
+var helperCLIValueFlags = []string{"--mode", "--model", "--fallback-model", "--fallback-effort", "--effort", "--prompt"}
+
 func helperCLISetArgs(args []string) (RolePatch, string) {
 	var patch RolePatch
 	clearFallback, setFallback, changed := false, false, false
 	for i := 2; i < len(args); i++ {
-		flag := args[i]
+		flag, inline, hasInline := args[i], "", false
+		if name, value, ok := strings.Cut(flag, "="); ok && slices.Contains(helperCLIValueFlags, name) {
+			flag, inline, hasInline = name, value, true
+		}
+		if slices.Contains(helperCLIValueFlags, flag) && !hasInline {
+			switch next := helperCLIArg(args, i+1); {
+			case i+1 >= len(args):
+				return RolePatch{}, flag + " requires a value"
+			case strings.HasPrefix(next, "-"):
+				return RolePatch{}, flag + " requires a value; write a value that starts with '-' as " + flag + "=<value>"
+			default:
+				inline = next
+				i++
+			}
+		}
 		changed = true
 		switch flag {
 		case "--mode":
-			i++
-			v := RoleMode(helperCLIArg(args, i))
+			v := RoleMode(inline)
 			if v != ModeDefault && v != ModeModel {
 				return RolePatch{}, fmt.Sprintf("--mode must be default|model (got '%s')", v)
 			}
 			patch.Mode = Some(v)
 		case "--model":
-			i++
-			patch.Model = Some(helperCLIArg(args, i))
+			patch.Model = Some(inline)
 		case "--fallback-model", "--fallback-effort":
-			i++
-			value := helperCLIArg(args, i)
+			value := inline
 			fallback := FallbackPatch{}
 			if patch.Fallback.Value != nil {
 				fallback = *patch.Fallback.Value
@@ -124,8 +153,7 @@ func helperCLISetArgs(args []string) (RolePatch, string) {
 		case "--clear-fallback":
 			patch.Fallback, clearFallback = Null[FallbackPatch](), true
 		case "--effort":
-			i++
-			v := EffortName(helperCLIArg(args, i))
+			v := EffortName(inline)
 			if !validEffort(v) {
 				return RolePatch{}, fmt.Sprintf("--effort must be %s (got '%s')", helperCLIEfforts("|"), v)
 			}
@@ -133,8 +161,7 @@ func helperCLISetArgs(args []string) (RolePatch, string) {
 		case "--clear-effort":
 			patch.Effort = Null[EffortName]()
 		case "--prompt":
-			i++
-			patch.PromptOverride = Some(helperCLIArg(args, i))
+			patch.PromptOverride = Some(inline)
 		case "--clear-prompt":
 			patch.PromptOverride = Null[string]()
 		default:
@@ -181,7 +208,9 @@ func HelperHelp() string {
 		"  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback",
 		"  crw role helper register executor|architect   register or update managed role; restart Codex afterward",
 		"  crw role helper reset <role>  remove the role override and inherit the session",
-		"  Settings use the global store; trailing --global is accepted for compatibility.", "",
+		"  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)",
+		"  Settings use the global store; trailing --global is accepted for compatibility.",
+		"  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.", "",
 		"  roles: " + helperCLIRoles(", "),
 		"  efforts: " + helperCLIEfforts(", ") + " (unset = inherit the parent session's effort)",
 	}, "\n")
@@ -267,7 +296,11 @@ func helperCLIRow(name string) HelperCommand {
 func CLI(args []string, in io.Reader, stdout, stderr io.Writer, env host.LookupEnv) int {
 	const usage = "usage: crw role [-h] {helper} ..."
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprintln(stdout, usage)
+		fmt.Fprintln(stdout, strings.Join([]string{usage, "",
+			"  crw role helper [list|get|set|reset|register] ...   per-role subagent settings (crw role helper --help)",
+			"  crw role helper dispatch < request.json            managed fallback dispatch: reads one JSON request on stdin",
+			"                                                     and prints one JSON answer (crw role helper dispatch --help)",
+		}, "\n"))
 		return 0
 	}
 	if len(args) == 0 || args[0] != "helper" {

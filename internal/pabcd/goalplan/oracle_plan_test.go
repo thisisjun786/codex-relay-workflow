@@ -70,13 +70,20 @@ func revivedText(t *testing.T, raw, slug string) string {
 	return compact(t, reviveGoalplan(decodePlan(t, raw), &slug))
 }
 
+// oraclePlanRefusedVersions are the recorded plans CRW-1109 refuses on purpose (docs/port-cxc/known-defects/CRW-1109.md): a
+// schemaVersion that is not a whole number from 1, which the oracle floors, keeps as written or drops. The recording is unchanged.
+var oraclePlanRefusedVersions = map[string]bool{
+	"version_v0": true, "version_negative": true, "version_fraction_2_9": true, "version_minus_zero": true,
+	"version_underflow": true, "version_huge_negative": true,
+}
+
 func TestOraclePlanParity(t *testing.T) {
 	o := loadOraclePlans(t)
 	for _, name := range slices.Sorted(maps.Keys(o.Plans)) {
 		c := o.Plans[name]
 		t.Run(name, func(t *testing.T) {
 			want := "null"
-			if c.Oracle != nil {
+			if c.Oracle != nil && !oraclePlanRefusedVersions[name] {
 				want = *c.Oracle
 			}
 			got := revivedText(t, c.Raw, c.Slug)

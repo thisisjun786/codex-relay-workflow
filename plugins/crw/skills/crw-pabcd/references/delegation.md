@@ -375,7 +375,14 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    original bounded task and required skills. Use a fresh context and the returned
    candidate's model/effort (null inherits the original session). Preserve the role.
 3. Every report includes `sessionId`, `dispatchId`, and the current `attemptId`.
-   Report `outcome:created` and the actual `agentId`, then use native wait. Report
+   Report `outcome:created` and the actual `agentId`, then use native wait. Created
+   requires the spawn hook's issuance of the attempt, and the child's first message
+   must carry this attempt's marker. The marker does not tie the child to the call:
+   only the host's own result of the issued spawn call naming this `agentId` does, and
+   a child the host cannot yet tie that way is recorded unverified and cannot complete
+   an independent review until created is reported again. A child spawned while the hook was off is recorded only with
+   `reconciliation` evidence, never deleted or respawned, and cannot satisfy
+   independent review. Report
    `outcome:complete` with that ID only after validating the final work. A native
    completed status does not prove the task succeeded; terminal reports cannot be reopened.
 4. On provider failure report `outcome:failed`, the original `error`, and `executionState`:
@@ -391,6 +398,9 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    with `taskFailure: {kind: "stagnation" | "unusable_output", evidence: "..."}`.
    This requires a recorded child, `executionState:stopped`, matching `agentId`
    and `reconciliation`; running or unknown work must be reconciled first.
+   Before a `failed` or `task_failed` handoff of a recorded child, the command reads
+   that child: an active child or a turn in progress refuses, and an end it cannot
+   see returns `reconcile` with the child kept; stop the child, then report again.
    Task evidence explains the failure; reconciliation explains termination and
    partial-work inspection. Both are non-empty text of at most 2000 characters.
    No other task kinds or taskFailure keys are accepted. Never label cancellation,
@@ -399,6 +409,10 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    remaining work; `independentReviewRequired` stays true for reviewer tasks.
    Main implementation is never independent review. `stop` or `reconcile` means
    no model switch or direct-execution permission. Inspect the reason and state.
+   A policy `stop` that leaves a recorded child marks its cleanup pending; once the
+   child has ended, report `outcome:stopped` with its `agentId`,
+   `executionState:stopped` and `reconciliation`. That only records the cleanup:
+   the dispatch stays stopped and nothing is reopened or switched.
 
 A task-failure report has no provider `error`; for example:
 

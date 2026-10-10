@@ -17,13 +17,28 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata while preserving name, description and the original instruction body.",
+      "reason": "CRW-1083: chat index --verify (content-verified freshness) is listed in the synopsis and described, as the usage text of the port lists it",
       "hunks": [
         {
           "line": 4,
           "old": [
             "metadata:\n",
             "  short-description: \"Read-only recall search over ~/.codex: past chats (FTS-indexed) + memory store.\"\n"
+          ]
+        },
+        {
+          "line": 41,
+          "old": [
+            "crw recall chat index [--rebuild] [--status] [--json]\n"
+          ],
+          "new": [
+            "crw recall chat index [--rebuild] [--status] [--verify] [--json]\n"
+          ]
+        },
+        {
+          "line": 78,
+          "new": [
+            "- `--verify` on `crw recall chat index` decides which rollout files changed from their content, so a rewrite that kept the size and the millisecond mtime is found; the default refresh compares size, mtime and file identity only. With `--status` it reports without writing.\n"
           ]
         }
       ]

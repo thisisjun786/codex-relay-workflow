@@ -49,6 +49,14 @@ func TestDetectBClass(t *testing.T) {
 	}
 }
 
+// recordedPortChanges are the recorded inputs whose line the port changed on purpose (CRW-1098): the oracle advertised
+// any number as the listen port.
+var recordedPortChanges = map[string]string{
+	"{\"proxy\":{\"running\":true},\"listen\":{\"port\":1e400}}":                                  "{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status reported a listen.port that is not a TCP port: 1e400\"}",
+	"{\"proxy\":{\"running\":true},\"listen\":{\"port\":-0}}":                                     "{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status reported a listen.port that is not a TCP port: -0\"}",
+	"{\"proxy\":{\"running\":true},\"defaultProvider\":\"<>&\\u2028\",\"listen\":{\"port\":1.5}}": "{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"/fake/ocx\",\"reason\":\"ocx status reported a listen.port that is not a TCP port: 1.5\"}",
+}
+
 func TestDetectNodeRecordedStatusCases(t *testing.T) {
 	f, err := os.Open("testdata/oracle.jsonl")
 	if err != nil {
@@ -64,6 +72,9 @@ func TestDetectNodeRecordedStatusCases(t *testing.T) {
 		}
 		zero := 0
 		s := Detect(Deps{Which: func(string) string { return "/fake/ocx" }, RunStatus: func(string) (*int, string, error) { return &zero, row.Input, nil }})
+		if changed, ok := recordedPortChanges[row.Input]; ok {
+			row.Line = changed
+		}
 		if got := Line(s); got != row.Line {
 			t.Errorf("%s: %q != %q", row.Input, got, row.Line)
 		}
@@ -106,13 +117,13 @@ func TestRealCLIWithTemporaryPATH(t *testing.T) {
 	} {
 		providerPath(t, "test \"$*\" = 'status --json' || exit 9\n"+c.body)
 		var out bytes.Buffer
-		if Run(context.Background(), &out) != 0 || !strings.Contains(out.String(), "\"mode\":\""+c.mode+"\"") || !strings.Contains(out.String(), c.reason) {
+		if Run(context.Background(), nil, &out, &bytes.Buffer{}) != 0 || !strings.Contains(out.String(), "\"mode\":\""+c.mode+"\"") || !strings.Contains(out.String(), c.reason) {
 			t.Fatal(out.String())
 		}
 	}
 	t.Setenv("PATH", t.TempDir())
 	var out bytes.Buffer
-	if Run(context.Background(), &out) != 0 || !strings.Contains(out.String(), "\"mode\":\"native\"") {
+	if Run(context.Background(), nil, &out, &bytes.Buffer{}) != 0 || !strings.Contains(out.String(), "\"mode\":\"native\"") {
 		t.Fatal(out.String())
 	}
 }
@@ -130,7 +141,7 @@ func TestRealResolverRetainsRelativePATH(t *testing.T) {
 	}
 	t.Setenv("PATH", "bin")
 	var out bytes.Buffer
-	if Run(context.Background(), &out) != 0 || !strings.Contains(out.String(), "\"ocxPath\":\"bin/ocx\"") || !strings.Contains(out.String(), "\"mode\":\"provider\"") {
+	if Run(context.Background(), nil, &out, &bytes.Buffer{}) != 0 || !strings.Contains(out.String(), "\"ocxPath\":\"bin/ocx\"") || !strings.Contains(out.String(), "\"mode\":\"provider\"") {
 		t.Fatal(out.String())
 	}
 }
@@ -145,7 +156,7 @@ func TestResolvedOcxWithEmptyPATH(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if Run(context.Background(), &out) != 0 || !strings.Contains(out.String(), "\"ocxPath\":\"ocx\"") || !strings.Contains(out.String(), "\"mode\":\"provider\"") {
+	if Run(context.Background(), nil, &out, &bytes.Buffer{}) != 0 || !strings.Contains(out.String(), "\"ocxPath\":\"ocx\"") || !strings.Contains(out.String(), "\"mode\":\"provider\"") {
 		t.Fatal(out.String())
 	}
 }
@@ -153,12 +164,12 @@ func TestResolvedOcxWithEmptyPATH(t *testing.T) {
 func TestStatusTimeoutAndBufferLimit(t *testing.T) {
 	path := providerPath(t, "while :; do :; done")
 	code, _, err := readStatus(context.Background(), path, 20*time.Millisecond)
-	if code != nil || err != nil {
+	if code != nil || err == nil || err.Error() != "ocx status timed out after 20ms" {
 		t.Fatalf("%v %v", code, err)
 	}
 	path = providerPath(t, "while :; do printf 'abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789'; done")
 	code, _, err = readStatus(context.Background(), path, time.Second)
-	if code != nil || err != nil {
+	if code != nil || err == nil || !strings.Contains(err.Error(), "output exceeded") {
 		t.Fatalf("overflow: %v %v", code, err)
 	}
 }

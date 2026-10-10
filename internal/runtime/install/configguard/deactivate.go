@@ -525,18 +525,29 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	if now == nil {
 		now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 	}
-	// Oracle parity: marker failure never gates uninstall, including early exits. The
+	// Oracle parity: a marker failure never gates uninstall, including early exits. The
 	// marker API itself refuses unreadable records rather than replacing their consent data.
-	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
 	// unsynced is the durability error of a record this command published: it is in place and kept, and the command reports
 	// it (CRW-1153) instead of a success the directory sync did not back.
 	var unsynced, recoveryDur error
 	durability := func() error { return errors.Join(recoveryDur, txDurability(unsynced)) }
 	// A deactivation that stops after such a record was published reports the uncertainty with the stop.
 	defer func() { err = txWithDurability(err, errors.Join(recoveryDur, unsynced)) }()
+	// One failure does gate: another CRW writer holding the marker lock past the wait (an enable's
+	// recorder on a stalled filesystem) means the opt-out was not recorded, and a disable that then
+	// reported success would leave self-healing on against the user's explicit choice (CRW-1150). It
+	// refuses instead, before it has changed anything, and running it again records the opt-out.
+	markOptedOut := func() error {
+		if err := MarkSelfHealOptedOut(deps.CodexHome, now()); errors.Is(err, errSelfHealMarkerBusy) {
+			return fmt.Errorf("the self-heal opt-out could not be recorded, so nothing was changed; run the disable again: %w", err)
+		}
+		return nil
+	}
 	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}, Recovered: []string{}}
 	noManifest := func() (*DeactivateResult, error) {
-		markOptedOut()
+		if err := markOptedOut(); err != nil {
+			return nil, err
+		}
 		r.NoManifest = true
 		return r, durability()
 	}
@@ -576,7 +587,9 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	// A manifest a completed deactivation released owns nothing any more: reverting from it again would turn off a flag
 	// or reset a key the user set since (CRW-1145).
 	released := func() (*DeactivateResult, error) {
-		markOptedOut()
+		if err := markOptedOut(); err != nil {
+			return nil, err
+		}
 		r.Released = true
 		return r, durability()
 	}
@@ -658,7 +671,9 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	// The opt-out is recorded only once this deactivation is going to do its work: a busy lock
 	// refuses the command before this line, and a refusal must not leave self-healing off for an
 	// uninstall that never ran (the commit-order rule: never record an effect that did not happen).
-	markOptedOut()
+	if err := markOptedOut(); err != nil {
+		return nil, err
+	}
 	if m.PostActivateHash != nil {
 		hash, err := hashOrNull(path)
 		if err != nil {

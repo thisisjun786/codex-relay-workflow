@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1130 (post-evaluation): the Delegation model starts from the CRW binding (DISPATCH-MANAGED-01 is applied before any dispatch of an independent lane; a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane) and the thread and subagent choice is scoped to unmanaged work; the dispatch-surfaces reference is read before every authorized dispatch. Oracle: pabcd/SKILL.md Delegation model and pabcd/references/dispatch-surfaces.md:25-31. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word, and separates the detector result from what the handler injects (the un-armed loop-arm mandate before the hint, the interview-entry policy, the goal-mode drop of an I hint and the P-to-interview promotion, the un-armed loop-arm mandate, the interview-entry policy, passive re-injection in an armed session).",
       "hunks": [
         {
           "line": 4,
@@ -82,6 +82,60 @@
           ]
         },
         {
+          "line": 27,
+          "old": [
+            "- **Hook hint (narrow):** `UserPromptSubmit` detects `interview` / `인터뷰`\n",
+            "  and other existing lexical phase hints and injects scoped advice only. Natural\n",
+            "  hints never enter or advance a phase. A line-anchored `orchestrate i` command\n",
+            "  instead takes the existing explicit-command parser path.\n"
+          ],
+          "new": [
+            "- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only. The\n",
+            "  detector (`DetectTrigger`) yields a phase hint only when one request clause names\n",
+            "  the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or `pabcd로` / `pabcd phase`)\n",
+            "  together with a request verb (`use`, `run`, `start`, `invoke`, `enter`, `apply`, or\n",
+            "  시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가). The phase is then picked by the\n",
+            "  first matching phase pattern, in this order: I (`interview`, `인터뷰`, `phase i`),\n",
+            "  P (`plan`, `phase p`, 계획), A (`audit`, `phase a`, 감사), B (`build`, `phase b`,\n",
+            "  구현), C (`check`, `phase c`, 검증). With no phase pattern, only a request naming\n",
+            "  `crw-pabcd` (in any form above) or `pabcd로` falls back to phase P; `pabcd phase`\n",
+            "  has no such fallback. So the detector finds a hint for `Use crw-pabcd`, `pabcd로\n",
+            "  시작해줘` and `Use crw-pabcd to start the interview` (P, P, I) and for `Start pabcd\n",
+            "  phase i` (I), and finds none for `Start pabcd phase`, a bare `인터뷰 먼저 해줘`,\n",
+            "  `interview me first` or `pabcd로 인터뷰 해줘` (no request verb or no phase pattern).\n",
+            "  What the hook injects is the handler's answer, which depends on the session. The\n",
+            "  handler applies these in order:\n",
+            "  1. Goal mode: while the session has an active goal, or the goals database cannot be\n",
+            "     read (fail closed), an I hint is dropped (the hook answers nothing), and a P hint\n",
+            "     is not promoted to the interview (step 3 then gives the plain P directive). This\n",
+            "     runs before the loop-arm check, so a dropped I hint never reaches the mandate.\n",
+            "  2. Loop-arm: in a session that has not armed PABCD, a clause with a loop mode\n",
+            "     (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` / `ipabcd` word (not the one\n",
+            "     inside `crw-pabcd`) plus an action word makes the hook answer the arming mandate\n",
+            "     (ORCH-MANDATE-01) instead of any phase hint, including a P hint.\n",
+            "  3. Phase hint: the phase directive plus the trigger-authority note. A P hint is\n",
+            "     delivered as the interview directive under the default interview-entry policy\n",
+            "     (`new-unit`: not once a cycle is running; `always` also inside a cycle; `off`\n",
+            "     never) unless step 1 applies.\n",
+            "  - Without a goal, in a fresh un-armed session: `pabcd로 시작해줘`, `pabcd로 인터뷰\n",
+            "    해줘`, `Start pabcd phase` and `Start pabcd phase i` get the mandate; `Use\n",
+            "    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the\n",
+            "    interview directive for both); `인터뷰 먼저 해줘` and `interview me first` get\n",
+            "    nothing.\n",
+            "  - With an active goal, in a fresh un-armed session: `Use crw-pabcd` gets the plain P\n",
+            "    directive (not the interview); `Use crw-pabcd to start the interview` and `Start\n",
+            "    pabcd phase i` get nothing (the I hint is dropped before the loop-arm check);\n",
+            "    `pabcd로 시작해줘`, `pabcd로 인터뷰 해줘` and `Start pabcd phase` still get the\n",
+            "    mandate; `인터뷰 먼저 해줘` and `interview me first` get nothing.\n",
+            "  - In a session that already armed PABCD, a prompt without any hint can still get the\n",
+            "    current phase directive or stage header re-injected, unless the transcript tail\n",
+            "    already carries the stage marker or shows context pressure; in phase I under an\n",
+            "    active goal nothing is re-injected.\n",
+            "  Natural hints never enter or advance a phase. A line-anchored `orchestrate i`\n",
+            "  command instead takes the existing explicit-command parser path.\n"
+          ]
+        },
+        {
           "line": 49,
           "old": [
             "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
@@ -109,12 +163,58 @@
           ]
         },
         {
-          "line": 84,
+          "line": 83,
           "old": [
+            "3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Never push to a remote without explicit user approval (DEV-GIT-PUSH-01, ESCALATE). When P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.\n",
             "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
           ],
           "new": [
-            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+            "3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Push only as `crw-dev` DEV-GIT-PUSH-01 defines. Where the repository's delivery path uses pull requests and P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.\n",
+            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (pushing follows `crw-dev` DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+          ]
+        },
+        {
+          "line": 127,
+          "old": [
+            "Choose the surface before dispatching. A **subagent** (`spawn_agent`) is a leaf\n"
+          ],
+          "new": [
+            "Choose the surface before dispatching, and start from the binding: before any\n",
+            "dispatch of an independent lane, apply\n",
+            "[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
+            "A Linear issue or DAG node (also one the relay holds no assignment for yet) is an\n",
+            "independent relay child started and resumed through `crw-run`, never a\n",
+            "`create_thread` lane, and the relay's duplicate-assignment and capacity refusals are\n",
+            "followed, not routed around by creating a thread by hand. An unresolved binding is\n",
+            "not permission to take the unmanaged route. The thread and subagent choice below is\n",
+            "for unmanaged work: standalone PABCD with no Linear issue and no CRW execution\n",
+            "binding, and bounded helper delegation inside any task.\n",
+            "\n",
+            "A **subagent** (`spawn_agent`) is a leaf\n"
+          ]
+        },
+        {
+          "line": 132,
+          "old": [
+            "checkout. Work needing its own branch, checkout or merge/CI lane is thread work,\n",
+            "one worktree thread per lane; a bounded slice of the tree you are already editing\n",
+            "is subagent work. Asking for parallel lane work is asking for those threads — the lanes are\n"
+          ],
+          "new": [
+            "checkout. For unmanaged work, work needing its own branch, checkout or merge/CI\n",
+            "lane is thread work, one worktree thread per lane; a bounded slice of the tree you are already editing\n",
+            "is subagent work. Asking for unmanaged parallel lane work is asking for those threads — the lanes are\n"
+          ]
+        },
+        {
+          "line": 138,
+          "old": [
+            "Before an authorized dispatch that is not obviously one or the other, read\n",
+            "[Dispatch surfaces](references/dispatch-surfaces.md).\n"
+          ],
+          "new": [
+            "Before every authorized dispatch, read [Dispatch surfaces](references/dispatch-surfaces.md)\n",
+            "(DISPATCH-MANAGED-01 first).\n"
           ]
         },
         {
@@ -142,7 +242,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch.",
       "hunks": [
         {
           "line": 141,
@@ -152,13 +252,137 @@
           "new": [
             "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
           ]
+        },
+        {
+          "line": 378,
+          "old": [
+            "   Report `outcome:created` and the actual `agentId`, then use native wait. Report\n"
+          ],
+          "new": [
+            "   Report `outcome:created` and the actual `agentId`, then use native wait. Created\n",
+            "   requires the spawn hook's issuance of the attempt, and the child's first message\n",
+            "   must carry this attempt's marker. The marker does not tie the child to the call:\n",
+            "   only the host's own result of the issued spawn call naming this `agentId` does, and\n",
+            "   a child the host cannot yet tie that way is recorded unverified and cannot complete\n",
+            "   an independent review until created is reported again. A child spawned while the hook was off is recorded only with\n",
+            "   `reconciliation` evidence, never deleted or respawned, and cannot satisfy\n",
+            "   independent review. Report\n"
+          ]
+        },
+        {
+          "line": 394,
+          "new": [
+            "   Before a `failed` or `task_failed` handoff of a recorded child, the command reads\n",
+            "   that child: an active child or a turn in progress refuses, and an end it cannot\n",
+            "   see returns `reconcile` with the child kept; stop the child, then report again.\n"
+          ]
+        },
+        {
+          "line": 402,
+          "new": [
+            "   A policy `stop` that leaves a recorded child marks its cleanup pending; once the\n",
+            "   child has ended, report `outcome:stopped` with its `agentId`,\n",
+            "   `executionState:stopped` and `reconciliation`. That only records the cleanup:\n",
+            "   the dispatch stays stopped and nothing is reopened or switched.\n"
+          ]
         }
       ]
     },
     {
       "file": "references/dispatch-surfaces.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable. CRW-1130: start the surface choice from the CRW binding (DISPATCH-MANAGED-01): a Linear issue or DAG node (also one with no assignment yet, whose first lane is the managed start) is an independent relay child through crw-run managed start/resume/dag-release, with the relay's duplicate-assignment and capacity refusals, a read-only projection instead of a second manifest, and relay delivery as the goal-free parent's wake; project parents use read-only and review helpers; standalone PABCD with no Linear issue and no CRW execution binding, and bounded helpers, keep the thread/subagent choice; an unresolved binding is not permission to go unmanaged; a bounded worktree worker's evidence is read in the tree the dispatch assigned. Oracle: pabcd/references/dispatch-surfaces.md:25-31,87,180,230. CRW-1130 (post-evaluation): the worker-evidence sentence states what the SubagentStop gate reads (the native cwd's .crw/evidence) and makes the assigned-tree reading conditional on a runtime that has the evidence-location change.",
       "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "surfaces. [Delegation](delegation.md) owns what a subagent packet contains once\n"
+          ],
+          "new": [
+            "surfaces for unmanaged work; a CRW-managed lane is chosen first by\n",
+            "[DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
+            "[Delegation](delegation.md) owns what a subagent packet contains once\n"
+          ]
+        },
+        {
+          "line": 7,
+          "new": [
+            "## DISPATCH-MANAGED-01 (STRICT) — start from the binding, not from the mechanism\n",
+            "\n",
+            "Before choosing a surface, find out what owns the work. Read the binding the task carries:\n",
+            "the task packet, the assignment record the relay holds for it, or the DAG node\n",
+            "([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).\n",
+            "\n",
+            "- **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it\n",
+            "  or not. An issue with no assignment yet is not unmanaged: its first independent lane is the\n",
+            "  managed start `crw-run` makes. An independent lane for it is an\n",
+            "  independent relay child, started and resumed through `crw-run`: the managed start, the DAG release\n",
+            "  and their bridge recovery, pair/profile, capacity and receipt rules. It is never a desktop\n",
+            "  `create_thread` lane. The relay refuses a second active or paused assignment of the same issue and\n",
+            "  a release past capacity; those answers are followed, not routed around by creating a thread by\n",
+            "  hand. A project parent uses read-only and review helpers only; the implementation of an issue is\n",
+            "  its independent relay child's, and that child may own bounded native helpers for its own task.\n",
+            "  The manifest of managed lanes is a read-only projection of the relay assignments and DAG records,\n",
+            "  not a second file to keep. A goal-free parent is resumed by relay delivery\n",
+            "  ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it\n",
+            "  checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))\n",
+            "  and yields only after that readiness is established, never by arming a wake of its own.\n",
+            "- **Unmanaged** — standalone PABCD with no Linear issue and no CRW execution binding, and bounded\n",
+            "  helper delegation inside any task. A Linear issue with no assignment yet is not this case. The\n",
+            "  rest of this file applies as written.\n",
+            "- **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is\n",
+            "  not permission to take the unmanaged route for an independent lane: resolve the binding, or\n",
+            "  report that it is unresolved and keep to bounded helpers meanwhile. Nothing is forced the other\n",
+            "  way either: a bounded helper or worktree worker needs no relay binding, and none is invented for it.\n",
+            "\n",
+            "A native helper's dispatch record is a local helper record. It is never an independent child's\n",
+            "assignment, a DAG acceptance or a relay receipt.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 31,
+          "old": [
+            "own goal or PABCD state. Different workers must use different worktrees.\n"
+          ],
+          "new": [
+            "own goal or PABCD state. Different workers must use different worktrees. The\n",
+            "SubagentStop gate reads `.crw/evidence` under the coordinator's native cwd, so a receipt\n",
+            "the worker writes under its assigned tree is not accepted there: have the worker write its\n",
+            "receipt under the native cwd's `.crw/evidence` and report that absolute path. Only where the\n",
+            "runtime in use reads the tree the dispatch assigned (the evidence-location change of the 10-10\n",
+            "review) is a receipt in the assigned tree accepted.\n"
+          ]
+        },
+        {
+          "line": 86,
+          "old": [
+            "Route by what the work needs to own, not by how parallel it is:\n"
+          ],
+          "new": [
+            "Route by what the work needs to own, not by how parallel it is. A CRW-bound issue or DAG\n",
+            "node is routed by [DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)\n",
+            "first; this list is for the rest:\n"
+          ]
+        },
+        {
+          "line": 114,
+          "old": [
+            "Creating a thread is user-visible, so it needs a user request. A request for\n"
+          ],
+          "new": [
+            "Creating a thread is user-visible, so it needs a user request (a managed lane is started\n",
+            "by the relay, not created as a thread by hand). A request for\n"
+          ]
+        },
+        {
+          "line": 128,
+          "old": [
+            "N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.\n"
+          ],
+          "new": [
+            "For unmanaged work, N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.\n"
+          ]
+        },
         {
           "line": 150,
           "old": [
@@ -166,6 +390,38 @@
           ],
           "new": [
             "[Lane dispatch](../../crw-loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ]
+        },
+        {
+          "line": 180,
+          "old": [
+            "Lane work outlives a turn, and nothing resumes a parent automatically. Stop-continuation\n",
+            "is bounded on purpose: it releases under context pressure and at the stagnation cap. A\n",
+            "parent that dispatches lanes, yields, and expects to wake up later has arranged nothing,\n",
+            "and every lane then sits finished and unmerged.\n"
+          ],
+          "new": [
+            "Lane work outlives a turn, and for unmanaged lanes nothing resumes a parent automatically.\n",
+            "Stop-continuation is bounded on purpose: it releases under context pressure and at the\n",
+            "stagnation cap. A parent that dispatches lanes, yields, and expects to wake up later has\n",
+            "arranged nothing, and every lane then sits finished and unmerged. In a managed run a\n",
+            "goal-free parent is resumed by relay delivery instead (DISPATCH-MANAGED-01): it verifies that\n",
+            "wake readiness and arranges no second wake or manifest.\n"
+          ]
+        },
+        {
+          "line": 230,
+          "old": [
+            "Independent task lanes are separate tasks, so nothing in the system knows two were handed the\n",
+            "same issue until their pull requests collide. One shared record makes that visible before\n",
+            "the branches diverge. Per lane: repository, lane id, task and host id, worktree, branch,\n"
+          ],
+          "new": [
+            "For unmanaged work, independent task lanes are separate tasks, so nothing in the system knows\n",
+            "two were handed the same issue until their pull requests collide. One shared record makes that\n",
+            "visible before the branches diverge. Managed lanes keep no such file: the relay refuses a\n",
+            "second active assignment of an issue, and their identity, checkout and status are read from\n",
+            "its assignment and DAG records. Per lane: repository, lane id, task and host id, worktree, branch,\n"
           ]
         },
         {
@@ -222,6 +478,21 @@
       ]
     },
     {
+      "file": "references/phase-audit.md",
+      "reason": "CRW-1116: name the reviewer's closing line VERDICT: GO-WITH-FIXES (blockers=N) as the form the observer records, with the attest auditResidual disposing of each blocker. The A>B attest names auditBlockers for the blockers of a recorded GO-WITH-FIXES (blockers=N) round.",
+      "hunks": [
+        {
+          "line": 3,
+          "old": [
+            "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
+          ],
+          "new": [
+            "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser; the reviewer's own closing line is `VERDICT: GO-WITH-FIXES (blockers=N)`, which the observer records as a near-pass with its count, and the attest's `auditBlockers` then gives each blocker its disposition, folded or rebutted, with the reason). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted); when the recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` it also requires `auditBlockers`, one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N (the gate checks that form, in any language, never the prose of `auditResidual`). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "references/phase-check.md",
       "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
       "hunks": [
@@ -238,7 +509,7 @@
     },
     {
       "file": "references/phase-control.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left.",
       "hunks": [
         {
           "line": 20,
@@ -250,12 +521,68 @@
           ]
         },
         {
+          "line": 61,
+          "old": [
+            "| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual` | FAIL never advances |\n"
+          ],
+          "new": [
+            "| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual`; a recorded `GO-WITH-FIXES (blockers=N)` adds `auditBlockers` | FAIL never advances |\n"
+          ]
+        },
+        {
+          "line": 72,
+          "old": [
+            "{\"from\":\"A\",\"to\":\"B\",\"did\":\"folded 2 blockers, rebutted 1\",\"auditOutput\":\"<pasted reviewer verdict tail>\",\"auditVerdict\":\"near-pass\",\"auditResidual\":\"GO-WITH-FIXES; blocker 1 folded, blocker 2 rebutted because ...\",\"workPhaseId\":\"wp1\"}\n"
+          ],
+          "new": [
+            "{\"from\":\"A\",\"to\":\"B\",\"did\":\"folded 1 blocker, rebutted 1\",\"auditOutput\":\"<pasted reviewer verdict tail>\",\"auditVerdict\":\"near-pass\",\"auditResidual\":\"GO-WITH-FIXES (blockers=2); blocker 1 folded, blocker 2 rebutted because ...\",\"auditBlockers\":[{\"blocker\":1,\"disposition\":\"folded\",\"reason\":\"<how the plan changed>\"},{\"blocker\":2,\"disposition\":\"rebutted\",\"reason\":\"<why it does not hold>\"}],\"workPhaseId\":\"wp1\"}\n"
+          ]
+        },
+        {
+          "line": 77,
+          "old": [
+            "Omit `workPhaseId` when no goalplan is bound, and `testReceiptPath` when the\n",
+            "session is unbound. Everything else is mandatory on that edge.\n"
+          ],
+          "new": [
+            "Omit `workPhaseId` when no goalplan is bound, `testReceiptPath` when the\n",
+            "session is unbound, and `auditBlockers` when the recorded reviewer verdict has no `blockers=N`. Everything else is mandatory on that edge.\n"
+          ]
+        },
+        {
+          "line": 90,
+          "old": [
+            "`A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires\n",
+            "`auditResidual`.\n"
+          ],
+          "new": [
+            "`A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires\n",
+            "`auditResidual`, and a round whose recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` also requires\n",
+            "`auditBlockers`: one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N.\n"
+          ]
+        },
+        {
           "line": 115,
           "old": [
             "Execution intent and HOTL activation belong to [crw-loop](../../loop/SKILL.md).\n"
           ],
           "new": [
             "Execution intent and HOTL activation belong to [crw-loop](../../crw-loop/SKILL.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-plan.md",
+      "reason": "CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88.",
+      "hunks": [
+        {
+          "line": 35,
+          "old": [
+            "1. **P — Plan**: Explore first (read real code, configs, docs). **Slice and order phases by dependency/architecture structure (STRICT, PHASE-SPLIT-01)** — the orthodox unlimited-time build order: foundations (schema, contracts, core data flow) → core capabilities → integration → hardening/polish — so each phase consumes the verified output of the previous one. Effort-based bucketing is FORBIDDEN: never split or order phases by estimated effort or payoff speed — no \"quick win vs heavy\" buckets, no impact/effort matrices, no time-boxed slices. Phase boundaries encode the system's build order, not the schedule. DB/API/UI/test work inside a phase are subtasks, not top-level phases by default, and every phase must still close with something independently verifiable (build, tests, or a demonstrable surface). Write a diff-level plan: file change map, scope boundary (IN/OUT), and testable accept criteria. For every planned conditional path (error handler, fallback, guard, gated branch, threshold behavior), the accept criteria name its **activation scenario** — how C will trigger it and what observable effect proves it ran (C-ACTIVATION-GROUNDING-01). For C2+ plans, including plan-only requests, begin with the loop-spec header required by [Plan output](plan-output.md). For open-ended optimization, include the divergence plan, deterministic selection rule, and telemetry schema; if the verifier only reports scalar outcome, instrumentation is B's first work item before candidates. Ground every decision in code you have read. No implementation yet. For broad or unfamiliar repos, include a compact tree, detected conventions, which existing logs/docs you will reuse, and the SoT sync target (SOT-SYNC-01): which general source-of-truth doc (architecture/INDEX docs, or equivalent) this unit will patch in C — or, if the repo has none, the plan recommends creating one (dev-scaffolding §2.1). **A dependency-ordered phase map may be publishable as a PR stack (`DEV-STACK-01`).** When the unit will produce dependent branches too large to review as one diff, P decides whether to stack and records it. Rules: `crw-dev` `../../dev/references/stacked-prs.md`.\n"
+          ],
+          "new": [
+            "1. **P — Plan**: Explore first (read real code, configs, docs). **Slice and order phases by dependency/architecture structure (STRICT, PHASE-SPLIT-01)** — the orthodox unlimited-time build order: foundations (schema, contracts, core data flow) → core capabilities → integration → hardening/polish — so each phase consumes the verified output of the previous one. Effort-based bucketing is FORBIDDEN: never split or order phases by estimated effort or payoff speed — no \"quick win vs heavy\" buckets, no impact/effort matrices, no time-boxed slices. Phase boundaries encode the system's build order, not the schedule. DB/API/UI/test work inside a phase are subtasks, not top-level phases by default, and every phase must still close with something independently verifiable (build, tests, or a demonstrable surface). Write a diff-level plan: file change map, scope boundary (IN/OUT), and testable accept criteria. For every planned conditional path (error handler, fallback, guard, gated branch, threshold behavior), the accept criteria name its **activation scenario** — how C will trigger it and what observable effect proves it ran (C-ACTIVATION-GROUNDING-01). For C2+ plans, including plan-only requests, begin with the loop-spec header required by [Plan output](plan-output.md). For open-ended optimization, include the divergence plan, deterministic selection rule, and telemetry schema; if the verifier only reports scalar outcome, instrumentation is B's first work item before candidates. Ground every decision in code you have read. No implementation yet. For broad or unfamiliar repos, include a compact tree, detected conventions, which existing logs/docs you will reuse, and the SoT sync target (SOT-SYNC-01): which general source-of-truth doc (architecture/INDEX docs, or equivalent) this unit will patch in C — or, if the repo has none, the plan recommends creating one (dev-scaffolding §2.1). **A dependency-ordered phase map may be publishable as a PR stack where the repository's delivery path uses pull requests (`DEV-STACK-01`).** When the unit will produce dependent branches too large to review as one diff, P decides whether to stack and records it; CRW internal work is delivered as a task branch to the integrator and is not stacked. Rules: `crw-dev` `../../dev/references/stacked-prs.md`.\n"
           ]
         }
       ]

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -27,6 +29,14 @@ const featureUsage = "Usage:\n" +
 	"  crw install features status       show declared feature-flag state\n\n" +
 	"  --help / -h / help in any argument position prints this text and writes nothing.\n" +
 	"  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable reverts.\n"
+
+// featureEvidenceDeadline is the one deadline of the optional evidence recording after an enable
+// (CRW-1150). A variable only so a test can shorten it.
+var featureEvidenceDeadline = 8 * time.Second
+
+// featureEvidenceWaitDelay bounds how long a recording probe's output may be held open after it
+// exited or was killed.
+const featureEvidenceWaitDelay = 2 * time.Second
 
 // This surface keeps the oracle's text and exit codes, outside the installer's JSON verbs.
 func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stderr io.Writer) int {
@@ -59,6 +69,14 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 			// Explicit enable resumes healing; the optional marker never gates activation. A result that comes with an error
 			// is in place and recorded but not known to be durable (CRW-1153); it is shown, and the error fails the command.
 			_ = configguard.ClearSelfHealOptOut(home)
+			// The explicit command's verified listing lets SessionStart skip repeating it (CRW-1150).
+			// Failing to record it never fails the enable: the hook measures instead.
+			// The recording shares one short deadline: it is optional, so an enable that has already
+			// activated is never held by a codex that stops answering.
+			cwd, _ := os.Getwd()
+			evidenceCtx, endEvidence := context.WithTimeout(ctx, featureEvidenceDeadline)
+			_ = configguard.RecordSelfHealEvidence(configguard.RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: featureBoundedRunner(evidenceCtx, env.With("CODEX_HOME", home)), Ctx: evidenceCtx})
+			endEvidence()
 			renderFeatureEnable(stdout, stderr, m)
 		}
 	case "disable":
@@ -261,6 +279,17 @@ func (w *featureCapture) Write(p []byte) (int, error) {
 }
 
 func featureRunner(ctx context.Context, env scope.Env) configguard.CodexRunner {
+	return featureRunnerWith(ctx, env, false)
+}
+
+// featureBoundedRunner is featureRunner for a call that must end with its context: the child leads
+// its own process group, which a cancellation kills whole, and the output wait ends shortly after,
+// so a descendant that keeps the pipe open cannot hold the caller (the SessionStart probe's rule).
+func featureBoundedRunner(ctx context.Context, env scope.Env) configguard.CodexRunner {
+	return featureRunnerWith(ctx, env, true)
+}
+
+func featureRunnerWith(ctx context.Context, env scope.Env, bounded bool) configguard.CodexRunner {
 	return func(args []string) configguard.CodexRunResult {
 		file, err := featureBinary(env)
 		if err != nil {
@@ -272,9 +301,15 @@ func featureRunner(ctx context.Context, env scope.Env) configguard.CodexRunner {
 		out, errOut := featureCapture{budget: &budget}, featureCapture{budget: &budget}
 		cmd := exec.CommandContext(run, file, args...)
 		cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, &errOut
+		if bounded {
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+			cmd.WaitDelay = featureEvidenceWaitDelay
+		}
 		err = cmd.Run()
 		result := configguard.CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
-		if !budget.overflow && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
+		// A probe that exited while a descendant still held its output open may have a cut-short answer.
+		if !budget.overflow && !errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			result.ExitCode = cmd.ProcessState.ExitCode()
 		}
 		if cmd.ProcessState == nil && result.Stderr == "" && err != nil {
