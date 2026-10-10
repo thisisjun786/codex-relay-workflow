@@ -1156,3 +1156,56 @@ func TestSelfHealEvidenceFailedRecordingPastTheDeadlineStillRetiresTheLegacyCach
 		})
 	}
 }
+
+// CRW-1169 round 5: with the marker lock free, a filesystem that stalls on the drop's own write does
+// not hold the caller past a deadline that was still running when the drop began: the call returns
+// at the deadline, and the drop, left running, still retires the legacy cache once the write goes on.
+func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheRetirementStalls(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	path := selfHealReportWriteConfig(t, home)
+	cwd := selfHealEvidenceCwd(t, home)
+	selfHealReportWriteMarker(t, home, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
+		selfHealReportMarkerMtimeMs(t, path)+"}\n")
+	entered, done, release := stallSelfHealPublication(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	run := (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+	failing := func(args []string) CodexRunResult {
+		if len(args) > 0 && args[0] == "features" {
+			return CodexRunResult{ExitCode: 1}
+		}
+		return run(args)
+	}
+	returned := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		returned <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: failing, Ctx: ctx})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the failed recording never reached the marker write, so the test did not stall it")
+	}
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatalf("the stalled drop changed the command's result: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed > 350*time.Millisecond {
+			t.Fatalf("the recording returned after %v, past its 200ms deadline plus the scheduling margin", elapsed)
+		}
+	case <-time.After(time.Second):
+		release()
+		t.Fatal("the failed recording waited on a stalled retirement past its 200ms deadline")
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stalled write never finished after it was released")
+	}
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil || (marker.AllEnabled != nil && *marker.AllEnabled) {
+		t.Fatalf("the drop left running did not retire the legacy cache: %+v %v", marker, err)
+	}
+}

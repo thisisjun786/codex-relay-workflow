@@ -373,24 +373,25 @@ func updateSelfHealMarkerWithin(home string, wait time.Duration, requireLock boo
 // mtime cache no longer describes them either: it is retired too (selfHealRetireLegacyCache), and a
 // marker with neither is left as it is.
 //
-// The deadline bounds how long the caller waits for the drop, not whether it retires what the
-// failed recording left behind (CRW-1169). The drop first tries the marker lock once, without
-// waiting: when it is free, the older record is removed and the oracle's mtime cache retired, and
-// the lock released, before the call returns, whether or not ctx has ended (a slow codex may have
-// used the time up), as the synchronous drop did. These are a few local file operations; the
-// explicit command exits right after the call, so the retirement is never left to a goroutine the
-// exiting process would kill, and a legacy-only allEnabled cache cannot vouch again for flags the
-// command just changed. Only when another writer holds the lock does the drop wait for it, in its
-// own goroutine, and the call returns nil the moment ctx ends, with no further wait: a lock held past
-// the deadline cannot keep the explicit command past it. That waiting drop is then abandoned: it
-// finishes only if the process lives to see the lock free (under the lock and from the marker it
-// reads there, so it never overwrites an opt-out), and it ends without writing when the separate
-// marker-lock wait (selfHealMarkerLockWait) runs out or an I/O step fails. It is not retried within
-// the command; the next drop or publication retires the cache. nil ctx means no deadline.
+// The deadline bounds how long the caller waits for the drop (CRW-1169). With ctx still running, the
+// whole drop runs in its own goroutine and the caller waits for it until ctx ends. It first tries the
+// marker lock once, without waiting: when the lock is free, the older record is removed, the oracle's
+// mtime cache retired and the lock released; these are a few local file operations that finish well
+// before the deadline, so the call returns after them and the explicit command, which exits right
+// after the call, cannot lose the retirement to an unfinished goroutine. Only when another writer
+// holds the lock does the goroutine go on to wait for it. Either way, a lock held past the deadline or
+// a filesystem that stalls past it does not hold the caller: the call returns nil the moment ctx ends,
+// with no further wait, and the drop is abandoned. It finishes only if the process lives long enough
+// (under the lock and from the marker it reads there, so it never overwrites an opt-out), it ends
+// without writing when the separate marker-lock wait (selfHealMarkerLockWait) runs out or an I/O step
+// fails, and it is not retried within the command; the next drop or publication retires the cache.
+//
+// When ctx has already ended before the drop begins (a slow codex used the time up), there is no
+// deadline left to wait within, yet the command changed the flags, so a legacy-only allEnabled cache
+// must not vouch for them again: the one non-blocking try runs before the call returns, as the
+// synchronous drop did, and only a held lock leaves the drop to an abandoned goroutine. nil ctx means
+// no deadline.
 func dropSelfHealEvidence(ctx context.Context, home string) error {
-	if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
-		return err
-	}
 	update := func() (*SelfHealMarker, error) {
 		marker, err := ReadSelfHealMarkerFile(home)
 		if err != nil || marker == nil {
@@ -403,14 +404,35 @@ func dropSelfHealEvidence(ctx context.Context, home string) error {
 		selfHealRetireLegacyCache(marker)
 		return marker, nil
 	}
-	if ctx == nil {
-		return updateSelfHealMarker(home, false, update)
+	// try is the drop without waiting for the lock; wait is the drop that waits for it.
+	try := func() error {
+		if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
+			return err
+		}
+		return updateSelfHealMarkerWithin(home, 0, false, update)
 	}
-	if err := updateSelfHealMarkerWithin(home, 0, false, update); !errors.Is(err, errSelfHealMarkerBusy) {
-		return err
+	wait := func() error { return updateSelfHealMarker(home, false, update) }
+	switch {
+	case ctx == nil:
+		if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
+			return err
+		}
+		return wait()
+	case ctx.Err() != nil:
+		if err := try(); !errors.Is(err, errSelfHealMarkerBusy) {
+			return err
+		}
+		go func() { _ = wait() }()
+		return nil
 	}
 	dropped := make(chan error, 1)
-	go func() { dropped <- updateSelfHealMarker(home, false, update) }()
+	go func() {
+		err := try()
+		if errors.Is(err, errSelfHealMarkerBusy) {
+			err = wait()
+		}
+		dropped <- err
+	}()
 	select {
 	case err := <-dropped:
 		return err
