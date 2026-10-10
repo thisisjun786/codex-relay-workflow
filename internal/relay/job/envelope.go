@@ -21,7 +21,9 @@ func blockEnvelope(reason string) string {
 // os.File.Write on fd 1/2 turns EPIPE into a fatal runtime SIGPIPE. A direct
 // syscall keeps it an ordinary error, as Node's runHook stdout catch requires,
 // without changing the process's signal policy or any other component's output.
-func writeHookOutput(out io.Writer, text string) {
+// The error is returned: a completion is stamped only after its text was written
+// in full (CRW-1092).
+func writeHookOutput(out io.Writer, text string) error {
 	if f, ok := out.(*os.File); ok && f.Fd() <= 2 {
 		body := []byte(text)
 		for len(body) > 0 {
@@ -32,11 +34,15 @@ func writeHookOutput(out io.Writer, text string) {
 			if err == syscall.EINTR {
 				continue
 			}
-			if err != nil || n == 0 {
-				return
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return io.ErrShortWrite
 			}
 		}
-		return
+		return nil
 	}
-	_, _ = io.WriteString(out, text)
+	_, err := io.WriteString(out, text)
+	return err
 }
