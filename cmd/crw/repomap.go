@@ -94,6 +94,12 @@ type mapDeps struct {
 	run    func(string, []string, bool) (int, error)
 	exists func(string) bool
 	remove func(string) error
+	// isFile reports whether path is a regular file (after links); nil means exists. The completion marker must be a file: a
+	// directory at its path is not a marker (CRW-1162).
+	isFile func(string) bool
+	// removeMarker removes a stale marker: nonrecursively, and only a file or a link; any other thing at the marker path is an
+	// error, never deleted (CRW-1162). Nil means the stale marker is not removed (tests with fakes).
+	removeMarker func(path string) error
 	// mark writes the venv's completion marker atomically; it is called only after pip has succeeded (CRW-1162). Nil means
 	// the marker is not written (tests with fakes that do not care).
 	mark func(path string) error
@@ -194,22 +200,29 @@ var repoMapLockPoll = 100 * time.Millisecond
 // bootstrap to finish until ctx ends. The lock is held on the venvs directory itself, which a failed bootstrap never removes
 // (it removes the repomap directory inside), so the lock leaves no file of its own behind.
 func repoMapBootstrapLock(ctx context.Context, venvs string, stderr io.Writer) (func(), error) {
+	unlock, _, err := repoMapBootstrapLockFile(ctx, venvs, stderr)
+	return unlock, err
+}
+
+// repoMapBootstrapLockFile is repoMapBootstrapLock that also returns the locked file, which a child process can inherit to keep
+// the lock held after crw dies (a flock belongs to the open file description, which a child's copy of the descriptor shares).
+func repoMapBootstrapLockFile(ctx context.Context, venvs string, stderr io.Writer) (func(), *os.File, error) {
 	if err := os.MkdirAll(venvs, 0o700); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	f, err := os.Open(venvs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	waited := false
 	for {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
-			return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+			return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, f, nil
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			_ = f.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		if !waited {
 			waited = true
@@ -218,7 +231,7 @@ func repoMapBootstrapLock(ctx context.Context, venvs string, stderr io.Writer) (
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(repoMapLockPoll):
 		}
 	}
@@ -279,12 +292,43 @@ func writeRepoMapMarkerWith(path string, ops markerOps) error {
 // repoMapVenvReady is the readiness verdict: the interpreter exists and the bootstrap left its completion marker. An interpreter
 // alone is what a killed bootstrap or a failed venv leaves behind (CRW-1162).
 func repoMapVenvReady(p mapPaths, d mapDeps) bool {
-	return d.exists(p.python) && d.exists(p.marker)
+	isFile := d.isFile
+	if isFile == nil {
+		isFile = d.exists
+	}
+	return d.exists(p.python) && isFile(p.marker)
+}
+
+// removeRepoMapMarker removes a stale marker without recursion. A marker is a file (or a link to one); a directory or any other
+// thing at the marker path may hold content crw did not create, so it is refused and left alone (CRW-1162).
+func removeRepoMapMarker(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("%s is not a marker file (%s); not removing it", path, info.Mode().Type())
+	}
+	return os.Remove(path)
 }
 
 func runRepoMap(c invocation) int {
+	// held is the bootstrap lock's file while this process holds it. The venv and pip commands inherit it (as file descriptor 3),
+	// so the lock stays held for as long as such a child lives even when crw itself is killed: a retry cannot start building over
+	// a venv an orphaned installer is still writing (CRW-1162). The map run itself starts after the unlock and inherits nothing.
+	var held *os.File
 	d := mapDeps{
-		lock: func(dir string) (func(), error) { return repoMapBootstrapLock(c.ctx, dir, c.stderr) },
+		lock: func(dir string) (func(), error) {
+			unlock, f, err := repoMapBootstrapLockFile(c.ctx, dir, c.stderr)
+			if err != nil {
+				return nil, err
+			}
+			held = f
+			return func() { held = nil; unlock() }, nil
+		},
 		run: func(command string, args []string, quiet bool) (int, error) {
 			ctx := c.ctx
 			if quiet {
@@ -299,6 +343,9 @@ func runRepoMap(c invocation) int {
 			}
 			if !quiet {
 				cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, c.stdout, c.stderr
+				if held != nil {
+					cmd.ExtraFiles = []*os.File{held}
+				}
 			}
 			err := cmd.Run()
 			if cmd.ProcessState == nil {
@@ -307,7 +354,9 @@ func runRepoMap(c invocation) int {
 			return cmd.ProcessState.ExitCode(), err
 		},
 		exists:         func(p string) bool { _, err := os.Stat(p); return err == nil },
+		isFile:         regularFile,
 		remove:         os.RemoveAll,
+		removeMarker:   removeRepoMapMarker,
 		mark:           writeRepoMapMarker,
 		installedSkill: installedRepoMapDir,
 	}
@@ -371,8 +420,8 @@ func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exi
 	}
 	// A marker without its interpreter is stale; it goes before the venv is built again, or a kill during the build would leave
 	// an interpreter that looks ready.
-	if d.exists(p.marker) {
-		if err := d.remove(p.marker); err != nil {
+	if d.exists(p.marker) && d.removeMarker != nil {
+		if err := d.removeMarker(p.marker); err != nil {
 			fmt.Fprintln(stderr, "crw map:", err)
 			return false, 1
 		}

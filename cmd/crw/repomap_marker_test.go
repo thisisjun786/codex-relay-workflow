@@ -152,6 +152,105 @@ func (h *fakeMapHost) killDuring(venv, pip string) {
 	_ = os.Remove(h.log)
 }
 
+// killLauncherOnly is killDuring for the case where only the crw process dies: the fake venv or pip it started is left running
+// as an orphan (it is in the launcher's process group, which the cleanup kills). It returns when the fake reached its hang point
+// and crw is gone.
+func (h *fakeMapHost) killLauncherOnly(venv, pip string) int {
+	h.t.Helper()
+	h.set(venv, pip, true)
+	_ = os.Remove(h.signal)
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), repoMapKillHelperEnv+"=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		h.t.Fatal(err)
+	}
+	pgid := cmd.Process.Pid
+	h.t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+	reaped := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(reaped) }()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(h.signal); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatal("the bootstrap never reached the fake's hang point")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = syscall.Kill(pgid, syscall.SIGKILL)
+	<-reaped
+	_ = os.Remove(h.log)
+	return pgid
+}
+
+// Killing only the crw process leaves the installer it started running. The bootstrap lock must stay held for as long as that
+// installer lives, or a retry would build over a venv that is still being written (CRW-1162).
+func TestRepoMapOrphanedInstallerKeepsTheBootstrapLock(t *testing.T) {
+	for _, c := range []struct{ name, venv, pip string }{
+		{"orphan-venv", "hang", ""},
+		{"orphan-pip", "", "hang"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			poll := repoMapLockPoll
+			repoMapLockPoll = 10 * time.Millisecond
+			t.Cleanup(func() { repoMapLockPoll = poll })
+			h := newFakeMapHost(t)
+			orphan := h.killLauncherOnly(c.venv, c.pip)
+
+			h.set("", "", true)
+			ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+			defer cancel()
+			var stderr strings.Builder
+			runRepoMap(invocation{ctx: ctx, args: []string{"."}, stdout: io.Discard, stderr: &stderr})
+			if !strings.Contains(stderr.String(), "waiting for another venv bootstrap") || countCalls(h.calls(), "-m venv") != 0 || countCalls(h.calls(), "-m pip") != 0 {
+				t.Fatalf("a retry built over a venv whose installer is still running: stderr %q calls %v", stderr.String(), h.calls())
+			}
+
+			_ = syscall.Kill(-orphan, syscall.SIGKILL)
+			_ = os.Remove(h.log)
+			code, stdout, stderr2, calls := h.run()
+			if code != 0 || !strings.Contains(stdout, "venv ran") || countCalls(calls, "-m pip install") != 1 {
+				t.Fatalf("after the installer ended the retry did not rebuild once: exit %d stdout %q stderr %q calls %v", code, stdout, stderr2, calls)
+			}
+		})
+	}
+}
+
+// A stale marker path that is not a marker file (a directory with contents the attempt did not create) is never deleted: the
+// bootstrap refuses instead of removing it recursively (CRW-1162).
+func TestRepoMapMarkerPathThatIsADirectoryIsNeverDeleted(t *testing.T) {
+	h := newFakeMapHost(t)
+	marker := filepath.Join(h.venv, repoMapVenvMarker)
+	precious := filepath.Join(marker, "sub", "precious")
+	if err := os.MkdirAll(filepath.Dir(precious), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(precious, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.set("fail", "", true)
+	code, _, stderr, calls := h.run()
+	if _, err := os.Stat(precious); err != nil {
+		t.Fatalf("the contents of the marker-path directory were deleted: %v (exit %d stderr %q)", err, code, stderr)
+	}
+	if code == 0 || countCalls(calls, "-m venv") != 0 {
+		t.Fatalf("the bootstrap went on past a marker path it could not clear: exit %d stderr %q calls %v", code, stderr, calls)
+	}
+	// With the interpreter present the directory is not a marker either: the venv is not ready and not used.
+	if err := os.MkdirAll(filepath.Join(h.venv, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.venv, "bin", "python3"), []byte("#!/bin/sh\necho venv ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.set("", "", false)
+	if code, stdout, _, _ := h.run(); code != 0 || strings.Contains(stdout, "venv ran") {
+		t.Fatalf("a directory at the marker path made the venv ready: exit %d stdout %q", code, stdout)
+	}
+}
+
 func countCalls(calls []string, part string) int {
 	n := 0
 	for _, c := range calls {
@@ -423,7 +522,7 @@ func TestRepoMapStaleMarkerIsRemovedBeforeTheRebuild(t *testing.T) {
 	var order []string
 	d := mapDeps{
 		exists: func(path string) bool { return present[path] },
-		remove: func(path string) error {
+		removeMarker: func(path string) error {
 			order = append(order, "remove "+filepath.Base(path))
 			delete(present, path)
 			return nil
@@ -463,3 +562,44 @@ func (f *tracedMarkerFile) WriteString(s string) (int, error) {
 }
 func (f *tracedMarkerFile) Sync() error  { f.note("sync"); return f.markerFile.Sync() }
 func (f *tracedMarkerFile) Close() error { f.note("close"); return f.markerFile.Close() }
+
+// removeRepoMapMarker removes a file or a link, accepts an absent path, and refuses a directory (empty or not) and anything else
+// that is not a marker file (CRW-1162).
+func TestRemoveRepoMapMarkerIsNonRecursiveAndTypeChecked(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	full := filepath.Join(dir, "full")
+	if err := os.MkdirAll(filepath.Join(full, "a"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty")
+	if err := os.Mkdir(empty, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{link, file, filepath.Join(dir, "absent")} {
+		if err := removeRepoMapMarker(path); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+	}
+	if _, err := os.Lstat(file); !os.IsNotExist(err) {
+		t.Fatalf("the marker file was not removed: %v", err)
+	}
+	for _, path := range []string{full, empty} {
+		if err := removeRepoMapMarker(path); err == nil {
+			t.Fatalf("%s: a directory was removed or accepted", path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s was deleted: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(full, "a")); err != nil {
+		t.Fatalf("the directory contents were deleted: %v", err)
+	}
+}
