@@ -113,12 +113,22 @@ func auditPkgBlobRun(ctx context.Context, repo, head, path string, w io.Writer) 
 	return nil
 }
 
+// auditPkgGoListCommand is the go list command, started with the tool roots the configuration
+// names and the caller's environment otherwise: a root nothing configured passes nothing.
+func auditPkgGoListCommand(ctx context.Context, repo, pattern string, tools crwconfig.ToolRoots) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "go", "list", "-f", "{{.Dir}}", pattern)
+	cmd.Dir = repo
+	if entries := tools.Env(); len(entries) > 0 {
+		cmd.Env = tools.Apply(os.Environ())
+	}
+	return cmd
+}
+
 // auditPkgGoListRun expands a package pattern. It asks go list for each package's directory
 // rather than its import path, because a package is addressed here the way git addresses it:
 // by its path inside the checkout.
-func auditPkgGoListRun(ctx context.Context, repo, pattern string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "go", "list", "-f", "{{.Dir}}", pattern)
-	cmd.Dir = repo
+func auditPkgGoListRun(ctx context.Context, repo, pattern string, tools crwconfig.ToolRoots) ([]byte, error) {
+	cmd := auditPkgGoListCommand(ctx, repo, pattern, tools)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut

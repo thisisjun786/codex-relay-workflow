@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // coreConfigUsage is what crw manage config prints for -h.
@@ -58,6 +59,8 @@ type Config struct {
 	StateDir         string            `json:"state_dir"`
 	Settings         coreSettingsBlock `json:"settings"`
 
+	tools  crwconfig.ToolRoots        // the build roots the file names; a root it leaves out is empty
+	logDir string                     // log_root when the file names it, else empty: logs stay in StateDir
 	path   string                     // the configuration file's path
 	source crwconfig.Source           // where that path came from: flag, env or default
 	raw    map[string]json.RawMessage // the manage object verbatim, for Section
@@ -205,7 +208,36 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 	if cfg.Bridge.Binary != "" && coreFieldPresent(manage["bridge"], "binary") {
 		cfg.sources["bridge.binary"] = coreSourceConfig
 	}
+	if err := coreApplyStorage(e, file, cfg); err != nil {
+		return coreConfigState{cfg: cfg, err: fmt.Errorf("%s: %v", path, err)}
+	}
 	return coreConfigState{cfg: cfg}
+}
+
+// coreApplyStorage applies the storage roots the configuration file names (CRW-958). A root the
+// file names that fails a structural check refuses the configuration, so no command starts a tool
+// or the relay against it. The tool roots are kept for the commands that start go; log_root moves
+// the pump log; relay_state, when manage.relay.state names nothing, selects the relay's scope
+// directory below it, so the store, its WAL and its sidecars move together. A root the file does
+// not name changes nothing: the relay chooses its own state and the log stays in the state directory.
+func coreApplyStorage(e *Env, file *crwconfig.File, cfg *Config) error {
+	if err := file.Refusal(e.Getenv, crwconfig.RootBuildCache, crwconfig.RootModuleCache, crwconfig.RootBuildWork, crwconfig.RootLog, crwconfig.RootRelayState); err != nil {
+		return err
+	}
+	roots := file.Roots()
+	cfg.tools = file.ToolRoots()
+	if root := roots[crwconfig.RootLog]; root.Source == crwconfig.SourceConfig {
+		cfg.logDir = root.Path
+	}
+	if root := roots[crwconfig.RootRelayState]; root.Source == crwconfig.SourceConfig && cfg.Relay.State == "" {
+		scope, err := store.SocketScope(cfg.Relay.Socket)
+		if err != nil {
+			return fmt.Errorf("relay_state: the scope of %s: %v", cfg.Relay.Socket, err)
+		}
+		cfg.Relay.State = crwconfig.JoinRoot(root.Path, scope)
+		cfg.sources["relay.state"] = coreSourceConfig
+	}
+	return nil
 }
 
 // coreKeyPresent reports whether a manage key carries a value: a key that is absent,

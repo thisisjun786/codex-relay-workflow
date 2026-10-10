@@ -40,7 +40,7 @@ func LoadToolRoots(getenv func(string) string, flagPath string) (ToolRoots, erro
 	if tools == (ToolRoots{}) {
 		return tools, nil
 	}
-	if err := Check(file, getenv, Probe{Only: toolRootNames}).Refusal(); err != nil {
+	if err := file.Refusal(getenv, toolRootNames...); err != nil {
 		return ToolRoots{}, err
 	}
 	return tools, nil

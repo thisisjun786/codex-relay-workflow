@@ -65,6 +65,10 @@ type Probe struct {
 	SocketLimit int
 	// Only limits the check to these roots; empty checks every root.
 	Only []string
+	// ConfiguredOnly limits the check to roots whose path the configuration file names, so a
+	// default placement is never refused for a fault the host did not choose. The split keys of
+	// relay_state are read either way.
+	ConfiguredOnly bool
 }
 
 // RootStatus is what the check saw of one root.
@@ -173,6 +177,12 @@ func Check(file *File, getenv func(string) string, probe Probe) Report {
 			continue
 		}
 		root := file.roots[name]
+		if probe.ConfiguredOnly && root.Source != SourceConfig {
+			if name == RootRelayState {
+				checkRelayKeys(file, add)
+			}
+			continue
+		}
 		status := RootStatus{Name: name, Path: root.Path, Source: root.Source, Set: root.Set()}
 		observed := observedPlacement(name, defaults[name], getenv)
 		if !root.Set() {
@@ -290,11 +300,7 @@ func checkSocket(name, path string, limit int, add func(Level, string, string, s
 // store in the root has a WAL or sidecar that lives in another directory, and an environment
 // variable that names one store directory is reported as taking the place of the configuration.
 func checkRelay(file *File, path string, getenv func(string) string, add func(Level, string, string, string, ...any)) {
-	for _, key := range splitKeys {
-		if value, ok := file.paths[key]; ok {
-			add(LevelError, RootRelayState, CheckStateSplit, "paths.%s=%q points part of the relay state apart; the store, its WAL and its sidecars are one bundle moved only by paths.%s", key, value, RootRelayState)
-		}
-	}
+	checkRelayKeys(file, add)
 	if value := getenv("CODEX_SESSION_RELAY_STATE"); value != "" && file.roots[RootRelayState].Source == SourceConfig {
 		add(LevelWarning, RootRelayState, CheckDrift, "CODEX_SESSION_RELAY_STATE=%s names the store directory and takes the place of paths.%s while it is set", value, RootRelayState)
 	}
@@ -327,6 +333,22 @@ func checkRelay(file *File, path string, getenv func(string) string, add func(Le
 			}
 		}
 	}
+}
+
+// checkRelayKeys refuses a paths key that points a part of the relay's state apart.
+func checkRelayKeys(file *File, add func(Level, string, string, string, ...any)) {
+	for _, key := range splitKeys {
+		if value, ok := file.paths[key]; ok {
+			add(LevelError, RootRelayState, CheckStateSplit, "paths.%s=%q points part of the relay state apart; the store, its WAL and its sidecars are one bundle moved only by paths.%s", key, value, RootRelayState)
+		}
+	}
+}
+
+// Refusal checks the roots this file's paths section names, limited to only (every root when none
+// is given), and returns the structural faults as one error; warnings never refuse. A product
+// command calls it for the roots it is about to use, and starts nothing against a root it cannot.
+func (f *File) Refusal(getenv func(string) string, only ...string) error {
+	return Check(f, getenv, Probe{Only: only, ConfiguredOnly: true}).Refusal()
 }
 
 // checkShared warns when two uses name one directory.
