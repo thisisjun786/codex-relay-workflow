@@ -686,6 +686,11 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	// let a module tree stand without the go.sum check.
 	sealed := opts.Tools
 	sealed.ModuleCache = ""
+	// go makes its work directory directly below GOTMPDIR and fails when it is missing, so a
+	// configured build_work the validator accepted as creatable is made here, before any step
+	if err := sealed.Prepare(); err != nil {
+		return nil, err
+	}
 	env = sealed.Apply(env)
 	env = append(env, opts.Env...)
 	return env, nil

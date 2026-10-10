@@ -4,6 +4,7 @@ package ci
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,5 +118,48 @@ func TestValidateStorage_a_module_cache_that_is_a_file_is_refused(t *testing.T) 
 	got := goCheck(t, r.root, []string{"GITHUB_EVENT_NAME=", "BLOB_RANGE_BASE=", storageConfig(t, "module_cache", plain)}, "validate")
 	if got.code != 1 || !strings.Contains(got.stderr, "module_cache") || !strings.Contains(got.stderr, crwconfig.CheckNotDirectory) {
 		t.Errorf("module cache that is a file: %+v", got)
+	}
+}
+
+// CRW-958: a configured build_work that does not exist yet passes the storage check, and the step that
+// is about to start go makes it: go makes its work directory directly below GOTMPDIR and fails when
+// that directory is missing. A real go build in the sealed environment succeeds with it.
+func TestLocalStorage_a_missing_build_work_is_made_and_go_builds_with_it(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go command on PATH")
+	}
+	temp := t.TempDir()
+	work := filepath.Join(t.TempDir(), "disk", "gotmp")
+	cache := filepath.Join(t.TempDir(), "disk", "gocache")
+	tools, err := crwconfig.LoadToolRoots(func(name string) string {
+		if name == "CRW_CONFIG" {
+			return strings.TrimPrefix(storageConfig(t, "build_work", work, "build_cache", cache), "CRW_CONFIG=")
+		}
+		return os.Getenv(name)
+	}, "")
+	if err != nil {
+		t.Fatalf("the check refused a creatable build_work: %v", err)
+	}
+	if _, err := os.Stat(work); err == nil {
+		t.Fatal("loading the roots created build_work: the validator is read-only")
+	}
+	env, err := localStepEnv(filepath.Join(temp, "home"), temp, localOptions{output: filepath.Join(temp, "output"), Tools: tools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(work); err != nil || !info.IsDir() {
+		t.Fatalf("build_work after the step environment was made: %v", err)
+	}
+	module := t.TempDir()
+	for name, body := range map[string]string{"go.mod": "module example.test/m\n\ngo 1.21\n", "m.go": "package m\n\nfunc F() int { return 1 }\n"} {
+		if err := os.WriteFile(filepath.Join(module, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = module
+	cmd.Env = append(env, "GOPROXY=off", "GOTELEMETRY=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build in the sealed environment: %v\n%s", err, out)
 	}
 }

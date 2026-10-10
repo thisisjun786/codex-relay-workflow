@@ -322,6 +322,9 @@ func goModTidyCheck(root string) (errs []string, note string) {
 	if err != nil {
 		return []string{"go mod tidy -diff: " + err.Error()}, ""
 	}
+	if err := tools.Prepare(); err != nil {
+		return []string{"go mod tidy -diff: " + err.Error()}, ""
+	}
 	cmd := exec.Command("go", "mod", "tidy", "-diff")
 	cmd.Dir = root
 	cmd.Env = append(tools.Apply(os.Environ()), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",

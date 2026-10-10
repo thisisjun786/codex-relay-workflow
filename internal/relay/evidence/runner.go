@@ -2,9 +2,12 @@ package evidence
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // ExecRunner is the process runner the forge reads through in production: it runs the argv it is given under the context and the timeout, and reports the exit code and both streams. A command
@@ -14,6 +17,10 @@ func ExecRunner(ctx context.Context) Runner {
 		runCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
+		// the tool roots the configuration names (CRW-958); with none configured the environment is inherited
+		if err := crwconfig.ConfigureCommand(cmd, os.Getenv); err != nil {
+			return 0, "", "", err
+		}
 		var stdout, stderr strings.Builder
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
