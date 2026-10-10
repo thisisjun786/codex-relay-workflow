@@ -181,9 +181,6 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 		}
 		return rep, nil
 	}
-	if rep.Codex, err = describeCodex(codex); err != nil {
-		return rep, err
-	}
 	if o.Timeout == 0 {
 		o.Timeout = 90 * time.Second
 	}
@@ -195,6 +192,9 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 		return rep, err
 	}
 	defer os.RemoveAll(scratch)
+	if rep.Codex, err = describeCodex(codex, scratch); err != nil {
+		return rep, err
+	}
 	rep.Args = hostArgs("<work>")
 	h := &hostEnv{opts: o, codex: codex, scratch: scratch, manifest: manifest, registered: registered}
 	for _, spec := range hostCellSpecs() {
@@ -241,7 +241,9 @@ func findCodex(named string) (string, string) {
 	return abs, ""
 }
 
-func describeCodex(path string) (HostCodex, error) {
+// describeCodex names the Codex executable and the version it reports. The version is asked for in
+// a home of its own (a directory of the run), never the caller's.
+func describeCodex(path, home string) (HostCodex, error) {
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return HostCodex{}, err
@@ -251,7 +253,7 @@ func describeCodex(path string) (HostCodex, error) {
 		return HostCodex{}, err
 	}
 	cmd := exec.Command(path, "--version")
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, "codex-version")}
 	out, err := cmd.Output()
 	if err != nil {
 		return HostCodex{}, fmt.Errorf("codex --version: %w", err)
