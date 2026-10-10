@@ -85,24 +85,45 @@ func Delivered(env host.LookupEnv, session, leg, text, command string) bool {
 // Record notes that this session was given this text by this leg, replacing the leg's earlier record. It is best effort. A whole
 // output that is not a resume's starts a generation of its own, so it also ends the pair a resume left open (see RecordResume).
 func Record(env host.LookupEnv, session, leg, text, command string) {
+	record(env, session, leg, text, command, nil)
+}
+
+// record writes the record and, when m is not nil, the resume mark that goes with it, holding the session's lock, so the pair a
+// resume leaves and the one a whole output ends are never mixed with a prompt or a compact of another hook. Without the lock it
+// writes nothing and ends the pair, so the leg says more next time.
+func record(env host.LookupEnv, session, leg, text, command string, m *mark) {
 	path := slot(env, session, leg)
-	if path == "" || os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+	if path == "" {
 		return
 	}
+	unlock, ok := lockSession(filepath.Dir(path), true)
+	if !ok {
+		_ = os.Remove(path + resumeSuffix)
+		return
+	}
+	defer unlock()
 	_ = os.Remove(path + resumeSuffix)
+	if writeRecord(path, text, command) && m != nil {
+		writeMark(path+resumeSuffix, *m)
+	}
+}
+
+func writeRecord(path, text, command string) bool {
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
-		return
+		return false
 	}
 	tmp := filepath.Join(filepath.Dir(path), "."+hex.EncodeToString(suffix)+".tmp")
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return
+		return false
 	}
 	_, werr := f.WriteString(line(text, command))
 	if err := f.Close(); werr != nil || err != nil || os.Rename(tmp, path) != nil {
 		_ = os.Remove(tmp)
+		return false
 	}
+	return true
 }
 
 // resumeSuffix names the mark a resume leaves beside the leg's record.
@@ -179,10 +200,7 @@ func writeMark(path string, m mark) bool {
 // the same turn stay silent, once (TakePair). Codex appends the resume's output after the compaction record, so the compact start
 // would otherwise stack the same text a second time (CRW-1180).
 func RecordResume(env host.LookupEnv, session, leg, text, command string) {
-	Record(env, session, leg, text, command)
-	if path := slot(env, session, leg); path != "" {
-		writeMark(path+resumeSuffix, mark{})
-	}
+	record(env, session, leg, text, command, &mark{})
 }
 
 // RecordResumePart notes that a resume of a session that was given the text before gave only this part of it (the session binding and
@@ -193,6 +211,12 @@ func RecordResumePart(env host.LookupEnv, session, leg, part string) {
 	if path == "" {
 		return
 	}
+	unlock, ok := lockSession(filepath.Dir(path), true)
+	if !ok {
+		_ = os.Remove(path + resumeSuffix)
+		return
+	}
+	defer unlock()
 	_ = os.Remove(path + resumeSuffix)
 	if d := PartDigest(part); d != "" {
 		writeMark(path+resumeSuffix, mark{Part: d})
@@ -202,40 +226,56 @@ func RecordResumePart(env host.LookupEnv, session, leg, part string) {
 // ClearResume ends the pair a resume left open without writing anything where none is open: a start, a clear or a compact starts a
 // new generation, whether or not it says anything.
 func ClearResume(env host.LookupEnv, session, leg string) {
-	if path := slot(env, session, leg); path != "" {
-		_ = os.Remove(path + resumeSuffix)
+	path := slot(env, session, leg)
+	if path == "" {
+		return
 	}
+	if unlock, ok := lockSession(filepath.Dir(path), false); ok {
+		defer unlock()
+	}
+	_ = os.Remove(path + resumeSuffix)
 }
 
 // TakePair reports whether a compact start that would say this text follows a resume of its own turn, and takes the pair: the next
 // compact is a compaction of its own. A missing, stale, other-text or later-turn pair answers PairNone, so the compact says the text
-// as it did before records. A pair ends with the second user prompt after its resume (NoteUserPrompt), and after PairWindow.
+// as it did before records. A pair ends with the second user prompt after its resume (NoteUserPrompt), and after PairWindow. The pair
+// is read and taken holding the session's lock, so of two compacts, or of a compact and a prompt, that race, a taken pair stays taken.
 func TakePair(env host.LookupEnv, session, leg, text, command string) (Pair, string) {
+	kind, part, _ := takePair(env, session, leg, text, command, false)
+	return kind, part
+}
+
+// takePair is TakePair; with end set, a start that does not take the pair ends it under the same lock (Begin).
+func takePair(env host.LookupEnv, session, leg, text, command string, end bool) (Pair, string, bool) {
 	path := slot(env, session, leg)
 	if path == "" {
-		return PairNone, ""
+		return PairNone, "", false
 	}
 	markPath := path + resumeSuffix
-	m, st, ok := readMark(markPath)
+	unlock, ok := lockSession(filepath.Dir(path), false)
 	if !ok {
-		_ = os.Remove(markPath) // a mark that cannot be read is not a pair
-		return PairNone, ""
+		_ = os.Remove(markPath) // no lock, no pair: the compact says the text
+		return PairNone, "", true
 	}
-	if m.Prompts > 1 || time.Since(st.ModTime()) > PairWindow {
-		_ = os.Remove(markPath)
-		return PairNone, ""
+	defer unlock()
+	m, st, ok := readMark(markPath)
+	switch {
+	case !ok, m.Prompts > 1, time.Since(st.ModTime()) > PairWindow:
+		_ = os.Remove(markPath) // a mark that cannot be read, or of a later turn, or stale, is not a pair
+		return PairNone, "", true
+	case !Delivered(env, session, leg, text, command):
+		if end {
+			_ = os.Remove(markPath)
+		}
+		return PairNone, "", end
 	}
-	if !Delivered(env, session, leg, text, command) {
-		return PairNone, ""
-	}
-	// One compact takes the pair: of two that race, only the one whose removal succeeds stays silent.
 	if os.Remove(markPath) != nil {
-		return PairNone, ""
+		return PairNone, "", true
 	}
 	if m.Part != "" {
-		return PairPart, m.Part
+		return PairPart, m.Part, true
 	}
-	return PairWhole, ""
+	return PairWhole, "", true
 }
 
 // CompactRepeatsResume reports whether a compact start that would say this text is the second half of a resume that already gave
@@ -255,7 +295,7 @@ func Begin(env host.LookupEnv, session, source, leg, text, command string) (Pair
 		return PairNone, ""
 	}
 	if source == "compact" {
-		if kind, part := TakePair(env, session, leg, text, command); kind != PairNone {
+		if kind, part, ended := takePair(env, session, leg, text, command, true); kind != PairNone || ended {
 			return kind, part
 		}
 	}
@@ -265,13 +305,18 @@ func Begin(env host.LookupEnv, session, source, leg, text, command string) (Pair
 
 // NoteUserPrompt counts a user prompt of a session against every pair its resumes left open: the first prompt after a resume is the
 // turn the pair belongs to, and a prompt of another turn ends it, so a compaction of a later turn is a compaction of its own and says
-// the text. Without a turn id every prompt counts. Best effort: whatever it cannot read is removed, which only makes a hook say more.
+// the text. Without a turn id every prompt counts. It counts holding the session's lock, so it never writes back a mark a compact took
+// or a start ended meanwhile. Best effort: whatever it cannot read or lock is removed, which only makes a hook say more.
 func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 	path := slot(env, session, "x")
 	if path == "" {
 		return
 	}
 	dir := filepath.Dir(path)
+	unlock, locked := lockSession(dir, false)
+	if locked {
+		defer unlock()
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -283,7 +328,7 @@ func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 		}
 		markPath := filepath.Join(dir, name)
 		m, st, ok := readMark(markPath)
-		if !ok {
+		if !ok || !locked {
 			_ = os.Remove(markPath)
 			continue
 		}

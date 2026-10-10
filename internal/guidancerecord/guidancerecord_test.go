@@ -2,6 +2,7 @@ package guidancerecord
 
 import (
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -245,5 +246,91 @@ func TestAShortResumeLeavesAPairOfThePart(t *testing.T) {
 	}
 	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
 		t.Fatal("a clear that said nothing left the pair open")
+	}
+}
+
+// CRW-1180 (verification round 2, P1): a prompt that counts against a pair while a compact takes it, or while a start ends it, must not
+// bring the mark back: each resume pairs with at most one compact, and an ended pair stays ended.
+func TestAPromptCannotBringBackATakenOrEndedPair(t *testing.T) {
+	env := envFor(t.TempDir())
+	race := func(end func()) {
+		start := make(chan struct{})
+		done := make(chan struct{})
+		go func() { defer close(done); <-start; NoteUserPrompt(env, "s", "own-turn") }()
+		close(start)
+		end()
+		<-done
+	}
+	for i := 0; i < 1500; i++ {
+		RecordResume(env, "s", "leg", "a", "")
+		var first Pair
+		race(func() { first, _ = TakePair(env, "s", "leg", "a", "") })
+		if second, _ := TakePair(env, "s", "leg", "a", ""); first == PairWhole && second == PairWhole {
+			t.Fatalf("iteration %d: a prompt brought back the pair a compact took, and a second compact took it again", i)
+		}
+		RecordResume(env, "s", "leg", "a", "")
+		race(func() { ClearResume(env, "s", "leg") })
+		if _, err := os.Lstat(slot(env, "s", "leg") + resumeSuffix); err == nil {
+			t.Fatalf("iteration %d: a prompt brought back the pair a start ended", i)
+		}
+	}
+}
+
+// The hooks are separate processes, so the pair holds across processes too: a prompt hook counting in a loop of its own never brings
+// back the mark a compact took.
+func TestAPromptOfAnotherProcessCannotBringBackATakenPair(t *testing.T) {
+	home := t.TempDir()
+	env := envFor(home)
+	stop := filepath.Join(t.TempDir(), "stop")
+	ready := stop + ".ready"
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperPromptHookLoop$", "-test.count=1")
+	cmd.Env = append(os.Environ(), "GUIDANCERECORD_PROMPT_LOOP="+home+string(os.PathListSeparator)+stop)
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.WriteFile(stop, nil, 0o600)
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("prompt loop: %v", err)
+		}
+	}()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Millisecond) {
+		if _, err := os.Lstat(ready); err == nil {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatal("the prompt loop did not start")
+		}
+	}
+	for i := 0; i < 1000; i++ {
+		RecordResume(env, "s", "leg", "a", "")
+		// Let the other process read the fresh mark before this one takes it.
+		for j := 0; j < i%7*50; j++ {
+			_ = digest("x")
+		}
+		first, _ := TakePair(env, "s", "leg", "a", "")
+		time.Sleep(20 * time.Microsecond)
+		if second, _ := TakePair(env, "s", "leg", "a", ""); first == PairWhole && second == PairWhole {
+			t.Fatalf("iteration %d: another process's prompt brought back the pair a compact took", i)
+		}
+	}
+}
+
+// TestHelperPromptHookLoop is the prompt hook of TestAPromptOfAnotherProcessCannotBringBackATakenPair; it runs only in that process.
+func TestHelperPromptHookLoop(t *testing.T) {
+	arg, ok := os.LookupEnv("GUIDANCERECORD_PROMPT_LOOP")
+	if !ok {
+		t.Skip("runs as the prompt hook of another test")
+	}
+	home, stop, _ := strings.Cut(arg, string(os.PathListSeparator))
+	env := envFor(home)
+	if err := os.WriteFile(stop+".ready", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); {
+		if _, err := os.Lstat(stop); err == nil {
+			return
+		}
+		NoteUserPrompt(env, "s", "own-turn")
 	}
 }
