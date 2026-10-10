@@ -221,7 +221,7 @@ func stampRows(ledger string) string {
 	for i, line := range lines {
 		var o map[string]any
 		trimmed := text.Trim(line) // JavaScript's trim, which strips the byte order mark too
-		if json.Unmarshal([]byte(trimmed), &o) != nil || o == nil || strings.Index(line, "{") < 0 {
+		if json.Unmarshal([]byte(trimmed), &o) != nil || o == nil || !strings.Contains(line, "{") {
 			continue
 		}
 		kind, _ := o["event"].(string)
