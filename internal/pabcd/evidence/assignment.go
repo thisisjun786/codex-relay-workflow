@@ -188,24 +188,27 @@ func NewAssignment(sessionID, worktree string, mode AssignmentMode, now time.Tim
 // Persist writes the assignment under cwd (the parent's native cwd) through a temp file and a rename, refusing links in the
 // state tree. An error means the spawn is refused, so nothing of it may stay open: a record that the rename published before a
 // later step failed (its directory sync) is removed again, because an open record no child will ever claim would refuse every
-// later child of the session that is tied to no dispatch. When that removal fails too, the error says the record is left and
-// where, so the refusal names what the parent has to remove.
+// later child of the session that is tied to no dispatch. Only the file this call published is removed, and only while it is
+// still open and unclaimed (removePublished). When that removal fails too, the error says the record is left and where, so the
+// refusal names what the parent has to remove.
 func (a Assignment) Persist(cwd string) error {
 	dir, err := ensureRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, a.ID+".json")
-	err = writeRecord(path, a)
-	if err == nil {
-		return nil
-	}
-	if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() {
-		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-			return fmt.Errorf("%w; the published record %s could not be removed and stays open until it is removed: %v", err, path, rmErr)
+	published := false
+	staged, err := writeRecordStaged(path, a, func(tmp, final string) error {
+		if err := crwdir.Rename(tmp, final); err != nil {
+			return err
 		}
+		published = true
+		return nil
+	})
+	if err == nil || !published {
+		return err
 	}
-	return err
+	return removePublished(path, a.ID, staged, err)
 }
 
 // ErrAssignmentExists is PersistNew's answer for an id that already has a record.
@@ -213,39 +216,80 @@ var ErrAssignmentExists = errors.New("the evidence assignment is already recorde
 
 // PersistNew is Persist that never replaces a record: an id that already has one is ErrAssignmentExists and that record is left as it
 // is. The spawn hook names the assignment of an event after the event, so two deliveries of it that run together (no event lock could
-// be had) write the same path, and the later one must not put an open record over the claimed one of the first.
+// be had) write the same path, and the later one must not put an open record over the claimed one of the first. A failure before
+// this call published anything leaves whatever the path holds (another delivery's record, which its child may have claimed); a
+// failure after it published removes only the file it published, while that is still open and unclaimed (CRW-1121, CRW-1124).
 func (a Assignment) PersistNew(cwd string) error {
 	dir, err := ensureRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, a.ID+".json")
-	err = writeRecordWith(path, a, func(tmp, final string) error {
+	published := false
+	staged, err := writeRecordStaged(path, a, func(tmp, final string) error {
 		if err := os.Link(tmp, final); err != nil {
 			if errors.Is(err, fs.ErrExist) {
 				return ErrAssignmentExists
 			}
 			return err
 		}
+		published = true
 		return os.Remove(tmp)
 	})
-	if err == nil || errors.Is(err, ErrAssignmentExists) {
+	if err == nil || !published {
 		return err
 	}
-	if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() {
-		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-			return fmt.Errorf("%w; the published record %s could not be removed and stays open until it is removed: %v", err, path, rmErr)
+	return removePublished(path, a.ID, staged, err)
+}
+
+// removePublished takes back, after cause, the record a failed Persist published at path: under the record's lock (the lock a claim
+// takes), and only when path still names the file that call staged (the same inode: a claim rewrites the record through a file of
+// its own) and that file is still an open record no actor holds. Anything else at path is another writer's and stays.
+func removePublished(path, id string, staged os.FileInfo, cause error) error {
+	err := withFileLock(path+".lock", func() error {
+		info, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
 		}
+		if err != nil {
+			return err
+		}
+		if staged == nil || !os.SameFile(info, staged) {
+			return nil
+		}
+		if a, ok := readAssignment(path, id); ok && (a.Status != AssignmentOpen || a.AgentID != "") {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("%w; the published record %s could not be removed and stays open until it is removed: %v", cause, path, err)
 	}
-	return err
+	return cause
 }
 
 // Remove deletes the assignment's record under cwd, best effort: the spawn that would have used it was refused after the record was
-// written, and nothing may be left that no packet names.
+// written, or an edited input of the same call replaced it, and nothing may be left that no packet names. It re-reads the record
+// under the lock a claim takes and removes it only while it is still a as this caller knows it, open and held by no actor: a record
+// a child claimed after the caller read it is that child's contract and stays (CRW-1121).
 func (a Assignment) Remove(cwd string) {
-	if dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID)); err == nil {
-		removeFile(filepath.Join(dir, a.ID+".json"))
+	if a.Status != AssignmentOpen || a.AgentID != "" {
+		return
 	}
+	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, a.ID+".json")
+	_ = withFileLock(path+".lock", func() error {
+		if recorded, ok := readAssignment(path, a.ID); ok && recorded == a {
+			removeFile(path)
+		}
+		return nil
+	})
 }
 
 // LeadingAssignmentID is the id of the assignment block that text starts with (the place the spawn hook writes it), and whether it
@@ -304,28 +348,38 @@ func writeRecord(path string, v any) error { return writeRecordWith(path, v, crw
 
 // writeRecordWith is writeRecord publishing the synced temp file with publish, which takes the temp file over (renames or links it).
 func writeRecordWith(path string, v any, publish func(tmp, final string) error) error {
+	_, err := writeRecordStaged(path, v, publish)
+	return err
+}
+
+// writeRecordStaged is writeRecordWith that also returns what the temp file was (nil when it was not created), so a caller whose
+// later step failed can tell the file it published from one another writer put at path.
+func writeRecordStaged(path string, v any, publish func(tmp, final string) error) (os.FileInfo, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tmp := fmt.Sprintf("%s.%d.%s.tmp", path, os.Getpid(), rand.Text())
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o666)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = f.Write(append(raw, '\n'))
+	staged, err := f.Stat()
+	if err == nil {
+		_, err = f.Write(append(raw, '\n'))
+	}
 	if err == nil {
 		err = syncFile(f)
 	}
 	if err = errors.Join(err, f.Close()); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return staged, err
 	}
 	if err := publish(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return staged, err
 	}
-	return syncDirectory(filepath.Dir(path))
+	return staged, syncDirectory(filepath.Dir(path))
 }
 
 // syncRecordChain makes the directories ensureRecordDir created, or may have created, durable: each directory below cwd/.crw named
