@@ -35,7 +35,8 @@
 // the turn's announced total cap reads and writes nothing, and a prompt without turn_id that lands before
 // the lock releases the earlier turn's Stop (the turn generation). CRW-1107.md: the goal-idle block's IDLE->P
 // command carries no attest. CRW-386.md: a session the registry verifies as a project parent or a supervisor gets no goal-idle block
-// (StopHandleWithRole).
+// (StopHandleWithRole). CRW-145.md: the goal-idle block names the honest exits first and drops the arming option where the source
+// identity cannot be resolved.
 package hook
 
 import (
@@ -53,6 +54,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
+	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
@@ -141,7 +143,7 @@ func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock fun
 			return StopAnswer{}
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
-			return stopGoalIdleBlock(fresh, snap.plan, p.SessionID, env)
+			return stopGoalIdleBlock(fresh, snap.plan, p.Cwd, p.SessionID, env)
 		})
 	}
 
@@ -655,21 +657,34 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 }
 
 // stopGoalIdleBlock is buildGoalIdleBlock (hook.ts:1694-1738): the Stop block for a goal ACTIVE with a
-// bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: arm the next
-// work-phase, or close the goal for real.
+// bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: close the goal for real, or arm the next
+// work-phase.
 //
 // CRW-1107: IDLE->P takes no attest (plugins/crw/skills/crw-pabcd/references/phase-control.md), but the
 // oracle's command carried one with a placeholder `did` (and win32 an attest file to write it to), which
 // agents copied into the ledger as evidence. The command is the plain entry on every platform.
-func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, sessionID string, env host.LookupEnv) string {
-	startNext := "Either start the next work-phase now: `crw pabcd orchestrate P --session " + sessionID + "`"
+//
+// CRW-145 (port: fixed): the oracle led with the arming command and named the honest exits after it, and offered the command
+// where it cannot run: `orchestrate P` of a goalplan-bound session is refused while the session has no resolvable source
+// identity (session.CheckBound, the same predicate the command applies, so a non-git working directory whose session is bound to a
+// git source worktree keeps the option). The block now names the honest exits first and, when the identity cannot be resolved,
+// says why the next work-phase cannot be armed in place of the command (and does not end the unit-chain line with it). The block
+// is still a block: the counter, the caps and every other line are the oracle's.
+func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, cwd, sessionID string, env host.LookupEnv) string {
+	canArm := sourcesession.CheckBound(cwd, sessionID).OK
 	lines := []string{
 		"[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.",
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.",
-		startNext,
-		"or close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.",
-		"LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.",
+		"Close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.",
 	}
+	chain := " (append it to the goalplan, then orchestrate P)"
+	if canArm {
+		lines = append(lines, "Or start the next work-phase now: `crw pabcd orchestrate P --session "+sessionID+"`")
+	} else {
+		lines = append(lines, "The next work-phase cannot be armed from this workspace: it has no resolvable git source identity, and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. To make arming possible, bind a git source tree: `crw relay session source <absolute-path> --json`.")
+		chain = " (append it to the goalplan)"
+	}
+	lines = append(lines, "LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase"+chain+". \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.")
 	switch work := stopReadWorkContext(st.Slug, plan); {
 	case work != nil:
 		lines = append(lines, work.lines()...)
