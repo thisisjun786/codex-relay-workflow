@@ -34,7 +34,8 @@ return { hi }                                   // top-level return: the run's r
   An import has one of the forms `import 'm'`, `import d from 'm'`, `import {a, b as c} from 'm'`,
   `import * as ns from 'm'` and `import d, {a} from 'm'`.
 - `meta` must evaluate to a JSON-serialisable object. It is evaluated as an expression in a fresh runtime with no host
-  globals, so it cannot call `agent` or read `args`. It is recorded in the run record.
+  globals, so it cannot call `agent` or read `args`, and under the same determinism stubs as the body (below), so
+  `Date.now()`, `Math.random()`, `new Date()` and `Date()` in a `meta` are load errors. It is recorded in the run record.
 - The body may use top-level `await` and top-level `return`. These are a CRW extension and the script is not standard
   ESM: the body runs as the body of an async function, and the value it returns is the run's result. A script in the
   shape Claude Workflow accepts (a `meta` and a body with top-level await and return, no imports) is a subset of this
@@ -55,7 +56,8 @@ A helper is a module the header imports. Two kinds are admitted, and nothing els
   a symbolic link that points out of the directory are load errors.
 
 Helpers are ES modules with static `import` and `export`. A helper with top-level `await` is a load error (the bundle is an
-IIFE). There is no `require`, `fs`, `net` or `exec` in a script or a helper.
+IIFE), and so is a dynamic `import()` in a helper, literal or computed, direct or in a helper it imports: a helper reaches
+other modules only through static imports the resolver checks. There is no `require`, `fs`, `net` or `exec` in a script or a helper.
 
 The run record holds the SHA-256 digest of the script's bytes and, for every bundled helper, the digest of the sources it
 was built from.
@@ -66,7 +68,7 @@ goja, the JavaScript runtime (a pinned commit; direct dependency), has no module
 builds an executable script in four steps:
 
 1. A header lexer finds the end of the imports and of the `meta` object literal.
-2. `meta` is evaluated in a fresh runtime with no globals and recorded as JSON.
+2. `meta` is evaluated in a fresh runtime with no host globals, under the determinism stubs, and recorded as JSON.
 3. Each imported helper is bundled by esbuild's Go API (a pinned release; direct dependency) with `Bundle`, `Format` IIFE,
    `GlobalName` `__crw_lib_<n>` and `Target` ES2017. The resolver plugin admits only the embedded `crw:lib` files and the
    script's workflows directory.
@@ -129,7 +131,9 @@ supplied by the policy the run is configured with; the fake backend runs against
 
 A call is identified by `(path, position)`. The root path is the script's top-level sequence (`root`). Each item of a
 `parallel` or `pipeline` runs on a child path named by the join's position and the item's key, `root/3:0` for item 0 of the
-join at position 3 (nested items extend it: `root/3:0/1:5`). A `workflow()` child runs on the path `<path>/<n>:workflow`.
+join at position 3 (nested items extend it: `root/3:0/1:5`). The characters `%`, `/` and `:` in a key are percent-encoded
+(`%25`, `%2F`, `%3A`) in the path, so two different sequences of positions and keys never name the same path, call id or
+handle. A `workflow()` child runs on the path `<path>/<n>:workflow`.
 `position` is the ordinal of the `agent()`, `agent.call()` or `crw.*` call on that path (a join counts as one position),
 starting at 1. Completion order is never an identity source, and the call id (`c_` and twelve hex digits) is derived from the
 run id, path and position.
@@ -186,8 +190,9 @@ stays within 10 levels of nesting, 5000 properties and 1000 enum values.
   violation is a load error.
 - A schema passed to `agent.call` that fails the check ends the call `refused` with reason `schema_not_strict`, before any
   thread starts.
-- The result of every call with a schema is validated in Go (`google/jsonschema-go`). An invalid result gets one repair turn
-  on the same thread with the same pair; a result that is still invalid is `null_model` with reason
+- The result of every call with a schema is validated in Go (`google/jsonschema-go`). A message is valid only if it is one JSON
+  document with nothing after it (a closing bracket, a second value or text after the value is invalid). An invalid result
+  gets one repair turn on the same thread with the same pair; a result that is still invalid is `null_model` with reason
   `schema_invalid_after_repair`. A third turn is never sent.
 
 ## Continuing a call
@@ -198,18 +203,25 @@ implicit "last call"). The continuation inherits role, pair, node and `stepDecis
 turn to the same thread and gets a handle of its own. An explicit value that differs from the inherited one is refused:
 
 - A handle from another run, another role family or another node, and a handle that names no call with a thread in this run,
-  is `refused` with reason `foreign_handle`.
+  is `refused` with reason `foreign_handle`. The run of a handle is judged by the journal row of the call it names, not by the
+  run id written in the handle's text.
 - The same role family on another role, a `model` that is not the thread's model or an alias of it, or another `stepDecision`
   is `refused` with reason `pair_refused`.
+
+- A thread whose pair read back wrong when it started (its call was `refused` with `pair_refused`) stays refused: continuing
+  it is `refused` with `pair_refused` too. A continuation carries the thread's read-back pair, not the role's.
 
 A refused continuation sends nothing to the host.
 
 ## crw.classify
 
-`crw.classify(result)` maps an executor `CallResult` to one state: `ready` (completed, `ready_for_review`), `research`
+`crw.classify(result)` takes an executor `CallResult` or the handle of one of this run's results and maps it to one state: `ready` (completed, `ready_for_review`), `research`
 (`needs_research`), `scope` (`blocked_scope`), `self_failed` (`failed` or `budget_exhausted`), `null_model`, `host_held`,
 `null_unknown`, `refused` or `superseded`. Each classification reads only its own result, so failures mixed on one path or
-across parallel paths are attributed to the exact call. A completed result whose output is not a `RECEIPT` is a `TypeError`.
+across parallel paths are attributed to the exact call. A completed result whose output is not a `RECEIPT` is a `TypeError`, and so are a bare object, a copy of a `CallResult`, `null`
+and a string that is no handle of a result of this run. Like every `crw.*` call, `crw.classify` takes a position of its path
+(journaled as an `Op: crw.classify` row), so calling it while another call or join of the path has not settled throws
+`CrwPathConcurrencyError` and ends the run `script_error`.
 
 ## Limits
 

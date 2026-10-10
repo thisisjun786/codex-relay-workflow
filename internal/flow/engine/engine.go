@@ -122,6 +122,7 @@ type Engine struct {
 	fatalKind string
 	fatalErr  error
 	results   []CallResult
+	byHandle  map[string]CallResult // the delivered results that hold a handle, by handle
 	phases    []string
 	logs      []string
 	phase     string
@@ -167,7 +168,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop()}
+	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}}
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
 		"meta": json.RawMessage(prog.MetaJSON),

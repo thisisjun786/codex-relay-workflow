@@ -205,6 +205,10 @@ func (p *Program) evalMeta(name, text string, h *header) error {
 	vm := goja.New()
 	timer := time.AfterFunc(2*time.Second, func() { vm.Interrupt("meta evaluation took too long") })
 	defer timer.Stop()
+	// meta is part of the run record, so it is evaluated under the determinism stubs of the body.
+	if _, err := vm.RunString(stubs); err != nil {
+		return &LoadError{Name: name, Msg: "meta: determinism stubs: " + err.Error()}
+	}
 	v, err := vm.RunString("(" + h.metaSrc + ")")
 	if err != nil {
 		return &LoadError{Name: name, Msg: "meta: " + err.Error()}

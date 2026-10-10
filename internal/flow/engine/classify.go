@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/dop251/goja"
@@ -56,31 +57,46 @@ func Classify(res CallResult) (state string, ok bool) {
 	return "", false
 }
 
-// classify is crw.classify(result). It takes a CallResult and nothing else: a bare object, a copy of one or null is a
-// TypeError, and there is no implicit "last call".
+// classify is crw.classify(result). It takes the CallResult agent.call returned or that result's handle and nothing
+// else: a bare object, a copy of a CallResult, a string that is no handle of this run or null is a TypeError, and there
+// is no implicit "last call". Like every crw.* call it takes a position of its path, so it is refused (and the run ends
+// script_error) while another call or join of the path has not settled.
 func (s *scriptVM) classify(call goja.FunctionCall) goja.Value {
 	v := call.Argument(0)
-	obj, ok := v.(*goja.Object)
-	var ref *resultRef
-	if ok {
-		ref = s.results[obj]
+	var res CallResult
+	found := false
+	if obj, ok := v.(*goja.Object); ok {
+		if ref := s.results[obj]; ref != nil {
+			res, found = ref.res, true
+		}
+	} else if str, ok := v.Export().(string); ok {
+		res, found = s.e.byHandle[str]
 	}
-	if ref == nil {
+	if !found {
 		kind := "a bare value"
 		switch {
 		case goja.IsNull(v):
 			kind = "null"
 		case goja.IsUndefined(v):
 			kind = "undefined"
-		case ok:
-			kind = "an object that is not a CallResult"
+		default:
+			if _, ok := v.(*goja.Object); ok {
+				kind = "an object that is not a CallResult"
+			} else if str, ok := v.Export().(string); ok {
+				kind = fmt.Sprintf("the string %q, which is no handle of a call of this run", str)
+			}
 		}
-		s.throwType("crw.classify takes the CallResult agent.call returned, got %s", kind)
+		s.throwType("crw.classify takes the CallResult agent.call returned or its handle, got %s", kind)
 	}
-	state, ok := Classify(ref.res)
+	state, ok := Classify(res)
 	if !ok {
-		s.throwType("crw.classify: the output of call %s is not an executor RECEIPT", ref.res.CallID)
+		s.throwType("crw.classify: the output of call %s is not an executor RECEIPT", res.CallID)
 	}
+	path, position := s.open("crw.classify")
+	id := s.e.callID(path.id, position)
+	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: "crw.classify", Label: "crw.classify", Event: EvCompleted,
+		Data: map[string]any{"result": mustJSONString(state), "of": res.CallID}})
+	path.settle(position)
 	return s.vm.ToValue(state)
 }
 

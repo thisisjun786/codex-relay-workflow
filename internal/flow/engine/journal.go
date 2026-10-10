@@ -105,6 +105,9 @@ type CallInfo struct {
 	Node, StepDecision  string
 	Pair                Pair
 	ThreadID            string
+	// Configured is the pair the host read back for the thread (carried unchanged along a chain of continuations); a
+	// thread whose readback differs from its role's pair is never continued.
+	Configured Pair
 	// ThroughTurnID is the last turn of the call: a continuation resumes the thread after it.
 	ThroughTurnID string
 	Terminal      string // the status of the call's last terminal event, empty while it is open
@@ -135,8 +138,12 @@ func LookupCall(j Journal, callID string) (CallInfo, bool) {
 			if t, _ := d["through_turn_id"].(string); t != "" {
 				info.ThroughTurnID = t
 			}
+			info.Configured.Model, _ = d["configured_model"].(string)
+			info.Configured.Effort, _ = d["configured_effort"].(string)
 		case EvThreadStarted:
 			info.ThreadID, _ = d["thread_id"].(string)
+			info.Configured.Model, _ = d["model"].(string)
+			info.Configured.Effort, _ = d["effort"].(string)
 		case EvTurnStarted:
 			info.ThroughTurnID, _ = d["turn_id"].(string)
 		}

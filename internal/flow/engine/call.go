@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -193,6 +194,11 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 		refuse(ReasonForeignHandle, "the handle names no call with a thread in this run")
 		return
 	}
+	// The run id in the handle's text is only a claim; the journal row says which run the call belongs to.
+	if info.RunID != e.runID {
+		refuse(ReasonForeignHandle, fmt.Sprintf("the call the handle names belongs to run %s, not this run", info.RunID))
+		return
+	}
 	spec, ok := e.cfg.Policy.Roles[info.Role]
 	if !ok {
 		refuse(ReasonPolicyRefused, "the handle's role "+info.Role+" is not in the policy")
@@ -245,6 +251,11 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 		p.step = info.StepDecision
 		p.inherited = append(p.inherited, "stepDecision")
 	}
+	// A thread whose pair read back wrong when it started was refused then and stays refused: the handle it carries
+	// continues nothing.
+	if info.Configured != spec.Pair {
+		refuse(ReasonPairRefused, fmt.Sprintf("the thread reads back %s/%s, the role's pair is %s/%s", info.Configured.Model, info.Configured.Effort, spec.Pair.Model, spec.Pair.Effort))
+	}
 }
 
 // callRun is one agent call from its opening to its result.
@@ -290,6 +301,8 @@ func (c *callRun) prepare() {
 		d["resume_of"] = p.resume.CallID
 		d["thread_id"] = p.resume.ThreadID
 		d["through_turn_id"] = p.resume.ThroughTurnID
+		d["configured_model"] = p.resume.Configured.Model
+		d["configured_effort"] = p.resume.Configured.Effort
 		d["inherited"] = p.inherited
 	}
 	c.startSeq = c.event(EvPrepared, d).Seq
@@ -323,6 +336,9 @@ func (c *callRun) deliverNow(res CallResult) {
 	c.complete(func() {
 		c.path.settle(c.position)
 		c.e.results = append(c.e.results, res)
+		if res.Handle != "" {
+			c.e.byHandle[res.Handle] = res
+		}
 		var v goja.Value
 		if c.plain {
 			v = c.s.fromJSON(res.Output)
@@ -462,7 +478,7 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 				"detail": fmt.Sprintf("the thread reads back %s/%s, the role's pair is %s/%s", info.Pair.Model, info.Pair.Effort, p.spec.Pair.Model, p.spec.Pair.Effort)})
 		}
 	} else {
-		c.threadID, c.configured = p.resume.ThreadID, p.spec.Pair
+		c.threadID, c.configured = p.resume.ThreadID, p.resume.Configured
 	}
 
 	input := p.prompt
@@ -522,7 +538,8 @@ func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, 
 	if err := dec.Decode(&plain); err != nil {
 		return nil, fmt.Errorf("the message is not JSON: %v", err)
 	}
-	if dec.More() {
+	// The message is one JSON document: whatever follows it (a closing bracket, a second value, text) is an error.
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, errors.New("the message holds more than one JSON value")
 	}
 	if err := resolved.Validate(plain); err != nil {

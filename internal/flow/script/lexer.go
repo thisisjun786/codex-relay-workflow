@@ -45,7 +45,7 @@ var regexPrecedingKeywords = map[string]bool{
 // regular expression literals, which is all the header and body checks need; it does not parse. A string,
 // template, comment or regular expression that does not end is an error.
 func tokenize(src string) ([]token, error) {
-	s := &scanner{src: src}
+	s := &scanner{src: src, closeRegex: map[int]bool{}}
 	if err := s.run(0, 0, false); err != nil {
 		return nil, err
 	}
@@ -56,6 +56,12 @@ type scanner struct {
 	src  string
 	pos  int
 	toks []token
+
+	// parens and braces hold, for every bracket still open, whether it is a statement header ("if (", "while (", "for (",
+	// "with (") or a block; closeRegex marks, by token index, the closing ) and } after which a slash starts a regular
+	// expression (the end of a header or of a block) and not a division (the end of an operand).
+	parens, braces []bool
+	closeRegex     map[int]bool
 }
 
 func isIdentStart(c byte) bool {
@@ -64,25 +70,81 @@ func isIdentStart(c byte) bool {
 
 func isIdentPart(c byte) bool { return isIdentStart(c) || c >= '0' && c <= '9' }
 
-// prevAllowsRegex reports whether a slash at this point starts a regular expression.
-func (s *scanner) prevAllowsRegex(from int) bool {
-	if len(s.toks) <= from {
+// statementHeaders are the keywords whose parenthesised header is followed by a statement, which may start with a
+// regular expression.
+var statementHeaders = map[string]bool{"if": true, "while": true, "for": true, "with": true}
+
+// isProperty reports whether the identifier at index i is a property name (after a dot, which also covers ?. and the
+// spread), so it is an operand whatever its spelling.
+func (s *scanner) isProperty(i, from int) bool {
+	return i-1 >= from && s.toks[i-1].kind == tokPunct && s.toks[i-1].text == "."
+}
+
+// allowsRegexAfter reports whether a slash that follows the token at index i starts a regular expression, which is
+// the case where an operand is expected and not where one has just ended.
+func (s *scanner) allowsRegexAfter(i, from int) bool {
+	if i < from {
 		return true
 	}
-	p := s.toks[len(s.toks)-1]
+	p := s.toks[i]
 	switch p.kind {
 	case tokIdent:
-		return regexPrecedingKeywords[p.text]
+		return !s.isProperty(i, from) && regexPrecedingKeywords[p.text]
 	case tokPunct:
-		return p.text != ")" && p.text != "]" && p.text != "}"
+		switch p.text {
+		case ")", "}":
+			return s.closeRegex[i]
+		case "]":
+			return false
+		case "+", "-":
+			// x++ / 2 and x-- / 2: a postfix operator ends an operand; a prefix or binary one does not.
+			if i-1 >= from && s.toks[i-1].text == p.text && s.toks[i-1].end == p.start && s.toks[i-1].kind == tokPunct {
+				return s.allowsRegexAfter(i-2, from)
+			}
+		}
+		return true
 	}
 	return false
+}
+
+// prevAllowsRegex reports whether a slash at this point starts a regular expression.
+func (s *scanner) prevAllowsRegex(from int) bool {
+	return s.allowsRegexAfter(len(s.toks)-1, from)
+}
+
+// opensBlock reports whether a { at this point opens a block (a function or control-flow body, a class body) and not an
+// object literal.
+func (s *scanner) opensBlock(from int, inSubst bool) bool {
+	n := len(s.toks)
+	if n-1 < from {
+		return !inSubst
+	}
+	p := s.toks[n-1]
+	switch p.kind {
+	case tokPunct:
+		switch p.text {
+		case ")", ";", "{", "}":
+			return true
+		case ">":
+			return n-2 >= from && s.toks[n-2].text == "=" && s.toks[n-2].end == p.start
+		}
+		return false
+	case tokIdent:
+		if s.isProperty(n-1, from) {
+			return false
+		}
+		if p.text == "do" || p.text == "else" {
+			return true
+		}
+		return !regexPrecedingKeywords[p.text]
+	}
+	return true
 }
 
 // run scans tokens until the end of the source or, when inSubst is set, until the brace that closes the template
 // substitution it was started for (consumed, not emitted).
 func (s *scanner) run(from, startOff int, inSubst bool) error {
-	depth := 0
+	base := len(s.braces)
 	src := s.src
 	for s.pos < len(src) {
 		c := src[s.pos]
@@ -169,15 +231,28 @@ func (s *scanner) run(from, startOff int, inSubst bool) error {
 			}
 			s.toks = append(s.toks, token{tokNumber, src[start:s.pos], start, s.pos})
 		default:
-			if inSubst {
-				if c == '{' {
-					depth++
-				} else if c == '}' {
-					if depth == 0 {
-						s.pos++
-						return nil
-					}
-					depth--
+			switch c {
+			case '(':
+				header := false
+				if n := len(s.toks); n-1 >= from && s.toks[n-1].kind == tokIdent && statementHeaders[s.toks[n-1].text] && !s.isProperty(n-1, from) {
+					header = true
+				}
+				s.parens = append(s.parens, header)
+			case ')':
+				if n := len(s.parens); n > 0 {
+					s.closeRegex[len(s.toks)] = s.parens[n-1]
+					s.parens = s.parens[:n-1]
+				}
+			case '{':
+				s.braces = append(s.braces, s.opensBlock(from, inSubst))
+			case '}':
+				if inSubst && len(s.braces) == base {
+					s.pos++
+					return nil
+				}
+				if n := len(s.braces); n > 0 {
+					s.closeRegex[len(s.toks)] = s.braces[n-1]
+					s.braces = s.braces[:n-1]
 				}
 			}
 			s.toks = append(s.toks, token{tokPunct, string(c), s.pos, s.pos + 1})

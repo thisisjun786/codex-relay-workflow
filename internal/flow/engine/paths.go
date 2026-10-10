@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // RootPath is the path of the script's top-level sequence.
@@ -54,8 +55,15 @@ func (p *pathState) settle(position int) {
 // child returns the path of a join's item: the join's position and the item's key name it, so two joins on one path
 // and two items of one join never share a path.
 func (p *pathState) child(position int, key string) *pathState {
-	return &pathState{id: p.id + "/" + strconv.Itoa(position) + ":" + key}
+	return &pathState{id: p.id + "/" + strconv.Itoa(position) + ":" + escapeKey(key)}
 }
+
+// keyEscaper makes an item key safe as a path segment: the characters that separate segments and positions are
+// percent-encoded (and the percent sign itself, so the encoding is reversible), which keeps the mapping from
+// (position, key) sequences to path ids one-to-one whatever the keys hold.
+var keyEscaper = strings.NewReplacer("%", "%25", "/", "%2F", ":", "%3A")
+
+func escapeKey(key string) string { return keyEscaper.Replace(key) }
 
 // joinState is a parallel() or pipeline() on a path: one position of the parent that settles when every item has.
 type joinState struct {
