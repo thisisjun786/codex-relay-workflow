@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -18,26 +17,12 @@ import (
 const interruptedWait = 90 * time.Second
 
 // interruptedAck is the ack bound of the timeout cases. It is the interruption under test, so it
-// is given to the stage under test alone (ackOnStage): the client would otherwise apply it to every
+// is given to the stage under test alone (BoundAckOn on the real client, so the call keeps the
+// client's subscription watch path): the client would otherwise apply it to every
 // request of the call, and thread/start before a turn/start stage expired on it under load, so the
 // stage was never sent (CRW-1181). The held answer outlasts any bound, so the case takes this long
 // and no longer.
 const interruptedAck = time.Second
-
-// ackOnStage gives the ack bound to the calls of one method and leaves every other call of the
-// bridge on the client's own bound.
-type ackOnStage struct {
-	RPC
-	method string
-	bound  time.Duration
-}
-
-func (a ackOnStage) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	if method == a.method {
-		ctx = appserver.WithAckBound(ctx, a.bound)
-	}
-	return a.RPC.Call(ctx, method, params)
-}
 
 func Test_test_interrupted_dispatch_is_retained_and_never_repeated(t *testing.T) {
 	for _, c := range []struct {
@@ -81,7 +66,7 @@ func Test_test_interrupted_dispatch_is_retained_and_never_repeated(t *testing.T)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if interruption == "timeout" {
-				b.RPC = ackOnStage{RPC: b.RPC, method: stage, bound: interruptedAck}
+				b.RPC.(*appserver.Client).BoundAckOn(stage, interruptedAck)
 			}
 			result := make(chan map[string]any, 1)
 			go func() { receipt, _ := b.CreateWorktreeThread(ctx, input); result <- receipt }()
@@ -100,6 +85,11 @@ func Test_test_interrupted_dispatch_is_retained_and_never_repeated(t *testing.T)
 				}
 			case <-time.After(interruptedWait):
 				t.Fatal("interrupted launch hung")
+			}
+			// watchSubscription pins and finishes the created thread's turn watch only for the real client, so a
+			// double standing in for b.RPC would run the interrupted call with no watch at all (CRW-1181 d1).
+			if _, ok := b.RPC.(*appserver.Client); !ok {
+				t.Fatalf("b.RPC is %T: the call did not run on the real client's subscription watch path", b.RPC)
 			}
 			stored, err := b.GetOperation(context.Background(), input.RequestID)
 			if err != nil || stored["status"] != "outcome_unknown" || pyjson.Map(stored["worktree"])["state"] != "created" {
