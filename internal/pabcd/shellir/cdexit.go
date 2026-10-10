@@ -1,6 +1,7 @@
 package shellir
 
 import (
+	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -26,6 +27,15 @@ var exitProofBanned = map[string]bool{
 	// others remove a hash entry or a function, load or unload a module that holds builtins, or schedule a command (CRW-1165).
 	"disable": true, "unhash": true, "unfunction": true, "zmodload": true, "zcompile": true, "sched": true,
 }
+
+// reShellTables are the names of the tables with which zsh (and bash, BASH_ALIASES) defines functions and aliases, or sets options, by
+// assignment: `functions[exit]=:` defines a function named exit with no command that declares one, and `aliases[exit]=true` an alias
+// (a later line of the text expands it); `options[...]` sets a shell option as setopt does. The name anywhere in the text withdraws the
+// proof, in a command, a string or a comment alike (CRW-1165).
+var reShellTables = regexp.MustCompile(`\b(functions|aliases|galiases|saliases|options|BASH_ALIASES|dis_functions|dis_aliases|dis_galiases|dis_saliases|dis_builtins)\b`)
+
+// textNamesShellTables is whether a text spells one of the tables of reShellTables.
+func textNamesShellTables(src string) bool { return reShellTables.MatchString(src) }
 
 // plainForExitProof is whether the whole text leaves exit and cd alone (see above). lookup is the environment the text runs in, nil when
 // the reader is given none (a variable is then unknown, and the startup variables cannot be checked). A function named exit is

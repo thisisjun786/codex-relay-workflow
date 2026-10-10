@@ -204,6 +204,9 @@ type state struct {
 	// start of the walk.
 	exitTainted bool
 	startup     func(string) (string, bool)
+	// noExitProof withdraws the proof of cd || exit for the whole walk (the second reading of a text whose first reading used the proof
+	// and then met an assignment to a name it does not spell, see analyze).
+	noExitProof bool
 }
 
 func newState(cwd string) *state {
@@ -222,6 +225,8 @@ func (s *state) clone() *state {
 		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
 		cdpath:  s.cdpath,
 		lookup:  s.lookup,
+
+		exitTainted: s.exitTainted, startup: s.startup, noExitProof: s.noExitProof,
 	}
 	for k, v := range s.vars {
 		c.vars[k] = v
@@ -321,7 +326,9 @@ type walker struct {
 	// was checked, and pipeSeq numbers its pipelines (Context.pipeID).
 	pythonPathNamed bool
 	// exitProof is whether the text leaves exit and cd alone, so that `cd <literal> || exit <digits>` proves the cd (CRW-1165).
-	exitProof  bool
+	exitProof bool
+	// exitUsed is whether the walk took a cd as proven by the form (cdOrExit).
+	exitUsed   bool
 	moduleRuns []moduleRun
 	pipeSeq    int
 }
@@ -661,6 +668,7 @@ func (e *effectScan) function(name string, body *syntax.Stmt) bool {
 // fails runs the exit, which ends the shell (cdExitForm; exitProof says nothing in the text changes that). The exit is walked on a copy of
 // the state, which is dropped: nothing runs after it.
 func (w *walker) cdOrExit(c *syntax.BinaryCmd, st *state, ctx Context) error {
+	w.exitUsed = true
 	lctx := ctx
 	lctx.succeeds = true
 	if err := w.stmt(c.X, st, lctx); err != nil {

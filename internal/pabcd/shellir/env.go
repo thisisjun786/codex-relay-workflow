@@ -90,6 +90,7 @@ func AnalyzeNoDir(src string) (Result, error) {
 
 func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
 	w := &walker{}
+	fresh := st.clone()
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -111,12 +112,19 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	if st.startup != nil {
 		startup = st.startup
 	}
-	w.exitProof = st.proveCD && !st.exitTainted && plainForExitProof(file, startup)
+	w.exitProof = st.proveCD && !st.exitTainted && !st.noExitProof && !textNamesShellTables(src) && plainForExitProof(file, startup)
 	if err := w.stmts(file.Stmts, st, Context{top: true}); err != nil {
 		return Result{}, err
 	}
 	if err := w.writersBesideModules(); err != nil {
 		return Result{}, err
+	}
+	if w.exitUsed && w.prefixUnknown {
+		// The form was taken as proof, and the text assigns variables by names it does not spell (read "$N", printf -v "$N", export
+		// "$N"): one of them may be a table that defines a function or an alias named exit (zsh functions, aliases), which the walk cannot
+		// know. Read the text again without the proof (CRW-1165).
+		fresh.noExitProof = true
+		return analyze(src, fresh, lookup)
 	}
 	return Result{Execs: w.out}, nil
 }

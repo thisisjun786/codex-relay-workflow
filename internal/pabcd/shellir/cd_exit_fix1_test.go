@@ -23,6 +23,22 @@ func TestCRW1165FixRound1MoreWaysToChangeExit(t *testing.T) {
 		"'disable' exit; cd /outside || exit 1; rm x",
 		"\\disable exit; cd /outside || exit 1; rm x",
 		"$D exit; cd /outside || exit 1; rm x",
+		// zsh defines functions and aliases by assigning to a table, bash has BASH_ALIASES, and options are a table too
+		"functions[exit]=':'; cd /outside || exit 1; rm x",
+		"functions[exit]=:\ncd /outside || exit 1\nrm x",
+		"cd /outside || exit 1; functions[exit]=:; rm x",
+		"aliases[exit]=true\ncd /outside || exit 1\nrm x",
+		"aliases=(exit true)\ncd /outside || exit 1\nrm x",
+		"functions+=(exit :)\ncd /outside || exit 1\nrm x",
+		"FOO=1 functions[exit]=:; cd /outside || exit 1; rm x",
+		"galiases[exit]=true\ncd /outside || exit 1\nrm x",
+		"BASH_ALIASES[exit]=true\ncd /outside || exit 1\nrm x",
+		"options[cdablevars]=on; cd out || exit 1; rm x",
+		"echo functions; cd /outside || exit 1; rm x",
+		// a name the text does not spell may be one of those tables: the form is read again without the proof
+		"read \"$N\" <<< :; cd /outside || exit 1; rm x",
+		"printf -v \"$N\" :; cd /outside || exit 1; rm x",
+		"export \"$N\"=:; cd /outside || exit 1; rm x",
 	} {
 		for _, script := range []bool{false, true} {
 			got, err := crw1165Read(command, nil, script)

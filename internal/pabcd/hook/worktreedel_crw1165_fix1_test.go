@@ -11,6 +11,7 @@ import (
 // CRW-1165 verification fix round 1 (two P0). The proof of `cd <literal> || exit <digits>` stands on `exit` ending the shell, so
 // anything that makes exit do something else must withdraw it, in the text and in the scripts the text runs:
 //   - zsh's disable removes a builtin: `disable exit; cd missing || exit 1; rm -rf .` goes on after the failed cd;
+//   - zsh defines a function or an alias named exit by assigning to a table (`functions[exit]=:`, `aliases[exit]=true` on an earlier line);
 //   - a function named exit, exported by the parent shell (export -f, or BASH_FUNC_exit%% through env), is inherited by the bash of a script
 //     file whose body is then read on its own and looked plain.
 
@@ -25,6 +26,11 @@ func crw1165FixCommands(r delRig, script string) []string {
 		"unfunction exit; cd " + missing + " || exit 1; rm -rf .",
 		"zmodload -u zsh/main; cd " + missing + " || exit 1; rm -rf .",
 		"cd " + missing + " || exit 1; disable exit; rm -rf .",
+		"functions[exit]=':'; cd " + missing + " || exit 1; rm -rf .",
+		"aliases[exit]=true\ncd " + missing + " || exit 1\nrm -rf .",
+		"aliases=(exit true)\ncd " + missing + " || exit 1\nrm -rf .",
+		"N=functions; read \"$N[exit]\" <<< :; cd " + missing + " || exit 1; rm -rf .",
+		"read \"$N\" <<< :; cd " + missing + " || exit 1; rm -rf .",
 		// an exported function named exit reaches the script the text runs
 		"exit() { :; }; export -f exit; bash " + script,
 		"exit() { :; }; export -f exit; sh " + script,
@@ -34,6 +40,9 @@ func crw1165FixCommands(r delRig, script string) []string {
 		"env 'BASH_FUNC_exit%%=() { :; }' bash " + script,
 		"BASH_FUNC_exit%%='() { :; }' bash " + script,
 		"env BASH_ENV=" + filepath.Join(o, "env.sh") + " bash " + script,
+		"BASH_ENV=" + filepath.Join(o, "env.sh") + "; export BASH_ENV; bash " + script,
+		"export BASH_ENV=" + filepath.Join(o, "env.sh") + "; bash " + script,
+		"set -a; BASH_ENV=" + filepath.Join(o, "env.sh") + "; bash " + script,
 		"env SHELLOPTS=posix bash " + script,
 		"export SHELLOPTS=posix; bash " + script,
 		// a text that is not plain for the proof does not hand it to the script it runs
@@ -94,7 +103,7 @@ func TestCRW1165FixRound1AllowedTextsStopInRealShells(t *testing.T) {
 		wtWrite(t, safe, body+"touch "+marker+"\n")
 		wtWrite(t, judged, body+"rm -rf .\n")
 		prefixes := []string{
-			"", "disable exit; ", "disable -r exit; ", "unhash -f exit; ", "unfunction exit; ",
+			"", "disable exit; ", "disable -r exit; ", "unhash -f exit; ", "unfunction exit; ", "functions[exit]=:; ", "aliases[exit]=true\n",
 			"exit() { :; }; export -f exit; ", "env 'BASH_FUNC_exit%%=() { :; }' ", "trap : DEBUG; ", "alias exit=true; ",
 		}
 		for _, pre := range prefixes {
