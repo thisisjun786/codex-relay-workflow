@@ -131,7 +131,8 @@ func spawnHookManaged(a *spawnHookAssembly, sources []spawnDispatchSource) (stri
 		if IsFullHistoryFork(spawnHookView(a.toolInput)) {
 			return DenyEnvelope("managed fallback requires a fresh context"), true
 		}
-		resolved, err := role.ManagedSpawn(a.cwd, a.sessionID, candidate.Source)
+	resolver := role.NewManagedSpawnResolver(a.cwd) // the root and each source's record are looked at once per event (CRW-1124)
+		resolved, err := resolver.Preview(a.sessionID, candidate.Source)
 		if err == nil && resolved == nil {
 			err = errors.New("invalid managed dispatch marker")
 		}

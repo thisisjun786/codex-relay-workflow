@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"os"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -16,6 +17,7 @@ type ManagedSpawnSelection struct {
 	Candidate DispatchCandidate
 	Role      RoleName
 	root      string
+	rootInfo  os.FileInfo // the preview's root as the file system names it, so the issuance records into that directory and no other
 	session   string
 	dispatch  string
 	attempt   string
@@ -32,12 +34,59 @@ func managedSpawnCarries(message, dispatch, attempt string) bool {
 	return regexp.MustCompile(`(?:^|[\r\n\x{2028}\x{2029}])\[CRW-DISPATCH:` + regexp.QuoteMeta(dispatch) + `:` + regexp.QuoteMeta(attempt) + `\](?:\r?\n|$|[\r\x{2028}\x{2029}])`).MatchString(message)
 }
 
+// ManagedSpawnResolver previews the managed spawns of one cwd. The dispatch root is resolved once, with the first message it is
+// asked about, and the answer (or its error) serves every later message: a hook event that has several candidate messages for one
+// marker does not run git for each of them (CRW-1124). A resolver serves one event and is not safe for concurrent use.
+type ManagedSpawnResolver struct {
+	cwd      string
+	resolved bool
+	root     string
+	rootInfo os.FileInfo
+	err      error
+	previews map[string]managedSpawnPreview
+}
+
+type managedSpawnPreview struct {
+	sel *ManagedSpawnSelection
+	err error
+}
+
+// NewManagedSpawnResolver is a resolver for the working directory cwd.
+func NewManagedSpawnResolver(cwd string) *ManagedSpawnResolver {
+	return &ManagedSpawnResolver{cwd: cwd}
+}
+
 // ManagedSpawn ports fallback-dispatch.ts:237-247 after name substitution.
 func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) {
-	root, err := dispatchRoot(cwd)
-	if err != nil {
-		return nil, err
+	return NewManagedSpawnResolver(cwd).Preview(session, message)
+}
+
+// Preview is ManagedSpawn over the resolver's root. A message asked about again for the same session gets the answer it got: the
+// record is read once per event (CRW-1124).
+func (r *ManagedSpawnResolver) Preview(session, message string) (*ManagedSpawnSelection, error) {
+	key := session + "\x00" + message
+	if p, ok := r.previews[key]; ok {
+		return p.sel, p.err
 	}
+	sel, err := r.preview(session, message)
+	if r.previews == nil {
+		r.previews = map[string]managedSpawnPreview{}
+	}
+	r.previews[key] = managedSpawnPreview{sel, err}
+	return sel, err
+}
+
+func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSelection, error) {
+	if !r.resolved {
+		r.resolved = true
+		if r.root, r.err = dispatchRoot(r.cwd); r.err == nil {
+			r.rootInfo, r.err = os.Stat(r.root)
+		}
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	root := r.root
 	match := managedSpawnMarker(message)
 	if match == nil {
 		return nil, nil
@@ -55,7 +104,7 @@ func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) 
 	if a.ID != match[2] || !a.Claimed || !dispatchIs(a.Status, "claimed") || !dispatchIs(d.Status, "active") {
 		return nil, errors.New("managed spawn attempt is not claimed or no longer current")
 	}
-	return &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: root, session: session, dispatch: match[1], attempt: match[2]}, nil
+	return &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: root, rootInfo: r.rootInfo, session: session, dispatch: match[1], attempt: match[2]}, nil
 }
 
 // IssueManagedSpawn consumes issuance under the ledger lock (oracle:250-267).
@@ -90,7 +139,7 @@ func IssueManagedSpawnSelection(sel *ManagedSpawnSelection, toolUseID *string, e
 	if sel == nil || sel.root == "" {
 		return nil, errors.New("managed spawn issuance needs a preview of the attempt")
 	}
-	dir, err := dispatchDirectory(sel.root, sel.session, nil)
+	dir, err := dispatchDirectoryOf(sel.root, sel.rootInfo, sel.session, nil)
 	if err != nil {
 		return nil, err
 	}

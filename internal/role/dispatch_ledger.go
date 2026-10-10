@@ -337,12 +337,27 @@ func dispatchPinnedOpen(parent *os.Root, name string, observed fs.FileInfo) (*os
 // dispatches and the session directory are opened one step at a time, each created when missing (.crw by crwdir) and
 // never followed as a link; the last one is returned open.
 func dispatchDirectory(cwd, session string, after func(string)) (*dispatchPinnedDir, error) {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return nil, err
+	return dispatchDirectoryOf(cwd, nil, session, after)
+}
+
+// dispatchDirectoryOf is dispatchDirectory for a root a preview resolved: when ident is set the directory that cwd names now must be
+// that very directory (the same device and inode), or nothing is opened, created or written. A root replaced after the preview, by
+// a link to another directory included, is refused; the preview proved the .crw directory exists, so none is created either.
+func dispatchDirectoryOf(cwd string, ident os.FileInfo, session string, after func(string)) (*dispatchPinnedDir, error) {
+	if ident == nil {
+		if _, err := crwdir.EnsureDir(cwd); err != nil {
+			return nil, err
+		}
 	}
 	cur, err := os.OpenRoot(cwd)
 	if err != nil {
 		return nil, err
+	}
+	if ident != nil {
+		if opened, err := cur.Stat("."); err != nil || !os.SameFile(ident, opened) {
+			_ = cur.Close()
+			return nil, errors.New("managed spawn root changed since its preview")
+		}
 	}
 	path := cwd
 	for i, part := range []string{crwdir.DirName, "dispatches", session} {
