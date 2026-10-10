@@ -75,7 +75,15 @@ environments no manual install is needed:
    resolve; later runs are warm).
 3. An existing venv at `$CRW_HOME|~/.crw/venvs/repomap` — a user-level
    rebuildable derived cache (philosophy §2). Auto-created only when
-   `CRW_MAP_BOOTSTRAP=1` is set (opt-in network install).
+   `CRW_MAP_BOOTSTRAP=1` is set (opt-in network install). A venv is ready only
+   when its completion marker `.crw-ready` exists in the venv directory; the
+   bootstrap writes it (atomically) after `pip install` succeeded. A venv without
+   the marker (one built before the marker existed, or one whose bootstrap was
+   killed or failed) is not used: a run without `CRW_MAP_BOOTSTRAP=1` goes on to
+   rung 4, and the next run with `CRW_MAP_BOOTSTRAP=1` builds it again once
+   (`python3 -m venv` over the directory, then `pip install`) and marks it ready.
+   Nothing else in the directory is deleted, and a failed attempt removes only
+   what it made.
 4. Bare `python3` — works when deps are already installed; otherwise degrades to
    the install hint below.
 

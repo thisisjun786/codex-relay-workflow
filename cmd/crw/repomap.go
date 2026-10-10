@@ -20,7 +20,10 @@ import (
 
 type mapPaths struct {
 	script, requirements, python string
-	hasUv, hasVenv               bool
+	// marker is the venv's completion marker: the bootstrap writes it after pip has installed the requirements, and a venv is
+	// ready only while it exists (CRW-1162).
+	marker         string
+	hasUv, hasVenv bool
 }
 type mapCommand struct {
 	cmd  string
@@ -58,6 +61,9 @@ func selectRepoMapCommand(args []string, env host.LookupEnv, p mapPaths) mapComm
 	}
 }
 
+// repoMapVenvMarker is the file inside the venv directory that says the bootstrap finished (CRW-1162).
+const repoMapVenvMarker = ".crw-ready"
+
 func repoMapVenvPython(env host.LookupEnv) (string, error) {
 	base, err := host.CRWHome(env)
 	return filepath.Join(base, "venvs", "repomap", "bin", "python3"), err
@@ -80,13 +86,17 @@ func repoMapPaths(env host.LookupEnv) (mapPaths, error) {
 	}
 	dir := filepath.Join(root, "crw-repo-map", "scripts")
 	py, err := repoMapVenvPython(env)
-	return mapPaths{script: filepath.Join(dir, "repomap.py"), requirements: filepath.Join(dir, "requirements.txt"), python: py}, err
+	return mapPaths{script: filepath.Join(dir, "repomap.py"), requirements: filepath.Join(dir, "requirements.txt"), python: py,
+		marker: filepath.Join(filepath.Dir(filepath.Dir(py)), repoMapVenvMarker)}, err
 }
 
 type mapDeps struct {
 	run    func(string, []string, bool) (int, error)
 	exists func(string) bool
 	remove func(string) error
+	// mark writes the venv's completion marker atomically; it is called only after pip has succeeded (CRW-1162). Nil means
+	// the marker is not written (tests with fakes that do not care).
+	mark func(path string) error
 	// lock serializes the venv bootstrap of one crw home: it returns once this process holds the lock on dir's
 	// directory (CRW-1147). Nil means no serialization (tests with fakes).
 	lock func(dir string) (unlock func(), err error)
@@ -214,6 +224,36 @@ func repoMapBootstrapLock(ctx context.Context, venvs string, stderr io.Writer) (
 	}
 }
 
+// writeRepoMapMarker writes the completion marker atomically: the content goes to a temporary file in the venv directory, is
+// synced, and is renamed onto the marker, so the marker either does not exist or is whole, whatever kills the process (CRW-1162).
+func writeRepoMapMarker(path string) error {
+	f, err := os.CreateTemp(filepath.Dir(path), repoMapVenvMarker+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.WriteString("crw map venv: requirements installed\n")
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
+}
+
+// repoMapVenvReady is the readiness verdict: the interpreter exists and the bootstrap left its completion marker. An interpreter
+// alone is what a killed bootstrap or a failed venv leaves behind (CRW-1162).
+func repoMapVenvReady(p mapPaths, d mapDeps) bool {
+	return d.exists(p.python) && d.exists(p.marker)
+}
+
 func runRepoMap(c invocation) int {
 	d := mapDeps{
 		lock: func(dir string) (func(), error) { return repoMapBootstrapLock(c.ctx, dir, c.stderr) },
@@ -240,6 +280,7 @@ func runRepoMap(c invocation) int {
 		},
 		exists:         func(p string) bool { _, err := os.Stat(p); return err == nil },
 		remove:         os.RemoveAll,
+		mark:           writeRepoMapMarker,
 		installedSkill: installedRepoMapDir,
 	}
 	return launchRepoMap(c.args, os.LookupEnv, c.stderr, d)
@@ -270,7 +311,7 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 		}
 		p.hasVenv = ok
 	} else {
-		p.hasVenv = d.exists(p.python)
+		p.hasVenv = repoMapVenvReady(p, d)
 	}
 	// uv is probed only for a run it can serve: an explicit interpreter and help (above) never reach it.
 	if override == "" {
@@ -281,42 +322,64 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 }
 
 // bootstrapRepoMapVenv builds the one-time venv under the bootstrap lock, so concurrent runs wait for one another and the
-// second finds the first's venv. A failed pip removes the directory only when this attempt made it: a tree that was there before
-// (another run's, or an earlier partial one) is never deleted, only the interpreter this attempt put in it (CRW-1147). It returns whether the venv is usable, or a nonzero
-// exit when the cleanup itself failed.
+// second finds the first's venv. A venv is ready when its completion marker exists, which is written only after pip succeeded: an
+// interpreter without the marker (a bootstrap that was killed, or a venv from before the marker) is built again, once (CRW-1162).
+// A failed venv or pip removes the directory only when this attempt made it: a tree that was there before (another run's, or an
+// earlier partial one) is never deleted, only the interpreter this attempt put in it (CRW-1147). It returns whether the venv is
+// usable, or a nonzero exit when the cleanup itself failed.
 func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exit int) {
 	dir := filepath.Dir(filepath.Dir(p.python))
 	if d.lock != nil {
 		unlock, err := d.lock(filepath.Dir(dir))
 		if err != nil {
 			fmt.Fprintln(stderr, "crw map: venv bootstrap skipped:", err)
-			return d.exists(p.python), 0 // without the lock nothing is built, and an interpreter that is there is used as before
+			return repoMapVenvReady(p, d), 0 // without the lock nothing is built, and a ready venv is used as before
 		}
 		defer unlock()
 	}
-	if d.exists(p.python) {
+	if repoMapVenvReady(p, d) {
 		return true, 0 // ready: any earlier run finished (or failed and cleaned up) before it released the lock
+	}
+	// A marker without its interpreter is stale; it goes before the venv is built again, or a kill during the build would leave
+	// an interpreter that looks ready.
+	if d.exists(p.marker) {
+		if err := d.remove(p.marker); err != nil {
+			fmt.Fprintln(stderr, "crw map:", err)
+			return false, 1
+		}
 	}
 	existed := d.exists(dir)
 	fmt.Fprintf(stderr, "crw map: bootstrapping venv at %s (one-time)...\n", dir)
 	if code, _ := d.run("python3", []string{"-m", "venv", dir}, false); code != 0 {
-		return false, 0
+		return false, cleanupRepoMapVenv(p, dir, existed, stderr, d)
 	}
-	if code, _ := d.run(p.python, []string{"-m", "pip", "install", "-q", "-r", p.requirements}, false); code == 0 {
-		return true, 0
+	if code, _ := d.run(p.python, []string{"-m", "pip", "install", "-q", "-r", p.requirements}, false); code != 0 {
+		fmt.Fprintln(stderr, "crw map: venv bootstrap failed; falling back.")
+		return false, cleanupRepoMapVenv(p, dir, existed, stderr, d)
 	}
-	fmt.Fprintln(stderr, "crw map: venv bootstrap failed; falling back.")
-	// A directory that was there before keeps its tree, but loses the interpreter this attempt made: an interpreter is what marks
-	// a ready venv, so one without its requirements would stop the next opted-in run from retrying pip and be run as the map.
+	if d.mark != nil {
+		if err := d.mark(p.marker); err != nil {
+			fmt.Fprintln(stderr, "crw map: venv bootstrap failed:", err)
+			fmt.Fprintln(stderr, "crw map: falling back.")
+			return false, cleanupRepoMapVenv(p, dir, existed, stderr, d)
+		}
+	}
+	return true, 0
+}
+
+// cleanupRepoMapVenv removes what a failed attempt made. A directory that was there before keeps its tree, but loses the
+// interpreter this attempt made: an interpreter without the marker is not a ready venv, and removing it leaves the next opted-in
+// run a clean place to build in. It returns the exit code of the run: nonzero only when the removal itself failed.
+func cleanupRepoMapVenv(p mapPaths, dir string, existed bool, stderr io.Writer, d mapDeps) int {
 	gone := dir
 	if existed {
 		gone = p.python
 	}
 	if err := d.remove(gone); err != nil {
 		fmt.Fprintln(stderr, "crw map:", err)
-		return false, 1
+		return 1
 	}
-	return false, 0
+	return 0
 }
 
 func runRepoMapCommand(sel mapCommand, stderr io.Writer, d mapDeps) int {
