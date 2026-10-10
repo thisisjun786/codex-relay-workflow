@@ -24,11 +24,13 @@ import (
 // that follows. Its subject is not a deadline, and its guard does real store and journal work that a
 // loaded host can stretch past the production 5 s and 3.5 s (CRW-1161). The settings' timeoutSeconds
 // cannot do this: it only shortens the deadline. The tests of the deadlines keep the production ones.
+// The fake host's hang guard grows with them: a peer that reads until the adapter hangs up waits out
+// the guard's work.
 func loadProofDeadlines(t *testing.T) {
 	t.Helper()
-	was, wasGuard := absoluteDeadline, guardDeadline
-	absoluteDeadline, guardDeadline = 2*time.Minute, time.Minute
-	t.Cleanup(func() { absoluteDeadline, guardDeadline = was, wasGuard })
+	was, wasGuard, wasPeer := absoluteDeadline, guardDeadline, fakeControlDeadline
+	absoluteDeadline, guardDeadline, fakeControlDeadline = 2*time.Minute, time.Minute, 2*time.Minute
+	t.Cleanup(func() { absoluteDeadline, guardDeadline, fakeControlDeadline = was, wasGuard, wasPeer })
 }
 
 func hookHome(t *testing.T, budget float64) string {
@@ -93,8 +95,14 @@ func rowsAt(t *testing.T, home string) []map[string]any {
 	}
 	return rows
 }
+
+// fakeControlDeadline is the fake host's socket hang guard. loadProofDeadlines lengthens it with the
+// hook's own deadlines, since a peer that reads until the adapter hangs up waits out the guard's work.
+var fakeControlDeadline = 8 * time.Second
+
 func fakeControl(t *testing.T, home string, serve func(net.Conn) error) (<-chan error, func()) {
 	t.Helper()
+	deadline := fakeControlDeadline
 	path := filepath.Join(home, "state", "control.sock")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
@@ -118,7 +126,7 @@ func fakeControl(t *testing.T, home string, serve func(net.Conn) error) (<-chan 
 			return
 		}
 		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+		if err = conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 			result = err
 			return
 		}
@@ -329,6 +337,28 @@ func Test33ClaimWithoutOutcomeNeverReplayed(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || a != "duplicate" || !bytes.Equal(before, after) {
 		t.Fatalf("%s %v", a, err)
+	}
+}
+
+// A peer that reads until the adapter hangs up waits out the guard's work, so under the load-proof
+// deadlines a guard slower than the fake host's hang guard still ends cleanly (CRW-1161).
+func Test33LoadProofDeadlinesOutlastTheFakeHostsHangGuard(t *testing.T) {
+	was := fakeControlDeadline
+	fakeControlDeadline = 200 * time.Millisecond // stands in for the 8 s hang guard; the guard outlasts it
+	t.Cleanup(func() { fakeControlDeadline = was })
+	loadProofDeadlines(t)
+	home := hookHome(t, 5)
+	t.Setenv("CODEX_HOME", home)
+	done, _ := fakeControl(t, home, func(conn net.Conn) error { _, err := io.Copy(io.Discard, conn); return err })
+	var stdout bytes.Buffer
+	code := runAdapter(context.Background(), nil, strings.NewReader(`{"session_id":"s"}`), &stdout, time.Now(), func(context.Context, Object, GuardOptions) (Object, error) {
+		time.Sleep(time.Second)
+		panic("injected guard panic")
+	})
+	awaitHost(t, done)
+	rows := rowsAt(t, home)
+	if code != 0 || stdout.Len() != 0 || len(rows) != 1 || rows[0]["adapterOutcome"] != "adapter_faulted" {
+		t.Fatalf("code=%d stdout=%s rows=%v", code, stdout.String(), rows)
 	}
 }
 

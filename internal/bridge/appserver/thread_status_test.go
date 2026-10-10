@@ -99,7 +99,7 @@ func TestThreadHold_takes_no_gate_so_the_deliverys_own_watch_is_admitted(t *test
 		if err != nil {
 			t.Fatalf("the delivery's own watch was not admitted while the hold stood: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(30 * time.Second): // a held gate blocks the watch for good; 30 s is a hang guard
 		t.Fatal("the hold blocked the delivery's own watch: it held the root's gate")
 	}
 }
