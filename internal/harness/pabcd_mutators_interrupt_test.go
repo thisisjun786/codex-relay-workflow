@@ -671,8 +671,29 @@ func TestPabcd1171BatchWriterReleaseOutlastsALateOpen(t *testing.T) {
 	})
 	released := make(chan struct{})
 	go func() { w.release(batch); close(released) }()
-	// the writer reaches its open only after release has started and its first reader open is over
-	time.Sleep(300 * time.Millisecond)
+	// the writer reaches its open only after release has opened its reader and kept it: a non-blocking write open of
+	// the FIFO fails with ENXIO until a reader exists, so it observes release's reader (the test has none of its own)
+	probe := func() bool {
+		fd, err := syscall.Open(batch, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return false
+		}
+		syscall.Close(fd)
+		return true
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !probe() {
+		if time.Now().After(deadline) {
+			t.Fatal("release never opened its reader")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// the reader stays open while the writer's result is pending; a release that closed it at once fails here
+	for end := time.Now().Add(100 * time.Millisecond); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if !probe() {
+			t.Fatal("release closed its reader before the writer's result arrived")
+		}
+	}
 	close(opening)
 	select {
 	case <-released:
