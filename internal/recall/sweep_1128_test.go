@@ -82,7 +82,7 @@ func TestSweep1128ThreadIDStaysOnItsLine(t *testing.T) {
 		want string
 	}{
 		{"thread_id:\n# next", ""}, {"thread_id: \t\ncwd: /x", ""}, {"cwd: /x\nthread_id: real\n", "real"}, {"thread_id:\nthread_id: second", "second"},
-		{"thread_id:   spaced  \n", "spaced"}, {"intro\r\nthread_id: crlf\r\n", "crlf"}, {"xthread_id: no", ""},
+		{"thread_id:   spaced  \n", "spaced"}, {"cwd: /x\r\nthread_id: crlf\r\n", "crlf"}, {"xthread_id: no", ""},
 	} {
 		got := frontmatterThreadID(tc.in)
 		if tc.want == "" && got != nil || tc.want != "" && (got == nil || *got != tc.want) {
@@ -371,6 +371,59 @@ func TestSweep1128QuotedPathWithSpacesIsOneWholePath(t *testing.T) {
 	r, err = SearchMemory("zebra", MemorySearchOptions{Home: &stage, Synonyms: memoryPtr(false), Cwd: memoryPtr("/proj/here"), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
 	if err != nil || len(r.Hits) != 1 || r.Hits[0].Relpath != "stage1_outputs/t2" {
 		t.Fatalf("%+v %v", r.Hits, err)
+	}
+}
+
+// :762 -- a combining mark continues a name: /proj/heré (e and U+0301) is another directory than /proj/here, for files as for stage1 rows.
+func TestSweep1128CombiningMarkContinuesAPath(t *testing.T) {
+	home := sweepMemoryHome(t, map[string]string{
+		"adjacent.md": "zebra in /proj/heré\n",
+		"before.md":   "zebra in é/proj/here\n",
+		"exact.md":    "zebra in /proj/here\n",
+	})
+	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: memoryPtr("/proj/here"), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range r.Hits {
+		got = append(got, h.Relpath)
+	}
+	if want := []string{"exact.md"}; !slices.Equal(got, want) {
+		t.Fatalf("memories inside /proj/here: %v, want %v", got, want)
+	}
+	now := time.Now().Unix()
+	stage := sweepStage1Home(t, []any{"t1", now, "zebra in /proj/heré", "s"}, []any{"t2", now, "zebra in /proj/here", "s"})
+	r, err = SearchMemory("zebra", MemorySearchOptions{Home: &stage, Synonyms: memoryPtr(false), Cwd: memoryPtr("/proj/here"), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
+	if err != nil || len(r.Hits) != 1 || r.Hits[0].Relpath != "stage1_outputs/t2" {
+		t.Fatalf("%+v %v", r.Hits, err)
+	}
+}
+
+// :591 -- the identity keys are read from the leading key lines alone: a thread_id in the body (a code example, a line after the blank
+// line or a heading) names no memory and does not hide the stage1 row of that id.
+func TestSweep1128BodyKeysAreNoIdentity(t *testing.T) {
+	for _, in := range []string{
+		"cwd: /proj/here\n\n# sample\n```yaml\nthread_id: unrelated\n```\nzebra",
+		"intro\nthread_id: unrelated",
+		"# heading\nthread_id: unrelated",
+		"cwd: /a\n---\nthread_id: unrelated",
+	} {
+		if got := frontmatterThreadID(in); got != nil {
+			t.Errorf("%q: a body key is the identity %q", in, *got)
+		}
+	}
+	if got := frontmatterThreadID("updated_at: 2026\nrollout_path:\ncwd: /a\nthread_id: real\n\n# body"); got == nil || *got != "real" {
+		t.Errorf("a key further down the leading lines is read: %v", got)
+	}
+	if got := frontmatterCwd("thread_id: t\nrollout_path:\ncwd: /a\n"); got == nil || *got != "/a" {
+		t.Errorf("an empty value does not end the leading lines: %v", got)
+	}
+	home := sweepStage1Home(t, []any{"unrelated", time.Now().Unix(), "zebra real memory", "s"})
+	writeRolloutTestFile(t, home, "memories/sample.md", "cwd: /proj/here\n\n# sample\n```yaml\nthread_id: unrelated\n```\nzebra")
+	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Synonyms: memoryPtr(false)})
+	if err != nil || len(r.Hits) != 2 {
+		t.Fatalf("the body key hid the stage1 row: %+v %v", r.Hits, err)
 	}
 }
 

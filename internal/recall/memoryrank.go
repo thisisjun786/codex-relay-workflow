@@ -219,38 +219,31 @@ func frontmatterValue(s string) *string {
 
 func isJSLineTerminator(r rune) bool { return r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' }
 
-// frontmatterThreadID is the value of a thread_id key that starts a line within the first 2,000 UTF-16 units. The value is on the line of
-// its key: a key with nothing after it does not take the next line (a heading, another key) for its id (known-defects.md :591).
-func frontmatterThreadID(content string) *string {
-	prefix := memorySlice(content, 0, 2000)
-	start := true
-	for i, r := range prefix {
-		if start && strings.HasPrefix(prefix[i:], "thread_id:") {
-			if value := frontmatterValue(prefix[i+len("thread_id:"):]); value != nil {
-				return value
-			}
-		}
-		start = isJSLineTerminator(r)
-	}
-	return nil
-}
-
-func frontmatterCwd(content string) *string {
+// frontmatterKey is the value of a key among the leading key lines of a memory file, within its first 2,000 UTF-16 units: the lines from
+// the first one that are each a lower-case key (letters and underscores), a colon and the rest. The first line that is not such a line
+// (a blank line, a heading, a delimiter, any prose) ends them, so a key written in the body, a code example among others, names nothing
+// (known-defects.md :591). The value is on the line of its key, and a key with an empty value has none: a key with nothing after it does
+// not take the next line for its value, and it does not end the leading lines (known-defects.md :591, :592).
+func frontmatterKey(content, want string) *string {
 	for _, line := range text.SplitLines(memorySlice(content, 0, 2000)) {
 		key, rest, colon := strings.Cut(line, ":")
 		if !colon || key == "" || !allBytes(key, func(b byte) bool { return isLower(b) || b == '_' }) {
 			return nil
 		}
-		value := frontmatterValue(rest)
-		if value == nil {
-			return nil
-		}
-		if key == "cwd" {
-			return value
+		if key == want {
+			if value := frontmatterValue(rest); value != nil {
+				return value
+			}
 		}
 	}
 	return nil
 }
+
+// frontmatterThreadID is the thread_id of the leading key lines.
+func frontmatterThreadID(content string) *string { return frontmatterKey(content, "thread_id") }
+
+// frontmatterCwd is the cwd of the leading key lines.
+func frontmatterCwd(content string) *string { return frontmatterKey(content, "cwd") }
 
 type ParagraphChunk struct {
 	Text      string `json:"text"`

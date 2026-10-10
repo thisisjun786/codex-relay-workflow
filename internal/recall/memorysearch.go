@@ -89,9 +89,10 @@ func memorySearchScopeAdjust(scope *CwdScope, hitCwd *string, lowerText, hitRepo
 	return !scope.only, 0
 }
 
-// isPathRune is a character that continues a path name; a mention of a path ends before one that is not.
+// isPathRune is a character that continues a path name; a mention of a path ends before one that is not. A combining mark continues
+// the name it follows: /proj/here and /proj/here with an accent on its last letter are two directories (known-defects.md :762).
 func isPathRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_-.~%+@$#/\\", r)
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || strings.ContainsRune("_-.~%+@$#/\\", r)
 }
 
 // mentionsPath reports whether lowerText names the path prefix as a whole path: the mention does not start inside a longer path, and

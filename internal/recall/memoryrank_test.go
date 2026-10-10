@@ -152,7 +152,8 @@ func TestMemoryMarkdownTreeAndFrontmatter(t *testing.T) {
 	holds(t, *frontmatterCwd("cwd: /a b\n") == "/a b", "a cwd with a space is read whole (CRW-1128, known-defects.md :592)")
 	holds(t, frontmatterThreadID("intro\nthread_id:\n# next") == nil, "the id is on the line of its key (CRW-1128, known-defects.md :591)")
 	for _, sep := range []string{"\r", "\n", "\u2028", "\u2029"} {
-		holds(t, *frontmatterThreadID("intro" + sep + "thread_id: one") == "one", "JS multiline anchor %q", sep)
+		// Only the leading key lines name a memory (CRW-1128, known-defects.md :591).
+		holds(t, frontmatterThreadID("intro"+sep+"thread_id: one") == nil, "a key after a body line %q", sep)
 	}
 	holds(t, frontmatterThreadID(strings.Repeat("😀", 1000)+"\nthread_id: late") == nil, "UTF-16 prefix limit")
 }
