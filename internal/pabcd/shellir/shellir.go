@@ -436,6 +436,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		cctx.Coprocess = true
 		return w.stmt(c.Stmt, st.clone(), cctx)
 	}
+	if s.Cmd == nil {
+		return unreadablef("a redirection with no command is not modelled")
+	}
 	return unreadablef("unsupported command %T", s.Cmd)
 }
 

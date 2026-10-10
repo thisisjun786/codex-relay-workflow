@@ -23,6 +23,7 @@ type MemoryWriteAttempt struct {
 	Surface string // "tool", "edit" or "shell"; empty when the call is no memory write
 	Cause   string // empty: confirmed protected write; otherwise a bounded reason code
 	Target  string // the destination that triggered the judgement, as the deny reason names it
+	Reason  string // unreadable-program only: what the command reader could not read, bounded and free of control characters
 }
 
 // HandleMemoryWriteGate is handleMemoryWriteGate, the PreToolUse leg: the deny envelope for a memory write nobody asked for,
@@ -75,6 +76,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	if leaf {
 		recovery = "Report the blocked command and cause code to your parent."
 	}
+	reachable := memoryGateStateReachable(cwd, sid)
 	switch a.Cause {
 	case "unknown-destination":
 		// A general command is not a request to write memory, so it gets no grant route. An edit tool call is a write
@@ -84,7 +86,8 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 		}
 		return prefix + "Cannot verify the program's write destination (unknown-destination). " + recovery
 	case "unreadable-program":
-		return prefix + "Cannot read the command or its program (unreadable-program); a protected write has not been established. " + recovery
+		// No protected write was observed, so this is not the gate's policy refusal: it says what could not be read (CRW-1178).
+		return commandUnreadableReason("unreadable-program", a.Reason, leaf, "")
 	case "authorization-state":
 		return prefix + "Cannot spend the authorization (authorization-state): session state is locked, unwritable or cannot be preserved. " + "Report this state failure to the parent or session owner; retry after state repair."
 	}
@@ -96,11 +99,8 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	if leaf {
 		return reason + "Report the protected write to your parent; the parent must resolve authorization."
 	}
-	if sid == "" {
-		sid = "<id>"
-	}
-	if cwd == "" {
-		cwd = "the session working directory"
+	if !reachable {
+		return reason + memoryGateNoStateHint
 	}
 	stem := reason + "Ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
 	suffix := ". The grant is stored per cwd and permits one write."
@@ -108,12 +108,20 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	return stem + memoryGateLabelLimit(cwd, budget) + suffix
 }
 
+// memoryGateNoStateHint replaces the grant route when the call carries no absolute working directory or no session id: the gate
+// reads no authorization for such a call, so a grant or a request could not be spent by it (CRW-1178).
+const memoryGateNoStateHint = "This call carries no absolute working directory and session id, so no grant or request can be matched to it; retry from a session whose hook payload carries both."
+
+// memoryGateStateReachable is whether the gate consults the session state for this call (memoryGateHandle): only then can a
+// grant or a request authorize it. A relative working directory is looked up from the hook process's own directory, which the
+// grant command cannot be told to match, so it counts as unreachable for the route the reason offers.
+func memoryGateStateReachable(cwd, sid string) bool {
+	return sid != "" && cwd != "" && path.IsAbs(cwd)
+}
+
 func memoryGateUnknownEditReason(prefix, sid, cwd string) string {
-	if sid == "" {
-		sid = "<id>"
-	}
-	if cwd == "" {
-		cwd = "the session working directory"
+	if !memoryGateStateReachable(cwd, sid) {
+		return prefix + "Cannot verify the write destination of this edit (unknown-destination); use an absolute path. " + memoryGateNoStateHint
 	}
 	stem := prefix + "Cannot verify the write destination of this edit (unknown-destination); use an absolute path. If it is a memory note, ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
 	suffix := ". The grant is stored per cwd and permits one write."
@@ -216,6 +224,10 @@ func memoryGateClassifyUsing(tool string, input any, cwd string, env host.Lookup
 		return MemoryWriteAttempt{}
 	}
 	record, _ := input.(map[string]any) // a bare string (unparseable arguments), an array or null is no record
+	if freeform, ok := input.(string); ok && record == nil && editTool(tool) {
+		// A freeform apply_patch hands its patch text over as the bare string; it is judged as the patch of a record (CRW-1178).
+		record = map[string]any{"command": freeform}
+	}
 	switch {
 	case memoryGateToolName(tool):
 		name, _ := record["filename"].(string)
@@ -259,21 +271,11 @@ func memoryGateClassifyUsing(tool string, input any, cwd string, env host.Lookup
 			}
 		}
 		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
-		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
-		if _, ok := shellIRFStringResult(a.withEnv()); ok {
-			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
-		}
-		if _, ok := shellIRFStringResult(a.withoutEnv()); ok {
-			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
-		}
-		if _, ok := shellIRFStringResult(a.withoutDir()); ok {
-			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
-		}
-		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
-		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
-		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if !a.readable() {
-			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
+		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741). The same holds for a
+		// shell program position the outer shell builds at run time - a -c program, an eval operand, a source operand, a
+		// shell reading a pipe, a here-string or a here-document (CRW-726), and for any text the reader refuses.
+		if reason, bad := a.unreadable(); bad {
+			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)", Reason: reason}
 		}
 	}
 	return MemoryWriteAttempt{}

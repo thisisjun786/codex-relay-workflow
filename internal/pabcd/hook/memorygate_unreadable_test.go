@@ -63,7 +63,7 @@ func TestMemoryGateUnreadableProgramDeniesAndSpends(t *testing.T) {
 			if out := HandleMemoryWriteGate(payload, env); out != "" {
 				t.Errorf("with a grant the write must pass: %s", out)
 			}
-			if out := HandleMemoryWriteGate(payload, env); !strings.Contains(out, "MEMORY-WRITE-GATE") {
+			if out := HandleMemoryWriteGate(payload, env); !strings.Contains(out, "unreadable-program") {
 				t.Errorf("the grant must be spent after one write: %q", out)
 			}
 		})

@@ -93,12 +93,20 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 	if site.rule != githubPostRuleUnread {
 		return githubPostDeny(site.rule, site.place)
 	}
+	leaf := p["agent_id"] != nil || p["agent_type"] != nil
 	recovery := "Run a readable script file."
-	if p["agent_id"] != nil || p["agent_type"] != nil {
+	if leaf {
 		recovery = "Report the blocked command and cause code to your parent."
 	}
 	reason := "Cannot read the command or its program (unreadable-github-post); GitHub posting has not been established. " + recovery
-	if site.post {
+	if site.reason != "" {
+		reason = "Cannot read the command or its program (unreadable-github-post): " + site.reason + "; GitHub posting has not been established. " + recovery
+	}
+	if site.analysis && !site.post && !site.mentions {
+		// The text names no gh post: the refusal is the reader's, not a verdict on GitHub posting, so it says what could not be
+		// read, as the memory guard does, rather than repeating a policy refusal (CRW-1178).
+		reason = commandUnreadableReason(githubPostRuleUnread, site.reason, leaf, "It names no GitHub post.")
+	} else if site.post {
 		reason = "GitHub post cannot be verified (unreadable-github-post) at " + memoryGateLabel(site.place) + ". " + recovery
 	}
 	if site.cause == "outside-temp-roots" {
@@ -118,6 +126,9 @@ type githubPostSite struct {
 	line        int
 	post        bool   // established by the execution that refused, including carried files
 	cause       string // bounded body-read cause; never reconstructed from the payload cwd
+	reason      string // what the command reader could not read, when it refused the text (bounded, from the reader)
+	analysis    bool   // the refusal is the reader's refusal of the whole text, not a rule about one execution
+	mentions    bool   // the text spells a gh post (set by the guard from the command text)
 }
 
 // githubPostArgv is tool_input's command or cmd as an already-split argv array.

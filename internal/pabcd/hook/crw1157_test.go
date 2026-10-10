@@ -19,7 +19,13 @@ func TestCRW1157DenialCauses(t *testing.T) {
 				t.Errorf("%s: misleading %q", cmd, bad)
 			}
 		}
-		if !strings.Contains(strings.ToLower(reason), "cannot") || !strings.Contains(reason, "MEMORY-WRITE-GATE") || len(reason) > 700 {
+		// A command the reader cannot read observed no protected write, so it carries the reader's name and cause (CRW-1178);
+		// a destination the gate cannot verify keeps the gate's.
+		wantName := "[crw command-reader]"
+		if strings.Contains(reason, "unknown-destination") {
+			wantName = "MEMORY-WRITE-GATE"
+		}
+		if !strings.Contains(strings.ToLower(reason), "cannot") || !strings.Contains(reason, wantName) || len(reason) > 700 {
 			t.Errorf("cause/bound: %s", reason)
 		}
 	}
@@ -43,7 +49,10 @@ func TestCRW1157DenialCauses(t *testing.T) {
 // cause is unknown-destination; a leaf is sent to its parent, and a general shell command never receives the grant route.
 func TestCRW1157UnknownDestinationEditKeepsGrantRoute(t *testing.T) {
 	_, _, env := gateScene(t)
-	unknown := gatePayload(t, "", map[string]any{"tool_name": "Write", "tool_input": map[string]any{"file_path": "relative-note.md", "content": "x"}})
+	// The grant is offered only where the gate reads the state: an absolute working directory (here one that is not a directory, so
+	// a relative path has no known destination) and a session id. With no cwd the route is not offered (CRW-1178).
+	missing := filepath.Join(t.TempDir(), "missing")
+	unknown := gatePayload(t, missing, map[string]any{"tool_name": "Write", "tool_input": map[string]any{"file_path": "relative-note.md", "content": "x"}})
 	reason := gateDeny(t, HandleMemoryWriteGate(unknown, env))
 	for _, want := range []string{"MEMORY-WRITE-GATE", "unknown-destination", "allow-write --session " + gateSession, "permits one write"} {
 		if !strings.Contains(reason, want) {

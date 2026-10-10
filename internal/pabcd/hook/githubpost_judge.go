@@ -50,14 +50,18 @@ func HandleGitHubPostGuard(raw string) string {
 	cwd = shellirPayloadCwd(cwd)
 	var site githubPostSite
 	var denied bool
+	var spelled string
 	if words, ok := githubPostArgv(input); ok {
 		site, denied = githubPostJudgeArgv(words, cwd)
+		spelled = strings.Join(words, " ")
 	} else if command, ok := githubPostCommand(input); ok && text.Trim(command) != "" {
 		site, denied = githubPostJudgeText(command, cwd)
+		spelled = command
 	}
 	if !denied {
 		return ""
 	}
+	site.mentions = githubPostInlineNamesPost(spelled)
 	return githubPostDenyPayload(site, p)
 }
 
@@ -82,7 +86,7 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
 	res, err := shellir.AnalyzeScript(command, cwd, cdpath)
 	if err != nil {
-		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
+		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: unreadableCause(err), analysis: true}, true
 	}
 	layoutLine, layout := 0, true
 	if depth > 0 {
