@@ -259,6 +259,26 @@ func TestHitEventCountsOnce(t *testing.T) {
 	}
 }
 
+// The store the hook uses keeps that promise too: a second Bump with a counted event changes nothing.
+func TestSidecarStoreBumpCountsAnEventOnce(t *testing.T) {
+	db, _ := indexTestDB(t)
+	store := &hookContextSidecarStore{db: db}
+	for range 2 {
+		if err := store.Bump("same-event", []string{"thread:a"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := readHitCounts(db, []string{"thread:a"})["thread:a"]; got != 1 {
+		t.Fatalf("one event counted %v times", got)
+	}
+	if err := store.Bump("next-event", []string{"thread:a"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readHitCounts(db, []string{"thread:a"})["thread:a"]; got != 2 {
+		t.Fatalf("a new event counts: %v", got)
+	}
+}
+
 func TestHitEventsAreBounded(t *testing.T) {
 	db, _ := indexTestDB(t)
 	for i := range hitEventKeep + 50 {

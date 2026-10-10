@@ -42,7 +42,8 @@ func HitCountPenalty(count float64) float64 {
 // Errors model the oracle's throws; a failed Read restores neutral ordering. Read is used while an
 // entry is selected and the store is closed at once; Bump is used after the hook's answer was
 // written, with the refs that answer carries. A Bump with an event the store has already counted
-// changes nothing, and a Bump that fails changes nothing.
+// (and still keeps: the sidecar keeps events for 24 hours, at most 1,000) changes nothing, and a Bump
+// that fails changes nothing.
 type HitCountStore interface {
 	Read([]string) (map[string]float64, error)
 	Bump(event string, refs []string) error
@@ -126,12 +127,11 @@ type hookContextSidecarStore struct{ db *RwDb }
 func (s *hookContextSidecarStore) Read(refs []string) (map[string]float64, error) {
 	return readHitCounts(s.db, refs), nil
 }
+
+// Bump keeps the counted event recorded, within the age and number bounds of recordHitEvent, so a
+// repeated Bump with it changes nothing for as long as the event is kept.
 func (s *hookContextSidecarStore) Bump(event string, refs []string) error {
-	if err := recordHitEvent(s.db, event, refs, time.Now().UTC().Format("2006-01-02T15:04:05.000Z")); err != nil {
-		return err
-	}
-	forgetHitEvent(s.db, event) // Counted: nothing retries it now.
-	return nil
+	return recordHitEvent(s.db, event, refs, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"))
 }
 func (s *hookContextSidecarStore) Close() error { return s.db.Close() }
 func hookContextOpenSidecarHitCounts(env host.LookupEnv) HitCountStore {
