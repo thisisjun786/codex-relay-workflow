@@ -122,20 +122,20 @@ func deriveRecord(obs Observation, needsID bool) (Record, error) {
 		note = "work report " + obs.ReportStatus
 	}
 	record := Record{
-		Schema:      Schema,
-		DecisionID:  obs.DecisionID,
-		Kind:        KindBlockedEscalation,
-		Context:     derivedContext(obs, fromReport),
-		Options:     options,
-		Blocking:    blocking,
-		NeededBy:    obs.NeededBy,
-		Origin:      Origin{Issue: obs.Issue, Project: obs.Project},
-		Source:      Source{Kind: SourceKindObligation, Ref: obs.ObligationID},
-		Authority:   authority,
-		State:       StateRaised,
-		RaisedAt:    obs.ObservedAt,
-		RaisedVia:   RaisedViaObligation,
-		Seen:        []Seen{{At: obs.ObservedAt, Source: "event:" + obs.EventID, Note: note}},
+		Schema:     Schema,
+		DecisionID: obs.DecisionID,
+		Kind:       KindBlockedEscalation,
+		Context:    derivedContext(obs, fromReport),
+		Options:    options,
+		Blocking:   blocking,
+		NeededBy:   obs.NeededBy,
+		Origin:     Origin{Issue: obs.Issue, Project: obs.Project},
+		Source:     Source{Kind: SourceKindObligation, Ref: obs.ObligationID},
+		Authority:  authority,
+		State:      StateRaised,
+		RaisedAt:   obs.ObservedAt,
+		RaisedVia:  RaisedViaObligation,
+		Seen:       []Seen{{At: obs.ObservedAt, Source: "event:" + obs.EventID, Note: note}},
 	}
 	record.Fingerprint = Fingerprint(record.Context, record.Blocking, record.Options)
 	if err := ValidateRaise(record); err != nil {
