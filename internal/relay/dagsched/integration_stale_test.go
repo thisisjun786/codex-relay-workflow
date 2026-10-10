@@ -255,3 +255,31 @@ func TestPushWithStaleNodesStillPushesAndWritesNothing(t *testing.T) {
 		t.Fatalf("a list that cannot be read is reported and does not block: %+v, %v", again, err)
 	}
 }
+
+// A merge whose mark the criteria change refused (the branch moved, the mark stayed pending) is in the pushed head all the
+// same: the push lists it, still pushes, and a split candidate of the same batch stays out of the list.
+func TestPushListsAMergedNodeWhoseMarkStayedPending(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	remote := bareRemote(t)
+	k.pushRepo(t, remote)
+	k.acceptByCommit("a")
+	in := k.batchIn()
+	deps := IntegrationBatchDeps{Verify: inProcessVerifier(t), Update: updateIntegrationRef, AfterMove: func(context.Context) error {
+		k.changeCriteria("a")
+		return nil
+	}}
+	res, err := k.sched.IntegrateBatch(context.Background(), in, deps)
+	if err != nil || len(res.Pending) != 1 || len(res.MarkedEvents) != 0 {
+		t.Fatalf("want a merged candidate whose mark is pending: %+v, %v", res, err)
+	}
+	push, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto, k.sched.StaleIntegratedNodes)
+	if err != nil || push.Outcome != PushPushed {
+		t.Fatalf("the pending mark must not block the push: %+v, %v", push, err)
+	}
+	if got := remoteBranch(t, remote, "dev"); got != res.NewHead {
+		t.Fatalf("the remote holds %s, want %s", got, res.NewHead)
+	}
+	if len(push.StaleNodes) != 1 || push.StaleNodes[0].NodeID != "a" || push.StaleNodes[0].Reason != StaleNodeCriteriaChanged || push.StaleNodesError != "" {
+		t.Fatalf("a pushed merge with a pending mark and changed criteria is listed: %+v", push)
+	}
+}

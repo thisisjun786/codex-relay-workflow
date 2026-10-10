@@ -63,9 +63,6 @@ type VerificationKeys struct {
 	// Pins are the tool versions the verified commit declares (DeclaredToolPins): the required pin set of a record.
 	// CommitVerificationKeys reads them from the commit; they are never read from the local PATH.
 	Pins map[string]string
-	// PinsUnread is a caller that cannot read the commit (the upgrade command holds a tree id and no checkout) saying so:
-	// the record's pins are then checked for shape and for agreement with its tools, not against a declaration.
-	PinsUnread bool
 }
 
 // DecodeVerificationRecord reads the document and refuses what is not a verification-record/1: a document that
@@ -187,7 +184,7 @@ func JudgeVerificationRecord(raw []byte, want VerificationKeys) (VerificationRec
 }
 
 // judgeRecordPins decides the record's pins (CRW-1026, d1). The record must carry the pins member (not null), every tool it
-// pins must equal its own pin (CRW-965, parent decision D1 refined), and, unless the caller cannot read the commit, every
+// pins must equal its own pin (CRW-965, parent decision D1 refined), and every
 // tool the verified commit declares must be pinned and carried by the record at exactly the version the commit declares.
 // The declaration is the commit's (go.mod, secrets.sh, ci.yml); the PATH of this host is never consulted. A missing pin is
 // disposition_conflict and names the tool.
@@ -203,9 +200,6 @@ func judgeRecordPins(record VerificationRecord, members map[string]json.RawMessa
 		}
 	}
 	if want.Pins == nil {
-		if want.PinsUnread {
-			return nil
-		}
 		return refuse(contract.RefusalDispositionConflict, "the pins the verified commit declares were not read, so the verification record's pins cannot be judged")
 	}
 	for _, name := range pinNames(want.Pins) {

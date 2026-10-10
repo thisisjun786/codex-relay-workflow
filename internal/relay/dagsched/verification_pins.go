@@ -1,6 +1,7 @@
 package dagsched
 
 import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"regexp"
 	"slices"
 	"strconv"
@@ -55,7 +56,11 @@ func DeclaredToolPins(read func(path string) (body []byte, found bool, err error
 	if body, found, err = read(pinWorkflowFile); err != nil {
 		return nil, err
 	} else if found {
-		if nodes := workflowNodeVersions(string(body)); len(nodes) > 0 {
+		nodes, err := workflowNodeVersions(string(body))
+		if err != nil {
+			return nil, err
+		}
+		if len(nodes) > 0 {
 			pins["node"] = strings.Join(nodes, ",")
 		}
 	}
@@ -63,10 +68,27 @@ func DeclaredToolPins(read func(path string) (body []byte, found bool, err error
 }
 
 // workflowNodeVersions are the distinct node-version values of the steps that use actions/setup-node, sorted. It reads the
-// steps' `uses:` and `with:` keys line by line, as CRW-964's writer does; it is not a YAML parser.
-func workflowNodeVersions(text string) []string {
+// steps' `uses:` and `with:` keys line by line, as CRW-964's writer does; it is not a YAML parser. A step is judged once it
+// is read whole, so `with:` before `uses:` is the same step as the reverse order. A setup-node step that names no
+// node-version it can read is an error, never "no Node declaration": the pin set of a record must not shrink because the
+// workflow was written in a shape this reader does not understand.
+func workflowNodeVersions(text string) ([]string, error) {
 	var versions []string
-	setupNode, inWith := false, false
+	var step struct {
+		open, setupNode bool
+		versions        []string
+	}
+	flush := func() error {
+		if step.open && step.setupNode {
+			if len(step.versions) == 0 {
+				return refuse(contract.RefusalDispositionConflict, "ci.yml has an actions/setup-node step with no node-version this reader can read, so the node pin the commit declares is unknown")
+			}
+			versions = append(versions, step.versions...)
+		}
+		step.open, step.setupNode, step.versions = false, false, nil
+		return nil
+	}
+	inWith := false
 	withIndent := 0
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -76,9 +98,9 @@ func workflowNodeVersions(text string) []string {
 		indent := len(line) - len(strings.TrimLeft(line, " "))
 		if inWith {
 			if indent > withIndent {
-				if m := pinWithEntry.FindStringSubmatch(trimmed); m != nil && m[1] == "node-version" && setupNode {
+				if m := pinWithEntry.FindStringSubmatch(trimmed); m != nil && m[1] == "node-version" {
 					if value := pinScalar(m[2]); value != "" {
-						versions = append(versions, value)
+						step.versions = append(step.versions, value)
 					}
 				}
 				continue
@@ -87,7 +109,10 @@ func workflowNodeVersions(text string) []string {
 		}
 		if strings.HasPrefix(trimmed, "- ") {
 			// a new step: its first key sits after the dash
-			setupNode = false
+			if err := flush(); err != nil {
+				return nil, err
+			}
+			step.open = true
 			trimmed, indent = strings.TrimSpace(trimmed[2:]), indent+2
 		}
 		m := pinStepKey.FindStringSubmatch(trimmed)
@@ -97,7 +122,7 @@ func workflowNodeVersions(text string) []string {
 		switch m[1] {
 		case "uses":
 			if fields := strings.Fields(m[2]); len(fields) > 0 && strings.HasPrefix(fields[0], "actions/setup-node@") {
-				setupNode = true
+				step.setupNode = true
 			}
 		case "with":
 			if strings.TrimSpace(m[2]) == "" {
@@ -105,8 +130,11 @@ func workflowNodeVersions(text string) []string {
 			}
 		}
 	}
+	if err := flush(); err != nil {
+		return nil, err
+	}
 	slices.Sort(versions)
-	return slices.Compact(versions)
+	return slices.Compact(versions), nil
 }
 
 // pinScalar reads a YAML scalar of a with: entry: quotes are dropped and a trailing comment is not part of the value.

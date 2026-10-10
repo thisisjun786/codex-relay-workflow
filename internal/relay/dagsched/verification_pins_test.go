@@ -243,7 +243,7 @@ func TestJudgeVerificationRecordOlderTreesNeedNoNodePin(t *testing.T) {
 }
 
 // Keys that were not built from a commit say nothing about what the commit declares: the judge refuses rather than accept
-// every record, unless the caller states that it cannot read the commit.
+// every record: there is no caller that waives the declaration (CRW-1026).
 func TestJudgeVerificationRecordKeysWithoutADeclaration(t *testing.T) {
 	repo, head := pinnedCommit(t, fullDeclaration())
 	keys := pinnedKeys(t, repo, head)
@@ -253,16 +253,12 @@ func TestJudgeVerificationRecordKeysWithoutADeclaration(t *testing.T) {
 	if _, err := JudgeVerificationRecord(raw, unread); refusalReasonOf(err) != "disposition_conflict" {
 		t.Fatalf("keys with no declared pins must not accept a record, got %v", err)
 	}
-	unread.PinsUnread = true
-	if _, err := JudgeVerificationRecord(raw, unread); err != nil {
-		t.Fatalf("a caller that cannot read the commit still accepts a record with consistent pins: %v", err)
-	}
 	for name, edit := range map[string]func(map[string]any){
 		"missing": func(m map[string]any) { delete(m, "pins") },
 		"null":    func(m map[string]any) { m["pins"] = nil },
 	} {
 		if _, err := JudgeVerificationRecord(reseal(t, raw, edit), unread); refusalReasonOf(err) != "disposition_conflict" || !strings.Contains(err.Error(), "pins") {
-			t.Fatalf("pins %s must be refused even when the declaration is unread, got %v", name, err)
+			t.Fatalf("pins %s must be refused, got %v", name, err)
 		}
 	}
 }
@@ -305,5 +301,48 @@ func TestCommitAcceptanceRefusesARecordWithoutThePinsOfTheCommit(t *testing.T) {
 	with := sealPinned(t, k.repo, k.head, keys, copyPins(declaredAll()), copyPins(declaredAll()))
 	if _, err := k.acceptCommit(write(with)); err != nil {
 		t.Fatalf("a record with the commit's pins is accepted: %v", err)
+	}
+}
+
+// A step reads whole: `with:` before `uses:` is the same setup-node step as the reverse order, so its node declaration is
+// collected and a record without the node pin, or with another, is refused. A setup-node step whose node-version cannot be
+// read is an error, never "no Node declaration".
+func TestDeclaredNodePinsDoNotDependOnTheOrderOfAStepsKeys(t *testing.T) {
+	withFirst := "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - with:\n          node-version: '24.20.0'\n        uses: actions/setup-node@v4\n"
+	files := fullDeclaration()
+	files[".github/workflows/ci.yml"] = withFirst
+	repo, head := pinnedCommit(t, files)
+	keys := pinnedKeys(t, repo, head)
+	if keys.Pins["node"] != "24.20.0" {
+		t.Fatalf("a setup-node step with the with block first lost its declaration: %v", keys.Pins)
+	}
+	noNode := declaredAll()
+	delete(noNode, "node")
+	if _, err := JudgeVerificationRecord(sealPinned(t, repo, head, keys, copyPins(noNode), copyPins(noNode)), keys); refusalReasonOf(err) != "disposition_conflict" || !strings.Contains(err.Error(), "node") {
+		t.Fatalf("a record without the node pin must be refused for a tree with setup-node, got %v", err)
+	}
+	wrongNode := declaredAll()
+	wrongNode["node"] = "20.0.0"
+	if _, err := JudgeVerificationRecord(sealPinned(t, repo, head, keys, copyPins(wrongNode), copyPins(wrongNode)), keys); refusalReasonOf(err) != "disposition_conflict" || !strings.Contains(err.Error(), "node") {
+		t.Fatalf("a record with another node pin must be refused, got %v", err)
+	}
+	if _, err := JudgeVerificationRecord(sealPinned(t, repo, head, keys, copyPins(declaredAll()), copyPins(declaredAll())), keys); err != nil {
+		t.Fatalf("the record that equals the declaration is reusable: %v", err)
+	}
+	for name, ci := range map[string]string{
+		"no node-version":         "jobs:\n  build:\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version-file: .nvmrc\n",
+		"no with":                 "jobs:\n  build:\n    steps:\n      - uses: actions/setup-node@v4\n",
+		"an empty node-version":   "jobs:\n  build:\n    steps:\n      - with:\n          node-version: ''\n        uses: actions/setup-node@v4\n",
+		"the last step, no value": "jobs:\n  build:\n    steps:\n      - run: make\n      - uses: actions/setup-node@v4\n",
+	} {
+		_, err := DeclaredToolPins(func(path string) ([]byte, bool, error) {
+			if path == pinWorkflowFile {
+				return []byte(ci), true, nil
+			}
+			return nil, false, nil
+		})
+		if err == nil {
+			t.Errorf("%s: a setup-node step whose version cannot be read must be an error", name)
+		}
 	}
 }

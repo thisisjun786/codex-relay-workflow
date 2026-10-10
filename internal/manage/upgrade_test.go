@@ -181,7 +181,9 @@ type upgradeHarnessOptions struct {
 
 type upgradeGhAnswer struct {
 	Body string
-	Exit int
+	// Stderr is what the fake prints on the error stream, as gh does for an HTTP error.
+	Stderr string
+	Exit   int
 }
 
 func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
@@ -433,7 +435,7 @@ func (h *upgradeEnv) writeFakes(opts upgradeHarnessOptions) {
 	body.WriteString("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + coreShellQuote(h.ghCalls) + "\n")
 	body.WriteString("case \"$2\" in\n")
 	for path, answer := range opts.gh {
-		body.WriteString(coreShellQuote(path) + ") printf '%s\\n' " + coreShellQuote(answer.Body) + "; exit " + strconv.Itoa(answer.Exit) + ";;\n")
+		body.WriteString(coreShellQuote(path) + ") printf '%s\\n' " + coreShellQuote(answer.Body) + "; printf '%s' " + coreShellQuote(answer.Stderr) + " >&2; exit " + strconv.Itoa(answer.Exit) + ";;\n")
 	}
 	body.WriteString("*) exit 1;;\nesac\n")
 	syscall.ForkLock.RLock()
@@ -635,7 +637,19 @@ func upgradeGhPathsFor(version, commit string) map[string]upgradeGhAnswer {
 	for _, ref := range upgradeCommitRefs(version) {
 		out["repos/owner/repo/commits/"+ref] = upgradeGhAnswer{Body: fmt.Sprintf("{\"sha\":\"%s\",\"commit\":{\"tree\":{\"sha\":\"%s\"}}}", commit, upgradeGoodTree)}
 	}
+	// the release commit declares no tool (CRW-1026): the forge has none of the files the pins are read from
+	for _, file := range upgradeDeclaringFiles {
+		out[upgradeContentsPath(commit, file)] = upgradeGhAnswer{Body: `{"message":"Not Found","status":"404"}`, Stderr: "gh: Not Found (HTTP 404)", Exit: 1}
+	}
 	return out
+}
+
+// upgradeDeclaringFiles are the files the pins of a commit are read from.
+var upgradeDeclaringFiles = []string{"go.mod", "scripts/ci/secrets.sh", ".github/workflows/ci.yml"}
+
+// upgradeContentsPath is the forge path the upgrade reads one file of a commit from.
+func upgradeContentsPath(commit, file string) string {
+	return "repos/owner/repo/contents/" + file + "?ref=" + commit
 }
 
 // upgradeGhPaths answers the forge calls the harness's default version makes.

@@ -45,9 +45,10 @@ type StaleNode struct {
 type StaleNodesCheck func(ctx context.Context, checkout, integrationRef, head string) ([]StaleNode, error)
 
 // StaleIntegratedNodes reads the integrated acceptances the head contains and answers those the plan no longer stands behind,
-// in plan, node and acceptance order. An acceptance is an integrated one of this head when a batch of integrationRef marked it
-// merged (the batches that came before the last one count) and the head it integrated is an ancestor of head in the checkout.
-// A candidate a batch split out has no mark and is not read, and a batch of another integration ref is not read either.
+// in plan, node and acceptance order. An acceptance is an integrated one of this head when a batch of integrationRef merged it
+// (its mark, or the mark_pending row of a merge whose mark the criteria change refused; the batches that came before the last
+// one count) and the head it integrated is an ancestor of head in the checkout. A candidate a batch split out has neither
+// row and is not read, and a batch of another integration ref is not read either.
 func (s *Scheduler) StaleIntegratedNodes(ctx context.Context, checkout, integrationRef, head string) ([]StaleNode, error) {
 	q := s.Store.Q(ctx)
 	marked, err := integratedAcceptances(ctx, q, integrationRef)
@@ -95,14 +96,16 @@ func (s *Scheduler) StaleIntegratedNodes(ctx context.Context, checkout, integrat
 	return out, nil
 }
 
-// markedAcceptance is the newest acceptance of one node that a batch of the ref marked merged, with the head it integrated.
+// markedAcceptance is the newest acceptance of one node that a batch of the ref merged, with the head it integrated.
 type markedAcceptance struct{ plan, node, acceptance, head string }
 
-// integratedAcceptances are, per plan and node, the newest acceptance a batch of integrationRef marked merged (a batch that
-// merged it and a batch that found it already contained both write the mark). An older acceptance of the same node that a
+// integratedAcceptances are, per plan and node, the newest acceptance a batch of integrationRef merged (a batch that merged it
+// and a batch that found it already contained write a mark; a batch that moved the branch and could not write the mark, because
+// the criteria changed in between, leaves mark_pending, and its merge is in the branch all the same, so it counts: a batch
+// split candidate has neither row). An older acceptance of the same node that a
 // later one replaced in the ref is not read: the later one is what the ref holds for the node.
 func integratedAcceptances(ctx context.Context, q store.Querier, integrationRef string) ([]markedAcceptance, error) {
-	rows, err := q.QueryContext(ctx, "SELECT c.plan_id, c.node_id, c.acceptance_id, c.head_sha, b.detail FROM dag_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.stage = 'marked' AND c.node_id <> '' AND c.acceptance_id <> '' ORDER BY c.rowid")
+	rows, err := q.QueryContext(ctx, "SELECT c.plan_id, c.node_id, c.acceptance_id, c.head_sha, b.detail FROM dag_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.stage IN ('marked', 'mark_pending') AND c.node_id <> '' AND c.acceptance_id <> '' ORDER BY c.rowid")
 	if err != nil {
 		return nil, err
 	}
