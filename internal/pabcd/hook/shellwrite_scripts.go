@@ -27,7 +27,10 @@ func shellIRScriptDests(e shellir.Exec, cwd string, lookup func(string) (string,
 	}
 	read, dir := shellir.AnalyzeScript, e.Dir.Path
 	if resolve {
-		read = shellir.AnalyzeScriptProvenDirectory
+		// The script inherits what the text that runs it did to exit and cd (CRW-1165), and the environment the gate is given.
+		read = func(body, dir string, cdpath bool) (shellir.Result, error) {
+			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup})
+		}
 		if !e.Dir.Known {
 			dir = ""
 		}

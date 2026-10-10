@@ -22,10 +22,15 @@ var exitProofBanned = map[string]bool{
 	"builtin": true, "command": true, "unset": true, "set": true, "exec": true, "hash": true, "declare": true, "typeset": true,
 	"local": true, "nameref": true, "setopt": true, "unsetopt": true, "emulate": true, "autoload": true, "functions": true,
 	"fc": true, "history": true, "bind": true, "compgen": true, "complete": true,
+	// zsh: disable removes a builtin (`disable exit` makes the exit of the form a command that is not found, and the text goes on), the
+	// others remove a hash entry or a function, load or unload a module that holds builtins, or schedule a command (CRW-1165).
+	"disable": true, "unhash": true, "unfunction": true, "zmodload": true, "zcompile": true, "sched": true,
 }
 
 // plainForExitProof is whether the whole text leaves exit and cd alone (see above). lookup is the environment the text runs in, nil when
-// the reader is given none (a variable is then unknown, and the startup variables cannot be checked).
+// the reader is given none (a variable is then unknown, and the startup variables cannot be checked). A function named exit is
+// refused by the reader itself (modelledName), so the walk of the text never gets here with one; FuncDecl stays in the check for the
+// readings that do not walk a body.
 func plainForExitProof(file *syntax.File, lookup func(string) (string, bool)) bool {
 	if lookup != nil {
 		for _, name := range []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "BASH_FUNC_exit%%", "BASH_FUNC_cd%%", "CDPATH"} {
@@ -46,6 +51,12 @@ func plainForExitProof(file *syntax.File, lookup func(string) (string, bool)) bo
 			if x.Variant != nil && (x.Variant.Value == "declare" || x.Variant.Value == "typeset" || x.Variant.Value == "local") {
 				plain = false
 			}
+			// export -f and readonly -f name a function: one the text or its environment defined reaches the shells the text runs.
+			for _, a := range x.Args {
+				if a.Naked && a.Value != nil && declFunctionFlag(a.Value) {
+					plain = false
+				}
+			}
 		case *syntax.CallExpr:
 			if len(x.Args) == 0 {
 				return true
@@ -58,6 +69,15 @@ func plainForExitProof(file *syntax.File, lookup func(string) (string, bool)) bo
 		return plain
 	})
 	return plain
+}
+
+// declFunctionFlag is whether a word of a declaration is an option word that holds f (-f, -fx, -nf).
+func declFunctionFlag(w *syntax.Word) bool {
+	v, ok := commandWordText(w)
+	if !ok {
+		return true
+	}
+	return strings.HasPrefix(v, "-") && strings.Contains(v, "f")
 }
 
 // commandWordText is the command a word names after the shell removed its quotes and backslashes, and false when the word holds an

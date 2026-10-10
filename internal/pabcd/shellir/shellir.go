@@ -164,6 +164,10 @@ type Exec struct {
 	// program or script file that is run there inherits it: a cd to a bare name in a script body searches its directories. A
 	// reader of the body starts with it (AnalyzeScript).
 	Cdpath bool
+	// ExitTainted is whether the text that holds a KindScriptFile record may have changed what exit or cd does for the shell that runs
+	// the script (a function, option or builtin it changed, or an environment it was not shown to leave alone): the reader of the
+	// script's body does not give it the proof of `cd <literal> || exit <digits>` (AnalyzeScriptProven, CRW-1165).
+	ExitTainted bool
 	// Line is the line, in the text the record was read from, of the statement that holds it (1-based; 0 when unknown).
 	Line int
 }
@@ -196,6 +200,10 @@ type state struct {
 	funcs   map[string]*syntax.Stmt
 	cdpath  bool
 	lookup  func(string) (string, bool)
+	// exitTainted and startup are what the reader was told about the shell around the text (ScriptOptions); they are read once, at the
+	// start of the walk.
+	exitTainted bool
+	startup     func(string) (string, bool)
 }
 
 func newState(cwd string) *state {
@@ -1410,7 +1418,7 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	}
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
-		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath,
+		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, ExitTainted: !w.exitProof,
 	})
 	return nil
 }

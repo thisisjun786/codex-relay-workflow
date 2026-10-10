@@ -47,9 +47,29 @@ func AnalyzeScriptEnv(src, cwd string, cdpath bool, lookup func(string) (string,
 // AnalyzeScriptProvenDirectory is AnalyzeScript with the same failed-cd
 // tracking as AnalyzeEnvProvenDirectory, for memory destinations in carried files.
 func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) {
+	return AnalyzeScriptProven(src, cwd, ScriptOptions{Cdpath: cdpath})
+}
+
+// ScriptOptions is what a reader of a text with failed-cd tracking knows about the shell that runs it besides the text (CRW-1165).
+type ScriptOptions struct {
+	// Cdpath is Exec.Cdpath of the record that runs the text.
+	Cdpath bool
+	// ExitTainted is Exec.ExitTainted of the record that runs the text: the text that ran it did not leave exit and cd alone, so a
+	// function or option it made may be inherited, and the text is not given the proof of `cd <literal> || exit <digits>`.
+	ExitTainted bool
+	// Startup answers the variables a shell reads at start (BASH_ENV, ENV, SHELLOPTS, BASHOPTS, BASH_FUNC_exit%%, BASH_FUNC_cd%%, CDPATH)
+	// from the environment the command inherits, for a reader that is given no environment otherwise. nil: not known, nothing is held
+	// against the proof for them (the other variables stay unknown either way).
+	Startup func(string) (string, bool)
+}
+
+// AnalyzeScriptProven is AnalyzeScriptProvenDirectory with what is known about the shell around the text (ScriptOptions).
+func AnalyzeScriptProven(src, cwd string, o ScriptOptions) (Result, error) {
 	st := newState(cwd)
-	st.cdpath = cdpath
+	st.cdpath = o.Cdpath
 	st.proveCD = true
+	st.exitTainted = o.ExitTainted
+	st.startup = o.Startup
 	return analyze(src, st, nil)
 }
 
@@ -87,7 +107,11 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	st.cdpath = st.cdpath || textNamesCdpath(src)
 	w.prefixNamed = textNamesPycachePrefix(src)
 	w.pythonPathNamed = strings.Contains(src, "PYTHONPATH")
-	w.exitProof = st.proveCD && plainForExitProof(file, lookup)
+	startup := lookup
+	if st.startup != nil {
+		startup = st.startup
+	}
+	w.exitProof = st.proveCD && !st.exitTainted && plainForExitProof(file, startup)
 	if err := w.stmts(file.Stmts, st, Context{top: true}); err != nil {
 		return Result{}, err
 	}
