@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // shellMetaBase is a command one command gate judges: the memory write gate (its destinations) or the GitHub post guard
@@ -394,6 +395,8 @@ func TestShellMetaRealShellDifferential(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The child shells get dir/home, dir/codex-home and dir/crw-home: those are the homes the run must leave alone.
+	shellMetaHomes(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "w", "a"), []byte("a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -495,4 +498,47 @@ var shellMetaAbsPath = regexp.MustCompile(`(^|[^A-Za-z0-9_.$/])/[A-Za-z]`)
 // check keeps a later base with an absolute path from leaving the sandbox unnoticed.
 func shellMetaEscapesSandbox(cmd string) bool {
 	return shellMetaAbsPath.MatchString(strings.ReplaceAll(cmd, "/dev/null", ""))
+}
+
+// shellMetaHomes watches the homes shellMetaTrace hands the child shell: dir/home, dir/codex-home and
+// dir/crw-home. The differential test runs real shells with those as HOME, CODEX_HOME and CRW_HOME, so they are the
+// directories a stray write would land in; the homes githubPostTempHome sandboxes are the process's own and
+// the child never sees them (CRW-1170). Call it once the fixture directories exist.
+func shellMetaHomes(t *testing.T, dir string) *testsupport.AccountHomes {
+	t.Helper()
+	return testsupport.WatchAccountHomes(t, filepath.Join(dir, "home"), filepath.Join(dir, "codex-home"), filepath.Join(dir, "crw-home"))
+}
+
+// CRW-1170: a write the traced child shell makes into its HOME, CODEX_HOME or CRW_HOME is seen by the watch the
+// differential test installs, wherever the shell was started from.
+func TestShellMetaHomesSeeWhatTheTracedShellWrites(t *testing.T) {
+	sh, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash on this host")
+	}
+	for _, c := range []struct{ name, cmd string }{
+		{"codex home", `: > "$CODEX_HOME/crw1170-unexpected-write"`},
+		{"crw home", `: > "$CRW_HOME/crw1170-unexpected-write"`},
+		{"home", `: > "$HOME/crw1170-unexpected-write"`},
+		{"home .codex", `mkdir -p "$HOME/.codex" && : > "$HOME/.codex/crw1170-unexpected-write"`},
+	} {
+		dir := t.TempDir()
+		for _, d := range []string{"home", "codex-home", "crw-home", "tmp", "stubs"} {
+			if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		homes := shellMetaHomes(t, dir)
+		homes.Rebase()
+		run := shellMetaTrace(t, sh, c.cmd, dir, filepath.Join(dir, "stubs"))
+		if !run.ranToEnd() {
+			t.Fatalf("%s: the write did not run: %+v", c.name, run)
+		}
+		reported := ""
+		homes.Verify(func(msg string) { reported = msg })
+		if !strings.Contains(reported, "crw1170-unexpected-write") {
+			t.Errorf("%s: a write by the traced shell is not reported: %q", c.name, reported)
+		}
+		homes.Rebase() // the write was expected here; the end-of-test check stays quiet
+	}
 }
