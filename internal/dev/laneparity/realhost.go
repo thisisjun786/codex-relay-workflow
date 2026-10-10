@@ -838,10 +838,24 @@ func (h *hostEnv) judge(cell *HostCell, r *hostRun, spec hostCellSpec) {
 				add("hook %s started %d time(s), want %d", k, gotKeys[k], wantKeys[k])
 			}
 		}
+		// An optional event is raised or not as a whole: when any declared hook of it started, every
+		// declared hook of it must have started as often as declared.
 		optionalKeys := dueHooks(h.registered, spec.optional)
-		for _, k := range sortedKeysOf(optionalKeys) {
-			if wantKeys[k] == 0 && gotKeys[k] != 0 && gotKeys[k] != optionalKeys[k] {
-				add("hook %s started %d time(s), want %d (the event was raised) or none (it was not)", k, gotKeys[k], optionalKeys[k])
+		for _, ev := range spec.optional {
+			evKeys := dueHooks(h.registered, []hostEvent{ev})
+			raised := false
+			for k := range evKeys {
+				if wantKeys[k] == 0 && gotKeys[k] != 0 {
+					raised = true
+				}
+			}
+			if !raised {
+				continue
+			}
+			for _, k := range sortedKeysOf(evKeys) {
+				if wantKeys[k] == 0 && gotKeys[k] != evKeys[k] {
+					add("hook %s started %d time(s), want %d: another hook of the %s event started, so the event was raised and every declared hook of it starts", k, gotKeys[k], evKeys[k], ev.Event)
+				}
 			}
 		}
 		for _, k := range sortedKeysOf(gotKeys) {

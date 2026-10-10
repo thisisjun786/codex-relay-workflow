@@ -209,3 +209,51 @@ func TestJudge_aPermissionRequestHookTheHostStartedIsAccountedFor(t *testing.T) 
 		t.Errorf("an unrelated start: %q", cell2.Problems)
 	}
 }
+
+// An optional event counts as raised for the whole event: with two declared PermissionRequest hooks,
+// a host that starts both, or neither, passes; one that starts only one of them does not.
+func TestJudge_aPartialStartOfTheDeclaredPermissionRequestHooksFails(t *testing.T) {
+	_, shipped, err := ReadRegistered(filepath.Join(repoRoot(t), "plugins", "crw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := append([]Registered{}, shipped...)
+	registered = append(registered,
+		Registered{Event: "PermissionRequest", Matcher: "Bash", Leg: "permission-request-second-leg", Command: "second"},
+		Registered{Event: "PermissionRequest", Matcher: "Bash", Leg: "permission-request-third-leg", Command: "third"},
+	)
+	var spec hostCellSpec
+	for _, s := range hostCellSpecs() {
+		if s.name == CellPermission {
+			spec = s
+		}
+	}
+	h := &hostEnv{registered: registered}
+	all := firingsDue(t, registered, []hostEvent{{"PermissionRequest", "Bash"}}, "thread-1")
+	if len(all) < 3 {
+		t.Fatalf("want three declared PermissionRequest hooks, got %d", len(all))
+	}
+	base := firingsDue(t, registered, spec.events, "thread-1")
+	judge := func(permission []HostFiring) []string {
+		cell := HostCell{Name: spec.name, Switch: spec.state, Trusted: true, Thread: "thread-1", Events: map[string]int{}}
+		cell.Firings = append(append([]HostFiring{}, base...), permission...)
+		h.judge(&cell, &hostRun{requests: []StubRequest{{ToolOutputs: []string{"approval policy is Never"}}}}, spec)
+		return cell.Problems
+	}
+	if p := judge(nil); len(p) != 0 {
+		t.Errorf("none started: %q", p)
+	}
+	if p := judge(all); len(p) != 0 {
+		t.Errorf("all started: %q", p)
+	}
+	for i := range all {
+		one := []HostFiring{all[i]}
+		if p := judge(one); len(p) == 0 {
+			t.Errorf("only %s started: accepted", all[i].Leg)
+		}
+		rest := append(append([]HostFiring{}, all[:i]...), all[i+1:]...)
+		if p := judge(rest); len(p) == 0 {
+			t.Errorf("all but %s started: accepted", all[i].Leg)
+		}
+	}
+}
