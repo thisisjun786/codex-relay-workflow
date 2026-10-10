@@ -12,6 +12,13 @@
       "set": {
         "tree/ws/transcript.jsonl/content": "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}"
       }
+    },
+    {
+      "id": "hook__post-compact-resetting-reinject-cursor__active_cycle_resets_cursor",
+      "reason": "CRW-1090: the turn dedup holds within one context generation, so PostCompact drops injectedTurns with the injection cursor (the oracle keeps them, and a turn id reused after the compaction was then skipped before any marker was read); the lock and re-read of the CRW-378 claim are unchanged and the cursor reset is the oracle's",
+      "set": {
+        "tree/ws/.crw/sessions/rec-s1.json/content": "{\"phase\":\"B\",\"sessionId\":\"rec-s1\",\"slug\":\"\",\"updatedAt\":\"<TS>\",\"flags\":{\"interview\":false,\"auditPassed\":false,\"checkPassed\":false},\"supersededBy\":null,\"injectedTurns\":[],\"lastInjectedPhase\":null,\"orchestrationActive\":true,\"interview\":null,\"stopBlockPhase\":null,\"stopBlockCount\":0,\"stopBlockWorkPhaseId\":null,\"stopMetricCursor\":0,\"stopBlockTotal\":0,\"stopBlockTurnId\":null,\"stopBlockCapNotified\":false,\"loopArmSeen\":false,\"idleEditNudges\":0,\"memoryWriteRequested\":false,\"memoryWriteTurn\":null,\"memoryWriteGrant\":false,\"unverifiedSubagents\":[],\"unverifiedCorrupt\":false,\"phaseEntrySource\":null,\"planUnit\":null,\"planEpoch\":null,\"checkEpoch\":null,\"dcloseRecovery\":null}"
+      }
     }
   ]
 }
