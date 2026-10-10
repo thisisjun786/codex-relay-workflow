@@ -22,7 +22,7 @@ func TestRecallHomeAndDirs(t *testing.T) {
 			if k == "CODEX_HOME" {
 				return c.value, true
 			}
-			return "ignored-home", true
+			return home, true // The supplied environment's HOME is the one used, not the process's.
 		}
 		got, err := codexHome(env)
 		if err != nil || got != c.want {
@@ -81,16 +81,14 @@ func TestRecallVersionedDB(t *testing.T) {
 	}
 }
 
-func TestRecallVersionedDBKeepsNonFilesAndLexicalJoin(t *testing.T) {
+// port: fixed (docs/port-cxc/known-defects/CRW-1123.md, :390 and :391); TestSweepVersionedDBNeedsAUsableFile and
+// TestSweepVersionedDBHomeIsResolvedOnce hold the cases. A home with a link and `..` lists and joins one directory.
+func TestRecallVersionedDBNamesTheListedDirectory(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "state_99.sqlite"), 0o700); err != nil {
+	outer, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := stateDbPath(root)
-	if err != nil || got != filepath.Join(root, "state_99.sqlite") {
-		t.Fatal(got, err)
-	}
-	outer := t.TempDir()
 	if err := os.Mkdir(filepath.Join(outer, "child"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -100,11 +98,11 @@ func TestRecallVersionedDBKeepsNonFilesAndLexicalJoin(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outer, "child"), filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	got, err = stateDbPath(root + "/link/..")
-	if err != nil || got != filepath.Join(root, "state_7.sqlite") {
+	got, err := stateDbPath(root + "/link/..")
+	if err != nil || got != filepath.Join(outer, "state_7.sqlite") {
 		t.Fatal(got, err)
 	}
-	if _, err := os.Stat(got); !os.IsNotExist(err) {
-		t.Fatal("oracle's lexical join quirk must remain", err)
+	if _, err := os.Stat(got); err != nil {
+		t.Fatal("the named database must exist", err)
 	}
 }

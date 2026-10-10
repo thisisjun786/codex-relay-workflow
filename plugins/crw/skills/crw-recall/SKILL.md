@@ -36,7 +36,7 @@ crw recall chat search "<query>" [--days N] [--cwd PATH] [--role r] [--source ma
                           [--limit N] [--context N] [--any] [--all] [--no-tools]
                           [--recent] [--rank] [--scan] [--no-refresh] [--synonyms] [--json] [--full]
                           [--home PATH]
-crw recall chat index [--rebuild] [--status] [--json]
+crw recall chat index [--rebuild] [--status] [--verify] [--json]
 crw recall memory search "<query>" [--days N] [--limit N] [--any] [--no-synonyms]
                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]
                             [--home PATH]
@@ -73,6 +73,7 @@ By default it selects only transient causes; `--include-context-window` is opt-i
 usually a bad idea, since an input that did not fit the context window will not fit on a
 retry either — it just spends quota failing again.
 - `--json` on `crw recall chat index` prints index status as JSON.
+- `--verify` on `crw recall chat index` decides which rollout files changed from their content, so a rewrite that kept the size and the millisecond mtime is found; the default refresh compares size, mtime and file identity only. With `--status` it reports without writing.
 
 Defaults that matter:
 

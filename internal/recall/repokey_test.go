@@ -69,11 +69,18 @@ func TestRepoKeyBaseOracle(t *testing.T) {
 		if row.Key != nil {
 			want = *row.Key
 		}
+		if fixed, ok := repoKeyPortFixed[raw]; ok {
+			want = fixed
+		}
 		if got := normalizeRepoKey(raw); got != want {
 			t.Errorf("%q: got %q, Node %q", raw, got, want)
 		}
 	}
 }
+
+// repoKeyPortFixed lists the recorded rows whose Node key the port changes (docs/port-cxc/known-defects/CRW-1123.md):
+// an encoded separator keeps its segment (:449), and a drive-letter path is a local directory, not an scp remote (:448).
+var repoKeyPortFixed = map[string]string{`https://x/a%2Fb.git`: `x/a%2Fb`, `C:\repo`: ""}
 
 func TestRepoKeyOriginInTemporaryGit(t *testing.T) {
 	root := t.TempDir()

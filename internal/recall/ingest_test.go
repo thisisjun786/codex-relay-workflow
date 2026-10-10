@@ -378,6 +378,14 @@ func TestIngestRecordedOracle(t *testing.T) {
 		t.Fatal("oracle case set incomplete")
 	}
 	for _, c := range cases {
+		if c.Name == "growth-rewrite-kept" {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1083.md): the oracle appended after the old
+			// prefix and kept "original"; the port replaces the file's rows with the rewritten file.
+			step := c.Expected[1].(map[string]any)
+			result := step["result"].(map[string]any)
+			result["ingested"], result["appended"], result["msgs"] = float64(1), float64(0), float64(2)
+			step["msgs"].([]any)[0].(map[string]any)["text"] = "rewritten prefix that is longer"
+		}
 		t.Run(c.Name, func(t *testing.T) {
 			db, _ := indexTestDB(t)
 			home := t.TempDir()

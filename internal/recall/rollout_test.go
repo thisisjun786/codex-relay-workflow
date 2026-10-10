@@ -53,6 +53,30 @@ func rolloutListingHome(t *testing.T) string {
 	return home
 }
 
+type rolloutFixedCase struct {
+	Index       int
+	Fn          string
+	OracleError string
+	Out         json.RawMessage
+}
+
+func rolloutPortFixed(t *testing.T) map[int]rolloutFixedCase {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "rollout", "port-fixed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []rolloutFixedCase
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	out := map[int]rolloutFixedCase{}
+	for _, r := range rows {
+		out[r.Index] = r
+	}
+	return out
+}
+
 func TestRolloutOracle(t *testing.T) {
 	rolloutUTC(t)
 	home := rolloutListingHome(t)
@@ -67,8 +91,16 @@ func TestRolloutOracle(t *testing.T) {
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)
 	}
+	fixed := rolloutPortFixed(t)
 	seen := map[string]int{}
 	for i, c := range cases {
+		if f, ok := fixed[i]; ok {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1123.md): the oracle's recorded result and the port's.
+			if f.Fn != c.Fn || f.OracleError != c.Error {
+				t.Fatalf("case %d: the port-fixed record is for another case", i)
+			}
+			c.Error, c.Out = "", f.Out
+		}
 		seen[c.Fn]++
 		str := func(n int) string { return arg[string](t, c.oracleCase, n) }
 		var got any
@@ -205,15 +237,16 @@ func TestRolloutHeadReadAndFailures(t *testing.T) {
 			t.Fatal("file error swallowed", path)
 		}
 	}
-	if dirs := safeDirs(filepath.Join(home, "missing")); len(dirs) != 0 {
+	if dirs := safeDirs(filepath.Join(home, "missing"), func(string, error) {}); len(dirs) != 0 {
 		t.Fatal(dirs)
 	}
 	if files, err := ListRolloutFiles(filepath.Join(home, "missing"), 0); err != nil || len(files) != 0 {
 		t.Fatal(files, err)
 	}
+	// port: fixed (CRW-1123, :499): an archive that cannot be listed leaves its files out, not the listing.
 	writeRolloutTestFile(t, home, "archived_sessions", "")
-	if _, err := ListRolloutFiles(home, 0); err == nil {
-		t.Fatal("archive listing error swallowed")
+	if files, err := ListRolloutFiles(home, 0); err != nil || len(files) != 0 {
+		t.Fatal("an unlistable archive ended the listing", files, err)
 	}
 }
 
@@ -236,7 +269,7 @@ func TestRolloutLocalMidnightAndInvalidDays(t *testing.T) {
 	for _, c := range []struct {
 		days  float64
 		count int
-	}{{math.NaN(), 2}, {math.Inf(-1), 2}, {math.Inf(1), 0}, {1e20, 0}} {
+	}{{math.NaN(), 2}, {math.Inf(-1), 2}, {math.Inf(1), 2}, {1e20, 2}} { // port: fixed (CRW-1123, :501): a window wider than the calendar prunes nothing
 		if got, err := ListRolloutFiles(home, c.days, now); err != nil || len(got) != c.count {
 			t.Fatal(c, got, err)
 		}
@@ -264,22 +297,25 @@ func TestRolloutCwdSQLWithBoundValues(t *testing.T) {
 	}
 }
 
-func TestRolloutKeptParserDefects(t *testing.T) {
+// port: fixed (docs/port-cxc/known-defects/CRW-1123.md, :505 and :506): the recorded defects are now
+// decided on the decoded line, and an entry of an unreadable type is dropped alone.
+func TestRolloutParserJudgesDecodedLines(t *testing.T) {
 	raw := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"\u0043I"}]}}`
 	plan := CompileMatchPlan([]QueryGroup{{{Text: "ci"}}}, []string{"ci"}, false, false)
 	got, err := ParseRollout(raw, false)
 	if err != nil || len(got) != 1 || got[0].Text != "CI" || MatchesFilePrefilter(Lower(raw), plan) || !PlanMatches(Lower(got[0].Text), plan) {
 		t.Fatal(got, err)
 	}
-	if got, err := ParseRollout(strings.Replace(raw, "response_item", `response_\u0069tem`, 1), false); err != nil || len(got) != 0 {
+	if got, err := ParseRollout(strings.Replace(raw, "response_item", `response_\u0069tem`, 1), false); err != nil || len(got) != 1 || got[0].Text != "CI" {
 		t.Fatal(got, err)
 	}
 	if got, err := ParseRollout(raw+" {}", false); err != nil || len(got) != 0 {
 		t.Fatal("trailing JSON", got, err)
 	}
 	bad := `{"type":"response_item","payload":{"type":"message","content":[{"type":"input_text","text":{"toString":null}}]}}`
-	if got, err := ParseRollout(raw+"\n"+bad, true); err == nil || got != nil {
-		t.Fatal("coercion error must abort without partial results", got, err)
+	got, err = ParseRollout(raw+"\n"+bad+"\n"+raw, true)
+	if err != nil || len(got) != 2 {
+		t.Fatal("the entries around an unreadable one are kept", got, err)
 	}
 }
 

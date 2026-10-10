@@ -572,7 +572,9 @@
   {
     "group": "states",
     "raw": "https://x/%2F.git",
-    "key": null
+    "key": null,
+    "classification": "intentionally-changed",
+    "port": "x/%2F"
   },
   {
     "group": "states",

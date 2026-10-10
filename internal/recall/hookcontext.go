@@ -2,6 +2,7 @@
 package recall
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,10 +40,15 @@ func HitCountPenalty(count float64) float64 {
 }
 
 // HitCountStore is reachable only from automatic context, never explicit search.
-// Errors model the oracle's throws; failures restore neutral ordering.
+// Errors model the oracle's throws; a failed Read restores neutral ordering. Read is used while an
+// entry is selected and the store is closed at once; Bump is used after the hook's answer was
+// written, with the refs that answer carries. A Bump that fails changes nothing, and retrying a Bump
+// that reported a failure with the same event counts it at most once, even when the failed attempt did
+// count. Once a Bump with an event has succeeded the store may forget the event: the caller makes one
+// event per invocation and never repeats a Bump that succeeded.
 type HitCountStore interface {
 	Read([]string) (map[string]float64, error)
-	Bump([]string) error
+	Bump(event string, refs []string) error
 	Close() error
 }
 
@@ -53,7 +59,10 @@ type RecallContextDeps struct {
 	ListCwdSessions  func(string, int) ([]CwdSession, error)
 	LoadSummaryIndex func() (map[string]SummaryEntry, error)
 	OpenHitCounts    func() (HitCountStore, error)
-	Invocation       string
+	// Rendered, when set, is told the hit-history refs of the entries the cwd block carries, once the
+	// block exists. The hook counts them after its answer is written, not when the entries are chosen.
+	Rendered   func(refs []string)
+	Invocation string
 }
 
 func DefaultRecallDeps(env host.LookupEnv) RecallContextDeps {
@@ -103,7 +112,7 @@ func hookContextHome(env host.LookupEnv) (string, error) {
 	if v, _ := env("CODEX_HOME"); text.Trim(v) != "" {
 		return codexHome(env)
 	}
-	home, err := host.Home(env)
+	home, err := recallHome(env)
 	if err != nil {
 		return "", err
 	}
@@ -115,16 +124,53 @@ func hookContextHome(env host.LookupEnv) (string, error) {
 	})
 }
 
-type hookContextSidecarStore struct{ db *RwDb }
+type hookContextSidecarStore struct {
+	db    *RwDb
+	until time.Time // zero: no bound beyond the store's own busy wait
+}
+
+var errHookOutOfTime = errors.New("recall: the hook's time is used up")
+
+// LimitTo holds every later wait of the store to the point in time; an earlier bound stays.
+func (s *hookContextSidecarStore) LimitTo(until time.Time) {
+	if s.until.IsZero() || until.Before(s.until) {
+		s.until = until
+	}
+}
+
+// withinTime sets the lock wait of the connection to what the bound leaves, at most the store's own
+// bound, and reports false when nothing is left.
+func (s *hookContextSidecarStore) withinTime() bool {
+	if s.until.IsZero() {
+		return true
+	}
+	ms, ok := hitStoreBusyWithin(s.until)
+	return ok && s.db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", ms)) == nil
+}
 
 func (s *hookContextSidecarStore) Read(refs []string) (map[string]float64, error) {
 	return readHitCounts(s.db, refs), nil
 }
-func (s *hookContextSidecarStore) Bump(refs []string) error {
-	return bumpHitCounts(s.db, refs, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"))
+func (s *hookContextSidecarStore) Bump(event string, refs []string) error {
+	if !s.withinTime() {
+		return errHookOutOfTime
+	}
+	if err := recordHitEvent(s.db, event, refs, time.Now().UTC().Format("2006-01-02T15:04:05.000Z")); err != nil {
+		return err
+	}
+	if s.withinTime() {
+		forgetHitEvent(s.db, event) // Counted: nothing retries it now. With no time left the age bound removes it.
+	}
+	return nil
 }
 func (s *hookContextSidecarStore) Close() error { return s.db.Close() }
 func hookContextOpenSidecarHitCounts(env host.LookupEnv) HitCountStore {
+	return hookContextOpenSidecarHitCountsUntil(env, time.Time{})
+}
+
+// hookContextOpenSidecarHitCountsUntil opens the history store with its waits held to until (zero: no
+// bound); with no time left there is no store.
+func hookContextOpenSidecarHitCountsUntil(env host.LookupEnv, until time.Time) HitCountStore {
 	path, err := indexPath(env)
 	if err != nil {
 		return nil
@@ -132,11 +178,18 @@ func hookContextOpenSidecarHitCounts(env host.LookupEnv) HitCountStore {
 	if _, err = os.Stat(path); err != nil {
 		return nil
 	}
-	db, err := openIndex(path)
+	busy := hitStoreBusyMs
+	if !until.IsZero() {
+		var ok bool
+		if busy, ok = hitStoreBusyWithin(until); !ok {
+			return nil
+		}
+	}
+	db, err := openHitCountStore(path, busy)
 	if err != nil {
 		return nil
 	}
-	return &hookContextSidecarStore{db}
+	return &hookContextSidecarStore{db: db, until: until}
 }
 
 // Retain the cwd reader's split code unit through JSON quoting, rather than
@@ -200,13 +253,29 @@ func hookContextSliceEnd(n, end int) int {
 	return max(0, min(n, end))
 }
 
-// This hook's clip preserves whitespace and uses slice(0,max-3) + "...".
-// The CLI formatter's separate clip has different oracle semantics.
+// hookContextClip keeps at most n code units. The bound is clamped before anything is sliced, and a
+// cut reserves three units for the ellipsis; where fewer than three units are allowed there is no room
+// for content and the result is the allowed number of dots.
 func hookContextClip(u []uint16, n int) []uint16 {
+	n = max(n, 0)
 	if len(u) <= n {
 		return u
 	}
-	return append(slices.Clone(u[:hookContextSliceEnd(len(u), n-3)]), '.', '.', '.')
+	if n < 3 {
+		return slices.Repeat([]uint16{'.'}, n)
+	}
+	return append(slices.Clone(u[:n-3]), '.', '.', '.')
+}
+
+// hookContextDate is the calendar date a label begins with: ten characters, YYYY-MM-DD, naming a date
+// that exists. Anything else is not a date, and is neither shown as one nor compared as one.
+func hookContextDate(raw string) (time.Time, bool) {
+	u := hookContextUnits(raw, nil)
+	if len(u) < 10 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02", string(utf16.Decode(u[:10])))
+	return t, err == nil
 }
 func hookContextCost(lines []string) int {
 	n := 0
@@ -219,6 +288,13 @@ func hookContextCost(lines []string) int {
 // RenderCwdBlock reserves the closer and scope line and admits whole entries.
 // An empty Invocation uses the portable command name; defaults resolve it via host.
 func RenderCwdBlock(cwdName string, sessions [][]string, budget int, latestDate, invocation string) string {
+	block, _ := renderCwdBlock(cwdName, sessions, budget, latestDate, invocation)
+	return block
+}
+
+// renderCwdBlock also reports how many leading entries the block carries: entries are admitted in order
+// and the first one that does not fit ends the list.
+func renderCwdBlock(cwdName string, sessions [][]string, budget int, latestDate, invocation string) (string, int) {
 	if invocation == "" {
 		invocation = "crw"
 	}
@@ -232,6 +308,7 @@ func RenderCwdBlock(cwdName string, sessions [][]string, budget int, latestDate,
 	tail := []string{"</untrusted-recall-data>", "Scope: project-local (this cwd, or another checkout of the same git origin). Use `" + invocation + " recall chat search \"<q>\" --days 0` explicitly for global recall."}
 	used := hookContextCost(head) + hookContextCost(tail)
 	body := []string{}
+	admitted := 0
 	for _, entry := range sessions {
 		cost := hookContextCost(entry)
 		if used+cost > budget {
@@ -239,11 +316,12 @@ func RenderCwdBlock(cwdName string, sessions [][]string, budget int, latestDate,
 		}
 		body = append(body, entry...)
 		used += cost
+		admitted++
 	}
 	if len(body) == 0 {
-		return ""
+		return "", 0
 	}
-	return strings.Join(append(append(head, body...), tail...), "\n")
+	return strings.Join(append(append(head, body...), tail...), "\n"), admitted
 }
 func hookContextCandidatePool(n int, deps RecallContextDeps) int {
 	if deps.OpenHitCounts != nil {
@@ -251,6 +329,10 @@ func hookContextCandidatePool(n int, deps RecallContextDeps) int {
 	}
 	return n
 }
+
+// hookContextDemote selects the first limit candidates after the repeat penalty. It only reads the
+// history, and closes the store before it returns: choosing an entry is not showing it, so nothing
+// is counted here.
 func hookContextDemote[T any](candidates []T, limit int, refOf func(T) string, deps RecallContextDeps) []T {
 	neutral := candidates[:hookContextSliceEnd(len(candidates), limit)]
 	if len(candidates) == 0 || deps.OpenHitCounts == nil {
@@ -260,33 +342,28 @@ func hookContextDemote[T any](candidates []T, limit int, refOf func(T) string, d
 	if err != nil || store == nil {
 		return neutral
 	}
-	defer func() { _ = store.Close() }()
 	refs := make([]string, len(candidates))
 	for i, c := range candidates {
 		refs[i] = refOf(c)
 	}
 	counts, err := store.Read(refs)
+	_ = store.Close()
 	if err != nil {
 		return neutral
 	}
 	type ranked struct {
 		item T
-		ref  string
 		rank float64
 	}
 	ranks := make([]ranked, len(candidates))
 	for i, c := range candidates {
-		ranks[i] = ranked{c, refs[i], float64(i) + HitCountPenalty(counts[refs[i]])}
+		ranks[i] = ranked{c, float64(i) + HitCountPenalty(counts[refs[i]])}
 	}
 	JSSort(ranks, func(a, b ranked) float64 { return a.rank - b.rank })
 	chosen := ranks[:hookContextSliceEnd(len(ranks), limit)]
-	bumped := make([]string, len(chosen))
 	out := make([]T, len(chosen))
 	for i, c := range chosen {
-		bumped[i], out[i] = c.ref, c.item
-	}
-	if err = store.Bump(bumped); err != nil {
-		return neutral
+		out[i] = c.item
 	}
 	return out
 }
@@ -303,12 +380,28 @@ type CwdContextResult struct {
 	Outcome CwdContextOutcome `json:"outcome"`
 	Text    string            `json:"text"`
 	Detail  string            `json:"detail"`
+	// Refs are the hit-history refs of the entries Text carries, in order; empty unless Outcome is hits.
+	Refs []string `json:"-"`
+}
+
+// valid clamps the counts to finite non-negative values: a negative count asks for nothing.
+func (b RecallBudget) valid() RecallBudget {
+	return RecallBudget{max(b.Chars, 0), max(b.TopN, 0), max(b.Snippet, 0)}
 }
 
 func BuildCwdContext(cwd string, deps RecallContextDeps, budget RecallBudget) string {
 	return BuildCwdContextResult(cwd, deps, budget).Text
 }
+
+// hookContextEntry is one session of the block: its lines, its history ref and its date label.
+type hookContextEntry struct {
+	lines []string
+	ref   string
+	date  string
+}
+
 func BuildCwdContextResult(cwd string, deps RecallContextDeps, budget RecallBudget) CwdContextResult {
+	budget = budget.valid()
 	if cwd == "" {
 		return CwdContextResult{Outcome: CwdContextEmpty}
 	}
@@ -336,10 +429,8 @@ func BuildCwdContextResult(cwd string, deps RecallContextDeps, budget RecallBudg
 		if !CwdMatches(scanString(hit.Cwd), cwd, FoldCwdCase()) {
 			continue
 		}
-		key := hit.TS
-		if hit.ThreadID != nil {
-			key = *hit.ThreadID
-		}
+		// An empty thread id is no thread id: the entry is keyed by the ref the history uses.
+		key := hitCountRef(scanString(hit.ThreadID), hit.File)
 		if seen[key] {
 			continue
 		}
@@ -347,26 +438,20 @@ func BuildCwdContextResult(cwd string, deps RecallContextDeps, budget RecallBudg
 		hits = append(hits, hit)
 	}
 	chosen := hookContextDemote(hits, budget.TopN, func(h ChatHit) string { return hitCountRef(scanString(h.ThreadID), h.File) }, deps)
-	entries := [][]string{}
-	latest := ""
-	var latestUnits []uint16
+	entries := []hookContextEntry{}
 	for _, hit := range chosen {
-		dateUnits := hookContextUnits(hit.TS, nil)
-		dateUnits = dateUnits[:min(10, len(dateUnits))]
-		date := string(utf16.Decode(dateUnits))
 		raw := hit.Text
 		if hit.Title != nil {
 			raw = *hit.Title
 		}
 		raw = text.Trim(strings.ReplaceAll(raw, "\n", " "))
-		entries = append(entries, []string{"  • [" + date + "] " + hookContextQuote(hookContextClip(hookContextUnits(raw, nil), 60))})
-		// Compare before the UTF-8 presentation boundary can replace a sliced
-		// lone surrogate; that replacement must not change the winning date.
-		if slices.Compare(dateUnits, latestUnits) > 0 {
-			latestUnits, latest = dateUnits, date
-		}
+		date := hookContextDateLabel(hit.TS)
+		entries = append(entries, hookContextEntry{
+			lines: []string{"  • [" + date + "] " + hookContextQuote(hookContextClip(hookContextUnits(raw, nil), 60))},
+			ref:   hitCountRef(scanString(hit.ThreadID), hit.File), date: hit.TS,
+		})
 	}
-	return hookContextRendered(name, entries, budget.Chars, latest, deps.Invocation)
+	return hookContextRendered(name, entries, budget.Chars, deps.Invocation)
 }
 func hookContextDirect(name string, direct []CwdSession, deps RecallContextDeps, budget RecallBudget) CwdContextResult {
 	showable := []CwdSession{}
@@ -384,35 +469,85 @@ func hookContextDirect(name string, direct []CwdSession, deps RecallContextDeps,
 			return hookContextUnavailable(err)
 		}
 	}
-	entries := [][]string{}
-	latest := ""
+	entries := []hookContextEntry{}
 	for _, session := range chosen {
 		excerpt := hookContextQuote(hookContextClip(hookContextUnits(session.Excerpt, session.excerptClip), budget.Snippet))
-		entry := []string{"  • [" + session.Date + "] " + excerpt}
+		entry := []string{"  • [" + hookContextDateLabel(session.Date) + "] " + excerpt}
 		if id := scanString(session.ThreadID); id != "" {
 			if summary, ok := summaries[id]; ok {
 				entry = append(entry, "    ↳ "+hookContextQuote(hookContextClip(hookContextUnits(summary.Title, nil), hookContextSummaryChars)))
 			}
 		}
-		entries = append(entries, entry)
-		latest = hookContextLatest(latest, session.Date)
+		entries = append(entries, hookContextEntry{lines: entry, ref: hitCountRef(scanString(session.ThreadID), session.Path), date: session.Date})
 	}
-	return hookContextRendered(name, entries, budget.Chars, latest, deps.Invocation)
+	return hookContextRendered(name, entries, budget.Chars, deps.Invocation)
 }
-func hookContextRendered(name string, entries [][]string, budget int, latest, invocation string) CwdContextResult {
+
+// hookContextDateLabel is an entry's date as shown: the calendar date it names, or "undated".
+func hookContextDateLabel(raw string) string {
+	if day, ok := hookContextDate(raw); ok {
+		return day.Format("2006-01-02")
+	}
+	return "undated"
+}
+
+// hookContextLatest is the newest date among entries, compared as dates, in normalized form.
+func hookContextLatest(entries []hookContextEntry) string {
+	var latest time.Time
+	for _, e := range entries {
+		if day, ok := hookContextDate(e.date); ok && day.After(latest) {
+			latest = day
+		}
+	}
+	if latest.IsZero() {
+		return ""
+	}
+	return latest.Format("2006-01-02")
+}
+
+// hookContextNoticeLabel is what the staleness notice names for entries: their newest date, or an unknown date.
+func hookContextNoticeLabel(entries []hookContextEntry) string {
+	if latest := hookContextLatest(entries); latest != "" {
+		return latest
+	}
+	return "an unknown date"
+}
+
+// hookContextRendered renders the entries and reports, with the text, the refs of the entries the text
+// carries: an entry the budget leaves out is neither shown nor counted, and a budget that fits none is empty.
+func hookContextRendered(name string, entries []hookContextEntry, budget int, invocation string) CwdContextResult {
 	if len(entries) == 0 {
 		return CwdContextResult{Outcome: CwdContextEmpty}
 	}
-	return CwdContextResult{Outcome: CwdContextHits, Text: RenderCwdBlock(name, entries, budget, latest, invocation)}
+	lines := make([][]string, len(entries))
+	for i, e := range entries {
+		lines[i] = e.lines
+	}
+	// The staleness notice is always there; it names the newest date among the entries shown, or says
+	// there is none to name. The unknown-date notice is longer than a date, so it can leave out another
+	// entry: render again over the entries admitted until the notice matches them (each pass admits no
+	// more than the last, so this ends).
+	label := hookContextNoticeLabel(entries)
+	block, admitted := renderCwdBlock(name, lines, budget, label, invocation)
+	for admitted > 0 {
+		shown := hookContextNoticeLabel(entries[:admitted])
+		if shown == label {
+			break
+		}
+		label = shown
+		block, admitted = renderCwdBlock(name, lines[:admitted], budget, label, invocation)
+	}
+	if admitted == 0 {
+		return CwdContextResult{Outcome: CwdContextEmpty}
+	}
+	refs := make([]string, admitted)
+	for i := range refs {
+		refs[i] = entries[i].ref
+	}
+	return CwdContextResult{Outcome: CwdContextHits, Text: block, Refs: refs}
 }
 func hookContextUnavailable(err error) CwdContextResult {
 	return CwdContextResult{Outcome: CwdContextUnavailable, Detail: err.Error()}
-}
-func hookContextLatest(old, next string) string {
-	if slices.Compare(hookContextUnits(next, nil), hookContextUnits(old, nil)) > 0 {
-		return next
-	}
-	return old
 }
 func hookContextBasename(cwd string) string {
 	cwd = strings.TrimRight(cwd, "/")

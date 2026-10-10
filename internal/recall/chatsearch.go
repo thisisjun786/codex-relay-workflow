@@ -138,6 +138,9 @@ func chatSearchViaIndex(opts ChatSearchOptions, shared chatScanShared, cutoff st
 	if err != nil {
 		return ChatSearchResult{}, err
 	}
+	if fresh.UnreadDirs > 0 {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%d rollout directories could not be listed — their rollouts are not covered, so the result and the stale count may be incomplete", int(fresh.UnreadDirs)))
+	}
 	result.Index = &ChatIndexInfo{LastIngestAt: status.LastIngestAt, Files: int(status.Files), SourceFiles: int(fresh.SourceFiles), StaleFiles: int(fresh.StaleFiles), ReadOnly: readOnly}
 	result.ScannedFiles = refreshed
 	result.ElapsedMs = now().UnixMilli() - started
