@@ -10,7 +10,7 @@
 // is strict: its reader refuses a document with an unknown field or content after the document and
 // an active value that is neither state, its writer refuses a state without its provenance (changedAt
 // and by), and crw install switch (CRW-201) repairs a switch.json it cannot use by
-// setting that entry aside (KeepAside) and publishing a whole document with a temporary file renamed
+// setting that entry aside (KeepAside; a directory is swapped, never moved away, so the path is never empty) and publishing a whole document with a temporary file renamed
 // into place. The command a declaration names does not change with the switch, so the hooks' trust
 // hashes stay stable across it.
 package hookswitch

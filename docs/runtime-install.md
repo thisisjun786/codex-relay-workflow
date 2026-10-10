@@ -117,9 +117,12 @@ writer of `config.toml` takes:
    CRW on, or a conflict with the CXC plugin, and the refusal is reported beside it. The installer owns this file, so one it cannot use
    (a link whose target is gone, a FIFO, a directory, a file over 64 KiB, a document it refuses) does
    not stop the command: it is kept as `switch.json.crw-<ts>.bak` beside it (a symbolic link is copied as the link
-   itself and any other entry is hard linked, so a hook never sees the switch absent; a directory is
-   moved), the reason and the backup are reported in the
-   notes, and a failed later step puts the entry back;
+   itself and any other entry is hard linked, so a hook never sees the switch absent; a directory, which
+   a file cannot replace, is swapped in one step with a placeholder file that a hook reads as on with a
+   warning, so the path is never empty, and a filesystem that cannot swap refuses the repair and
+   changes nothing), the reason and the backup are reported in the
+   notes, and a failed later step puts the entry back (the switch directory is synced after the
+   restore, as after the publication);
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
    `enabled=true`, a tab-separated line or a CRLF file to the byte. A key and a table are identified by

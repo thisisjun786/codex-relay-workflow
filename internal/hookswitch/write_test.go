@@ -427,3 +427,175 @@ func TestKeepAsideKeepsALinkAsTheLinkItself(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1174 round 2: a hook reads an absent switch as off, so no step of a repair may leave the
+// switch path with nothing at it. A directory cannot be replaced by a rename of a file, so KeepAside
+// swaps it with a placeholder in one step; the placeholder is a document a hook reads as on, as it
+// read the directory.
+func TestKeepAsideOfADirectoryNeverLeavesTheSwitchAbsent(t *testing.T) {
+	home, file := switchDir(t)
+	brokenEntries["directory"](t, home, file)
+	a, err := KeepAside(home, "d1")
+	if err != nil || a == nil {
+		t.Fatalf("KeepAside = %v, %v", a, err)
+	}
+	info, err := os.Lstat(file)
+	if err != nil {
+		t.Fatalf("the switch path is empty after KeepAside: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("the switch path is %v, want the placeholder file", info.Mode())
+	}
+	if r := readWithin(t, home); !r.On || r.Problem == "" {
+		t.Fatalf("a hook reads %+v after KeepAside, want on with a problem", r)
+	}
+	if _, err := Parse(mustRead(t, file)); err == nil {
+		t.Fatal("the installer's reader accepts the placeholder")
+	}
+	if b, err := os.ReadFile(filepath.Join(a.Path, "inner")); err != nil || string(b) != "x" {
+		t.Fatalf("the kept directory lost its content: %q, %v", b, err)
+	}
+	// The publication replaces the placeholder whole.
+	if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := readWithin(t, home); !r.On || r.Problem != "" {
+		t.Fatalf("a hook reads %+v after the repair", r)
+	}
+	// Restore gives the directory back with no empty moment: the path holds the file until the swap.
+	seen := ""
+	was := exchange
+	t.Cleanup(func() { exchange = was })
+	exchange = func(x, y string) error {
+		if _, err := os.Lstat(x); err != nil {
+			seen = "the switch path was empty before the swap"
+		}
+		return was(x, y)
+	}
+	if err := a.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "" {
+		t.Fatal(seen)
+	}
+	if info, err := os.Lstat(file); err != nil || !info.IsDir() {
+		t.Fatalf("restored entry %v, %v", info, err)
+	}
+	if _, err := os.Lstat(a.Path); !os.IsNotExist(err) {
+		t.Fatalf("the backup name remains: %v", err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// A filesystem that cannot swap two entries stops the repair of a directory before it changes
+// anything: the directory stays, as it did before the repair existed, and no placeholder remains.
+func TestKeepAsideOfADirectoryRefusesWhereTheSwapIsUnsupported(t *testing.T) {
+	home, file := switchDir(t)
+	brokenEntries["directory"](t, home, file)
+	was := exchange
+	t.Cleanup(func() { exchange = was })
+	exchange = func(string, string) error { return syscall.EINVAL }
+	a, err := KeepAside(home, "d2")
+	if a != nil || err == nil {
+		t.Fatalf("KeepAside = %v, %v", a, err)
+	}
+	if info, err := os.Lstat(file); err != nil || !info.IsDir() {
+		t.Fatalf("the directory was changed: %v, %v", info, err)
+	}
+	if _, err := os.Lstat(file + ".crw-d2.bak"); !os.IsNotExist(err) {
+		t.Fatalf("a backup name or placeholder remains: %v", err)
+	}
+}
+
+// d2: the restore of a kept entry is part of the rollback and is as durable as the publication it
+// undoes: the directory is synced after it, and a failed sync is reported.
+func TestRestoreSyncsTheSwitchDirectoryAndReportsAFailure(t *testing.T) {
+	for name, mk := range brokenEntries {
+		for _, published := range []bool{false, true} {
+			t.Run(name+map[bool]string{false: " before publication", true: " after publication"}[published], func(t *testing.T) {
+				home, file := switchDir(t)
+				mk(t, home, file)
+				a, err := KeepAside(home, "r1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if published {
+					if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				was := syncDir
+				t.Cleanup(func() { syncDir = was })
+				var synced []string
+				syncDir = func(dir string) error {
+					synced = append(synced, dir)
+					if _, err := os.Lstat(file); err != nil {
+						t.Errorf("the switch path is empty at the sync: %v", err)
+					}
+					return nil
+				}
+				if err := a.Restore(); err != nil {
+					t.Fatal(err)
+				}
+				if len(synced) != 1 || synced[0] != filepath.Dir(file) {
+					t.Fatalf("directories synced by Restore = %v, want [%s]", synced, filepath.Dir(file))
+				}
+			})
+		}
+	}
+	t.Run("failure", func(t *testing.T) {
+		home, file := switchDir(t)
+		brokenEntries["fifo"](t, home, file)
+		a, err := KeepAside(home, "r2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+			t.Fatal(err)
+		}
+		was := syncDir
+		t.Cleanup(func() { syncDir = was })
+		injected := &os.PathError{Op: "sync", Path: "dir", Err: syscall.EIO}
+		syncDir = func(string) error { return injected }
+		err = a.Restore()
+		if !errors.Is(err, ErrNotDurable) || !errors.Is(err, injected) {
+			t.Fatalf("Restore = %v, want ErrNotDurable wrapping %v", err, injected)
+		}
+	})
+}
+
+// Remove undoes a first publication; it is synced like the publication.
+func TestRemoveSyncsTheSwitchDirectory(t *testing.T) {
+	home := t.TempDir()
+	if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	was := syncDir
+	t.Cleanup(func() { syncDir = was })
+	calls := 0
+	syncDir = func(string) error { calls++; return nil }
+	if err := Remove(home); err != nil || calls != 1 {
+		t.Fatalf("Remove = %v after %d syncs, want one", err, calls)
+	}
+	injected := &os.PathError{Op: "sync", Path: "dir", Err: syscall.EIO}
+	if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	syncDir = func(string) error { return injected }
+	if err := Remove(home); !errors.Is(err, ErrNotDurable) {
+		t.Fatalf("Remove = %v, want ErrNotDurable", err)
+	}
+	// An absent file is not an error and has nothing to sync.
+	syncDir = func(string) error { t.Error("synced an unchanged directory"); return nil }
+	if err := Remove(home); err != nil {
+		t.Fatal(err)
+	}
+}

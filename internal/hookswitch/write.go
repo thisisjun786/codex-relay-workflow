@@ -116,8 +116,16 @@ func WriteRaw(codexHome string, b []byte) error {
 	if err != nil {
 		return err
 	}
+	return syncAfter(path, "is in place")
+}
+
+// syncAfter syncs the switch directory once an entry at path has changed, and reports a failure as
+// ErrNotDurable: the change is made and a reader sees it, and a power loss may still undo it.
+// what says what the change is, for the message.
+func syncAfter(path, what string) error {
+	dir := filepath.Dir(path)
 	if err := syncDir(dir); err != nil {
-		return fmt.Errorf("%w: %s is in place but the sync of %s failed: %w", ErrNotDurable, path, dir, err)
+		return fmt.Errorf("%w: %s %s but the sync of %s failed: %w", ErrNotDurable, path, what, dir, err)
 	}
 	return nil
 }
@@ -165,8 +173,11 @@ type Aside struct {
 // link(2) may follow a link and then fail on a dangling one or keep the target instead of the
 // link); any other entry that is not a directory is hard linked, which keeps it to the byte. Both
 // leave the switch path in place until the rename replaces it, so a hook never sees the switch
-// absent. A directory cannot be replaced by a file and is moved, and the path is absent until the
-// publication. It returns nil when nothing is at the path.
+// absent. A directory cannot be replaced by a file, and moving it away would leave the path absent,
+// which a hook reads as off while it read the directory as on: it is swapped, in one step
+// (exchange), with a placeholder file that a hook reads as on with a warning, and the placeholder
+// stays until the publication replaces it. A filesystem that cannot swap refuses the repair and
+// changes nothing. It returns nil when nothing is at the path.
 func KeepAside(codexHome, stamp string) (*Aside, error) {
 	path := Path(codexHome)
 	info, err := os.Lstat(path)
@@ -182,7 +193,7 @@ func KeepAside(codexHome, stamp string) (*Aside, error) {
 	}
 	switch {
 	case a.dir:
-		err = os.Rename(path, a.Path)
+		err = swapDirectoryForPlaceholder(path, a.Path)
 	case info.Mode()&fs.ModeSymlink != 0:
 		var target string
 		if target, err = os.Readlink(path); err == nil {
@@ -197,14 +208,62 @@ func KeepAside(codexHome, stamp string) (*Aside, error) {
 	return a, nil
 }
 
-// Restore puts the entry back where it was, over whatever was published since.
+// placeholder is what stands at the switch path while a directory is kept aside. A hook reads it as
+// a document whose active value is neither state: on, with a warning, as it read the directory. The
+// installer's reader refuses it, so a run that died before the publication repairs it at the next
+// switch.
+const placeholder = `{"crw":"this was a directory; it is kept beside this file as switch.json.crw-<stamp>.bak and a document replaces this file"}` + "\n"
+
+// swapDirectoryForPlaceholder puts a synced placeholder file at keep and swaps it with the directory
+// at path: the path holds the directory or the placeholder at every moment, and keep holds the
+// directory afterwards. Nothing is changed when it fails.
+func swapDirectoryForPlaceholder(path, keep string) error {
+	f, err := os.OpenFile(keep, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(placeholder)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = exchange(path, keep)
+	}
+	if err != nil {
+		_ = os.Remove(keep)
+		return err
+	}
+	return nil
+}
+
+// Restore puts the entry back where it was, over whatever was published since, and syncs the
+// switch directory: the undo of a publication is as durable as the publication. A failed sync is
+// ErrNotDurable (the entry is back; a power loss may still bring the replacement back).
 func (a *Aside) Restore() error {
 	path := Path(a.home)
+	if err := a.put(path); err != nil {
+		return err
+	}
+	return syncAfter(path, "is restored")
+}
+
+func (a *Aside) put(path string) error {
 	if a.dir {
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// The path holds the placeholder or the published file: swap it for the directory, then
+		// drop it from the backup name. The path is never empty.
+		if _, err := os.Lstat(path); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			return os.Rename(a.Path, path)
+		}
+		if err := exchange(path, a.Path); err != nil {
 			return err
 		}
-		return os.Rename(a.Path, path)
+		return os.Remove(a.Path)
 	}
 	// Nothing was published: both names are the one entry, and a rename between them does nothing.
 	pi, perr := os.Lstat(path)
@@ -215,11 +274,16 @@ func (a *Aside) Restore() error {
 	return os.Rename(a.Path, path)
 }
 
-// Remove deletes the switch file; an absent file is not an error.
+// Remove deletes the switch file and syncs the switch directory (ErrNotDurable when that fails); an
+// absent file is not an error and has nothing to sync.
 func Remove(codexHome string) error {
-	err := os.Remove(Path(codexHome))
+	path := Path(codexHome)
+	err := os.Remove(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return syncAfter(path, "is removed")
 }
