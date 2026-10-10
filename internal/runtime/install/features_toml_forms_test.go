@@ -39,6 +39,10 @@ var tomlFormsOwned = [][]string{
 	{"memories", "dedicated_tools"},
 }
 
+// tomlFormsRefusable names the steps that may refuse (config.toml, the manifest and every backup left as they were); a form the
+// editor supports must succeed, so a regression that refuses a supported form fails here (CRW-1141).
+var tomlFormsRefusable = map[string]bool{}
+
 func tomlFormsSnapshot(t *testing.T, home string) map[string]string {
 	t.Helper()
 	entries, err := os.ReadDir(home)
@@ -76,6 +80,9 @@ func tomlFormsStrip(doc map[string]any, path []string) {
 // in the owned keys and keeps the user's comments and MCP entry; a refusal leaves every file as it was.
 func tomlFormsCheck(t *testing.T, step string, before map[string]string, after map[string]string, code int, stdout, stderr string) {
 	t.Helper()
+	if code != 0 && !tomlFormsRefusable[step] {
+		t.Fatalf("%s must succeed on a supported form but exited %d: %q", step, code, stderr)
+	}
 	if code != 0 {
 		for name, content := range before {
 			if after[name] != content {

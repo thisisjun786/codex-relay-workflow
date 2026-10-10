@@ -36,12 +36,10 @@ func TestFeaturesEnableUsesOneCodexHomeIdentity(t *testing.T) {
 		}
 		return string(b)
 	}
+	// The fixture is a supported home: the command must succeed, so a regression that refuses every symlink or ".." home before
+	// editing cannot pass (CRW-1144).
 	if code != 0 {
-		t.Logf("refused: exit %d, %q", code, errOut)
-		if read(lexical) != sentinel || read(physical) != sentinel {
-			t.Fatalf("a refused enable (%d, %q) wrote a config", code, errOut)
-		}
-		return
+		t.Fatalf("enable on a supported symlink/.. home exited %d: %q", code, errOut)
 	}
 	if read(lexical) != sentinel {
 		t.Fatalf("the lexical home was edited while Codex edited the physical one (stdout %q):\n%s", out, read(lexical))
