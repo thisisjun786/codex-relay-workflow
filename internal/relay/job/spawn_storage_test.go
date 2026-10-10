@@ -36,7 +36,7 @@ func TestRunBackgroundGivesTheJobTheConfiguredToolRoots(t *testing.T) {
 	storageJobConfig(t, "build_cache", cache, "module_cache", mod, "build_work", work)
 	t.Setenv("CRW_JOB_PROBE", "inherited")
 	t.Setenv("GOCACHE", "/caller/gocache")
-	rec, err := runBackground(ws, RunOptions{Command: []string{"/bin/sh", "-c", `printf '%s|%s|%s|%s' "$GOCACHE" "$GOMODCACHE" "$GOTMPDIR" "$CRW_JOB_PROBE"`}}, time.Now, defaultStart)
+	rec, err := runBackground(ws, RunOptions{Command: []string{"/bin/sh", "-c", `printf '%s|%s|%s|%s' "$GOCACHE" "$GOMODCACHE" "$GOTMPDIR" "$CRW_JOB_PROBE"`}}, time.Now, func(cmd *exec.Cmd) error { return cmd.Start() })
 	if err != nil {
 		t.Fatal(err)
 	}
