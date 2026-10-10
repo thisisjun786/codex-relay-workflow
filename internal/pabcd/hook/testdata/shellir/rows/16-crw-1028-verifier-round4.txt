@@ -14,7 +14,7 @@ cat evil.sh > post.sh
 --cmd
 ./writer.sh; bash writer.sh; bash post.sh
 
-=== CRW-1028-v4-02 | T
+=== CRW-1028-v4-02 | B
 --why Control: writer.sh only runs by path, where #!/bin/true reads it and writes nothing, so post.sh is the body the guards read.
 --file post.sh
 echo clean
@@ -27,7 +27,7 @@ cat evil.sh > post.sh
 --cmd
 ./writer.sh; bash post.sh
 
-=== CRW-1028-v4-03 | Q
+=== CRW-1028-v4-03 | none/deny/allow
 --why A sibling script overwrites ./gh before it runs: the file the GitHub guard reads is stale, whatever read-only gh words follow.
 --file gh
 #!/bin/sh
@@ -39,7 +39,7 @@ cat evil.sh > gh
 --cmd
 bash ghwriter.sh; ./gh pr view 1
 
-=== CRW-1028-v4-04 | T
+=== CRW-1028-v4-04 | B
 --why Control: the sibling script writes another file, so ./gh is the file the GitHub guard reads.
 --file gh
 #!/bin/sh

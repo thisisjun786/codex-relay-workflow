@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -34,9 +35,35 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 	if err != nil {
 		return nil, false
 	}
-	for _, e := range res.Execs {
+	return shellIRDestsResult(res, cwd, lookup, resolve, 0, nil), true
+}
+
+func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (string, bool), resolve bool, depth int, outer *githubPostWrites) []string {
+	var dests []string
+	writes := githubPostWritesOf(res.Execs, outer)
+	for i, e := range res.Execs {
 		if e.Kind == shellir.KindScriptFile {
-			dests = append(dests, shellIRUnknownDest)
+			if writes.stale(i, e.Script.Value, e.Dir) {
+				dests = append(dests, shellIRUnknownDest)
+			} else {
+				dests = append(dests, shellIRScriptDests(e, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))...)
+			}
+			continue
+		}
+		if depth > 0 && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+			// A direct child of an admitted shell file must also be read.
+			// Only a bounded shell program has a destination reader here.
+			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {
+				continue // A proven missing child has no body to execute.
+			}
+			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+			if kind != githubPostFileShell || writes.stale(i, e.Program.Value, e.Dir) {
+				dests = append(dests, shellIRUnknownDest)
+			} else {
+				child := e
+				child.Kind, child.Name, child.Script = shellir.KindScriptFile, "sh", e.Program
+				dests = append(dests, shellIRScriptDests(child, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
+			}
 			continue
 		}
 		protectDir := false
@@ -49,7 +76,7 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 		}
 		dests = append(dests, own...)
 	}
-	return shellIRUnique(dests), true
+	return shellIRUnique(dests)
 }
 
 // shellIRExecDests returns the destinations one program record writes: its redirections, the files its verb names and the writes
@@ -221,7 +248,10 @@ func shellIRStrings(ws []shellir.Word) []string {
 // The programs come from the shared reader's records, so a program a nested shell -c or eval runs is included. A command
 // the reader cannot read is itself unreadable.
 func shellIRFStringUnreadable(command string) (string, bool) {
-	res, err := shellir.AnalyzeNoDir(command)
+	return shellIRFStringResult(shellir.AnalyzeNoDir(command))
+}
+
+func shellIRFStringResult(res shellir.Result, err error) (string, bool) {
 	if err != nil {
 		return "the command reader refused it", true
 	}
@@ -354,6 +384,11 @@ func shellIRLanguageDests(e shellir.Exec, protectDir bool) []string {
 			res = append(res, shellIRUnknownDest)
 		}
 		return append(out, res...)
+	case "awk":
+		if shellIRAwkReadOnly(src) {
+			return out
+		}
+		return append(out, shellIRUnknownDest)
 	case "sed":
 		return append(out, shellVerbSedWrites(shellIRStrings(e.Args))...)
 	case "perl", "ruby":

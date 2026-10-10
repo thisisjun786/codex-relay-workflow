@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
 
@@ -93,11 +94,25 @@ func (g ghForge) one(ctx context.Context, body string, args ...string) (c prComm
 }
 
 func (g ghForge) Create(ctx context.Context, pr int, body string) (prComment, error) {
+	if err := checkSummaryBody(body); err != nil {
+		return prComment{}, err
+	}
 	return g.one(ctx, body, "--method", "POST", fmt.Sprintf("repos/{owner}/{repo}/issues/%d/comments", pr))
 }
 
 func (g ghForge) Update(ctx context.Context, id int64, body string) (prComment, error) {
+	if err := checkSummaryBody(body); err != nil {
+		return prComment{}, err
+	}
 	return g.one(ctx, body, "--method", "PATCH", fmt.Sprintf("repos/{owner}/{repo}/issues/comments/%d", id))
+}
+
+// The exact rendered body is data. A refusal never includes its matching value.
+func checkSummaryBody(body string) error {
+	if line, found := publishpolicy.RawSecretLine(body); found {
+		return fmt.Errorf("GitHub summary blocked (secret-in-github-text) at body:%d", line)
+	}
+	return nil
 }
 
 // assignedTo reports whether the ledger assigned the result with this sha256 to path: a file that has these bytes is the result of some patch, only not the one that is posted.

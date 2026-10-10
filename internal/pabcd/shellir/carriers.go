@@ -83,6 +83,9 @@ func interpreterSpec(lang string) interpSpec {
 // sed -f, whose file the caller reads as a script record.
 func (w *walker) interpreterInline(name string, args []Word, redirs []Redir, dir Dir, ctx Context) (*Inline, *Word, error) {
 	lang := interpreterLanguage(name)
+	if interpreterNoExec(lang, args) {
+		return nil, nil, nil
+	}
 	switch lang {
 	case "awk":
 		return awkInline(name, args)
@@ -311,9 +314,15 @@ func awkInline(name string, args []Word) (*Inline, *Word, error) {
 				return nil, nil, unreadablef("%s -f without a file", name)
 			}
 			file := args[i+1]
+			if err := awkFileTail(args[i+2:]); err != nil {
+				return nil, nil, err
+			}
 			return nil, &file, nil
 		case strings.HasPrefix(v, "-f"):
 			file := Word{Known: true, Value: v[2:]}
+			if err := awkFileTail(args[i+1:]); err != nil {
+				return nil, nil, err
+			}
 			return nil, &file, nil
 		default:
 			return nil, nil, unreadablef("%s option %s is not modelled", name, v)
@@ -326,6 +335,17 @@ func awkInline(name string, args []Word) (*Inline, *Word, error) {
 		return nil, nil, unreadablef("%s program is not known (%s)", name, args[i].Reason)
 	}
 	return &Inline{Language: "awk", Source: args[i]}, nil, nil
+}
+
+// One carried awk program is read. Additional program operands are refused
+// rather than declaring the first file to be the entire execution set.
+func awkFileTail(args []Word) error {
+	for _, a := range args {
+		if !a.Known || strings.HasPrefix(a.Value, "-f") || strings.HasPrefix(a.Value, "-e") || strings.HasPrefix(a.Value, "--file") || strings.HasPrefix(a.Value, "--source") {
+			return unreadablef("additional awk program is not modelled")
+		}
+	}
+	return nil
 }
 
 // sedInline reads sed's command line (ParseSedArgs reads its options the way getopt_long does, abbreviations included) and
@@ -384,7 +404,7 @@ func isInterpreter(name string) bool { return interpreterLanguage(name) != "" }
 // after the options, not the word that follows -c. The operand is a script file unless -c or -s is set; without an
 // operand, and with -s, the program comes from standard input (with -s the operands are positional parameters, not a script).
 func (w *walker) shellCall(name string, args []Word, redirs []Redir, st *state, ctx Context) error {
-	cmdMode, stdinMode := false, false
+	cmdMode, stdinMode, noExec, interactive := false, false, false, false
 	i := 0
 loop:
 	for i < len(args) {
@@ -410,9 +430,24 @@ loop:
 				switch c {
 				case 'c':
 					cmdMode = true
+				case 'i':
+					interactive = v[0] == '-'
+				case 'n':
+					noExec = v[0] == '-'
 				case 's':
 					stdinMode = true // +s is read like -s: the reader does not take a reading that lets a pipe through
 				case 'o', 'O':
+					if i >= len(args) || !args[i].Known {
+						return unreadablef("shell option value is not known")
+					}
+					if c == 'o' && args[i].Value == "noexec" {
+						noExec = v[0] == '-'
+					}
+					// Some shells expose interactive as a named option. Never
+					// use syntax-only mode when that reading can execute.
+					if args[i].Value == "interactive" {
+						interactive = v[0] == '-'
+					}
 					i++ // -o and -O take the next word as their value
 					if strings.ContainsAny(v[k+1:], "cs") {
 						// bash goes on reading flags after -o (-oc posix is -o posix -c), zsh reads the rest of the word as the option
@@ -430,6 +465,9 @@ loop:
 			break loop
 		}
 	}
+	if noExec && !interactive {
+		return nil
+	} // the shell parses its input without executing it
 	var operand *Word
 	if i < len(args) {
 		operand = &args[i]
@@ -491,7 +529,7 @@ func interpreterLanguage(name string) string {
 	return ""
 }
 
-// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand, and whether an option keeps the interpreter reading commands from standard input (-i). An option it does not model (python -m, which puts the working directory first on the module search path) is unreadable.
+// clusterInterp reads interpreter options. It returns the program words it found, the index of the first operand, and whether an option keeps the interpreter reading commands from standard input (-i). An option it does not model is unreadable; python -m is handled by pythonModule.
 // Node's --eval and --print take the program as the next word or after an =.
 func clusterInterp(name string, args []Word, spec interpSpec) ([]Word, int, bool, error) {
 	var codes []Word

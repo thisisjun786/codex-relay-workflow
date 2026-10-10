@@ -214,7 +214,7 @@ gh pr comment 1 --body-file {TMP}/fifo
 --why d18: a plain string whose text is f'}' is no f-string.
 python3 -c "print(\"f'}'\")"
 
-=== CRW-1028-ev-overblock-01 | T
+=== CRW-1028-ev-overblock-01 | B
 --why Control: at the top level the later script's rewrite of lint.sh reaches only the executions after it, so lint.sh is the file read (fix round 5).
 --file lint.sh
 echo lint
@@ -223,7 +223,7 @@ echo refreshed > lint.sh
 --cmd
 bash lint.sh; bash refresh.sh
 
-=== CRW-1028-ev-overblock-02 | T
+=== CRW-1028-ev-overblock-02 | B
 --why Over-block, fixed by CRW-1059 (was a follow-up: sequential executions inside bash -c and command substitution see later scripts' writes): the same two scripts run in order inside bash -c, but a carried text is unordered for the body writes, so lint.sh counts as rewritten.
 --file lint.sh
 echo lint
@@ -232,7 +232,7 @@ echo refreshed > lint.sh
 --cmd
 bash -c 'bash lint.sh; bash refresh.sh'
 
-=== CRW-1028-ev-overblock-03 | T
+=== CRW-1028-ev-overblock-03 | B
 --why Over-block, fixed by CRW-1059 (same follow-up): the same in a command substitution that runs after lint.sh.
 --file lint.sh
 echo lint
