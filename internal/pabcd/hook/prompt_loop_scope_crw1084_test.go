@@ -112,6 +112,8 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a Korean lane coordination", "crw-loop로 레인들을 조정해줘", PromptRoleUnknown, "pointer"},
 		{"a Korean connective after an object child", "crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현해", PromptRoleUnknown, "recipe"},
 		{"a Korean connective after a subject child", "crw-loop 돌려서 현재 세션에서 자식이 확인하고 구현해", PromptRoleUnknown, "pointer"},
+		{"a Korean connective then a delegated causative", "crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하게 해", PromptRoleUnknown, "pointer"},
+		{"a Korean connective then an explicit worker subject", "crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 워커가 구현해", PromptRoleUnknown, "pointer"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -323,6 +325,11 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"crw-loop로 현재 세션에서 자식이 확인하고 구현해", LoopScopeProject},
 		{"crw-loop로 현재 세션에서 자식 작업이 확인하고 구현해", LoopScopeProject},
 		{"crw-loop로 현재 세션에서 자식에게 구현하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하도록 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 워커가 구현해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 하위 에이전트는 구현해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 제가 구현해", LoopScopeCurrentTask},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {

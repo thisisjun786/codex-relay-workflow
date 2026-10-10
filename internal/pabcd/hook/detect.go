@@ -429,7 +429,7 @@ func implementVerbs(clause string) (session, delegated bool) {
 		if negatedBefore.MatchString(clause[:at[0]]) || negatedAfter.MatchString(clause[at[1]:]) {
 			continue
 		}
-		if noun, ok := delegation(clause[:at[0]]); !ok {
+		if noun, ok := delegation(clause[:at[0]], clause[at[1]:]); !ok {
 			session = true
 		} else if noun != "they" && noun != "others" {
 			delegated = true
@@ -450,12 +450,13 @@ func implementVerbs(clause string) (session, delegated bool) {
 //     causative before the noun ("while/as/when the children then implement", "let the children then implement") leaves the
 //     noun the subject;
 //   - a Korean noun that is no subject (no 이/가/은/는 on it or on a word before the connective) followed by a word ending in
-//     the connective -고 ("자식 작업을 확인하고 구현해", "워커에게 물어보고 구현해").
+//     the connective -고 ("자식 작업을 확인하고 구현해", "워커에게 물어보고 구현해") and no explicit other subject after the
+//     connective and no causative on the verb (CRW-1166: "... 확인하고 워커가 구현해", "... 확인하고 구현하게 해" stay delegated).
 //
 // A sentence adverb right after the noun with none of these ("the children then implement", "they also implement", "the
 // children each implement") or set off by commas ("the children, then, implement") leaves the noun the subject of the verb.
 // Anything else ambiguous stays delegated, which is the pointer.
-func delegation(prefix string) (noun string, delegated bool) {
+func delegation(prefix, suffix string) (noun string, delegated bool) {
 	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
 	// detectorRE expands \s and \S into bracket classes, so the separator and word classes here spell jsSpaceChars out.
 	sep, word := `[`+jsSpaceChars+`,;]`, `[^`+jsSpaceChars+`,;]`
@@ -472,7 +473,7 @@ func delegation(prefix string) (noun string, delegated bool) {
 	}
 	noun, gap := folded[m[0]:m[2]], folded[m[2]:m[3]]
 	noun = strings.TrimSpace(noun)
-	if hangulConnective(noun, gap) {
+	if hangulConnective(noun, gap, suffix) {
 		return noun, false
 	}
 	if objectLead.MatchString(folded[:m[0]]) && adverbs.MatchString(gap) {
@@ -484,20 +485,33 @@ func delegation(prefix string) (noun string, delegated bool) {
 // hangulConnective reports a Korean agent noun (자식, 하위, 워커 plus its particle) that is the object of an earlier verb joined to
 // the implement verb by the connective -고: a word of the gap ends in 고 and neither the noun nor a word before that word ends
 // in a subject particle (이, 가, 은, 는) after at least one other character. A subject ("자식이 확인하고 구현해") stays delegated.
-func hangulConnective(noun, gap string) bool {
+// The implement verb is then still this session's own only when nothing else takes it over: a later word of the gap that is
+// another agent noun or ends in a subject particle other than a first-person one ("확인하고 워커가 구현해") is the verb's explicit
+// subject, and a causative on the verb (suffix: "구현하게 해", "구현하도록 해", "구현시켜") hands it to a delegate; both stay delegated.
+func hangulConnective(noun, gap, suffix string) bool {
 	if !strings.HasPrefix(noun, "자식") && !strings.HasPrefix(noun, "하위") && !strings.HasPrefix(noun, "워커") {
 		return false
 	}
+	if detectorRE(`^(?:하게|하도록|하라고|토록|시켜|시키)`).MatchString(suffix) {
+		return false
+	}
 	subject := detectorRE(`.+[이가은는]$`)
+	firstPerson := detectorRE(`^(?:제가|내가|저는|나는|우리가|우리는|저희가|저희는)$`)
+	connective := false
 	for _, w := range strings.FieldsFunc(noun+" "+gap, func(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) || r == '\ufeff' }) {
-		if strings.HasSuffix(w, "고") {
-			return true
+		if connective {
+			if (strings.HasPrefix(w, "자식") || strings.HasPrefix(w, "하위") || strings.HasPrefix(w, "워커") || subject.MatchString(w)) && !firstPerson.MatchString(w) {
+				return false
+			}
+			continue
 		}
-		if subject.MatchString(w) {
+		if strings.HasSuffix(w, "고") {
+			connective = true
+		} else if subject.MatchString(w) {
 			return false
 		}
 	}
-	return false
+	return connective
 }
 
 // coordinateKorean reports 조정 in a folded clause that is coordination and not the adjustment of a value (CRW-1166, port: deviation
