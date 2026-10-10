@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -99,12 +100,25 @@ func TestLedgerWritesMatchTheRecordedOracle(t *testing.T) {
 				events[0].Map = []MapEntry{{"10", "a"}, {"2", "b"}, {"x", "c"}, {"1", "d"}, {"01", "e"}, {"4294967295", "f"}, {"y", "g"}}
 			}
 			for _, e := range events {
-				same("append", AppendInterviewEvent(cwd, e), error(nil))
+				// port: fixed by CRW-1108 (known-defects.md:109): the oracle appends a/b's row to a-b.jsonl (aliasFile); the port
+				// refuses the alias and creates no file for it
+				err := AppendInterviewEvent(cwd, e)
+				if e.SessionID == "a/b" {
+					same("alias refused", errors.Is(err, ErrNonCanonicalSessionID), true)
+				} else {
+					same("append", err, error(nil))
+				}
 			}
 			got := []any{fileText(t, filepath.Join(ivDir, "rec-s1.jsonl"))}
 			want := []any{c.str("file")}
 			if id == "interview_events" {
-				got, want = append(got, fileText(t, filepath.Join(ivDir, "a-b.jsonl")), listNames(ivDir)), append(want, c.str("aliasFile"), c.strs("listing"))
+				var kept []string
+				for _, name := range c.strs("listing") {
+					if name != "a-b.jsonl" {
+						kept = append(kept, name)
+					}
+				}
+				got, want = append(got, listNames(ivDir)), append(want, kept)
 			}
 			same("files", got, want)
 			compareEvents(t, id, ReadInterviewEvents(cwd, "rec-s1"), c["events"].([]any))
@@ -118,7 +132,7 @@ func TestLedgerWritesMatchTheRecordedOracle(t *testing.T) {
 			}
 			got := ReadInterviewEvents(cwd, sid)
 			same("not nil", got != nil, true)
-			compareEvents(t, id, got, c["events"].([]any))
+			compareEvents(t, id, got, interviewEvidenceOf(sid, c["events"].([]any)))
 		case id == "modes_umask_022" || id == "modes_umask_077":
 			mask, _ := strconv.ParseInt(strings.TrimPrefix(id, "modes_umask_"), 8, 32)
 			withUmask(int(mask), func() {
@@ -163,4 +177,20 @@ func compareEvents(t *testing.T, id string, got []InterviewEvent, want []any) {
 			t.Errorf("%s event %d: map %v, oracle %v", id, i, got[i].Map, o["map"])
 		}
 	}
+}
+
+// interviewEvidenceOf is the oracle's answer narrowed to what the port counts as sid's evidence (CRW-1108, known-defects.md:109): a
+// row that names sid and carries ts and highContradictionCount. The oracle returns every scan-kind row with numeric roundId and
+// contradictionCount, whatever session it names.
+func interviewEvidenceOf(sid string, events []any) []any {
+	kept := []any{}
+	for _, e := range events {
+		row, _ := e.(map[string]any)
+		_, ts := row["ts"].(string)
+		_, high := row["highContradictionCount"].(float64)
+		if session, _ := row["sessionId"].(string); ts && high && session == sid {
+			kept = append(kept, e)
+		}
+	}
+	return kept
 }

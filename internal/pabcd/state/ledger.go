@@ -85,7 +85,12 @@ func (e LedgerEntry) members() []member {
 // AppendLedger appends the row to <state dir>/ledger.jsonl (appendLedger). The counters of a row are written as JSON.stringify
 // writes a number: -0 as 0, NaN and the infinities as null. The row starts with a line feed when the file ends in a line that has
 // none, or when its last byte cannot be read (appendRow), so a final line left by a crash, a full disk or a hand edit is not joined to it.
+// The row's session id must be canonical (ErrNonCanonicalSessionID otherwise, nothing created): the oracle records a/b's or the empty
+// id's transition in the ledger although no state file of that id can exist (CRW-1108).
 func AppendLedger(cwd string, e LedgerEntry) error {
+	if !IsCanonicalSessionID(e.SessionID) {
+		return ErrNonCanonicalSessionID
+	}
 	return appendRow(cwd, "", LedgerFile, e.members(), true)
 }
 
@@ -143,20 +148,29 @@ func (e InterviewEvent) members() []member {
 }
 
 // AppendInterviewEvent appends the row to the session's scan ledger (appendInterviewEvent), the durable record that a scan ran.
-// The file is named by SanitizeKey of the row's session id, as the oracle names it. The file is shared with the interview answer
+// The file is named by the row's session id, which must be canonical (ErrNonCanonicalSessionID otherwise, nothing created): the
+// oracle names it by SanitizeKey, so a/b appended to a-b's ledger (CRW-1108). The file is shared with the interview answer
 // ledger's rows; the row starts with a line feed when the file ends in a line that has none, or when its last byte cannot be read,
 // so a final line left by a crash, a full disk or a hand edit is not joined to this row. No lock is taken, as in the oracle: two
 // appenders that meet one unterminated tail each add a line feed, and the blank line between the rows is skipped by both readers.
 func AppendInterviewEvent(cwd string, e InterviewEvent) error {
+	if !IsCanonicalSessionID(e.SessionID) { // CRW-1108: a/b no longer appends to a-b's ledger, nor "" to missing's
+		return ErrNonCanonicalSessionID
+	}
 	return appendRow(cwd, InterviewsSubdir, SanitizeKey(e.SessionID)+".jsonl", e.members(), true)
 }
 
 // ReadInterviewEvents reads a session's scan rows, best effort: a file that cannot be read is no rows, and the result is never
-// nil. A row counts when its event is a scan kind and roundId and contradictionCount are numbers; blank and damaged lines and the
-// rest are skipped. Like every reader of this package it parses with encoding/json, which refuses a document nested deeper than
+// nil. A row counts when its event is a scan kind, roundId, contradictionCount and highContradictionCount are numbers, ts is a
+// string and sessionId is the session asked for; blank and damaged lines and the rest are skipped. A session id that sanitising
+// would rewrite, or an empty one, reads no rows. The oracle counts a row on its event, roundId and contradictionCount alone, so
+// another session's rows in the file, or an alias id's file, read as this session's evidence (CRW-1108, known-defects.md:109). Like every reader of this package it parses with encoding/json, which refuses a document nested deeper than
 // 10,000 levels: a row that deep reads as damaged, where JSON.parse's limit is the stack.
 func ReadInterviewEvents(cwd, sessionID string) []InterviewEvent {
 	events := []InterviewEvent{}
+	if !IsCanonicalSessionID(sessionID) {
+		return events
+	}
 	data, err := os.ReadFile(filepath.Join(cwd, crwdir.DirName, InterviewsSubdir, SanitizeKey(sessionID)+".jsonl"))
 	if err != nil {
 		return events
@@ -171,9 +185,13 @@ func ReadInterviewEvents(cwd, sessionID string) []InterviewEvent {
 			continue
 		}
 		e := InterviewEvent{Event: InterviewScanEvent(kind), RoundID: round, ContradictionCount: count, Raw: json.RawMessage(line)}
-		e.TS, _ = row["ts"].(string)
+		var okTS, okHigh bool
+		e.TS, okTS = row["ts"].(string)
 		e.SessionID, _ = row["sessionId"].(string)
-		e.HighContradictionCount, _ = number(row["highContradictionCount"])
+		e.HighContradictionCount, okHigh = number(row["highContradictionCount"])
+		if !okTS || !okHigh || e.SessionID != sessionID {
+			continue // CRW-1108: another session's row, or one without a declared field, is not this session's evidence
+		}
 		e.Map = attributions(line)
 		events = append(events, e)
 	}

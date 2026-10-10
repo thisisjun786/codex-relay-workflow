@@ -42,20 +42,22 @@ func DeriveEventID(turnID, questionID string, kind QaKind) string {
 	return turnID + ":" + questionID + ":" + string(kind)
 }
 
-// ledgerPath is cwd/.crw/interviews/<sanitised session id>.jsonl, the file of the state package's scan rows too; sessions whose ids
-// sanitise alike share it.
+// ledgerPath is cwd/.crw/interviews/<session id>.jsonl, the file of the state package's scan rows too. Every reader and writer takes
+// a canonical id only (CRW-1108), so the sanitising never joins two sessions in one file.
 func ledgerPath(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, state.InterviewsSubdir, state.SanitizeKey(sessionID)+".jsonl")
 }
 
-// ReadQaEvents is the session's question and answer rows, best effort: a row counts when its event is one of the two kinds and its
-// eventId is a string; a missing file, blank and damaged lines and every other row (the scan rows included) are skipped. Never nil.
+// ReadQaEvents is the session's question and answer rows, best effort: a row counts when its event is one of the two kinds, its
+// eventId is a string and its sessionId is the session asked for (CRW-1108: the oracle counts the rows of any session in the file, so
+// an alias session's row with the same eventId suppressed this session's capture); a missing file, blank and damaged lines and every
+// other row (the scan rows included) are skipped. Never nil.
 func ReadQaEvents(cwd, sessionID string) []QaEvent {
 	events := []QaEvent{}
 	eachRow(cwd, sessionID, func(line string, o map[string]any) {
 		kind, _ := o["event"].(string)
 		eventID, ok := o["eventId"].(string)
-		if (kind != string(QuestionAsked) && kind != string(AnswerRecorded)) || !ok {
+		if owner, _ := o["sessionId"].(string); owner != sessionID || (kind != string(QuestionAsked) && kind != string(AnswerRecorded)) || !ok {
 			return
 		}
 		e := QaEvent{Event: QaKind(kind), EventID: eventID, Raw: json.RawMessage(line)}
@@ -79,11 +81,16 @@ func ReadQaEvents(cwd, sessionID string) []QaEvent {
 
 // DimensionsBackedByAnswers is the dimensions that hold a question the user was asked and answered: the file holds the question, an
 // answer with a non-blank string, and a scan_completed row whose map attributes the question to the dimension (the last non-empty
-// string any such row gave it). The rows need no eventId, turn or session. Provenance, not tamper-proofing: whoever can write the
-// file can append the three rows.
+// string any such row gave it). The rows need no eventId or turn, but every row must name the session asked for, and a scan row must
+// be one state.ReadInterviewEvents counts (ts, roundId, contradictionCount and highContradictionCount declared): another session's
+// rows in the file, or an incomplete scan row, back nothing (CRW-1108, known-defects.md:109). Provenance, not tamper-proofing:
+// whoever can write the file can append the three rows.
 func DimensionsBackedByAnswers(cwd, sessionID string) map[interview.Dimension]bool {
 	asked, answered, attribution := map[string]bool{}, map[string]bool{}, map[string]string{}
 	eachRow(cwd, sessionID, func(_ string, o map[string]any) {
+		if owner, _ := o["sessionId"].(string); owner != sessionID {
+			return
+		}
 		event, _ := o["event"].(string)
 		questionID, hasID := o["questionId"].(string)
 		switch {
@@ -96,15 +103,23 @@ func DimensionsBackedByAnswers(cwd, sessionID string) map[interview.Dimension]bo
 					answered[questionID] = true
 				}
 			}
-		case event == "scan_completed":
-			m, _ := o["map"].(map[string]any)
-			for q, dimension := range m {
-				if s, ok := dimension.(string); ok && s != "" {
-					attribution[q] = s
-				}
-			}
 		}
 	})
+	for _, scan := range state.ReadInterviewEvents(cwd, sessionID) { // the rows with this session's name and the declared fields
+		if scan.Event != state.ScanCompleted {
+			continue
+		}
+		// JSON.parse of the row, as eachRow reads it: only the exact key "map", the last of a repeated one, and no merging; a struct
+		// field would also take "MAP" or "Map" and merge repeats into one map.
+		row, _ := parseJSON(string(scan.Raw))
+		o, _ := row.(map[string]any)
+		m, _ := o["map"].(map[string]any)
+		for q, dimension := range m {
+			if s, ok := dimension.(string); ok && s != "" {
+				attribution[q] = s
+			}
+		}
+	}
 	backed := map[interview.Dimension]bool{}
 	for q, dimension := range attribution {
 		if asked[q] && answered[q] {
@@ -178,8 +193,12 @@ func quote(s string) string {
 
 // appendEvent appends the row to its session's ledger: the .crw directory, the interviews directory below it, then one write to a file
 // opened for appending, as the oracle does it; an error leaves what the earlier steps made. The write starts with a line feed when the
-// file already ends in a line that has none (endsMidLine).
+// file already ends in a line that has none (endsMidLine). A session id that sanitising would rewrite, or an empty one, is refused with
+// state.ErrNonCanonicalSessionID before anything is created (CRW-1108).
 func appendEvent(cwd string, e QaEvent) error {
+	if !state.IsCanonicalSessionID(e.SessionID) {
+		return state.ErrNonCanonicalSessionID
+	}
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return err
 	}
@@ -231,13 +250,13 @@ type CaptureInput struct {
 type CaptureResult struct{ Written []QaEvent }
 
 // CaptureInterviewAnswers records one round: a question_asked row per question and an answer_recorded row per answered question,
-// each skipped when its id is already in the file (idempotent per turn, question and kind). A round without a session id records
-// nothing and a missing turn id records as no-turn. A failed append loses that row only; it is never an error.
+// each skipped when its id is already in the file (idempotent per turn, question and kind). A round without a session id, or with
+// one that sanitising would rewrite (CRW-1108), records nothing and a missing turn id records as no-turn. A failed append loses that row only; it is never an error.
 func CaptureInterviewAnswers(in CaptureInput) CaptureResult { return capture(in, time.Now) }
 
 func capture(in CaptureInput, now func() time.Time) CaptureResult {
 	written := []QaEvent{}
-	if in.SessionID == "" {
+	if !state.IsCanonicalSessionID(in.SessionID) {
 		return CaptureResult{written}
 	}
 	turn := in.TurnID

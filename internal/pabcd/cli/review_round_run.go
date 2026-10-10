@@ -66,7 +66,7 @@ func RunReviewRoundCli(args ReviewRoundCliArgs, o *ReviewRoundRunOptions) (Revie
 	case ReviewRoundVerbOpen:
 		return reviewRoundRunOpen(args, session, st, o)
 	case ReviewRoundVerbAbort:
-		return reviewRoundRunAbort(args, st, o)
+		return reviewRoundRunAbort(args, session, st, o)
 	}
 	return reviewRoundRunShow(args, st)
 }
@@ -157,6 +157,30 @@ func reviewRoundRunBound(plan *goalplan.Goalplan, launch, session, workPhase, un
 	return &bound, true
 }
 
+// reviewRoundRunHeldBy is the session that still holds the round against session (CRW-1108): its owner when the owner is another
+// canonical session that is still auditing this plan (at A, bound to slug, at the round's plan epoch) or whose state cannot be read;
+// "" when the round is session's, has no owner, or its owner left it (moved on from A, rebound to another goalplan or epoch, or no
+// state file), which is the takeover route for the round of a session that is gone. The oracle closes or supersedes the round
+// whatever its owner (review-round-cli.ts:276-290); a session's own round is closed by itself, from Codex or from a terminal
+// outside it, where the native guard leaves the explicit id.
+func reviewRoundRunHeldBy(cwd, slug, session string, r goalplan.ReviewRoundState) string {
+	owner := r.OwnerSessionID
+	if owner == "" || owner == session || !state.IsCanonicalSessionID(owner) {
+		return ""
+	}
+	st, unreadable := state.ReadStateStrict(cwd, owner)
+	if unreadable || (st.Phase == state.PhaseA && st.Slug == slug && st.PlanEpoch != nil && *st.PlanEpoch == r.PlanEpoch) {
+		return owner
+	}
+	return ""
+}
+
+// reviewRoundRunOwnerRefusal is the refusal of a verb that would change a round another live session holds.
+func reviewRoundRunOwnerRefusal(verb, roundID, owner string) ReviewRoundCliResult {
+	return reviewRoundRunRefuse(fmt.Sprintf("review-round %s: round %s belongs to session %s, which is still auditing this plan. Nothing was written. "+
+		"That session closes it (`crw pabcd review-round abort --session %s`), or it is released once that session leaves A.", verb, roundID, owner, owner))
+}
+
 // reviewRoundRunLocked runs fn on the bound goalplan under its write lock. A lock that cannot be taken and a plan that cannot be read
 // are the oracle's "<reason>; retry" refusal; an error of the lock or of fn is returned.
 func reviewRoundRunLocked(args ReviewRoundCliArgs, verb, slug string, o *ReviewRoundRunOptions, fn func(*goalplan.Goalplan) (ReviewRoundCliResult, error)) (ReviewRoundCliResult, error) {
@@ -201,6 +225,13 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 		if workPhase == "" {
 			return reviewRoundRunRefuse(prefix + "the bound goalplan has no active work-phase"), nil
 		}
+		for _, r := range plan.ReviewRounds { // open supersedes every open round of the purpose, and refreshes a pending one
+			if unclosed := !slices.Contains([]goalplan.ReviewRoundStatus{goalplan.ReviewApproved, goalplan.ReviewChangesRequested, goalplan.ReviewInconclusive}, r.Status); r.Purpose == goalplan.PurposePlanAudit && unclosed {
+				if owner := reviewRoundRunHeldBy(args.Cwd, st.Slug, session, r); owner != "" {
+					return reviewRoundRunOwnerRefusal("open", r.RoundID, owner), nil
+				}
+			}
+		}
 		opened := review.OpenRound(plan, review.OpenRoundInput{Purpose: goalplan.PurposePlanAudit, PlanPath: unit, PlanSha256: PlanFilesHash(files)})
 		if opened.Kind != review.OK {
 			return reviewRoundRunRefuse(prefix + reviewRoundRunReason(opened)), nil
@@ -241,7 +272,7 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 }
 
 // reviewRoundRunAbort is the abort verb (:284-297): the live round is closed as inconclusive and never approved.
-func reviewRoundRunAbort(args ReviewRoundCliArgs, st state.State, o *ReviewRoundRunOptions) (ReviewRoundCliResult, error) {
+func reviewRoundRunAbort(args ReviewRoundCliArgs, session string, st state.State, o *ReviewRoundRunOptions) (ReviewRoundCliResult, error) {
 	if st.Slug == "" {
 		return reviewRoundRunRefuse("review-round abort: this session has no bound goalplan"), nil
 	}
@@ -250,6 +281,11 @@ func reviewRoundRunAbort(args ReviewRoundCliArgs, st state.State, o *ReviewRound
 		reason = *args.Reason
 	}
 	return reviewRoundRunLocked(args, "abort", st.Slug, o, func(plan *goalplan.Goalplan) (ReviewRoundCliResult, error) {
+		if live := review.EffectiveRound(plan, goalplan.PurposePlanAudit); live != nil {
+			if owner := reviewRoundRunHeldBy(args.Cwd, st.Slug, session, *live); owner != "" {
+				return reviewRoundRunOwnerRefusal("abort", live.RoundID, owner), nil
+			}
+		}
 		aborted := review.AbortRound(plan, goalplan.PurposePlanAudit, reason)
 		if aborted.Kind != review.OK {
 			return reviewRoundRunRefuse("review-round abort: " + reviewRoundRunReason(aborted)), nil

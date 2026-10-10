@@ -98,7 +98,7 @@ R19 is not a textual rename rule. Its reserved-prefix note concerns components i
 
 | Source pattern | CXC writer | Go equivalent | Disposition |
 | --- | --- | --- | --- |
-| `sessions/<id>.json.lock` | `P/state.ts:671-689` | `internal/pabcd/state/lock.go:24` | skip transfer; presence refuses selected scope as possibly active |
+| `sessions/<id>.json.lock` | `P/state.ts:671-689` | `internal/pabcd/state/lock.go:33` | skip transfer; presence refuses selected scope as possibly active |
 | `goalplans/<slug>/.goalplan.lock/owner.json` and lock directory | `P/goalplan.ts:823-846` | `internal/pabcd/goalplan/lock.go:107-127,177` | skip transfer; lock-directory presence refuses even without owner.json |
 | `dispatches/<session>/<dispatch>.json.lock/` | `O/subagent-config/src/fallback-dispatch.ts:127-167` | `internal/role/dispatch_ledger.go:275-312` | skip transfer; presence refuses, never break it |
 | `agents/.<role>-update.lock` | `O/subagent-config/src/role-registration.ts:65-83` | `internal/role/registration.go:200-215` | skip transfer; presence refuses Codex scope |
