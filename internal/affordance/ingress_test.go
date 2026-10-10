@@ -18,13 +18,13 @@ type failedReader struct{}
 
 func (failedReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
 
-func TestIngressReadFailureStillEmitsSessionPointers(t *testing.T) {
+func TestIngressReadFailureReleasesWithoutSessionPointers(t *testing.T) {
 	var out strings.Builder
 	if code := RunHook(context.Background(), "session-start", failedReader{}, &out, testEnv, t.TempDir()); code != 0 {
 		t.Fatal(code)
 	}
-	if got := contextOf(t, out.String(), "SessionStart"); len(strings.Split(got, "\n\n")) != 6 {
-		t.Fatal("fallback pointers")
+	if out.Len() != 0 {
+		t.Fatal("read error emitted pointers")
 	}
 	for _, event := range []string{"post-compact", "user-prompt-submit"} {
 		out.Reset()
@@ -34,7 +34,7 @@ func TestIngressReadFailureStillEmitsSessionPointers(t *testing.T) {
 	}
 }
 
-func TestIngressOwnUnboundedPolicyAndObservationName(t *testing.T) {
+func TestIngressBoundedPolicyAndObservationName(t *testing.T) {
 	ws, plugin, codex := t.TempDir(), t.TempDir(), t.TempDir()
 	put(t, filepath.Join(plugin, ".codex-plugin", "plugin.json"), `{"version":"1.0.0"}`)
 	t.Setenv("PLUGIN_ROOT", plugin)
@@ -67,16 +67,13 @@ func TestIngressOwnUnboundedPolicyAndObservationName(t *testing.T) {
 	if err != nil || n != 3 {
 		t.Fatal("observations", n, err)
 	}
-	// cxc-ops reads even above the shared observation bound. It still sees the
-	// id at the end, whereas a capped stdin reader would use empty input.
+	// CRW-1158: oversized input never reaches decoding or the handler.
 	var out strings.Builder
 	raw := `{"unused":"` + strings.Repeat("x", harness.MaxStdinBytes+1) + `","session_id":"oversized"}`
-	if RunHook(context.Background(), "session-start", strings.NewReader(raw), &out, os.LookupEnv, ws) != 0 || !strings.Contains(out.String(), "--session oversized") {
-		t.Fatal("own stdin policy capped")
+	if RunHook(context.Background(), "session-start", strings.NewReader(raw), &out, os.LookupEnv, ws) != 0 || out.Len() != 0 {
+		t.Fatal("oversized advisory was not released")
 	}
-	if !strings.HasSuffix(out.String(), "\n") || strings.HasSuffix(out.String(), "\n\n") {
-		t.Fatal("newline doubled")
-	}
+
 }
 
 func TestCancellationReturnsAndLateReadDoesNotWrite(t *testing.T) {
@@ -134,8 +131,8 @@ func TestIngressInvalidUTF8MatchesNodeOracle(t *testing.T) {
 				t.Fatal("exit")
 			}
 			ctx := contextOf(t, out.String(), "SessionStart")
-			if strings.Split(ctx, "\n\n")[0] != RenderSessionBinding(tc.Sid, testEnv) {
-				t.Fatal("raw UTF8 binding")
+			if strings.Contains(ctx, "This session's id") {
+				t.Fatal("invalid UTF8 identity bound")
 			}
 			raw = strings.Replace(raw, "SessionStart", "PostCompact", 1)
 			if RunHook(context.Background(), "post-compact", strings.NewReader(raw), io.Discard, testEnv, ws) != 0 {

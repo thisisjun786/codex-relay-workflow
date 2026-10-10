@@ -3,6 +3,7 @@ package provider
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -17,6 +18,7 @@ type Status struct {
 	Running               bool
 	DefaultProvider       *string
 	Port                  *float64
+	badPort               string // the spelling of a listen.port that is not a TCP port
 }
 
 // Deps retains the oracle's optional resolver and status-reader seams.
@@ -39,6 +41,10 @@ func Detect(d Deps) Status {
 	}
 	code, out, err := d.RunStatus(path)
 	if err != nil {
+		var se *statusError
+		if errors.As(err, &se) {
+			return fail(se.reason)
+		}
 		return fail("ocx status invocation threw: " + err.Error())
 	}
 	if code == nil {
@@ -52,6 +58,9 @@ func Detect(d Deps) Status {
 		return fail("ocx status produced no parseable payload")
 	}
 	s.Mode, s.OcxPath = "provider", path
+	if s.badPort != "" {
+		return fail("ocx status reported a listen.port that is not a TCP port: " + s.badPort)
+	}
 	return s
 }
 
@@ -75,9 +84,14 @@ func parseStatus(out string) (Status, bool) {
 		s.DefaultProvider = &provider
 	}
 	listen, _ := obj["listen"].(map[string]any)
+	// Only a whole number from 1 to 65535 is a port. The oracle advertised any number, a negative one, a fraction or
+	// 0 included, and spelled one that overflows as null; ocx reporting such a value is a wrong status, so it is
+	// named and not passed on to the agent as a place to connect to.
 	if n, ok := listen["port"].(json.Number); ok {
 		f, _ := strconv.ParseFloat(string(n), 64)
-		if !math.IsInf(f, 0) {
+		if math.IsInf(f, 0) || f != math.Trunc(f) || f < 1 || f > 65535 {
+			s.badPort = string(n)
+		} else {
 			s.Port = &f
 		}
 	}

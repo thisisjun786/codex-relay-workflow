@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // HookPayload keeps the oracle's optional unknown-valued fields. Source and
@@ -43,16 +46,103 @@ func PayloadCwd(p HookPayload, fallback string) string {
 	return fallback
 }
 
+// CompletionText is the text of a wake for recs: the jobs that fit the budget (fitWake), as a drain hands it over.
 func CompletionText(recs []BgRecord) string {
-	lines := []string{"[crw bg] 백그라운드 작업 " + stringNumber(len(recs)) + "건이 끝났습니다."}
-	for _, rec := range recs {
-		lines = append(lines, DescribeRecord(rec))
-	}
+	out, _ := fitWake(recs, completionBody, wireSize, wireSize)
+	return out
+}
+
+// completionBody is the text of a wake that describes n jobs with lines.
+func completionBody(n int, lines []string) string {
+	lines = append([]string{"[crw bg] 백그라운드 작업 " + stringNumber(n) + "건이 끝났습니다."}, lines...)
 	// map(...).join on an empty batch still contributes an empty body line.
-	if len(recs) == 0 {
+	if n == 0 {
 		lines = append(lines, "")
 	}
 	return strings.Join(append(lines, "출력은 `crw relay job get <id> --tail 40`으로 봅니다. 전체 목록은 `crw relay job list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."), "\n")
+}
+
+// The byte budget of the text a wake, an adoption or a drain hands to the session (CRW-1095), measured as it is handed over: the
+// serialized envelope, where JSON spells a control character in six bytes. A command longer than WakeCommandBytes and a note longer
+// than WakeNoteBytes are cut at a rune boundary and the line points at `get`. A batch whose lines pass WakeLinesBytes, or whose text
+// passes WakeTextBytes, is written again without commands and notes; a batch that still passes WakeTextBytes describes its first jobs
+// that fit, and a wake leaves the others pending for the next one. The id, the status, the exit code, the duration and the get of
+// every job described are always there, and the record keeps the whole command. One job always fits: a file name holds at most 255
+// bytes, so its line, with the id twice and every byte escaped, stays near 3 KB.
+const (
+	WakeCommandBytes = 160
+	WakeNoteBytes    = 120
+	WakeLinesBytes   = 2048
+	WakeTextBytes    = 4096
+)
+
+// fitWake is the text wrap builds from the lines of the first jobs of recs that fit the budget, and those jobs. wrap answers the text
+// of n jobs and their lines as it is handed over, size is what that text costs and lineSize what the lines cost, each in the spelling
+// the text is written in. A job whose command fits and that has no note gets DescribeRecord's line.
+func fitWake(recs []BgRecord, wrap func(n int, lines []string) string, size, lineSize func(string) int) (string, []BgRecord) {
+	lines := make([]string, len(recs))
+	for i, rec := range recs {
+		lines[i] = briefRecord(rec, WakeCommandBytes, WakeNoteBytes)
+	}
+	if out := wrap(len(recs), lines); len(recs) == 0 || lineSize(strings.Join(lines, "\n")) <= WakeLinesBytes && size(out) <= WakeTextBytes {
+		return out, recs
+	}
+	for i, rec := range recs {
+		lines[i] = briefRecord(rec, -1, -1)
+	}
+	for n := len(recs); ; n-- {
+		if out := wrap(n, lines[:n]); n == 1 || size(out) <= WakeTextBytes {
+			return out, recs[:n]
+		}
+	}
+}
+
+// jsonSize is the size of s as a JSON string, the way the store's serializer spells it: the spelling of a hook's envelope, which
+// leaves a character past U+007F as it is.
+func jsonSize(s string) int { return len(quote(s)) }
+
+// wireSize is the size of s as a JSON string the way the relay writes a drain's answer: Python's json.dumps with ensure_ascii, where a
+// character past U+007E is \uXXXX, two of them past the BMP (CRW-1095).
+func wireSize(s string) int {
+	b, err := pyjson.Encode(s, pyjson.Options{})
+	if err != nil {
+		return 6*len(s) + 2 // no spelling is longer than six bytes for one
+	}
+	return len(b)
+}
+
+func envelopeSize(s string) int { return len(s) }
+
+// briefRecord is DescribeRecord with the command cut to command bytes and the note, when there is one, to note bytes; a line that
+// leaves anything out names the job's get. A negative command leaves the command and the note out.
+func briefRecord(rec BgRecord, command, note int) string {
+	full := strings.Join(rec.Command, " ")
+	pointer := " (전체: crw relay job get " + rec.ID + ")"
+	if command < 0 {
+		return strings.TrimSuffix(DescribeRecord(rec), " — "+full) + pointer
+	}
+	shown, cut := clip(full, command)
+	line := strings.TrimSuffix(DescribeRecord(rec), full) + shown
+	if rec.Note != nil {
+		n, noteCut := clip(*rec.Note, note)
+		line += " [" + n + "]"
+		cut = cut || noteCut
+	}
+	if cut {
+		line += pointer
+	}
+	return line
+}
+
+// clip is s cut to at most n bytes at a rune boundary, with an ellipsis when anything was cut.
+func clip(s string, n int) (string, bool) {
+	if len(s) <= n {
+		return s, false
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…", true
 }
 
 func stringNumber(n int) string { b, _ := value(n, 0); return string(b) }
@@ -66,60 +156,80 @@ func silent(fn func() string) (out string) {
 	return fn()
 }
 
-// HandleStop stamps before returning its block. A second Stop cannot wake the
-// same stamped records, even if the caller lost the first output.
+// HandleStop returns the block of the session's due completions and stamps them delivered: the caller has the text, which is the
+// emission here. RunHook emits to its stdout first and stamps only after that write succeeded (CRW-1092).
 func HandleStop(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
-	return completion(p, cwd, getenv, clock, "Stop")
+	return completion(p, cwd, getenv, clock, "Stop", acceptAll)
 }
 
 // HandleUserPromptSubmit injects context only: a decision would reject the prompt.
 func HandleUserPromptSubmit(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
-	return completion(p, cwd, getenv, clock, "UserPromptSubmit")
+	return completion(p, cwd, getenv, clock, "UserPromptSubmit", acceptAll)
 }
 
-func completion(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time, event string) string {
+func acceptAll(string) error { return nil }
+
+// completion selects, emits and stamps under the store lock (deliver): emit is the write of the envelope, and a completion whose
+// envelope was not written stays pending. A store that is locked for longer than lockWait emits nothing.
+func completion(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time, event string, emit func(string) error) string {
 	return silent(func() string {
 		ws := PayloadCwd(p, cwd)
 		if WakeSuppressed(ws, getenv) {
 			return ""
 		}
-		due, err := SelectWake(ws, PayloadSessionID(p, getenv), WakeBatchLimit, clock)
-		if err != nil || len(due) == 0 {
-			return ""
-		}
-		body := CompletionText(due)
-		if text.Trim(body) == "" {
-			return ""
-		}
-		MarkDelivered(ws, due, clock)
-		if event == "Stop" {
-			return blockEnvelope(body)
-		}
-		return contextEnvelope(event, body)
+		out, _ := deliver(ws, PayloadSessionID(p, getenv), clock, func() bool { return WakeSuppressed(ws, getenv) }, func(due []BgRecord) (string, []BgRecord) {
+			return fitWake(due, func(n int, lines []string) string {
+				body := completionBody(n, lines)
+				if text.Trim(body) == "" {
+					return ""
+				}
+				if event == "Stop" {
+					return blockEnvelope(body)
+				}
+				return contextEnvelope(event, body)
+			}, envelopeSize, jsonSize)
+		}, emit)
+		return out
 	})
 }
 
 // HandleSessionStart adopts even while off. Adoption is not delivery; Stop or the
 // next prompt stamps the completion. Only the first five adopted jobs are described.
+// The adoption is written under the store lock over the records as they are then (CRW-1092).
 func HandleSessionStart(p HookPayload, cwd string, getenv func(string) string, clock func() time.Time) string {
 	return silent(func() string {
 		ws, sid := PayloadCwd(p, cwd), PayloadSessionID(p, getenv)
-		adopted, err := AdoptOrphans(ws, sid, clock)
+		// One reconciled snapshot serves the adoption and the has-task question, so each record is reconciled once in this event
+		// (CRW-1095).
+		unlock, err := lockStore(ws)
+		if err != nil {
+			return ""
+		}
+		defer unlock()
+		recs, err := listRecords(ws, clock, true)
+		if err != nil {
+			return ""
+		}
+		adopted, err := adoptOrphans(ws, sid, clock, recs)
 		if err != nil || WakeSuppressed(ws, getenv) {
 			return ""
 		}
-		has, err := HasAnyTask(ws, sid, clock)
-		if err != nil || !has {
+		has := len(recs) > 0
+		if sid != nil {
+			has = len(adopted) > 0 || slices.ContainsFunc(recs, func(r BgRecord) bool { return ownedBy(r, *sid) })
+		}
+		if !has {
 			return ""
 		}
-		lines := []string{}
-		if len(adopted) > 0 {
-			lines = append(lines, "[crw bg] 이전 세션에서 끝난 백그라운드 작업 "+stringNumber(len(adopted))+"건이 아직 전달되지 않았습니다.")
-			for _, r := range adopted[:min(5, len(adopted))] {
-				lines = append(lines, DescribeRecord(r))
+		out, _ := fitWake(adopted[:min(5, len(adopted))], func(_ int, described []string) string {
+			lines := []string{}
+			if len(adopted) > 0 {
+				lines = append(lines, "[crw bg] 이전 세션에서 끝난 백그라운드 작업 "+stringNumber(len(adopted))+"건이 아직 전달되지 않았습니다.")
+				lines = append(lines, described...)
 			}
-		}
-		return contextEnvelope("SessionStart", strings.Join(append(lines, Affordance), "\n"))
+			return contextEnvelope("SessionStart", strings.Join(append(lines, Affordance), "\n"))
+		}, envelopeSize, jsonSize)
+		return out
 	})
 }
 
@@ -172,26 +282,36 @@ func runHook(ctx context.Context, event string, in io.Reader, stdout io.Writer, 
 			code = 0
 		}
 	}()
-	raw, overflow := harness.ReadStdin(in)
+	// harness.ReadStdin's bound and decoding, with the read error kept apart from empty input: input that failed to read or passed a
+	// bound is not the empty payload, whose cwd and CODEX_THREAD_ID fallbacks could wake or adopt for the wrong session, and the hook
+	// does nothing with it (CRW-1134).
+	b, err := io.ReadAll(io.LimitReader(in, harness.MaxStdinBytes+1))
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
-	if overflow || hookUnits(raw) > MaxHookUnits {
-		raw = ""
+	raw, unusable := decodeUTF8(b), err != nil || len(b) > harness.MaxStdinBytes
+	if unusable || hookUnits(raw) > MaxHookUnits {
+		raw, unusable = "", true
 	}
 	harness.RecordInvocation(raw, "bg-wake", event, env)
+	if unusable {
+		return 0
+	}
 	p, out := parseHookPayload(raw), ""
 	getenv := func(k string) string { v, _ := env(k); return v }
+	// Stop and UserPromptSubmit write their envelope from inside the delivery, so a completion is stamped only after its text reached
+	// stdout; a failed write leaves it pending (CRW-1092).
+	emit := func(text string) error { return writeHookOutput(stdout, text+"\n") }
 	switch event {
 	case "stop":
-		out = HandleStop(p, cwd, getenv, clock)
+		completion(p, cwd, getenv, clock, "Stop", emit)
 	case "user-prompt-submit":
-		out = HandleUserPromptSubmit(p, cwd, getenv, clock)
+		completion(p, cwd, getenv, clock, "UserPromptSubmit", emit)
 	case "session-start":
 		out = HandleSessionStart(p, cwd, getenv, clock)
 	}
 	if out != "" {
-		writeHookOutput(stdout, out+"\n")
+		_ = writeHookOutput(stdout, out+"\n")
 	}
 	return 0
 }

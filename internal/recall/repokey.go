@@ -31,6 +31,10 @@ func normalizeRepoKey(raw string) string {
 		}
 		return pack(host, path)
 	}
+	// A drive-letter path names a local directory, not host:path, and falls back to the cwd scope.
+	if localDrivePath(raw) {
+		return ""
+	}
 	// The optional userinfo can backtrack away: @ is legal in the host alternative.
 	if at := strings.IndexByte(raw, '@'); at > 0 && !strings.ContainsRune(raw[:at], '/') {
 		valid := true
@@ -39,14 +43,20 @@ func normalizeRepoKey(raw string) string {
 		}
 		if valid {
 			if host, path, ok := scpRemote(raw[at+1:]); ok {
-				return pack(host, path)
+				return pack(host, scpKeyPath(path))
 			}
 		}
 	}
 	if host, path, ok := scpRemote(raw); ok {
-		return pack(host, path)
+		return pack(host, scpKeyPath(path))
 	}
 	return ""
+}
+
+// localDrivePath is C:\repo and C:/repo. A single letter before the colon followed by a separator is a
+// drive, as git itself reads it; any longer host name, or a path without a separator, is still scp syntax.
+func localDrivePath(raw string) bool {
+	return len(raw) >= 3 && asciiLetter(raw[0]) && raw[1] == ':' && (raw[2] == '/' || raw[2] == '\\')
 }
 
 func scpRemote(raw string) (host, path string, ok bool) {
@@ -65,6 +75,11 @@ func scpRemote(raw string) (host, path string, ok bool) {
 	}
 	return host, path, true
 }
+
+// scpKeyPath spells an scp path the way a URL path is spelled in the key. scp has no percent
+// decoding, so its % is a literal percent: the key writes it %25, as a URL's %25 is written, and a
+// literal %2F never takes the identity of an encoded slash.
+func scpKeyPath(path string) string { return strings.ReplaceAll(path, "%", "%25") }
 
 func pack(host, path string) string {
 	host = Lower(text.Trim(host))

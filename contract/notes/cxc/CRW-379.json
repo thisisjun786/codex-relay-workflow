@@ -3,7 +3,6 @@
   "identical": [
     "hook__pre-tool-use-guarding-goal-budget__baseline_empty_workspace",
     "hook__pre-tool-use-guarding-goal-budget__non_object_input_fails_closed",
-    "hook__pre-tool-use-guarding-goal-budget__token_budget_denied",
     "hook__pre-tool-use-guarding-interview-in-goal__active_goal_denies",
     "hook__pre-tool-use-guarding-interview-in-goal__baseline_empty_workspace",
     "hook__pre-tool-use-guarding-interview-in-goal__unreadable_goal_fails_closed",

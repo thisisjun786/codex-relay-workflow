@@ -14,26 +14,24 @@ const (
 	block  = `{"decision":"block","reason":"` + reason + `"}` + "\n"
 )
 
-// oversizedWant is what each of the sixteen slugs answers to an input over the limit: cli.ts
-// matches "pre-tool-use" as a prefix and "stop" and "subagent-stop" exactly, so the guard slugs that
-// do not start with it (worktree-guard-pretool) and subagent-stop-review answer nothing.
+// oversizedWant maps recording slugs to the explicit registration policy (CRW-1101).
 func oversizedWant() map[string]string {
 	return map[string]string{
 		"session-start": "", "session-start-permission-advisory": "", "user-prompt-submit": "", "stop": block,
 		"pre-tool-use": deny, "permission-request": "", "post-tool-use": "", "subagent-stop": block, "subagent-stop-review": "",
-		"post-compact": "", "pre-tool-use-edit": deny, "post-tool-use-render-observation": "", "worktree-guard": "",
-		"worktree-guard-pretool": "", "pre-tool-use-memory-write": deny, "pre-tool-use-automation-ownership": deny,
+		"post-compact": "", "pre-tool-use-edit": "", "post-tool-use-render-observation": "", "worktree-guard": "",
+		"worktree-guard-pretool": deny, "pre-tool-use-memory-write": deny, "pre-tool-use-automation-ownership": deny,
 	}
 }
 
-func TestOversizedHookOutputBySlug(t *testing.T) {
-	for slug, want := range oversizedWant() {
-		if got := OversizedHookOutput(slug); got != want {
-			t.Errorf("%s: got %q, want %q", slug, got, want)
+func TestInputFailurePolicyMatchesLegSemantics(t *testing.T) {
+	for _, l := range Legs() {
+		if l.Event == "pre-tool-use" && (l.Stage == Guard || l.Stage == FailClosed) && l.InputFailure != InputDeny {
+			t.Errorf("%s lacks guard ingress deny", l.ID)
 		}
-	}
-	if got := OversizedHookOutput("unknown"); got != "" {
-		t.Errorf("an unknown slug answers %q", got)
+		if got := l.InputFailureOutput(Input{Overflow: true}); got != oversizedWant()[l.Slug] {
+			t.Errorf("%s: %q", l.ID, got)
+		}
 	}
 }
 

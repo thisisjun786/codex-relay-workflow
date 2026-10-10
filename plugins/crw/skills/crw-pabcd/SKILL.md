@@ -28,10 +28,49 @@ is distinct from that parent goal.
 
 Two distinct things, do not conflate them:
 
-- **Hook hint (narrow):** `UserPromptSubmit` detects `interview` / `인터뷰`
-  and other existing lexical phase hints and injects scoped advice only. Natural
-  hints never enter or advance a phase. A line-anchored `orchestrate i` command
-  instead takes the existing explicit-command parser path.
+- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only. The
+  detector (`DetectTrigger`) yields a phase hint only when one request clause names
+  the PABCD marker (`crw-pabcd`, `crw:crw-pabcd`, or `pabcd로` / `pabcd phase`)
+  together with a request verb (`use`, `run`, `start`, `invoke`, `enter`, `apply`, or
+  시작, 진행, 적용, 실행, 돌려, 써서, 으로, 들어가). The phase is then picked by the
+  first matching phase pattern, in this order: I (`interview`, `인터뷰`, `phase i`),
+  P (`plan`, `phase p`, 계획), A (`audit`, `phase a`, 감사), B (`build`, `phase b`,
+  구현), C (`check`, `phase c`, 검증). With no phase pattern, only a request naming
+  `crw-pabcd` (in any form above) or `pabcd로` falls back to phase P; `pabcd phase`
+  has no such fallback. So the detector finds a hint for `Use crw-pabcd`, `pabcd로
+  시작해줘` and `Use crw-pabcd to start the interview` (P, P, I) and for `Start pabcd
+  phase i` (I), and finds none for `Start pabcd phase`, a bare `인터뷰 먼저 해줘`,
+  `interview me first` or `pabcd로 인터뷰 해줘` (no request verb or no phase pattern).
+  What the hook injects is the handler's answer, which depends on the session. The
+  handler applies these in order:
+  1. Goal mode: while the session has an active goal, or the goals database cannot be
+     read (fail closed), an I hint is dropped (the hook answers nothing), and a P hint
+     is not promoted to the interview (step 3 then gives the plain P directive). This
+     runs before the loop-arm check, so a dropped I hint never reaches the mandate.
+  2. Loop-arm: in a session that has not armed PABCD, a clause with a loop mode
+     (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` / `ipabcd` word (not the one
+     inside `crw-pabcd`) plus an action word makes the hook answer the arming mandate
+     (ORCH-MANDATE-01) instead of any phase hint, including a P hint.
+  3. Phase hint: the phase directive plus the trigger-authority note. A P hint is
+     delivered as the interview directive under the default interview-entry policy
+     (`new-unit`: not once a cycle is running; `always` also inside a cycle; `off`
+     never) unless step 1 applies.
+  - Without a goal, in a fresh un-armed session: `pabcd로 시작해줘`, `pabcd로 인터뷰
+    해줘`, `Start pabcd phase` and `Start pabcd phase i` get the mandate; `Use
+    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the
+    interview directive for both); `인터뷰 먼저 해줘` and `interview me first` get
+    nothing.
+  - With an active goal, in a fresh un-armed session: `Use crw-pabcd` gets the plain P
+    directive (not the interview); `Use crw-pabcd to start the interview` and `Start
+    pabcd phase i` get nothing (the I hint is dropped before the loop-arm check);
+    `pabcd로 시작해줘`, `pabcd로 인터뷰 해줘` and `Start pabcd phase` still get the
+    mandate; `인터뷰 먼저 해줘` and `interview me first` get nothing.
+  - In a session that already armed PABCD, a prompt without any hint can still get the
+    current phase directive or stage header re-injected, unless the transcript tail
+    already carries the stage marker or shows context pressure; in phase I under an
+    active goal nothing is re-injected.
+  Natural hints never enter or advance a phase. A line-anchored `orchestrate i`
+  command instead takes the existing explicit-command parser path.
 - **Agent judgment (broad):** for unclear requirements phrased otherwise, select
   `crw-interview` and its applicable references. Loading a skill is not a state
   transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`
@@ -84,8 +123,8 @@ or justified near-pass exits. C requires fresh relevant proof and SoT sync;
 passing unrelated checks is not evidence. Explicit execution restrictions are not
 overridden by a reference asking to run a verifier or dispatch a reviewer.
 
-3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Never push to a remote without explicit user approval (DEV-GIT-PUSH-01, ESCALATE). When P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.
-5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.
+3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Push only as `crw-dev` DEV-GIT-PUSH-01 defines. Where the repository's delivery path uses pull requests and P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.
+5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (pushing follows `crw-dev` DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.
 
 ## Work-Phase Loop (multi-pass tasks)
 
@@ -128,19 +167,30 @@ See `dev` §0.0 for the full class definitions and tie-break rules.
 
 ## Delegation model — choosing a surface
 
-Choose the surface before dispatching. A **subagent** (`spawn_agent`) is a leaf
+Choose the surface before dispatching, and start from the binding: before any
+dispatch of an independent lane, apply
+[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
+A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
+independent relay child started and resumed through `crw-run`, never a
+`create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
+followed, not routed around by creating a thread by hand. An unresolved binding is
+not permission to take the unmanaged route. The thread and subagent choice below is
+for unmanaged work: standalone PABCD with no Linear issue and no CRW execution
+binding, and bounded helper delegation inside any task.
+
+A **subagent** (`spawn_agent`) is a leaf
 running in **this session's own working directory**, with no session state, no
 goal and no FSM; its writes are your uncommitted changes. A **thread**
 (`create_thread`) is a separate Codex task with its own goal and PABCD state, and
 with `environment: worktree` its own checkout — `local` shares the project
-checkout. Work needing its own branch, checkout or merge/CI lane is thread work,
-one worktree thread per lane; a bounded slice of the tree you are already editing
-is subagent work. Asking for parallel lane work is asking for those threads — the lanes are
+checkout. For unmanaged work, work needing its own branch, checkout or merge/CI
+lane is thread work, one worktree thread per lane; a bounded slice of the tree you are already editing
+is subagent work. Asking for unmanaged parallel lane work is asking for those threads — the lanes are
 the mechanism, not an extra deliverable — so do not fall back to subagents on the
 shared tree to avoid creating tasks. Concurrent subagents need non-overlapping
 write scopes and must never run branch-level git operations at the same time.
-Before an authorized dispatch that is not obviously one or the other, read
-[Dispatch surfaces](references/dispatch-surfaces.md).
+Before every authorized dispatch, read [Dispatch surfaces](references/dispatch-surfaces.md)
+(DISPATCH-MANAGED-01 first).
 
 This section governs dispatched children, not independently user-owned peer tasks.
 For necessary read-only context, follow

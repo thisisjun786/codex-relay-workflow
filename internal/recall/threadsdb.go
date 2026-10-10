@@ -1,7 +1,11 @@
 // Read-only metadata enrichment from CXC v0.2.40 recall/src/threads-db.ts.
 package recall
 
-import "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+import (
+	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+)
 
 // ThreadMeta keeps null distinct from empty strings, and accepts REAL timestamps.
 type ThreadMeta struct {
@@ -38,9 +42,11 @@ func loadThreadMeta(path string) ThreadMetaResult {
 		}
 		return stmt.All()
 	}
-	rows, err := read("SELECT id, title, cwd, git_branch, git_origin_url, updated_at_ms FROM threads")
-	if err != nil {
-		rows, err = read("SELECT id, title, cwd, git_branch, updated_at_ms FROM threads")
+	// The columns are named by alias, so the rows carry these names whatever case the table declared.
+	rows, err := read("SELECT id AS id, title AS title, cwd AS cwd, git_branch AS git_branch, git_origin_url AS git_origin_url, updated_at_ms AS updated_at_ms FROM threads")
+	if err != nil && strings.EqualFold(err.Error(), "no such column: git_origin_url") {
+		// Only a database from before the origin column is read without it; any other failure is reported.
+		rows, err = read("SELECT id AS id, title AS title, cwd AS cwd, git_branch AS git_branch, updated_at_ms AS updated_at_ms FROM threads")
 	}
 	if err != nil {
 		result.Warning = "state db unreadable (" + err.Error() + ")"

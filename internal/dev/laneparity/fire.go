@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -51,9 +52,10 @@ type FireOptions struct {
 	Only    *regexp.Regexp // restrict the fixtures
 	Fault   string
 	Run     string // the run id (a fresh one when empty)
-	// NoSwitch fires without the hook switch file, the state of an installation nobody switched: the
-	// ported legs are then silent (CRW-392). By default every case's CODEX_HOME holds the switch at crw.
-	NoSwitch bool
+	// Switch is the state the hook switch is held in while the commands run: SwitchOn (the default) is
+	// crw, so the ported legs do their work; SwitchOff has no switch file, the state of an installation
+	// nobody switched, and SwitchCXC says cxc: the ported legs are silent in both (CRW-392).
+	Switch string
 }
 
 // FixtureFire is the firing and effect of one fixture.
@@ -95,6 +97,9 @@ type FireReport struct {
 	Probes          []ProbeFire   `json:"probes"`
 	Receipts        []Receipt     `json:"receipts"`
 	ReceiptProblems []string      `json:"receiptProblems,omitempty"`
+	// Recorded names the hook invocation records the fixtures' trees held when they had run
+	// (<CODEX_HOME>/crw/hook-observations): the ported legs record nothing while the switch is off.
+	Recorded []string `json:"recorded,omitempty"`
 	// Unverified names what a green run does not show: legs no fixture witnesses.
 	Unverified []string `json:"unverified,omitempty"`
 	OK         bool     `json:"ok"`
@@ -103,7 +108,7 @@ type FireReport struct {
 // Fire fires every claimed hook fixture of the corpus, plus CRW's own probes, through the commands
 // the plugin root declares, and returns the firing, effect and receipt cells.
 func Fire(o FireOptions) (FireReport, error) {
-	rep := FireReport{Run: o.Run, Fault: o.Fault, Switch: switchReport(o.NoSwitch)}
+	rep := FireReport{Run: o.Run, Fault: o.Fault, Switch: switchReport(o.Switch)}
 	if rep.Run == "" {
 		rep.Run = NewRunID()
 	}
@@ -140,9 +145,9 @@ func Fire(o FireOptions) (FireReport, error) {
 		defer os.RemoveAll(scratch)
 	}
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Only: o.Only}
-	if !o.NoSwitch {
-		in.Seed = seedSwitch
-	}
+	plan := newSeedPlan(o.Switch, o.CRW, declared)
+	plan.records = &recordLog{}
+	in.Seed = plan.seed
 	switch o.Fault {
 	case FaultDropStdout:
 		in.Mutate = func(_ string, got *cxccorpus.Expect) {
@@ -154,6 +159,14 @@ func Fire(o FireOptions) (FireReport, error) {
 		in.Steps = func(_ string, steps []cxccorpus.Step) []cxccorpus.Step {
 			slices.Reverse(steps)
 			return steps
+		}
+	}
+	// the records a fixture's hooks left are named for it when its outcome is compared
+	mutate := in.Mutate
+	in.Mutate = func(id string, got *cxccorpus.Expect) {
+		plan.records.name(id)
+		if mutate != nil {
+			mutate(id, got)
 		}
 	}
 	results, err := contracttest.FireHooks(in)
@@ -190,6 +203,11 @@ func Fire(o FireOptions) (FireReport, error) {
 		}
 		rep.Fixtures = append(rep.Fixtures, ff)
 		if res.Run && res.Observed != nil {
+			for path := range res.Observed.Tree {
+				if strings.Contains(path, "/hook-observations/") && strings.HasSuffix(path, ".json") {
+					rep.Recorded = append(rep.Recorded, res.ID+": "+path)
+				}
+			}
 			ws, rs := stepReceipts(rep, wantLeg, declared, builds, res)
 			wants, rep.Receipts = append(wants, ws...), append(rep.Receipts, rs...)
 		}
@@ -198,6 +216,8 @@ func Fire(o FireOptions) (FireReport, error) {
 	if rep.Probes, err = fireOwn(o, in, wantLeg, declared, builds, &rep, &wants, perLeg); err != nil {
 		return rep, err
 	}
+	rep.Recorded = mergeRecorded(rep.Recorded, plan.records.all())
+	sort.Strings(rep.Recorded)
 	for _, p := range rep.Probes {
 		rep.OK = rep.OK && p.OK
 	}
@@ -227,6 +247,22 @@ func Fire(o FireOptions) (FireReport, error) {
 		rep.Legs = append(rep.Legs, *leg)
 	}
 	return rep, nil
+}
+
+// mergeRecorded adds the records found where the seed was taken out to the ones the observed trees
+// held, once each: a record in both is named by its fixture and its file name.
+func mergeRecorded(observed, found []string) []string {
+	out := slices.Clone(observed)
+	for _, f := range found {
+		id, rel, _ := strings.Cut(f, ": ")
+		if !slices.ContainsFunc(observed, func(o string) bool {
+			oid, path, _ := strings.Cut(o, ": ")
+			return oid == id && filepath.Base(path) == filepath.Base(rel)
+		}) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // stepReceipts makes the receipts of a fixture's hook steps, and what each must name.

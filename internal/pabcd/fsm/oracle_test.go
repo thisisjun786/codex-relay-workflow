@@ -157,9 +157,6 @@ func sameCommand(want *recordedCommand, got *OrchestrateCommand) bool {
 		return want == nil && got == nil
 	}
 	verb, errText := want.Verb, ""
-	if verb == "<function Object>" {
-		verb = string(VerbConstructor)
-	}
 	if want.Err != nil {
 		errText = *want.Err
 	}
@@ -179,6 +176,18 @@ func TestGrammarMatchesTheRecordedOracle(t *testing.T) {
 	}
 	for _, c := range g.Cases {
 		got := ParseOrchestrateCommand(c.C)
+		// CRW-1109 answers two recorded classes differently on purpose (docs/port-cxc/known-defects/CRW-1109.md): the
+		// inherited verb "constructor" is no command, and a would-be command whose --attest text holds a CR, U+2028 or
+		// U+2029 is answered with its FormError instead of being read as chat. The recording is unchanged.
+		if c.Want != nil && c.Want.Verb == "<function Object>" {
+			if got != nil {
+				t.Errorf("%q: constructor parsed as a command: %+v", c.C, got)
+			}
+			continue
+		}
+		if c.Want == nil && got != nil && got.FormError == ErrCommandSeparator && strings.ContainsAny(c.C, "\r\u2028\u2029") {
+			continue
+		}
 		if !sameCommand(c.Want, got) {
 			t.Errorf("%q: got %+v, oracle %+v", c.C, got, c.Want)
 		}

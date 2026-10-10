@@ -58,7 +58,7 @@ edge — including ungated entry edges — before `did`, `planUnit`, or
 | IDLE->P | none — pass no `--attest` at all | If you pass one anyway it is still parsed, so it still needs `from`/`to` |
 | I->P | none — unless overriding an unready interview, which needs `from`, `to`, `did`, `override` | |
 | P->A | `from`, `to`, `did` with plan pointer, `planUnit` | `planUnit` must be a real `devlog/_plan/YYMMDD_slug/` holding numbered docs |
-| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual` | FAIL never advances |
+| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual`; a recorded `GO-WITH-FIXES (blockers=N)` adds `auditBlockers` | FAIL never advances |
 | B->C | `from`, `to`, `did` with implementation delta | |
 | C->D | `from`, `to`, `did`, `checkOutput`, `exitCode` (required, must be 0) | a goalplan-bound session also needs `testReceiptPath` from `crw pabcd receipt test` |
 
@@ -69,13 +69,13 @@ Copy-paste objects. Replace the values; keep every key:
 
 ```json
 {"from":"P","to":"A","did":"wrote the diff-level plan at <path>","planUnit":"devlog/_plan/260825_slug","workPhaseId":"wp1"}
-{"from":"A","to":"B","did":"folded 2 blockers, rebutted 1","auditOutput":"<pasted reviewer verdict tail>","auditVerdict":"near-pass","auditResidual":"GO-WITH-FIXES; blocker 1 folded, blocker 2 rebutted because ...","workPhaseId":"wp1"}
+{"from":"A","to":"B","did":"folded 1 blocker, rebutted 1","auditOutput":"<pasted reviewer verdict tail>","auditVerdict":"near-pass","auditResidual":"GO-WITH-FIXES (blockers=2); blocker 1 folded, blocker 2 rebutted because ...","auditBlockers":[{"blocker":1,"disposition":"folded","reason":"<how the plan changed>"},{"blocker":2,"disposition":"rebutted","reason":"<why it does not hold>"}],"workPhaseId":"wp1"}
 {"from":"B","to":"C","did":"implemented <files>; <n> tests added","workPhaseId":"wp1"}
 {"from":"C","to":"D","did":"verified at <sha>","checkOutput":"<pasted tail of the command>","exitCode":0,"testReceiptPath":".crw/evidence/<session>/test-receipt.json","workPhaseId":"wp1"}
 ```
 
-Omit `workPhaseId` when no goalplan is bound, and `testReceiptPath` when the
-session is unbound. Everything else is mandatory on that edge.
+Omit `workPhaseId` when no goalplan is bound, `testReceiptPath` when the
+session is unbound, and `auditBlockers` when the recorded reviewer verdict has no `blockers=N`. Everything else is mandatory on that edge.
 
 These are edge contracts, not substitutes for phase work. Artifact pointers must name
 the evidence produced by the phase being advanced.
@@ -88,7 +88,8 @@ illegal edges remain refused. Agents use
 `crw pabcd orchestrate <verb> --session <id> --attest <json>` (or `--attest-file <path>`,
 required on Windows) and provide real evidence.
 `A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires
-`auditResidual`.
+`auditResidual`, and a round whose recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` also requires
+`auditBlockers`: one `{"blocker":<n>,"disposition":"folded"|"rebutted","reason":"..."}` for each blocker 1..N.
 `C>D` requires `checkOutput` and a passing `exitCode` — omitting it is refused, since a check with no outcome is not a check.
 Mutating verbs require an explicit session; only `status` may use latest-session fallback.
 **SESSION-IDENTITY-01 (STRICT):** use the current SessionStart binding, never a

@@ -15,13 +15,6 @@
     "hook__post-tool-use-capturing-interview-answers__replay_is_idempotent",
     "hook__post-tool-use-capturing-interview-answers__string_payloads_captured",
     "hook__post-tool-use-capturing-interview-answers__unreadable_goal_db_captures_silently",
-    "hook__post-compact-resetting-reinject-cursor__baseline_empty_workspace",
-    "hook__post-compact-resetting-reinject-cursor__idle_is_a_noop"
-  ],
-  "intentionally-changed": [
-    {
-      "id": "hook__post-compact-resetting-reinject-cursor__active_cycle_resets_cursor",
-      "reason": "the oracle reads the session state and writes it back with no lock, so an update a participating writer lands between the two is lost (data-loss defect, fixed by decision: the port re-reads inside the session lock and refuses to rewrite a state whose records the reader cannot keep). The single-step case observes the same bytes, so the claim names no difference."
-    }
+    "hook__post-compact-resetting-reinject-cursor__baseline_empty_workspace"
   ]
 }

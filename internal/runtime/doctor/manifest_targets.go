@@ -29,8 +29,10 @@ type TargetIssue struct {
 	Message string     `json:"message"`
 }
 
-// TargetParseError carries the malformed document's kind and path. Filesystem
-// errors are returned directly, as readJson of manifest-targets.ts:76-83 does.
+// TargetParseError carries the kind and path of a document that cannot be used: malformed JSON,
+// nested past the depth limit, or a file the harness refuses to read for what it is (not a
+// regular file, past the byte limit; CRW-1152). Other filesystem errors are returned directly, as
+// readJson of manifest-targets.ts:76-83 does.
 type TargetParseError struct {
 	Kind TargetKind
 	Path string
@@ -70,15 +72,26 @@ func targetNodeText(s string) string {
 }
 
 func targetReadJSON(kind TargetKind, path string) (any, error) {
-	b, err := os.ReadFile(targetNodeText(path))
+	b, err := harnessReadBounded(targetNodeText(path))
 	if err != nil {
-		return nil, err
+		return nil, targetReadFailure(kind, path, err)
 	}
 	return targetParseJSON(kind, path, b)
 }
 
+// targetReadFailure is the error of a read that failed. A document the harness refuses to read
+// for what it is (not a regular file, past the byte limit) fails its own kind, as a malformed one
+// does, so the other kind is still reported; any other failure is returned as it is, as readJson
+// of manifest-targets.ts:76-83 does.
+func targetReadFailure(kind TargetKind, path string, err error) error {
+	if harnessReadRefused(err) {
+		return &TargetParseError{kind, path, err}
+	}
+	return err
+}
+
 func targetParseJSON(kind TargetKind, path string, b []byte) (any, error) {
-	v, err := pyjson.Loads(source.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers, Deep: true})
+	v, err := harnessParseBounded(source.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
 		return nil, &TargetParseError{kind, path, err}
 	}
@@ -92,6 +105,9 @@ func targetParseJSON(kind TargetKind, path string, b []byte) (any, error) {
 // error is the read's own.
 func targetReadRooted(kind TargetKind, root, file string) (v any, escaped, missing bool, err error) {
 	b, err := doctorRootedRead(root, targetNodeText(file))
+	if err != nil && harnessReadRefused(err) {
+		return nil, false, false, targetReadFailure(kind, file, err)
+	}
 	switch {
 	case errors.Is(err, errDoctorRootEscape):
 		return nil, true, false, nil
@@ -332,6 +348,12 @@ func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing stri
 	if err != nil {
 		return err
 	}
+	if !info.Mode().IsRegular() {
+		// A target is a file the hook or server runs: a directory (non-empty or not), a FIFO or a
+		// device is not one, whatever size it reports (CRW-1152, port: fixed).
+		*issues = append(*issues, TargetIssue{kind, "target is not a regular file: " + rel})
+		return nil
+	}
 	if info.Size() == 0 {
 		*issues = append(*issues, TargetIssue{kind, "target is empty: " + rel})
 	}
@@ -432,98 +454,177 @@ func targetString(v any) string {
 // ValidateManifestTargets ports CXC v0.2.40 manifest-targets.ts. An absent
 // manifest has no findings; malformed JSON stops validation with its kind.
 func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
-	issues := []TargetIssue{}
+	outcome := validateManifestTargetsByKind(pluginRoot)
+	if outcome.manifestErr != nil {
+		return nil, outcome.manifestErr
+	}
+	if outcome.hook.err != nil {
+		return nil, outcome.hook.err
+	}
+	if outcome.mcp.err != nil {
+		return nil, outcome.mcp.err
+	}
+	return append(outcome.hook.issues, outcome.mcp.issues...), nil
+}
+
+// targetKindOutcome is what one kind's validation found: the findings made before it stopped, and
+// the error that stopped it, if any. The two kinds are independent, so one kind's stop does not
+// discard the other's findings (CRW-1152).
+type targetKindOutcome struct {
+	issues []TargetIssue
+	err    error
+}
+
+// targetOutcome is the validator's result split by kind. manifestErr is the failure to use the
+// manifest itself, which no kind can be evaluated without.
+type targetOutcome struct {
+	manifestErr error
+	hook, mcp   targetKindOutcome
+}
+
+// validateManifestTargetsByKind runs the hook and the MCP validation independently over one
+// manifest read.
+func validateManifestTargetsByKind(pluginRoot string) targetOutcome {
 	path := filepath.Join(pluginRoot, ".codex-plugin/plugin.json")
+	out := targetOutcome{hook: targetKindOutcome{issues: []TargetIssue{}}, mcp: targetKindOutcome{issues: []TargetIssue{}}}
 	if _, err := os.Stat(targetNodeText(path)); err != nil {
-		return issues, nil
+		return out
 	}
 	manifest, err := targetReadJSON(TargetHook, path)
 	if err != nil {
-		return nil, err
+		out.manifestErr = err
+		return out
 	}
+	if manifest == nil {
+		// A JSON null has no members to read: both kinds stop on the same read of it, as one
+		// failure of the manifest (the oracle's TypeError names `hooks`, the first read).
+		_, out.manifestErr = targetProperty(manifest, "hooks")
+		return out
+	}
+	out.hook.err = validateHookTargets(&out.hook.issues, pluginRoot, manifest)
+	out.mcp.err = validateMCPTargets(&out.mcp.issues, pluginRoot, manifest)
+	return out
+}
+
+func validateHookTargets(issues *[]TargetIssue, pluginRoot string, manifest any) error {
 	hooks, err := targetProperty(manifest, "hooks")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	entries, _ := hooks.([]any)
+	entries, isArray := hooks.([]any)
+	if hooks != nil && !isArray {
+		// The manifest declares hook files as an array of paths; a string, number, object or
+		// boolean declares none and was passed over silently (CRW-1152, port: fixed).
+		*issues = append(*issues, TargetIssue{TargetHook, "manifest hooks must be an array of hook file paths: " + targetString(hooks)})
+	}
 	for _, entry := range entries {
 		rel, ok := entry.(string)
 		if !ok {
-			issues = append(issues, TargetIssue{TargetHook, "manifest hook file must be a string: " + targetString(entry)})
+			*issues = append(*issues, TargetIssue{TargetHook, "manifest hook file must be a string: " + targetString(entry)})
 			continue
 		}
 		file := targetResolve(pluginRoot, rel)
 		if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
-			issues = append(issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
+			*issues = append(*issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
 			continue
 		}
 		v, escaped, missing, err := targetReadRooted(TargetHook, pluginRoot, file)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if escaped {
-			issues = append(issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
+			*issues = append(*issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
 			continue
 		}
 		if missing {
-			issues = append(issues, TargetIssue{TargetHook, "manifest hook file missing: " + rel})
+			*issues = append(*issues, TargetIssue{TargetHook, "manifest hook file missing: " + rel})
 			continue
 		}
 		v, err = targetProperty(v, "hooks")
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if err = targetHookGroups(&issues, pluginRoot, v); err != nil {
-			return nil, err
+		if v != nil {
+			if _, isObject := v.(pyjson.Object); !isObject {
+				*issues = append(*issues, TargetIssue{TargetHook, "hooks must be an object: " + rel})
+				continue
+			}
+		}
+		if err = targetHookGroups(issues, pluginRoot, v); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func validateMCPTargets(issues *[]TargetIssue, pluginRoot string, manifest any) error {
 	mcp, err := targetProperty(manifest, "mcpServers")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	rel, ok := mcp.(string)
 	if !ok {
-		return issues, nil
+		if mcp != nil {
+			*issues = append(*issues, TargetIssue{TargetMCP, "manifest mcpServers must be a string file path: " + targetString(mcp)})
+		}
+		return nil
 	}
 	file := targetResolve(pluginRoot, rel)
 	if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
-		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel}), nil
+		*issues = append(*issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel})
+		return nil
 	}
 	v, escaped, missing, err := targetReadRooted(TargetMCP, pluginRoot, file)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if escaped {
-		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel}), nil
+		*issues = append(*issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel})
+		return nil
 	}
 	if missing {
-		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file missing: " + rel}), nil
+		*issues = append(*issues, TargetIssue{TargetMCP, "manifest mcpServers file missing: " + rel})
+		return nil
 	}
 	v, err = targetProperty(v, "mcpServers")
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if v != nil {
+		if _, isObject := v.(pyjson.Object); !isObject {
+			*issues = append(*issues, TargetIssue{TargetMCP, "mcpServers must be an object: " + rel})
+			return nil
+		}
 	}
 	for _, srv := range targetEntries(v) {
 		args, e := targetProperty(srv.Value, "args")
 		if e != nil {
-			return nil, e
+			return e
 		}
 		a, e := targetIterable(args)
 		if e != nil {
-			return nil, e
+			return e
 		}
 		for _, arg := range a {
 			if rel, ok := arg.(string); ok && strings.HasSuffix(rel, ".js") {
-				if e := targetCheck(&issues, TargetMCP, pluginRoot, rel, "mcp server "+srv.Key+" references missing dist: "+rel); e != nil {
-					return nil, e
+				if e := targetCheck(issues, TargetMCP, pluginRoot, rel, "mcp server "+srv.Key+" references missing dist: "+rel); e != nil {
+					return e
 				}
 			}
 		}
 	}
-	return issues, nil
+	return nil
 }
 func targetHookGroups(issues *[]TargetIssue, root string, v any) error {
 	for _, event := range targetEntries(v) {
+		if _, supported := hookTrustIdentityEvent(event.Key); !supported {
+			// An event is one of the ten names the trust identity knows (hookTrustIdentityEvent, the
+			// same table ListHookTrustEntries and the hash use). Any other name, a misspelling or a
+			// name Object.prototype lends every object (constructor, toString, __proto__, ...), is a
+			// hooks finding, not a PASS (CRW-1152, port: fixed).
+			*issues = append(*issues, TargetIssue{TargetHook, "hook event is not supported: " + event.Key})
+			continue
+		}
 		groups, err := targetIterable(event.Value)
 		if err != nil {
 			return err

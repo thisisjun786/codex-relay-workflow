@@ -93,7 +93,7 @@ func TestStopBlockTextOfEveryPhase(t *testing.T) {
 	}
 	want := map[state.Phase]string{
 		state.PhaseP: head("P", "PLAN") + "`CRW pabcd orchestrate A --session rec-s1 --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"diff-level plan written with files and acceptance criteria\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
-		state.PhaseA: head("A", "AUDIT") + "`CRW pabcd orchestrate B --session rec-s1 --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit loop closed: blockers folded into plan\",\"auditOutput\":\"<reviewer verdict tail>\",\"auditVerdict\":\"pass|near-pass\",\"auditResidual\":\"<near-pass only: residual blockers + disposition>\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
+		state.PhaseA: head("A", "AUDIT") + "`CRW pabcd orchestrate B --session rec-s1 --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit loop closed: blockers folded into plan\",\"auditOutput\":\"<reviewer verdict tail>\",\"auditVerdict\":\"pass|near-pass\",\"auditResidual\":\"<near-pass only: residual blockers + disposition>\",\"auditBlockers\":\"<only when the review recorded blockers=N: replace with one {blocker,disposition,reason} object per blocker, disposition folded|rebutted>\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
 		state.PhaseB: head("B", "BUILD") + "`CRW pabcd orchestrate C --session rec-s1 --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
 		state.PhaseC: head("C", "CHECK") + "`CRW pabcd orchestrate D --session rec-s1 --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"checks passed\",\"checkOutput\":\"<test tail>\",\"exitCode\":0,\"testReceiptPath\":\"<bound goalplan only: crw pabcd receipt test output path>\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
 		state.PhaseD: head("D", "DONE") + "`CRW pabcd orchestrate reset --session rec-s1` after the DONE summary is recorded" + stopTail,
@@ -296,15 +296,25 @@ func TestStopReleasesForInterviewUnreadableGoalAndCorruptState(t *testing.T) {
 	}
 }
 
-// Recovery: a transcript whose tail shows compaction or a context-pressure recovery releases without a counter
-// write, so the recovery turn is not piled on and the budget is not spent.
+// Recovery: a transcript whose tail shows a compaction no user prompt has followed releases without a counter
+// write, so the recovery turn is not piled on and the budget is not spent. Since CRW-1090 the compaction is a
+// record Codex writes (the compacted record, its ContextCompaction item, the older context_compacted event), not
+// the oracle's phrases (TestCRW1090QuotedPressureDoesNotReleaseTheGoalStop).
 func TestStopContextPressureTailReleasesWithoutSpendingTheBudget(t *testing.T) {
-	for _, marker := range []string{"Your context window has been compacted.", "Compacted session handoff", "conversation history has been summarized"} {
+	for marker, line := range map[string]string{
+		"compacted":         `{"type":"compacted","payload":{"message":"","replacement_history":[]}}`,
+		"ContextCompaction": `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction","id":"c1"}}}`,
+		"context_compacted": `{"type":"event_msg","payload":{"type":"context_compacted"}}`,
+	} {
 		cwd, env := stopRig(t, "active")
 		stopInFlight(t, cwd, state.PhaseB)
 		transcript := filepath.Join(cwd, "transcript.jsonl")
-		if err := os.WriteFile(transcript, []byte(`{"type":"event_msg","payload":{"message":"`+marker+`"}}`+"\n"), 0o666); err != nil {
+		if err := os.WriteFile(transcript, []byte(line+"\n"), 0o666); err != nil {
 			t.Fatal(err)
+		}
+		// the same Stop on a transcript that is gone or unreadable, with no recovery recorded, is not a recovery: it blocks
+		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: filepath.Join(cwd, "gone.jsonl")}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
+			t.Errorf("%q: a missing transcript must not release: %+v", marker, a)
 		}
 		before := stopStateBytes(t, cwd)
 		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript}, "linux", env); a != (StopAnswer{}) {
@@ -313,9 +323,10 @@ func TestStopContextPressureTailReleasesWithoutSpendingTheBudget(t *testing.T) {
 		if stopStateBytes(t, cwd) != before {
 			t.Errorf("%q: the release spent the budget", marker)
 		}
-		// the same Stop on a transcript that is gone or unreadable is not a recovery: it blocks
-		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: filepath.Join(cwd, "gone.jsonl")}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
-			t.Errorf("%q: a missing transcript must not release: %+v", marker, a)
+		// once the Stop has seen the compaction, the recovery is recorded and outlives what the transcript shows
+		// (compaction_recovery.go) until the next user turn
+		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: filepath.Join(cwd, "gone.jsonl")}, "linux", env); a != (StopAnswer{}) {
+			t.Errorf("%q: the recorded recovery did not release: %+v", marker, a)
 		}
 	}
 }

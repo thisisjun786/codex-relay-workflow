@@ -1,0 +1,14 @@
+{
+  "issue": "CRW-1133",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "hook__pre-tool-use-guarding-goal-budget__token_budget_denied",
+      "reason": "port: fixed, a deviation from the oracle: the create_goal guard that denied a token_budget is removed so a limit the user named reaches the host, which validates the field; the new answer is silence (empty stdout)",
+      "set": {
+        "steps/0/form": "empty",
+        "steps/0/stdout": ""
+      }
+    }
+  ]
+}

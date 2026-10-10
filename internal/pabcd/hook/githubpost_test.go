@@ -26,17 +26,23 @@ func githubPostWant(t *testing.T, raw, label, wantRule, wantPlace string) {
 	if reason == "" {
 		t.Fatalf("%q was not denied, want (%s) at %s", label, wantRule, wantPlace)
 	}
-	const prefix = "GitHub post blocked ("
-	const guidance = ": write the text to a file, check it, and pass it with --body-file, -F body=@file or --input"
-	if !strings.HasPrefix(reason, prefix) || !strings.HasSuffix(reason, guidance) {
-		t.Fatalf("reason %q does not have the fixed shape", reason)
+	// Verdicts remain pinned independently of the cause-specific prose.
+	p := editObject(raw)
+	input, _ := p["tool_input"].(map[string]any)
+	cwd, _ := p["cwd"].(string)
+	cwd = shellirPayloadCwd(cwd)
+	var site githubPostSite
+	if words, ok := githubPostArgv(input); ok {
+		site, _ = githubPostJudgeArgv(words, cwd)
+	} else {
+		command, _ := githubPostCommand(input)
+		site, _ = githubPostJudgeText(command, cwd)
 	}
-	rule, place, ok := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(reason, prefix), guidance), ") at ")
-	if !ok {
-		t.Fatalf("reason %q names no place", reason)
+	if site.rule != wantRule || site.place != wantPlace {
+		t.Errorf("%q denied as (%s) at %s, want (%s) at %s", label, site.rule, site.place, wantRule, wantPlace)
 	}
-	if rule != wantRule || place != wantPlace {
-		t.Errorf("%q denied as (%s) at %s, want (%s) at %s", label, rule, place, wantRule, wantPlace)
+	if !strings.Contains(reason, "("+wantRule+")") || len(reason) > 700 {
+		t.Errorf("reason lacks its stable rule or exceeds the bound: %q", reason)
 	}
 }
 
@@ -554,8 +560,8 @@ func TestGitHubPostAnswerBoundsThePayload(t *testing.T) {
 	if !strings.Contains(reason, "("+githubPostRuleUnread+") at "+githubPostWhereCommand+":") {
 		t.Errorf("over the bound denied as %q, want %s at %s", reason, githubPostRuleUnread, githubPostWhereCommand)
 	}
-	if answer := GitHubPostAnswer(githubPostFailingReader{}); answer != "" {
-		t.Errorf("a failed read answered %q, want nothing", answer)
+	if reason := githubPostAnswerReason(t, GitHubPostAnswer(githubPostFailingReader{})); !strings.Contains(reason, "("+githubPostRuleUnread+") at "+githubPostWhereCommand+":") {
+		t.Errorf("a failed read answered %q, want unreadable-post deny", reason)
 	}
 }
 

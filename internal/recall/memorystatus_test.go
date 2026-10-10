@@ -103,6 +103,14 @@ func TestMemoryStatusOracle(t *testing.T) {
 			home := memoryStatusHome(t, c)
 			before := memoryStatusFiles(t, home)
 			s := CollectMemoryStatus(home)
+			if c.Mode == "directory" {
+				// port: fixed (docs/port-cxc/known-defects/CRW-1123.md): a directory named like the store
+				// is no store; the oracle tried to open it and reported the open failure.
+				if s.State != MemoryStatusUnavailable || s.StorePath != nil || s.Detail != "no memories store found under "+home {
+					t.Fatalf("a directory is no memories store: %+v", s)
+				}
+				return
+			}
 			gotJSON, err := json.Marshal(s)
 			if err != nil {
 				t.Fatal(err)

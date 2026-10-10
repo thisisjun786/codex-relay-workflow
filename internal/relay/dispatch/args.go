@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"io"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
@@ -16,6 +17,9 @@ type Services struct {
 	AdapterRequested bool
 	// Program is how the operator invoked this CLI, for printed recovery commands.
 	Program string
+	// Stderr is the diagnostic stream Execute was given: a note a command prints for a person (not part of its
+	// JSON answer) goes here. Nil, for a handler a test runs without Execute, is the process's stderr.
+	Stderr io.Writer
 }
 
 // Args are a command line's options as the parser read them, with the command's defaults for

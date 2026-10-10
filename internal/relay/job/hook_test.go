@@ -216,12 +216,12 @@ func TestBgRunHookThresholdFallbackAndErrors(t *testing.T) {
 		wakes bool
 	}{
 		{"at-ascii", strings.NewReader(strings.Repeat(" ", 1<<20-18) + `{"session_id":"X"}`), false},
-		{"over-ascii", strings.NewReader(strings.Repeat(" ", 1<<20) + `{"session_id":"X"}`), true},
+		{"over-ascii", strings.NewReader(strings.Repeat(" ", 1<<20) + `{"session_id":"X"}`), false},
 		{"bmp", strings.NewReader(`{"cwd":"` + strings.Repeat("한", 1<<19) + `","session_id":"X"}`), false},
-		{"astral-over", strings.NewReader(`{"cwd":"` + strings.Repeat("😀", 1<<19) + `","session_id":"X"}`), true},
+		{"astral-over", strings.NewReader(`{"cwd":"` + strings.Repeat("😀", 1<<19) + `","session_id":"X"}`), false},
 		{"astral-at", strings.NewReader(atAstral), false},
-		{"harness-over", strings.NewReader(strings.Repeat("x", harness.MaxStdinBytes+1)), true},
-		{"read-error", badHookReader{}, true}, {"panic-reader", badHookReader{true}, false},
+		{"harness-over", strings.NewReader(strings.Repeat("x", harness.MaxStdinBytes+1)), false},
+		{"read-error", badHookReader{}, false}, {"panic-reader", badHookReader{true}, false}, // CRW-1134: no fallback wake
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ws := workspace(t)
@@ -241,8 +241,8 @@ func TestBgRunHookThresholdFallbackAndErrors(t *testing.T) {
 		if RunHook(context.Background(), "stop", strings.NewReader("{}"), badHookWriter{panicWrite}, lookup, ws, noon) != 0 {
 			t.Fatal("broken stdout failed closed")
 		}
-		if r, _ := ReadRecord(ws, "lost"); r.DeliveredAt == nil {
-			t.Fatal("oracle stamps even when output is lost")
+		if r, _ := ReadRecord(ws, "lost"); r.DeliveredAt != nil {
+			t.Fatal("a completion whose output was lost is stamped (CRW-1092: it stays pending)")
 		}
 	}
 	ws := workspace(t)

@@ -116,6 +116,12 @@ func TestHookTrustIdentityHash_recordedCases(t *testing.T) {
 			}
 			got, err := doctor.HookTrustIdentityHash(recorded.Event, recorded.Matcher, hookTrustIdentityHandler(t, recorded.Handler))
 			switch {
+			case strings.HasPrefix(recorded.Name, "proto_"):
+				// The oracle hashes a member Object.prototype lends every object as an event; the
+				// port refuses it as any other unknown event (CRW-1152, port: fixed).
+				if err == nil || err.Error() != "unsupported hook event: "+recorded.Event {
+					t.Fatalf("got %q, %v; want the unsupported-event refusal", got, err)
+				}
 			case recorded.Error != "":
 				if err == nil || err.Error() != recorded.Error {
 					t.Fatalf("got %q, %v; want the oracle refusal %q", got, err, recorded.Error)

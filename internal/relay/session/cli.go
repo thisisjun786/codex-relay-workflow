@@ -31,6 +31,9 @@ type Options struct {
 type Result struct {
 	Out  any
 	Code int
+	// Note is a diagnostic for stderr that is not part of the answer: the native root policy's note (an empty HOME
+	// reads the account home), given on a refusal too. Empty when there is none.
+	Note string
 }
 
 type stateCheck struct {
@@ -114,14 +117,16 @@ func Run(opts Options, cwd string, env host.LookupEnv) Result {
 }
 
 func run(opts Options, cwd string, env host.LookupEnv, ensure func(string, string) (bool, error)) Result {
+	note := ""
 	fail := func(message string) Result {
 		out := contract.OrderedObject{{Key: "ok", Value: false}, {Key: "error", Value: message}, {Key: "hooksVerified", Value: false}}
 		if opts.JSON {
-			return Result{Out: out, Code: 1}
+			return Result{Out: out, Code: 1, Note: note}
 		}
-		return Result{Out: message + "\nhooksVerified: false", Code: 1}
+		return Result{Out: message + "\nhooksVerified: false", Code: 1, Note: note}
 	}
 	identity, err := host.ResolveNativeSession(cwd, env)
+	note = identity.Note
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -167,7 +172,7 @@ func run(opts Options, cwd string, env host.LookupEnv, ensure func(string, strin
 		contract.Field{Key: "statePath", Value: state.StatePath(identity.Cwd, identity.SessionID)}, contract.Field{Key: "stateExists", Value: checked.exists},
 		contract.Field{Key: "phase", Value: checked.phase}, contract.Field{Key: "created", Value: created}, contract.Field{Key: "hooksVerified", Value: false})
 	if opts.JSON {
-		return Result{Out: out}
+		return Result{Out: out, Note: note}
 	}
 	var lines []string
 	for _, field := range out {
@@ -179,7 +184,7 @@ func run(opts Options, cwd string, env host.LookupEnv, ensure func(string, strin
 		}
 		lines = append(lines, field.Key+": "+value)
 	}
-	return Result{Out: strings.Join(lines, "\n")}
+	return Result{Out: strings.Join(lines, "\n"), Note: note}
 }
 
 func identityFields(id source.Identity) contract.OrderedObject {

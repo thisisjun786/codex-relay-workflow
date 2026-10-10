@@ -44,7 +44,65 @@ type NamedParams []NamedParam
 // RunResult has JavaScript number semantics, including lastInsertRowid rounding.
 type RunResult struct{ Changes, LastInsertRowid float64 }
 
-func openDbReadOnly(path string) (*RwDb, error) { return openDb(path, sqlite.SQLITE_OPEN_READONLY) }
+func openDbReadOnly(path string) (*RwDb, error) {
+	if err := readOnlyURIError(path); err != nil {
+		return nil, err
+	}
+	return openDb(path, sqlite.SQLITE_OPEN_READONLY)
+}
+
+// readOnlyURIError refuses a URI whose mode asks for something other than a read-only file: SQLite lets
+// `mode=` in a URI override the flags of the open, so `file:x?mode=memory` would make the read-only API
+// open (and write to) a private in-memory database, and `mode=rwc` would create a file.
+func readOnlyURIError(path string) error {
+	rest, ok := strings.CutPrefix(path, "file:")
+	if !ok {
+		return nil
+	}
+	_, query, found := strings.Cut(rest, "?")
+	if !found {
+		return nil
+	}
+	query, _, _ = strings.Cut(query, "#")
+	// SQLite splits on the raw & and the first raw =, then percent-decodes key and value alike, so
+	// `%6Dode=memory` is a mode request. It applies every mode it finds (the last one wins): all must be ro.
+	for _, pair := range strings.Split(query, "&") {
+		rawKey, rawValue, _ := strings.Cut(pair, "=")
+		if strings.Contains(strings.ToLower(pair), "%00") {
+			return errors.New("a read-only open refuses a URI query holding an encoded NUL")
+		}
+		if sqliteURIDecode(rawKey) == "mode" {
+			if value := sqliteURIDecode(rawValue); value != "ro" {
+				return fmt.Errorf("a read-only open refuses the URI mode %q", value)
+			}
+		}
+	}
+	return nil
+}
+
+// sqliteURIDecode is SQLite's percent decoding: a % followed by two hex digits is that byte, any other
+// % stays as it is.
+func sqliteURIDecode(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHexDigit(s[i+1]) && isHexDigit(s[i+2]) {
+			v, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			b.WriteByte(byte(v))
+			i += 2
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
 func openDbReadWrite(path string) (*RwDb, error) {
 	return openDb(path, sqlite.SQLITE_OPEN_READWRITE|sqlite.SQLITE_OPEN_CREATE)
 }
@@ -283,24 +341,30 @@ func (s *Stmt) bind(params []any) error {
 		}
 		if ordered {
 			if s.bare == nil {
-				s.bare = map[string]string{}
+				// The aliases are checked whole before any is kept: an ambiguous statement is refused
+				// every time, and never leaves part of its aliases behind.
+				aliases := map[string]string{}
 				for i := int32(1); i <= count; i++ {
 					name := s.parameterName(i)
 					if name == "" {
 						continue
 					}
 					bare := name[1:]
-					if prior := s.bare[bare]; prior != "" && prior != name {
+					if prior := aliases[bare]; prior != "" && prior != name {
 						//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 						return fmt.Errorf("Cannot create bare named parameter '%s' because of conflicting names '%s' and '%s'.", bare, prior, name)
 					}
-					s.bare[bare] = name
+					aliases[bare] = name
 				}
+				s.bare = aliases
 			}
 			seen := map[int32]bool{}
 			_, unordered := params[0].(map[string]any)
 			for _, arg := range named {
-				key, _, _ := strings.Cut(arg.Name, "\x00")
+				if strings.ContainsRune(arg.Name, 0) {
+					return fmt.Errorf("named parameter %q must not contain a null byte", arg.Name)
+				}
+				key := arg.Name
 				alias := s.bare[key]
 				index := int32(0)
 				for i := int32(1); i <= count; i++ {

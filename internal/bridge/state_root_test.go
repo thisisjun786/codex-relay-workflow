@@ -1,0 +1,298 @@
+package bridge
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+)
+
+// stateRootThread is the PABCD session the thread's id addresses: the bridge's test thread.
+const stateRootThread = "thread-1"
+
+// inFlightAt writes the thread's PABCD state at root in phase P, with a plan epoch and a goalplan
+// file beside it, and returns every byte under root/.crw so a test can prove nothing changed.
+func inFlightAt(t *testing.T, root string) map[string]string {
+	t.Helper()
+	s := state.DefaultState(stateRootThread, "work")
+	s.Phase, s.OrchestrationActive = state.PhaseP, true
+	epoch := "epoch-1"
+	s.PlanEpoch = &epoch
+	if err := state.WriteState(root, s); err != nil {
+		t.Fatal(err)
+	}
+	goalplans := filepath.Join(root, ".crw", "goalplans")
+	if err := os.MkdirAll(goalplans, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goalplans, "work.md"), []byte("# goalplan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return treeBytes(t, root)
+}
+
+func treeBytes(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(filepath.Join(root, ".crw"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, err := os.ReadFile(path)
+		out[path] = string(raw)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func sameBytes(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// stateRootSend is a send whose thread the host reports at native, with status, asking for cwd.
+func stateRootSend(t *testing.T, native, status, cwd string) (*Bridge, *fakehost.Server, SendMessage) {
+	t.Helper()
+	t.Setenv("CRW_HOME", t.TempDir())
+	b, host, input := settingsSend(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": stateRootThread, "cwd": native, "status": map[string]any{"type": status}}}})
+	resume := startReply(cwd)
+	host.Respond("thread/resume", resume)
+	input.Expected["cwd"] = cwd
+	return b, host, input
+}
+
+// CRW-1140 criterion 1: a thread whose PABCD work is in flight at its native cwd A is not resumed
+// at another cwd B. The send is refused before thread/resume, A's bytes are kept, and B gets no
+// IDLE state file.
+func TestASendToAnotherCwdIsRefusedWhileTheNativeStateIsInFlight(t *testing.T) {
+	for _, status := range []string{"notLoaded", "idle"} {
+		t.Run(status, func(t *testing.T) {
+			a, b := t.TempDir(), t.TempDir()
+			before := inFlightAt(t, a)
+			bridge, host, input := stateRootSend(t, a, status, b)
+			receipt, err := bridge.SendMessageToThread(context.Background(), input)
+			rpc := pyjson.Map(receipt["rpcError"])
+			if err != nil || receipt["status"] != "failed" || rpc["code"] != "state_root_conflict" {
+				t.Fatalf("receipt=%v err=%v", receipt, err)
+			}
+			message, _ := rpc["message"].(string)
+			if !strings.Contains(message, state.StatePath(a, stateRootThread)) || !strings.Contains(message, "phase P") {
+				t.Errorf("the refusal does not name the preserved state: %q", message)
+			}
+			if n := host.Count("thread/resume") + host.Count("turn/start"); n != 0 {
+				t.Fatalf("the host was asked to resume or start a turn %d times", n)
+			}
+			if after := treeBytes(t, a); !sameBytes(before, after) {
+				t.Fatalf("the native state changed:\nbefore %v\nafter  %v", before, after)
+			}
+			if _, err := os.Stat(filepath.Join(b, ".crw")); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("the target cwd got a state directory: %v", err)
+			}
+		})
+	}
+}
+
+// The native cwd itself, and a symbolic-link alias of it, are the same root: the send goes ahead,
+// and the root is recorded as the thread's anchor for the SessionStart bootstrap.
+func TestASendAtTheNativeRootOrAnAliasOfItGoesAhead(t *testing.T) {
+	a := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(a, alias); err != nil {
+		t.Fatal(err)
+	}
+	for name, cwd := range map[string]string{"native": a, "alias": alias} {
+		t.Run(name, func(t *testing.T) {
+			inFlightAt(t, a)
+			bridge, host, input := stateRootSend(t, a, "notLoaded", cwd)
+			receipt, err := bridge.SendMessageToThread(context.Background(), input)
+			if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 {
+				t.Fatalf("receipt=%v err=%v", receipt, err)
+			}
+			raw, err := os.ReadFile(filepath.Join(os.Getenv("CRW_HOME"), "state-roots", stateRootThread+".json"))
+			var anchor struct{ NativeCwd string }
+			if err != nil || json.Unmarshal(raw, &anchor) != nil || anchor.NativeCwd != a {
+				t.Fatalf("anchor %s (%v), want %s", raw, err, a)
+			}
+		})
+	}
+}
+
+// A native root with nothing in flight (no state, or an IDLE one) does not hold a move back.
+func TestASendToAnotherCwdGoesAheadWhenNothingIsInFlight(t *testing.T) {
+	for _, idle := range []bool{false, true} {
+		a, b := t.TempDir(), t.TempDir()
+		if idle {
+			if _, err := state.EnsureState(a, stateRootThread); err != nil {
+				t.Fatal(err)
+			}
+		}
+		bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+		receipt, err := bridge.SendMessageToThread(context.Background(), input)
+		if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 {
+			t.Fatalf("idle=%v receipt=%v err=%v", idle, receipt, err)
+		}
+	}
+}
+
+func anchorAt(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("CRW_HOME"), "state-roots", stateRootThread+".json"))
+	if err != nil {
+		return ""
+	}
+	var anchor struct{ NativeCwd string }
+	if json.Unmarshal(raw, &anchor) != nil {
+		t.Fatalf("anchor %s", raw)
+	}
+	return anchor.NativeCwd
+}
+
+// Review P1: a resume the host rejects leaves the thread at its native root, so the anchor stays
+// there; a send that reached the host moves the anchor to the cwd the thread now runs in.
+func TestTheAnchorFollowsAResumeOnlyOnceTheHostTookIt(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	host.Respond("thread/resume", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "no such rollout"}})
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	if err != nil || receipt["status"] == "accepted" || host.Count("thread/resume") != 1 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if got := anchorAt(t); got != a {
+		t.Fatalf("a rejected resume left the anchor at %q, want the native root %q", got, a)
+	}
+}
+
+// A send the host took runs the thread at the cwd it asked for, so the anchor follows it there once
+// nothing was in flight at the root it left.
+func TestTheAnchorMovesWithAResumeTheHostTook(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if got := anchorAt(t); got != b {
+		t.Fatalf("anchor %q, want %q", got, b)
+	}
+}
+
+// Review P1: the thread was anchored at A, which holds its work, and an external resume moved the
+// cwd the host reports to B. A send asking for B is judged against A, not against the host's B.
+func TestASendIsJudgedAgainstThePreservedAnchorWhenTheHostReportsAnotherCwd(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	before := inFlightAt(t, a)
+	bridge, host, input := stateRootSend(t, b, "notLoaded", b)
+	if c := stateroot.Guard(os.LookupEnv, a, a, stateRootThread); c != nil {
+		t.Fatal(c)
+	}
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	rpc := pyjson.Map(receipt["rpcError"])
+	if err != nil || receipt["status"] != "failed" || rpc["code"] != "state_root_conflict" {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if n := host.Count("thread/resume"); n != 0 {
+		t.Fatalf("thread/resume was called %d times", n)
+	}
+	if !sameBytes(before, treeBytes(t, a)) || anchorAt(t) != a {
+		t.Fatalf("the native state or anchor changed (anchor %q)", anchorAt(t))
+	}
+}
+
+// d2: the anchor follows the cwd the host reported for the resumed thread, not the one the send
+// asked for.
+func TestTheAnchorFollowsTheCwdTheHostReportedForTheResume(t *testing.T) {
+	for _, ranAtRoot := range []bool{true, false} {
+		t.Run(map[bool]string{true: "ran at the native root", false: "ran elsewhere"}[ranAtRoot], func(t *testing.T) {
+			a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+			if _, err := state.EnsureState(a, stateRootThread); err != nil {
+				t.Fatal(err)
+			}
+			bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+			ranAt := c
+			if ranAtRoot {
+				ranAt = a
+			}
+			host.Respond("thread/resume", startReply(ranAt))
+			receipt, err := bridge.SendMessageToThread(context.Background(), input)
+			if err != nil || receipt["status"] == "accepted" || host.Count("thread/resume") != 1 || host.Count("turn/start") != 0 {
+				t.Fatalf("a resume that ran at %s was accepted: receipt=%v err=%v", ranAt, receipt, err)
+			}
+			if got := anchorAt(t); got != ranAt {
+				t.Fatalf("anchor %q, want the cwd the host reported %q", got, ranAt)
+			}
+		})
+	}
+}
+
+// d4: a resume the host took whose anchor cannot follow the thread to its new cwd starts no turn.
+func TestASendWhoseAnchorCannotFollowTheResumeStartsNoTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	a, b := t.TempDir(), t.TempDir()
+	if _, err := state.EnsureState(a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	if err := stateroot.Guard(os.LookupEnv, a, a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("CRW_HOME"), "state-roots")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	rpc := pyjson.Map(receipt["rpcError"])
+	if err != nil || receipt["status"] != "failed" || rpc["code"] != stateroot.AnchorCode || host.Count("turn/start") != 0 {
+		t.Fatalf("receipt=%v err=%v turns=%d", receipt, err, host.Count("turn/start"))
+	}
+}
+
+// d3: an anchor that cannot be trusted refuses the send before anything is resumed.
+func TestASendBesideAnUntrustworthyAnchorIsRefusedBeforeTheResume(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	inFlightAt(t, a)
+	bridge, host, input := stateRootSend(t, a, "notLoaded", b)
+	if err := stateroot.Guard(os.LookupEnv, a, a, stateRootThread); err != nil {
+		t.Fatal(err)
+	}
+	path := stateroot.AnchorPath(os.LookupEnv, stateRootThread)
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := bridge.SendMessageToThread(context.Background(), input)
+	rpc := pyjson.Map(receipt["rpcError"])
+	if err != nil || receipt["status"] != "failed" || rpc["code"] != stateroot.AnchorUnreadableCode || host.Count("thread/resume") != 0 {
+		t.Fatalf("receipt=%v err=%v", receipt, err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != "{" {
+		t.Fatalf("the anchor was rewritten: %q", raw)
+	}
+}

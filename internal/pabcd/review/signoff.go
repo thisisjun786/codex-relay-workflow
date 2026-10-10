@@ -3,7 +3,6 @@ package review
 import (
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -11,6 +10,10 @@ import (
 type ReviewSignoff struct {
 	LaunchID string        `json:"launchId"`
 	Verdict  ReviewVerdict `json:"verdict"`
+	// Blockers and Findings are the count and finding references of a `GO-WITH-FIXES (blockers=N; findings=a,b)` verdict line
+	// (CRW-1116, port: fixed); both are empty for the bare words, which stay valid.
+	Blockers int      `json:"blockers,omitempty"`
+	Findings []string `json:"findings,omitempty"`
 }
 
 // ParseSignoff parses only the last two nonempty trimmed lines (TS:372-390).
@@ -38,18 +41,11 @@ func ParseSignoff(message string) *ReviewSignoff {
 	if !ok {
 		return nil
 	}
-	var verdict goalplan.Verdict
-	switch reviewVerdictUpper(raw) {
-	case "PASS":
-		verdict = goalplan.VerdictPass
-	case "FAIL":
-		verdict = goalplan.VerdictFail
-	case "NEAR-PASS", "GO-WITH-FIXES":
-		verdict = goalplan.VerdictNearPass
-	default:
+	line, ok := parseVerdictLine(raw)
+	if !ok {
 		return nil
 	}
-	return &ReviewSignoff{LaunchID: launch, Verdict: verdict}
+	return &ReviewSignoff{LaunchID: launch, Verdict: line.verdict, Blockers: line.blockers, Findings: line.findings}
 }
 func reviewSignoffField(line, label string) (string, bool) {
 	if len(line) < len(label) {

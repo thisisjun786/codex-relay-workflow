@@ -73,7 +73,7 @@ func TestManifestTargetsOriginalEscapeVerdictWithTheLeafPresent(t *testing.T) {
 	t.Run("hook_command_target", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "plugin-\uFFFD")
 		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":["./hooks/a.json"],"mcpServers":"./.mcp.json"}`)
-		targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"Start":[{"hooks":[{"command":"x ${PLUGIN_ROOT}/../plugin-\ud800/hook.js"}]}]}}`)
+		targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"SessionStart":[{"hooks":[{"command":"x ${PLUGIN_ROOT}/../plugin-\ud800/hook.js"}]}]}}`)
 		targetTestWrite(t, root, ".mcp.json", `{"mcpServers":{"t":{"args":[]}}}`)
 		targetTestWrite(t, root, "hook.js", "data")
 		want := []TargetIssue{{TargetHook, "target escapes plugin root: ../plugin-" + hi + "/hook.js"}}
@@ -101,7 +101,7 @@ func TestManifestTargetsOriginalEscapeVerdictWithTheLeafPresent(t *testing.T) {
 func TestManifestTargetsOriginalEscapeVerdictForCommandTarget(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugin-\uFFFD")
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":["./hooks/a.json"],"mcpServers":"./.mcp.json"}`)
-	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"Start":[{"hooks":[{"command":"x ${PLUGIN_ROOT}/../plugin-\ud800/missing.js"}]}]}}`)
+	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"SessionStart":[{"hooks":[{"command":"x ${PLUGIN_ROOT}/../plugin-\ud800/missing.js"}]}]}}`)
 	targetTestWrite(t, root, ".mcp.json", `{"mcpServers":{"t":{"args":[]}}}`)
 	want := []TargetIssue{{TargetHook, "target escapes plugin root: ../plugin-" + targetSurrogateDecode(t, `"\ud800"`) + "/missing.js"}}
 	if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, want) {

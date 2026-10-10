@@ -78,10 +78,10 @@ func captureWithLimit(cwd string, o Options, limit int) Identity {
 	}
 	capturedAt := now().UTC().Format("2006-01-02T15:04:05.000Z")
 	commitSha := ""
-	if out, err := run(cwd, limit, "git", "rev-parse", "HEAD"); err == nil {
+	if out, err := run(cwd, limit, "rev-parse", "HEAD"); err == nil {
 		commitSha = strings.TrimSpace(string(out))
 	}
-	status, err := run(cwd, limit, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	status, err := run(cwd, limit, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return Identity{Kind: KindUnavailable, CapturedAt: capturedAt}
 	}

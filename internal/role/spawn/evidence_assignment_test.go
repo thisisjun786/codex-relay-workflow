@@ -205,6 +205,36 @@ func TestEvidenceAssignmentTreeReceiptPasses(t *testing.T) {
 	}
 }
 
+// CRW-1115 after the CRW-1136 source-probe merge: inherited Git configuration must neither hide the assigned HEAD nor
+// redirect its ancestry check. A broken injected configuration would make both commands fail without the probe policy.
+func TestEvidenceAssignmentGitProbesIgnoreInheritedConfiguration(t *testing.T) {
+	r := newAssignedRig(t)
+	t.Setenv("GIT_CONFIG_PARAMETERS", "not a valid git configuration")
+	child, raw := r.spawn("TASK: fix it\nCRW-WORKTREE: " + r.wt)
+	if !assignedID.MatchString(child) {
+		t.Fatalf("assignment was not injected: %s", raw)
+	}
+	records, err := filepath.Glob(filepath.Join(r.cwd, ".crw", "evidence-assignments", "*", "*.json"))
+	spawnHookMust(t, err)
+	if len(records) != 1 {
+		t.Fatalf("assignment records: %v", records)
+	}
+	data, err := os.ReadFile(records[0])
+	spawnHookMust(t, err)
+	var record struct {
+		Head string `json:"head"`
+	}
+	spawnHookMust(t, json.Unmarshal(data, &record))
+	if record.Head == "" {
+		t.Fatal("inherited configuration hid the assigned HEAD")
+	}
+	r.deliver("w1", child)
+	receipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "check.txt"), "verified")
+	if out := r.stop("w1", "t1", "EVIDENCE_RECORDED: "+receipt); out != "" {
+		t.Fatalf("inherited configuration refused the assigned receipt: %s", out)
+	}
+}
+
 // Without the packet marker nothing is registered and the native cwd stays the only root (compatibility).
 func TestEvidenceAssignmentAbsentKeepsNativeRoot(t *testing.T) {
 	r := newAssignedRig(t)

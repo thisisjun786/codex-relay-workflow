@@ -51,6 +51,20 @@ func memoryStage1Row(row map[string]any) (string, *float64) {
 	return body, nil
 }
 
+// memoryStage1RowScope is the recorded working directory and repository key of a row's thread, if the scope knows it.
+func (s *memorySearchState) memoryStage1RowScope(id string) (cwd *string, repoKey string) {
+	if id == "" || s.scope == nil {
+		return nil, ""
+	}
+	if meta, found := s.scope.threadCwd[id]; found {
+		cwd = &meta.Cwd
+		if meta.GitOriginURL != nil {
+			repoKey = normalizeRepoKey(*meta.GitOriginURL)
+		}
+	}
+	return cwd, repoKey
+}
+
 func (s *memorySearchState) memoryStage1Old(ms *float64) bool {
 	return s.cutoffMs != nil && *s.cutoffMs != 0 && ms != nil && *ms < *s.cutoffMs
 }
@@ -75,7 +89,7 @@ func (s *memorySearchState) memoryStage1FillPresence(home string) error {
 	if err != nil || path == "" {
 		return err
 	}
-	rows, err := memoryStage1Rows(path, "SELECT raw_memory, rollout_summary, source_updated_at FROM stage1_outputs")
+	rows, err := memoryStage1Rows(path, "SELECT thread_id, raw_memory, rollout_summary, source_updated_at FROM stage1_outputs")
 	if err != nil {
 		s.memoryStage1Warning(err)
 		return nil
@@ -85,7 +99,15 @@ func (s *memorySearchState) memoryStage1FillPresence(home string) error {
 		if s.memoryStage1Old(ms) {
 			continue
 		}
-		markGroupPresence(Lower(body), s.groups, s.present)
+		lower := Lower(body)
+		// Presence is evidence the scoped search could return: a row the scope rejects holds no
+		// term for it, so an out-of-scope symbol cannot stop the relaxed pass.
+		id, _ := row["thread_id"].(string)
+		cwd, repoKey := s.memoryStage1RowScope(id)
+		if keep, _ := memorySearchScopeAdjust(s.scope, cwd, lower, repoKey); !keep {
+			continue
+		}
+		markGroupPresence(lower, s.groups, s.present)
 		if allPresent() {
 			return nil
 		}
@@ -146,6 +168,7 @@ func (s *memorySearchState) memoryStage1Search(home string, plan MatchPlan, grou
 	}
 	for _, row := range rows {
 		var threadID, cwd, updatedAt *string
+		var repoKey string
 		id, isString := row["thread_id"].(string)
 		if isString {
 			threadID = &id
@@ -158,15 +181,7 @@ func (s *memorySearchState) memoryStage1Search(home string, plan MatchPlan, grou
 		if s.memoryStage1Old(ms) || !PlanMatches(lower, plan) {
 			continue
 		}
-		repoKey := ""
-		if id != "" && s.scope != nil {
-			if meta, found := s.scope.threadCwd[id]; found {
-				cwd = &meta.Cwd
-				if meta.GitOriginURL != nil {
-					repoKey = normalizeRepoKey(*meta.GitOriginURL)
-				}
-			}
-		}
+		cwd, repoKey = s.memoryStage1RowScope(id)
 		keep, bonus := memorySearchScopeAdjust(s.scope, cwd, lower, repoKey)
 		if !keep {
 			continue

@@ -36,7 +36,7 @@ func TestDispatchCommandBoundedJSONErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			code := DispatchCommand([]string{"--help"}, tc.in, &out, env)
+			code := DispatchCommand(nil, tc.in, &out, env)
 			var answer map[string]string
 			if code != 1 || json.Unmarshal(out.Bytes(), &answer) != nil || !strings.Contains(answer["error"], tc.want) || !strings.HasSuffix(out.String(), "\n") {
 				t.Fatalf("error answer = %d %q", code, out.String())
@@ -59,6 +59,9 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	createdCheckSeed(t, native, "child-b", "session-test")
 	createdCheckSeed(t, native, "child-c", "session-test")
 	createdCheckSeed(t, native, "foreign", "other-session")
+	// The task failures below hand on only a child seen to have ended: the host's rollouts of child-a and child-b show it.
+	dispatchHandoffEnded(t, native, "child-a")
+	dispatchHandoffEnded(t, native, "child-b")
 	vars := map[string]string{"HOME": userHome, "CODEX_HOME": native, "CRW_HOME": global}
 	var env host.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
 	_, err := SetRole(env, Executor, RolePatch{Mode: Some(ModeModel), Model: Some("primary/model"), Fallback: Some(FallbackPatch{Model: Some("fallback/model"), Effort: Some(EffortLow)})})
@@ -99,6 +102,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	}
 	start := run("reports", map[string]any{"action": "start", "role": "executor"}, 0)
 	claim := run("reports", map[string]any{"action": "claim", "attemptId": start.AttemptID}, 0)
+	dispatchReceiptIssue(t, ws, claim.Marker, "call-1")
 	if claim.Candidate == nil || *claim.Candidate.Model != "primary/model" {
 		t.Fatal("primary snapshot")
 	}
@@ -118,6 +122,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 		t.Fatal("CLI task failure did not offer fallback")
 	}
 	claim = run("reports", map[string]any{"action": "claim", "attemptId": next.AttemptID}, 0)
+	dispatchReceiptIssue(t, ws, claim.Marker, "call-2")
 	if claim.Candidate == nil || *claim.Candidate.Model != "fallback/model" || *claim.Candidate.Effort != EffortLow {
 		t.Fatal("CLI fallback snapshot")
 	}
@@ -127,7 +132,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 		t.Fatal("CLI task failure not durable")
 	}
 	complete := run("completion", map[string]any{"action": "start", "role": "executor"}, 0)
-	run("completion", map[string]any{"action": "claim", "attemptId": complete.AttemptID}, 0)
+	dispatchReceiptIssue(t, ws, run("completion", map[string]any{"action": "claim", "attemptId": complete.AttemptID}, 0).Marker, "call-3")
 	// The completion dispatch has a child of its own: one agent id is reported once per session.
 	run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "created", "agentId": "child-c"}, 0)
 	wrong := run("wrong", map[string]any{"action": "start", "role": "executor"}, 0)

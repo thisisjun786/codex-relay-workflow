@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -144,7 +145,7 @@ func treeIdentity(dir string) (real string, dev, ino uint64, err error) {
 
 // gitHead is the commit HEAD names in dir, "" when dir is not a git checkout or has no commit.
 func gitHead(dir string) string {
-	out, err := source.Run(dir, source.GitEnv(nil), 1<<16, "git", "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	out, err := source.Probe(dir, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout}, "rev-parse", "--verify", "-q", "HEAD^{commit}")
 	if err != nil {
 		return ""
 	}
@@ -571,7 +572,7 @@ func assignedReceiptValid(a Assignment, receipt string) bool {
 		return false
 	}
 	if a.Head != "" {
-		_, err := source.Run(a.Root, source.GitEnv(nil), 1<<16, "git", "merge-base", "--is-ancestor", a.Head, "HEAD")
+		_, err := source.Probe(a.Root, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout}, "merge-base", "--is-ancestor", a.Head, "HEAD")
 		if err != nil {
 			return false
 		}

@@ -51,7 +51,7 @@ func TestCreatedCheckHostWitnessAndRollback(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, env, start, file := dispatchTestFixture(t)
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			before := must(os.ReadFile(file))
 			h := &createdCheckFake{reply: tc.reply, err: tc.err}
 			out, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, h)
@@ -93,7 +93,7 @@ func TestCreatedCheckValidationPrecedesHost(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "claim") || h.calls != 0 {
 		t.Fatalf("precedence: %v %d", err, h.calls)
 	}
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 	input["attemptId"] = "stale"
 	_, err = CheckedDispatch(context.Background(), ws, input, env, h)
 	if err == nil || !strings.Contains(err.Error(), "stale") || h.calls != 0 {
@@ -111,7 +111,7 @@ func TestCreatedCheckValidationPrecedesHost(t *testing.T) {
 // that ID -> agentId changed; stopped report -> invalid report outcome.
 func TestCreatedCheckChangedOracleAnswersAndHonestClose(t *testing.T) {
 	ws, env, start, file := dispatchTestFixture(t)
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 	oracle := dispatchTestCall(t, ws, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "PLACEHOLDER"})
 	if oracle.Action != "wait" {
 		t.Fatal("parity oracle fixture")
@@ -156,7 +156,7 @@ func TestCreatedCheckChangedOracleAnswersAndHonestClose(t *testing.T) {
 
 func TestCreatedCheckCloseRefusesActiveAndKeepsLock(t *testing.T) {
 	ws, env, start, file := dispatchTestFixture(t)
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 	dispatchTestCall(t, ws, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"})
 	input := createdCheckInput(start.AttemptID, "stopped")
 	input["executionState"] = "stopped"
@@ -204,7 +204,7 @@ func TestCreatedCheckDefaultHostSpawnMarker(t *testing.T) {
 				return old(k)
 			}
 			before := must(os.ReadFile(filepath.Join(native, "state_5.sqlite")))
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			out, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
 			if tc.accept {
 				check(t, err)
@@ -265,7 +265,7 @@ func TestCreatedCheckNativeDatabaseRefusalsAndOrdering(t *testing.T) {
 				}
 				return old(k)
 			}
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
 			// An archived child of this session is a real child: the host archives it when it finishes.
 			if kind == "numeric-order" || kind == "archived" {
@@ -300,7 +300,7 @@ func TestCreatedCheckNativeWALAndEncodedPath(t *testing.T) {
 		}
 		return old(k)
 	}
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 	out, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
 	check(t, err)
 	if out.Action != "wait" || string(before) != string(must(os.ReadFile(file))) || string(wal) != string(must(os.ReadFile(file+"-wal"))) {
