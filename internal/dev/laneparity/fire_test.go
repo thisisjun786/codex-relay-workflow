@@ -526,8 +526,14 @@ func TestMeasureLatency_timesSubagentStopObservingReviewNowThatItsPortIsClaimed(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rep.OK || len(rep.Legs) != 1 || rep.Legs[0].Matched != 2 || rep.Legs[0].Pending != 0 {
-		t.Errorf("%+v", rep.Legs)
+	var found *LegFire
+	for i := range rep.Legs {
+		if rep.Legs[i].Leg == leg {
+			found = &rep.Legs[i]
+		}
+	}
+	if !rep.OK || found == nil || found.Matched != 2 || found.Pending != 0 || found.Failed != 0 {
+		t.Errorf("ok %v, legs %+v", rep.OK, rep.Legs)
 	}
 }
 
