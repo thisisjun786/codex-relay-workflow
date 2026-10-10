@@ -395,8 +395,9 @@ func tempPath(finalPath string) string {
 }
 
 // orphanTempName matches the temp files the state writers make beside a state file: this port's <key>.json.<pid>.<uuid>.tmp
-// (tempPath) and the oracle's <key>.json.<pid>.<ms>.tmp. The key is a sanitised id.
-var orphanTempName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.json\.([0-9]+)\.(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]+)\.tmp$`)
+// (tempPath), the oracle's <key>.json.<pid>.<ms>.tmp and the session lock's staged file <key>.json.lock.<pid>.<uuid>.tmp
+// (placeSessionLock). The key is a sanitised id.
+var orphanTempName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.json(?:\.lock)?\.([0-9]+)\.(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]+)\.tmp$`)
 
 // OrphanStateTemp reports whether name, an entry of the sessions directory, is a state writer's temp file whose writer is gone
 // (ProcessGone of the pid in its name), so nothing will rename it into place (CRW-1094, known-defects.md:79). Only an explicit

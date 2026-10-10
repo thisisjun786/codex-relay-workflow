@@ -21,15 +21,16 @@ import (
 //
 // Ownership is the kernel's (CRW-1094). A holder keeps an flock(2) on the lock file for as long as fn runs and records its pid in
 // it ("<pid> flock"); the kernel drops that lock when the holder's descriptor closes, at the release or when the process dies, so
-// a lock left by a killed hook no longer silences the session. An acquirer that finds the file takes the kernel lock without
-// waiting and checks that the path still names the file it locked; it then takes the file over when its owner is known to be gone:
-// a record of this protocol (its writer held the kernel lock until it died), an empty record (a record write that failed), or the
-// oracle's bare pid of a process that no longer exists. A live holder, the oracle's pid of a live process, and a record or a path it
-// cannot judge (a directory, a link, a FIFO, other text) are never taken over: there is no time-based breaker. Acquisition keeps the
-// oracle's schedule and gives up after about 250 ms with the busy error (a *fs.PathError on the lock path that errors.Is
-// fs.ErrExist). A record that cannot be written removes the file this call holds again and returns the write's error, and the release,
-// which also runs when fn panics, removes the lock file only while the path still names the file this holder locked (known-defects.md
-// :76 and :77, port: fixed).
+// a lock left by a killed hook no longer silences the session. A holder's file reaches the path with its kernel lock and record
+// already in place (trySessionLock), so the path never names an empty record of this protocol. An acquirer that finds the file
+// takes the kernel lock without waiting and checks that the path still names the file it locked; it then takes the file over when
+// its owner is known to be gone: a record of this protocol (its writer held the kernel lock until it died) or the oracle's bare pid
+// of a process that no longer exists. A live holder, the oracle's pid of a live process, an empty record (the oracle's holder between
+// its create and its pid write, alive or not) and a record or a path it cannot judge (a directory, a link, a FIFO, other text) are
+// never taken over: there is no time-based breaker. Acquisition keeps the oracle's schedule and gives up after about 250 ms with the
+// busy error (a *fs.PathError on the lock path that errors.Is fs.ErrExist). A record that cannot be written leaves no lock file and
+// returns the write's error, and the release, which also runs when fn panics, removes the lock file only while the path still names
+// the file this holder locked (known-defects.md :76 and :77, port: fixed).
 func WithSessionLock(cwd, sessionID string, fn func() error) error {
 	return WithSessionLockContext(context.Background(), cwd, sessionID, fn)
 }
@@ -152,26 +153,28 @@ var sessionLockWriteRecord = func(f *os.File, record string) error {
 
 // trySessionLock is one attempt. It returns the held lock, the busy error (a *fs.PathError that errors.Is fs.ErrExist) when
 // the lock is held or its owner cannot be judged gone, or any other error, which ends the wait.
+//
+// The path never names an empty record of this protocol: a fresh lock is a file whose kernel lock and record are in place before
+// link(2) puts it at the path, which fails when anything is there already, and a takeover renames such a file over the gone
+// owner's file while it holds that file's kernel lock. An empty file at the path is therefore the oracle's holder between its
+// exclusive create and its pid write, alive or not, which no record can tell apart, so it is never taken over.
 func trySessionLock(path string) (*sessionLock, error) {
 	busy := &fs.PathError{Op: "open", Path: path, Err: syscall.EEXIST}
-	// A file that leaves the path between the open and the kernel lock was released by its holder: that is progress, so the
-	// attempt opens again rather than waiting, a bounded number of times.
+	// A file that leaves the path between the open and the kernel lock was released by its holder, and a file that appears
+	// between a failed open and the link was placed by another acquirer: both are progress, so the attempt opens again rather
+	// than waiting, a bounded number of times.
 	for range 3 {
-		created := true
-		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o666)
-		if errors.Is(err, fs.ErrExist) {
-			created = false
-			// O_NONBLOCK: a FIFO at the path must not block the open; it is refused below as not a regular file.
-			f, err = os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-			switch {
-			case errors.Is(err, fs.ErrNotExist):
+		// O_NONBLOCK: a FIFO at the path must not block the open; it is refused below as not a regular file.
+		f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if errors.Is(err, fs.ErrNotExist) {
+			held, err := placeSessionLock(path, false)
+			if errors.Is(err, fs.ErrExist) {
 				continue
-			case err != nil: // a link, a directory, a socket, a file this process may not write: nothing it can judge
-				return nil, busy
 			}
+			return held, err
 		}
-		if err != nil {
-			return nil, err
+		if err != nil { // a link, a directory, a socket, a file this process may not write: nothing it can judge
+			return nil, busy
 		}
 		info, err := f.Stat()
 		if err != nil {
@@ -198,23 +201,70 @@ func trySessionLock(path string) (*sessionLock, error) {
 			}
 			return nil, err
 		}
-		held := &sessionLock{path: path, file: f, info: info}
-		if !created && !sessionLockOwnerGone(f) {
+		if !sessionLockOwnerGone(f) {
 			_ = f.Close()
 			return nil, busy
 		}
-		if err := sessionLockWriteRecord(f, sessionLockRecord(os.Getpid())); err != nil {
-			held.release()
-			return nil, &fs.PathError{Op: "write", Path: path, Err: err}
-		}
-		return held, nil
+		// The gone owner's file stays locked by this process until its replacement is at the path, so an acquirer that opened
+		// it meanwhile finds, once it gets that kernel lock, that the path names another file.
+		held, err := placeSessionLock(path, true)
+		_ = f.Close()
+		return held, err
 	}
 	return nil, busy
 }
 
-// sessionLockOwnerGone judges the record of a lock file whose kernel lock this process now holds. A record of this protocol, or
-// an empty one, has no live owner: a holder of this protocol keeps the kernel lock until it is gone. The oracle's record is the
-// bare pid of a holder that took no kernel lock, so it is gone only when no such process exists. Anything else cannot be judged.
+// placeSessionLock stages a lock file beside the path (<lock>.<pid>.<uuid>.tmp), takes its kernel lock, writes this holder's
+// record into it and only then puts it at the path: for a fresh lock by a rename that refuses to replace (renameNoReplace; link(2)
+// where the filesystem has no such rename), which answers fs.ErrExist when another acquirer was first, and for a takeover by
+// rename(2) over the gone owner's file. The staged name is removed again on every path; a record that cannot be
+// written returns the write's error with no lock file at the path. A process killed while it stages leaves only the staged name,
+// which `crw pabcd reset --state` removes once its pid is gone (OrphanStateTemp).
+func placeSessionLock(path string, replace bool) (*sessionLock, error) {
+	staged := tempPath(path)
+	f, err := os.OpenFile(staged, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o666)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*sessionLock, error) {
+		_ = os.Remove(staged)
+		_ = f.Close()
+		return nil, err
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return fail(&fs.PathError{Op: "flock", Path: staged, Err: err})
+	}
+	if err := sessionLockWriteRecord(f, sessionLockRecord(os.Getpid())); err != nil {
+		return fail(&fs.PathError{Op: "write", Path: path, Err: err})
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return fail(err)
+	}
+	switch {
+	case replace:
+		err = os.Rename(staged, path)
+	default:
+		err = renameNoReplace(staged, path)
+		if errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOSYS) {
+			err = os.Link(staged, path)
+		}
+	}
+	_ = os.Remove(staged) // gone already after a rename; the second name after a link
+	if err != nil {
+		_ = f.Close()
+		if errors.Is(err, fs.ErrExist) {
+			return nil, fs.ErrExist
+		}
+		return nil, err
+	}
+	return &sessionLock{path: path, file: f, info: info}, nil
+}
+
+// sessionLockOwnerGone judges the record of a lock file whose kernel lock this process now holds. A record of this protocol has no
+// live owner: a holder of this protocol keeps the kernel lock until it is gone. The oracle's record is the bare pid of a holder that
+// took no kernel lock, so it is gone only when no such process exists. Anything else cannot be judged, the empty record included:
+// it is what the oracle's live holder shows between its exclusive create and its pid write.
 func sessionLockOwnerGone(f *os.File) bool {
 	buf := make([]byte, 64)
 	n, err := f.ReadAt(buf, 0)
@@ -222,9 +272,6 @@ func sessionLockOwnerGone(f *os.File) bool {
 		return false
 	}
 	record := string(buf[:n])
-	if record == "" {
-		return true
-	}
 	if pid, ok := strings.CutSuffix(record, " flock\n"); ok && sessionLockDigits(pid) {
 		return true
 	}

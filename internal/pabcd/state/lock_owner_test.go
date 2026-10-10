@@ -39,12 +39,12 @@ func lockOwnerSeed(t *testing.T, cwd, content string) string {
 }
 
 // A lock left behind is taken over on the first attempt, without a wait, when its owner is gone: the
-// oracle's pid record of a dead process, an empty record (a pid write that failed), and the record of a
+// oracle's pid record of a dead process, this protocol's record of a dead holder, and the record of a
 // holder that died inside its critical section, which leaves the file but not the kernel lock.
 func TestALockWhoseOwnerIsGoneIsTakenOverAtOnce(t *testing.T) {
 	for name, content := range map[string]string{
-		"a dead pid":   strconv.Itoa(lockOwnerDeadPid(t)),
-		"empty record": "",
+		"a dead pid":             strconv.Itoa(lockOwnerDeadPid(t)),
+		"a dead holder's record": sessionLockRecord(lockOwnerDeadPid(t)),
 	} {
 		cwd := t.TempDir()
 		lock := lockOwnerSeed(t, cwd, content)
@@ -88,12 +88,75 @@ func TestALiveOrUnknownOwnersLockIsNeverTakenOver(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	for name, content := range map[string]string{"a live pid": strconv.Itoa(os.Getpid()), "pid 1": "1", "an unknown record": "held"} {
+	for name, content := range map[string]string{"a live pid": strconv.Itoa(os.Getpid()), "pid 1": "1", "an unknown record": "held", "an empty record": ""} {
 		cwd := t.TempDir()
 		lock := lockOwnerSeed(t, cwd, content)
 		err := withSessionLock(cwd, "s", func() error { entered = true; return nil }, func(time.Duration) {})
 		if !errors.Is(err, fs.ErrExist) || entered || fileText(t, lock) != content {
 			t.Fatalf("%s: err %v entered %v lock %q", name, err, entered, fileText(t, lock))
+		}
+	}
+}
+
+// The oracle's holder creates its lock file exclusively and writes its pid afterwards, holding no kernel lock, so between the two
+// calls a live holder's file is empty. A holder paused in that window (here: the file made as the oracle makes it, its descriptor
+// still open) is never taken over: the new caller's critical section does not run and the attempt ends with the busy error.
+func TestALiveOracleHolderBeforeItsPidWriteIsNeverTakenOver(t *testing.T) {
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	lock := SessionLockPath(cwd, "s")
+	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666) // the oracle's "wx" create, before its pid write
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	entered, slept := false, 0
+	err = withSessionLock(cwd, "s", func() error { entered = true; return nil }, func(time.Duration) { slept++ })
+	if !errors.Is(err, fs.ErrExist) || entered || slept == 0 || fileText(t, lock) != "" {
+		t.Fatalf("err %v entered %v slept %d lock %q; want the busy error after the schedule and the file untouched", err, entered, slept, fileText(t, lock))
+	}
+}
+
+// This protocol never shows an empty record at the lock path, so an empty one can only be an oracle holder's: the record is
+// written into a file that the path does not name yet, which is then linked into place whole; a takeover renames a complete record
+// over the dead holder's file, so the path never names an empty file in between.
+func TestTheLockPathNeverNamesAnEmptyRecord(t *testing.T) {
+	saved := sessionLockWriteRecord
+	t.Cleanup(func() { sessionLockWriteRecord = saved })
+	for name, seed := range map[string]*string{"a fresh lock": nil, "a takeover": func() *string { r := sessionLockRecord(lockOwnerDeadPid(t)); return &r }()} {
+		cwd := t.TempDir()
+		lock := SessionLockPath(cwd, "s")
+		if seed != nil {
+			lockOwnerSeed(t, cwd, *seed)
+		}
+		var seen []string
+		sessionLockWriteRecord = func(f *os.File, record string) error {
+			text, err := os.ReadFile(lock)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				seen = append(seen, "absent")
+			case err != nil:
+				seen = append(seen, err.Error())
+			default:
+				seen = append(seen, string(text))
+			}
+			return saved(f, record)
+		}
+		entered := ""
+		if err := WithSessionLock(cwd, "s", func() error { entered = fileText(t, lock); return nil }); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		want := "absent"
+		if seed != nil {
+			want = *seed
+		}
+		if len(seen) != 1 || seen[0] != want || entered != sessionLockRecord(os.Getpid()) {
+			t.Fatalf("%s: while the record was written the path held %q (want %q); inside, %q", name, seen, want, entered)
+		}
+		if names := sessionFiles(cwd); len(names) != 0 {
+			t.Fatalf("%s: left %v in the sessions directory", name, names)
 		}
 	}
 }
