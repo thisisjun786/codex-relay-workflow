@@ -447,9 +447,15 @@ func ReadExplicitObjectiveKind(cwd, sessionID string) (ObjectiveKind, bool) {
 }
 
 // ReadObjectiveKind is the explicit kind when there is one, else maximize when the session has any row (the ledger of an empty session
-// id is every session's), else satisfy.
+// id is every session's), else satisfy. The ledger is read only when there is no explicit kind.
 func ReadObjectiveKind(cwd, sessionID string) ObjectiveKind {
-	return InferObjectiveKind(cwd, sessionID, ReadObjectiveMetrics(cwd, sessionID))
+	if kind, ok := ReadExplicitObjectiveKind(cwd, sessionID); ok {
+		return kind
+	}
+	if len(ReadObjectiveMetrics(cwd, sessionID)) > 0 {
+		return Maximize
+	}
+	return Satisfy
 }
 
 // InferObjectiveKind is ReadObjectiveKind on the session's rows already read (rows is ReadObjectiveMetrics of the session): the
