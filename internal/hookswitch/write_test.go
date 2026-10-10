@@ -578,7 +578,7 @@ func TestRestoreOfADirectorySyncsWhenTheBackupCannotBeRemoved(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permissions do not stop root from removing the backup")
 	}
-	run := func(t *testing.T, syncErr error) (error, []string) {
+	run := func(t *testing.T, syncErr error) ([]string, error) {
 		home, file := switchDir(t)
 		brokenEntries["directory"](t, home, file)
 		a, err := KeepAside(home, "r3")
@@ -604,10 +604,10 @@ func TestRestoreOfADirectorySyncsWhenTheBackupCannotBeRemoved(t *testing.T) {
 		if info, serr := os.Stat(file); serr != nil || !info.IsDir() {
 			t.Fatalf("the directory was not restored: %v, %v", info, serr)
 		}
-		return err, synced
+		return synced, err
 	}
 	t.Run("sync succeeds", func(t *testing.T) {
-		err, synced := run(t, nil)
+		synced, err := run(t, nil)
 		if !errors.Is(err, syscall.EACCES) || errors.Is(err, ErrNotDurable) {
 			t.Fatalf("Restore = %v, want the removal failure only", err)
 		}
@@ -617,7 +617,7 @@ func TestRestoreOfADirectorySyncsWhenTheBackupCannotBeRemoved(t *testing.T) {
 	})
 	t.Run("sync fails too", func(t *testing.T) {
 		injected := &os.PathError{Op: "sync", Path: "dir", Err: syscall.EIO}
-		err, synced := run(t, injected)
+		synced, err := run(t, injected)
 		if !errors.Is(err, syscall.EACCES) || !errors.Is(err, ErrNotDurable) || !errors.Is(err, injected) {
 			t.Fatalf("Restore = %v, want both the removal failure and ErrNotDurable wrapping %v", err, injected)
 		}
