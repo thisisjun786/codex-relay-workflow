@@ -112,28 +112,43 @@ func (w *scaleWorld) exec(query string, args ...any) {
 }
 
 // requireLinearDuePlans holds the due reads to the plans that make them linear in the deliveries, which does not move with
-// the host's load as the time they take does: no subquery is correlated to a candidate row, the hour's spent counts are
-// reached by an index search of one derived table (not computed for each candidate), and the waiting heads are reached the
-// same way (an automatic index over their derived table, not a scan of the heads for each candidate).
+// the host's load as the time they take does. The plans are those of the statements the service builds and runs (the
+// parents, the recipients, and the rows with and without a recipient and a refusal marker, with their own projection,
+// ordering and limit), not of a stand-in: no subquery is correlated to a candidate row, the hour's spent counts are
+// reached by an index search of one derived table (not computed for each candidate), and the waiting heads are reached
+// the same way (an automatic index over their derived table, not a scan of the heads for each candidate).
 func (w *scaleWorld) requireLinearDuePlans() {
 	w.t.Helper()
-	join, where, args := w.f.delivery.eligibility(w.f.clock.Now())
-	for name, query := range map[string]string{
-		"parents": "SELECT DISTINCT r.parent_task_id" + dueFrom + join + where,
-		"rows":    "SELECT d.*" + dueFrom + join + where + " AND r.parent_task_id = ?",
-	} {
-		queryArgs := args
-		if name == "rows" {
-			queryArgs = append(slices.Clone(args), scaleParent)
-		}
-		plan, err := all(w.f.ctx, w.f.store, "EXPLAIN QUERY PLAN "+query, queryArgs...)
+	d, now := w.f.delivery, w.f.clock.Now()
+	type statement struct {
+		query string
+		args  []any
+	}
+	reads := map[string]statement{}
+	add := func(name string, query string, args []any) { reads[name] = statement{query, args} }
+	query, args := d.eligibleParentsQuery(now)
+	add("parents", query, args)
+	query, args = d.dueRecipientsQuery(scaleParent, now, "", 5)
+	add("recipients", query, args)
+	query, args = d.dueRecipientsQuery(scaleParent, now, "r-0", 5)
+	add("recipients after one", query, args)
+	query, args = d.dueRowsQuery(scaleParent, now, "", "", allDue)
+	add("rows", query, args)
+	query, args = d.dueRowsQuery(scaleParent, now, "r-0", "", 5)
+	add("rows of a recipient", query, args)
+	query, args = d.dueRowsQuery(scaleParent, now, "", "1|2|e-0", 5)
+	add("rows after a marker", query, args)
+	query, args = d.dueRowsQuery(scaleParent, now, "r-0", "1|2|e-0", 5)
+	add("rows of a recipient after a marker", query, args)
+	for name, read := range reads {
+		plan, err := all(w.f.ctx, w.f.store, "EXPLAIN QUERY PLAN "+read.query, read.args...)
 		mustDo(w.t, err)
 		var lines []string
 		for _, line := range plan {
 			lines = append(lines, line.S("detail"))
 		}
 		joined := strings.Join(lines, " | ")
-		if strings.Contains(joined, "CORRELATED") || !strings.Contains(joined, "SEARCH sbspent USING") || !regexp.MustCompile(`SEARCH (bh|\(subquery-\d+\)) USING AUTOMATIC`).MatchString(joined) {
+		if len(lines) == 0 || strings.Contains(joined, "CORRELATED") || !strings.Contains(joined, "SEARCH sbspent USING") || !regexp.MustCompile(`SEARCH (bh|\(subquery-\d+\)) USING AUTOMATIC`).MatchString(joined) {
 			w.t.Errorf("the %s read does not take the spent counts and the waiting heads from derived tables by index: %s", name, joined)
 		}
 	}

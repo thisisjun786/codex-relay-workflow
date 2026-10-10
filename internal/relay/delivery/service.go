@@ -547,6 +547,17 @@ func (d *Service) dueRows(ctx context.Context, parent string, now float64, recip
 	if limit <= 0 {
 		return nil, nil
 	}
+	query, args := d.dueRowsQuery(parent, now, recipient, marker, limit)
+	rows, err := all(ctx, d.Store, query, args...)
+	if d.dueRead != nil {
+		d.dueRead(readRows, parent, len(rows))
+	}
+	return rows, err
+}
+
+// dueRowsQuery is the statement dueRows runs, and its arguments: the first limit due deliveries of one parent (of one
+// recipient when recipient is set) in event creation order, from the refusal marker when it is a key.
+func (d *Service) dueRowsQuery(parent string, now float64, recipient, marker string, limit int) (string, []any) {
 	join, where, args := d.eligibility(now)
 	query := "SELECT d.*, r.parent_task_id AS parent_task_id, e.first_seen_at AS first_seen_at" + dueFrom + join + where + " AND r.parent_task_id = ?"
 	args = append(args, parent)
@@ -559,19 +570,11 @@ func (d *Service) dueRows(ctx context.Context, parent string, now float64, recip
 		order = " ORDER BY CASE WHEN (e.first_seen_at, d.created_at, d.event_id) > (?,?,?) THEN 0 ELSE 1 END, e.first_seen_at, d.created_at, d.event_id"
 		args = append(args, firstSeen, created, event)
 	}
-	rows, err := all(ctx, d.Store, query+order+" LIMIT ?", append(args, limit)...)
-	if d.dueRead != nil {
-		d.dueRead(readRows, parent, len(rows))
-	}
-	return rows, err
+	return query + order + " LIMIT ?", append(args, limit)
 }
 
-// dueRecipients is the first limit recipients of one parent that have a due delivery: those after
-// the recipient last attempted (after, "" for none) in id order, then the ones up to it.
-func (d *Service) dueRecipients(ctx context.Context, parent string, now float64, after string, limit int) ([]string, error) {
-	if limit <= 0 {
-		return nil, nil
-	}
+// dueRecipientsQuery is the statement dueRecipients runs, and its arguments.
+func (d *Service) dueRecipientsQuery(parent string, now float64, after string, limit int) (string, []any) {
 	join, where, args := d.eligibility(now)
 	// CRW-904: a recipient holding an unspent wake comes first, before the rotation. The wake is the
 	// recipient's own idle edge opening the turn this delivery was waiting for, and the issue's answer
@@ -580,7 +583,17 @@ func (d *Service) dueRecipients(ctx context.Context, parent string, now float64,
 	// unattempted for a turn, which is the wait the wake exists to end. The rotation below still orders
 	// everything else, so a woken recipient that is served does not move any other recipient's place
 	// (the cursor is a recipient id, not a position).
-	rows, err := all(ctx, d.Store, "SELECT d.recipient_task_id AS recipient_task_id, MAX(CASE WHEN dw.event_id IS NOT NULL AND dw.spent_at IS NULL AND d.state = '"+DeferredBusy+"' THEN 1 ELSE 0 END) AS woken"+dueFrom+join+where+" AND r.parent_task_id = ? GROUP BY d.recipient_task_id ORDER BY woken DESC, d.recipient_task_id <= ?, d.recipient_task_id LIMIT ?", append(args, parent, after, limit)...)
+	return "SELECT d.recipient_task_id AS recipient_task_id, MAX(CASE WHEN dw.event_id IS NOT NULL AND dw.spent_at IS NULL AND d.state = '" + DeferredBusy + "' THEN 1 ELSE 0 END) AS woken" + dueFrom + join + where + " AND r.parent_task_id = ? GROUP BY d.recipient_task_id ORDER BY woken DESC, d.recipient_task_id <= ?, d.recipient_task_id LIMIT ?", append(args, parent, after, limit)
+}
+
+// dueRecipients is the first limit recipients of one parent that have a due delivery: those after
+// the recipient last attempted (after, "" for none) in id order, then the ones up to it.
+func (d *Service) dueRecipients(ctx context.Context, parent string, now float64, after string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	query, args := d.dueRecipientsQuery(parent, now, after, limit)
+	rows, err := all(ctx, d.Store, query, args...)
 	var out []string
 	for _, r := range rows {
 		out = append(out, r.S("recipient_task_id"))

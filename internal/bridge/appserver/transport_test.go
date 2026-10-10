@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -64,32 +65,50 @@ func TestCall_retires_stalled_transmit_inside_its_bound(t *testing.T) {
 }
 
 func TestClose_bounds_stalled_handshake_to_two_seconds(t *testing.T) {
-	// Given: a real connection whose close handshake never returns until released.
+	// Given: a real connection (dialled outside the bubble, so the host's sockets do not hold the virtual clock still)
+	// whose close handshake never returns until released.
 	host := fakehost.Start(t)
 	client, err := Dial(context.Background(), host.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	release := make(chan struct{})
-	done := make(chan struct{})
-	client.closeFrame = func(conn *websocket.Conn) error {
-		defer close(done)
-		<-release
-		return conn.Close(websocket.StatusNormalClosure, "")
-	}
-	defer func() { close(release); <-done }()
-	// When
-	started := time.Now()
-	err = client.Close()
-	// Then: a 60-second close timeout would violate this independent timer. The lower bound is the budget
-	// itself and the DeadlineExceeded below says it was the budget that ended the wait; the upper bound is a
-	// 10 s regression ceiling (five times the budget, for a loaded host), still far under the 60 s.
-	if elapsed := time.Since(started); elapsed < 2*time.Second || elapsed >= 10*time.Second {
-		t.Fatalf("close bound: %s", elapsed)
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("close error: %v", err)
-	}
+	// Virtual time: the budget is read off the clock the timer runs on, not off a host that may be loaded, so it is
+	// asserted exactly (a 60-second close timeout, or five seconds, or one, moves it).
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		done := make(chan struct{})
+		client.closeFrame = func(conn *websocket.Conn) error {
+			defer close(done)
+			<-release
+			return conn.Close(websocket.StatusNormalClosure, "")
+		}
+		defer func() { close(release); <-done }()
+		started := time.Now()
+		result := make(chan error, 1)
+		// When
+		go func() { result <- client.Close() }()
+		time.Sleep(2*time.Second - time.Nanosecond)
+		synctest.Wait()
+		// Then: the wait is still on one nanosecond short of the budget, and over at the budget.
+		select {
+		case err := <-result:
+			t.Fatalf("close returned %s short of its two-second budget: %v", time.Nanosecond, err)
+		default:
+		}
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("close error: %v", err)
+			}
+		default:
+			t.Fatalf("close still waiting at its budget, after %s", time.Since(started))
+		}
+		if elapsed := time.Since(started); elapsed != 2*time.Second {
+			t.Fatalf("close bound: %s", elapsed)
+		}
+	})
 }
 
 func TestReceive_fails_only_requests_owned_by_retired_reader(t *testing.T) {
