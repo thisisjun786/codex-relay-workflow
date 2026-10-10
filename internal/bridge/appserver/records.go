@@ -21,6 +21,9 @@ var approvalMethods = map[string]bool{
 	"item/tool/requestUserInput": true,
 }
 
+// legacyApprovalMethods are the two approvals the codex schema raises with a conversationId in place of a threadId.
+var legacyApprovalMethods = map[string]bool{"execCommandApproval": true, "applyPatchApproval": true}
+
 type PhaseBounds struct{ Establish, Transmit, Ack time.Duration }
 
 var DefaultBounds = PhaseBounds{20 * time.Second, 20 * time.Second, 20 * time.Second}
@@ -145,6 +148,10 @@ type RequestReport struct {
 }
 
 const requestsNote = "Requests recorded between the two marks this receipt spans. A turn outlives that window, so a request the turn raises later is handled the same way and is simply not on this receipt. An approval-class request is never answered here: the host sends it to every client subscribed to the thread and applies the first answer, so it stays with the thread's own approver. Nothing here was granted or denied."
+
+// responderRequestsNote is the note of a report that holds a request the opt-in responder denied. It
+// says what the responder did, so it does not say that nothing was denied.
+const responderRequestsNote = "Requests recorded between the two marks this receipt spans. A turn outlives that window, so a request the turn raises later is handled the same way and is simply not on this receipt. An approval-class request about a thread the flow backend started was denied by the backend's responder (answered \"denied_by_responder\", counted in deniedByResponderForThisThread): the run has no user to approve, and nothing was granted. An approval-class request about any other thread is not answered here: the host sends it to every client subscribed to the thread and applies the first answer, so it stays with the thread's own approver."
 
 type response struct {
 	Result json.RawMessage `json:"result"`
@@ -300,6 +307,9 @@ func (c *Client) RequestsSince(mark uint64, threadID string) RequestReport {
 	}
 	if c.total > mark+retained {
 		report.NotRetained = c.total - mark - retained
+	}
+	if report.DeniedByResponderForThisThread > 0 {
+		report.Note = responderRequestsNote
 	}
 	return report
 }

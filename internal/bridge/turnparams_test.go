@@ -401,6 +401,11 @@ func TestTurnParamsMatchGeneratedSchema(t *testing.T) {
 			if (props["threadId"] != nil) == legacy || (props["conversationId"] != nil) != legacy {
 				t.Errorf("%s names its thread unexpectedly: %v", method, props)
 			}
+			// The fake host raises each request with the params the schema defines for it.
+			raised := fakehost.SchemaServerParams(method, "thread-1", "turn-1")
+			if err := definitionSchema(t, requests, definition).Validate(roundTrip(t, raised)); err != nil {
+				t.Errorf("%s: the fake host's request params are outside the schema: %v", method, err)
+			}
 			answer, ok := appserver.DenyAnswer(appserver.ServerRequest{Method: method, ThreadID: "t"})
 			if !ok {
 				t.Errorf("%s: no answer", method)

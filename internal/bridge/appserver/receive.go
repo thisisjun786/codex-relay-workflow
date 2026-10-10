@@ -131,15 +131,22 @@ func (c *Client) failReader(ws *websocket.Conn, failure error) {
 
 func (c *Client) serverRequest(ws *websocket.Conn, msg incoming) {
 	var params struct {
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
+		ThreadID       string `json:"threadId"`
+		ConversationID string `json:"conversationId"`
+		TurnID         string `json:"turnId"`
 	}
 	_ = json.Unmarshal(msg.Params, &params)
 	approval := approvalMethods[msg.Method]
-	// The opt-in responder answers only what its owner started: a request with a thread id the owner
-	// claims. Every other request, and every request of a client without a responder, takes the path below.
-	if r := c.responder; r != nil && params.ThreadID != "" && r.owned(params.ThreadID) {
-		request := ServerRequest{Method: msg.Method, ThreadID: params.ThreadID, TurnID: params.TurnID, Params: msg.Params}
+	// The opt-in responder answers only what its owner started: a request whose thread the owner claims.
+	// The two legacy approvals (execCommandApproval, applyPatchApproval) carry no threadId; the codex
+	// schema names their thread in conversationId, which only the responder reads. Every other request,
+	// and every request of a client without a responder, takes the path below, attributed by threadId.
+	owned := params.ThreadID
+	if owned == "" && legacyApprovalMethods[msg.Method] {
+		owned = params.ConversationID
+	}
+	if r := c.responder; r != nil && owned != "" && r.owned(owned) {
+		request := ServerRequest{Method: msg.Method, ThreadID: owned, TurnID: params.TurnID, Params: msg.Params}
 		if answer, ok := r.answer(request); ok {
 			c.answerWithResponder(ws, msg, request, approval, answer)
 			return

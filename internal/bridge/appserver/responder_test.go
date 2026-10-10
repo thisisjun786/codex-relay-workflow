@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
@@ -36,7 +37,14 @@ func decodeAnswers(t *testing.T, host *fakehost.Server) []answerFrame {
 // delivery of the client's answers with a second round trip.
 func raise(t *testing.T, host *fakehost.Server, client *appserver.Client, thread string, methods []string) {
 	t.Helper()
-	host.Script("thread/read", fakehost.Reply{Result: map[string]any{"ok": true}, ServerRequests: methods}, fakehost.Reply{Result: map[string]any{"ok": true}})
+	raiseAs(t, host, client, thread, methods, false)
+}
+
+// raiseAs is raise with the choice of the request params: the older tests' shape (a threadId on every
+// request) or the one the generated schema defines (SchemaParams).
+func raiseAs(t *testing.T, host *fakehost.Server, client *appserver.Client, thread string, methods []string, schemaParams bool) {
+	t.Helper()
+	host.Script("thread/read", fakehost.Reply{Result: map[string]any{"ok": true}, ServerRequests: methods, SchemaParams: schemaParams}, fakehost.Reply{Result: map[string]any{"ok": true}})
 	params := map[string]any{}
 	if thread != "" {
 		params["threadId"] = thread
@@ -227,5 +235,131 @@ func TestFlowResponderDeclinedMethodKeepsDefault(t *testing.T) {
 	report := client.RequestsSince(mark, "flow-1")
 	if report.ApprovalsLeftForThisThread != 1 || report.RefusedForThisThread != 1 || report.DeniedByResponderForThisThread != 0 {
 		t.Fatalf("%+v", report)
+	}
+}
+
+// CRW-1193. The two legacy approvals name their thread in conversationId, with no threadId: that is how
+// codex raises them. The responder reads the conversationId as the thread for its ownership question and
+// for the record of its denial; a client without a responder attributes them as it always did.
+func TestFlowResponderDeniesOwnedLegacyApprovalsByConversationId(t *testing.T) {
+	legacy := []string{"execCommandApproval", "applyPatchApproval"}
+	t.Run("owned conversation is denied and recorded on its thread", func(t *testing.T) {
+		host := fakehost.Start(t)
+		client, err := appserver.Dial(bounded(t), host.SocketPath, withFlowResponder("flow-1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		mark := client.RequestMark()
+
+		raiseAs(t, host, client, "flow-1", legacy, true)
+
+		for _, r := range host.ServerRequests() {
+			var members map[string]any
+			if err := json.Unmarshal(r.Params, &members); err != nil || members["threadId"] != nil || members["conversationId"] != "flow-1" {
+				t.Fatalf("%s is not raised as the schema defines it: %s", r.Method, r.Params)
+			}
+		}
+		report := client.RequestsSince(mark, "flow-1")
+		if len(report.ThisThread) != 2 || report.DeniedByResponderForThisThread != 2 || report.ApprovalsLeftForThisThread != 0 || len(report.Unattributed) != 0 {
+			t.Fatalf("%+v", report)
+		}
+		for i, r := range report.ThisThread {
+			if r.Method != legacy[i] || !r.Approval || r.Answered != appserver.AnsweredByResponder || r.ThreadID != "flow-1" {
+				t.Fatalf("record %+v", r)
+			}
+		}
+		answers := decodeAnswers(t, host)
+		if len(answers) != 2 {
+			t.Fatalf("answers = %s", host.Answers())
+		}
+		for i, a := range answers {
+			if a.Result == nil || !denies(legacy[i], a.Result) {
+				t.Fatalf("answer %d to %s does not deny: %s", i, legacy[i], host.Answers()[i].Raw)
+			}
+		}
+	})
+
+	t.Run("a conversation nobody owns keeps the default path", func(t *testing.T) {
+		outcomeOf := func(options ...appserver.Option) (appserver.RequestReport, int) {
+			host := fakehost.Start(t)
+			client, err := appserver.Dial(bounded(t), host.SocketPath, options...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			mark := client.RequestMark()
+			raiseAs(t, host, client, "desktop-1", legacy, true)
+			report := client.RequestsSince(mark, "desktop-1")
+			if len(report.ThisThread) != 0 || len(report.Unattributed) != 2 {
+				t.Fatalf("legacy approvals of a conversation are attributed by threadId only: %+v", report)
+			}
+			for i := range report.Unattributed {
+				report.Unattributed[i].At = 0
+			}
+			return report, len(host.Answers())
+		}
+		plain, plainAnswers := outcomeOf()
+		withResponder, responderAnswers := outcomeOf(withFlowResponder("flow-1"))
+		if plainAnswers != 0 || responderAnswers != 0 || !reflect.DeepEqual(plain, withResponder) {
+			t.Fatalf("answers %d/%d\n plain     %+v\n responder %+v", plainAnswers, responderAnswers, plain, withResponder)
+		}
+		for _, r := range plain.Unattributed {
+			if r.Answered != "left_for_thread_approver" {
+				t.Fatalf("record %+v", r)
+			}
+		}
+	})
+
+	t.Run("a client without a responder leaves an owned-looking conversation alone", func(t *testing.T) {
+		host := fakehost.Start(t)
+		client, err := appserver.Dial(bounded(t), host.SocketPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		mark := client.RequestMark()
+		raiseAs(t, host, client, "flow-1", legacy, true)
+		if report := client.RequestsSince(mark, "flow-1"); len(report.ThisThread) != 0 || len(host.Answers()) != 0 {
+			t.Fatalf("%+v", report)
+		}
+	})
+}
+
+// CRW-1193. The note of a report says what happened to the requests it lists: a report that holds a
+// request the responder denied does not claim that nothing was denied; every other report keeps the
+// default note.
+func TestRequestsReportNoteFollowsTheResponder(t *testing.T) {
+	host := fakehost.Start(t)
+	client, err := appserver.Dial(bounded(t), host.SocketPath, withFlowResponder("flow-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	mark := client.RequestMark()
+	raise(t, host, client, "flow-1", []string{"item/commandExecution/requestApproval"})
+	raise(t, host, client, "desktop-1", []string{"item/commandExecution/requestApproval"})
+
+	denied := client.RequestsSince(mark, "flow-1")
+	left := client.RequestsSince(mark, "desktop-1")
+	empty := client.RequestsSince(client.RequestMark(), "flow-1")
+
+	if denied.DeniedByResponderForThisThread != 1 || strings.Contains(denied.Note, "Nothing here was granted or denied") || !strings.Contains(denied.Note, "denied") {
+		t.Fatalf("denied report note: %q", denied.Note)
+	}
+	if left.Note != empty.Note || !strings.Contains(left.Note, "Nothing here was granted or denied") {
+		t.Fatalf("default note changed:\n left  %q\n empty %q", left.Note, empty.Note)
+	}
+	// A client without a responder reports the default note, byte for byte.
+	plainHost := fakehost.Start(t)
+	plain, err := appserver.Dial(bounded(t), plainHost.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	plainMark := plain.RequestMark()
+	raise(t, plainHost, plain, "flow-1", []string{"item/commandExecution/requestApproval"})
+	if got := plain.RequestsSince(plainMark, "flow-1").Note; got != left.Note {
+		t.Fatalf("plain note %q != default %q", got, left.Note)
 	}
 }
