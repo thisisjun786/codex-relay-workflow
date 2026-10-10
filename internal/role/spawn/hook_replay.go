@@ -17,13 +17,13 @@ import (
 
 // This file makes the hook safe to apply again to one hook event (CRW-1121). The oracle's answer is not: a reapplied message got the
 // prompt override again, and a reapplied recursion request lost its grant marker to stripControlMarkers and got a plain guard
-// stacked on the coordinator guard (known-defects.md, "reapplied grant request"). Two parts fix it:
+// stacked on the coordinator guard (known-defects.md, "reapplied grant request"). Three parts fix it:
 //   - spawnHookOwnedGuard recognizes every guard the hook writes, plain or coordinator, with or without the coordinator's grant
 //     instruction, at the start of a message, so the guard of this event replaces it instead of stacking on it. A guard the caller
 //     wrote is recognized the same way, so a forged coordinator guard is replaced and authorizes nothing;
-//   - an event that mints a grant records its answer under the grant's key directory, bound to the event's tool use id and to the
-//     event's input. The same event applied again to that input or to the input it answered with is answered with the recorded
-//     answer, so its grant is kept and no second one is minted;
+//   - an event that mints a grant, or a subagent's event that spends one, records its answer under the grant's key directory, bound to
+//     the event's tool use id, to the kind of its spawner and to the event's input (CRW-1118). The same event applied again to that
+//     input or to the input it answered with is answered with the recorded answer, so its grant is kept and no second one is minted;
 //   - deliveries of one event are serialized by a lock in the same directory, taken before a grant is minted or spent and held until
 //     the answer is recorded, so of two deliveries that both passed the lookup one decides and the other finds its record.
 
