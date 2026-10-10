@@ -1149,4 +1149,140 @@ BEGIN SELECT RAISE(ABORT, 'delivery_wakes.event_id is NULL: a row is addressed b
 	`CREATE TRIGGER IF NOT EXISTS delivery_wakes_event_id_not_null_update BEFORE UPDATE OF event_id ON delivery_wakes
 WHEN NEW.event_id IS NULL
 BEGIN SELECT RAISE(ABORT, 'delivery_wakes.event_id is NULL: a row is addressed by a non-empty id'); END`,
+	// CRW-974: a key of an append-only table is refused on REPLACE as well. The tables above refuse UPDATE and DELETE by trigger, but an INSERT OR REPLACE that repeats a key deletes the
+	// stored row without running a DELETE trigger while recursive_triggers is OFF (the store's setting, unchanged: turning it ON would change what every trigger above means on every connection),
+	// and no UPDATE happens, so a raw writer could rewrite a row the table promises never changes. One BEFORE INSERT guard per key, for every table that has a <table>_no_delete trigger
+	// (17 tables: the primary key, each UNIQUE, each partial UNIQUE with its WHERE), raises the exact text SQLite gives a plain INSERT of that key, so the refusal text, its class (constraint,
+	// primary code 19) and the priority among keys are what they were; only the extended code is now 1811 (SQLITE_CONSTRAINT_TRIGGER) where it was 1555 or 2067, and no product code branches
+	// on either for these tables. The guards are appended, never edited into a shipped statement, and a BEFORE INSERT guard cannot touch a row that already exists, so a store that holds the
+	// zone keeps every row. A guard is the template store.zoneKeyGuardSQL (dag_zone_key_guard_test.go) writes and TestDAGZoneKeyGuardsAreTheTemplateAndCoverEveryAppendOnlyKey checks, and it
+	// reads the catalog of an opened store, so a later append-only table that lacks its guards fails there:
+	//   - the name is <table>_<key>_guard, the message is 'UNIQUE constraint failed: <table>.<column>, <table>.<column>' in the key's column order;
+	//   - WHEN <key columns equal the incoming row's> through EXISTS over the table; a NULL key column matches nothing, as UNIQUE treats NULLs as distinct; a partial key repeats the index's
+	//     WHERE inside the EXISTS and on the incoming row (NEW.), so a row outside the index is never refused;
+	//   - SQLite fires triggers last-created-first and checks unique indexes last-declared-first with the primary key last, so a table's guards are appended primary key first, then its
+	//     UNIQUEs in the order of its DDL, then its partial indexes in creation order; the priority among several repeated keys is then the one a plain INSERT had;
+	//   - a table with a BEFORE INSERT trigger of its own that refuses with another message (dag_plan_revisions_parent, dag_summary_outbox_order) has that trigger's WHEN as NOT (...) in each
+	//     guard, so a row both refuse keeps the message it had. A CHECK or NOT NULL of the same row is checked after BEFORE triggers, so a row that repeats a key and also breaks a CHECK is now
+	//     refused with the key's text instead of the CHECK's; it is refused either way and nothing is written.
+	// One unique key has no guard: (plan_id, document, seq) of dag_summary_outbox. dag_summary_outbox_order refuses every entry whose seq is not the next of its stream, INSERT OR REPLACE included, and a
+	// repeated seq is never the next one, so the key cannot be repeated; its guard would carry that trigger's WHEN as its stand-aside condition and could never fire
+	// (TestDAGZoneOutboxSequenceKeyIsRefusedByTheOrderTrigger).
+	// INSERT OR IGNORE and ON CONFLICT DO NOTHING on a stored key of these tables are refused as well (RAISE(ABORT) is not softened by the statement's conflict clause); no product writer uses either
+	// on them (TestNoProductWriterRelaxesAGuardedTable), and the idempotent writers (dag_node_executions, dag_input_manifests, dag_conflict_drift) write tables that have no no_delete trigger and no guard.
+	`CREATE TRIGGER IF NOT EXISTS dag_plans_pk_guard BEFORE INSERT ON dag_plans
+WHEN EXISTS (SELECT 1 FROM dag_plans WHERE plan_id = NEW.plan_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plans.plan_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_pk_guard BEFORE INSERT ON dag_plan_revisions
+WHEN NOT (NEW.parent_revision_no > 0 AND NOT EXISTS (
+      SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND revision_no = NEW.parent_revision_no)) AND EXISTS (SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND revision_no = NEW.revision_no)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plan_revisions.plan_id, dag_plan_revisions.revision_no'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_request_key_guard BEFORE INSERT ON dag_plan_revisions
+WHEN NOT (NEW.parent_revision_no > 0 AND NOT EXISTS (
+      SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND revision_no = NEW.parent_revision_no)) AND EXISTS (SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND request_id = NEW.request_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plan_revisions.plan_id, dag_plan_revisions.request_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_parent_key_guard BEFORE INSERT ON dag_plan_revisions
+WHEN NOT (NEW.parent_revision_no > 0 AND NOT EXISTS (
+      SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND revision_no = NEW.parent_revision_no)) AND EXISTS (SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND parent_revision_no = NEW.parent_revision_no)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plan_revisions.plan_id, dag_plan_revisions.parent_revision_no'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_nodes_pk_guard BEFORE INSERT ON dag_nodes
+WHEN EXISTS (SELECT 1 FROM dag_nodes WHERE plan_id = NEW.plan_id AND node_id = NEW.node_id AND introduced_rev = NEW.introduced_rev)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_nodes.plan_id, dag_nodes.node_id, dag_nodes.introduced_rev'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_nodes_live_key_guard BEFORE INSERT ON dag_nodes
+WHEN NEW.retired_rev IS NULL AND EXISTS (SELECT 1 FROM dag_nodes WHERE plan_id = NEW.plan_id AND node_id = NEW.node_id AND retired_rev IS NULL)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_nodes.plan_id, dag_nodes.node_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_edges_pk_guard BEFORE INSERT ON dag_edges
+WHEN EXISTS (SELECT 1 FROM dag_edges WHERE plan_id = NEW.plan_id AND edge_id = NEW.edge_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_edges.plan_id, dag_edges.edge_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_pk_guard BEFORE INSERT ON dag_summary_outbox
+WHEN NOT (NEW.state <> 'pending' OR NEW.attempts <> 0
+    OR NEW.seq <> COALESCE((SELECT MAX(seq) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0) + 1
+    OR NEW.plan_revision < COALESCE((SELECT MAX(plan_revision) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0)) AND EXISTS (SELECT 1 FROM dag_summary_outbox WHERE summary_id = NEW.summary_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_summary_outbox.summary_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_open_key_guard BEFORE INSERT ON dag_summary_outbox
+WHEN NEW.state IN ('pending', 'claimed', 'failed') AND NOT (NEW.state <> 'pending' OR NEW.attempts <> 0
+    OR NEW.seq <> COALESCE((SELECT MAX(seq) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0) + 1
+    OR NEW.plan_revision < COALESCE((SELECT MAX(plan_revision) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0)) AND EXISTS (SELECT 1 FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document AND state IN ('pending', 'claimed', 'failed'))
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_summary_outbox.plan_id, dag_summary_outbox.document'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_pk_guard BEFORE INSERT ON dag_base_refreshes
+WHEN EXISTS (SELECT 1 FROM dag_base_refreshes WHERE refresh_id = NEW.refresh_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_base_refreshes.refresh_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_seq_key_guard BEFORE INSERT ON dag_base_refreshes
+WHEN EXISTS (SELECT 1 FROM dag_base_refreshes WHERE acceptance_id = NEW.acceptance_id AND refresh_seq = NEW.refresh_seq)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_base_refreshes.acceptance_id, dag_base_refreshes.refresh_seq'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_head_key_guard BEFORE INSERT ON dag_base_refreshes
+WHEN EXISTS (SELECT 1 FROM dag_base_refreshes WHERE acceptance_id = NEW.acceptance_id AND event_id = NEW.event_id AND head_sha = NEW.head_sha)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_base_refreshes.acceptance_id, dag_base_refreshes.event_id, dag_base_refreshes.head_sha'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_pk_guard BEFORE INSERT ON dag_generation_withdrawals
+WHEN EXISTS (SELECT 1 FROM dag_generation_withdrawals WHERE relationship_id = NEW.relationship_id AND execution_generation = NEW.execution_generation)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_generation_withdrawals.relationship_id, dag_generation_withdrawals.execution_generation'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_pk_guard BEFORE INSERT ON dag_acceptance_refreshes
+WHEN EXISTS (SELECT 1 FROM dag_acceptance_refreshes WHERE refresh_id = NEW.refresh_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_refreshes.refresh_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_seq_key_guard BEFORE INSERT ON dag_acceptance_refreshes
+WHEN EXISTS (SELECT 1 FROM dag_acceptance_refreshes WHERE acceptance_id = NEW.acceptance_id AND refresh_seq = NEW.refresh_seq)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_refreshes.acceptance_id, dag_acceptance_refreshes.refresh_seq'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_head_key_guard BEFORE INSERT ON dag_acceptance_refreshes
+WHEN EXISTS (SELECT 1 FROM dag_acceptance_refreshes WHERE acceptance_id = NEW.acceptance_id AND head_sha = NEW.head_sha)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_refreshes.acceptance_id, dag_acceptance_refreshes.head_sha'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_pk_guard BEFORE INSERT ON dag_verified_heads
+WHEN EXISTS (SELECT 1 FROM dag_verified_heads WHERE event_id = NEW.event_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_verified_heads.event_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_pk_guard BEFORE INSERT ON merge_trains
+WHEN EXISTS (SELECT 1 FROM merge_trains WHERE train_id = NEW.train_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_trains.train_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_pk_guard BEFORE INSERT ON merge_train_members
+WHEN EXISTS (SELECT 1 FROM merge_train_members WHERE train_id = NEW.train_id AND seq = NEW.seq)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_train_members.train_id, merge_train_members.seq'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_pk_guard BEFORE INSERT ON merge_train_events
+WHEN EXISTS (SELECT 1 FROM merge_train_events WHERE train_id = NEW.train_id AND seq = NEW.seq)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_train_events.train_id, merge_train_events.seq'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_pk_guard BEFORE INSERT ON dag_acceptance_verifications
+WHEN EXISTS (SELECT 1 FROM dag_acceptance_verifications WHERE acceptance_id = NEW.acceptance_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_verifications.acceptance_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_pk_guard BEFORE INSERT ON dag_integration_batches
+WHEN EXISTS (SELECT 1 FROM dag_integration_batches WHERE batch_id = NEW.batch_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_integration_batches.batch_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_pk_guard BEFORE INSERT ON dag_integration_stages
+WHEN EXISTS (SELECT 1 FROM dag_integration_stages WHERE stage_id = NEW.stage_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_integration_stages.stage_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_pk_guard BEFORE INSERT ON dag_acceptance_premerge
+WHEN EXISTS (SELECT 1 FROM dag_acceptance_premerge WHERE acceptance_id = NEW.acceptance_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_premerge.acceptance_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_pk_guard BEFORE INSERT ON dag_revalidation_premerge
+WHEN EXISTS (SELECT 1 FROM dag_revalidation_premerge WHERE revalidation_id = NEW.revalidation_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_revalidation_premerge.revalidation_id'); END`,
+}
+
+// zoneKeyGuardName finds the key guards among the zone's triggers: a guard's name ends in _guard (CRW-974).
+var zoneKeyGuardName = regexp.MustCompile(`(?is)^\s*CREATE\s+TRIGGER\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z_0-9]*_guard)\s`)
+
+// MissingZoneKeyGuards is the read-only check that the key guards of the append-only tables (CRW-974) are in the
+// store: the names of the guards this build declares that the catalog lacks, sorted, empty on a store a write open
+// of this build has opened. It only reads sqlite_master, so it runs after an install on a store opened read-only,
+// and it creates nothing.
+func MissingZoneKeyGuards(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'trigger'")
+	if err != nil {
+		return nil, err
+	}
+	present := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			break
+		}
+		present[name] = true
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	var missing []string
+	for _, statement := range dagZone {
+		if match := zoneKeyGuardName.FindStringSubmatch(statement); match != nil && !present[match[1]] {
+			missing = append(missing, match[1])
+		}
+	}
+	slices.Sort(missing)
+	return missing, nil
 }
