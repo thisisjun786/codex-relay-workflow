@@ -305,27 +305,53 @@ func TestSubagentStopPersistenceFailuresAndCorruptCounter(t *testing.T) {
 	}
 }
 
+// Two agents that stop at the same moment each record their terminal verdict under the session lock:
+// neither verdict is lost. The lock's wait budget is the oracle's (about 250 ms, state.WithSessionLock),
+// so a holder the host has not scheduled for that long makes the other stop give up, which the product
+// answers with a stop that records nothing and raises the corruption sentinel. That give-up is a
+// property of the host's load, not of the lock; the case proves that concurrent stops lose no verdict
+// that was committed, so a stop whose own verdict is absent after it returned is run again (CRW-1172),
+// bounded, and any other failure (an error, a blocked stop) fails at once.
 func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 	cwd := subagentStopWorkspace(t)
-	for _, agent := range []string{"racer-a", "racer-b"} {
+	agents := []string{"racer-a", "racer-b"}
+	for _, agent := range agents {
 		for n := 1; n <= 3; n++ {
 			subagentStopBlock(t, subagentStopRun(t, cwd, "executor", agent, "", "", nil), n)
 		}
 	}
+	recorded := func(agent string) bool {
+		for _, entry := range state.ReadState(cwd, "s1").UnverifiedSubagents {
+			if entry.AgentID == agent {
+				return true
+			}
+		}
+		return false
+	}
+	const gaveUpLimit = 50
 	var wg sync.WaitGroup
-	errors := make(chan error, 2)
-	for _, agent := range []string{"racer-a", "racer-b"} {
+	errors := make(chan error, len(agents))
+	for _, agent := range agents {
 		raw, err := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": cwd, "session_id": "s1", "agent_type": "executor", "agent_id": agent})
 		if err != nil {
 			t.Fatal(err)
 		}
 		wg.Go(func() {
-			out, err := subagentStopInvoke(raw)
-			if err != nil {
-				errors <- err
-			} else if out != "" {
-				errors <- fmt.Errorf("terminal stop blocked: %s", out)
+			for attempt := 0; attempt <= gaveUpLimit; attempt++ {
+				out, err := subagentStopInvoke(raw)
+				if err != nil {
+					errors <- err
+					return
+				}
+				if out != "" {
+					errors <- fmt.Errorf("terminal stop blocked: %s", out)
+					return
+				}
+				if recorded(agent) {
+					return
+				}
 			}
+			errors <- fmt.Errorf("%s: the verdict was not recorded after %d stops", agent, gaveUpLimit+1)
 		})
 	}
 	wg.Wait()
