@@ -187,3 +187,32 @@ func TestPromptDcloseAllDoneRowIsRecordedByTheNextHook(t *testing.T) {
 		t.Errorf("closedWorkPhaseId: %v (present %v), want a present null", v, present)
 	}
 }
+
+// An all-done close whose PABCD ledger cannot be searched for its close row still leaves a recoverable row: the answer warns,
+// the event stays pending, and the next hook records exactly one close row once the ledger reads again.
+func TestPromptDcloseAllDoneLedgerReadErrorKeepsARecoverableRow(t *testing.T) {
+	cwd, attest := promptDcloseAllDoneRepo(t, "chat-all-done-readerr", "c-all-done-readerr")
+	ledger := promptDclosePabcdLedgerPath(cwd)
+	if err := os.MkdirAll(ledger, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "[crw: DONE]") || !strings.Contains(answer, "the close was applied but its ledger row could not be written: ") {
+		t.Fatalf("the all-done answer: %q", answer)
+	}
+	if pending, _, _ := state.PendingLedgerEvents(cwd, "s1"); len(pending) != 1 {
+		t.Fatalf("pending events after the read error: %+v", pending)
+	}
+	if err := os.Remove(ledger); err != nil {
+		t.Fatal(err)
+	}
+	promptOrchestrateAnswer(t, cwd, "s1", "t2", "next prompt")
+	promptOrchestrateAnswer(t, cwd, "s1", "t3", "and the one after")
+	rows := promptOrchestrateLedger(t, cwd)
+	if len(rows) != 1 || rows[0]["reason"] != "done" || rows[0]["checkEpoch"] != "c-all-done-readerr" {
+		t.Fatalf("the ledger after the next hooks: %+v, want exactly the all-done row", rows)
+	}
+	if pending, _, _ := state.PendingLedgerEvents(cwd, "s1"); len(pending) != 0 {
+		t.Fatalf("pending events after the recovery: %+v", pending)
+	}
+}

@@ -505,11 +505,14 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	// row lost after IDLE is published (IDLE has no D edge). Its row is prepared in the session's ledger
 	// outbox before the publication instead, and recorded after it below; a row that cannot be appended
 	// stays pending for the next writer of the session. A row the ledger already holds (a close an earlier
-	// build recorded) is not prepared again, and a ledger that cannot be read leaves the row to the
-	// guarded append below, as before.
+	// build recorded) is not prepared again. A ledger whose close key cannot be looked up still gets the
+	// event: the row is owed whichever way the lookup would have gone, and a close that published IDLE
+	// without a recoverable row could never be retried. The drain looks for the exact line when the ledger
+	// reads again.
 	var allDoneEvent *state.LedgerEvent
 	if plan.allDone && result.Ledger != nil {
-		if present, readErr := promptDcloseHasPabcdCloseRowOpen(p.Cwd, p.SessionID, held.CheckEpoch, "", promptDcloseOpenSeam(seams)); readErr == nil && !present {
+		present, readErr := promptDcloseHasPabcdCloseRowOpen(p.Cwd, p.SessionID, held.CheckEpoch, "", promptDcloseOpenSeam(seams))
+		if readErr != nil || !present {
 			row := promptDcloseCloseRow(*result.Ledger, held.CheckEpoch, "")
 			ev, err := state.NewLedgerEvent(p.Cwd, held, next, &row, nil)
 			if err == nil {
