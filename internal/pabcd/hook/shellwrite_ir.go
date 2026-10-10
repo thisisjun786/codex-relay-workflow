@@ -35,10 +35,10 @@ func shellIRDests(command, cwd string, lookup func(string) (string, bool), resol
 	if err != nil {
 		return nil, false
 	}
-	return shellIRDestsResult(res, cwd, resolve, 0, nil), true
+	return shellIRDestsResult(res, cwd, lookup, resolve, 0, nil), true
 }
 
-func shellIRDestsResult(res shellir.Result, cwd string, resolve bool, depth int, outer *githubPostWrites) []string {
+func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (string, bool), resolve bool, depth int, outer *githubPostWrites) []string {
 	var dests []string
 	writes := githubPostWritesOf(res.Execs, outer)
 	for i, e := range res.Execs {
@@ -46,7 +46,7 @@ func shellIRDestsResult(res shellir.Result, cwd string, resolve bool, depth int,
 			if writes.stale(i, e.Script.Value, e.Dir) {
 				dests = append(dests, shellIRUnknownDest)
 			} else {
-				dests = append(dests, shellIRScriptDests(e, cwd, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))...)
+				dests = append(dests, shellIRScriptDests(e, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))...)
 			}
 			continue
 		}
@@ -62,7 +62,7 @@ func shellIRDestsResult(res shellir.Result, cwd string, resolve bool, depth int,
 			} else {
 				child := e
 				child.Kind, child.Name, child.Script = shellir.KindScriptFile, "sh", e.Program
-				dests = append(dests, shellIRScriptDests(child, cwd, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
+				dests = append(dests, shellIRScriptDests(child, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
 			}
 			continue
 		}

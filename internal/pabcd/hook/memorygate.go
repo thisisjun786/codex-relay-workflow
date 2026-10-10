@@ -248,7 +248,7 @@ func memoryGateClassifyUsing(tool string, input any, cwd string, env host.Lookup
 		dir := shellirPayloadCwd(cwd)
 		a := analyses(command, dir, env)
 		if res, err := a.withEnv(); err == nil {
-			dests := shellIRDestsResult(res, dir, true, 0, nil)
+			dests := shellIRDestsResult(res, dir, env, true, 0, nil)
 			for _, token := range dests {
 				if token == shellIRUnknownDest {
 					return MemoryWriteAttempt{Surface: "shell", Cause: "unknown-destination", Target: "(a destination the gate cannot read)"}

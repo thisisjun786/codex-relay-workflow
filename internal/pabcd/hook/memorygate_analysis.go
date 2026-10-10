@@ -18,7 +18,7 @@ type memoryShellAnalysis struct {
 }
 
 func newMemoryShellAnalysis(command, dir string, lookup host.LookupEnv) *memoryShellAnalysis {
-	return &memoryShellAnalysis{cached: true, command: command, dir: dir, lookup: lookup, env: shellir.AnalyzeEnv, plain: shellir.Analyze, noDir: shellir.AnalyzeNoDir}
+	return &memoryShellAnalysis{cached: true, command: command, dir: dir, lookup: lookup, env: shellir.AnalyzeEnvProvenDirectory, plain: shellir.Analyze, noDir: shellir.AnalyzeNoDir}
 }
 
 type memoryAnalysisResult struct {

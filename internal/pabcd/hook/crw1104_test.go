@@ -20,7 +20,7 @@ func TestCRW1104EachContextAnalyzedOnce(t *testing.T) {
 			a := newMemoryShellAnalysis(command, dir, env)
 			a.env = func(cmd, dir string, lookup func(string) (string, bool)) (shellir.Result, error) {
 				counts[0]++
-				return shellir.AnalyzeEnv(cmd, dir, lookup)
+				return shellir.AnalyzeEnvProvenDirectory(cmd, dir, lookup)
 			}
 			a.plain = func(cmd, dir string) (shellir.Result, error) { counts[1]++; return shellir.Analyze(cmd, dir) }
 			a.noDir = func(cmd string) (shellir.Result, error) { counts[2]++; return shellir.AnalyzeNoDir(cmd) }
@@ -74,7 +74,7 @@ func TestCRW1104CacheErrorsAndReadOnlyRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := json.Marshal(res)
-	shellIRDestsResult(res, cwd, true, 0, nil)
+	shellIRDestsResult(res, cwd, env, true, 0, nil)
 	shellIRFStringResult(res, nil)
 	after, _ := json.Marshal(res)
 	if string(before) != string(after) {
@@ -109,7 +109,7 @@ func TestCRW1104CorpusParity(t *testing.T) {
 			res, err := a.withEnv()
 			var now []string
 			if err == nil {
-				now = shellIRDestsResult(res, cwd, true, 0, nil)
+				now = shellIRDestsResult(res, cwd, env, true, 0, nil)
 			}
 			if ok != (err == nil) || !reflect.DeepEqual(old, now) {
 				t.Fatal("destinations changed")

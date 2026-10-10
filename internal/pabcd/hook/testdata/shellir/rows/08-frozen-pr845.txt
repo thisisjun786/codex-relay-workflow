@@ -423,8 +423,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 /usr/bin/timeout 30 bash post.sh
 
-=== PR845-92799ae0-d5 | none/deny/allow
---why A subshell that starts with a cd: the shell runs sub/post.sh.
+=== PR845-92799ae0-d5 | Q
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -563,8 +563,8 @@ echo clean
 --cmd
 SCRIPT=post.sh; ./"$SCRIPT"
 
-=== PR845-ef89e0ed-d3 | none/deny/allow
---why D=sub is a literal assignment of straight-line code, so cd "$D" is known and the shell runs sub/post.sh.
+=== PR845-ef89e0ed-d3 | Q
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -672,15 +672,15 @@ echo clean
 --cmd
 declare -x PATH=/evil:/usr/bin:/bin; source lib.sh
 
-=== PR845-f30490c1-d5 | B
---why Control: a relative cd to a known directory leaves it known and the clean script is allowed.
+=== PR845-f30490c1-d5 | T
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
 --file sub/clean.sh
 echo clean
 --cmd
 cd ./sub; bash clean.sh
 
-=== PR845-f30490c1-d5b | B
---why Control: an absolute cd.
+=== PR845-f30490c1-d5b | T
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
 --file sub/clean.sh
 echo clean
 --cmd

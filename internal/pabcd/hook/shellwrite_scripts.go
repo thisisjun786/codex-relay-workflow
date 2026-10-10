@@ -10,7 +10,7 @@ import (
 
 // Carried shell files reuse the bounded regular-file reader and stale-file
 // checks of the GitHub guard. No file changed by this command can be trusted.
-func shellIRScriptDests(e shellir.Exec, cwd string, resolve bool, depth int, outer *githubPostWrites) []string {
+func shellIRScriptDests(e shellir.Exec, cwd string, lookup func(string) (string, bool), resolve bool, depth int, outer *githubPostWrites) []string {
 	unknown := []string{shellIRUnknownDest}
 	if depth >= githubPostMaxScriptDepth || !e.Script.Known || !githubPostScriptKnown(e.Script.Value, e.Dir) {
 		return unknown
@@ -25,7 +25,14 @@ func shellIRScriptDests(e shellir.Exec, cwd string, resolve bool, depth int, out
 		}
 		return unknown
 	}
-	res, err := shellir.AnalyzeScript(body, e.Dir.Path, e.Cdpath)
+	read, dir := shellir.AnalyzeScript, e.Dir.Path
+	if resolve {
+		read = shellir.AnalyzeScriptProvenDirectory
+		if !e.Dir.Known {
+			dir = ""
+		}
+	}
+	res, err := read(body, dir, e.Cdpath)
 	if err != nil {
 		return unknown
 	}
@@ -45,7 +52,7 @@ func shellIRScriptDests(e shellir.Exec, cwd string, resolve bool, depth int, out
 			}
 		}
 	}
-	return shellIRDestsResult(res, cwd, resolve, depth+1, outer)
+	return shellIRDestsResult(res, cwd, lookup, resolve, depth+1, outer)
 }
 
 // This deliberately conservative lexical rule only expands read-only awk.
