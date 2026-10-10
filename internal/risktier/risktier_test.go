@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -658,5 +659,105 @@ func TestDecodeRefusesNullsTheSchemaForbids(t *testing.T) {
 	}
 	if _, err := Decode(encode(t, must(t, input(edit("docs/a.md"))))); err != nil {
 		t.Errorf("null declared_tier and region_tier refused: %v", err)
+	}
+}
+
+// securityCorpusFiles are recorded answers that tests replay against the security readers and gates
+// (internal/dev/cxcfuzz cases_test.go, internal/pabcd/gate oracle_test.go). Their names carry none of the
+// reserved words, so only an explicit list keeps them high (CRW-1041 verification round 2).
+var securityCorpusFiles = []string{
+	"internal/dev/cxcfuzz/testdata/worktreedel/cases.json",
+	"internal/dev/cxcfuzz/testdata/memorygate/cases.json",
+	"internal/dev/cxcfuzz/testdata/shellwrite/cases.json",
+	"internal/dev/cxcfuzz/testdata/spawn/cases.json",
+	"internal/dev/cxcfuzz/testdata/state/cases.json",
+	"internal/pabcd/gate/testdata/cases.json",
+}
+
+func TestSecurityCorpusIsHigh(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..")
+	for _, p := range securityCorpusFiles {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil {
+			t.Fatalf("the corpus file %s is gone: update this list and the classifier's: %v", p, err)
+		}
+		if v := Classify(p); v.Tier != High || v.Rule != RuleSecurityCorpus {
+			t.Errorf("Classify(%q) = %+v, want high/%s", p, v, RuleSecurityCorpus)
+		}
+		for _, r := range []Region{{Path: p, Kind: "file"}, {Path: p, Kind: "symbol", Key: "case"}, {Path: path.Dir(p), Kind: "tree"}} {
+			if v := ClassifyRegion(r); v.Tier != High {
+				t.Errorf("region %+v = %+v, want high", r, v)
+			}
+		}
+		in := input(edit(p))
+		rec := must(t, in)
+		if rec.ChangedTier != High || rec.Tier != High || rec.ExecutionTier != High {
+			t.Errorf("a diff of only %s: changed %s, tier %s, execution %s", p, rec.ChangedTier, rec.Tier, rec.ExecutionTier)
+		}
+		in.Regions = []Region{{Path: p, Kind: "file"}}
+		in.Declared = Low
+		if rec := must(t, in); rec.RegionTier == nil || *rec.RegionTier != High || rec.Tier != High || rec.ExecutionTier != High {
+			t.Errorf("a declared low diff of only %s inside its own region: %+v", p, rec)
+		}
+	}
+	for _, tree := range []string{"internal/dev/cxcfuzz/testdata", "internal/pabcd/gate/testdata", "internal/dev/cxcfuzz/testdata/new-target"} {
+		if v := ClassifyRegion(Region{Path: tree, Kind: "tree"}); v.Tier != High || v.Rule != RuleSecurityCorpus {
+			t.Errorf("tree region %s = %+v, want high/%s", tree, v, RuleSecurityCorpus)
+		}
+	}
+	// a new target's corpus is high before anyone lists it
+	if v := Classify("internal/dev/cxcfuzz/testdata/new-target/cases.json"); v.Tier != High {
+		t.Errorf("a new cxcfuzz corpus = %+v", v)
+	}
+}
+
+// Decode accepts only the exact spelling the schema gives: encoding/json matches member names without
+// regard to case and omitempty erases an empty optional member, so neither may decide what a record says.
+func TestDecodeRefusesWhatTheSchemaRefuses(t *testing.T) {
+	schema := schemaFile(t)
+	in := input(edit("docs/a.md"), Change{Path: "docs/n.md", OldPath: "docs/o.md", Change: "rename"})
+	in.Regions = []Region{{Path: "docs", Kind: "tree"}, {Path: "docs/a.md", Kind: "symbol", Key: "S"}}
+	in.Exception = exception(High)
+	good := encode(t, must(t, in))
+	if _, err := Decode(good); err != nil {
+		t.Fatal(err)
+	}
+	patch := func(mutate func(map[string]any)) []byte {
+		var m map[string]any
+		_ = json.Unmarshal(good, &m)
+		mutate(m)
+		out, _ := json.Marshal(m)
+		return out
+	}
+	item := func(m map[string]any, key string, i int) map[string]any { return m[key].([]any)[i].(map[string]any) }
+	modify := func(m map[string]any) map[string]any {
+		for _, e := range m["changed_paths"].([]any) {
+			if e.(map[string]any)["change"] == "modify" {
+				return e.(map[string]any)
+			}
+		}
+		t.Fatal("no modify entry")
+		return nil
+	}
+	cases := map[string]func(map[string]any){
+		"upper-case duplicate member": func(m map[string]any) { m["TIER"] = "low" },
+		"upper-case member alone":     func(m map[string]any) { m["TIER"] = m["tier"]; delete(m, "tier") },
+		"upper-case path":             func(m map[string]any) { e := item(m, "changed_paths", 0); e["PATH"] = e["path"]; delete(e, "path") },
+		"empty old_path":              func(m map[string]any) { modify(m)["old_path"] = "" },
+		"empty region key":            func(m map[string]any) { item(m, "declared_regions", 0)["key"] = "" },
+		"mixed-case exception member": func(m map[string]any) {
+			e := m["exception"].(map[string]any)
+			e["Reason"] = e["reason"]
+			delete(e, "reason")
+		},
+	}
+	for name, mutate := range cases {
+		data := patch(mutate)
+		if validates(t, schema, data) == nil {
+			t.Errorf("%s: the schema accepted it", name)
+		}
+		if _, err := Decode(data); err == nil {
+			t.Errorf("%s: Decode accepted it", name)
+		}
 	}
 }

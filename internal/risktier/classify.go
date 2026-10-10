@@ -44,6 +44,7 @@ const (
 	RuleNotOnAllowlist  = "not_on_allowlist"
 	RuleInvalidPath     = "invalid_path"
 	RuleTypeChange      = "type_change"
+	RuleSecurityCorpus  = "security_corpus"
 )
 
 // The allowlist is the whole of "low": documentation prose under docs/ (Markdown only), and plain data
@@ -60,6 +61,12 @@ var (
 	// highTrees are the trees the decided answer names. Everything under them is high, whatever low rule
 	// its file would match, so they are checked before the allowlist.
 	highTrees = []string{"internal/relay", "internal/runtime", "internal/hookswitch", "internal/policystore"}
+	// securityCorpusTrees hold recorded answers that tests replay against the security readers and gates:
+	// the CXC differential corpus (internal/dev/cxcfuzz cases_test.go replays every target's cases.json,
+	// among them the worktree deletion guard and the memory write gate) and the C>D receipt gate corpus
+	// (internal/pabcd/gate oracle_test.go). Their file names carry no reserved word, so they are named
+	// here; a new corpus tree is added one reviewed line at a time.
+	securityCorpusTrees = []string{"internal/dev/cxcfuzz/testdata", "internal/pabcd/gate/testdata"}
 	// sharedTrees and sharedFiles are the contract surfaces: the scheduler's SharedSurface list, with all of contract/.
 	sharedTrees = []string{"contract"}
 	sharedFiles = []string{"internal/relay/argparse/specs.json"}
@@ -124,14 +131,16 @@ func testdataGolden(segments []string) bool {
 }
 
 // highFloor is the high verdict for a path that no low rule may lift: a shared contract surface, text that
-// instructs an agent, or anything under a tree the decided answer names (so a testdata file there is high
-// too). ok is false when none applies.
+// instructs an agent, the security corpus, or anything under a tree the decided answer names (so a testdata
+// file there is high too). ok is false when none applies.
 func highFloor(p string, segments []string) (Verdict, bool) {
 	switch {
 	case withinAny(p, sharedTrees), isOneOf(p, sharedFiles), testdataGolden(segments):
 		return Verdict{High, RuleSharedContract}, true
 	case within(p, "plugins"), isOneOf(p, instructionFiles), isOneOf(strings.ToLower(segments[len(segments)-1]), agentInstructionNames):
 		return Verdict{High, RuleExecutableText}, true
+	case withinAny(p, securityCorpusTrees):
+		return Verdict{High, RuleSecurityCorpus}, true
 	case withinAny(p, highTrees):
 		return Verdict{High, RuleHighTree}, true
 	}

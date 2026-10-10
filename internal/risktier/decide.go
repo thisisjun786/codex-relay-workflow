@@ -386,10 +386,92 @@ func Decode(data []byte) (Record, error) {
 	if decoder.More() {
 		return Record{}, errors.New("the record is followed by more data")
 	}
+	if err := sameSpelling(data, r); err != nil {
+		return Record{}, err
+	}
 	if err := r.Validate(); err != nil {
 		return Record{}, err
 	}
 	return r, nil
+}
+
+// sameSpelling refuses a document that says more or other than the record read from it: encoding/json
+// matches member names without regard to case (so "TIER" or "PATH" would be read as tier or path, which
+// the schema's additionalProperties and required refuse) and omitempty drops an empty optional member
+// (an "old_path" or a "key" of "", which the schema's minLength refuses). The document, read as plain
+// JSON, must equal the record written back, member for member.
+func sameSpelling(data []byte, r Record) error {
+	var doc, back any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("a policy-decision record is a JSON object: %w", err)
+	}
+	written, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(written, &back); err != nil {
+		return err
+	}
+	if where := firstDifference(doc, back, ""); where != "" {
+		return fmt.Errorf("the record's %s is not spelled as %s spells it (a member name differs in case, is unknown, or is an empty optional member)", where, RecordSchema)
+	}
+	return nil
+}
+
+// firstDifference is the JSON pointer of the first place where two plain JSON values differ, or "" when
+// they are equal.
+func firstDifference(a, b any, at string) string {
+	switch x := a.(type) {
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		if !ok {
+			return pointer(at)
+		}
+		names := make([]string, 0, len(x)+len(y))
+		for k := range x {
+			names = append(names, k)
+		}
+		for k := range y {
+			if _, ok := x[k]; !ok {
+				names = append(names, k)
+			}
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			xv, inX := x[k]
+			yv, inY := y[k]
+			if !inX || !inY {
+				return pointer(at + "/" + k)
+			}
+			if d := firstDifference(xv, yv, at+"/"+k); d != "" {
+				return d
+			}
+		}
+		return ""
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return pointer(at)
+		}
+		for i := range x {
+			if d := firstDifference(x[i], y[i], fmt.Sprintf("%s/%d", at, i)); d != "" {
+				return d
+			}
+		}
+		return ""
+	default:
+		if a != b {
+			return pointer(at)
+		}
+		return ""
+	}
+}
+
+func pointer(at string) string {
+	if at == "" {
+		return "document"
+	}
+	return "member " + at
 }
 
 // nullableMembers are the only members the schema lets be null; a null anywhere else is a type violation
