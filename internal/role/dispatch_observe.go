@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -80,17 +81,46 @@ func dispatchObserve(ctx context.Context, env host.LookupEnv, h DispatchHost, se
 	return o
 }
 
+// dispatchRolloutBeforeOpen is called between the look at a rollout path and its open; a test replaces the path there.
+var dispatchRolloutBeforeOpen func()
+
+// dispatchOpenRollout opens a rollout the host wrote, for reading it as evidence. The path is looked at without following a
+// link, opened without following one and without blocking, and the descriptor that was opened must be the regular file that was
+// looked at, as the ledger's own reader requires of a record: a path replaced in between, by a link to another rollout, another
+// file or a named pipe, is refused instead of read as the child's.
+func dispatchOpenRollout(path string) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("rollout is not a regular file")
+	}
+	if dispatchRolloutBeforeOpen != nil {
+		dispatchRolloutBeforeOpen()
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := f.Stat()
+	if err == nil && (!opened.Mode().IsRegular() || !os.SameFile(info, opened)) {
+		err = errors.New("rollout is not the file that was looked at")
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 // dispatchRolloutNewest reads the child's rollout, which the host appends to, and returns how its newest started turn ended:
 // "completed" (task_complete), "interrupted" (turn_aborted), or "" when no turn started, the newest one has not ended in the
 // file, or a damaged or unfinished line leaves it unclear how the newest turn stands. A turn that has not ended in the file
 // may still be running, or its process may be gone; the rollout cannot tell, so it is never read as in progress. Only regular
 // files are read, line by line.
 func dispatchRolloutNewest(path string) string {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return ""
-	}
-	f, err := os.Open(path)
+	f, err := dispatchOpenRollout(path)
 	if err != nil {
 		return ""
 	}

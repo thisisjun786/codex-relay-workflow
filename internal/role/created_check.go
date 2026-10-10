@@ -219,11 +219,7 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 	if err != nil || path == "" {
 		return createdSpawnResult{}, err
 	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return createdSpawnResult{}, err
-	}
-	f, err := os.Open(path)
+	f, err := dispatchOpenRollout(path)
 	if err != nil {
 		return createdSpawnResult{}, err
 	}
