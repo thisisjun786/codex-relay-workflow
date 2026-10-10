@@ -268,8 +268,9 @@ a tool with them: `crw-dev ci local` (the build cache and the
 build work directory, not the module cache: a sealed run keeps its own, see [CI](CI.md#sealed-runs)),
 `crw-dev ci validate` (`go mod tidy -diff`), the `merge-build-check` skill command (the build work
 directory holds the run's owned temporary directory, and is never removed itself) and the audit
-package expansion of `crw manage` (`go list`), the relay processes `crw manage` starts (a configuration
-named with `--config` is handed to them as `CRW_CONFIG`), the jobs `crw relay` runs in the background
+package expansion of `crw manage` (`go list`), every child `crw manage` starts (the relay, the audit
+and pre-merge grader, the bridge the deliveries dial and the commands an upgrade runs; a configuration
+named with `--config` is handed to each as `CRW_CONFIG`), the jobs `crw relay` runs in the background
 and the commands the relay's evidence reads run. A job is started with the roots the relay process's
 own configuration names, so a host that moves the roots names them in the file the relay reads.
 
@@ -282,15 +283,34 @@ configured `relay_state` (named by the socket's digest, as the relay names it; t
 `manage.relay.state` as `--state`, so it is the most specific setting; it never turns `relay_state`
 into a `--state` of its own, and an environment variable is never overridden by a derived value. The
 scope directories and the legacy directories discovery already adopts are looked for below the
-configured root exactly as they are below the XDG base. The store, its WAL and its sidecars are never placed apart: a
-`paths.relay_store`, `relay_db`, `relay_wal`, `relay_sidecar` or `relay_sidecars` key is refused, and
-`manage_state` does not move the relay. `log_root` moves the management tool's pump log once the file
-names it; the relay's own `daemon.log` stays in its store directory with the rest of that bundle.
+configured root exactly as they are below the XDG base. A configured `relay_state` is judged (and
+refused on a structural fault) only where the selection uses it: when `--state` or
+`CODEX_SESSION_RELAY_STATE` chooses the store, an unusable `relay_state` stops neither a relay started
+directly nor `crw manage`. The store, its WAL and its sidecars are never placed apart: a
+`paths.relay_store`, `relay_db`, `relay_wal`, `relay_sidecar` or `relay_sidecars` key is refused on its
+own, with or without a `relay_state` beside it, and for every source of the selection, since the file
+is wrong whichever store is chosen; `manage_state` does not move the relay.
+
+`log_root` moves the product's long-lived logs once the file names it: the management tool's pump log
+goes to `<log_root>/pump.log`, and each relay service's daemon log (the output of the daemon a
+`service start` launches, its journal notes and the tail a failed start reports) goes to
+`<log_root>/relay/<16 hex>/daemon.log`, where the 16 hex digits are the start of the SHA-256 of the
+store directory's resolved path, so every store has a log of its own. Unset, the pump log stays in the
+management state directory and the daemon log in the store directory, as before. The log is not part
+of the durable state bundle; the store, its WAL and its sidecars stay in the store directory either
+way. A `log_root` that fails a structural check refuses the relay service and `crw manage`.
 Neither root moves data that is already somewhere: the move is a separate, approved step.
 
 `crw config check [--config <path>]` (also `crw doctor storage`, which runs the same check) prints every root, its path, whether it exists, its file system
-and free space, and the placement already in use when that holds data. It writes nothing and creates
-no directory. It reports two kinds of finding. An error exits 1 and is a structural fault, and any
+and free space, and every placement already in use that holds data (`in_use`): the root's default
+location, Go's own caches, the relay stores the relay's scope registry
+(`CODEX_SESSION_RELAY_SCOPE_DIR`, else `~/.codex-session-relay/scopes`) and the installer's unit
+(`crw-relay.service`) record, the pump log in the management state directory and the daemon logs in
+the store directories. It writes nothing and creates no directory. The same check runs, for the
+environment it is given, as the `storage` entry of the plain `crw doctor` report (its `refusal` is the
+fault a product command would refuse on, else null) and as the preflight of `crw install install` and
+`update`, before anything is read or written: an error refuses the run, and a warning is recorded as
+its first step and the run goes on. It reports two kinds of finding. An error exits 1 and is a structural fault, and any
 product command that uses a root the file names refuses to run against it:
 
 | Check | Error when |
@@ -299,7 +319,7 @@ product command that uses a root the file names refuses to run against it:
 | `not_creatable` | no part of it can be made: the nearest existing part is not a writable directory |
 | `not_writable` | the directory exists and this process cannot write to it |
 | `socket_path_too_long` | `relay_state`: a store socket, `<root>/<16 hex scope>/control.sock`, would reach the Unix socket bind limit (108 bytes on Linux, 104 on macOS, the NUL included) |
-| `state_split` | a `paths` key places the relay's store, WAL or sidecars apart, or a store's WAL or sidecar lives in another directory than the store |
+| `state_split` | a `paths` key places the relay's store, WAL or sidecars apart, or a store's WAL or sidecar lives in another directory than the store (the daemon log is not a sidecar) |
 
 A warning never stops anything, so a host short of space or sharing a directory keeps working:
 
@@ -309,7 +329,7 @@ A warning never stops anything, so a host short of space or sharing a directory 
 | `shared_path` | two uses name one directory (links resolved) |
 | `unknown_filesystem` | the file system under a root is not one the check can name |
 | `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
-| `drift` | a root the file names differs from the placement in use, which holds data, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
+| `drift` | a root the file names differs from a placement in use that holds data (a registered relay store outside the configured `relay_state`, a pump or daemon log outside the configured `log_root`, a populated default or Go cache elsewhere), naming both paths, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
 
 ## Installing the runtime
 
