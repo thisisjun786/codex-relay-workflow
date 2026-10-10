@@ -168,11 +168,21 @@ func TestPromptSubmitLegReadsTheRegistryRole(t *testing.T) {
 			if c.want == pointer && strings.Contains(got, "registered as a project parent") != c.parentWording {
 				t.Fatalf("parent wording = %v:\n%s", c.parentWording, got)
 			}
+			// The role's state decision: the recipe arms the loop (loopArmSeen) and the pointer arms nothing; neither starts
+			// the FSM, and both record the injected turn.
+			s := state.ReadState(cwd, c.session)
+			if s.LoopArmSeen != (c.want == recipe) || s.OrchestrationActive || s.Phase != state.PhaseIdle ||
+				len(s.InjectedTurns) != 1 || s.InjectedTurns[0] != "t-"+c.session {
+				t.Fatalf("state decision for %q: %+v", c.want, s)
+			}
 		})
 	}
 	// No readable store: the role is unknown and the lexical scope decides.
 	t.Setenv("CODEX_SESSION_RELAY_STATE", filepath.Join(dir, "absent"))
 	if got := run("thread-child2", "Start crw-loop for the migration project."); !strings.HasPrefix(got, pointer) {
 		t.Fatalf("no store:\n%s", got)
+	}
+	if s := state.ReadState(cwd, "thread-child2"); s.LoopArmSeen || s.OrchestrationActive || s.Phase != state.PhaseIdle {
+		t.Fatalf("no store state: %+v", s)
 	}
 }
