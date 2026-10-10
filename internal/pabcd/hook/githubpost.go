@@ -102,7 +102,7 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 	if site.reason != "" {
 		reason = "Cannot read the command or its program (unreadable-github-post): " + site.reason + "; GitHub posting has not been established. " + recovery
 	}
-	if site.analysis && !site.post && !site.mentions {
+	if site.unreadableText() {
 		// The text names no gh post: the refusal is the reader's, not a verdict on GitHub posting, so it says what could not be
 		// read, as the memory guard does, rather than repeating a policy refusal (CRW-1178).
 		reason = commandUnreadableReason(githubPostRuleUnread, site.reason, leaf, "It names no GitHub post.")
@@ -128,7 +128,15 @@ type githubPostSite struct {
 	cause       string // bounded body-read cause; never reconstructed from the payload cwd
 	reason      string // what the command reader could not read, when it refused the text (bounded, from the reader)
 	analysis    bool   // the refusal is the reader's refusal of the whole text, not a rule about one execution
-	mentions    bool   // the text spells a gh post (set by the guard from the command text)
+	mentions    bool   // the text the refusal was found in spells a gh command (see githubPostSpellsPost)
+	judged      bool   // mentions was set for the text the refusal was found in; a text that runs it does not set it again
+}
+
+// unreadableText is whether the refusal is the reader's alone: a text or a script it runs could not be read, no post was
+// established, and the text it was found in spells no gh command. Such a refusal says what could not be read, not a policy about
+// GitHub posting.
+func (s githubPostSite) unreadableText() bool {
+	return s.rule == githubPostRuleUnread && s.cause == "" && !s.post && !s.mentions && (s.analysis || s.reason != "")
 }
 
 // githubPostArgv is tool_input's command or cmd as an already-split argv array.

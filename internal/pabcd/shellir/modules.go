@@ -165,7 +165,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			if errors.As(err, &u) {
 				return true, u
 			}
-			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err))
+			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err, physical))
 		}
 		// Pytest also loads ancestor conftest files and configuration. Config
 		// can name plugins whose execution set this reader cannot establish.
@@ -278,11 +278,19 @@ func pycacheEntryRefusal(p string) string {
 	return ""
 }
 
-// walkErrorWhat names what failed in a directory walk without the operating system's path, which the reason already carries.
-func walkErrorWhat(err error) string {
+// walkErrorWhat names what failed in a directory walk: the operation, the cause and the file or directory it failed on, relative to the
+// project root (physical), so the host's path is not repeated and the reader's reason says what to fix.
+func walkErrorWhat(err error, root string) string {
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
-		return pe.Op + ": " + pe.Err.Error()
+		what := pe.Op + ": " + pe.Err.Error()
+		switch {
+		case pe.Path == root:
+			what += " in ."
+		case strings.HasPrefix(pe.Path, root+"/"):
+			what += " in " + strings.TrimPrefix(pe.Path, root+"/")
+		}
+		return what
 	}
 	return "walk failed"
 }

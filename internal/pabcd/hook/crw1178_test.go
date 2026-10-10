@@ -163,3 +163,111 @@ func TestCRW1178FreeformApplyPatchIsJudged(t *testing.T) {
 		t.Errorf("a relative patch under a usable cwd must pass: %s", out)
 	}
 }
+
+// githubReaderWording is whether a GitHub guard answer is the command reader's refusal (it says what could not be read and that
+// the text names no post) and not a policy refusal about GitHub posting.
+func crw1178ReaderWording(t *testing.T, reason string) {
+	t.Helper()
+	if !strings.Contains(reason, "[crw command-reader]") || !strings.Contains(reason, "names no GitHub post") {
+		t.Errorf("not the command reader's wording: %s", reason)
+	}
+	for _, bad := range []string{"GitHub posting has not been established", "GitHub post blocked", "--body-file"} {
+		if strings.Contains(reason, bad) {
+			t.Errorf("a non-GitHub command reads as a GitHub post refusal (%q): %s", bad, reason)
+		}
+	}
+}
+
+// A path or argument that merely contains the letters gh, pr or issue is no mention of a GitHub post.
+func TestCRW1178PathSubstringsAreNoGithubPost(t *testing.T) {
+	cwd, _, _ := gateScene(t)
+	if err := os.WriteFile(filepath.Join(cwd, "hidden.pyc"), make([]byte, 32), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{
+		"python3 -m unittest tests/high_priority",
+		"python3 -m unittest tests.test_high_priority_review",
+		"python3 -m unittest discover -s thoughts -p 'test_pr_*.py'",
+	} {
+		crw1178ReaderWording(t, githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd))))
+	}
+}
+
+// A script file that cannot be read is the reader's refusal when the command names no post, with the file and the cause.
+func TestCRW1178UnreadableScriptFileIsReaderWording(t *testing.T) {
+	cwd, _, _ := gateScene(t)
+	if err := os.WriteFile(filepath.Join(cwd, "noperm.sh"), []byte("echo hi\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ cmd, file string }{
+		{"bash missing.sh", "missing.sh"},
+		{"sh ./missing.sh", "missing.sh"},
+		{"./missing.sh", "missing.sh"},
+		{"bash noperm.sh", "noperm.sh"},
+	} {
+		if os.Geteuid() == 0 && c.file == "noperm.sh" {
+			continue
+		}
+		reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, c.cmd)))
+		if reason == "" {
+			continue // a file that is absent and run by path runs nothing: allowed
+		}
+		crw1178ReaderWording(t, reason)
+		if !strings.Contains(reason, c.file) {
+			t.Errorf("%q: the reason lacks the file: %s", c.cmd, reason)
+		}
+	}
+	// The same refusal beside a spelled gh post keeps the GitHub wording.
+	reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash missing.sh; gh pr comment 1 --body-file x")))
+	if strings.Contains(reason, "names no GitHub post") {
+		t.Errorf("a command that spells a post: %s", reason)
+	}
+}
+
+// A refusal inside a script is judged by the text of that script, not by the command that runs it.
+func TestCRW1178NestedScriptMentionIsOfItsOwnText(t *testing.T) {
+	cwd, _, _ := gateScene(t)
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("post.sh", "\"$FOO\" a\ngh pr comment 1 --body-file body.md\n")
+	write("plain.sh", "\"$FOO\" a\necho done\n")
+	post := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash post.sh")))
+	if post == "" || strings.Contains(post, "names no GitHub post") {
+		t.Errorf("a script that spells a post lost the GitHub wording: %s", post)
+	}
+	plain := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash plain.sh")))
+	crw1178ReaderWording(t, plain)
+	// A script that runs a script that spells a post, from a command that does not.
+	write("outer.sh", "bash post.sh\n")
+	outer := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash outer.sh")))
+	if outer == "" || strings.Contains(outer, "names no GitHub post") {
+		t.Errorf("a nested script that spells a post lost the GitHub wording: %s", outer)
+	}
+}
+
+// An operating-system failure in the module inventory names the directory that failed, relative to the project.
+func TestCRW1178WalkErrorNamesTheDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	cwd, _, env := gateScene(t)
+	blocked := filepath.Join(cwd, "blocked_tests")
+	if err := os.Mkdir(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+	cmd := "python3 -m unittest"
+	mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+	gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+	for _, r := range []string{mem, gh} {
+		if !strings.Contains(r, "blocked_tests") || strings.Contains(r, cwd) {
+			t.Errorf("the reason must name the directory relative to the project: %s", r)
+		}
+	}
+}

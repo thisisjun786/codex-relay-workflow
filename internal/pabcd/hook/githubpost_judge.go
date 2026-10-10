@@ -50,18 +50,14 @@ func HandleGitHubPostGuard(raw string) string {
 	cwd = shellirPayloadCwd(cwd)
 	var site githubPostSite
 	var denied bool
-	var spelled string
 	if words, ok := githubPostArgv(input); ok {
 		site, denied = githubPostJudgeArgv(words, cwd)
-		spelled = strings.Join(words, " ")
 	} else if command, ok := githubPostCommand(input); ok && text.Trim(command) != "" {
 		site, denied = githubPostJudgeText(command, cwd)
-		spelled = command
 	}
 	if !denied {
 		return ""
 	}
-	site.mentions = githubPostInlineNamesPost(spelled)
 	return githubPostDenyPayload(site, p)
 }
 
@@ -84,6 +80,16 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 // happen before the script's own commands. cdpath is whether CDPATH may be set where the script runs (shellir.Exec.Cdpath): the body
 // is read with it set, so a cd to a bare name in it is not a directory the guard knows.
 func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
+	site, denied := githubPostJudgeTextOnly(command, cwd, depth, outer, cdpath)
+	if denied && !site.judged {
+		// Whether a refusal is about a GitHub post is a fact of the text it was found in: the innermost text that refuses sets it,
+		// and the text that runs that text does not overwrite it.
+		site.judged, site.mentions = true, githubPostSpellsPost(command)
+	}
+	return site, denied
+}
+
+func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
 	res, err := shellir.AnalyzeScript(command, cwd, cdpath)
 	if err != nil {
 		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: unreadableCause(err), analysis: true}, true
@@ -140,7 +146,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		failLine = e.Line
 		if e.Kind == shellir.KindScriptFile {
 			if textWrites().stale(i, e.Script.Value, e.Dir) {
-				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: githubPostScriptReason("script file is written before it runs", e.Script.Value)}, true
 			}
 			if site, denied := githubPostJudgeScript(e, depth, writes().as(githubPostBodyKey(e.Script.Value, e.Dir))); denied {
 				return site, true
@@ -157,7 +163,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		direct := githubPostDirectPath(e)
 		// A file run by path (./gh among them) that the text, or a script body it runs before, writes is not the file read here.
 		if direct && githubPostDirectStale(textWrites(), i, e) {
-			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: githubPostScriptReason("script file is written before it runs", e.Program.Value)}, true
 		}
 		if direct && githubPostProgram(e.Name) != "gh" {
 			if site, denied := githubPostJudgeDirect(e, depth, writes().as(githubPostBodyKey(e.Program.Value, e.Dir))); denied {
@@ -430,7 +436,12 @@ func githubPostPlainContext(c shellir.Context) bool {
 // githubPostJudgeScript reads the file a shell or a sed or awk program runs and judges its text.
 func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
 	unread := githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}
-	if depth >= githubPostMaxScriptDepth || !e.Script.Known {
+	if depth >= githubPostMaxScriptDepth {
+		unread.reason = "scripts run scripts too deeply"
+		return unread, true
+	}
+	if !e.Script.Known {
+		unread.reason = "script file name is not known"
 		return unread, true
 	}
 	base := e.Dir.Path
@@ -441,6 +452,7 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 	}
 	body, ok := githubPostReadScript(e.Script.Value, base)
 	if !ok {
+		unread.reason = githubPostScriptReason("script file cannot be read", e.Script.Value)
 		return unread, true
 	}
 	switch e.Name {
@@ -480,6 +492,16 @@ func githubPostInlineNamesPost(src string) bool {
 		}
 	}
 	return false
+}
+
+var githubPostWordRe = regexp.MustCompile(`(?:^|[^a-z0-9_.-])gh(?:$|[^a-z0-9_-])`)
+
+// githubPostSpellsPost is whether a text spells a gh command, for the wording of a refusal only (never a decision): the word gh
+// as the shell reads words, quotes and backslashes deleted first, so g""h is gh, but gh inside a path or a name (high_priority,
+// tests/ghost) is not. The decision a text gets is made by the rules above; this says only whether the refusal is about a post.
+func githubPostSpellsPost(src string) bool {
+	lower := strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(src))
+	return githubPostWordRe.MatchString(lower)
 }
 
 // githubPostReadScript reads a script file of at most 1 MiB; a path that is not a regular file is refused.
@@ -623,7 +645,12 @@ func githubPostScriptKnown(name string, dir shellir.Dir) bool {
 // rule).
 func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
 	unread := githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}
-	if depth >= githubPostMaxScriptDepth || !githubPostScriptKnown(e.Program.Value, e.Dir) {
+	if depth >= githubPostMaxScriptDepth {
+		unread.reason = "scripts run scripts too deeply"
+		return unread, true
+	}
+	if !githubPostScriptKnown(e.Program.Value, e.Dir) {
+		unread.reason = githubPostScriptReason("script file is in a directory that is not known", e.Program.Value)
 		return unread, true
 	}
 	cwd := e.Dir.Path
@@ -633,6 +660,7 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 	body, kind := githubPostReadDirect(e.Program.Value, cwd)
 	switch kind {
 	case githubPostFileUnreadable:
+		unread.reason = githubPostScriptReason("script file cannot be read", e.Program.Value)
 		return unread, true
 	case githubPostFileBinary, githubPostFileAbsent:
 		return githubPostSite{}, false
@@ -643,6 +671,12 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 		return unread, true
 	}
 	return githubPostSite{}, false
+}
+
+// githubPostScriptReason is the reader's reason for a script file it cannot read: what failed and the file's name as the command
+// spells it, bounded.
+func githubPostScriptReason(what, name string) string {
+	return unreadableLabel(what + " (" + name + ")")
 }
 
 // githubPostFileKind is what a file run by path holds.

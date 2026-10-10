@@ -125,3 +125,24 @@ func TestCRW1178CacheNeedsRegularSource(t *testing.T) {
 		t.Error("a cache beside a directory named calc.py was allowed")
 	}
 }
+
+// An operating-system failure in the walk names the file or directory that failed, relative to the project, not the host path.
+func TestCRW1178WalkErrorNamesThePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	cwd := crw1178Project(t, nil)
+	blocked := filepath.Join(cwd, "sub", "blocked_tests")
+	if err := os.MkdirAll(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o700) })
+	_, err := Analyze("python3 -m unittest", cwd)
+	var u *Unreadable
+	if !errors.As(err, &u) || !strings.Contains(u.Reason, "sub/blocked_tests") || strings.Contains(u.Reason, cwd) {
+		t.Errorf("reason: %v", err)
+	}
+}
