@@ -23,6 +23,7 @@ import (
 // docs/port-cxc/known-defects.md:
 //   - the project layer is dropped (decision 7), so the trust warning is empty: trustPrefix is applied, but nothing sets it;
 //   - the oracle's :1030-1046 branches for an empty guard are ported in spawnHookRoutePrompt, but the guard is never empty;
+//   - a managed spawn whose tool_input nests too deep to be answered is denied before it is issued (CRW-1122);
 //   - a tool_input nested past 4,463 levels prints nothing, where the oracle's JSON.stringify fails past 4,462 levels of junk inside
 //     tool_input at Node 24's default stack, measured by the spawn recorder (the threshold depends on the stack size, the platform
 //     and the depth of the caller, CRW-749); the payload is still read at any depth, as JSON.parse reads it, so a subagent's
@@ -40,9 +41,13 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if len(raw) > spawnHookRouteMaxInput {
 		return DenyEnvelope(spawnHookOversizedInputReason)
 	}
+	commit := &spawnHookCommit{}
 	defer func() {
 		if recover() != nil {
 			out = ""
+			if commit.issued {
+				out = DenyEnvelope(spawnHookReconcileReason)
+			}
 		}
 	}()
 	payload, ok := spawnHookRouteLoad(raw)
@@ -53,6 +58,7 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if stop {
 		return deny
 	}
+	a.commit = commit
 	return spawnHookRoute(a, env)
 }
 
@@ -303,6 +309,12 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		return DenyEnvelope(reason)
 	}
 	if tooDeep {
+		if a.managed != nil {
+			// A managed spawn must run with the candidate the attempt was claimed for and be recorded as issued; an answer that
+			// cannot be written would let the host run the caller's input instead, so it is denied before anything is issued
+			// (CRW-1122; the oracle issued and then printed nothing).
+			return DenyEnvelope("managed dispatch: " + spawnHookDeepReason)
+		}
 		return "" // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
 	}
 	routed, err := role.ReadSettingsSnapshot(env).Role(a.role)
@@ -336,11 +348,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		updated = updated.Set("reasoning_effort", effort)
 	}
 	if a.managed != nil {
-		// Issue the managed spawn (:1094-1097): a failure is the deny envelope. The candidate's model and effort then replace
-		// whatever the caller sent, a null candidate field deleting the key.
-		if _, err := role.IssueManagedSpawnEnv(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID, env); err != nil {
-			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
-		}
+		// The candidate's model and effort replace whatever the caller sent, a null candidate field deleting the key (:1098-1101).
 		if a.managed.Candidate.Model == nil {
 			updated = spawnHookWithout(updated, "model")
 		} else {
@@ -356,7 +364,33 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if context != "" {
 		output = append(output, pyjson.Field{Key: "additionalContext", Value: context})
 	}
-	return spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}}) + "\n"
+	answer := spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}}) + "\n"
+	if a.managed != nil {
+		// Issue the managed spawn last (:1094-1097), once every refusal has been checked and the answer is written, so nothing is
+		// issued for a spawn the hook then cannot answer (CRW-1122). A failure is the deny envelope; after the issuance the answer
+		// is only returned, and a failure there is an unknown outcome to reconcile (RunSpawnAttachHook).
+		if _, err := role.IssueManagedSpawnEnv(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID, env); err != nil {
+			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
+		}
+		if a.commit != nil {
+			a.commit.issued = true
+		}
+	}
+	return answer
+}
+
+// spawnHookDeepReason is why a managed spawn nested too deep is refused, with what the caller does about it.
+var spawnHookDeepReason = "the spawn's tool_input nests deeper than " + strconv.Itoa(spawnHookRouteMaxDepth) +
+	" levels, so the managed candidate cannot be applied; remove the deeply nested fields and spawn again"
+
+// spawnHookReconcileReason answers a spawn whose managed attempt was issued when the hook then failed to give its answer: the
+// attempt is recorded as issued to this native call, so it is neither retried nor spawned again here.
+const spawnHookReconcileReason = "managed dispatch: the attempt was issued but the hook could not answer; inspect the dispatch status and reconcile before retry"
+
+// spawnHookCommit is what a hook run has committed, shared by RunSpawnAttachHook and the route so a failure after a commit is
+// answered as an unknown outcome and never as an allow of the caller's own input.
+type spawnHookCommit struct {
+	issued bool
 }
 
 // spawnHookRouteSettings is :999-1016: the trimmed promptOverride, which no fork restricts, and the model and effort to inject, which

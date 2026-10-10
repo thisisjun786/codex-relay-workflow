@@ -52,6 +52,7 @@ type spawnHookAssembly struct {
 	dispatchSource     string                      // dispatchSource: the source line that resolved (:893)
 	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
 	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
+	commit             *spawnHookCommit            // what this run has committed; set by RunSpawnAttachHook, nil in a direct call
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
