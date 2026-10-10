@@ -222,16 +222,14 @@ func indexRankNormalized(t *testing.T, r ChatSearchResult, home string) map[stri
 	}
 	return out
 }
-func indexRankCompare(t *testing.T, got, want any) { indexRankCompareDump(t, "", got, want) }
 
-func indexRankCompareDump(t *testing.T, key string, got, want any) {
+// indexRankCompare compares a normalized result with the recorded one; key names the case for a regenerated port-fixed file.
+func indexRankCompare(t *testing.T, key string, got, want any) {
 	t.Helper()
 	g, w := got.(map[string]any), want.(map[string]any)
 	gh, wh := g["hits"].([]any), w["hits"].([]any)
 	if len(gh) != len(wh) {
-		if key != "" {
-			portFixedDump("indexsearch", key, map[string]any{"out": got})
-		}
+		portFixedDump("indexsearch", key, map[string]any{"out": got})
 		t.Fatalf("hit count %d != %d", len(gh), len(wh))
 	}
 	for i := range gh {
@@ -245,9 +243,7 @@ func indexRankCompareDump(t *testing.T, key string, got, want any) {
 		}
 	}
 	if !reflect.DeepEqual(g, w) {
-		if key != "" {
-			portFixedDump("indexsearch", key, map[string]any{"out": g})
-		}
+		portFixedDump("indexsearch", key, map[string]any{"out": g})
 		t.Fatalf("Node oracle differs\ngot: %v\nwant: %v", g, w)
 	}
 }
@@ -330,7 +326,7 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 					c.Out.(map[string]any)["hits"].([]any)[hit].(map[string]any)["score"] = score
 				}
 				normalized := indexRankNormalized(t, r, home)
-				indexRankCompareDump(t, key, normalized, c.Out)
+				indexRankCompare(t, key, normalized, c.Out)
 			})
 		}
 	}
