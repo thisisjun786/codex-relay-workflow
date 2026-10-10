@@ -169,14 +169,31 @@ func spawnGrantCheck(obj map[string]any, message, tmpRoot string, uid int, now t
 	if spawnGrantUnexpired(dir, spawnGrantFile(nonce), now) {
 		return c, true
 	}
+	spawnGrantBeforeCleanup()
 	// A grant that can never be used (expired, or not the minted shape) is spent as the oracle spends it, by a rename to a claimed
-	// name and a removal, so it does not stay behind; a failed rename means there was nothing to spend.
-	claimed := spawnGrantFile(nonce) + ".claimed-" + c.tag
-	if dir.Rename(spawnGrantFile(nonce), claimed) == nil {
-		_ = dir.Remove(claimed)
+	// name and a removal, so it does not stay behind. The file is judged again after it is taken: a name that was empty when it was
+	// judged is a grant another call holds, and a valid one that came back since (that call released it) is given back under its name
+	// and answers this call as well, never removed (CRW-1118).
+	if _, err := dir.Lstat(spawnGrantFile(nonce)); err != nil {
+		return nil, false // nothing is there to spend
 	}
+	claimed := spawnGrantFile(nonce) + ".claimed-" + c.tag
+	if dir.Rename(spawnGrantFile(nonce), claimed) != nil {
+		return nil, false
+	}
+	if spawnGrantUnexpired(dir, claimed, now) {
+		if dir.Rename(claimed, spawnGrantFile(nonce)) != nil {
+			_ = dir.Remove(claimed)
+			return nil, false
+		}
+		return c, true
+	}
+	_ = dir.Remove(claimed)
 	return nil, false
 }
+
+// spawnGrantBeforeCleanup runs between the judgement that a grant cannot be used and the clean-up of the file; a test acts there.
+var spawnGrantBeforeCleanup = func() {}
 
 // spawnGrantReadInput reads the input a reservation was made for.
 func spawnGrantReadInput(dir *os.Root, name string) (string, bool) {
