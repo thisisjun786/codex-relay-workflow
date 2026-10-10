@@ -98,7 +98,11 @@ func pumpSignalDagReviewRead(ctx context.Context, e *Env, cfg *Config) (Review, 
 var pumpSignalCapacity = pumpSignalCapacityRead
 
 // pumpSignalCapacityRead is the real read: a dry read is Capacity(dry=true); otherwise the pure
-// evaluation, whose Commit the pump calls once the alert events are durable.
+// evaluation, whose Commit the pump calls once the alert events are durable. The pump settles its
+// alert records and drops its lifecycle proposals on what the evaluation read, so that state is
+// made durable first (capacityStateDurable): a commit renamed into place whose directory sync failed
+// is not taken for made while a power loss can still take it back. A sync that fails is a failed
+// read, which the source reports unmeasured.
 func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, func() error, error) {
 	if dry {
 		report, err := Capacity(ctx, e, cfg, true)
@@ -106,6 +110,9 @@ func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) 
 	}
 	ev, err := capacityEvaluate(ctx, e, cfg)
 	if err != nil {
+		return CapacityReport{}, nil, err
+	}
+	if err := capacityStateDurable(ev.statePath); err != nil {
 		return CapacityReport{}, nil, err
 	}
 	return ev.Report, ev.Commit, nil
@@ -557,10 +564,10 @@ func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 // against every write of the file (capacityCommitState), the alert's identity only against the
 // plan's own lifecycle and alert epoch. A lifecycle is a random name drawn when the plan's entry is
 // made, never derived from a stamp of the file; for an entry the state does not hold yet the pump
-// keeps the name it proposed (pumpSignalCapacityProposals) so the retry stores the same one. A
-// plan registered again or a state file lost or written again without the plan therefore starts a
-// new lifecycle. Any other alert takes an epoch above the record's, so the epoch of a plan's events
-// only grows.
+// keeps the name it proposed (pumpSignalCapacityProposals) so the retry stores the same one while
+// the proposal holds. A plan registered again or a state file lost or written again without the
+// plan therefore starts a new lifecycle. Any other alert takes an epoch above the record's, so the
+// epoch of a plan's events only grows.
 type pumpSignalCapacityRecord struct {
 	Base      int    `json:"base"`
 	Lifecycle string `json:"lifecycle"`
@@ -609,15 +616,18 @@ func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan) (int, pumpSignalC
 //
 // A plan the state holds no lifecycle for (it does not hold the plan, or holds an entry written
 // before entries carried one) gets a new random lifecycle from its evaluation. The pump writes that
-// name to its own state, in the same save as the pending events and so before the commit that
-// would store it, and proposes it to every later evaluation while the state still lacks it in the
-// same way: a commit refused (another writer saved in between without the plan's lifecycle) or
-// never made (a crash, a failed save) is retried under the same lifecycle, and the alert it carries
-// converges on its pending id. The proposal is dropped once the state holds a lifecycle for the plan
-// (the commit succeeded, or a later read finds one) and when the plan leaves the settings; an
-// entry that was held and is now gone does not take it (capacityLifecycleProposal). A state file
-// that is lost or written again without the plan after its commit therefore gives the plan a fresh
-// lifecycle and a later alert a new id.
+// name, with the generation of the state it was given on, to its own state, in the same save as the
+// pending events and so before the commit that would store it, and proposes it to every later
+// evaluation, which takes it only while it holds (capacityLifecycleProposal.holds): on the same
+// generation, or on a later write of it that neither lost the file nor made and removed the plan's
+// entry. A commit refused (another writer saved in between without touching the plan's entry) or
+// never made (a crash, a failed save) is therefore retried under the same lifecycle, and the alert
+// it carries converges on its pending id; once the plan's entry was made and removed, or the state
+// file lost or written again from nothing, the proposal no longer holds, the evaluation draws a fresh
+// lifecycle and the alert takes a new id instead of being absorbed into one already sent. The
+// proposal is dropped once the state holds a lifecycle for the plan (the commit succeeded, or a
+// later read finds one) and when the plan leaves the settings; each measured read writes it again
+// with the generation it was taken on.
 func pumpSignalCapacityProposals(st *pumpState) map[string]capacityLifecycleProposal {
 	proposed := map[string]capacityLifecycleProposal{}
 	for key, value := range st.Cursors {

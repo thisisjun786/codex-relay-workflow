@@ -97,14 +97,47 @@ type CapacityPlan struct {
 }
 
 // capacityLifecycleProposal is a lifecycle given to a plan's entry that the state read held none
-// for, and whether that entry was held at all: Held is an entry written before entries carried a
-// lifecycle, not Held a plan the state does not hold. A caller proposes it back to a later
-// evaluation (capacityWithLifecycles), which takes it only for the same case: an entry still held
-// without a lifecycle, or a plan still absent. A plan whose entry was held and is now gone lost its
-// state, and takes a fresh lifecycle.
+// for, whether that entry was held at all (Held is an entry written before entries carried a
+// lifecycle, not Held a plan the state does not hold), and the generation of the state it was given
+// on: the stamp, the lineage and the version (capacityLoadState, capacityState). A caller proposes
+// it back to a later evaluation (capacityWithLifecycles), which takes it only while it holds.
 type capacityLifecycleProposal struct {
 	Lifecycle string `json:"lifecycle"`
 	Held      bool   `json:"held"`
+	Stamp     string `json:"stamp"`
+	Lineage   string `json:"lineage,omitempty"`
+	Version   int    `json:"version,omitempty"`
+}
+
+// holds reports whether the proposal still names plan's entry on state, read with stamp, where held
+// says whether the state holds an entry for plan. It holds only for the same case (an entry still
+// held without a lifecycle, or a plan still absent) on the generation it was given on, or on a later
+// write of that generation's lineage that neither lost the file nor removed the plan's entry: the
+// same lineage (or, for a proposal given on a file without one, the lineage that started over that
+// very file), a version no older and no removal of the entry since. An entry made since carries a
+// lifecycle and takes no proposal, and one made and removed since left its removal. A proposal given
+// on no file names no generation, since a file made and lost again leaves nothing to tell it by, and
+// never holds. What does not hold draws a fresh lifecycle: at worst the alert it carries is sent
+// again under a new id, never absorbed into one already sent.
+func (p capacityLifecycleProposal) holds(plan string, held bool, state capacityState, stamp string) bool {
+	if p.Lifecycle == "" || p.Held != held {
+		return false
+	}
+	switch p.Stamp {
+	case "", capacityStampAbsent, capacityStampUnreadable:
+		return false
+	case stamp:
+		return true
+	}
+	switch {
+	case state.Lineage == "":
+		return false
+	case p.Lineage != "" && state.Lineage != p.Lineage:
+		return false
+	case p.Lineage == "" && state.Origin != p.Stamp:
+		return false
+	}
+	return state.Version >= p.Version && state.Removed[plan] <= p.Version
 }
 
 // MarshalJSON keeps a plan's three answers about its branches apart in the document: the key is
@@ -179,6 +212,17 @@ type capacityState struct {
 	// generations apart.
 	Version  int    `json:"version"`
 	Revision string `json:"revision,omitempty"`
+	// Lineage names the succession of writes the file holds: a random name drawn by the write that
+	// makes the file from nothing (no file, one that cannot be decoded, or one written before files
+	// carried a lineage) and carried by every later write, so a file that is lost or written again
+	// from nothing starts another. Origin is the stamp of the file that first write replaced. Removed
+	// holds, for each plan whose entry a write of the lineage removed, the version of that write; a
+	// write that makes the entry again drops it. A lifecycle proposal is told by them whether the
+	// plan's entry was made or removed, or the file lost, since it was given
+	// (capacityLifecycleProposal.holds).
+	Lineage string         `json:"lineage,omitempty"`
+	Origin  string         `json:"origin,omitempty"`
+	Removed map[string]int `json:"removed,omitempty"`
 }
 
 // errCapacityStateMoved is a commit refused because the state file changed after the evaluation
@@ -340,9 +384,10 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		if entry := next.Plans[ref.Plan]; entry.Lifecycle == "" {
 			_, held := previous.Plans[ref.Plan]
-			entry.Lifecycle = capacityProposedLifecycle(ctx, ref.Plan, held)
+			entry.Lifecycle = capacityProposedLifecycle(ctx, ref.Plan, held, previous, stamp)
 			next.Plans[ref.Plan] = entry
-			plan.proposal = &capacityLifecycleProposal{Lifecycle: entry.Lifecycle, Held: held}
+			plan.proposal = &capacityLifecycleProposal{Lifecycle: entry.Lifecycle, Held: held,
+				Stamp: stamp, Lineage: previous.Lineage, Version: previous.Version}
 		}
 		plan.lifecycle, plan.committedEpoch = next.Plans[ref.Plan].Lifecycle, previous.Plans[ref.Plan].AlertEpoch
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
@@ -432,7 +477,8 @@ func capacityReadState(path string) capacityState {
 
 // capacityLoadState reads the state and the stamp of the file's generation: "absent" for no file,
 // the version and the revision for a state, a digest of the content for a file that cannot be
-// decoded (an evaluation that read it may replace it, any other may not), and a stamp no commit
+// decoded (an evaluation that read it may replace it, any other may not) and for one written before
+// files carried a revision (whose version does not move with its writes), and a stamp no commit
 // matches for a file that cannot be read. An absent or undecodable file reads as the empty state.
 func capacityLoadState(path string) (capacityState, string) {
 	state := capacityState{Plans: map[string]capacityPlanState{}}
@@ -443,10 +489,13 @@ func capacityLoadState(path string) (capacityState, string) {
 	if err != nil {
 		return state, capacityStampUnreadable
 	}
+	sum := sha256.Sum256(data)
 	var stored capacityState
 	if err := json.Unmarshal(data, &stored); err != nil || stored.Plans == nil {
-		sum := sha256.Sum256(data)
 		return state, "undecodable:" + hex.EncodeToString(sum[:])
+	}
+	if stored.Revision == "" {
+		return stored, "content:" + hex.EncodeToString(sum[:])
 	}
 	return stored, fmt.Sprintf("%d/%s", stored.Version, stored.Revision)
 }
@@ -463,17 +512,18 @@ type capacityLifecyclesKey struct{}
 // capacityWithLifecycles proposes, for each plan it names, the lifecycle an evaluation gives that
 // plan's entry when the state it reads holds none. The pump proposes the name its durable pending
 // record already carries, so a commit that was refused or never made is retried under the same
-// lifecycle; a state that holds the plan's lifecycle keeps it and ignores the proposal.
+// lifecycle while the proposal holds (capacityLifecycleProposal.holds); a state that holds the
+// plan's lifecycle keeps it and ignores the proposal.
 func capacityWithLifecycles(ctx context.Context, proposed map[string]capacityLifecycleProposal) context.Context {
 	return context.WithValue(ctx, capacityLifecyclesKey{}, proposed)
 }
 
-// capacityProposedLifecycle is the lifecycle an entry of plan without one takes: the one proposed
-// on ctx for the same case (held tells an entry held without a lifecycle from an absent plan), else
-// a random name drawn now.
-func capacityProposedLifecycle(ctx context.Context, plan string, held bool) string {
+// capacityProposedLifecycle is the lifecycle an entry of plan without one takes on state, read with
+// stamp: the one proposed on ctx while it holds (held tells an entry held without a lifecycle from
+// an absent plan), else a random name drawn now.
+func capacityProposedLifecycle(ctx context.Context, plan string, held bool, state capacityState, stamp string) string {
 	if proposed, ok := ctx.Value(capacityLifecyclesKey{}).(map[string]capacityLifecycleProposal); ok {
-		if p := proposed[plan]; p.Lifecycle != "" && p.Held == held {
+		if p := proposed[plan]; p.holds(plan, held, state, stamp) {
 			return p.Lifecycle
 		}
 	}
@@ -482,7 +532,8 @@ func capacityProposedLifecycle(ctx context.Context, plan string, held bool) stri
 
 // capacityCommitState writes next as the generation after base, under an exclusive lock on the
 // state's lock file, and refuses when the file is no longer the generation base names or cannot be
-// read. The lock is waited for at most capacityLockWait.
+// read. The lock is waited for at most capacityLockWait. The write carries the file's lineage on,
+// or starts one over a file without (capacityState), and records the plans whose entries it removes.
 func capacityCommitState(path string, base string, next capacityState) error {
 	if err := os.MkdirAll(rootDir(path), 0o755); err != nil {
 		return err
@@ -505,7 +556,39 @@ func capacityCommitState(path string, base string, next capacityState) error {
 		return err
 	}
 	next.Version, next.Revision = current.Version+1, hex.EncodeToString(token)
+	removed := map[string]int{}
+	next.Lineage, next.Origin = current.Lineage, current.Origin
+	if current.Lineage == "" {
+		next.Lineage, next.Origin = rand.Text(), stamp
+	} else {
+		for name, version := range current.Removed {
+			removed[name] = version
+		}
+	}
+	for name := range current.Plans {
+		if _, kept := next.Plans[name]; !kept {
+			removed[name] = next.Version
+		}
+	}
+	for name := range next.Plans {
+		delete(removed, name)
+	}
+	next.Removed = nil
+	if len(removed) > 0 {
+		next.Removed = removed
+	}
 	return capacityWriteState(path, next)
+}
+
+// capacityStateDurable makes the capacity state at path durable as it now reads, by syncing its
+// directory: a write that renamed a state into place but whose directory sync failed can otherwise
+// still be taken back by a power loss, after a caller built on it as made. No directory holds no
+// state to make durable.
+func capacityStateDurable(path string) error {
+	if err := capacityStateIO.syncDir(rootDir(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("capacity: sync the state directory: %w", err)
+	}
+	return nil
 }
 
 // capacityLock takes the exclusive lock on fd without blocking, trying again until wait has passed;

@@ -294,7 +294,7 @@ func TestPumpSignalDagHangingDoctorDoesNotHoldUpTheRound(t *testing.T) {
 	pumpSignalDagReview = pumpSignalDagReviewRead
 	t.Cleanup(func() { pumpSignalDagReview = quiet })
 	helper := filepath.Join(t.TempDir(), "crw")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\nsleep 12 &\nwait\n"), 0o700); err != nil {
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nsleep 60 &\nwait\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	f.e.Executable = helper
@@ -318,7 +318,9 @@ func TestPumpSignalDagHangingDoctorDoesNotHoldUpTheRound(t *testing.T) {
 		if err != nil {
 			t.Fatalf("round: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	// The round takes about a second (the 200 ms budget and the helper's one-second wait delay); the
+	// margin up to the doctor's minute is for a loaded host, whose fsyncs alone can take seconds.
+	case <-time.After(30 * time.Second):
 		cancel()
 		<-done
 		t.Fatalf("the round was held %v by a doctor that never answers", time.Since(start))
