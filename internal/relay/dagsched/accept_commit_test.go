@@ -57,7 +57,7 @@ func (k *commitAcceptKit) report(plan, node string) accepted {
 func (k *commitAcceptKit) record(tree, result string, extra map[string]any) string {
 	k.t.Helper()
 	record := VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: k.base, HeadCommit: k.head, TreeHash: tree,
-		CiDigest: "", Tools: map[string]string{"go": "go1.27.1"}, Pins: map[string]string{}, GoFlags: "", GoEnv: "",
+		CiDigest: "", Tools: map[string]string{}, Pins: map[string]string{}, GoFlags: "", GoEnv: "",
 		PinMismatch: []string{}, Dependencies: map[string]string{"go.sum": "", "web/package-lock.json": ""}, OS: runtime.GOOS, Arch: runtime.GOARCH,
 		Result: result, Jobs: []json.RawMessage{}}
 	if pins, ok := extra["pinMismatch"].([]string); ok {
@@ -70,7 +70,8 @@ func (k *commitAcceptKit) record(tree, result string, extra map[string]any) stri
 	if err != nil {
 		k.t.Fatal(err)
 	}
-	record.CiDigest, record.Dependencies = keys.CiDigest, keys.Dependencies
+	// a record carries the pins its commit declares, and the tools at those versions (CRW-1026)
+	record.CiDigest, record.Dependencies, record.Tools, record.Pins = keys.CiDigest, keys.Dependencies, copyPins(keys.Pins), copyPins(keys.Pins)
 	raw, err := SealVerificationRecord(record)
 	if err != nil {
 		k.t.Fatal(err)

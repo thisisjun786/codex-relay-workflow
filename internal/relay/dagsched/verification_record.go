@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -45,10 +46,10 @@ var verificationDependencyFiles = []string{"go.sum", "web/package-lock.json"}
 // verificationCIFile is the workflow file whose digest the record carries.
 const verificationCIFile = ".github/workflows/ci.yml"
 
-// verificationRequired are the members a reusable record must carry. runner, pins, jobs and headCommit are
-// not in the list: the reuse keys do not decide on them (headCommit deliberately, since the same tree under
-// another commit is the same verification).
-var verificationRequired = []string{"schema", "repository", "baseCommit", "treeHash", "ciDigest", "tools", "goFlags", "goEnv",
+// verificationRequired are the members a reusable record must carry. runner, jobs and headCommit are not in the
+// list: the reuse keys do not decide on them (headCommit deliberately, since the same tree under another commit is
+// the same verification). pins is in the list since CRW-1026: a record without them says nothing about its toolchain.
+var verificationRequired = []string{"schema", "repository", "baseCommit", "treeHash", "ciDigest", "tools", "pins", "goFlags", "goEnv",
 	"pinMismatch", "dependencies", "os", "arch", "result", "digest"}
 
 // VerificationKeys are what a reusable record must agree with: the tree it names, the base the range covers, the
@@ -59,6 +60,9 @@ type VerificationKeys struct {
 	CiDigest     string
 	Dependencies map[string]string
 	OS, Arch     string
+	// Pins are the tool versions the verified commit declares (DeclaredToolPins): the required pin set of a record.
+	// CommitVerificationKeys reads them from the commit; they are never read from the local PATH.
+	Pins map[string]string
 }
 
 // DecodeVerificationRecord reads the document and refuses what is not a verification-record/1: a document that
@@ -156,11 +160,8 @@ func JudgeVerificationRecord(raw []byte, want VerificationKeys) (VerificationRec
 	if len(record.PinMismatch) > 0 {
 		return record, refuse(contract.RefusalDispositionConflict, "the verification record carries a tool pin mismatch (%s), so it is not reusable", strings.Join(record.PinMismatch, ", "))
 	}
-	// a tool that differs from its own pin makes the record internally inconsistent (CRW-965, parent decision D1 refined)
-	for name, pinned := range record.Pins {
-		if tool, ok := record.Tools[name]; !ok || tool != pinned {
-			return record, refuse(contract.RefusalDispositionConflict, "the verification record's tool %s is %q but its pin is %q: the record is not reusable", name, tool, pinned)
-		}
+	if err := judgeRecordPins(record, members, want); err != nil {
+		return record, err
 	}
 	if !strings.EqualFold(record.TreeHash, want.Tree) {
 		return record, refuse(contract.RefusalRevisionMismatch, "the verification record names tree %s and the tree judged is %s", record.TreeHash, want.Tree)
@@ -182,8 +183,68 @@ func JudgeVerificationRecord(raw []byte, want VerificationKeys) (VerificationRec
 	return record, nil
 }
 
+// judgeRecordPins decides the record's pins (CRW-1026, d1). The record must carry the pins member (not null), every tool it
+// pins must equal its own pin (CRW-965, parent decision D1 refined), and every
+// tool the verified commit declares must be pinned and carried by the record at exactly the version the commit declares.
+// The declaration is the commit's (go.mod, secrets.sh, ci.yml); the PATH of this host is never consulted. A missing pin is
+// disposition_conflict and names the tool.
+func judgeRecordPins(record VerificationRecord, members map[string]json.RawMessage, want VerificationKeys) error {
+	if bytes.Equal(bytes.TrimSpace(members["pins"]), []byte("null")) {
+		return refuse(contract.RefusalDispositionConflict, "the verification record's pins member is null: a record without the pins of its toolchain is not reusable")
+	}
+	// a tool that differs from its own pin makes the record internally inconsistent
+	for _, name := range pinNames(record.Pins) {
+		pinned := record.Pins[name]
+		if tool, ok := record.Tools[name]; !ok || tool != pinned {
+			return refuse(contract.RefusalDispositionConflict, "the verification record's tool %s is %q but its pin is %q: the record is not reusable", name, tool, pinned)
+		}
+	}
+	if want.Pins == nil {
+		return refuse(contract.RefusalDispositionConflict, "the pins the verified commit declares were not read, so the verification record's pins cannot be judged")
+	}
+	for _, name := range pinNames(want.Pins) {
+		declared := want.Pins[name]
+		pin, pinned := record.Pins[name]
+		if !pinned {
+			return refuse(contract.RefusalDispositionConflict, "the verification record has no pin for %s, which the verified commit declares as %q: the record is not reusable", name, declared)
+		}
+		if pin != declared {
+			return refuse(contract.RefusalDispositionConflict, "the verification record pins %s at %q but the verified commit declares %q: the record is not reusable", name, pin, declared)
+		}
+		tool, ok := record.Tools[name]
+		if !ok {
+			return refuse(contract.RefusalDispositionConflict, "the verification record has no tool value for %s, which the verified commit declares as %q: the record is not reusable", name, declared)
+		}
+		if tool != declared {
+			return refuse(contract.RefusalDispositionConflict, "the verification record's tool %s is %q but the verified commit declares %q: the record is not reusable", name, tool, declared)
+		}
+	}
+	return nil
+}
+
+// pinNames are the tool names of a pin set in the order CRW-964's writer lists them (go, node, gitleaks, staticcheck), any
+// other name after them, sorted, so a refusal names the same tool for the same record.
+func pinNames(pins map[string]string) []string {
+	known := []string{"go", "node", "gitleaks", "staticcheck"}
+	var names []string
+	for _, name := range known {
+		if _, ok := pins[name]; ok {
+			names = append(names, name)
+		}
+	}
+	var rest []string
+	for name := range pins {
+		if !slices.Contains(known, name) {
+			rest = append(rest, name)
+		}
+	}
+	slices.Sort(rest)
+	return append(names, rest...)
+}
+
 // CommitVerificationKeys reads, in a local checkout, what a record must agree with for one commit: its tree, the
-// digest of its ci.yml, and the digests of its dependency files. A file the commit does not have digests to "".
+// digest of its ci.yml, the digests of its dependency files and the tool pins it declares. A file the commit does not
+// have digests to "".
 func CommitVerificationKeys(ctx context.Context, checkout, commit string) (VerificationKeys, error) {
 	var keys VerificationKeys
 	tree, err := runGit(ctx, checkout, nil, "rev-parse", commit+"^{tree}")
@@ -203,22 +264,35 @@ func CommitVerificationKeys(ctx context.Context, checkout, commit string) (Verif
 		}
 		keys.Dependencies[file] = digest
 	}
+	keys.Pins, err = DeclaredToolPins(func(path string) ([]byte, bool, error) { return commitFileBody(ctx, checkout, commit, path) })
+	if err != nil {
+		return keys, err
+	}
 	return keys, nil
+}
+
+// commitFileBody is a file as a commit has it, and whether the commit has it at all.
+func commitFileBody(ctx context.Context, checkout, commit, file string) ([]byte, bool, error) {
+	code, _, err := runGitExit(ctx, checkout, nil, "cat-file", "-e", commit+":"+file)
+	if err != nil && code < 0 {
+		return nil, false, refuse(contract.RefusalMergeTargetUnreadable, "git could not read %s of %s: %v", file, commit, err)
+	}
+	if code != 0 {
+		return nil, false, nil
+	}
+	body, err := runGit(ctx, checkout, nil, "show", commit+":"+file)
+	if err != nil {
+		return nil, false, refuse(contract.RefusalMergeTargetUnreadable, "git could not read %s of %s: %v", file, commit, err)
+	}
+	return []byte(body), true, nil
 }
 
 // commitFileDigest is sha256:<hex> of a file as a commit has it, or "" when the commit has no such file.
 func commitFileDigest(ctx context.Context, checkout, commit, file string) (string, error) {
-	code, _, err := runGitExit(ctx, checkout, nil, "cat-file", "-e", commit+":"+file)
-	if err != nil && code < 0 {
-		return "", refuse(contract.RefusalMergeTargetUnreadable, "git could not read %s of %s: %v", file, commit, err)
+	body, found, err := commitFileBody(ctx, checkout, commit, file)
+	if err != nil || !found {
+		return "", err
 	}
-	if code != 0 {
-		return "", nil
-	}
-	body, err := runGit(ctx, checkout, nil, "show", commit+":"+file)
-	if err != nil {
-		return "", refuse(contract.RefusalMergeTargetUnreadable, "git could not read %s of %s: %v", file, commit, err)
-	}
-	sum := sha256.Sum256([]byte(body))
+	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }

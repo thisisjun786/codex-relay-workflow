@@ -37,7 +37,7 @@ func TestServerErrorOnPushDefersOnlyThePush(t *testing.T) {
 	if err != nil || progress.Cumulative.Integrated.Nodes != 2 {
 		t.Fatalf("integrated count during the outage: %v, %v; want 2", progress.Cumulative.Integrated.Nodes, err)
 	}
-	deferred, err := PushIntegration(ctx, k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
+	deferred, err := PushIntegration(ctx, k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto, nil)
 	if err != nil || deferred.Outcome != PushDeferred {
 		t.Fatalf("push answered 503: %+v, %v; want deferred", deferred, err)
 	}
@@ -47,7 +47,7 @@ func TestServerErrorOnPushDefersOnlyThePush(t *testing.T) {
 	if err := os.Remove(hook); err != nil {
 		t.Fatal(err)
 	}
-	done, err := PushIntegration(ctx, k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
+	done, err := PushIntegration(ctx, k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto, nil)
 	if err != nil || done.Outcome != PushPushed {
 		t.Fatalf("push after the remote accepts again: %+v, %v; want pushed", done, err)
 	}

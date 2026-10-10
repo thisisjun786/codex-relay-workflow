@@ -36,7 +36,7 @@ func TestPushRefusesATipThatTheRelayDidNotMove(t *testing.T) {
 			other := k.repo.git("rev-parse", "HEAD")
 			k.repo.git("checkout", "-q", "dev")
 			move(k, other)
-			_, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
+			_, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto, nil)
 			if refusalReasonOf(err) != "merge_base_mismatch" {
 				t.Fatalf("a tip the relay did not move must be refused before the push: %v", err)
 			}

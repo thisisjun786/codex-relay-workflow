@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// CRW-965 (parent decision d1): the relay judges a record by its reuse keys only. The tool versions and the Go
-// flags and environment are the writer's to judge (CRW-964 refuses a pin mismatch, and its --reuse compares the
-// environment), so a record that names other values is still reusable here, while a record without the member is
-// refused.
+// CRW-965 (parent decision d1): the relay judges a record by its reuse keys only. The Go flags and environment are the
+// writer's to judge (CRW-964 refuses a pin mismatch, and its --reuse compares the environment), so a record that names
+// other values is still reusable here, while a record without the member is refused. The tool versions are judged against
+// the pins the verified commit declares (CRW-1026); the kit's tree declares none.
 func TestVerificationRecordIsJudgedByItsKeysNotByEnvironmentValues(t *testing.T) {
 	k := newCommitAcceptKit(t)
 	ctx := context.Background()
@@ -19,9 +19,9 @@ func TestVerificationRecordIsJudgedByItsKeysNotByEnvironmentValues(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := VerificationKeys{Tree: k.treeOf(k.head), Base: k.base, CiDigest: keys.CiDigest, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH}
+	want := VerificationKeys{Tree: k.treeOf(k.head), Base: k.base, CiDigest: keys.CiDigest, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Pins: keys.Pins}
 	record := VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: k.base, HeadCommit: k.head, TreeHash: want.Tree,
-		CiDigest: keys.CiDigest, Tools: map[string]string{"go": "go0.0-other"}, Pins: map[string]string{}, GoFlags: "-mod=vendor", GoEnv: "GOOS=plan9",
+		CiDigest: keys.CiDigest, Tools: copyPins(keys.Pins), Pins: copyPins(keys.Pins), GoFlags: "-mod=vendor", GoEnv: "GOOS=plan9",
 		PinMismatch: []string{}, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Result: "pass", Jobs: []json.RawMessage{}}
 	raw, err := SealVerificationRecord(record)
 	if err != nil {

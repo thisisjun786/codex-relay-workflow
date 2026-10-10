@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // CRW-964: the pinned tool versions and the ones this host actually has. The pins come from the
@@ -20,31 +21,21 @@ import (
 // localToolNames is the tools the record names, in a stable order.
 var localToolNames = []string{"go", "node", "gitleaks", "staticcheck"}
 
-var (
-	goModToolchain = regexp.MustCompile(`(?m)^toolchain go([0-9][^\s]*)$`)
-	goModRequire   = regexp.MustCompile(`(?m)^\s*(honnef\.co/go/tools)\s+v([0-9][^\s]*)$`)
-	secretsVersion = regexp.MustCompile(`(?m)^scan_version=([0-9][^\s]*)$`)
-	goVersionLine  = regexp.MustCompile(`(?m)^go version go([0-9][^\s]*)`)
-)
+var goVersionLine = regexp.MustCompile(`(?m)^go version go([0-9][^\s]*)`)
 
-// localToolPins reads the pinned versions from the verified tree. A pin the tree does not carry
-// is left empty rather than guessed.
+// localToolPinsFrom reads the pinned versions from the verified tree, through the reader the judge uses
+// (dagsched.DeclaredToolchainPins), so the record names exactly the pins the judge requires of that commit: a go.mod in any
+// spelling the go command reads and a scan_version in any shell spelling. A pin the tree does not carry is left empty rather
+// than guessed; a declaration the reader cannot read is an error, since a record that pinned less than the commit declares
+// would be refused.
 func localToolPinsFrom(read func(path string) ([]byte, error)) (map[string]string, error) {
-	pins := map[string]string{}
-	if data, err := read("go.mod"); err == nil {
-		if m := goModToolchain.FindSubmatch(data); m != nil {
-			pins["go"] = string(m[1])
+	return dagsched.DeclaredToolchainPins(func(path string) ([]byte, bool, error) {
+		data, err := read(path)
+		if err != nil {
+			return nil, false, nil
 		}
-		if m := goModRequire.FindSubmatch(data); m != nil {
-			pins["staticcheck"] = string(m[2])
-		}
-	}
-	if data, err := read("scripts/ci/secrets.sh"); err == nil {
-		if m := secretsVersion.FindSubmatch(data); m != nil {
-			pins["gitleaks"] = string(m[1])
-		}
-	}
-	return pins, nil
+		return data, true, nil
+	})
 }
 
 // localToolVersions observes the tools this host has, resolving each through PATH. A tool that is

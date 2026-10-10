@@ -286,6 +286,10 @@ func (r *upgradeRunState) checkVerificationRecord() (int, string) {
 	if err != nil {
 		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
 	}
+	pins, err := r.releasePins()
+	if err != nil {
+		return r.refuse(upgradeStepVerify, upgradeReasonVerifyNotPass, "", err)
+	}
 	keys := dagsched.VerificationKeys{
 		Tree:         r.tree,
 		Base:         record.BaseCommit,
@@ -293,6 +297,8 @@ func (r *upgradeRunState) checkVerificationRecord() (int, string) {
 		Dependencies: record.Dependencies,
 		OS:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
+		// the pins the release commit declares, read from the forge: a record is judged against them like any other (CRW-1026)
+		Pins: pins,
 	}
 	if _, err := dagsched.JudgeVerificationRecord(raw, keys); err != nil {
 		var refused *store.RefusedError
@@ -303,6 +309,26 @@ func (r *upgradeRunState) checkVerificationRecord() (int, string) {
 	}
 	r.note(upgradeStepVerify, nil, 0, "the verification record passes for the installed tree", nil)
 	return 0, ""
+}
+
+// releasePins are the tool pins the release commit declares (dagsched.DeclaredToolPins), read from the forge at that exact
+// commit because the upgrade holds a tree id and no checkout. A file the forge says the commit does not have is absent; any
+// other failure is an error, so a declaration that could not be read refuses the record instead of waiving its pins.
+func (r *upgradeRunState) releasePins() (map[string]string, error) {
+	return dagsched.DeclaredToolPins(func(path string) ([]byte, bool, error) {
+		args := []string{"api", "repos/" + r.cfg.Repository + "/contents/" + path + "?ref=" + r.commit, "-H", "Accept: application/vnd.github.raw"}
+		ctx, cancel := context.WithTimeout(r.ctx, upgradeCommandTimeout)
+		defer cancel()
+		out, stderr, code, err := upgradeRunCommand(ctx, "gh", args...)
+		r.note(upgradeStepVerify, append([]string{"gh"}, args...), code, upgradeOutputHead(stderr), err)
+		if err == nil && code == 0 {
+			return []byte(out), true, nil
+		}
+		if err == nil && (strings.Contains(stderr, "HTTP 404") || strings.Contains(out, `"status":"404"`)) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("the declaration %s of commit %s could not be read from the forge (exit %d): %v", path, r.commit, code, err)
+	})
 }
 
 // upgradeDoctorAnswer is the part of the relay doctor's answer this command reads: where the store

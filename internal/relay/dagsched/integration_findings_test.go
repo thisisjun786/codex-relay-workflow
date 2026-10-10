@@ -121,7 +121,7 @@ func TestPushAfterAReconciledMoveIsAllowed(t *testing.T) {
 	if err != nil || len(res.Reconciled) != 1 {
 		t.Fatalf("the next run reconciles the move: %+v, %v", res, err)
 	}
-	push, err := PushIntegration(ctx, k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto)
+	push, err := PushIntegration(ctx, k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto, nil)
 	if err != nil || push.Outcome != PushPushed {
 		t.Fatalf("the reconciled head is a verified move and must push: %+v, %v", push, err)
 	}
