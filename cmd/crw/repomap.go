@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,16 +98,17 @@ type mapDeps struct {
 // installedRepoMapDir is the scripts directory of the repo-map skill a plugin installation keeps:
 // PLUGIN_ROOT's when the host provides it and its repomap.py is a regular file, otherwise the most
 // recently written of the versions under the Codex home's plugin cache
-// (<codex>/plugins/cache/<marketplace>/crw/<version>/skills). It answers only when the default
-// script, the one a skills link gives, is absent. A cached copy never displaces the active
-// PLUGIN_ROOT, however recently it was written (CRW-392).
+// (<codex>/plugins/cache/<marketplace>/crw/<version>). Each plugin's skills directory is the one its
+// manifest names (pluginSkillsDir, CRW-1147). It answers only when the default script, the one a
+// skills link gives, is absent. A cached copy never displaces the active PLUGIN_ROOT, however
+// recently it was written (CRW-392).
 func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
 	if regularFile(defaultScript) {
 		return ""
 	}
-	skill := filepath.Join("skills", "crw-repo-map", "scripts")
+	skill := filepath.Join("crw-repo-map", "scripts")
 	if root, _ := env("PLUGIN_ROOT"); text.Trim(root) != "" {
-		if dir := filepath.Join(root, skill); regularFile(filepath.Join(dir, "repomap.py")) {
+		if dir := filepath.Join(pluginSkillsDir(root), skill); regularFile(filepath.Join(dir, "repomap.py")) {
 			return dir
 		}
 	}
@@ -118,9 +121,10 @@ func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
 	if codex == "" {
 		return ""
 	}
-	cached, _ := filepath.Glob(filepath.Join(codex, "plugins", "cache", "*", "crw", "*", skill))
+	versions, _ := filepath.Glob(filepath.Join(codex, "plugins", "cache", "*", "crw", "*"))
 	best, bestTime := "", time.Time{}
-	for _, dir := range cached {
+	for _, version := range versions {
+		dir := filepath.Join(pluginSkillsDir(version), skill)
 		info, err := os.Stat(filepath.Join(dir, "repomap.py"))
 		if err != nil || !info.Mode().IsRegular() {
 			continue
@@ -130,6 +134,39 @@ func installedRepoMapDir(env host.LookupEnv, defaultScript string) string {
 		}
 	}
 	return best
+}
+
+// pluginManifestMaxBytes bounds the plugin manifest read for its skills directory.
+const pluginManifestMaxBytes = 1 << 20
+
+// pluginSkillsDir is the skills directory a plugin's manifest names (the "skills" string of
+// <root>/.codex-plugin/plugin.json, relative to the plugin root), or <root>/skills, the directory the
+// plugin ships today, when the manifest is absent, unreadable or larger than the bound, or names no
+// relative directory inside the plugin (CRW-1147).
+func pluginSkillsDir(root string) string {
+	fallback := filepath.Join(root, "skills")
+	manifest := filepath.Join(root, ".codex-plugin", "plugin.json")
+	if info, err := os.Stat(manifest); err != nil || !info.Mode().IsRegular() || info.Size() > pluginManifestMaxBytes {
+		return fallback
+	}
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		return fallback
+	}
+	var m struct {
+		Skills *string `json:"skills"`
+	}
+	if json.Unmarshal(data, &m) != nil || m.Skills == nil {
+		return fallback
+	}
+	rel := text.Trim(*m.Skills)
+	if rel == "" || filepath.IsAbs(rel) {
+		return fallback
+	}
+	if rel = filepath.Clean(rel); rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fallback
+	}
+	return filepath.Join(root, rel)
 }
 
 func regularFile(path string) bool {

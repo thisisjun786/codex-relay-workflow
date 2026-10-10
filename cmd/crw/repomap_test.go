@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -639,5 +640,108 @@ func TestRepoMapUvProbeIsBounded(t *testing.T) {
 	}
 	if took := time.Since(started); took > 10*time.Second {
 		t.Fatalf("the run waited %v on a uv that never answers", took)
+	}
+}
+
+// The skills directory of an installed plugin is the one its manifest names (.codex-plugin/plugin.json "skills"), for the
+// active PLUGIN_ROOT and for each cached version; a manifest that cannot be read, names no relative directory inside the
+// plugin, or is absent keeps "skills" (CRW-1147).
+func TestRepoMapReadsTheSkillsDirectoryFromThePluginManifest(t *testing.T) {
+	script := func(t *testing.T, dir string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, "repomap.py")
+		if err := os.WriteFile(p, []byte("print()\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	manifest := func(t *testing.T, root, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, ".codex-plugin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, ".codex-plugin", "plugin.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("plugin root", func(t *testing.T) {
+		root := t.TempDir()
+		manifest(t, root, `{"name":"crw","skills":"./bundle/skills/"}`)
+		want := script(t, filepath.Join(root, "bundle", "skills", "crw-repo-map", "scripts"))
+		script(t, filepath.Join(root, "skills", "crw-repo-map", "scripts")) // not the declared directory
+		env := mapEnv(map[string]string{"CODEX_HOME": t.TempDir(), "PLUGIN_ROOT": root})
+		if got := installedRepoMapDir(env, "/absent/repomap.py"); got != filepath.Dir(want) {
+			t.Fatalf("dir %q, want the manifest's %q", got, filepath.Dir(want))
+		}
+	})
+	t.Run("cached version", func(t *testing.T) {
+		codex := t.TempDir()
+		version := filepath.Join(codex, "plugins", "cache", "market", "crw", "1.0.0")
+		manifest(t, version, `{"skills":"other"}`)
+		want := script(t, filepath.Join(version, "other", "crw-repo-map", "scripts"))
+		if got := installedRepoMapDir(mapEnv(map[string]string{"CODEX_HOME": codex}), "/absent/repomap.py"); got != filepath.Dir(want) {
+			t.Fatalf("dir %q, want the manifest's %q", got, filepath.Dir(want))
+		}
+	})
+	for name, body := range map[string]string{"absent": "", "unreadable": "{", "not a string": `{"skills":["x"]}`, "blank": `{"skills":" "}`,
+		"absolute": `{"skills":"/etc"}`, "outside": `{"skills":"../elsewhere"}`} {
+		t.Run("falls back: "+name, func(t *testing.T) {
+			root := t.TempDir()
+			if body != "" {
+				manifest(t, root, body)
+			}
+			script(t, filepath.Join(root, "elsewhere", "crw-repo-map", "scripts"))
+			want := script(t, filepath.Join(root, "skills", "crw-repo-map", "scripts"))
+			if got := installedRepoMapDir(mapEnv(map[string]string{"CODEX_HOME": t.TempDir(), "PLUGIN_ROOT": root}), "/absent/repomap.py"); got != filepath.Dir(want) {
+				t.Fatalf("dir %q, want the fixed %q", got, filepath.Dir(want))
+			}
+		})
+	}
+}
+
+// End to end with the real Python: `crw map --help` from a plugin whose manifest names its skills directory runs the plugin's
+// repomap.py with python3 and prints its usage, with no skills link, no venv and no uv (CRW-1147).
+func TestRepoMapHelpRunsThePluginScriptWithRealPython(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not on PATH")
+	}
+	scripts, err := filepath.Abs(filepath.Join("..", "..", "plugins", "crw", "skills", "crw-repo-map"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codex-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codex-plugin", "plugin.json"), []byte(`{"name":"crw","skills":"./bundled/"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "bundled"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(scripts, filepath.Join(root, "bundled", "crw-repo-map")); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	t.Setenv("CRW_HOME", filepath.Join(home, "crw"))
+	t.Setenv("PLUGIN_ROOT", root)
+	for _, k := range []string{"CRW_SKILLS_DIR", "CRW_PYTHON", "CRW_MAP_BOOTSTRAP"} {
+		t.Setenv(k, "")
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout, stderr strings.Builder
+	code := runRepoMap(invocation{ctx: context.Background(), args: []string{"--help"}, stdout: &stdout, stderr: &stderr})
+	if code != 0 || !strings.Contains(stdout.String(), "usage: crw map") {
+		t.Fatalf("exit %d\nstdout %q\nstderr %q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "crw", "venvs")); !os.IsNotExist(err) {
+		t.Fatalf("help touched the venvs directory: %v", err)
 	}
 }
