@@ -16,15 +16,7 @@ const TailBytes = 65_536
 // (fail open). Only the tail is read (CRW-1160): the oracle read the whole file to cut its last
 // 64 KiB, so a long session paid the whole transcript in I/O and memory on every prompt and Stop.
 func ReadTranscriptTail(path string, maxBytes int) string {
-	tail, _ := readTranscriptWindow(path, maxBytes)
-	return tail
-}
-
-// readTranscriptWindow is ReadTranscriptTail and whether the window's first line is a whole record: the window starts
-// at the file's first byte, or at the first byte after a newline. A reader of whole records drops the first line of
-// a window for which this is false (it is the cut end of a longer record) and keeps it otherwise.
-func readTranscriptWindow(path string, maxBytes int) (string, bool) {
-	return readTranscriptWindowWith(path, maxBytes, nil)
+	return readTranscriptTailWith(path, maxBytes, nil)
 }
 
 // transcriptTailSeams let a test act between the stat and the read (an append, a truncation, a rename) and
@@ -34,39 +26,58 @@ type transcriptTailSeams struct {
 	reader    func(io.ReaderAt) io.ReaderAt
 }
 
-func readTranscriptWindowWith(path string, maxBytes int, seams *transcriptTailSeams) (string, bool) {
-	w := readTranscriptBytes(path, maxBytes, seams)
-	return decodeUTF8(w.data), w.whole
+// readTranscriptTailWith is ReadTranscriptTail with the test seams: the last min(size, maxBytes) bytes, decoded.
+func readTranscriptTailWith(path string, maxBytes int, seams *transcriptTailSeams) string {
+	data, _, _ := readTranscriptRange(path, maxBytes, seams, func(size int64) int64 { return max(0, size-int64(maxBytes)) })
+	return decodeUTF8(data)
 }
 
-// transcriptWindow is the bytes readTranscriptBytes read: the last bytes of the file, whether the first line of them is a
-// whole record, and whether they start the file (nothing precedes them).
+// transcriptWindow is what readTranscriptBytes read for a reader of whole records: the bytes of the window and whether
+// the first line of them is a whole record.
 type transcriptWindow struct {
-	data    []byte
-	whole   bool
-	covered bool
+	data  []byte
+	whole bool
 }
 
-// readTranscriptBytes opens the file once, without waiting (O_NONBLOCK: a FIFO with no writer would
-// hold the open), refuses anything but a regular file by fstat of that descriptor, and reads the last
-// min(size, maxBytes) bytes of the size it saw with one ReadAt, preceded by the one byte before them when
-// there is one: a window is cut mid-record unless that byte is a newline, which this reads without widening
-// the window (CRW-1160 evaluation d1: whether the window starts at byte zero does not say whether its first record
-// is cut). A file that changes after the stat is read as it then is, best effort: an append past the stat is not
-// seen, a truncation leaves a short read, a rename keeps the open file; the read never widens to the whole file.
-// Any error is an empty window (fail open).
+// readTranscriptBytes reads the window of whole records at the end of the transcript, touching at most maxBytes bytes
+// with one ReadAt (CRW-1160 end condition 1: <= 65,536 for TailBytes, verification round 3). A file of at most maxBytes is
+// read whole. A longer one is read as the maxBytes bytes that end one byte before its end: the first of them says
+// whether the window after it starts a record (a newline does; CRW-1160 evaluation d1: whether the window starts at byte
+// zero does not say whether its first record is cut), and the file's last byte is left unread. Every landed record ends
+// in a newline, so the record that ends there is whole without it, and the records this keeps are the whole records that
+// lie in the last maxBytes bytes of the file. A record whose newline has not landed is still being written: cut by its
+// last byte it is no JSON object, so it is not counted until it lands.
 func readTranscriptBytes(path string, maxBytes int, seams *transcriptTailSeams) transcriptWindow {
-	if path == "" || maxBytes <= 0 {
+	data, size, ok := readTranscriptRange(path, maxBytes, seams, func(size int64) int64 { return max(0, size-int64(maxBytes)-1) })
+	if !ok {
 		return transcriptWindow{}
+	}
+	if size <= int64(maxBytes) {
+		return transcriptWindow{data: data, whole: true}
+	}
+	if len(data) == 0 {
+		return transcriptWindow{}
+	}
+	return transcriptWindow{data: data[1:], whole: data[0] == '\n'}
+}
+
+// readTranscriptRange opens the file once, without waiting (O_NONBLOCK: a FIFO with no writer would hold the open),
+// refuses anything but a regular file by fstat of that descriptor, and reads min(size, maxBytes) bytes of the size it
+// saw from from(size) with one ReadAt. A file that changes after the stat is read as it then is, best effort: an append
+// past the stat is not seen, a truncation leaves a short read, a rename keeps the open file; the read never widens. Any
+// error is no read (fail open). size is the size the stat saw.
+func readTranscriptRange(path string, maxBytes int, seams *transcriptTailSeams, from func(size int64) int64) ([]byte, int64, bool) {
+	if path == "" || maxBytes <= 0 {
+		return nil, 0, false
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return transcriptWindow{}
+		return nil, 0, false
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return transcriptWindow{}
+		return nil, 0, false
 	}
 	if seams != nil && seams.afterStat != nil {
 		seams.afterStat()
@@ -76,21 +87,13 @@ func readTranscriptBytes(path string, maxBytes int, seams *transcriptTailSeams) 
 		r = seams.reader(f)
 	}
 	size := info.Size()
-	start := max(0, size-int64(maxBytes))
-	from := max(0, start-1) // the byte before the window says whether it starts a record
-	buf := make([]byte, size-from)
-	n, err := r.ReadAt(buf, from)
+	start := from(size)
+	buf := make([]byte, min(size, int64(maxBytes)))
+	n, err := r.ReadAt(buf, start)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return transcriptWindow{}
+		return nil, 0, false
 	}
-	buf = buf[:n]
-	if start == 0 {
-		return transcriptWindow{data: buf, whole: true, covered: true}
-	}
-	if len(buf) == 0 {
-		return transcriptWindow{}
-	}
-	return transcriptWindow{data: buf[1:], whole: buf[0] == '\n'}
+	return buf[:n], size, true
 }
 
 // decodeUTF8 replaces each maximal invalid subpart with one U+FFFD (the WHATWG decoder Node uses);

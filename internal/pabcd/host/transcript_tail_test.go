@@ -82,14 +82,43 @@ func (c countingReader) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
-// TestReadTranscriptTailReadsAtMostTheWindow is CRW-1160 end condition 1: on a 64 MiB transcript the reader touches
-// at most TailBytes and the one byte before them, which says whether the window starts at a record.
+// TestReadTranscriptTailReadsAtMostTheWindow is CRW-1160 end condition 1: on a 64 MiB transcript each reader, the raw tail
+// and the whole-record window the R-11 guards and the Stop read, touches at most TailBytes (verification round 3: the byte
+// before the window that says whether its first record is whole is counted inside the bound, not added to it).
 func TestReadTranscriptTailReadsAtMostTheWindow(t *testing.T) {
 	path := bigTranscript(t, "\n{\"tail\":true}\n")
 	var read int64
-	got, _ := readTranscriptWindowWith(path, TailBytes, &transcriptTailSeams{reader: func(r io.ReaderAt) io.ReaderAt { return countingReader{r, &read} }})
-	if read > TailBytes+1 || read == 0 || len(got) == 0 {
-		t.Errorf("read %d bytes (%d decoded), want at most %d", read, len(got), TailBytes+1)
+	counting := &transcriptTailSeams{reader: func(r io.ReaderAt) io.ReaderAt { return countingReader{r, &read} }}
+	got := readTranscriptTailWith(path, TailBytes, counting)
+	if read > TailBytes || read == 0 || len(got) == 0 {
+		t.Errorf("the tail read %d bytes (%d decoded), want at most %d", read, len(got), TailBytes)
+	}
+	read = 0
+	w := readTranscriptBytes(path, TailBytes, counting)
+	if read > TailBytes || read == 0 || len(w.data) == 0 {
+		t.Errorf("the record window read %d bytes (%d kept), want at most %d", read, len(w.data), TailBytes)
+	}
+}
+
+// TestReadTranscriptGenerationKeepsAnAlignedRecordWithinTheBound is CRW-1160 evaluation d1 at the acceptance bound: the last
+// TailBytes bytes of a 64 MiB transcript start exactly at a hook's developer record, so the marker in it counts, and the
+// reader still touches at most TailBytes.
+func TestReadTranscriptGenerationKeepsAnAlignedRecordWithinTheBound(t *testing.T) {
+	record := devRecord("[crw: PLAN]\nWrite a diff-level plan")
+	head := `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"`
+	tail := `"}]}}` + "\n"
+	pad := head + strings.Repeat("w", TailBytes-len(record)-len(head)-len(tail)) + tail
+	path := bigTranscript(t, "\n"+record+pad)
+	var read int64
+	w := readTranscriptBytes(path, TailBytes, &transcriptTailSeams{reader: func(r io.ReaderAt) io.ReaderAt { return countingReader{r, &read} }})
+	if !parseTranscriptGeneration(w.data, w.whole).HasStageMarkerForPhase("P") {
+		t.Error("the record that starts the last TailBytes bytes was dropped")
+	}
+	if read > TailBytes {
+		t.Errorf("read %d bytes, want at most %d", read, TailBytes)
+	}
+	if !ReadTranscriptGeneration(path, TailBytes).HasStageMarkerForPhase("P") {
+		t.Error("ReadTranscriptGeneration dropped the aligned record")
 	}
 }
 
@@ -138,7 +167,7 @@ func TestReadTranscriptTailUnderAChangingFile(t *testing.T) {
 	const content = "first\nsecond\nthird\n"
 	t.Run("append", func(t *testing.T) {
 		path := writeTail(t, content)
-		got, _ := readTranscriptWindowWith(path, 8, &transcriptTailSeams{afterStat: func() {
+		got := readTranscriptTailWith(path, 8, &transcriptTailSeams{afterStat: func() {
 			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -154,7 +183,7 @@ func TestReadTranscriptTailUnderAChangingFile(t *testing.T) {
 	})
 	t.Run("truncate", func(t *testing.T) {
 		path := writeTail(t, content)
-		got, _ := readTranscriptWindowWith(path, 8, &transcriptTailSeams{afterStat: func() {
+		got := readTranscriptTailWith(path, 8, &transcriptTailSeams{afterStat: func() {
 			if err := os.Truncate(path, int64(len(content)-4)); err != nil {
 				t.Fatal(err)
 			}
@@ -162,7 +191,7 @@ func TestReadTranscriptTailUnderAChangingFile(t *testing.T) {
 		if got != content[len(content)-8:len(content)-4] {
 			t.Errorf("a truncation after the stat: %q", got)
 		}
-		got, _ = readTranscriptWindowWith(path, 8, &transcriptTailSeams{afterStat: func() {
+		got = readTranscriptTailWith(path, 8, &transcriptTailSeams{afterStat: func() {
 			if err := os.Truncate(path, 0); err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +202,7 @@ func TestReadTranscriptTailUnderAChangingFile(t *testing.T) {
 	})
 	t.Run("rename", func(t *testing.T) {
 		path := writeTail(t, content)
-		got, _ := readTranscriptWindowWith(path, 6, &transcriptTailSeams{afterStat: func() {
+		got := readTranscriptTailWith(path, 6, &transcriptTailSeams{afterStat: func() {
 			if err := os.Rename(path, path+".old"); err != nil {
 				t.Fatal(err)
 			}
