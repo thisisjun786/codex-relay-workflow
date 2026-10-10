@@ -120,17 +120,15 @@ func runCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	journal := NewMemoryJournal()
 	res, err := Run(ctx, prog, Config{
 		Backend: NewFake(), Policy: FakePolicy(), Journal: journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget,
+		// The journal sequence numbers of a call say in which order the host finished concurrent calls, which differs from
+		// run to run; the script and the printed result do not hold them, so two runs of one script print the same bytes
+		// (the journal rows, with --journal, keep them).
+		OmitSeq:   true,
 		Workflows: func(name, scriptPath string) (*script.Program, error) { return loadSibling(dir, name, scriptPath) },
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "crw flow run: error: %v\n", err)
 		return 2
-	}
-	// The journal sequence numbers of a call say in which order the host finished concurrent calls, which differs from run
-	// to run; the printed result leaves them out so that two runs of one script print the same bytes (the journal
-	// rows, with --journal, keep them).
-	for i := range res.Calls {
-		res.Calls[i].Meta.StartSeq, res.Calls[i].Meta.EndSeq = 0, 0
 	}
 	out := struct {
 		*Result

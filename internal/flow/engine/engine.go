@@ -34,6 +34,7 @@ const (
 	ErrKindHeapLimit       = "heap_limit"
 	ErrKindUnsettled       = "unsettled"
 	ErrKindEngine          = "engine"
+	ErrKindCancelled       = "cancelled"
 )
 
 // DefaultPool is the number of agent calls a run keeps in flight (the agent pool).
@@ -56,6 +57,10 @@ type Config struct {
 	// TokenBudget is the run's token ceiling; 0 sets none. 80% gives an info event and 100% pauses the run.
 	TokenBudget int64
 	Limits      script.Limits
+	// OmitSeq leaves the journal sequence numbers (meta.startSeq, meta.endSeq) out of the CallResult a script holds and
+	// of the run's result. They say in which order the host finished concurrent calls, so a run that must print the
+	// same bytes every time (crw flow run) omits them; the journal rows keep theirs.
+	OmitSeq bool
 	// Now is the clock crw.clock() journals; nil is time.Now.
 	Now func() time.Time
 	// Workflows resolves workflow(name) and workflow({scriptPath}) for the one nesting level; nil refuses nesting.
@@ -108,6 +113,8 @@ type Engine struct {
 	j     Journal
 	runID string
 	ctx   context.Context
+	// parent is the context the caller gave Run: when it is done, the run ends.
+	parent context.Context
 	// cancel ends every call in flight (run abort).
 	cancel context.CancelFunc
 	pool   chan struct{}
@@ -128,11 +135,13 @@ type Engine struct {
 	// Everything below is touched only by the loop goroutine.
 	fatalKind string
 	fatalErr  error
-	results   []CallResult
-	byHandle  map[string]CallResult // the delivered results that hold a handle, by handle
-	phases    []string
-	logs      []string
-	phase     string
+	// mainPromise is the promise of the main script's completion.
+	mainPromise *goja.Promise
+	results     []CallResult
+	byHandle    map[string]CallResult // the delivered results that hold a handle, by handle
+	phases      []string
+	logs        []string
+	phase       string
 }
 
 func digestJSON(v []byte) string {
@@ -175,7 +184,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}}
+	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}}
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
 		"meta": json.RawMessage(prog.MetaJSON),
@@ -190,26 +199,40 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if err != nil {
 		e.fail(limitKind(err), err)
 	}
-	e.loop.Run(func(err error) { e.fail(limitKind(err), err) })
+	e.mainPromise = promise
+	e.noteMain()
+	// A cancelled parent context wakes a loop that waits for completions, so the run ends instead of waiting for work
+	// that the cancellation will not deliver.
+	watching := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			e.loop.Post(nil, e.noteMain)
+		case <-watching:
+		}
+	}()
+	e.loop.RunObserved(func(err error) { e.fail(limitKind(err), err) }, e.noteMain)
+	close(watching)
+	e.noteMain()
 
 	res := &Result{RunID: e.runID, Workflow: workflow, Status: RunCompleted, Value: json.RawMessage("null")}
 	// What the script came to is read inside the VM under the step and heap limits: rendering a thrown value or
 	// serialising the returned one runs the script's own toString, toJSON and getters.
 	switch {
-	case e.fatalErr != nil:
-	case promise == nil:
-		e.fail(ErrKindEngine, errors.New("the script did not start"))
-	case promise.State() == goja.PromiseStateRejected:
+	case e.fatalErr == errMainRejected:
 		var text string
 		if err := main.rt.Enter(func() error {
 			var err error
 			text, err = main.textOf(promise.Result())
 			return err
 		}); err != nil {
-			e.fail(valueErrKind(err), fmt.Errorf("the script failed and its error cannot be rendered: %w", err))
+			e.fatalKind, e.fatalErr = valueErrKind(err), fmt.Errorf("the script failed and its error cannot be rendered: %w", err)
 		} else {
-			e.fail(ErrKindJS, errors.New(text))
+			e.fatalKind, e.fatalErr = ErrKindJS, errors.New(text)
 		}
+	case e.fatalErr != nil:
+	case promise == nil:
+		e.fail(ErrKindEngine, errors.New("the script did not start"))
 	case promise.State() == goja.PromiseStatePending:
 		e.fail(ErrKindUnsettled, errors.New("the script awaits a promise that nothing will settle"))
 	default:
@@ -276,6 +299,26 @@ func valueErrKind(err error) string {
 		return limitKind(err)
 	}
 	return ErrKindJS
+}
+
+// errMainRejected stands for the error of a main script whose promise was rejected until the run renders it (under
+// the step and heap limits, after the loop has stopped).
+var errMainRejected = errors.New("the script failed")
+
+// noteMain ends the run as soon as the main script has failed or the caller's context is done, not after the work
+// that is still queued: an abort must stop the script's other paths before they send another request. It runs after
+// every step of the loop and when a script opens a call.
+func (e *Engine) noteMain() {
+	if e.fatalErr != nil {
+		return
+	}
+	if e.parent.Err() != nil {
+		e.fail(ErrKindCancelled, errors.New("the run was cancelled"))
+		return
+	}
+	if e.mainPromise != nil && e.mainPromise.State() == goja.PromiseStateRejected {
+		e.fail(ErrKindJS, errMainRejected)
+	}
 }
 
 // fail ends the run: the first failure is its error, every call in flight is cancelled and the loop is aborted, so no

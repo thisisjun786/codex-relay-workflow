@@ -155,7 +155,7 @@ func (b *bundler) load(args api.OnLoadArgs) (api.OnLoadResult, error) {
 		if t.kind != tokIdent || t.text != "import" || i+1 >= len(toks) || toks[i+1].kind != tokPunct || toks[i+1].text != "(" {
 			continue
 		}
-		if i > 0 && toks[i-1].kind == tokPunct && toks[i-1].text == "." {
+		if isMemberName(toks, i) || isMethodDeclaration(src, toks, i+1) {
 			continue
 		}
 		return api.OnLoadResult{}, fmt.Errorf("%s:%d: %s", args.Path, lineOf(src, t.start), errDynamicImport)

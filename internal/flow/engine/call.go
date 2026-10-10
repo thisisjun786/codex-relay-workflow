@@ -326,11 +326,15 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 	}
 	data["reason"] = reason
 	row := c.event(ev, data)
+	startSeq, endSeq := c.startSeq, row.Seq
+	if c.e.cfg.OmitSeq {
+		startSeq, endSeq = 0, 0
+	}
 	res := CallResult{
 		CallID: c.id, Path: c.path.id, Position: c.position, Label: c.label, Status: status, Reason: reason,
 		Meta: CallMeta{
 			Role: c.plan.role, RequestedPair: c.plan.requested, ConfiguredPair: c.configured, ThreadID: c.threadID,
-			TurnIDs: append([]string{}, c.turnIDs...), RepairUsed: c.repairUsed, Tokens: c.tokens, StartSeq: c.startSeq, EndSeq: row.Seq,
+			TurnIDs: append([]string{}, c.turnIDs...), RepairUsed: c.repairUsed, Tokens: c.tokens, StartSeq: startSeq, EndSeq: endSeq,
 		},
 	}
 	if c.threadID != "" {

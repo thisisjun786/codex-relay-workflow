@@ -3,10 +3,58 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/google/jsonschema-go/jsonschema"
 )
+
+// receiptSchema is the executor RECEIPT (workflows/lib/schemas.js, export RECEIPT): crw.classify reads a completed
+// result only when its output satisfies it. A test pins the two texts to each other.
+const receiptSchema = `{
+  "type": "object",
+  "properties": {
+    "outcome": {"type": "string", "enum": ["ready_for_review", "needs_research", "blocked_scope", "failed", "budget_exhausted"]},
+    "files": {"type": "array", "items": {"type": "string"}},
+    "verification": {"type": "array", "items": {
+      "type": "object",
+      "properties": {"cmd": {"type": "string"}, "exit": {"type": "integer"}, "summary": {"type": "string"}},
+      "required": ["cmd", "exit", "summary"],
+      "additionalProperties": false
+    }},
+    "summary": {"type": "string"},
+    "gap": {"type": ["string", "null"]},
+    "research_question": {"type": ["string", "null"]},
+    "plan_mismatch": {"type": ["string", "null"]}
+  },
+  "required": ["outcome", "files", "verification", "summary", "gap", "research_question", "plan_mismatch"],
+  "additionalProperties": false
+}`
+
+var receiptResolved = sync.OnceValues(func() (*jsonschema.Resolved, error) {
+	var sch jsonschema.Schema
+	if err := json.Unmarshal([]byte(receiptSchema), &sch); err != nil {
+		return nil, err
+	}
+	return sch.Resolve(nil)
+})
+
+// validReceipt reports why output is not an executor RECEIPT, or "" when it is.
+func validReceipt(output json.RawMessage) string {
+	resolved, err := receiptResolved()
+	if err != nil {
+		return err.Error()
+	}
+	var v any
+	if err := json.Unmarshal(output, &v); err != nil {
+		return "the output is not JSON"
+	}
+	if err := resolved.Validate(v); err != nil {
+		return err.Error()
+	}
+	return ""
+}
 
 // Outcome states crw.classify returns.
 const (
@@ -23,7 +71,7 @@ const (
 
 // Classify maps an executor CallResult to the one state it is in, from its status and reason and, when it completed,
 // the outcome of its RECEIPT (engine.controlFlow.outcomeStates). ok is false for a completed result whose output is
-// not a RECEIPT.
+// not a complete RECEIPT. The role is not judged here: crw.classify refuses a result of another role family.
 func Classify(res CallResult) (state string, ok bool) {
 	switch res.Status {
 	case StatusNullModel:
@@ -37,6 +85,9 @@ func Classify(res CallResult) (state string, ok bool) {
 	case StatusSuperseded:
 		return StateSuperseded, true
 	case StatusCompleted:
+		if validReceipt(res.Output) != "" {
+			return "", false
+		}
 		var receipt struct {
 			Outcome string `json:"outcome"`
 		}
@@ -88,9 +139,17 @@ func (s *scriptVM) classify(call goja.FunctionCall) goja.Value {
 		}
 		s.throwType("crw.classify takes the CallResult agent.call returned or its handle, got %s", kind)
 	}
+	// A result that was refused before its role resolved has none; every other result must be an executor's.
+	if spec, known := s.e.cfg.Policy.Roles[res.Meta.Role]; res.Meta.Role != "" && (!known || spec.Family != "executor") {
+		s.throwType("crw.classify: call %s ran as %q, not as an executor", res.CallID, res.Meta.Role)
+	}
 	state, ok := Classify(res)
 	if !ok {
-		s.throwType("crw.classify: the output of call %s is not an executor RECEIPT", res.CallID)
+		detail := ""
+		if res.Status == StatusCompleted {
+			detail = ": " + validReceipt(res.Output)
+		}
+		s.throwType("crw.classify: the output of call %s is not an executor RECEIPT%s", res.CallID, detail)
 	}
 	path, position := s.open("crw.classify")
 	id := s.e.callID(path.id, position)

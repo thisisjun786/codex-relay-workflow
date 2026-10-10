@@ -67,8 +67,11 @@ type Loop struct {
 }
 
 type queued struct {
+	// rt is the runtime fn runs in; nil runs fn outside any script.
 	rt *Runtime
 	fn func()
+	// counted is set when the entry settles an operation that Begin counted as pending.
+	counted bool
 }
 
 // NewLoop returns an empty loop.
@@ -195,27 +198,55 @@ func (r *Runtime) Main() (*goja.Promise, error) {
 }
 
 // Begin registers an asynchronous operation of rt. The returned function completes it from any goroutine: fn then
-// runs on the loop's goroutine, inside rt.Enter. It must be called exactly once.
+// runs on the loop's goroutine, inside rt.Enter. It must be called exactly once. The loop does not return while the
+// operation is pending.
 func (l *Loop) Begin(rt *Runtime) (complete func(fn func())) {
 	l.mu.Lock()
 	l.pending++
 	l.mu.Unlock()
+	return l.completion(rt, true)
+}
+
+// Link registers a completion that only the scripts on this loop can produce (a script awaiting the workflow it
+// called): it does not keep the loop running. When nothing else is pending and no completion is queued, the script
+// that awaits it can never be resumed, and Run returns. Like Begin, the returned function is called exactly once.
+func (l *Loop) Link(rt *Runtime) (complete func(fn func())) {
+	return l.completion(rt, false)
+}
+
+// Post queues fn to run on the loop's goroutine inside rt.Enter (outside any script when rt is nil). It is how code
+// that must run in a script, or on the loop goroutine, is handed there from a callback or another goroutine.
+func (l *Loop) Post(rt *Runtime, fn func()) {
+	l.enqueue(queued{rt: rt, fn: fn})
+}
+
+func (l *Loop) completion(rt *Runtime, counted bool) func(fn func()) {
 	var once sync.Once
 	return func(fn func()) {
 		once.Do(func() {
-			l.mu.Lock()
-			if l.aborted {
+			if !l.enqueue(queued{rt: rt, fn: fn, counted: counted}) && counted {
+				l.mu.Lock()
+				l.pending--
 				l.mu.Unlock()
-				return
-			}
-			l.queue = append(l.queue, queued{rt, fn})
-			l.mu.Unlock()
-			select {
-			case l.wake <- struct{}{}:
-			default:
 			}
 		})
 	}
+}
+
+// enqueue adds q to the queue and wakes Run; it reports false when the loop was aborted and q was dropped.
+func (l *Loop) enqueue(q queued) bool {
+	l.mu.Lock()
+	if l.aborted {
+		l.mu.Unlock()
+		return false
+	}
+	l.queue = append(l.queue, q)
+	l.mu.Unlock()
+	select {
+	case l.wake <- struct{}{}:
+	default:
+	}
+	return true
 }
 
 // Abort ends the loop: completions that have not run are dropped, later ones are never queued, and Run returns without
@@ -241,7 +272,11 @@ func (l *Loop) Aborted() bool {
 
 // Run runs completions on the calling goroutine until no operation is pending or the loop is aborted. A limit error a
 // completion hits is passed to onError.
-func (l *Loop) Run(onError func(error)) {
+func (l *Loop) Run(onError func(error)) { l.RunObserved(onError, nil) }
+
+// RunObserved is Run that calls after on the loop's goroutine after every completion it ran, so a caller can end the
+// run (Abort) as soon as the script has failed instead of after the work still queued.
+func (l *Loop) RunObserved(onError func(error), after func()) {
 	for {
 		l.mu.Lock()
 		if l.aborted {
@@ -259,10 +294,17 @@ func (l *Loop) Run(onError func(error)) {
 		}
 		q := l.queue[0]
 		l.queue = l.queue[1:]
-		l.pending--
+		if q.counted {
+			l.pending--
+		}
 		l.mu.Unlock()
-		if err := q.rt.Enter(func() error { q.fn(); return nil }); err != nil && onError != nil {
+		if q.rt == nil {
+			q.fn()
+		} else if err := q.rt.Enter(func() error { q.fn(); return nil }); err != nil && onError != nil {
 			onError(err)
+		}
+		if after != nil {
+			after()
 		}
 	}
 }

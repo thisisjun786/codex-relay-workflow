@@ -2,6 +2,7 @@ package script
 
 import (
 	"fmt"
+	"strings"
 )
 
 // importKind is the shape of one static import clause.
@@ -195,7 +196,7 @@ func checkBody(name, src string, toks []token, from int) error {
 		if t.start < from || t.kind != tokIdent || (t.text != "import" && t.text != "export") {
 			continue
 		}
-		if i > 0 && toks[i-1].kind == tokPunct && toks[i-1].text == "." && toks[i-1].end == t.start {
+		if isMemberName(toks, i) {
 			continue
 		}
 		var next token
@@ -205,6 +206,9 @@ func checkBody(name, src string, toks []token, from int) error {
 		if t.text == "import" {
 			switch {
 			case next.kind == tokPunct && next.text == "(":
+				if isMethodDeclaration(src, toks, i+1) {
+					continue
+				}
 				return errAt(name, src, t.start, "dynamic import() is not allowed")
 			case next.kind == tokPunct && next.text == ".":
 				return errAt(name, src, t.start, "import.meta is not available")
@@ -219,4 +223,43 @@ func checkBody(name, src string, toks []token, from int) error {
 		}
 	}
 	return nil
+}
+
+// isMemberName reports whether the identifier at toks[i] is the name of a property access (`o.import`, `o?.import`,
+// with whatever whitespace or comments lie between the dot and the name). A dot that is the last of three adjacent
+// dots is a spread (`...import(x)`), which applies to the expression that follows, so it does not count.
+func isMemberName(toks []token, i int) bool {
+	if i == 0 || toks[i-1].kind != tokPunct || toks[i-1].text != "." {
+		return false
+	}
+	if i >= 2 && toks[i-2].kind == tokPunct && toks[i-2].text == "." && toks[i-2].end == toks[i-1].start {
+		return false
+	}
+	return true
+}
+
+// isMethodDeclaration reports whether the parenthesis at toks[open] starts the parameter list of a method named
+// import (`{ import(x) {...} }`, `class { static async import() {...} }`): its closing parenthesis is followed by an
+// opening brace on the same line. A call cannot be followed by a brace on its own line of the source (that would be a
+// syntax error), and the one that starts a block on the next line is still read as a call, so the check fails closed.
+func isMethodDeclaration(src string, toks []token, open int) bool {
+	depth := 0
+	for k := open; k < len(toks); k++ {
+		if toks[k].kind != tokPunct {
+			continue
+		}
+		switch toks[k].text {
+		case "(":
+			depth++
+		case ")":
+			depth--
+			if depth == 0 {
+				if k+1 >= len(toks) || toks[k+1].kind != tokPunct || toks[k+1].text != "{" {
+					return false
+				}
+				return !strings.ContainsAny(src[toks[k].end:toks[k+1].start], "\n\r")
+			}
+		}
+	}
+	return false
 }

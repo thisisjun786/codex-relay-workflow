@@ -2,9 +2,12 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/dop251/goja"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
 // workflow is workflow(nameOrRef, args): it runs another script inline as one step and resolves with what it
@@ -51,7 +54,9 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 		Data: map[string]any{"call_id": id, "script_digest": prog.Digest}})
 
 	promise, resolve, reject := s.vm.NewPromise()
-	complete := s.e.loop.Begin(s.rt)
+	// Only the scripts of this run can settle the child, so waiting for it does not keep the loop running: a child
+	// that awaits something nothing will settle ends the run as unsettled.
+	complete := s.e.loop.Link(s.rt)
 	settle := func(ok bool, jsonText []byte, msg string) {
 		complete(func() {
 			path.settle(position)
@@ -77,22 +82,43 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 		settle(false, nil, "workflow(): "+err.Error())
 		return s.vm.ToValue(promise)
 	}
-	cpObj := child.vm.ToValue(cp).ToObject(child.vm)
-	then, _ := goja.AssertFunction(cpObj.Get("then"))
+	// Everything that touches the child's VM runs under the child's step and heap limits: registering the reactions
+	// (the child may have replaced what then reads) and rendering its value or error. The reactions themselves only
+	// hand the settled value to the loop, which renders it inside child.rt.Enter, also when the child had settled
+	// already; the parent's watchdog belongs to another VM.
 	onOK := child.vm.ToValue(func(c goja.FunctionCall) goja.Value {
-		v, err := child.jsonOfErr(c.Argument(0))
-		if err != nil {
-			settle(false, nil, "workflow(): the child's value cannot be serialised: "+err.Error())
-			return goja.Undefined()
-		}
-		settle(true, v, "")
+		val := c.Argument(0)
+		s.e.loop.Post(child.rt, func() {
+			v, err := child.jsonOfErr(val)
+			if err != nil {
+				settle(false, nil, "workflow(): the child's value cannot be serialised: "+err.Error())
+				return
+			}
+			settle(true, v, "")
+		})
 		return goja.Undefined()
 	})
 	onErr := child.vm.ToValue(func(c goja.FunctionCall) goja.Value {
-		settle(false, nil, "workflow(): the child script failed: "+child.errorText(c.Argument(0)))
+		val := c.Argument(0)
+		s.e.loop.Post(child.rt, func() {
+			settle(false, nil, "workflow(): the child script failed: "+child.errorText(val))
+		})
 		return goja.Undefined()
 	})
-	if _, err := then(cpObj, onOK, onErr); err != nil {
+	if err := child.rt.Enter(func() error {
+		cpObj := child.vm.ToValue(cp).ToObject(child.vm)
+		then, ok := goja.AssertFunction(cpObj.Get("then"))
+		if !ok {
+			return errors.New("the child's promise has no then")
+		}
+		_, err := then(cpObj, onOK, onErr)
+		return err
+	}); err != nil {
+		var le *script.LimitError
+		if errors.As(err, &le) {
+			s.e.fail(limitKind(err), err)
+			return s.vm.ToValue(promise)
+		}
 		settle(false, nil, "workflow(): "+err.Error())
 	}
 	return s.vm.ToValue(promise)

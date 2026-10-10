@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"regexp"
+	"regexp/syntax"
 	"strings"
 	"sync"
 )
@@ -223,14 +226,145 @@ func synthesize(root, n map[string]any, depth int) any {
 		}
 		return out
 	case "string":
+		if pat, ok := n["pattern"].(string); ok {
+			return synthesizeString(pat)
+		}
 		return ""
 	case "integer", "number":
-		if min, ok := n["minimum"].(float64); ok && min > 0 {
-			return min
-		}
-		return 0
+		return synthesizeNumber(n, typ == "integer")
 	case "boolean":
 		return false
 	}
 	return nil
+}
+
+// synthesizeNumber picks a number that satisfies minimum, maximum, exclusiveMinimum, exclusiveMaximum and multipleOf:
+// 0 when that is allowed, else the value nearest to 0 that is.
+func synthesizeNumber(n map[string]any, integer bool) any {
+	num := func(k string) (float64, bool) { v, ok := n[k].(float64); return v, ok }
+	lo, hasLo := num("minimum")
+	hi, hasHi := num("maximum")
+	loEx, hasLoEx := num("exclusiveMinimum")
+	hiEx, hasHiEx := num("exclusiveMaximum")
+	step, hasStep := num("multipleOf")
+	if !hasStep || step <= 0 {
+		step, hasStep = 0, false
+	}
+	ok := func(v float64) bool {
+		switch {
+		case hasLo && v < lo, hasHi && v > hi, hasLoEx && v <= loEx, hasHiEx && v >= hiEx:
+			return false
+		case integer && v != math.Trunc(v):
+			return false
+		case hasStep && math.Abs(v/step-math.Round(v/step)) > 1e-9:
+			return false
+		}
+		return true
+	}
+	if ok(0) {
+		return 0
+	}
+	unit := step
+	if unit == 0 {
+		unit = 1
+	}
+	// Walk away from 0 on the side the bounds allow, one multiple at a time (a fractional multipleOf of an integer needs
+	// a few more).
+	up := hasLo || hasLoEx || !(hasHi || hasHiEx)
+	var from float64
+	switch {
+	case up && hasLo && hasLoEx:
+		from = math.Max(lo, loEx)
+	case up && hasLo:
+		from = lo
+	case up && hasLoEx:
+		from = loEx
+	case hasHi && hasHiEx:
+		from = math.Min(hi, hiEx)
+	case hasHi:
+		from = hi
+	case hasHiEx:
+		from = hiEx
+	}
+	k := math.Ceil(from / unit)
+	dir := 1.0
+	if !up {
+		k, dir = math.Floor(from/unit), -1
+	}
+	for i := 0; i < 10000; i++ {
+		if v := (k + dir*float64(i)) * unit; ok(v) {
+			return v
+		}
+	}
+	// A range with room between its bounds but no multiple in the steps above: its middle.
+	if !integer && !hasStep && (hasLo || hasLoEx) && (hasHi || hasHiEx) {
+		a, b := math.Max(lo, loEx), math.Min(hi, hiEx)
+		if !hasLo {
+			a = loEx
+		}
+		if !hasHi {
+			b = hiEx
+		}
+		if mid := (a + b) / 2; ok(mid) {
+			return mid
+		}
+	}
+	return 0
+}
+
+// synthesizeString builds a short string that matches the pattern (an unanchored pattern matches anywhere), or "" when
+// the pattern cannot be read or no string was found.
+func synthesizeString(pattern string) string {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return ""
+	}
+	if re.MatchString("") {
+		return ""
+	}
+	tree, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return ""
+	}
+	if cand := shortest(tree.Simplify()); re.MatchString(cand) {
+		return cand
+	}
+	for _, cand := range []string{"a", "A", "0", "x", "a0", "a-0", "1"} {
+		if re.MatchString(cand) {
+			return cand
+		}
+	}
+	return ""
+}
+
+// shortest writes a string for a regular expression tree: the first alternative, the first character of a class, the
+// minimum repeat count (at least reps for a repeat that has none).
+func shortest(re *syntax.Regexp) string {
+	switch re.Op {
+	case syntax.OpLiteral:
+		return string(re.Rune)
+	case syntax.OpCharClass:
+		if len(re.Rune) >= 2 {
+			return string(re.Rune[0])
+		}
+	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		return "a"
+	case syntax.OpCapture:
+		return shortest(re.Sub[0])
+	case syntax.OpConcat:
+		var b strings.Builder
+		for _, sub := range re.Sub {
+			b.WriteString(shortest(sub))
+		}
+		return b.String()
+	case syntax.OpAlternate:
+		return shortest(re.Sub[0])
+	case syntax.OpStar, syntax.OpQuest:
+		return ""
+	case syntax.OpPlus:
+		return shortest(re.Sub[0])
+	case syntax.OpRepeat:
+		return strings.Repeat(shortest(re.Sub[0]), re.Min)
+	}
+	return ""
 }

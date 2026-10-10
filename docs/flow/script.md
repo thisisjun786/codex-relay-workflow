@@ -10,12 +10,13 @@ crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token
 ```
 
 `--backend fake` runs the script against the in-process fake backend: every turn answers immediately with a value that
-satisfies the call's schema (or a short sentence for a call without one). It is the only backend of this build; the App
+satisfies the call's schema, including its numeric bounds, `multipleOf` and `pattern` (or a short sentence for a call without one). It is the only backend of this build; the App
 Server backend arrives with its own issue. The command prints the run's result as JSON and exits 0 when the script
 completed, 1 when the script failed (`status: script_error`) or did not load, and 2 for a command line it cannot use.
-The printed result leaves out the journal sequence numbers of each call (`meta.startSeq`, `meta.endSeq`), which depend
-on the order the host finished concurrent calls, so two runs of one script print the same bytes; `--journal` adds the
-journal rows, with those numbers. `testdata/flow/hello.js` is a small script that runs this way.
+The journal sequence numbers of a call (`meta.startSeq`, `meta.endSeq`) depend on the order the host finished concurrent
+calls, so under `crw flow run` neither the `CallResult` the script holds nor the printed result carries them (a value,
+a log line or an error the script builds from a `CallResult` cannot hold them either) and two runs of one script print the
+same bytes; `--journal` adds the journal rows, with those numbers. `testdata/flow/hello.js` is a small script that runs this way.
 
 ## File format
 
@@ -42,7 +43,10 @@ return { hi }                                   // top-level return: the run's r
   format.
 - An `import` or `export` after the header, a dynamic `import()`, `import.meta`, and any export other than `meta` are
   load errors. The body is checked with a lexer that tracks strings, template literals (including their substitutions),
-  comments and regular expression literals, so the words inside them are not taken for statements.
+  comments and regular expression literals, so the words inside them are not taken for statements. A property call
+  (`o.import(x)`, also with whitespace or a comment between the dot and the name) and a method named `import` or `export`
+  (`{ import(x) { ... } }`) are not imports; a method declaration is told from a call by the `{` that follows its
+  parameter list on the same line.
 - Script errors keep the body's line numbers: the header is replaced by blank lines in the executed text and the
   transform's source map is given to the runtime.
 
@@ -166,7 +170,7 @@ The calls of a run share an agent pool (`--pool`, default 6): at most that many 
 | `status` | `completed`, `null_model`, `held`, `refused`, `unknown` or `superseded`. |
 | `output` | The schema-valid object (or the text of a call without a schema); non-null only when `status` is `completed`. |
 | `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`. |
-| `meta` | `role`, `requestedPair`, `configuredPair`, `threadId`, `turnIds`, `repairUsed`, `tokens`, `startSeq`, `endSeq`. |
+| `meta` | `role`, `requestedPair`, `configuredPair`, `threadId`, `turnIds`, `repairUsed`, `tokens`, `startSeq`, `endSeq` (the last two are absent under `crw flow run`, see above). |
 
 A failed or interrupted turn, and an RPC error to the thread or turn request, is classified by its `codexErrorInfo`: the
 quota, rate, overload, connection, stream, rollback, steering and `other` kinds are `held` (`host_infra_<kind>`; a usage or
@@ -219,7 +223,9 @@ A refused continuation sends nothing to the host.
 `crw.classify(result)` takes an executor `CallResult` or the handle of one of this run's results and maps it to one state: `ready` (completed, `ready_for_review`), `research`
 (`needs_research`), `scope` (`blocked_scope`), `self_failed` (`failed` or `budget_exhausted`), `null_model`, `host_held`,
 `null_unknown`, `refused` or `superseded`. Each classification reads only its own result, so failures mixed on one path or
-across parallel paths are attributed to the exact call. A completed result whose output is not a `RECEIPT` is a `TypeError`, and so are a bare object, a copy of a `CallResult`, `null`
+across parallel paths are attributed to the exact call. A result of another role family than the executor, and a completed
+result whose output is not a complete `RECEIPT` (every field of `RECEIPT` in `crw:lib/schemas`, with the types it lists),
+is a `TypeError`; so are a bare object, a copy of a `CallResult`, `null`
 and a string that is no handle of a result of this run. Like every `crw.*` call, `crw.classify` takes a position of its path
 (journaled as an `Op: crw.classify` row), so calling it while another call or join of the path has not settled throws
 `CrwPathConcurrencyError` and ends the run `script_error`.
@@ -233,6 +239,12 @@ so it is a ceiling against runaway allocation and not an exact account). The run
 kind `step_limit` or `heap_limit`. The call stack depth is bounded as well. Rendering a thrown value and serialising the
 returned one run the script's own `toString`, `toJSON` and getters, so they run under the same limits; one that throws ends
 the run with error kind `js_error`.
+
+The run also ends as soon as the main script's promise is rejected (not after the work still queued has run: a
+continuation of another path that has not started does not start) and as soon as the context of `crw flow run` is
+cancelled (error kind `cancelled`). The value or error of a `workflow()` child is rendered in the child's VM under the
+child's own step and heap limits, also when the child had settled at once. A child that awaits something nothing will
+settle does not keep the run waiting: it ends `unsettled`.
 
 A run that ends with an error (a limit, `path_concurrency`, an engine error) stops at once, in a `workflow()` child as in the
 main script: no completion resumes the script, nothing it still awaits keeps the run waiting, and every call in flight is

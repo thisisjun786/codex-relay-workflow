@@ -248,6 +248,7 @@ var errRunEnded = errors.New("the run has ended")
 // live stops a script that goes on after its run ended (it caught the error that ended it): the VM is interrupted,
 // which no try/catch can catch, so the script opens no further position, writes no intent row and starts nothing.
 func (s *scriptVM) live() {
+	s.e.noteMain()
 	if s.e.fatalErr == nil {
 		return
 	}
