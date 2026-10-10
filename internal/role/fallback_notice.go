@@ -95,16 +95,24 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	// given it again. The notice is computed from the role store, CRW_SPAWN_V1 and the model catalog, so what counts is the text,
 	// not the source: a resume of a session that never had it (this leg was off at its start), or whose settings have changed since,
 	// hears it. Startup, compact, clear and a missing or unknown source always answer.
-	session, resumed := "", false
+	session, source, transcript := "", "", ""
 	if object, ok := payload.(map[string]any); ok {
 		session, _ = object["session_id"].(string)
-		resumed = object["source"] == "resume"
+		source, _ = object["source"].(string)
+		transcript, _ = object["transcript_path"].(string) // the evidence of the turn a resume and a compact run in (CRW-1180)
 	}
+	resumed := source == "resume"
 	answer, err := SessionFallbackNotice(env)
 	if ctx.Err() != nil {
 		return fallbackInterrupted
 	}
 	if err != nil {
+		return 0
+	}
+	// CRW-1180: the compact start right after a resume that gave this notice, in the same turn, adds nothing: Codex keeps the resume's
+	// output after the compaction record, so saying it again stacks the notice twice. Every other start, whether or not it says
+	// anything, ends a pair a resume left open (a resume that gave nothing because the session holds the notice already included).
+	if kind, _ := guidancerecord.Begin(env, session, source, fallbackNoticeLeg, answer, "", transcript); kind == guidancerecord.PairWhole {
 		return 0
 	}
 	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
@@ -114,7 +122,11 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	// Only a notice written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a cancelled
 	// hook, leaves no record, so the session's next resume hears the notice.
 	if werr == nil && n == len(answer) && ctx.Err() == nil {
-		guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
+		if resumed {
+			guidancerecord.RecordResume(env, session, fallbackNoticeLeg, answer, "", transcript)
+		} else {
+			guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
+		}
 	}
 	return 0
 }

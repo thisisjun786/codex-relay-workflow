@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 )
 
 func TestFallbackNoticeOracleAndRepeatedStartup(t *testing.T) {
@@ -108,7 +110,8 @@ func TestFallbackNoticeHookResumeRepeatsOnlyWhatChanged(t *testing.T) {
 	if card := run(resume); card == "" {
 		t.Error("resume after the host card changed answered nothing")
 	}
-	// A compact empties the context: it answers whatever the record says.
+	// A compact empties the context: it answers whatever the record says (here after a start, not right after a resume's whole answer).
+	run(`{"session_id":"s","source":"startup"}`)
 	if got := run(`{"session_id":"s","source":"compact"}`); got == "" {
 		t.Error("compact answered nothing")
 	}
@@ -209,5 +212,106 @@ func TestFallbackNoticeLeafAndNonObjectStartups(t *testing.T) {
 				t.Fatalf("card=%v want %v: %q", got, c.card, out.String())
 			}
 		})
+	}
+}
+
+// CRW-1180 (S4-F4b): a resume that gave the whole notice and the compaction of the same turn stack the notice twice, because the compact
+// start answers whatever the record says. The compact right after a whole resume answer stays silent, once; a later compact, a compact after
+// a changed notice and a compact that no resume answered before it say the notice.
+func TestFallbackNoticeHookCompactAfterAWholeResumeAnswerIsSilentOnce(t *testing.T) {
+	m, env := fallbackTestEnv(t)
+	run := func(raw string) string {
+		var out strings.Builder
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), &out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return out.String()
+	}
+	resume, compact := `{"session_id":"s","source":"resume"}`, `{"session_id":"s","source":"compact"}`
+	whole := run(`{"session_id":"s"}`)
+	if whole == "" {
+		t.Fatal("baseline notice is empty")
+	}
+	// The session started, then was resumed with the record in place: the resume is silent, so a compact must say the notice.
+	if got := run(resume); got != "" {
+		t.Fatalf("resume answered %q", got)
+	}
+	if got := run(compact); got != whole {
+		t.Errorf("compact after a silent resume answered %q", got)
+	}
+	// A resume of a session never given the notice answers whole; the compact of the same turn adds nothing. The transcript shows the
+	// resumed turn compacting before the SessionStart hooks run, as codex 0.154.0 writes it.
+	start := func(session, source string, tr *pairTranscript) string {
+		return run(`{"session_id":"` + session + `","source":"` + source + `","transcript_path":"` + tr.path + `"}`)
+	}
+	n := newPairTranscript(t).turn("t1", true)
+	if got := start("n", "resume", n); got != whole {
+		t.Fatalf("resume of a session never given the notice answered %q", got)
+	}
+	n.said()
+	if got := start("n", "compact", n); got != "" {
+		t.Errorf("compact in the same turn as a whole resume repeated the notice: %q", got)
+	}
+	if got := start("n", "compact", n); got != whole {
+		t.Errorf("the next compact did not say the notice: %q", got)
+	}
+	// The notice changing between the resume and the compact is said.
+	c := newPairTranscript(t).turn("t1", true)
+	if got := start("c", "resume", c); got != whole {
+		t.Fatalf("resume answered %q", got)
+	}
+	c.said()
+	m["CRW_SPAWN_V1"] = "1"
+	if got := start("c", "compact", c); got == "" || got == whole {
+		t.Errorf("compact after the notice changed answered %q", got)
+	}
+	// Another session's compact is not the pair.
+	d := newPairTranscript(t).turn("t1", true)
+	start("d", "resume", d)
+	d.said()
+	if got := start("e", "compact", d); got == "" {
+		t.Error("another session's compact was silenced")
+	}
+}
+
+// CRW-1180 (evaluation d1): a start that names no transcript has no evidence of the resume's turn, so its compact says the notice.
+func TestFallbackNoticeHookCompactWithoutTranscriptEvidenceSaysTheNotice(t *testing.T) {
+	_, env := fallbackTestEnv(t)
+	run := func(raw string) string {
+		var out strings.Builder
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), &out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return out.String()
+	}
+	whole := run(`{"session_id":"s"}`)
+	if got := run(`{"session_id":"q","source":"resume"}`); got != whole {
+		t.Fatalf("resume answered %q", got)
+	}
+	if got := run(`{"session_id":"q","source":"compact"}`); got != whole {
+		t.Errorf("compact of a session whose prompt hook never ran answered %q, want the notice", got)
+	}
+}
+
+// CRW-1180 (verification P1): a compact in a turn after the resume's is a compaction of its own and says the notice again; the prompts
+// the cxc-ops user-prompt hook notes (guidancerecord.NoteUserPrompt) end the pair.
+func TestFallbackNoticeHookCompactInALaterTurnSaysTheNotice(t *testing.T) {
+	_, env := fallbackTestEnv(t)
+	run := func(raw string) string {
+		var out strings.Builder
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), &out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return out.String()
+	}
+	whole := run(`{"session_id":"s"}`)
+	tr := newPairTranscript(t).turn("t1", true)
+	if got := run(`{"session_id":"n","source":"resume","transcript_path":"` + tr.path + `"}`); got != whole {
+		t.Fatalf("resume of a session never given the notice answered %q", got)
+	}
+	guidancerecord.NoteUserPrompt(env, "n", "turn-1")
+	guidancerecord.NoteUserPrompt(env, "n", "turn-2")
+	if got := run(`{"session_id":"n","source":"compact","transcript_path":"` + tr.path + `"}`); got != whole {
+		t.Errorf("compact in a later turn answered %q, want the notice", got)
 	}
 }

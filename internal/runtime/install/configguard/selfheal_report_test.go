@@ -377,6 +377,89 @@ func TestSelfHealReportOffSoftKeyWarns(t *testing.T) {
 	}
 }
 
+// CRW-1180 (S4-F4b): the flag warning is said once per generation. A resume says it (it is not recorded as given at the session's start),
+// and the compact of the same turn does not repeat it; a start, a later compact and a changed warning say it.
+func TestSelfHealReportCompactRightAfterAResumeDoesNotRepeatTheWarning(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	log := selfHealReportFakeCodex(t, selfHealReportSoftOff)
+	// Each session's transcript shows its resumed turn compacting before the SessionStart hooks run, as codex 0.154.0 writes it.
+	transcripts := map[string]*pairTranscript{}
+	start := func(session, source string) string {
+		t.Helper()
+		if transcripts[session] == nil {
+			transcripts[session] = newPairTranscript(t).turn("t1", true)
+		}
+		out, code := selfHealReportRun(t, home, "{\"hook_event_name\":\"SessionStart\",\"session_id\":\""+session+"\",\"cwd\":\"/ws\",\"source\":\""+source+"\",\"transcript_path\":\""+transcripts[session].path+"\"}")
+		if code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+		return out
+	}
+	warning := selfHealReportEnvelopePrefix + pyjson.Dumps(selfHealReportWarning, pyjson.Options{Compact: true, Unicode: true}) + "}}\n"
+	// The warning is live state, so every resume says it; the compact that follows in the same turn adds nothing.
+	if got := start("s1", "resume"); got != warning {
+		t.Fatalf("resume = %q", got)
+	}
+	transcripts["s1"].said()
+	if got := start("s1", "compact"); got != "" {
+		t.Fatalf("compact in the turn of a resume repeated the warning: %q", got)
+	}
+	if got := start("s1", "compact"); got != warning {
+		t.Fatalf("the next compact = %q, want the warning", got)
+	}
+	// Startup, clear and a compact with no resume before it say the warning; a start between the resume and the compact ends the pair.
+	for _, source := range []string{"startup", "clear", "compact", ""} {
+		if got := start("s2", source); got != warning {
+			t.Fatalf("source %q = %q", source, got)
+		}
+	}
+	start("s3", "resume")
+	start("s3", "startup")
+	if got := start("s3", "compact"); got != warning {
+		t.Fatalf("compact after a start = %q", got)
+	}
+	// Another session's compact is not the pair.
+	start("s4", "resume")
+	if got := start("s5", "compact"); got != warning {
+		t.Fatalf("another session's compact = %q", got)
+	}
+	if got := selfHealReportCalls(t, log); len(got) == 0 {
+		t.Fatal("the probe did not run")
+	}
+}
+
+// CRW-1180 (verification P1): a start that has no warning to say still begins a new generation, so the compact that follows it does not
+// take an earlier resume for its pair. The flag is off at a resume, on at a clear (silent), and off again at the compact.
+func TestSelfHealReportSilentStartEndsTheResumePair(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	warning := selfHealReportEnvelopePrefix + pyjson.Dumps(selfHealReportWarning, pyjson.Options{Compact: true, Unicode: true}) + "}}\n"
+	for _, source := range []string{"clear", "startup", "compact", "resume"} {
+		session := "s-" + source
+		start := func(source string) string {
+			t.Helper()
+			out, code := selfHealReportRun(t, home, "{\"hook_event_name\":\"SessionStart\",\"session_id\":\""+session+"\",\"cwd\":\"/ws\",\"source\":\""+source+"\"}")
+			if code != 0 {
+				t.Fatalf("exit = %d", code)
+			}
+			return out
+		}
+		selfHealReportFakeCodex(t, selfHealReportSoftOff)
+		if got := start("resume"); got != warning {
+			t.Fatalf("%s: resume = %q", source, got)
+		}
+		selfHealReportFakeCodex(t, selfHealReportSoftOn)
+		if got := start(source); got != "" {
+			t.Fatalf("%s: start with the flag on = %q", source, got)
+		}
+		selfHealReportFakeCodex(t, selfHealReportSoftOff)
+		if got := start("compact"); got != warning {
+			t.Fatalf("%s: compact after a silent start lost the warning: %q", source, got)
+		}
+	}
+}
+
 // TestSelfHealReportOffSoftKeyWritesNothing is the criterion's letter: a listing of CODEX_HOME
 // before and after the warning is equal.
 func TestSelfHealReportOffSoftKeyWritesNothing(t *testing.T) {

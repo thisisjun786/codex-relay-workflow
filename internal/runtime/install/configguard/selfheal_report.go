@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -171,6 +172,9 @@ func RenderSelfHealReportContext(outcomes []SelfHealReportOutcome) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+// selfHealReportLeg names this hook's record of what a session was told.
+const selfHealReportLeg = "self-heal-report"
+
 // RunSelfHealReportHook owns this component's input and answer. Input is used only for the shared
 // metadata observation; malformed, oversized or unreadable input still exits 0 silently.
 func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env host.LookupEnv) int {
@@ -206,13 +210,18 @@ func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env
 		// The probe was cancelled while it ran: nothing is rendered or written after cancellation.
 		return harness.Interrupted
 	}
-	if additional == "" {
+	// CRW-1180: the compact start right after a resume that gave this very warning, in the same turn, adds nothing: Codex keeps the
+	// resume's output after the compaction record, so saying it again stacks the warning twice. The warning is live state, so a resume
+	// always says it. Every start ends a pair a resume left open, also the one that has no warning to say (the flag was on at that
+	// clear or startup), so a later compact does not take that resume for its pair.
+	if guidancerecord.SilentCompact(env, raw, selfHealReportLeg, additional) || additional == "" {
 		return 0
 	}
 	answer := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":` +
 		pyjson.Dumps(additional, pyjson.Options{Compact: true, Unicode: true}) + "}}\n"
-	if _, err := io.WriteString(out, answer); err != nil {
-		return 0
+	// Only a warning written whole, by a hook that was not cancelled, counts as said.
+	if n, err := io.WriteString(out, answer); err == nil && n == len(answer) && ctx.Err() == nil {
+		guidancerecord.Said(env, raw, selfHealReportLeg, additional)
 	}
 	return 0
 }

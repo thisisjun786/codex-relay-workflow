@@ -1,0 +1,129 @@
+{
+  "issue": "CRW-1180",
+  "intentionally-changed": [
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__aliases_verified_in_local_catalog",
+      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call. CRW-1146: the leg records a JSON line with the SHA-256 of the guidance it gave the session (and the command it names, where it names one) under <CODEX_HOME>/crw/session-guidance/<sha256 of the session id>/subagent-fallback (0600, in 0700 directories), so a resume repeats only guidance the session was not given; the oracle keeps no such record (known-defects/CRW-1146.md). CRW-1180: the dispatch card's first cell names a model only when the local Codex catalog lists its alias (the first listed alias in the order deepseek, swe2, kimi, sol, luna), and sets no model, with a one-line note, when none is listed, where the oracle pins the deepseek alias unverified (known-defects/CRW-1180.md).",
+      "remove": [
+        "calls/0"
+      ],
+      "set": {
+        "tree/codex/crw/session-guidance/type": "dir",
+        "tree/codex/crw/session-guidance/mode": "0700",
+        "tree/codex/crw/session-guidance/content": "",
+        "tree/codex/crw/session-guidance/form": "",
+        "tree/codex/crw/session-guidance/sha256": "",
+        "tree/codex/crw/session-guidance/size": "",
+        "tree/codex/crw/session-guidance/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/type": "dir",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/mode": "0700",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/content": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/form": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/type": "file",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/mode": "0600",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/content": "{\"schemaVersion\":1,\"digest\":\"419d0a3cbc77da0952b2e15a1e46cc64898058964f2851d7c4f67a8e4bcad34d\"}",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/form": "json-line",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/target": "",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",model:\\\"devin/swe-2\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (verified in local catalog)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (verified in local catalog)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}"
+      }
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__baseline_empty_workspace",
+      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call. CRW-1146: the leg records a JSON line with the SHA-256 of the guidance it gave the session (and the command it names, where it names one) under <CODEX_HOME>/crw/session-guidance/<sha256 of the session id>/subagent-fallback (0600, in 0700 directories), so a resume repeats only guidance the session was not given; the oracle keeps no such record (known-defects/CRW-1146.md). CRW-1180: the dispatch card's first cell names a model only when the local Codex catalog lists its alias (the first listed alias in the order deepseek, swe2, kimi, sol, luna), and sets no model, with a one-line note, when none is listed, where the oracle pins the deepseek alias unverified (known-defects/CRW-1180.md).",
+      "remove": [
+        "calls/0"
+      ],
+      "set": {
+        "tree/codex/crw/session-guidance/type": "dir",
+        "tree/codex/crw/session-guidance/mode": "0700",
+        "tree/codex/crw/session-guidance/content": "",
+        "tree/codex/crw/session-guidance/form": "",
+        "tree/codex/crw/session-guidance/sha256": "",
+        "tree/codex/crw/session-guidance/size": "",
+        "tree/codex/crw/session-guidance/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/type": "dir",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/mode": "0700",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/content": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/form": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/type": "file",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/mode": "0600",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/content": "{\"schemaVersion\":1,\"digest\":\"d2b64650fdf252e677a2467c28aceab0ea0c0d301af6fde843960a45dae74e15\"}",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/form": "json-line",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/target": "",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nNo alias is verified locally: the cell sets no model (role default).\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}"
+      }
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__fallback_configured_protocol_precedes_card",
+      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call. CRW-1146: the leg records a JSON line with the SHA-256 of the guidance it gave the session (and the command it names, where it names one) under <CODEX_HOME>/crw/session-guidance/<sha256 of the session id>/subagent-fallback (0600, in 0700 directories), so a resume repeats only guidance the session was not given; the oracle keeps no such record (known-defects/CRW-1146.md). CRW-1180: the dispatch card's first cell names a model only when the local Codex catalog lists its alias (the first listed alias in the order deepseek, swe2, kimi, sol, luna), and sets no model, with a one-line note, when none is listed, where the oracle pins the deepseek alias unverified (known-defects/CRW-1180.md).",
+      "remove": [
+        "calls/0"
+      ],
+      "set": {
+        "tree/codex/crw/session-guidance/type": "dir",
+        "tree/codex/crw/session-guidance/mode": "0700",
+        "tree/codex/crw/session-guidance/content": "",
+        "tree/codex/crw/session-guidance/form": "",
+        "tree/codex/crw/session-guidance/sha256": "",
+        "tree/codex/crw/session-guidance/size": "",
+        "tree/codex/crw/session-guidance/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/type": "dir",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/mode": "0700",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/content": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/form": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/type": "file",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/mode": "0600",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/content": "{\"schemaVersion\":1,\"digest\":\"86444da049a7107e41dccabac7046c1bd53e04cdfa9f1d8de1beb4ae72e8e142\"}",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/form": "json-line",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/target": "",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] First fallback configured for executor. Roles with a first fallback use the main-owned dispatch protocol before native spawn. Run crw role helper dispatch with one JSON object on stdin: {action:\\\"start\\\",sessionId:<your native session>,dispatchId:<unique task id>,role:<role>}. Then claim with {action:\\\"claim\\\",sessionId,dispatchId,attemptId}. Only action=spawn authorizes one native call; prepend its marker followed by a newline to the original task/skills, pass candidate model and effort when non-null, and use a fresh context. Report creation with {action:\\\"report\\\",outcome:\\\"created\\\",sessionId,dispatchId,attemptId,agentId:<returned id>}, then use native wait. Report success with {action:\\\"report\\\",outcome:\\\"complete\\\",sessionId,dispatchId,attemptId,agentId} only after validating final work; native completion alone is not task success and terminal reports cannot reopen. Report provider failure with action:\\\"report\\\",outcome:\\\"failed\\\", the same IDs, the original error and executionState (not_created/stopped/unknown/running). For confirmed stagnation or unusable final output, report outcome:\\\"task_failed\\\" with taskFailure:{kind:\\\"stagnation\\\"|\\\"unusable_output\\\",evidence:<concrete task evidence>}, the same IDs, executionState:\\\"stopped\\\", and reconciliation:<termination and partial-work evidence>. Task evidence and reconciliation must each be non-empty text of at most 2000 characters; taskFailure permits only kind and evidence. Omit error on task reports; supplied stop errors still stop, unknown errors reconcile, and next-eligible provider errors must use outcome:\\\"failed\\\". Never relabel cancellation, exhausted bounds, a bare wait timeout or supported disagreement as task failure. Failed handoff requires concrete reconciliation evidence and the recorded agentId for a stopped child. Inspect changes and stop all prior work before retrying. A ready result requires a new claim. Status never authorizes a second spawn. main-direct returns remaining work to the main agent; independent review still requires independent evidence. stop/reconcile never authorizes another model or direct execution. OCX owns provider retries; CRW selects at most two native attempts. Do not invent error codes from arbitrary prose; preserve structured errors or canonical transport error text. Explicit caller model overrides and full-history forks are outside this managed path. Never use a dispatch marker to bypass native permissions.\\n[crw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\\nconst s = n.filter(x => /spawn_agent$/.test(x));\\nif (s.length !== 1) throw new Error(\\\"expected one spawn_agent helper, found \\\" + s.length);\\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\\nif (v1 === v2) throw new Error(\\\"collab family unresolved: v1=\\\" + v1 + \\\" v2=\\\" + v2);\\nconst a = {message:\\\"Report your model and say OK; do not edit files.\\\",reasoning_effort:\\\"low\\\"};\\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\\\"model_probe\\\", fork_turns:\\\"none\\\"}));\\nNo alias is verified locally: the cell sets no model (role default).\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}"
+      }
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__spawn_v1_card",
+      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call. CRW-1146: the leg records a JSON line with the SHA-256 of the guidance it gave the session (and the command it names, where it names one) under <CODEX_HOME>/crw/session-guidance/<sha256 of the session id>/subagent-fallback (0600, in 0700 directories), so a resume repeats only guidance the session was not given; the oracle keeps no such record (known-defects/CRW-1146.md). CRW-1180: the dispatch card's first cell names a model only when the local Codex catalog lists its alias (the first listed alias in the order deepseek, swe2, kimi, sol, luna), and sets no model, with a one-line note, when none is listed, where the oracle pins the deepseek alias unverified (known-defects/CRW-1180.md).",
+      "remove": [
+        "calls/0"
+      ],
+      "set": {
+        "tree/codex/crw/session-guidance/type": "dir",
+        "tree/codex/crw/session-guidance/mode": "0700",
+        "tree/codex/crw/session-guidance/content": "",
+        "tree/codex/crw/session-guidance/form": "",
+        "tree/codex/crw/session-guidance/sha256": "",
+        "tree/codex/crw/session-guidance/size": "",
+        "tree/codex/crw/session-guidance/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/type": "dir",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/mode": "0700",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/content": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/form": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/target": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/type": "file",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/mode": "0600",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/content": "{\"schemaVersion\":1,\"digest\":\"bfee8a830ed6a462ded4755e825f0c649e3b71d4fc361f516902ddcaa95fc3bd\"}",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/form": "json-line",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/sha256": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/size": "",
+        "tree/codex/crw/session-guidance/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/subagent-fallback/target": "",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] Subagent dispatch: V1 requested by CRW_SPAWN_V1=1 (override, not host evidence).\\nCode Mode first cell: await tools.multi_agent_v1__spawn_agent({message:\\\"Report your model and say OK; do not edit files.\\\",reasoning_effort:\\\"low\\\"});\\nDirect: multi_agent_v1.spawn_agent({message,model?,reasoning_effort?}); wait: tools.multi_agent_v1__wait_agent({targets:[agent_id],timeout_ms}); close: tools.multi_agent_v1__close_agent({target:agent_id}). Replace the probe message with the task; obey managed fallback dispatch first.\\nNo alias is verified locally: the cell sets no model (role default).\\nAliases (map 2026-09-24; local Codex catalog membership only):\\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\\nsol -> gpt-6-sol (unverified, map 2026-09-24)\\nluna -> gpt-6-luna (unverified, map 2026-09-24)\"}}"
+      }
+    }
+  ]
+}

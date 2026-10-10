@@ -136,20 +136,23 @@ func RunMapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) s
 // mapAffordanceLeg names this leg's record of what a session was given.
 const mapAffordanceLeg = "map-affordance"
 
-// mapAffordanceSessionStart returns the answer and the function that records the pointers it gave. A resume (CRW-1146)
+// mapAffordanceSessionStart returns the answer and the function that notes what it gave, told whether the answer was written whole. A resume (CRW-1146)
 // re-issues only the session binding and the PATH banner when the session was given exactly these pointers before; it holds them from
 // its start or its last compact. Resume alone proves nothing (the switch can be off at the start and on at the resume, and the pointers
 // name the command and the workspace size), so a resume of a session that was not given them, or given others, gets them whole. A
-// missing or unknown source always gets the whole list.
-func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (string, func()) {
-	cwd, sid, resumed := fallbackCwd, "", false
+// missing or unknown source always gets the whole list, except the compact start that follows, in the same turn, a resume that gave the
+// whole list (CRW-1180): that one adds nothing, once.
+func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (string, func(written bool)) {
+	cwd, sid, source, transcript := fallbackCwd, "", "", ""
 	if p := object(text.Trim(raw)); p != nil {
 		if s, ok := p["cwd"].(string); ok && s != "" {
 			cwd = s
 		}
 		sid, _ = p["session_id"].(string)
-		resumed = p["source"] == "resume"
+		source, _ = p["source"].(string)
+		transcript, _ = p["transcript_path"].(string) // the evidence of the turn a resume and a compact run in (CRW-1180)
 	}
+	resumed := source == "resume"
 	lines := []harness.ContextSection{}
 	if validSessionID(sid) {
 		lines = append(lines, harness.ContextSection{Text: RenderSessionBinding(sid, env), Required: true})
@@ -178,14 +181,51 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 		banner = append(banner, harness.ContextSection{Text: "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: " + command})
 	}
 	given := strings.Join(identity, "\n\n")
-	record := func() {
-		if sid != "" {
+	// What a resume that was given the pointers before says is the binding and the PATH banner: the part of the answer that does not
+	// depend on the pointers.
+	headText := func() string {
+		texts := []string{}
+		for _, section := range append(append([]harness.ContextSection{}, lines...), banner...) {
+			texts = append(texts, section.Text)
+		}
+		return strings.Join(texts, "\n\n")
+	}
+	// An answer written whole is recorded (which ends a pair an earlier resume left open, and a resume leaves one of its own); one that
+	// was not written leaves no record, and no pair either, since the context does not hold what it would have said.
+	record := func(written bool) {
+		switch {
+		case sid == "":
+		case !written:
+			guidancerecord.ClearResume(env, sid, mapAffordanceLeg)
+		case resumed:
+			guidancerecord.RecordResume(env, sid, mapAffordanceLeg, given, command, transcript)
+		default:
 			guidancerecord.Record(env, sid, mapAffordanceLeg, given, command)
 		}
 	}
+	// CRW-1180: the compact start right after a resume of its turn adds only what that resume did not give: Codex keeps the resume's
+	// output after the compaction record, so saying it again stacks it twice.
+	pair, part := guidancerecord.PairNone, ""
+	if source == "compact" && sid != "" {
+		pair, part = guidancerecord.TakePair(env, sid, mapAffordanceLeg, given, command, transcript)
+	}
+	if pair == guidancerecord.PairWhole {
+		return "", func(bool) {}
+	}
+	if pair == guidancerecord.PairPart && guidancerecord.PartDigest(headText()) == part {
+		// The resume gave this binding and banner; the context still holds them, and the compaction emptied only the pointers.
+		lines, banner = nil, nil
+	}
 	if resumed && sid != "" && guidancerecord.Delivered(env, sid, mapAffordanceLeg, given, command) {
+		// This resume gave the binding only (and the banner): a compact of its turn must say the pointers, and only them.
+		head := headText()
 		lines = append(lines, banner...)
-		return harness.ContextOutputSections("SessionStart", lines), func() {}
+		return harness.ContextOutputSections("SessionStart", lines), func(written bool) {
+			if !written {
+				head = ""
+			}
+			guidancerecord.RecordResumePart(env, sid, mapAffordanceLeg, head, transcript)
+		}
 	}
 	for i, pointer := range pointers {
 		lines = append(lines, harness.ContextSection{Text: pointer, Required: identity[i] == RenderLoopAffordance(words)})
@@ -220,18 +260,24 @@ func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	var answer string
 	switch event {
 	case "session-start":
-		var record func()
+		var record func(written bool)
 		answer, record = mapAffordanceSessionStart(raw, cwd, env)
 		n, err := io.WriteString(out, answer)
-		// Only an answer written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a
-		// cancelled hook, leaves no record, so the session's next resume gets the whole list.
-		if err == nil && n == len(answer) && ctx.Err() == nil {
-			record()
+		// Only an answer written whole counts as given: a failed or short write leaves no record, so the session's next resume gets
+		// the whole list. A cancelled hook has no effects at all.
+		if ctx.Err() == nil {
+			record(err == nil && n == len(answer))
 		}
 		answer = ""
 	case "post-compact":
 		answer = RunPostCompactAffordance(raw)
 	case "user-prompt-submit":
+		// CRW-1180: a prompt of a later turn ends the resume pair, so a compaction of that turn says its guidance again.
+		if p := object(raw); p != nil {
+			session, _ := p["session_id"].(string)
+			turn, _ := p["turn_id"].(string)
+			guidancerecord.NoteUserPrompt(env, session, turn)
+		}
 		answer = RunUserPromptAffordance(raw, env)
 	}
 	if answer != "" {

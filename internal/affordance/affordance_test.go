@@ -521,6 +521,83 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 	return k, errors.New("write failed")
 }
 
+// CRW-1180 (S4-F4b): a resume that gave the whole list and the compaction of the same turn stack it twice. The compact right after a whole
+// resume answer is silent, once; a start between them, a changed list and a session the resume did not answer for are not the pair.
+func TestSessionStartCompactRightAfterAWholeResumeIsSilentOnce(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	// Each session's transcript shows its resumed turn compacting before the SessionStart hooks run, as codex 0.154.0 writes it.
+	transcripts := map[string]*pairTranscript{}
+	transcript := func(id string) *pairTranscript {
+		if transcripts[id] == nil {
+			transcripts[id] = newPairTranscript(t).turn("t1", true)
+		}
+		return transcripts[id]
+	}
+	src := func(id, source string) string {
+		return payload(big, "SessionStart", id, map[string]any{"source": source, "transcript_path": transcript(id).path})
+	}
+	// A session never given the list hears it whole on its resume.
+	wholeResume := func(id string) {
+		t.Helper()
+		if got := contextOf(t, hookAnswer(t, src(id, "resume"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+			t.Fatalf("resume of %s, never given the list: %q", id, got)
+		}
+		transcript(id).said()
+	}
+	full := hookAnswer(t, payload(big, "SessionStart", "S", nil), big, env)
+	// The resume of a session that was given the list is short; the compact that follows says the list, and only the list: the
+	// binding is in the context from the resume (the compaction record precedes it).
+	if got := contextOf(t, hookAnswer(t, src("S", "resume"), big, env), "SessionStart"); got != RenderSessionBinding("S", env) {
+		t.Fatalf("short resume: %q", got)
+	}
+	transcript("S").said()
+	compact := contextOf(t, hookAnswer(t, src("S", "compact"), big, env), "SessionStart")
+	if want := strings.TrimPrefix(contextOf(t, full, "SessionStart"), RenderSessionBinding("S", env)+"\n\n"); compact != want {
+		t.Errorf("compact after a short resume = %q, want the list without the binding the resume gave: %q", compact, want)
+	}
+	if strings.Contains(compact, RenderSessionBinding("S", env)) {
+		t.Errorf("compact after a short resume repeated the binding: %q", compact)
+	}
+	if got := contextOf(t, hookAnswer(t, src("S", "compact"), big, env), "SessionStart"); got != contextOf(t, full, "SessionStart") {
+		t.Errorf("the next compact did not say the binding and the list: %q", got)
+	}
+	// After a whole resume the compact of the same turn adds nothing, and only that one.
+	wholeResume("N")
+	if got := hookAnswer(t, src("N", "compact"), big, env); got != "" {
+		t.Errorf("compact in the turn of a whole resume repeated the list: %q", got)
+	}
+	if got := contextOf(t, hookAnswer(t, src("N", "compact"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") || !strings.Contains(got, "`N`") {
+		t.Errorf("the next compact did not say the whole list: %q", got)
+	}
+	// A start between the resume and the compact begins a new generation.
+	wholeResume("C")
+	hookAnswer(t, src("C", "clear"), big, env)
+	if got := hookAnswer(t, src("C", "compact"), big, env); got == "" {
+		t.Error("compact after a clear was silenced")
+	}
+	// The list changing between the resume and the compact is said.
+	wholeResume("D")
+	other := func(k string) (string, bool) {
+		if k == "CRW_BIN" {
+			return "chosen-crw", true
+		}
+		return env(k)
+	}
+	if got := contextOf(t, hookAnswer(t, src("D", "compact"), big, other), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact after the list changed: %q", got)
+	}
+	// Another session's compact is not the pair, and a compact without a session id cannot be matched.
+	wholeResume("E")
+	if got := hookAnswer(t, src("M", "compact"), big, env); got == "" {
+		t.Error("another session's compact was silenced")
+	}
+	if got := hookAnswer(t, src("", "compact"), big, env); got == "" {
+		t.Error("a compact without a session id was silenced")
+	}
+}
+
 // hookAnswer is what the session-start leg writes when the dispatcher runs it (RunHook), recording what the session was given.
 func hookAnswer(t *testing.T, raw, cwd string, env host.LookupEnv) string {
 	t.Helper()
@@ -584,5 +661,137 @@ func TestRenderingTheSessionStartAnswerRecordsNothing(t *testing.T) {
 	RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", nil), big, env)
 	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
 		t.Fatalf("rendering wrote under the Codex home: %v %v", entries, err)
+	}
+}
+
+// userPrompt runs the dispatcher's user-prompt-submit leg for a prompt of a turn.
+func userPrompt(t *testing.T, ws, sid, turn string, env host.LookupEnv) {
+	t.Helper()
+	var out strings.Builder
+	raw := payload(ws, "UserPromptSubmit", sid, map[string]any{"turn_id": turn, "prompt": "go on"})
+	if code := RunHook(context.Background(), "user-prompt-submit", strings.NewReader(raw), &out, env, ws); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+// CRW-1180 (verification P1): the window is no evidence of "the same turn". A compact in a turn after the resume's is a compaction of
+// its own, which empties the context that held what the resume said, so it says the guidance again, within the window too. The turn is
+// told by the transcript; the prompts the prompt hook sees end a pair earlier: the first prompt after the resume (and a second hook call
+// for its turn) belongs to the pair's turn, a prompt of another turn ends the pair.
+func TestSessionStartCompactInALaterTurnSaysTheGuidance(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	transcripts := map[string]*pairTranscript{}
+	transcript := func(id string) *pairTranscript {
+		if transcripts[id] == nil {
+			transcripts[id] = newPairTranscript(t).turn("t1", true)
+		}
+		return transcripts[id]
+	}
+	src := func(id, source string) string {
+		return payload(big, "SessionStart", id, map[string]any{"source": source, "transcript_path": transcript(id).path})
+	}
+	whole := func(id string) {
+		t.Helper()
+		if got := contextOf(t, hookAnswer(t, src(id, "resume"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+			t.Fatalf("resume of %s: %q", id, got)
+		}
+		transcript(id).said()
+	}
+	// The pair's own turn: its prompt may reach the prompt hook before the compact (twice, too) without ending the pair.
+	whole("A")
+	userPrompt(t, big, "A", "turn-1", env)
+	userPrompt(t, big, "A", "turn-1", env)
+	if got := hookAnswer(t, src("A", "compact"), big, env); got != "" {
+		t.Errorf("compact in the turn of the resume's first prompt repeated the list: %q", got)
+	}
+	// A later turn: the compact says the whole list again, by the prompts the hook saw and by the transcript alone.
+	whole("B")
+	userPrompt(t, big, "B", "turn-1", env)
+	userPrompt(t, big, "B", "turn-2", env)
+	if got := contextOf(t, hookAnswer(t, src("B", "compact"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact in a later turn was silenced: %q", got)
+	}
+	whole("F")
+	transcript("F").end("t1").turn("t2", true)
+	if got := contextOf(t, hookAnswer(t, src("F", "compact"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact in a later turn the prompt hook did not see was silenced: %q", got)
+	}
+	// Without turn ids every prompt counts, so the second one ends the pair.
+	whole("C")
+	userPrompt(t, big, "C", "", env)
+	userPrompt(t, big, "C", "", env)
+	if got := hookAnswer(t, src("C", "compact"), big, env); got == "" {
+		t.Error("compact after two prompts without turn ids was silenced")
+	}
+	// A prompt of another session does not end the pair.
+	whole("D")
+	userPrompt(t, big, "D", "turn-1", env)
+	userPrompt(t, big, "other", "turn-2", env)
+	if got := hookAnswer(t, src("D", "compact"), big, env); got != "" {
+		t.Errorf("another session's prompt ended the pair: %q", got)
+	}
+	// The same holds for the short resume: its pair ends with the second turn's prompt, and the compact says the binding again.
+	hookAnswer(t, payload(big, "SessionStart", "E", nil), big, env)
+	hookAnswer(t, src("E", "resume"), big, env)
+	transcript("E").said()
+	userPrompt(t, big, "E", "turn-1", env)
+	userPrompt(t, big, "E", "turn-2", env)
+	if got := contextOf(t, hookAnswer(t, src("E", "compact"), big, env), "SessionStart"); !strings.Contains(got, RenderSessionBinding("E", env)) {
+		t.Errorf("compact in a later turn after a short resume omitted the binding: %q", got)
+	}
+}
+
+// CRW-1180 (verification P1): a short resume that gave the binding and the PATH banner leaves the compact of its turn to say the
+// pointers only; the banner is left out when the resume gave the same one, and said when the command changed in between.
+func TestSessionStartCompactAfterAShortResumeLeavesOutTheBannerItGave(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "/opt/bin/crw")
+	tr := newPairTranscript(t).turn("t1", true)
+	src := func(source string) string {
+		return payload(big, "SessionStart", "S", map[string]any{"source": source, "transcript_path": tr.path})
+	}
+	hookAnswer(t, payload(big, "SessionStart", "S", nil), big, env)
+	resume := contextOf(t, hookAnswer(t, src("resume"), big, env), "SessionStart")
+	banner := "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: /opt/bin/crw"
+	if !strings.Contains(resume, banner) {
+		t.Fatalf("short resume gave no banner: %q", resume)
+	}
+	tr.said()
+	compact := contextOf(t, hookAnswer(t, src("compact"), big, env), "SessionStart")
+	if strings.Contains(compact, banner) || strings.Contains(compact, RenderSessionBinding("S", env)) || !strings.Contains(compact, "Loop contract") {
+		t.Errorf("compact after a short resume = %q", compact)
+	}
+}
+
+// CRW-1180 (evaluation d1): without evidence of the resume's turn in the session's transcript the compact cannot tell the resume's turn from
+// a later one, so it says the list: whether the prompt hook ran in the session, before the resume or in its turn, is no such evidence.
+func TestSessionStartCompactWithoutTranscriptEvidenceSaysTheList(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	src := func(id, source string) string {
+		return payload(big, "SessionStart", id, map[string]any{"source": source})
+	}
+	// The prompt hook never ran for this session, and the start names no transcript: the whole resume is followed by a whole compact.
+	hookAnswer(t, src("H", "resume"), big, env)
+	if got := contextOf(t, hookAnswer(t, src("H", "compact"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact of a session without a transcript was silenced: %q", got)
+	}
+	// The prompt hook ran in the session's first life and in the resume's turn; the resume is whole (the command changed).
+	hookAnswer(t, payload(big, "SessionStart", "P", nil), big, env)
+	userPrompt(t, big, "P", "turn-0", env)
+	other := func(k string) (string, bool) {
+		if k == "CRW_BIN" {
+			return "other-crw", true
+		}
+		return env(k)
+	}
+	hookAnswer(t, src("P", "resume"), big, other)
+	userPrompt(t, big, "P", "turn-1", env)
+	if got := contextOf(t, hookAnswer(t, src("P", "compact"), big, other), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact without a transcript was silenced because the prompt hook ran: %q", got)
 	}
 }
