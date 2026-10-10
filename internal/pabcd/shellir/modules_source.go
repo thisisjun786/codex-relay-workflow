@@ -138,7 +138,6 @@ var importlibPlainAttrs = map[string]bool{"import_module": true, "reload": true,
 
 var (
 	reLoaderPaths  = regexp.MustCompile(`\b(__path__|submodule_search_locations)\b`)
-	reDynamicNames = regexp.MustCompile(`\b(__import__|import_module)\b`)
 	reSimpleCall   = regexp.MustCompile(`^\s*\(\s*(?:"[A-Za-z0-9_.]*"|'[A-Za-z0-9_.]*')\s*[,)]`)
 )
 
