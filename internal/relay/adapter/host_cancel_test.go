@@ -21,7 +21,9 @@ import (
 // tick's budget runs out and when the daemon stops. The wait for that end is only a bound on a
 // failing run; a passing run waits for the end itself.
 
-const hostEndBound = 3 * time.Second
+// The bound only decides a failing run. It is thirty seconds because the package runs its tests in parallel: a
+// repeated pass (-count=10 -cpu=1,4) saw the tick not reach the call the test holds within the old three seconds.
+const hostEndBound = 30 * time.Second
 
 // hangingHost answers its first answers calls and holds every call after them. A held call ends
 // when its context ends, which it reports on ended, or when the test releases it, which stands
