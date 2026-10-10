@@ -123,8 +123,8 @@ or justified near-pass exits. C requires fresh relevant proof and SoT sync;
 passing unrelated checks is not evidence. Explicit execution restrictions are not
 overridden by a reference asking to run a verifier or dispatch a reviewer.
 
-3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Never push to a remote without explicit user approval (DEV-GIT-PUSH-01, ESCALATE). When P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.
-5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.
+3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Push only as `crw-dev` DEV-GIT-PUSH-01 defines. Where the repository's delivery path uses pull requests and P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.
+5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (pushing follows `crw-dev` DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../crw-dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.
 
 ## Work-Phase Loop (multi-pass tasks)
 
@@ -167,19 +167,30 @@ See `dev` §0.0 for the full class definitions and tie-break rules.
 
 ## Delegation model — choosing a surface
 
-Choose the surface before dispatching. A **subagent** (`spawn_agent`) is a leaf
+Choose the surface before dispatching, and start from the binding: before any
+dispatch of an independent lane, apply
+[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
+A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
+independent relay child started and resumed through `crw-run`, never a
+`create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
+followed, not routed around by creating a thread by hand. An unresolved binding is
+not permission to take the unmanaged route. The thread and subagent choice below is
+for unmanaged work: standalone PABCD with no Linear issue and no CRW execution
+binding, and bounded helper delegation inside any task.
+
+A **subagent** (`spawn_agent`) is a leaf
 running in **this session's own working directory**, with no session state, no
 goal and no FSM; its writes are your uncommitted changes. A **thread**
 (`create_thread`) is a separate Codex task with its own goal and PABCD state, and
 with `environment: worktree` its own checkout — `local` shares the project
-checkout. Work needing its own branch, checkout or merge/CI lane is thread work,
-one worktree thread per lane; a bounded slice of the tree you are already editing
-is subagent work. Asking for parallel lane work is asking for those threads — the lanes are
+checkout. For unmanaged work, work needing its own branch, checkout or merge/CI
+lane is thread work, one worktree thread per lane; a bounded slice of the tree you are already editing
+is subagent work. Asking for unmanaged parallel lane work is asking for those threads — the lanes are
 the mechanism, not an extra deliverable — so do not fall back to subagents on the
 shared tree to avoid creating tasks. Concurrent subagents need non-overlapping
 write scopes and must never run branch-level git operations at the same time.
-Before an authorized dispatch that is not obviously one or the other, read
-[Dispatch surfaces](references/dispatch-surfaces.md).
+Before every authorized dispatch, read [Dispatch surfaces](references/dispatch-surfaces.md)
+(DISPATCH-MANAGED-01 first).
 
 This section governs dispatched children, not independently user-owned peer tasks.
 For necessary read-only context, follow
