@@ -89,3 +89,62 @@ func TestTemporaryRoots_neverLieInTheAccountHome(t *testing.T) {
 		t.Errorf("%d entries were made in the account's .codex", len(entries))
 	}
 }
+
+// CRW-1186 verification round 1: a link below the destination that leads into the account's home.
+func TestSaveCases_refusesACasesFileThatIsALinkIntoTheAccountHome(t *testing.T) {
+	home := fakeAccount(t)
+	protected := filepath.Join(home, ".crw", CasesFile)
+	if err := os.MkdirAll(filepath.Dir(protected), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(protected, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	if err := os.Symlink(protected, filepath.Join(dest, CasesFile)); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, SaveCases(dest, nil))
+	if raw, _ := os.ReadFile(protected); string(raw) != "original" {
+		t.Errorf("the account's file reads %q", raw)
+	}
+}
+
+func TestPrepareRoot_refusesAHomeBelowTheRootThatIsALinkIntoTheAccountHome(t *testing.T) {
+	home := fakeAccount(t)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	env := RootEnv(root)
+	if err := os.MkdirAll(filepath.Dir(env.CodexHome), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".codex"), env.CodexHome); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, PrepareRoot(root))
+	if entries, _ := os.ReadDir(filepath.Join(home, ".codex")); len(entries) != 0 {
+		t.Errorf("the account's .codex holds %d entries", len(entries))
+	}
+}
+
+func TestOutputFiles_refuseALinkIntoTheAccountHome(t *testing.T) {
+	home := fakeAccount(t)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if err := os.Symlink(filepath.Join(home, ".codex"), filepath.Join(out, DivergenceDir)); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, writeDivergence(out, Divergence{Kind: "x", Input: "{}"}, map[string]bool{}))
+	out2 := t.TempDir()
+	if err := os.Symlink(filepath.Join(home, ".codex", "summary.json"), filepath.Join(out2, "summary.json")); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, writeSummary(out2, Summary{}))
+	if entries, _ := os.ReadDir(filepath.Join(home, ".codex")); len(entries) != 0 {
+		t.Errorf("the account's .codex holds %d entries", len(entries))
+	}
+}

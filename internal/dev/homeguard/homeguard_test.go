@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -184,6 +185,106 @@ func TestReadOnlyHarnessesCallNoWriter(t *testing.T) {
 				}
 				return true
 			})
+		}
+	}
+}
+
+// CRW-1186 verification round 1: the guard asks the filesystem where a path leads, in the order the
+// kernel does (a ".." after a link is taken from the link's target), and ends on a link cycle.
+
+func wantRefused(t *testing.T, name, path string) {
+	t.Helper()
+	var refusal *Error
+	if err := Refuse(path); !errors.As(err, &refusal) {
+		t.Errorf("%s: want a refusal of %s, got %v", name, path, err)
+	}
+}
+
+func TestRefuseTakesDotDotAfterALinkFromTheLinksTarget(t *testing.T) {
+	home := t.TempDir()
+	defer SetAccountHome(home)()
+	if err := os.MkdirAll(filepath.Join(home, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(filepath.Join(home, "work"), filepath.Join(outside, "link")); err != nil {
+		t.Fatal(err)
+	}
+	raw := outside + "/link/../.codex/report.json"
+	wantRefused(t, "outside/link/../.codex", raw)
+	// the same destination written: the kernel puts it in the account's .codex
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(raw, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".codex", "report.json")); err != nil {
+		t.Fatalf("the premise (the kernel writes the account's .codex) does not hold: %v", err)
+	}
+	// a relative spelling takes the same way
+	t.Chdir(outside)
+	wantRefused(t, "relative", "link/../.codex/report.json")
+	if err := Refuse(filepath.Join(outside, "link", "..", "fine")); err != nil {
+		t.Errorf("a ..-after-link destination outside the protected directories: %v", err)
+	}
+}
+
+func TestRefuseProtectsThePhysicalPlaceOfAProtectedDirectoryThatIsALink(t *testing.T) {
+	home := t.TempDir()
+	defer SetAccountHome(home)()
+	for _, rel := range []string{".codex", ".crw", ".local/share/crw-runtime"} {
+		target := t.TempDir()
+		link := filepath.Join(home, rel)
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		wantRefused(t, rel+" target", filepath.Join(target, "report.json"))
+		wantRefused(t, rel+" target itself", target)
+	}
+	// a link in the middle of the way to the runtime directory
+	home2 := t.TempDir()
+	defer SetAccountHome(home2)()
+	mid := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(mid, "share", "crw-runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(mid, filepath.Join(home2, ".local")); err != nil {
+		t.Fatal(err)
+	}
+	wantRefused(t, ".local link", filepath.Join(mid, "share", "crw-runtime", "x"))
+}
+
+func TestRefuseEndsOnALinkCycle(t *testing.T) {
+	home := t.TempDir()
+	defer SetAccountHome(home)()
+	dir := t.TempDir()
+	mustLink := func(target, name string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustLink("a", "self")
+	mustLink("b", "a")
+	mustLink("a", "b")
+	for _, name := range []string{"self", "a", "b/x", "self/y/z"} {
+		done := make(chan error, 1)
+		go func() { done <- Refuse(filepath.Join(dir, name)) }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("%s: a path that cannot be resolved is not refused", name)
+			}
+			var refusal *Error
+			if errors.As(err, &refusal) {
+				t.Errorf("%s: a cycle is not a refusal of the home: %v", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: Refuse did not return", name)
 		}
 	}
 }

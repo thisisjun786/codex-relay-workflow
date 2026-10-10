@@ -33,7 +33,7 @@ func PrepareRoot(root string) error {
 	}
 	env := RootEnv(root)
 	for _, dir := range []string{root, env.Home, env.CodexHome, env.CrwHome, env.TmpDir, filepath.Join(root, "codexclaw-home")} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}

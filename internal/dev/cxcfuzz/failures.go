@@ -7,8 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // The causes a case the harness could not answer is recorded under (CRW-978 c7).
@@ -75,14 +76,14 @@ func writeFailure(out string, record Failure, written map[string]bool) (string, 
 		return name, false, nil
 	}
 	written[name] = true
-	if err := os.MkdirAll(filepath.Join(out, failureDir), 0o755); err != nil {
+	if err := homeguard.MkdirAll(filepath.Join(out, failureDir), 0o755); err != nil {
 		return "", false, err
 	}
 	raw, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return "", false, err
 	}
-	if err := os.WriteFile(filepath.Join(out, filepath.FromSlash(name)), append(raw, '\n'), 0o644); err != nil {
+	if err := homeguard.WriteFile(filepath.Join(out, filepath.FromSlash(name)), append(raw, '\n'), 0o644); err != nil {
 		return "", false, err
 	}
 	return name, true, nil

@@ -180,7 +180,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: the output directory %s is not empty\n", cfg.Out)
 		return 2
 	}
-	if err := os.MkdirAll(cfg.Out, 0o755); err != nil {
+	if err := homeguard.MkdirAll(cfg.Out, 0o755); err != nil {
 		fmt.Fprintf(stderr, "crw-dev fuzz: %v\n", err)
 		return 1
 	}
@@ -483,14 +483,14 @@ func writeDivergence(out string, d Divergence, written map[string]bool) error {
 	}
 	written[name] = true
 	dir := filepath.Join(out, DivergenceDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, name), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(filepath.Join(dir, name), append(raw, '\n'), 0o644)
 }
 
 // writeSummary writes <out>/summary.json.
@@ -499,7 +499,7 @@ func writeSummary(out string, summary Summary) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644)
 }
 
 // repositoryRoot is the checkout holding the working directory: the first parent with a go.mod.

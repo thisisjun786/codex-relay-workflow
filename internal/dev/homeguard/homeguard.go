@@ -82,21 +82,31 @@ func AccountHome() (string, error) {
 }
 
 // Protected is every directory below the account home the harnesses must not write, in the spelling
-// the passwd database gives and, where the home is itself reached through a link, the physical one.
-// It is empty when the account has no resolvable home.
+// the passwd database gives and in its physical place: where the home, or the protected directory
+// itself, is a link, the place it leads to is protected as well. It is empty when the account has no
+// resolvable home.
 func Protected() []string {
 	home, err := AccountHome()
 	if err != nil || !filepath.IsAbs(home) {
 		return nil
 	}
 	homes := []string{filepath.Clean(home)}
-	if resolved, err := filepath.EvalSymlinks(home); err == nil && !slices.Contains(homes, resolved) {
-		homes = append(homes, resolved)
+	if real, err := physical(home); err == nil && !slices.Contains(homes, real) {
+		homes = append(homes, real)
 	}
 	var out []string
+	add := func(dir string) {
+		if !slices.Contains(out, dir) {
+			out = append(out, dir)
+		}
+	}
 	for _, h := range homes {
 		for _, rel := range protectedBelow {
-			out = append(out, filepath.Join(h, rel))
+			dir := filepath.Join(h, rel)
+			add(dir)
+			if real, err := physical(dir); err == nil {
+				add(real)
+			}
 		}
 	}
 	return out
@@ -118,8 +128,11 @@ func (e *Error) Error() string {
 }
 
 // Refuse returns an *Error when path is, or lies below, a directory of the account home no harness
-// may write (Protected), whether by its name or through the links on the way to it. A part of the path
-// that does not exist yet is taken as written below the deepest part that does.
+// may write (Protected), whether by its name or through the links on the way to it. The links are
+// followed in the order the kernel follows them, so that a ".." after a link is taken from the link's
+// target; a part of the path that does not exist yet is taken as written below the deepest part that
+// does. A path that cannot be resolved (a link cycle, more links than the kernel follows) is refused
+// with an error that is not an *Error: nothing can be said of where a write would land.
 func Refuse(path string) error {
 	protected := Protected()
 	if len(protected) == 0 {
@@ -129,12 +142,22 @@ func Refuse(path string) error {
 	if err != nil {
 		return err
 	}
-	resolved := resolve(abs)
-	for _, candidate := range []string{abs, resolved} {
+	// Three readings of the destination: the name as given, the physical place the kernel reaches by
+	// the spelling as given, and the physical place of the cleaned spelling (a caller that joins path
+	// to a name cleans it first, which drops a ".." before the link it follows).
+	given, err := physical(path)
+	if err != nil {
+		return fmt.Errorf("cannot tell where %s leads, so it is not written: %w", path, err)
+	}
+	cleaned, err := physical(abs)
+	if err != nil {
+		return fmt.Errorf("cannot tell where %s leads, so it is not written: %w", path, err)
+	}
+	for _, candidate := range []string{abs, given, cleaned} {
 		for _, dir := range protected {
 			if within(dir, candidate) {
 				note(path)
-				return &Error{Path: path, Resolved: resolved, Home: dir}
+				return &Error{Path: path, Resolved: given, Home: dir}
 			}
 		}
 	}
@@ -166,36 +189,88 @@ func within(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// resolve is path with every link on the way followed. The part that does not exist yet is joined to
-// the deepest part that does; a link that points nowhere is resolved as far as it goes.
-func resolve(path string) string {
-	var rest []string
-	cur := filepath.Clean(path)
-	for {
-		if _, err := os.Lstat(cur); err == nil {
-			if real, err := filepath.EvalSymlinks(cur); err == nil {
-				slices.Reverse(rest)
-				return filepath.Join(append([]string{real}, rest...)...)
-			}
-			if target, err := os.Readlink(cur); err == nil {
-				// a dangling link: the file it would create lies where it points
-				if !filepath.IsAbs(target) {
-					target = filepath.Join(filepath.Dir(cur), target)
-				}
-				slices.Reverse(rest)
-				return resolve(filepath.Join(append([]string{target}, rest...)...))
-			}
-			return filepath.Clean(path)
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return filepath.Clean(path)
+// maxLinks is how many links one resolution follows before it gives up, as the kernel does (ELOOP).
+const maxLinks = 40
+
+// physical is the place the kernel reaches by path: every link on the way followed in order, so that
+// a ".." after a link is taken from the link's target. A part that does not exist yet (a link that
+// points nowhere included) is joined to the deepest part that does, and a ".." after it removes it.
+// A relative path is taken from the working directory. More than maxLinks links (a cycle) is an error.
+func physical(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
 		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return filepath.Clean(path)
-		}
-		rest = append(rest, filepath.Base(cur))
-		cur = parent
+		path = wd + string(filepath.Separator) + path
 	}
+	queue := components(path)
+	resolved := string(filepath.Separator)
+	links := 0
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if name == ".." {
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, name)
+		info, err := os.Lstat(next)
+		if err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			// absent, unreadable or a plain entry: it stays where it is spelled
+			resolved = next
+			continue
+		}
+		if links++; links > maxLinks {
+			return "", fmt.Errorf("%s: too many levels of symbolic links", path)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			resolved = next
+			continue
+		}
+		if filepath.IsAbs(target) {
+			resolved = string(filepath.Separator)
+		}
+		queue = append(components(target), queue...)
+	}
+	return resolved, nil
+}
+
+// components is the names of a path, "." and empty names dropped, ".." kept in place.
+func components(path string) []string {
+	var out []string
+	for _, name := range strings.Split(path, string(filepath.Separator)) {
+		if name != "" && name != "." {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// MkdirAll is os.MkdirAll for a harness writer: it refuses a protected destination first.
+func MkdirAll(path string, perm os.FileMode) error {
+	if err := Refuse(path); err != nil {
+		return err
+	}
+	return os.MkdirAll(path, perm)
+}
+
+// WriteFile is os.WriteFile for a harness writer: it refuses a protected destination first, one a
+// link in the path or the file itself leads to included.
+func WriteFile(path string, data []byte, perm os.FileMode) error {
+	if err := Refuse(path); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, perm)
+}
+
+// Symlink is os.Symlink for a harness writer: it refuses a protected place for the new link.
+func Symlink(target, path string) error {
+	if err := Refuse(path); err != nil {
+		return err
+	}
+	return os.Symlink(target, path)
 }
 
 // switchFile is the hook switch of the real Codex home, the file the CRW-1186 incident left.

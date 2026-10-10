@@ -60,10 +60,10 @@ func SaveCases(dir string, cases []Case) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, CasesFile), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(filepath.Join(dir, CasesFile), append(raw, '\n'), 0o644)
 }
 
 // CheckCase replays one case through the Go side only, with no Node and no worker, and returns a

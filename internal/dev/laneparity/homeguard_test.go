@@ -178,3 +178,39 @@ func TestRun_refusesAnOutputOrScratchInTheAccountHome(t *testing.T) {
 		untouched(t, home)
 	}
 }
+
+// CRW-1186 verification round 1: a link inside an output tree that leads into the account's home.
+func TestGeneratePluginRoot_refusesALinkInsideTheDestinationThatLeadsIntoTheAccountHome(t *testing.T) {
+	home := fakeAccount(t)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := repoRoot(t)
+	src := filepath.Join(root, "plugins", "crw")
+	for name, link := range map[string]string{
+		".codex-plugin":      ".codex-plugin",
+		"wiring":             "wiring",
+		"a wiring hook file": "wiring/hooks/hooks.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dest := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dest, filepath.Dir(link)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(home, ".codex")
+			if strings.Contains(link, "hooks.json") {
+				target = filepath.Join(target, "hooks.json")
+			}
+			if err := os.Symlink(target, filepath.Join(dest, link)); err != nil {
+				t.Fatal(err)
+			}
+			legs := []Leg{{File: "wiring/hooks/hooks.json", Event: "Stop"}}
+			err := GeneratePluginRoot(dest, src, "/opt/crw", legs)
+			wantRefusal(t, err)
+			entries, _ := os.ReadDir(filepath.Join(home, ".codex"))
+			if len(entries) != 0 {
+				t.Errorf("the account's .codex holds %d entries", len(entries))
+			}
+		})
+	}
+}
