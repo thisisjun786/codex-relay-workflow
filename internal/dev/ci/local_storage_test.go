@@ -47,7 +47,8 @@ func TestLocalStorage_unset_roots_pass_nothing(t *testing.T) {
 func TestLocalStorage_configured_build_roots_reach_a_step(t *testing.T) {
 	t.Setenv("GOCACHE", "/caller/gocache")
 	temp := t.TempDir()
-	opts := localOptions{output: filepath.Join(temp, "output"), Tools: crwconfig.ToolRoots{BuildCache: "/cfg/build", BuildWork: "/cfg/work"}}
+	work := filepath.Join(t.TempDir(), "cfg-work") // made by the step environment, so it has to be creatable
+	opts := localOptions{output: filepath.Join(temp, "output"), Tools: crwconfig.ToolRoots{BuildCache: "/cfg/build", BuildWork: work}}
 	env, err := localStepEnv(filepath.Join(temp, "home"), temp, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +56,7 @@ func TestLocalStorage_configured_build_roots_reach_a_step(t *testing.T) {
 	if got, _ := localEnvValue(env, "GOCACHE"); got != "/cfg/build" {
 		t.Errorf("GOCACHE = %q, want the configured build_cache", got)
 	}
-	if got, _ := localEnvValue(env, "GOTMPDIR"); got != "/cfg/work" {
+	if got, _ := localEnvValue(env, "GOTMPDIR"); got != work {
 		t.Errorf("GOTMPDIR = %q, want the configured build_work", got)
 	}
 }
