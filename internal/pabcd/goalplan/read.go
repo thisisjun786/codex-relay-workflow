@@ -151,6 +151,9 @@ func unpairedSurrogate(s string) int {
 	return -1
 }
 
+// invalidSchemaVersionField names the field of a plan whose schemaVersion is no whole number from 1 (CRW-1109).
+const invalidSchemaVersionField = "schemaVersion (a whole number from 1)"
+
 // firstInvalidField follows the oracle's diagnostic order (:875-913). The oracle answers (unknown) for a
 // slug that is not a valid one or not the requested one, a criterion with no id and a malformed steering
 // entry, and blames a missing host - which revival defaults and never refuses - for whatever failed after it;
@@ -177,7 +180,7 @@ func firstInvalidField(parsed any, expectedSlug *string) string {
 		return "schemaVersion"
 	}
 	if !validSchemaVersion(o) {
-		return "schemaVersion (a whole number from 1)"
+		return invalidSchemaVersionField
 	}
 	phases, ok := o["workPhases"].([]any)
 	if !ok {

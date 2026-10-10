@@ -493,6 +493,12 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 	if dup := revivalLossDuplicate(file.text); dup != "" {
 		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "the repeated key "+dup), Refused: true}, nil
 	}
+	// CRW-1109: a plan whose schemaVersion is no whole number from 1 is not read, but it is a plan that is there: before the version
+	// check it was read and its work-phase gate applied, so a writer must be refused here, not told the plan is absent and let
+	// publish past the gate. Its bytes are left as they are.
+	if d := read.Diagnostic; read.Plan == nil && d != nil && d.Field == invalidSchemaVersionField {
+		return GoalplanWriteLockResult[T]{Kind: "unreadable", Reason: revivalLossRefusal(slug, "a schemaVersion that is not a whole number from 1"), Refused: true}, nil
+	}
 	if read.Plan == nil {
 		detail := "goalplan '" + slug + "' could not be read"
 		if d := read.Diagnostic; d != nil && d.Kind != "absent" {

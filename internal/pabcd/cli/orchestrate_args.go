@@ -162,8 +162,9 @@ type orchestrateCliFlags struct {
 // stray argument, a missing value of any of the four (refused for every verb, reset and status included,
 // so no command runs with a malformed option), a value that is itself an option (a typo would otherwise
 // send the work to the input cwd or to no session), and a --session or --cwd repeated with a different
-// value are refusals. A help token in an option position is help; as an option's value it is
-// that value. The forms the skills use - space-separated values - are unchanged.
+// value are refusals (the short help option -h included: a reset that took it for its attestation would run, where the oracle
+// answered help). A help token in an option position is help; as an option's value it is that value, the word help and a
+// session named help included. The forms the skills use - space-separated values - are unchanged.
 func scanOrchestrateCliFlags(args []string, cwd string) orchestrateCliFlags {
 	f := orchestrateCliFlags{cwd: cwd}
 	fail := func(msg string) {
@@ -204,7 +205,7 @@ func scanOrchestrateCliFlags(args []string, cwd string) orchestrateCliFlags {
 		if !inline && i+1 < len(args) {
 			i++
 			value, present = args[i], true
-			if strings.HasPrefix(value, "--") {
+			if strings.HasPrefix(value, "--") || value == "-h" {
 				fail(name + " needs a value, but the next argument is the option " + value + " (use " + name + "=<value> for a value that starts with --)")
 				continue
 			}

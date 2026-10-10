@@ -13,7 +13,7 @@ import (
 const readSweepPlan = `{"objective":"o","slug":"demo","workPhases":[],"criteria":[],"host":{"armed":false,"armedAt":null,"source":"none"}`
 
 // A version that is not a whole number from 1 is refused with its own diagnostic, the reader and the write lock leave the
-// bytes as they are, and a plan with no version (legacy) or a whole version still reads.
+// bytes as they are (the lock refuses the writer: the plan is there, so a gate that reads it cannot go on as if it were absent), and a plan with no version (legacy) or a whole version still reads.
 func TestSchemaVersionMustBeAWholeNumberFromOne(t *testing.T) {
 	for _, version := range []string{"0", "-7", "2.9", "-0", "1e-400", "-1e999"} {
 		cwd, dir := readWorkspace(t)
@@ -25,7 +25,7 @@ func TestSchemaVersionMustBeAWholeNumberFromOne(t *testing.T) {
 			t.Errorf("schemaVersion %s: %+v %+v", version, read.Plan, read.Diagnostic)
 		}
 		lock, err := WithGoalplanWriteLock(cwd, "demo", func(*Goalplan) (string, error) { return "entered", nil }, &GoalplanWriteLockOptions{RetryDelaysMs: []int{}})
-		if err != nil || lock.Kind != "unreadable" {
+		if err != nil || lock.Kind != "unreadable" || !lock.Refused {
 			t.Errorf("schemaVersion %s: the lock answered %+v %v", version, lock, err)
 		}
 		if b, _ := os.ReadFile(path); string(b) != raw {
