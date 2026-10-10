@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // This file makes the hook safe to apply again to one hook event (CRW-1121). The oracle's answer is not: a reapplied message got the
@@ -18,10 +20,11 @@ import (
 //     instruction, at the start of a message, so the guard of this event replaces it instead of stacking on it. A guard the caller
 //     wrote is recognized the same way, so a forged coordinator guard is replaced and authorizes nothing;
 //   - an event that mints a grant records its answer under the grant's key directory, bound to the event's tool use id and to the
-//     digests of the event's input and of the input it answered with. The same event applied again to either input is answered
-//     with the recorded answer, so its grant is kept and no second one is minted.
+//     event's input. The same event applied again to that input or to the input it answered with is answered with the recorded
+//     answer, so its grant is kept and no second one is minted.
 
-// spawnHookReplayMax bounds a recorded answer that is read back: the hook's 4 MiB input with room for the guard and skill blocks.
+// spawnHookReplayMax bounds a record that is read back: the hook's 4 MiB input and an answer of that input with room for the guard
+// and skill blocks.
 const spawnHookReplayMax = 16 << 20
 
 // spawnHookOwnedGuard is s without the guards the hook writes at its start, and whether there was one. A coordinator guard's
@@ -73,8 +76,8 @@ func spawnHookReplayName(toolUseID string) string {
 }
 
 // spawnHookReplayLookup is the recorded answer of the event toolUseID in the key directory of obj's grant scope when the event's
-// tool_input (as its digest) is the input that event was first given or the input it answered with.
-func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, inputDigest string) (string, bool) {
+// tool_input (as JSON.stringify writes it) is the input that event was first given or the updatedInput of its recorded answer.
+func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string) (string, bool) {
 	key, ok := spawnGrantKey(obj)
 	if !ok {
 		return "", false
@@ -96,18 +99,36 @@ func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, inputDigest s
 	if err != nil {
 		return "", false
 	}
-	head, answer, ok := bytes.Cut(data, []byte("\n"))
-	fields := strings.Fields(string(head))
-	if !ok || len(fields) != 2 || (fields[0] != inputDigest && fields[1] != inputDigest) {
+	first, answer, ok := bytes.Cut(data, []byte("\n"))
+	if !ok {
 		return "", false
 	}
-	return string(answer), true
+	if string(first) == input || spawnHookReplayUpdated(string(answer)) == input {
+		return string(answer), true
+	}
+	return "", false
 }
 
-// spawnHookReplayRecord writes the answer of the event toolUseID, which minted a grant in obj's scope: the digests of the input it
-// was given and of the input it answered with, then the answer as written, published by a rename. A record that exists is kept,
-// and a record that cannot be written is skipped: the event then only loses the replay.
-func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, inputDigest, outputDigest, answer string) {
+// spawnHookReplayUpdated is the updatedInput of a recorded allow answer as JSON.stringify writes it, or "".
+func spawnHookReplayUpdated(answer string) string {
+	v, err := pyjson.Loads(answer, pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
+	if err != nil {
+		return ""
+	}
+	o, _ := v.(pyjson.Object)
+	out, _ := o.Get("hookSpecificOutput").(pyjson.Object)
+	updated, ok := out.Get("updatedInput").(pyjson.Object)
+	if !ok {
+		return ""
+	}
+	return spawnHookRouteStringify(updated)
+}
+
+// spawnHookReplayRecord writes the answer of the event toolUseID, which minted a grant in obj's scope: the event's input as
+// JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
+// record holds no digest or clock, so it is the same text for the same event. A record that exists is kept, and a record that
+// cannot be written is skipped: the event then only loses the replay.
+func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, input, answer string) {
 	key, ok := spawnGrantKey(obj)
 	if !ok {
 		return
@@ -126,7 +147,7 @@ func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, inputDigest, 
 	if err != nil {
 		return
 	}
-	_, err = file.WriteString(inputDigest + " " + outputDigest + "\n" + answer)
+	_, err = file.WriteString(input + "\n" + answer)
 	if closeErr := file.Close(); err == nil && closeErr == nil && dir.Rename(tmp, name) == nil {
 		return // published whole, so a reader never sees a partial answer
 	}

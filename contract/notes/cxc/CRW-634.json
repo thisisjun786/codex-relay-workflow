@@ -124,15 +124,6 @@
       ]
     },
     {
-      "id": "hook__pre-tool-use-attaching-skills__items_control_token_whitespace",
-      "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
-      "remove": [
-        "calls/2",
-        "calls/1",
-        "calls/0"
-      ]
-    },
-    {
       "id": "hook__pre-tool-use-attaching-skills__managed_dispatch_marker_issues_once",
       "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
       "set": {

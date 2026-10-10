@@ -32,31 +32,31 @@ import (
 // JSON key order is kept (pyjson.Object): the oracle answers {...toolInput, items: updatedItems}, which keeps each key where the
 // caller wrote it, and a Go map would not.
 type spawnHookAssembly struct {
-	v2Spawn            bool                              // v2Spawn: a collaboration hook name or v2 payload markers (:863)
-	toolInput          pyjson.Object                     // toolInput: obj.tool_input (:859)
-	itemInput          []any                             // itemInput: tool_input.items of a v1 spawn without message, nil for the oracle's null (:874); records once valid
-	validItems         bool                              // validItems: non-empty, every item an object with a string type and, for text, a string text (:876)
-	textItems          []pyjson.Object                   // textItems: the text items (:878)
-	mappedItems        []pyjson.Object                   // mappedItems: itemInput with each text item stripped of control markers and normalized, nil for null (:913)
-	firstText          int                               // firstText: index of the first text item in mappedItems, -1 without one (:920)
-	itemBlocks         []string                          // itemBlocks: the skill bodies to append after the text items (:919)
-	message            string                            // message: the caller's text, the text items joined for items (:885)
-	encryptedV2Message bool                              // encryptedV2Message: a v2 message of Fernet shape; RunSpawnAttachHook keeps its bytes (:887)
-	cwd                string                            // cwd: obj.cwd, else the process working directory, unresolved (:888)
-	role               role.RoleName                     // role: InferRole over the item scan or the normalized message (:925)
-	resolution         role.SpawnResolution              // resolution: ResolveSpawnConfig for role (:926)
-	trustPrefix        string                            // trustPrefix: always empty, the trust warning went with the project layer (:927)
-	guard              string                            // guard: the surface's guard block and the grant instruction (:979)
-	updatedMessage     string                            // updatedMessage: the start value of the oracle's evidenceExemptMessage (:984, :987)
-	managed            *role.ManagedSpawnSelection       // managed: the managed dispatch resolution, nil for a direct spawn (:892)
-	dispatchSource     string                            // dispatchSource: the source line that resolved (:893)
-	sessionID          string                            // sessionID: obj.session_id when it is a string, else "" (:899)
-	toolUseID          *string                           // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
-	commit             *spawnHookCommit                  // what this run has committed, shared with RunSpawnAttachHook
-	grant              *spawnGrantClaim                  // a subagent's checked grant, spent by finish
-	inputDigest        string                            // the digest of tool_input, for the event's replay record
-	replay             func(outputDigest, answer string) // records the answer of an event that minted a grant, or nil
-	settings           role.SettingsSnapshot             // the event's one read of the helper role settings
+	v2Spawn            bool                        // v2Spawn: a collaboration hook name or v2 payload markers (:863)
+	toolInput          pyjson.Object               // toolInput: obj.tool_input (:859)
+	itemInput          []any                       // itemInput: tool_input.items of a v1 spawn without message, nil for the oracle's null (:874); records once valid
+	validItems         bool                        // validItems: non-empty, every item an object with a string type and, for text, a string text (:876)
+	textItems          []pyjson.Object             // textItems: the text items (:878)
+	mappedItems        []pyjson.Object             // mappedItems: itemInput with each text item stripped of control markers and normalized, nil for null (:913)
+	firstText          int                         // firstText: index of the first text item in mappedItems, -1 without one (:920)
+	itemBlocks         []string                    // itemBlocks: the skill bodies to append after the text items (:919)
+	message            string                      // message: the caller's text, the text items joined for items (:885)
+	encryptedV2Message bool                        // encryptedV2Message: a v2 message of Fernet shape; RunSpawnAttachHook keeps its bytes (:887)
+	cwd                string                      // cwd: obj.cwd, else the process working directory, unresolved (:888)
+	role               role.RoleName               // role: InferRole over the item scan or the normalized message (:925)
+	resolution         role.SpawnResolution        // resolution: ResolveSpawnConfig for role (:926)
+	trustPrefix        string                      // trustPrefix: always empty, the trust warning went with the project layer (:927)
+	guard              string                      // guard: the surface's guard block and the grant instruction (:979)
+	updatedMessage     string                      // updatedMessage: the start value of the oracle's evidenceExemptMessage (:984, :987)
+	managed            *role.ManagedSpawnSelection // managed: the managed dispatch resolution, nil for a direct spawn (:892)
+	dispatchSource     string                      // dispatchSource: the source line that resolved (:893)
+	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
+	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
+	commit             *spawnHookCommit            // what this run has committed, shared with RunSpawnAttachHook
+	grant              *spawnGrantClaim            // a subagent's checked grant, spent by finish
+	inputText          string                      // tool_input as JSON.stringify writes it, for the event's replay record
+	replay             func(answer string)         // records the answer of an event that minted a grant, or nil
+	settings           role.SettingsSnapshot       // the event's one read of the helper role settings
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -98,8 +98,8 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	// The same event applied again to its own input or to the input it answered with gets its recorded answer, so a minted grant is
 	// kept and none is minted again (CRW-1121). Only a root spawn mints; a tool_input too deep to digest has no record.
 	if a.toolUseID != nil && *a.toolUseID != "" && !IsSubagentSpawner(obj) && !spawnHookRouteDeep(toolInput) {
-		a.inputDigest = spawnHookDigest(spawnHookRouteStringify(toolInput))
-		if answer, ok := spawnHookReplayLookup(obj, spawnHookTmpDir(env), *a.toolUseID, a.inputDigest); ok {
+		a.inputText = spawnHookRouteStringify(toolInput)
+		if answer, ok := spawnHookReplayLookup(obj, spawnHookTmpDir(env), *a.toolUseID, a.inputText); ok {
 			return stop(answer)
 		}
 	}
@@ -212,10 +212,8 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		_ = os.MkdirAll(tmpRoot, 0o700)
 		minted, _ = MintRecursionGrant(obj, tmpRoot, now)
 	}
-	if minted != "" && a.inputDigest != "" {
-		a.replay = func(outputDigest, answer string) {
-			spawnHookReplayRecord(obj, tmpRoot, *a.toolUseID, a.inputDigest, outputDigest, answer)
-		}
+	if minted != "" && a.inputText != "" {
+		a.replay = func(answer string) { spawnHookReplayRecord(obj, tmpRoot, *a.toolUseID, a.inputText, answer) }
 	}
 
 	// Each text item is normalized on its own, so an attachment boundary never joins fences, links or mentions (:913-918).

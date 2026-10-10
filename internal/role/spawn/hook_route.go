@@ -370,7 +370,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	answer := a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
 	if a.replay != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
-		a.replay(spawnHookDigest(spawnHookRouteStringify(updated)), answer) // CRW-1121: the same event again gets this answer
+		a.replay(answer) // CRW-1121: the same event again gets this answer
 	}
 	return answer
 }
