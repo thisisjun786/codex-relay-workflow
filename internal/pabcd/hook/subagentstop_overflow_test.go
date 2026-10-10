@@ -109,9 +109,10 @@ func TestSubagentStopOverflowRecoversA65File(t *testing.T) {
 		t.Fatal("precondition: a 65-entry file reads as overflowed")
 	}
 	// The session lock gives up after its 250 ms schedule, and a verdict whose lock gave up goes to the sentinel tier, so two
-	// recoveries that overlap on a host where one fsync outlasts that schedule lose a verdict for the lock's budget and not for
-	// the property under test (CRW-1181). The wait is widened; who is inside is still decided by the lock alone.
-	defer state.WidenSessionLockWait(50)()
+	// recoveries that overlap on a host where one holder outlasts that schedule (a slow fsync, a descheduled process) lose a
+	// verdict for the lock's budget and not for the property under test (CRW-1181). The wait goes on until the holder releases the
+	// lock, with a guard that only ends a hang; who is inside is still decided by the lock alone.
+	defer state.WaitForSessionLock(3 * time.Minute)()
 	var wg sync.WaitGroup
 	for _, agent := range []string{"new1", "new2"} {
 		for n := 1; n <= 3; n++ {
