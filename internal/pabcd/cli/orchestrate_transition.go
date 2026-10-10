@@ -386,6 +386,24 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
 			return orchestrateCommitOutcome{}, err
 		}
+		// CRW-1113: the reviewer sign-offs the observer kept (it met a busy lock or a failed write) are applied here, inside the lock
+		// this publication holds (the session lock is held by the caller), so the binding below is judged on the plan as the drain
+		// leaves it: a kept FAIL refuses, a kept PASS counts, and none is left to be deleted after the session has moved to B. The
+		// drain is the first durable effect of an A>B edge: it checks the invocation's context itself before its first change (a
+		// cancelled invocation writes nothing and answers Interrupted), and once it has written, the edge finishes as any command
+		// whose first write has started does (CRW-871), so the second check below is not taken after it.
+		var drained hook.ReviewObserverDrain
+		if cur.Phase == state.PhaseA && to == state.PhaseB {
+			var err error
+			if drained, err = hook.DrainReviewObserverInboxInLock(cwd, sessionID, plan, ctx.Err); err != nil {
+				return orchestrateCommitOutcome{}, err
+			}
+			plan = drained.Plan
+			if drained.Kept > 0 {
+				return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) +
+					"; a reviewer sign-off was kept but could not be applied (its verdict could not be written to the plan, or the review inbox could not be read), so the review binding cannot be judged. Retry the transition. The session did not move."}}, nil
+			}
+		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
 			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}}, nil
 		}
@@ -399,9 +417,11 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		}
 		// CRW-975: the review binding re-check above re-reads and re-hashes the plan files, which is I/O the
 		// first check did not cover, so the invocation's context is read once more immediately before the
-		// first durable effect below (CRW-871).
-		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
-			return orchestrateCommitOutcome{}, err
+		// first durable effect below (CRW-871). A drain that wrote above was that first effect: the edge finishes.
+		if !drained.Wrote {
+			if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+				return orchestrateCommitOutcome{}, err
+			}
 		}
 		// 032: a fresh epoch orphans every open plan_audit round this session owns under another epoch. The
 		// oracle closes the first stranded epoch's rounds only, before the state is published, and drops a
@@ -717,6 +737,8 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	}
 	// LEAN-REVIEW-01: an open round is honoured, never required; the B>C source gates follow, then the D close.
 	if cur.Phase == state.PhaseA && to == state.PhaseB && cur.Slug != "" {
+		// CRW-1113: the sign-offs the observer kept are applied inside the goalplan lock of the publication (orchestrateCommitPublish),
+		// where the binding is judged again on the drained plan; this first check reads the plan as it stands.
 		if refusal := orchestrateReviewBindingCheck(cur, a, sessionID); refusal != nil {
 			return *refusal, nil
 		}

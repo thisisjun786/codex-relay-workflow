@@ -321,7 +321,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 
 ## Found by the CRW-341 prompt detector port
 
-- `detectMemoryWriteRequest` scans quoted and negated text without the request-line filter, so both `"remember this"` and `Do not remember this` return true (source `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts:78-105`; recorded detector cases in `internal/pabcd/hook/detect_test.go`); port: kept.
+- `detectMemoryWriteRequest` scans quoted and negated text without the request-line filter, so both `"remember this"` and `Do not remember this` return true (source `plugins/codexclaw/components/pabcd-state/src/memory-write-gate.ts:78-105`; recorded detector cases in `internal/pabcd/hook/detect_test.go`); port: fixed by CRW-1093 (affirmative user sentences only; quotes, code fences, task packets and memory-specific negatives cannot arm the turn marker; lists and affirmative don't-forget idioms remain eligible).
 - `detectAgbrowseSearchRequest` also scans the whole prompt and accepts ordinary implementation prose containing an action word, so `Do not use agbrowse to search`, `"agbrowse search"` and `Please describe the agbrowse hook with tests` return true (source `plugins/codexclaw/components/pabcd-state/src/hook.ts:307-312`; recorded detector cases); port: kept.
 - `requestLines` addresses each backtick command against the original line, so `Run ` + backtick-quoted `crw-loop` + ` then use ` + backtick-quoted `crw-pabcd` + ` to plan` keeps the first mode but strips the second and detects no phase (source `hook.ts:247-254`, with the declared name substitution; direct request-line case); port: kept.
 - `requestLines` recognizes only triple-backtick fences, so an example between Markdown tilde fences still yields a loop request (source `hook.ts:239-242`; direct request-line case with `~~~`, a mode request, and `~~~`); port: kept.
@@ -1557,3 +1557,7 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedW
 ## Found by the oracle review of the live model catalog (CRW-1078)
 
 - An OCX that refuses the live-catalog command is treated by the oracle as an ordinary discovery failure (`live-catalog.ts:108-113`), and the port reports it as its own catalog state, `unsupported-ocx-catalog`, with its own message, also over a cached list (`internal/role/livecatalog.go`); port: fixed (CRW-890; the before and after states and messages, the pointers and the pinning tests are in [known-defects/CRW-890.md](known-defects/CRW-890.md)). This row is the one edit CRW-1078's acceptance criterion 2 names to the read-only list.
+
+## CRW-1085 — CRW-726/741 reader range
+
+CRW's shared reader accepts non-executing diagnostic options, bracket conditions, bounded shell files, four fixed Python modules with bounded test discovery, and read-only awk while unreadable code and destinations still fail closed. The oracle has no matching reader; port: fixed (CRW-specific over-refusal). Details and the superseded CRW-894 module controls are in [CRW-1085](known-defects/CRW-1085.md).

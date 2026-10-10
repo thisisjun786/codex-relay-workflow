@@ -285,7 +285,7 @@ find . -exec sh -c 'rm build/old.o' \;
 --why yes prints its operand again and again; head keeps the first line.
 yes ../repo | head -1 | xargs rmdir
 
-=== CRW-895-m2 | attempt/allow/deny
+=== CRW-895-m2 | none/allow/deny
 --why awk prints what its own program says.
 awk 'BEGIN{print "../repo"}' | xargs rmdir
 

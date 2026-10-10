@@ -55,7 +55,7 @@ printf x | bash -c 'bash -c bash </dev/null'
 --why c10(h): python3 -m code reads its program from the pipe.
 printf x | python3 -m code
 
-=== CRW-894-14 | B | deviation=attempt/deny/deny
+=== CRW-894-14 | B
 --why The issue keeps python3 -m json.tool in a pipe allowed; the reader does not model -m modules and refuses them (known-defects: a python -m module is refused as unreadable, port: kept; the allow control is withdrawn because python -m puts the working directory first on the module search path and json.tool imports standard modules through it).
 printf x | python3 -m json.tool
 

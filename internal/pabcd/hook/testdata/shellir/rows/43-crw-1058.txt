@@ -150,7 +150,7 @@ echo -n -n 'echo hi' | bash
 --cmd
 echo() { printf 'rm -rf {CHECKOUT}'; }; echo ignored | bash
 
-=== CRW-1058-29 | attempt/allow/deny
+=== CRW-1058-29 | none/allow/deny
 --why bash - reads its operand as a script file, as bash -- does: remove.sh holds the removal (the worktree guard refuses it), and the memory gate asks a grant for a script it cannot see into.
 --file remove.sh
 rm -rf {CHECKOUT}

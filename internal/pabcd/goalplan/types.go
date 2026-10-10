@@ -220,6 +220,11 @@ type ReviewLane struct {
 	ArtifactSha256  *string         `json:"artifactSha256,omitempty"`
 	Verdict         Verdict         `json:"verdict,omitempty"`
 	SourceIdentity  *SourceIdentity `json:"sourceIdentity,omitempty"`
+	// Blockers and Findings are what a `GO-WITH-FIXES (blockers=N; findings=a,b)` sign-off said (CRW-1116): the count of
+	// blockers the reviewer went ahead with and the finding references it named. Both are absent for a verdict that carried
+	// none (PASS, FAIL, a bare GO-WITH-FIXES or NEAR-PASS), which stays the legacy record.
+	Blockers int      `json:"blockers,omitempty"`
+	Findings []string `json:"findings,omitempty"`
 }
 
 // ReviewRoundState is one review round: RoundID is r1, r2, ... increasing per plan, PlanPath the document under audit and

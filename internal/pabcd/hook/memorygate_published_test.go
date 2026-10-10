@@ -78,7 +78,7 @@ func TestMemoryGateRefusesAWriteWhoseGrantWasNotPublished(t *testing.T) {
 	gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
 	failing := func(string, state.State) error { return syscall.EIO }
 	reason := gateDeny(t, memoryGateHandle(gatePayload(t, cwd, nil), env, failing))
-	if !strings.Contains(reason, "could not be spent") {
+	if !strings.Contains(reason, "authorization-state") {
 		t.Errorf("reason: %s", reason)
 	}
 	if !state.ReadState(cwd, gateSession).MemoryWriteGrant {

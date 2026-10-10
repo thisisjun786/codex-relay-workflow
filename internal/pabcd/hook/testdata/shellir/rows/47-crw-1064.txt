@@ -2,14 +2,14 @@
 # (c1), and a directory change behind a wrapper, a function or the zsh synonym chdir makes it unknown (c1, P2). Each row that has a
 # loop is judged like its control without the loop (CRW-1064-11 and -12). The command of a row is shortened from the CRW-1064 issue text.
 
-=== CRW-1064-01 | T
+=== CRW-1064-01 | B
 --why c1: a function that runs no state builtin leaves the directory known, so the script after the loop is judged as the same command without the loop (CRW-1064-12).
 --file prog.sh
 echo ok
 --cmd
 f() { :; }; for i in 1; do f; done; bash prog.sh
 
-=== CRW-1064-02 | T
+=== CRW-1064-02 | B
 --why c1: command with a harmless program in a loop changes neither the directory nor the variables.
 --file prog.sh
 echo ok
@@ -21,7 +21,7 @@ for i in 1; do command true; done; bash prog.sh
 f() { :; }; for i in 1; do f; done; bash /dev/fd/0 </dev/null
 
 === CRW-1064-04 | T
---why P2 control: chdir into a literal relative directory is the cd of zsh; the script beside the text is judged in that directory.
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
 --file sub/prog.sh
 echo ok
 --cmd
@@ -73,7 +73,7 @@ f() { f2; }; f2() { cd sub; }; for i in 1; do f; done; bash prog.sh
 --why control of CRW-1064-03: the descriptor script without the loop; the guards cannot read a descriptor script.
 bash /dev/fd/0 </dev/null
 
-=== CRW-1064-12 | T
+=== CRW-1064-12 | B
 --why control of CRW-1064-01: the script file without the loop.
 --file prog.sh
 echo ok

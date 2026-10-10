@@ -37,7 +37,7 @@ gh pr comment 1 -b x
 --cmd
 cp -r evil/. bin; bash bin/tool
 
-=== CRW-1028-v3-04 | T
+=== CRW-1028-v3-04 | B
 --why Control: the copy of evil/. fills bin, and the script the text runs is other/tool, outside it.
 --file other/tool
 #!/bin/sh
@@ -98,7 +98,7 @@ cat evil.sh > "$DEST"
 --cmd
 bash writer.sh; bash post.sh
 
-=== CRW-1028-v3-09 | T
+=== CRW-1028-v3-09 | B
 --why Control: the earlier script writes another file (other.sh), so the later sibling post.sh is the body the guards read.
 --file post.sh
 echo clean

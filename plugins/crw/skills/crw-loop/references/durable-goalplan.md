@@ -19,7 +19,16 @@ The objective must include:
 - The expected terminal outcome and the first work-phase to run.
 
 A vague or short objective under 500 characters is a discipline violation for
-HOTL mode. After `create_goal`, run `crw pabcd loop init --objective "<same text>"
+HOTL mode.
+
+Token limit: pass `token_budget` to `create_goal` only when the user named a token
+limit, with exactly that value; never choose one yourself. With no limit named the
+goal is unlimited. The host validates the field and its value. A host whose
+`create_goal` does not accept `token_budget` is a reported capability conflict;
+do not create the goal without the limit the user asked for. The `create_goal`
+hook does not refuse the field, and `update_goal` is not a budget API.
+
+After `create_goal`, run `crw pabcd loop init --objective "<same text>"
 --session <id>` to create the durable local plan bound to the session.
 
 After `loop init`, REGISTER the plan: fill `workPhases[]` (with tasks) and
@@ -130,3 +139,6 @@ state the tool/credential scope, write scope, token/cost budget, and wall-clock 
 For C4 surfaces, an unstated unattended scope is an ESCALATE-class omission: stop and
 ask before starting or continuing the loop. Hitting a resource bound is
 `BUDGET_EXHAUSTED`, not `DONE`.
+A token limit the user named is the host goal's `token_budget` (see the HOTL Goal-Setting Rule),
+and a goal the host moves to `budgetLimited` stays limited at that number; a resume
+or a raised limit is the user's decision, never the loop's.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	pabcdreview "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -282,10 +283,11 @@ func (x reviewIndex) verdictSections(report map[string]any) []reportSection {
 		if !ok || n < 1 {
 			panic(&py.PythonError{Class: "ValueError", Detail: "GO-WITH-FIXES states how many blockers it is going ahead with; a count below one is a PASS and should say so"})
 		}
-		if n > 9999 {
-			panic(&py.PythonError{Class: "ValueError", Detail: fmt.Sprintf("a blocker count of %d is past the point of being a review, and it sits on a line the message cannot shorten; the limit is 9999", n)})
+		if n > pabcdreview.MaxBlockers {
+			panic(&py.PythonError{Class: "ValueError", Detail: fmt.Sprintf("a blocker count of %d is past the point of being a review, and it sits on a line the message cannot shorten; the limit is %d", n, pabcdreview.MaxBlockers)})
 		}
-		line += fmt.Sprintf(" (blockers=%d)", n)
+		// The suffix is the one the PABCD observer parses (pabcdreview.BlockerSuffix, CRW-1116).
+		line += pabcdreview.BlockerSuffix(int(n), nil)
 	} else if review["blockers"] != nil {
 		panic(&py.PythonError{Class: "ValueError", Detail: "a " + pyvalue.Str(kind) + " verdict carries no blocker count"})
 	}
