@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -76,6 +77,11 @@ func Test33TranscriptBounds(t *testing.T) {
 	if identity.Get("reason") != "transcript_tail_incomplete" {
 		t.Fatal(identity)
 	}
+	// The byte bound is what this step proves; reading 64 MiB inside the production scan deadline is
+	// not, and a loaded host misses it (CRW-1161). The test is serial, so no other test reads the
+	// variable while it is changed.
+	defer func(previous time.Duration) { scanDeadline = previous }(scanDeadline)
+	scanDeadline = time.Minute
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
