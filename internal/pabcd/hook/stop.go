@@ -49,6 +49,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -142,8 +143,15 @@ func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock fun
 		if role != nil && role(p.Cwd, p.SessionID).Coordinates() {
 			return StopAnswer{}
 		}
+		// CRW-145: the source-identity investigation (git status, hashing the dirty files) is slow, so it is made here, before the
+		// session lock is taken, and the block built under the lock uses its answer. A Stop whose total cap was announced
+		// releases before the lock and never needs it.
+		canArm := true
+		if !st.StopBlockCapNotified {
+			canArm = stopCanArm(p.Cwd, p.SessionID)
+		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
-			return stopGoalIdleBlock(fresh, snap.plan, p.Cwd, p.SessionID, env)
+			return stopGoalIdleBlock(fresh, snap.plan, canArm, p.SessionID, env)
 		})
 	}
 
@@ -656,6 +664,30 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 	return ResolveCRWInDirective(strings.Join(lines, "\n"), env)
 }
 
+// stopCheckBound is the source-identity predicate of `orchestrate P` for a goalplan-bound session; a variable so a test can see
+// where it runs.
+var stopCheckBound = sourcesession.CheckBound
+
+// stopSourceBudget bounds the source-identity investigation of one Stop (git status and the hashing of the dirty files): the
+// Stop wiring has 15 seconds in all.
+var stopSourceBudget = 5 * time.Second
+
+// stopCanArm is whether `orchestrate P` can run for the session, judged by stopCheckBound within stopSourceBudget. An
+// investigation that does not finish in the budget is no evidence that arming is impossible, so the answer is then the oracle's
+// (the command is offered); the investigation's goroutine ends with the hook process.
+func stopCanArm(cwd, sessionID string) bool {
+	done := make(chan bool, 1)
+	go func() { done <- stopCheckBound(cwd, sessionID).OK }()
+	timer := time.NewTimer(stopSourceBudget)
+	defer timer.Stop()
+	select {
+	case ok := <-done:
+		return ok
+	case <-timer.C:
+		return true
+	}
+}
+
 // stopGoalIdleBlock is buildGoalIdleBlock (hook.ts:1694-1738): the Stop block for a goal ACTIVE with a
 // bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: close the goal for real, or arm the next
 // work-phase.
@@ -670,8 +702,7 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 // git source worktree keeps the option). The block now names the honest exits first and, when the identity cannot be resolved,
 // says why the next work-phase cannot be armed in place of the command (and does not end the unit-chain line with it). The block
 // is still a block: the counter, the caps and every other line are the oracle's.
-func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, cwd, sessionID string, env host.LookupEnv) string {
-	canArm := sourcesession.CheckBound(cwd, sessionID).OK
+func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, canArm bool, sessionID string, env host.LookupEnv) string {
 	lines := []string{
 		"[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.",
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.",
