@@ -1303,6 +1303,14 @@ middle of an update. It unsets `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` and `CODEX
 would otherwise pass in. `--scope-dir <dir>` registers an isolated target instead (a temporary state directory and socket):
 the unit sets that scope variable and the start carries `--allow-isolated-scope`.
 
+A registration keeps the configuration it used: when the registering environment selects a configuration file through
+`CRW_CONFIG` or `XDG_CONFIG_HOME` and that file exists, the unit carries it as `Environment=CRW_CONFIG=<file>` (a path systemd
+would split or expand is a usage error, as for the state directory), so the relay a boot start runs, and the jobs and evidence
+commands it starts, read the same `log_root`, tool roots and `relay_state` as the registering shell, which a user manager's
+environment does not carry. A file at the default location needs no line (the manager finds it too), and a missing file
+configures nothing. A unit registered without the line and a registration that would add it differ (`unit_differs`): remove,
+then register again.
+
 One owner registers this surface, and the command asks the manager as well as the file. It refuses, writing nothing:
 
 | Outcome | When |
