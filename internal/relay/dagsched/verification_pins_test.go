@@ -477,3 +477,101 @@ func TestSetupNodeCannotTakeTheWithOfAnotherStepOrJob(t *testing.T) {
 		}
 	}
 }
+
+// A setup-node use written as a YAML block scalar is the same step as a plain one: the reader either reads its node-version
+// or refuses the declaration, so a record without the node pin, or with a self-consistent wrong one, is never judged against
+// a declaration that silently lost the step (verification round 3, d2).
+func TestDeclaredNodePinsRefuseABlockScalarSetupNodeUse(t *testing.T) {
+	for name, header := range map[string]string{
+		"folded, stripped": ">-",
+		"folded":           ">",
+		"literal":          "|",
+		"literal, kept":    "|+",
+		"indicator":        ">2-",
+	} {
+		ci := "jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: " + header + "\n          actions/setup-node@v4\n        with:\n          node-version: '24.20.0'\n      - run: make test\n"
+		if pins, err := declaredPinsOf(map[string]string{pinWorkflowFile: ci}); refusalReasonOf(err) != "disposition_conflict" {
+			t.Errorf("%s: a block scalar uses that names setup-node must be refused, got %v, %v", name, pins, err)
+		}
+	}
+	// the judge refuses the commit's keys instead of judging a record against a lost declaration
+	files := fullDeclaration()
+	files[pinWorkflowFile] = "jobs:\n  build:\n    steps:\n      - uses: >-\n          actions/setup-node@v4\n        with:\n          node-version: '24.20.0'\n"
+	repo, head := pinnedCommit(t, files)
+	if _, err := CommitVerificationKeys(context.Background(), repo.path, head); refusalReasonOf(err) != "disposition_conflict" {
+		t.Fatalf("keys of a commit whose setup-node use is a block scalar must be refused, got %v", err)
+	}
+	// a block scalar that is another action, or a run body that mentions setup-node, is not a setup-node use
+	for name, ci := range map[string]string{
+		"another action":         "jobs:\n  a:\n    steps:\n      - uses: >-\n          actions/checkout@v4\n",
+		"a run body that quotes": "jobs:\n  a:\n    steps:\n      - run: |\n          uses: >-\n            actions/setup-node@v4\n",
+	} {
+		if pins, err := declaredPinsOf(map[string]string{pinWorkflowFile: ci}); err != nil || len(pins) != 0 {
+			t.Errorf("%s: declares no node, got %v, %v", name, pins, err)
+		}
+	}
+}
+
+// secrets.sh declares the Gitleaks version by assigning scan_version. Any equivalent spelling of the assignment is read, and
+// an assignment the reader cannot read is an error: a real scan_version never reads as "the tool is not declared"
+// (verification round 3, d3).
+func TestDeclaredGitleaksPinInEveryAssignmentForm(t *testing.T) {
+	for name, line := range map[string]string{
+		"plain":                     "scan_version=8.30.1\n",
+		"single quotes":             "scan_version='8.30.1'\n",
+		"double quotes":             "scan_version=\"8.30.1\"\n",
+		"a trailing comment":        "scan_version=8.30.1 # pinned\n",
+		"quotes and a comment":      "scan_version='8.30.1'   # pinned\n",
+		"export":                    "export scan_version=8.30.1\n",
+		"readonly":                  "readonly scan_version=8.30.1\n",
+		"indented":                  "  scan_version=8.30.1\n",
+		"CRLF":                      "scan_version=8.30.1\r\n",
+		"the same value twice":      "scan_version=8.30.1\nscan_version=8.30.1\n",
+		"no newline at end of file": "scan_version=8.30.1",
+	} {
+		pins, err := declaredPinsOf(map[string]string{pinSecretsFile: "#!/usr/bin/env bash\nset -eu\n" + line})
+		if err != nil || pins["gitleaks"] != "8.30.1" {
+			t.Errorf("%s: want gitleaks 8.30.1, got %v, %v", name, pins, err)
+		}
+	}
+	for name, line := range map[string]string{
+		"a command substitution": "scan_version=$(cat VERSION)\n",
+		"a parameter expansion":  "scan_version=\"${GITLEAKS_VERSION:-8.30.1}\"\n",
+		"a variable":             "scan_version=$pinned\n",
+		"an append":              "scan_version+=.1\n",
+		"an empty value":         "scan_version=\n",
+		"two versions":           "scan_version=8.30.1\nscan_version=8.29.0\n",
+		"a tail after the value": "scan_version=8.30.1 && true\n",
+		"a mismatched quote":     "scan_version='8.30.1\n",
+		"a declare":              "declare -r scan_version=\"$X\"\n",
+	} {
+		if pins, err := declaredPinsOf(map[string]string{pinSecretsFile: "#!/usr/bin/env bash\n" + line}); refusalReasonOf(err) != "disposition_conflict" {
+			t.Errorf("%s: an unreadable scan_version assignment must be refused, got %v, %v", name, pins, err)
+		}
+	}
+	// mentions of the name that assign nothing declare nothing and are not errors
+	for name, body := range map[string]string{
+		"a comment":        "# scan_version=9.9.9\n",
+		"a use":            "echo \"${scan_version}\" scan_version=1\n",
+		"no scan_version":  "echo hello\n",
+		"another variable": "my_scan_version=1.2.3\n",
+	} {
+		if pins, err := declaredPinsOf(map[string]string{pinSecretsFile: "#!/usr/bin/env bash\n" + body}); err != nil || len(pins) != 0 {
+			t.Errorf("%s: declares nothing, got %v, %v", name, pins, err)
+		}
+	}
+	// the judge refuses a record that omits the pin or carries a self-consistent wrong one, for a quoted assignment
+	files := fullDeclaration()
+	files[pinSecretsFile] = "#!/usr/bin/env bash\nscan_version='8.30.1'\n"
+	repo, head := pinnedCommit(t, files)
+	keys := pinnedKeys(t, repo, head)
+	if keys.Pins["gitleaks"] != "8.30.1" {
+		t.Fatalf("the keys of a quoted assignment read %v", keys.Pins)
+	}
+	missing := declaredAll()
+	delete(missing, "gitleaks")
+	refusedPinRecord(t, repo, head, keys, missing, "gitleaks")
+	wrong := declaredAll()
+	wrong["gitleaks"] = "8.29.0"
+	refusedPinRecord(t, repo, head, keys, wrong, "gitleaks")
+}

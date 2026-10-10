@@ -74,7 +74,7 @@ func isSetupNodeUse(uses *workflowNode) bool {
 }
 
 // setupNodeUses counts the uses entries of any mapping, at any depth, that name actions/setup-node, and every value the
-// reader keeps only as raw text (a flow collection, an alias, a tag, a block scalar header) that mentions it.
+// reader keeps only as raw text (a flow collection, an alias, a tag, the body of a block scalar uses) that mentions it.
 func setupNodeUses(n *workflowNode) int {
 	if n == nil {
 		return 0
@@ -262,11 +262,17 @@ func (p *workflowParser) mapping(indent int) (*workflowNode, error) {
 				return nil, err
 			}
 		case isWorkflowBlockScalar(value):
-			// a literal or folded block: its body is every deeper line, and none of it is structure
+			// a literal or folded block: its body is every deeper line, and none of it is structure. The body of a uses is the
+			// action reference itself, so it is kept as raw text for setupNodeUses to count; the body of any other key (a run
+			// script) is not an action reference and is dropped.
+			raw := value
 			for p.at < len(p.lines) && p.lines[p.at].indent > indent {
+				if key == "uses" {
+					raw += "\n" + p.lines[p.at].text
+				}
 				p.at++
 			}
-			node = &workflowNode{kind: workflowRaw, value: value}
+			node = &workflowNode{kind: workflowRaw, value: raw}
 		default:
 			if p.at < len(p.lines) && p.lines[p.at].indent > indent {
 				return nil, fmt.Errorf("line %d: the value of %s continues on a deeper line", p.lines[p.at].number, key)
