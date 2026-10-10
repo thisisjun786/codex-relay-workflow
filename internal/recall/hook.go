@@ -142,20 +142,32 @@ func recallHookTargetStop(key string) bool {
 }
 
 var (
-	recallHookDateYMD = regexp.MustCompile(`^(?:19|20)\d\d\.(?:0?[1-9]|1[0-2])\.(?:0?[1-9]|[12]\d|3[01])$`)
-	recallHookDateDMY = regexp.MustCompile(`^(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d\d$`)
-	recallHookCue     = regexp.MustCompile(`(?i)(?:\b(?:v(?:er(?:sion)?)?|release|tag)|버전|릴리스|릴리즈|@)[ :=]*$`)
+	recallHookDateYMD  = regexp.MustCompile(`^(?:19|20)\d\d\.(?:0?[1-9]|1[0-2])\.(?:0?[1-9]|[12]\d|3[01])$`)
+	recallHookDateDMY  = regexp.MustCompile(`^(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d\d$`)
+	recallHookCue      = regexp.MustCompile(`(?i)(?:\b(?:v(?:er(?:sion)?)?|release|tag)|버전|릴리스|릴리즈|@)[ :=]*$`)
+	recallHookCueAfter = regexp.MustCompile(`(?i)^[ ]*(?:(?:version|release)\b|버전|릴리스|릴리즈)`)
+	recallHookPackage  = regexp.MustCompile(`(?:^|[^\w.+/-])([A-Za-z][\w.+/-]*)[ =:]+$`)
 )
 
-// recallHookIsVersion judges a dotted-number match of the prompt, the span [start, end), as a version: a date (2026.10.04, 04.10.2026) and
-// a piece of a longer dotted number (the 1.2.3 of 1.2.3.4, an address) are not, unless a version word stands right before it
-// (known-defects.md :913).
+// recallHookNotPackage are the words that stand before a number in prose without naming what it is the version of.
+var recallHookNotPackage = map[string]bool{
+	"a": true, "about": true, "an": true, "and": true, "approx": true, "are": true, "around": true, "as": true, "at": true, "be": true,
+	"by": true, "date": true, "for": true, "from": true, "in": true, "is": true, "it": true, "of": true, "on": true, "or": true, "pi": true,
+	"than": true, "the": true, "then": true, "to": true, "was": true, "were": true, "with": true,
+}
+
+// recallHookIsVersion judges a dotted-number match of the prompt, the span [start, end), as a version. A number is a version when its
+// context says so: a version word or @ right before it, a version word right after it, a package name right before it (Python 3.12,
+// node 20.11), or the three-part form of a version (2.49.0). A date (2026.10.04, 04.10.2026) and a piece of a longer dotted number (the
+// 1.2.3 of 1.2.3.4, an address) are not, unless a version word stands right before it, and a bare decimal or an abbreviated date
+// (3.14, 2026.10) with nothing that names a version is not either (known-defects.md :913).
 func recallHookIsVersion(prompt string, start, end int) bool {
 	from := max(start-32, 0)
 	for from < start && !utf8.RuneStart(prompt[from]) {
 		from++
 	}
-	if recallHookCue.MatchString(prompt[from:start]) { // a window before the match, so a long prompt costs a long prompt once
+	before := prompt[from:start] // a window before the match, so a long prompt costs a long prompt once
+	if recallHookCue.MatchString(before) {
 		return true
 	}
 	match := prompt[start:end]
@@ -168,7 +180,14 @@ func recallHookIsVersion(prompt string, start, end int) bool {
 	if end+1 < len(prompt) && prompt[end] == '.' && prompt[end+1] >= '0' && prompt[end+1] <= '9' {
 		return false
 	}
-	return true
+	after := prompt[end:min(end+32, len(prompt))]
+	if recallHookCueAfter.MatchString(after) || strings.Count(match, ".") == 2 {
+		return true
+	}
+	if m := recallHookPackage.FindStringSubmatch(before); m != nil && len(m[1]) >= 2 && !recallHookNotPackage[strings.ToLower(m[1])] {
+		return true
+	}
+	return false
 }
 
 func ExtractRecallTargets(prompt string, caps ...int) []string {

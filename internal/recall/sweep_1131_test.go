@@ -119,6 +119,13 @@ func TestSweep1131ApplyNeverCreatesOrSwitchesTheStore(t *testing.T) {
 	if len(r.Selected) != 1 {
 		t.Fatalf("%+v", r)
 	}
+	// The requeue holds the selected file open until its apply ends; the test holds it the same way, so that the file put in its place
+	// below cannot be given the removed file's inode.
+	hold, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Close()
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -206,6 +213,40 @@ func TestSweep1131WithoutRowidTableIsWrittenByItsPrimaryKey(t *testing.T) {
 	}
 	if !reflect.DeepEqual(memoryStatusFiles(t, keyless), before) {
 		t.Fatal("a refused apply wrote the store")
+	}
+}
+
+// :624 -- a column named rowid hides the row's own rowid: the write names the row by an alias the table does not shadow, by the primary
+// key when every alias is a column, and refuses when neither names one row.
+func TestSweep1131ShadowedRowidIsNotTheRowIdentity(t *testing.T) {
+	const cols = "kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT"
+	const values = "'memory_stage1','a','error',0,9,'capacity')"
+	for _, tc := range []struct {
+		name, schema, prefix string
+		refused              bool
+	}{
+		{"rowid column", "CREATE TABLE jobs (rowid INTEGER, " + cols + ")", "INSERT INTO jobs VALUES (7,", false},
+		{"rowid and _rowid_ columns", "CREATE TABLE jobs (rowid INTEGER, _rowid_ INTEGER, " + cols + ")", "INSERT INTO jobs VALUES (7,7,", false},
+		{"every alias a column, a primary key", "CREATE TABLE jobs (rowid INTEGER, _rowid_ INTEGER, oid INTEGER, id TEXT PRIMARY KEY, " + cols + ")",
+			"INSERT INTO jobs VALUES (7,7,7,hex(randomblob(8)),", false},
+		{"every alias a column, no key", "CREATE TABLE jobs (rowid INTEGER, _rowid_ INTEGER, oid INTEGER, " + cols + ")", "INSERT INTO jobs VALUES (7,7,7,", true},
+	} {
+		home := requeueTestHome(t, tc.schema, tc.prefix+values, tc.prefix+values)
+		before := memoryStatusFiles(t, home)
+		r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true, Limit: requeueNumber(1)})
+		if tc.refused {
+			if r.Applied || r.Changed != 0 || !reflect.DeepEqual(memoryStatusFiles(t, home), before) {
+				t.Errorf("%s: no row identity, yet the apply wrote: %+v", tc.name, r)
+			}
+			continue
+		}
+		if !r.Applied || len(r.Selected) != 1 || r.Changed != 1 {
+			t.Errorf("%s: one selected row must change one row: %+v", tc.name, r)
+			continue
+		}
+		if n := countRows(requeueTestRows(t, home), "retry_remaining", float64(3)); n != 1 {
+			t.Errorf("%s: one selected row, %d rows rewritten", tc.name, n)
+		}
 	}
 }
 
@@ -326,7 +367,11 @@ func TestSweep1131DatesAndAddressesAreNoVersions(t *testing.T) {
 		"서버 192.168.0.1 에서 확인":                nil,
 		"04.10.2026 에 배포":                     nil,
 		"2.49.0 provenance 확인해":               {"2.49.0"},
-		"upgrade to 1.2.3 then 4.5":           {"1.2.3", "4.5"},
+		"upgrade to 1.2.3 then node 4.5":      {"1.2.3", "4.5"},
+		"원주율 3.14 및 날짜 2026.10 확인":            nil,
+		"pi is 3.14 and 2.5 of them":          nil,
+		"react@18.2 와 Python 3.12 확인":         {"18.2", "3.12"},
+		"그때 v 2.4 와 4.5 버전":                   {"2.4", "4.5"},
 		"version 2026.10.04 shipped":          {"2026.10.04"},
 		"그때 쓴 2026.10 릴리스":                    {"2026.10"},
 		"ip 10.0.0.1 and release 3.1.4 notes": {"3.1.4"},

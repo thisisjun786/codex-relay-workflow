@@ -3,6 +3,7 @@ package recall
 
 import (
 	"cmp"
+	"errors"
 	"math"
 	"os"
 	"slices"
@@ -47,6 +48,8 @@ type RequeueResult struct {
 	// rowid nor a primary key, so that no write can name one row (known-defects.md :624).
 	keyColumns []string
 	noIdentity bool
+	// rowidAlias is the name of the rowid that no column of the table shadows, the name the write uses for the selected row.
+	rowidAlias string
 }
 
 // TransientCauses returns the upstream set without mutable package state.
@@ -92,7 +95,13 @@ func RequeueExhaustedMemoryJobs(home string, options ...RequeueOptions) RequeueR
 	if _, err := os.Stat(path); path == "" || err != nil {
 		return emptyRequeue(MemoryStatusUnavailable, "no memories store found under "+home, nil, retries)
 	}
-	selectedFile, _ := os.Stat(path)
+	// The store file is held open from selection to the end of the apply: while it is open its inode cannot be given to a file put in its
+	// place, so the identity the apply compares names this file and no later one (known-defects.md :623).
+	var selectedFile os.FileInfo
+	if hold, err := os.Open(path); err == nil {
+		defer hold.Close()
+		selectedFile, _ = hold.Stat()
+	}
 	db, err := openDbReadOnly(path)
 	if err != nil {
 		return emptyRequeue(MemoryStatusUnavailable, "could not open "+path+": "+err.Error(), &path, retries)
@@ -140,13 +149,25 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 		return emptyRequeue(MemoryStatusUnsupported, "jobs table is missing column(s): "+strings.Join(missing, ", "), &path, retries), nil
 	}
 	const where = " FROM jobs WHERE status = 'error' AND retry_remaining = 0 ORDER BY kind, job_key"
-	withRowid := true
-	rows, err := read("SELECT rowid AS rid, typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error" + where + ", rowid")
+	// A column named rowid, _rowid_ or oid hides the row's own rowid under that name and need not be unique, so the row is named by an
+	// alias no column shadows (known-defects.md :624).
+	alias := ""
+	for _, name := range []string{"rowid", "_rowid_", "oid"} {
+		if !presentFold(present, name) {
+			alias = name
+			break
+		}
+	}
+	withRowid := alias != ""
+	var rows []map[string]any
+	if withRowid {
+		rows, err = read("SELECT CAST(" + alias + " AS TEXT) AS rid, typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error" + where + ", " + alias)
+		withRowid = err == nil
+	}
 	var keyColumns []string
-	if err != nil {
-		// A table without rowids is addressed by its primary key: two rows can share a kind and a key, and only the key names the one
-		// that was selected.
-		withRowid = false
+	if !withRowid {
+		// A table without rowids, or one whose every rowid alias is a column, is addressed by its primary key: two rows can share a kind
+		// and a key, and only the key names the one that was selected.
 		type pkColumn struct {
 			order float64
 			name  string
@@ -161,13 +182,15 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 		query := "SELECT typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error"
 		for i, c := range pk {
 			quoted := `"` + strings.ReplaceAll(c.name, `"`, `""`) + `"`
-			query += ", " + quoted + " AS pk" + strconv.Itoa(i) + ", typeof(" + quoted + ") AS pt" + strconv.Itoa(i)
+			query += ", " + quoted + " AS pk" + strconv.Itoa(i) + ", typeof(" + quoted + ") AS pt" + strconv.Itoa(i) + ", CAST(" + quoted + " AS TEXT) AS ps" + strconv.Itoa(i)
 			keyColumns = append(keyColumns, quoted)
 		}
 		if rows, err = read(query + where); err != nil {
 			return r, err
 		}
 		r.keyColumns, r.noIdentity = keyColumns, len(pk) == 0
+	} else {
+		r.rowidAlias = alias
 	}
 	for _, row := range rows {
 		// A kind or key that is not text (NULL, a number, a BLOB) cannot be addressed by the text the write binds; it is left alone
@@ -187,15 +210,24 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 		if wantedKind && wantedCause {
 			c := RequeueCandidate{Kind: kind, JobKey: memoryStatusString(row["job_key"]), Cause: cause}
 			if withRowid {
-				if id, ok := row["rid"].(float64); ok {
-					c.rowid, c.hasRowid = int64(id), true
+				// The rowid is read as text: a number read as a float64 loses the low digits of a rowid past 2^53.
+				if text, ok := row["rid"].(string); ok {
+					if id, err := strconv.ParseInt(text, 10, 64); err == nil {
+						c.rowid, c.hasRowid = id, true
+					}
 				}
 			}
 			for i := range keyColumns {
 				// A key column is bound back as it was read; a value of another type than text or integer cannot be bound back exactly.
 				value, typ := row["pk"+strconv.Itoa(i)], row["pt"+strconv.Itoa(i)]
-				if number, ok := value.(float64); ok && typ == "integer" {
-					value = int64(number)
+				if text, ok := row["ps"+strconv.Itoa(i)].(string); ok && typ == "integer" {
+					number, err := strconv.ParseInt(text, 10, 64)
+					if err != nil {
+						addRequeueCause(&r.SkippedByCause, "untyped-key")
+						c.key = nil
+						break
+					}
+					value = number
 				} else if _, ok := value.(string); !ok || typ != "text" {
 					addRequeueCause(&r.SkippedByCause, "untyped-key")
 					c.key = nil
@@ -215,6 +247,16 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 		r.Selected = r.Selected[:int(math.Trunc(*n))]
 	}
 	return r, nil
+}
+
+// presentFold reports whether the table has a column of that name; SQLite compares column names without regard to ASCII case.
+func presentFold(present map[string]bool, name string) bool {
+	for column := range present {
+		if strings.EqualFold(column, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // requeueIsConsolidation is a job kind of the memory consolidation pass, which is not an extraction that can be retried unchanged.
@@ -263,13 +305,11 @@ func writeMemoryRequeue(db *RwDb, r RequeueResult) (changed float64, began bool,
 	}
 	// A candidate the host has picked up since selection must not be clobbered.
 	const set = "UPDATE jobs SET retry_remaining = ?, retry_at = NULL WHERE status = 'error' AND retry_remaining = 0 AND "
-	byKey, err := db.Prepare(set + "kind = ? AND job_key = ?")
-	if err != nil {
-		return 0, true, err
-	}
-	byRow, err := db.Prepare(set + "rowid = ? AND kind = ? AND job_key = ?")
-	if err != nil {
-		byRow = nil // a table without rowids
+	var byRow *Stmt
+	if r.rowidAlias != "" {
+		if byRow, err = db.Prepare(set + r.rowidAlias + " = ? AND kind = ? AND job_key = ?"); err != nil {
+			return 0, true, err
+		}
 	}
 	var byPK *Stmt
 	if len(r.keyColumns) != 0 {
@@ -285,7 +325,8 @@ func writeMemoryRequeue(db *RwDb, r RequeueResult) (changed float64, began bool,
 		case byPK != nil && len(c.key) == len(r.keyColumns):
 			info, err = byPK.Run(append([]any{r.Retries, c.Kind, c.JobKey}, c.key...)...)
 		default:
-			info, err = byKey.Run(r.Retries, c.Kind, c.JobKey)
+			// A row that was selected without an identity is not written by its kind and key, which other rows can share.
+			err = errors.New("a selected row has no rowid or primary key to be written by")
 		}
 		if err != nil {
 			return 0, true, err

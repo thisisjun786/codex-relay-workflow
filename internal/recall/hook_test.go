@@ -370,7 +370,8 @@ func TestRecallHookUpstreamFixtures(t *testing.T) {
 				if got := ExtractRecallTargets("지난번 2.49.0 provenance와 hook.ts, 그리고 SessionStart"); !reflect.DeepEqual(got, want) {
 					t.Fatal(got)
 				}
-				if len(ExtractRecallTargets("2.1 2.2 2.3 2.4 2.5 2.6")) != 4 {
+				// A bare decimal is no version target (CRW-1131, known-defects.md :913); versions of the three-part form fill the cap.
+				if len(ExtractRecallTargets("2.1.0 2.2.0 2.3.0 2.4.0 2.5.0 2.6.0")) != 4 {
 					t.Fatal("cap")
 				}
 				p := "그때 그 작업 hook.ts 2.49.0 " + strings.Repeat("수정하고 다시 검증하자 ", 400)
