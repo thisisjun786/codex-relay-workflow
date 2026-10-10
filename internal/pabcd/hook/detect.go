@@ -487,12 +487,13 @@ func delegation(prefix, suffix string) (noun string, delegated bool) {
 // in a subject particle (이, 가, 은, 는) after at least one other character. A subject ("자식이 확인하고 구현해") stays delegated.
 // The implement verb is then still this session's own only when nothing else takes it over: a later word of the gap that is
 // another agent noun or ends in a subject particle other than a first-person one ("확인하고 워커가 구현해") is the verb's explicit
-// subject, and a causative on the verb (suffix: "구현하게 해", "구현하도록 해", "구현시켜") hands it to a delegate; both stay delegated.
+// subject, and a causative on the verb or on a later verb of its -고 chain (chainCausative) hands it to a delegate; both stay
+// delegated.
 func hangulConnective(noun, gap, suffix string) bool {
 	if !strings.HasPrefix(noun, "자식") && !strings.HasPrefix(noun, "하위") && !strings.HasPrefix(noun, "워커") {
 		return false
 	}
-	if detectorRE(`^(?:하게|하도록|하라고|토록|시켜|시키)`).MatchString(suffix) {
+	if chainCausative(suffix) {
 		return false
 	}
 	subject := detectorRE(`.+[이가은는]$`)
@@ -512,6 +513,33 @@ func hangulConnective(noun, gap, suffix string) bool {
 		}
 	}
 	return connective
+}
+
+// chainCausative reports a causative that governs the Korean implement verb whose folded clause rest is suffix: on the verb
+// itself ("구현하게 해", "구현하도록 해", "구현시켜") or on a later verb that a chain of connectives (-고, -서, -며) joins it to
+// ("구현하고 수정하게 해", "구현하고 테스트하고 수정시켜", CRW-1166). A verb that ends the chain without one ("구현하고 수정해",
+// "구현하고 수정할게") leaves the implement verb this session's own.
+func chainCausative(suffix string) bool {
+	if detectorRE(`^(?:하게|하도록|하라고|토록|시켜|시키)`).MatchString(suffix) {
+		return true
+	}
+	words := strings.FieldsFunc(suffix, func(r rune) bool { return r == ',' || unicode.IsSpace(r) || r == '\ufeff' })
+	for i, w := range words {
+		next := ""
+		if i+1 < len(words) {
+			next = words[i+1]
+		}
+		switch {
+		case strings.Contains(w, "시켜") || strings.Contains(w, "시키"),
+			strings.HasSuffix(w, "도록") || strings.HasSuffix(w, "토록") || strings.HasSuffix(w, "라고"),
+			strings.HasSuffix(w, "게") && (strings.HasPrefix(next, "해") || strings.HasPrefix(next, "하") || strings.HasPrefix(next, "만들")):
+			return true
+		case strings.HasSuffix(w, "고") || strings.HasSuffix(w, "서") || strings.HasSuffix(w, "며"):
+			continue
+		}
+		return false
+	}
+	return false
 }
 
 // coordinateKorean reports 조정 in a folded clause that is coordination and not the adjustment of a value (CRW-1166, port: deviation
