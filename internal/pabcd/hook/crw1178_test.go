@@ -416,3 +416,33 @@ func TestCRW1178CacheBypassShapesStayRefused(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1178 verification round 3: cp -p (and any command not known to change no file) through a hard link of the source can make a
+// stale entry current before the run. Both guards refuse it with the cause; the same run alone stays allowed.
+func TestCRW1178PreservedTimeCopyBesideStaleCacheIsRefused(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	crw1178Cache(t, cwd)
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "donor"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{
+		"cp -p donor stamp && python3 -B -m unittest",
+		"cat donor > stamp; python3 -m unittest",
+		"python3 -B -m unittest | cp -p donor stamp",
+	} {
+		reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+		if !strings.Contains(reason, "stale only until") {
+			t.Errorf("memory gate, %q: %s", cmd, reason)
+		}
+		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+		if !strings.Contains(gh, "stale only until") {
+			t.Errorf("GitHub guard, %q: %s", cmd, gh)
+		}
+	}
+	if out := HandleMemoryWriteGate(gateBash(t, cwd, "cd . && python3 -B -m unittest 2>&1 | tail -n 5"), env); out != "" {
+		t.Errorf("a run beside a stale cache with read-only commands was refused: %s", out)
+	}
+}

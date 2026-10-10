@@ -301,6 +301,8 @@ type walker struct {
 	createdUpTo  int
 	// pipeOut is what the last pipeline the walk finished prints (see stageSource).
 	pipeOut *pipeSource
+	// staleBeside are module runs that skipped a stale cache entry and run alongside records read after them (CRW-1178).
+	staleBeside []staleWatch
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {

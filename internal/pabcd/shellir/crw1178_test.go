@@ -294,3 +294,62 @@ func TestCRW1178TimestampMutationBesideStaleCacheIsRefused(t *testing.T) {
 		t.Errorf("a touch after the run was refused: %v", err)
 	}
 }
+
+// CRW-1178 verification round 3: touch and truncate are not the only commands that set a file's time. cp -p (or -a, --preserve),
+// install -p, rsync -t, an archive extractor, a write redirection or any program the reader does not know can give the source (by a
+// hard link) the time and size a stale entry records, and so make the entry current before the run. With a stale entry skipped, only
+// commands known to change no file may run before the module, or beside it in a pipeline or a coprocess.
+func TestCRW1178MetadataChangeBesideStaleCacheIsRefused(t *testing.T) {
+	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	for name, body := range map[string]string{"donor": "def add(a, b):\n    return a + b\n", "run.sh": "cp -p donor stamp\n"} {
+		if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, cmd := range []string{
+		"cp -p donor stamp && python3 -B -m unittest",
+		"cp -a donor stamp; python3 -m unittest",
+		"cp --preserve=timestamps donor stamp && python3 -m pytest",
+		"install -p donor stamp && python3 -m unittest",
+		"rsync -t donor stamp && python3 -m unittest",
+		"tar -xf calc.tar && python3 -m unittest",
+		"cat donor > stamp && python3 -m unittest",
+		"printf 'x' >> stamp; python3 -m unittest",
+		"echo x >& stamp; python3 -m unittest",
+		"python3 -c 'import os; os.utime(\"stamp\", (1, 1))' && python3 -m unittest",
+		"bash run.sh && python3 -m unittest",
+		"sh -c 'cp -p donor stamp' && python3 -m unittest",
+		"python3 -B -m unittest | touch -d @1 stamp",
+		"python3 -B -m unittest 2>&1 | cp -p donor stamp",
+		"coproc python3 -B -m unittest; cp -p donor stamp",
+		"./ls && python3 -m unittest",
+		"LS && python3 -m unittest",
+		"cat() { cp -p donor stamp; }; cat donor && python3 -m unittest",
+		"echo stamp | xargs cp -p donor; python3 -m unittest",
+		"find . -name stamp -exec cp -p donor {} \\; ; python3 -m unittest",
+	} {
+		_, err := Analyze(cmd, cwd)
+		var u *Unreadable
+		if !errors.As(err, &u) {
+			t.Errorf("%s: a possible source time change beside a stale cache was allowed: %v", cmd, err)
+		} else if !strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "rewrite") {
+			t.Errorf("%s: refused for another reason: %q", cmd, u.Reason)
+		}
+	}
+	// Commands that change no file stay allowed beside a stale entry, as does any command once the run is over.
+	for _, cmd := range []string{
+		"cd . && python3 -m unittest",
+		"true; pwd; echo start; python3 -B -m unittest",
+		"ls > /dev/null 2>&1 && python3 -m unittest",
+		"python3 -B -m unittest 2>&1 | tail -n 20",
+		"python3 -B -m unittest && cp -p donor other",
+		"env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
+	} {
+		if _, err := Analyze(cmd, cwd); err != nil {
+			t.Errorf("%s: refused beside a stale cache: %v", cmd, err)
+		}
+	}
+}

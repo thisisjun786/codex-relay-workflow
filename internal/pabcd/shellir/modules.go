@@ -87,6 +87,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		}
 		files = append(files, v)
 	}
+	before := len(w.out)
 	w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Args: args, Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx})
 	if module == "json.tool" && len(files) > 1 {
 		return true, unreadablef("json.tool output operand is not modelled")
@@ -170,11 +171,16 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			}
 			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err, physical))
 		}
-		// A stale entry is skipped on the modification time the sources have now. A command of this text that can change a time,
-		// through any name of the source (a hard link), could make the entry agree with its source before the run (CRW-1178).
+		// A stale entry is skipped on the modification time and size the sources have now. Any command of this text that runs
+		// before the module, or beside it in a pipeline or a coprocess, could give a source (through any name of it, such as a
+		// hard link) the time and size the entry records, and so make it current: cp -p, a redirection, an archive, a program
+		// the reader does not know. Only commands known to change no file may (CRW-1178).
 		if staleSkipped {
-			if name := w.timestampMutator(); name != "" {
-				return true, unreadablef("module cache entry is stale only until the command runs %s; remove __pycache__, use python -B", name)
+			if why := staleCacheMutator(w.out[:before]); why != "" {
+				return true, staleCacheRefusal(why)
+			}
+			if ctx.Pipeline || ctx.Coprocess {
+				defer func() { w.staleBeside = append(w.staleBeside, staleWatch{from: len(w.out), coproc: ctx.Coprocess}) }()
 			}
 		}
 		// Pytest also loads ancestor conftest files and configuration. Config
@@ -339,25 +345,74 @@ func pycacheEntryStem(name string) (string, bool) {
 	return parts[0], true
 }
 
-// timestampMutator names a command already read in this text that can change the modification time of a file through any name of
-// it: touch and truncate, or a command that runs one (xargs, find -exec) or whose words the reader cannot evaluate.
-func (w *walker) timestampMutator() string {
-	set := map[string]bool{"touch": true, "truncate": true}
-	runs := map[string]bool{"xargs": true, "find": true, "parallel": true}
-	for _, e := range w.out {
-		if set[e.Name] {
+// staleWatch is a module run that skipped a stale cache entry and runs alongside the records the walk appends from from on: the
+// rest of its pipeline, or everything after a coprocess.
+type staleWatch struct {
+	from   int
+	coproc bool
+}
+
+// staleCacheConcurrent is the refusal of a command that runs alongside a module run which skipped a stale cache entry, read after
+// that run (the right side of its pipeline, or a command after its coprocess), or nil.
+func (w *walker) staleCacheConcurrent() error {
+	for _, s := range w.staleBeside {
+		var beside []Exec
+		for _, e := range w.out[s.from:] {
+			if s.coproc || e.Ctx.Pipeline {
+				beside = append(beside, e)
+			}
+		}
+		if why := staleCacheMutator(beside); why != "" {
+			return staleCacheRefusal(why)
+		}
+	}
+	return nil
+}
+
+func staleCacheRefusal(why string) error {
+	if len(why) > 32 { // the hook bounds the reason to 200 bytes
+		why = why[:32]
+	}
+	return unreadablef("module cache entry is stale only until the command runs %s; remove __pycache__, use python -B", why)
+}
+
+// fileInert are programs that change no file's content or time (an access time aside, which Python does not compare) except through
+// a redirection, which staleCacheMutator judges on its own. A wrapper among them runs a program that has a record of its own.
+var fileInert = map[string]bool{
+	"cd": true, "pushd": true, "popd": true, "pwd": true, "echo": true, "printf": true, "true": true, "false": true, ":": true,
+	"test": true, "[": true, "set": true, "unset": true, "export": true, "ls": true, "cat": true, "head": true, "tail": true,
+	"wc": true, "grep": true, "sleep": true, "which": true, "type": true, "basename": true, "dirname": true, "realpath": true,
+	"readlink": true, "stat": true, "env": true, "command": true, "nice": true, "timeout": true,
+}
+
+// staleCacheMutator names the first record that could change the time or size of a file through any name of it, or "": a program
+// outside fileInert (cp -p, touch, tar, an interpreter, a shell, a script), a program the reader cannot name, or a redirection
+// that writes to anything but /dev/null or another descriptor.
+func staleCacheMutator(execs []Exec) string {
+	for _, e := range execs {
+		for _, r := range e.Redirs {
+			switch r.Op {
+			case "<", "<<", "<<-", "<<<":
+				continue
+			case ">&", "<&":
+				if r.Target.Known && isDescriptorDup(r.Target.Value) {
+					continue
+				}
+			default:
+				if r.Target.Known && r.Target.Value == "/dev/null" {
+					continue
+				}
+			}
+			return r.Op + " " + r.Target.Value
+		}
+		if e.Kind != KindCommand || e.Inline != nil || !e.Program.Known {
+			return "a program the reader cannot judge"
+		}
+		if e.Name == "" && e.Program.Value == "" {
+			continue // assignments or redirections only
+		}
+		if !fileInert[e.Name] || e.Program.Value != e.Name { // a path or another spelling may be a local program of that name
 			return e.Name
-		}
-		if !runs[e.Name] {
-			continue
-		}
-		for _, a := range e.Args {
-			if !a.Known {
-				return e.Name
-			}
-			if set[filepath.Base(a.Value)] {
-				return filepath.Base(a.Value)
-			}
 		}
 	}
 	return ""
