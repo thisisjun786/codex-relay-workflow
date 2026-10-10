@@ -50,6 +50,8 @@ func Test33TranscriptIdentityPython(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
+	// The golden is the identity of each Stop, not how fast the scan reads on a loaded host.
+	loadProofDeadlines(t)
 	home := t.TempDir()
 	path := filepath.Join(home, "transcript.jsonl")
 	for index, s := range fixture.Stops {
@@ -68,6 +70,9 @@ func Test33TranscriptIdentityPython(t *testing.T) {
 	}
 }
 func Test33TranscriptBounds(t *testing.T) {
+	// The byte bound is what this test proves; reading 64 MiB inside the production scan deadline is
+	// not, and a loaded host misses it (CRW-1161).
+	loadProofDeadlines(t)
 	home := t.TempDir()
 	path := filepath.Join(home, "transcript")
 	stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "done"}, {Key: "transcript_path", Value: path}}

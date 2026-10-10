@@ -221,7 +221,7 @@ func TestWholeZoneOpenTakesNoWriteLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _, _ = holder.ExecContext(context.Background(), "ROLLBACK") }()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if _, err := second.DB.ExecContext(ctx, "PRAGMA busy_timeout=100"); err != nil {
 		t.Fatal(err)

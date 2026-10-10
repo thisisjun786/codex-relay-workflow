@@ -92,7 +92,7 @@ func Test28ConcurrentReadLeases(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	results := make(chan error, 2)
 	var release sync.WaitGroup
