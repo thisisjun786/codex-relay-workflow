@@ -102,6 +102,16 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"children meanwhile implement", "Use crw-loop in this session while the children meanwhile implement their issues.", PromptRoleUnknown, "pointer"},
 		{"children each implement", "Use crw-loop in this session while the children each implement their own issue.", PromptRoleUnknown, "pointer"},
 		{"a current-task implementation after a comma and then", "Use crw-loop in this session to consult the children, then implement this task.", PromptRoleUnknown, "recipe"},
+		// CRW-1166
+		{"an object noun then implement", "Use crw-loop in this session to consult the children then implement this task.", PromptRoleUnknown, "recipe"},
+		{"an object noun then implement in a named project", "Use crw-loop in this session to consult the workers then implement this task in the migration project.", PromptRoleUnknown, "recipe"},
+		{"an object noun, then, implement", "Use crw-loop in this session to consult the children, then, implement this task", PromptRoleUnknown, "recipe"},
+		{"a subordinate subject then implement", "Use crw-loop in this session as the children, then, implement their issues.", PromptRoleUnknown, "pointer"},
+		{"a non-coordination subject meanwhile implements", "Use crw-loop in this session while the workers meanwhile implement their issues.", PromptRoleUnknown, "pointer"},
+		{"a Korean value adjustment", "crw-loop로 타임아웃 값 조정해줘", PromptRoleUnknown, "recipe"},
+		{"a Korean lane coordination", "crw-loop로 레인들을 조정해줘", PromptRoleUnknown, "pointer"},
+		{"a Korean connective after an object child", "crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현해", PromptRoleUnknown, "recipe"},
+		{"a Korean connective after a subject child", "crw-loop 돌려서 현재 세션에서 자식이 확인하고 구현해", PromptRoleUnknown, "pointer"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -288,6 +298,31 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"Use crw-loop in this session while the children each implement their own issue.", LoopScopeProject},
 		{"Use crw-loop in this session to consult the children, then implement this task.", LoopScopeCurrentTask},
 		{"Use crw-loop in this session to consult the children and then implement this task.", LoopScopeCurrentTask},
+		// CRW-1166: the structure before the noun tells an object (a transitive verb) from a subject (a subordinating conjunction).
+		{"Use crw-loop in this session to consult the children then implement this task.", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to consult the workers then implement this task in the migration project.", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to consult the children, then, implement this task", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to ask the child agents then fix this issue", LoopScopeCurrentTask},
+		{"Use crw-loop in this session, check with the workers then implement this task", LoopScopeCurrentTask},
+		{"Use crw-loop in this session as the children, then, implement their issues.", LoopScopeProject},
+		{"Use crw-loop in this session when the workers then implement their issues.", LoopScopeProject},
+		{"Use crw-loop in this session and let the children then implement their issues.", LoopScopeProject},
+		// A subject that is no coordination word is still another agent's verb: the clause is a coordination.
+		{"Use crw-loop in this session while the workers meanwhile implement their issues.", LoopScopeProject},
+		{"Use crw-loop in this session while the subagents then implement their parts.", LoopScopeProject},
+		{"Use crw-loop to fix the failing test, they said fix the lint", LoopScopeNone},
+		// Korean: 조정 of a value is no coordination of lanes; -고 after an object child keeps this session the implementer.
+		{"crw-loop로 타임아웃 값 조정해줘", LoopScopeNone},
+		{"crw-loop로 렌더링 간격을 조정해", LoopScopeNone},
+		{"crw-loop로 폰트 크기 재조정해줘", LoopScopeNone},
+		{"crw-loop로 레인들을 조정해줘", LoopScopeProject},
+		{"crw-loop로 작업 순서 조정해줘", LoopScopeProject},
+		{"crw-loop로 현재 세션에서 자식 작업을 확인하고 구현해", LoopScopeCurrentTask},
+		{"crw-loop로 현재 세션에서 자식 확인하고, 이 작업 구현해", LoopScopeCurrentTask},
+		{"crw-loop로 현재 세션에서 워커에게 물어보고 구현해", LoopScopeCurrentTask},
+		{"crw-loop로 현재 세션에서 자식이 확인하고 구현해", LoopScopeProject},
+		{"crw-loop로 현재 세션에서 자식 작업이 확인하고 구현해", LoopScopeProject},
+		{"crw-loop로 현재 세션에서 자식에게 구현하게 해", LoopScopeProject},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {
