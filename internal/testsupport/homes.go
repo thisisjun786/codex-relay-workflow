@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -179,7 +180,6 @@ func walkHomeDir(label, dir string, info fs.FileInfo) *snapshotWalk {
 		w.fail(label, err)
 		return w
 	}
-	w.walked[root] = label
 	w.entry(label, root, nil, 0)
 	return w
 }
@@ -240,7 +240,14 @@ func (w *snapshotWalk) entry(name, path string, ancestors []string, depth int) {
 		}
 		w.link(name, line+" -> "+target, path, ancestors, depth)
 	case info.IsDir():
+		if first, seen := w.walked[path]; seen {
+			// Only a link walked this directory before (a directory is reached through its own parent once): its contents
+			// are already in the snapshot under that link's name.
+			w.add(line + " (alias of " + first + ")")
+			return
+		}
 		w.add(line)
+		w.walked[path] = name
 		w.children(name, path, append(slices.Clip(ancestors), path), depth)
 	default:
 		w.add(line)
@@ -248,7 +255,9 @@ func (w *snapshotWalk) entry(name, path string, ancestors []string, depth int) {
 }
 
 // link records a link found below a watched directory and, when it names a directory, walks that directory. A cycle is a
-// directory the link's own ancestors already contain; an alias is a directory walked earlier through another link.
+// directory the link's own ancestors already contain; an alias is a directory walked earlier, through another link or as a
+// plain directory. A link to a regular file is read through the link; a link to anything else (a FIFO, a device, a socket) is
+// recorded with the target's mode and never opened, since opening it could block or read without end.
 func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth int) {
 	st, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -265,6 +274,10 @@ func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth i
 		return
 	}
 	if !st.IsDir() {
+		if !st.Mode().IsRegular() {
+			w.add(line + " (target " + st.Mode().String() + ", not read)")
+			return
+		}
 		if sum, ok := w.digest(line, real, st.Size()); ok {
 			w.add(line + " sha256:" + sum)
 		}
@@ -280,10 +293,11 @@ func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth i
 	}
 	w.add(line)
 	w.walked[real] = name
-	w.children(name, real, append(slices.Clip(ancestors), real), depth+1)
+	w.children(name, real, append(slices.Clip(ancestors), real), depth)
 }
 
-// children records the entries of the directory path, which sits depth directories below the root.
+// children records the entries of the directory path, which sits depth directories below the root; a linked directory counts
+// as one directory level like a plain one.
 func (w *snapshotWalk) children(name, path string, ancestors []string, depth int) {
 	if depth > snapshotMaxDepth {
 		w.stop(name, fmt.Sprintf("past the depth limit of %d directories", snapshotMaxDepth))
@@ -305,14 +319,25 @@ func (w *snapshotWalk) digest(line, path string, size int64) (string, bool) {
 		w.stop(line, fmt.Sprintf("more than %d bytes read", snapshotMaxBytes))
 		return "", false
 	}
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		w.fail(line, err)
 		return "", false
 	}
-	w.bytes += int64(len(raw))
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), true
+	defer f.Close()
+	// The read is capped at the remaining budget, so a file that grew since its size was taken cannot exceed it.
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, snapshotMaxBytes-w.bytes+1))
+	w.bytes += n
+	if w.bytes > snapshotMaxBytes {
+		w.stop(line, fmt.Sprintf("more than %d bytes read", snapshotMaxBytes))
+		return "", false
+	}
+	if err != nil {
+		w.fail(line, err)
+		return "", false
+	}
+	return hex.EncodeToString(h.Sum(nil)), true
 }
 
 // Verify reports through fail when the state differs from the one Rebase took, or when the content snapshot could

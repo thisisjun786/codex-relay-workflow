@@ -183,14 +183,140 @@ func TestContentsErrorsPastTheEntryBudget(t *testing.T) {
 // This is the exception the retrust fixture relies on, and it must hold after the links below the root are followed.
 func TestContentsKeepsHomeToItsTopLevelNames(t *testing.T) {
 	h, _ := linkHomes(t)
+	h.watchHome = true // dirs() returns HOME itself only for a watched HOME: without it this test never reaches the HOME branch
 	outside := t.TempDir()
 	writeFixture(t, filepath.Join(outside, "f"), "one")
 	if err := os.Symlink(outside, filepath.Join(h.Home, "link")); err != nil {
 		t.Fatal(err)
 	}
+	writeFixture(t, filepath.Join(h.Home, "sub", "deep"), "one")
 	before := mustContents(t, h)
+	if !strings.Contains(before, "HOME: link,sub") {
+		t.Fatalf("HOME is not listed by its top-level names:\n%s", before)
+	}
 	writeFixture(t, filepath.Join(outside, "f"), "two")
+	writeFixture(t, filepath.Join(h.Home, "sub", "deep"), "two")
 	if after := mustContents(t, h); after != before {
-		t.Fatalf("an edit behind a link at HOME's top level is walked into HOME:\nbefore %s\nafter  %s", before, after)
+		t.Fatalf("an edit behind or below a HOME top-level name is walked into HOME:\nbefore %s\nafter  %s", before, after)
+	}
+	writeFixture(t, filepath.Join(h.Home, "stray"), "new")
+	if after := mustContents(t, h); after == before {
+		t.Fatalf("a new top-level name in HOME is not seen:\n%s", after)
+	}
+}
+
+// fileLines are the snapshot lines of the regular file named base (a "/<base> " path that carries a digest).
+func fileLines(out, base string) []string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "/"+base+" -rw") && strings.Contains(l, "sha256:") {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// One directory reached as a plain directory and through a link is read once, whichever of the two the walk meets first:
+// the link name sorts before the plain name ("a" < "real") or after it ("z" > "real").
+func TestContentsReadsADirectoryOnceWhetherTheLinkComesBeforeOrAfterIt(t *testing.T) {
+	for _, linkName := range []string{"a", "z"} {
+		t.Run(linkName, func(t *testing.T) {
+			h, codex := linkHomes(t)
+			real := filepath.Join(codex, "real")
+			writeFixture(t, filepath.Join(real, "f"), "one")
+			if err := os.Symlink(real, filepath.Join(codex, linkName)); err != nil {
+				t.Fatal(err)
+			}
+			before := mustContents(t, h)
+			if got := fileLines(before, "f"); len(got) != 1 {
+				t.Fatalf("the directory's file is read %d times, want once:\n%s", len(got), before)
+			}
+			if !strings.Contains(before, "(alias of ") {
+				t.Fatalf("the second path to the directory is not marked as an alias:\n%s", before)
+			}
+			writeFixture(t, filepath.Join(real, "f"), "two")
+			if after := mustContents(t, h); after == before {
+				t.Fatalf("an edit in a directory reached by a plain path and a link is not seen:\n%s", after)
+			}
+		})
+	}
+}
+
+// A 40 MiB fixture reached by a plain path and a link fits the 64 MiB byte budget because it is read once.
+func TestContentsCountsAnAliasedFixtureOnceAgainstTheByteBudget(t *testing.T) {
+	h, codex := linkHomes(t)
+	real := filepath.Join(codex, "real")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "big"), make([]byte, 40<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(codex, "a")); err != nil {
+		t.Fatal(err)
+	}
+	mustContents(t, h)
+}
+
+// A file read through the byte budget is capped: a snapshot past the budget is an error.
+func TestContentsErrorsPastTheByteBudget(t *testing.T) {
+	h, codex := linkHomes(t)
+	for _, n := range []string{"one", "two"} {
+		if err := os.WriteFile(filepath.Join(codex, n), make([]byte, snapshotMaxBytes/2+1), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.Contents(); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Fatalf("a walk past the byte budget must error, got %v", err)
+	}
+}
+
+// chain builds n nested directories below root's directory: each of the n levels is a directory reached through a link
+// (kind 'l'), a plain directory ('p'), or alternating ones ('m'). The deepest holds the file leaf.
+func chain(t *testing.T, root string, n int, kind byte) {
+	t.Helper()
+	cur := root
+	for i := 1; i <= n; i++ {
+		linked := kind == 'l' || (kind == 'm' && i%2 == 1)
+		name := fmt.Sprintf("d%d", i)
+		if linked {
+			target := filepath.Join(t.TempDir(), name)
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(cur, name)); err != nil {
+				t.Fatal(err)
+			}
+			cur = target
+			continue
+		}
+		cur = filepath.Join(cur, name)
+		if err := os.MkdirAll(cur, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture(t, filepath.Join(cur, "leaf"), "x")
+}
+
+// The depth limit counts a linked directory like a plain one: 32 directories are walked, 33 are an error, for plain,
+// linked and mixed chains alike.
+func TestContentsDepthLimitIsThirtyTwoDirectoriesForPlainLinkedAndMixedChains(t *testing.T) {
+	for _, kind := range []byte{'p', 'l', 'm'} {
+		for _, n := range []int{snapshotMaxDepth, snapshotMaxDepth + 1} {
+			t.Run(fmt.Sprintf("%c%d", kind, n), func(t *testing.T) {
+				h, codex := linkHomes(t)
+				chain(t, codex, n, kind)
+				out, err := h.Contents()
+				if n <= snapshotMaxDepth {
+					if err != nil || !strings.Contains(out, "/leaf ") {
+						t.Fatalf("%d directories are within the limit, got err %v\n%s", n, err, out)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), "depth") {
+					t.Fatalf("%d directories must be a depth error, got %v", n, err)
+				}
+			})
+		}
 	}
 }
