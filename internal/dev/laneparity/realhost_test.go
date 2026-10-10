@@ -3,12 +3,15 @@
 package laneparity
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The recorder installed as the runtime keeps every start (arguments, payload, answer, status, time)
@@ -381,17 +384,101 @@ func TestRealHost_withoutCodexEveryCellIsNotVerified(t *testing.T) {
 	if len(merged) != len(base)+len(hostCellNames) {
 		t.Errorf("%d cells unverified, want %d", len(merged), len(base)+len(hostCellNames))
 	}
-	// a run that did reach the host drops the cells it measured and keeps the others
-	ran := notVerifiedWithRealHost(base, RealHostReport{Unverified: []NotVerified{{Cell: "real host: permission/crw"}}})
-	for _, n := range ran {
-		for _, covered := range realHostCells {
-			if strings.HasPrefix(n.Cell, covered) {
-				t.Errorf("%q stays unverified after a real-host run", n.Cell)
+}
+
+// A cell leaves the unverified list only when the real-host cells that cover it ran and passed: a
+// report with no cell (a filter that matched nothing), one with a cell that failed or could not be
+// driven, and one with only part of the cells keep what they did not measure.
+func TestNotVerifiedWithRealHost_onlyWhatRanAndPassedIsCovered(t *testing.T) {
+	base := NotVerifiedCells()
+	stays := func(rep RealHostReport) map[string]bool {
+		left := map[string]bool{}
+		for _, n := range notVerifiedWithRealHost(base, rep) {
+			for _, c := range realHostCovers {
+				if strings.HasPrefix(n.Cell, c.prefix) {
+					left[c.prefix] = true
+				}
 			}
 		}
+		return left
 	}
-	if len(ran) != len(base)-len(realHostCells)+1 {
-		t.Errorf("%d cells, want %d", len(ran), len(base)-len(realHostCells)+1)
+	pass := func(names ...string) RealHostReport {
+		rep := RealHostReport{OK: true}
+		for _, n := range names {
+			rep.Cells = append(rep.Cells, HostCell{Name: n, OK: true})
+		}
+		return rep
+	}
+	// no cell ran: nothing is covered, and every cell is listed as not run
+	merged := notVerifiedWithRealHost(base, pass())
+	if len(stays(pass())) != len(realHostCovers) || len(merged) != len(base)+len(hostCellNames) {
+		t.Errorf("an empty report covers cells: %d unverified of %d", len(merged), len(base)+len(hostCellNames))
+	}
+	for _, n := range merged[len(base):] {
+		if !strings.HasPrefix(n.Cell, "real host: ") || !strings.Contains(n.Reason, "did not run") {
+			t.Errorf("%+v", n)
+		}
+	}
+	// turn/crw alone covers the turn and not the trust contrast or the compaction
+	left := stays(pass(CellTurnCRW))
+	if left[realHostCovers[0].prefix] || !left[realHostCovers[1].prefix] || !left[realHostCovers[2].prefix] {
+		t.Errorf("turn/crw only: %v", left)
+	}
+	// a failed cell and a cell the host could not be driven into cover nothing
+	failed := pass(CellTurnCRW, CellUntrusted, CellCompaction)
+	failed.Cells[0].OK = false
+	failed.Cells[2].Unverified = "not driven"
+	left = stays(failed)
+	if len(left) != len(realHostCovers) {
+		t.Errorf("failed cells: %v", left)
+	}
+	// the cells that ran and passed cover theirs, and the cells that did not run are listed
+	all := pass(CellTurnCRW, CellUntrusted, CellCompaction)
+	if left := stays(all); len(left) != 0 {
+		t.Errorf("all three cells passed: %v stay", left)
+	}
+	if got, want := len(notVerifiedWithRealHost(base, all)), len(base)-len(realHostCovers)+len(hostCellNames)-3; got != want {
+		t.Errorf("%d cells, want %d", got, want)
+	}
+}
+
+// A filter that matches no real-host cell runs no turn: the report holds no cell, the unverified
+// list keeps the three cells the real host would cover, and the scope does not say a turn ran.
+func TestRealHostCommand_aFilterThatMatchesNoCellClaimsNothing(t *testing.T) {
+	root := repoRoot(t)
+	codex := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\necho codex-cli 0.0.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "report.json")
+	var out, errs bytes.Buffer
+	code := Run([]string{"realhost", "--repo", root, "--crw", os.Args[0], "--plugin", filepath.Join(root, "plugins", "crw"), "--codex", codex,
+		"--scratch", t.TempDir(), "--only", "^no-host-cell-matches$", "--json", report}, &out, &errs)
+	if code != 0 {
+		t.Fatalf("exit %d: %s%s", code, out.String(), errs.String())
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep Report
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.RealHost == nil || len(rep.RealHost.Cells) != 0 {
+		t.Fatalf("%+v", rep.RealHost)
+	}
+	if strings.Contains(rep.Scope, "ran whole turns") || !strings.Contains(rep.Scope, "no real Codex turn ran") {
+		t.Errorf("scope: %s", rep.Scope)
+	}
+	for _, covered := range realHostCovers {
+		found := false
+		for _, n := range rep.NotVerified {
+			found = found || strings.HasPrefix(n.Cell, covered.prefix)
+		}
+		if !found {
+			t.Errorf("%q left the unverified list although no turn ran", covered.prefix)
+		}
 	}
 }
 
@@ -439,5 +526,67 @@ func TestFindCodex(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if got, reason := findCodex(""); got != "" || !strings.Contains(reason, "no codex executable on PATH") {
 		t.Errorf("%q %q", got, reason)
+	}
+}
+
+// A plugin copied into the cache is plain files: a plugin root that is itself a link, a link to a
+// directory inside the package and a link to a file all copy as what they point at, and a link that
+// leads back into a directory being copied is an error and not an endless copy.
+func TestCopyPlugin_followsLinksAndRefusesACycle(t *testing.T) {
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := t.TempDir()
+	write(filepath.Join(src, "pkg", "a.txt"), "a")
+	write(filepath.Join(src, "pkg", "sub", "b.txt"), "b")
+	write(filepath.Join(src, "elsewhere", "c.txt"), "c")
+	if err := os.Symlink(filepath.Join(src, "elsewhere"), filepath.Join(src, "pkg", "linked-dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(src, "pkg", "a.txt"), filepath.Join(src, "pkg", "linked-file")); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(src, "root-link")
+	if err := os.Symlink(filepath.Join(src, "pkg"), root); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	dst := filepath.Join(t.TempDir(), "cache")
+	go func() { done <- copyPlugin(root, dst) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("copying a plugin root that is a link did not return")
+	}
+	for path, want := range map[string]string{"a.txt": "a", "sub/b.txt": "b", "linked-dir/c.txt": "c", "linked-file": "a"} {
+		raw, err := os.ReadFile(filepath.Join(dst, path))
+		if err != nil || string(raw) != want {
+			t.Errorf("%s: %q %v, want %q", path, raw, err, want)
+		}
+		if info, err := os.Lstat(filepath.Join(dst, path)); err != nil || info.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("%s is not a plain file: %v %v", path, info, err)
+		}
+	}
+	// a cycle: a directory below the package links to the package
+	if err := os.Symlink(filepath.Join(src, "pkg"), filepath.Join(src, "pkg", "sub", "back")); err != nil {
+		t.Fatal(err)
+	}
+	go func() { done <- copyPlugin(filepath.Join(src, "pkg"), filepath.Join(t.TempDir(), "cache")) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "link cycle") {
+			t.Errorf("a link cycle: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("copying a plugin with a link cycle did not return")
 	}
 }

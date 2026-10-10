@@ -295,3 +295,118 @@ func TestFire_theShippedPluginFiresThroughItsOwnDeclarations(t *testing.T) {
 		t.Errorf("%d entries left in the scratch directory", len(left))
 	}
 }
+
+// A link inside the case root that points out of it takes neither the switch nor the runtime link
+// (the scenario's given.symlinks can make one): nothing is created behind it, and a link that stays
+// inside the case root is followed.
+func TestSeed_refusesALinkOutOfTheCaseRoot(t *testing.T) {
+	outside := t.TempDir()
+	empty := func(t *testing.T) {
+		t.Helper()
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Fatalf("the seed created %d entr(ies) outside the case root", len(entries))
+		}
+	}
+	t.Run("codex home is a link out", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(root, "linked-home")); err != nil {
+			t.Fatal(err)
+		}
+		_, err := seedPlan{Switch: SwitchOn}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + filepath.Join(root, "home"), "CODEX_HOME=" + filepath.Join(root, "linked-home")})
+		if err == nil || !strings.Contains(err.Error(), "outside the case root") {
+			t.Fatalf("%v", err)
+		}
+		empty(t)
+	})
+	t.Run("a directory below the codex home is a link out", func(t *testing.T) {
+		root := t.TempDir()
+		codexHome := filepath.Join(root, "codex")
+		if err := os.MkdirAll(codexHome, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(codexHome, "crw")); err != nil {
+			t.Fatal(err)
+		}
+		_, err := seedPlan{Switch: SwitchOn}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + filepath.Join(root, "home"), "CODEX_HOME=" + codexHome})
+		if err == nil || !strings.Contains(err.Error(), "outside the case root") {
+			t.Fatalf("%v", err)
+		}
+		empty(t)
+	})
+	t.Run("home of the runtime link is a link out", func(t *testing.T) {
+		root := t.TempDir()
+		home := filepath.Join(root, "home")
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(home, ".local")); err != nil {
+			t.Fatal(err)
+		}
+		_, err := seedPlan{Switch: SwitchOff, CRW: "/opt/crw", Runtime: true}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + home})
+		if err == nil || !strings.Contains(err.Error(), "outside the case root") {
+			t.Fatalf("%v", err)
+		}
+		empty(t)
+	})
+	t.Run("a link that points nowhere", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Symlink(filepath.Join(outside, "missing"), filepath.Join(root, "dangling")); err != nil {
+			t.Fatal(err)
+		}
+		_, err := seedPlan{Switch: SwitchOn}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + filepath.Join(root, "home"), "CODEX_HOME=" + filepath.Join(root, "dangling")})
+		if err == nil {
+			t.Fatal("a Codex home behind a dangling link was accepted")
+		}
+		empty(t)
+	})
+	t.Run("a link inside the case root is followed", func(t *testing.T) {
+		root := t.TempDir()
+		real := filepath.Join(root, "real-home")
+		if err := os.MkdirAll(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(root, "linked-home")
+		if err := os.Symlink(real, link); err != nil {
+			t.Fatal(err)
+		}
+		undo, err := seedPlan{Switch: SwitchOn}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + filepath.Join(root, "home"), "CODEX_HOME=" + link})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(hookswitch.Path(real)); err != nil {
+			t.Errorf("the switch is not behind the link: %v", err)
+		}
+		if err := undo(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(hookswitch.Path(real)); !os.IsNotExist(err) {
+			t.Errorf("the undo left the switch: %v", err)
+		}
+	})
+	t.Run("a directory replaced by a link out is not undone through it", func(t *testing.T) {
+		root := t.TempDir()
+		codexHome := filepath.Join(root, "codex")
+		if err := os.MkdirAll(codexHome, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		undo, err := seedPlan{Switch: SwitchOn}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + filepath.Join(root, "home"), "CODEX_HOME=" + codexHome})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outside, "switch.json"), []byte("keep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(filepath.Join(codexHome, "crw"), filepath.Join(root, "moved")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(codexHome, "crw")); err != nil {
+			t.Fatal(err)
+		}
+		if err := undo(); err == nil {
+			t.Error("the undo went through a link out of the case root")
+		}
+		if raw, err := os.ReadFile(filepath.Join(outside, "switch.json")); err != nil || string(raw) != "keep" {
+			t.Errorf("a file outside the case root was removed or changed: %q %v", raw, err)
+		}
+	})
+}

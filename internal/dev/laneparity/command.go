@@ -398,8 +398,11 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 		report.RealHost = &rh
-		if rh.Skipped == "" {
-			report.Scope = "isolated roots fired with corpus payloads, and the real-host cells: the real Codex binary (" + rh.Codex.Version + ") ran whole turns in isolated homes against a stub model provider on the loopback interface, the hooks trusted by crw doctor retrust and none by a bypass flag; not a normal installation (CRW-201, CRW-204), not a real model"
+		if rh.Skipped == "" && len(rh.Cells) == 0 {
+			report.Scope += "; the real-host filter matched no cell, so no real Codex turn ran"
+		}
+		if rh.Skipped == "" && len(rh.Cells) > 0 {
+			report.Scope = "isolated roots fired with corpus payloads, and the real-host cells that ran (" + strings.Join(cellNames(rh.Cells), ", ") + "): the real Codex binary (" + rh.Codex.Version + ") ran whole turns in isolated homes against a stub model provider on the loopback interface, the hooks trusted by crw doctor retrust and none by a bypass flag; not a normal installation (CRW-201, CRW-204), not a real model"
 		}
 		printRealHost(stdout, rh)
 		report.OK = report.OK && rh.OK
@@ -764,3 +767,12 @@ func printLatency(w io.Writer, lat []Latency) {
 
 // HelperEnv is the variable that marks a process as a stub program or git wrapper of a replay case.
 const HelperEnv = contracttest.RecDirEnv
+
+// cellNames are the names of the real-host cells that ran.
+func cellNames(cells []HostCell) []string {
+	var names []string
+	for _, c := range cells {
+		names = append(names, c.Name)
+	}
+	return names
+}

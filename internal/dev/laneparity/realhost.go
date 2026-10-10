@@ -12,7 +12,6 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -509,33 +508,48 @@ func manifestVersion(root string) (string, error) {
 }
 
 // copyPlugin copies a plugin root into the plugin cache, following links, as an installation holds
-// the package as plain files.
+// the package as plain files. A link to a directory is copied as that directory; a link that leads
+// back into a directory being copied (a cycle) is an error, not an endless copy.
 func copyPlugin(from, to string) error {
-	return filepath.WalkDir(from, func(path string, d fs.DirEntry, err error) error {
+	return copyTree(from, to, map[string]bool{})
+}
+
+// copyTree copies src (a file, a directory, or a link to either) to dst. active holds the real paths
+// of the directories being copied on the way down to src.
+func copyTree(src, dst string, active map[string]bool) error {
+	real, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		raw, err := os.ReadFile(real)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(from, path)
-		if err != nil {
+		return os.WriteFile(dst, raw, info.Mode().Perm())
+	}
+	if active[real] {
+		return fmt.Errorf("%s links back to %s, a directory being copied: a plugin package holds no link cycle", src, real)
+	}
+	active[real] = true
+	defer delete(active, real)
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(real)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()), active); err != nil {
 			return err
 		}
-		target := filepath.Join(to, rel)
-		info, err := os.Stat(path)
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if d.Type()&fs.ModeSymlink != 0 {
-				return copyPlugin(path, target)
-			}
-			return os.MkdirAll(target, 0o755)
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, raw, info.Mode().Perm())
-	})
+	}
+	return nil
 }
 
 // writePNG writes the 2x2 image the script's view_image call opens.
@@ -1049,32 +1063,58 @@ func printRealHost(w io.Writer, rep RealHostReport) {
 	fmt.Fprintf(w, "real host: %s (%s), bypass of hook trust: %v\n", rep.Codex.Version, rep.Codex.Path, rep.Bypass)
 }
 
-// realHostCells are the cells the isolated runs of the harness leave unverified until a real-host run
-// covers them; a real-host run replaces them with what it measured.
-var realHostCells = []string{
-	"real Codex binary fires the declared hook from a real turn",
-	"hook trust: a declared hook does not run until trusted",
-	"context recovery after a real compaction",
+// realHostCover is a cell the isolated runs of the harness leave unverified until the real-host
+// cells that cover it ran and passed: the prefix of its NotVerified cell, and the real-host cells
+// that must all have run and passed to take it off the list.
+type realHostCover struct {
+	prefix string
+	cells  []string
+}
+
+var realHostCovers = []realHostCover{
+	{"real Codex binary fires the declared hook from a real turn", []string{CellTurnCRW}},
+	{"hook trust: a declared hook does not run until trusted", []string{CellTurnCRW, CellUntrusted}},
+	{"context recovery after a real compaction", []string{CellCompaction}},
 }
 
 // notVerifiedWithRealHost is the list of cells left unverified by a run that included the real-host
-// cells: the cells they cover go, and what they could not verify (or did not run) comes in. A run
-// that found no Codex keeps the list and adds why.
+// cells. A cell leaves the list only when every real-host cell that covers it ran to a verdict and
+// passed; a cell the filter left out, one that failed and one the host could not be driven into
+// stay on it, and the real-host cells that did not run come in with why. A run that found no Codex
+// keeps the list and adds why.
 func notVerifiedWithRealHost(base []NotVerified, rh RealHostReport) []NotVerified {
 	if rh.Skipped != "" {
 		return append(base, rh.Unverified...)
 	}
+	passed := map[string]bool{}
+	ran := map[string]bool{}
+	for _, c := range rh.Cells {
+		ran[c.Name] = true
+		passed[c.Name] = c.OK && c.Unverified == ""
+	}
 	var out []NotVerified
 	for _, n := range base {
 		covered := false
-		for _, prefix := range realHostCells {
-			covered = covered || strings.HasPrefix(n.Cell, prefix)
+		for _, cover := range realHostCovers {
+			if !strings.HasPrefix(n.Cell, cover.prefix) {
+				continue
+			}
+			covered = true
+			for _, name := range cover.cells {
+				covered = covered && passed[name]
+			}
 		}
 		if !covered {
 			out = append(out, n)
 		}
 	}
-	return append(out, rh.Unverified...)
+	out = append(out, rh.Unverified...)
+	for _, name := range hostCellNames {
+		if !ran[name] {
+			out = append(out, NotVerified{"real host: " + name, "the cell did not run in this invocation (the --only filter left it out)", "run the real-host cells without --only"})
+		}
+	}
+	return out
 }
 
 // checkSpawn: the spawned agent had a turn of its own with the provider (a request that carries its

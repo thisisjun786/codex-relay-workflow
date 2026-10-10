@@ -107,6 +107,9 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			return fail(fmt.Errorf("the step's HOME %q is not under the case root %s: no runtime is linked there", home, c.Root))
 		}
 		link := filepath.Join(home, runtimeBin)
+		if err := resolvedWithin(c.Root, filepath.Dir(link)); err != nil {
+			return fail(fmt.Errorf("the runtime link under HOME %q: %w", home, err))
+		}
 		if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
 			made, err := makeDirs(filepath.Dir(link), 0o755)
 			undos = append(undos, removeEmpty(made))
@@ -116,7 +119,7 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			if err := os.Symlink(p.CRW, link); err != nil {
 				return fail(err)
 			}
-			undos = append(undos, func() error { return removeIfExists(link) })
+			undos = append(undos, func() error { return removeBelow(c.Root, link) })
 		}
 	}
 	if p.Switch != SwitchOff {
@@ -130,6 +133,9 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			return fail(fmt.Errorf("the step's Codex home %q is not under the case root %s: nothing is written there", codexHome, c.Root))
 		}
 		path := hookswitch.Path(codexHome)
+		if err := resolvedWithin(c.Root, filepath.Dir(path)); err != nil {
+			return fail(fmt.Errorf("the switch file under the Codex home %q: %w", codexHome, err))
+		}
 		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 			made, err := makeDirs(filepath.Dir(path), 0o700) // as the hooks make <CODEX_HOME>/crw: MkdirAll 0700
 			undos = append(undos, removeEmpty(made))
@@ -143,17 +149,64 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			if err := writeSwitch(path, state); err != nil {
 				return fail(err)
 			}
-			undos = append(undos, func() error { return removeIfExists(path) })
+			undos = append(undos, func() error { return removeBelow(c.Root, path) })
 		}
 	}
 	return undo, nil
 }
 
-// within is whether path is root or below it (lexically: the harness's own case roots hold no links
-// out of themselves).
+// within is whether path is root or below it, by name only. Whatever the harness creates goes
+// through resolvedWithin as well: a link in the tree (the scenario's given.symlinks, or one a step
+// makes) may point out of the case root.
 func within(root, path string) bool {
 	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolvedWithin is whether path, with every link on the way followed, is root or below it. The
+// part of path that does not exist yet is taken as written below the deepest part that does; a link
+// that points nowhere, or a path that cannot be examined, is refused. A link that stays inside the
+// case root is fine.
+func resolvedWithin(root, path string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("the case root %s cannot be resolved: %w", root, err)
+	}
+	var rest []string
+	cur := filepath.Clean(path)
+	for {
+		_, err := os.Lstat(cur)
+		if err == nil {
+			real, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return fmt.Errorf("%s cannot be resolved (a link that points nowhere?): %w", cur, err)
+			}
+			slices.Reverse(rest)
+			full := filepath.Join(append([]string{real}, rest...)...)
+			if !within(realRoot, full) {
+				return fmt.Errorf("%s resolves to %s, outside the case root %s: nothing is created there", path, full, realRoot)
+			}
+			return nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return fmt.Errorf("%s has no existing ancestor", path)
+		}
+		rest = append(rest, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+// removeBelow removes a file the harness made, after checking again that the way to it still stays
+// in the case root (a step may have replaced a directory above it with a link).
+func removeBelow(root, path string) error {
+	if err := resolvedWithin(root, filepath.Dir(path)); err != nil {
+		return fmt.Errorf("not removing %s: %w", path, err)
+	}
+	return removeIfExists(path)
 }
 
 // makeDirs makes dir and the missing directories above it with mode perm, and returns the ones it

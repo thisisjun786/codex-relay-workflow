@@ -31,8 +31,9 @@ step the firing and latency cells start, and takes it out again before the case'
 is the scenario's and the hooks' alone. The Codex home is the one the step's own environment names: a step that sets
 `CODEX_HOME` to a home of its own, or unsets it (the hook then reads `$HOME/.codex`), gets the file there, made with the
 modes the hooks give what they make (CRW-1082; before it the file was written into the case's `CODEX_HOME` only, and the
-fixtures of those steps ran against no switch and were silent). Nothing is written outside the case root, and the
-account's home is never resolved. The report's `switch` (and the fire cell's) names the state every case root held, and
+fixtures of those steps ran against no switch and were silent). Nothing is written outside the case root (every link on the way to a
+directory the harness makes in is followed, and one that leaves the case root, or points nowhere, is refused, for the
+switch and for the runtime link, and again before the harness takes them out), and the account's home is never resolved. The report's `switch` (and the fire cell's) names the state every case root held, and
 `switchSilence` the cell that fires the same legs with the file absent and at `cxc`.
 
 The shipped plugin starts `"$HOME/.local/share/crw-runtime/current/bin/crw"`. To fire its declarations as they are, the
@@ -124,8 +125,10 @@ build's answer) must turn `turn/crw` and `compaction/crw` red; a host whose hook
 
 ## What it does not show
 
-Every run lists these as `notVerified` (a run that includes the real-host cells replaces the first three with what it
-measured): the real Codex binary starting the declared hooks from a turn, hook trust, context recovery after a real
+Every run lists these as `notVerified` (a run that includes the real-host cells takes off the first three, each only when the
+real-host cells that cover it ran and passed: the turn needs `turn/crw`, hook trust `turn/crw` and `untrusted/crw`, the
+compaction `compaction/crw`; a cell that `--only` left out, failed, or could not be driven is listed with why, and a filter
+that matches no cell claims no turn in the scope): the real Codex binary starting the declared hooks from a turn, hook trust, context recovery after a real
 compaction; pause, cancel, permission refusal, forced exit and restart of the host and a stall (a host session driven through
 the App Server; `codex exec` runs with approval never); which skills a real model selects on a native spawn; real-model
 behaviour of the injected directives (the stub's script never reads them); the CRW-392 switch as `crw install switch` turns
