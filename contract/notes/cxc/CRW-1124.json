@@ -1,0 +1,44 @@
+{
+  "issue": "CRW-1124",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "hook__pre-tool-use-attaching-skills__managed_dispatch_marker_issues_once",
+      "reason": "Claim handover from CRW-634: decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order. CRW-1124: each of the three hook events resolves the dispatch root once (the managed preview), and the issuance works on the preview's root under the record's lock, so one git rev-parse --show-toplevel is recorded per event.",
+      "set": {
+        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
+        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
+        "calls/2": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}"
+      },
+      "remove": [
+        "calls/3",
+        "calls/4",
+        "calls/5",
+        "calls/6",
+        "calls/7",
+        "calls/8",
+        "calls/9",
+        "calls/10",
+        "calls/11"
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__managed_dispatch_refusals",
+      "reason": "Claim handover from CRW-735: decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json) and its extra toplevel probe are not made. Every answer of this fixture is byte-identical, and the refusal text is now the oracle's own; only the recorded calls differ, and the claim restates them in the port order. CRW-1124: the dispatch root is resolved once per hook event, so the refusals record one git rev-parse --show-toplevel each.",
+      "remove": [
+        "calls/3",
+        "calls/4",
+        "calls/5"
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__managed_fallback_candidate_null_effort",
+      "reason": "Claim handover from CRW-634: decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order. CRW-1124: the managed event resolves the dispatch root once (the preview), and the issuance works on the preview's root under the record's lock, so one git rev-parse --show-toplevel is recorded.",
+      "remove": [
+        "calls/1",
+        "calls/2",
+        "calls/3"
+      ]
+    }
+  ]
+}

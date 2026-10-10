@@ -222,8 +222,8 @@ func TestHelperCLIFallbackAndReset(t *testing.T) {
 func TestHelperCLICorruptStoreAndProjectIsolation(t *testing.T) {
 	env, dir := home(t)
 	path := writeStore(t, dir, "broken JSON\n")
-	if cfg := helperCLIDecode[Config](t, RunHelper(ParseHelperArgs(nil), env)); !reflect.DeepEqual(cfg, DefaultConfig()) {
-		t.Fatal("corrupt read not defaulted")
+	if got := RunHelper(ParseHelperArgs(nil), env); got.Code != 1 || !strings.Contains(got.Output, "unusable helper role settings") {
+		t.Fatalf("corrupt read = %+v, want the store's refusal (CRW-1119)", got)
 	}
 	for _, args := range [][]string{{"set", "reviewer", "--prompt", "x"}, {"reset", "reviewer"}} {
 		got := RunHelper(ParseHelperArgs(args), env)

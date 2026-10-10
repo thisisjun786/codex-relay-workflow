@@ -279,12 +279,13 @@ func TestSpawnInlineCatalogQuirks(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	spawnInlineTestWrite(t, root, "crw-dev", "name: crw-dev\ndescription: "+strings.Repeat("x", 119)+"😀\n")
+	spawnInlineTestWrite(t, root, "crw-dev", "---\nname: crw-dev\ndescription: "+strings.Repeat("x", 119)+"😀\n---\n")
 	want := "Available skills (self-load from " + root + "/<name>/SKILL.md):\n- crw-dev: " + strings.Repeat("x", 119) + "\xed\xa0\xbd"
 	if got := BuildLeafSkillCatalog(root); got != want {
 		t.Fatalf("UTF-16 description split differs: %q", got)
 	}
-	spawnInlineTestWrite(t, root, "crw-dev", strings.Repeat("😀", 512)+"\nname: crw-dev\n")
+	// A frontmatter that does not close within the first 1024 UTF-16 units is no frontmatter (CRW-1114).
+	spawnInlineTestWrite(t, root, "crw-dev", "---\nname: crw-dev\ndescription: "+strings.Repeat("😀", 512)+"\n---\n")
 	if got := BuildLeafSkillCatalog(root); got != "" {
 		t.Fatal("catalog head is not 1024 UTF-16 units")
 	}

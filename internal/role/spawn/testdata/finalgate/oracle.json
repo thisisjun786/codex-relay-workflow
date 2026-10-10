@@ -328,9 +328,11 @@
         "ok": true
       },
       "expected": {
-        "ok": true
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt cannot be verified: the source identity of the receipt or of the tree is unavailable\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
       },
-      "classification": "identical"
+      "classification": "intentionally-changed",
+      "reason": "CRW-1114 (known-defects.md:1237): at a marked gate an identity git could not resolve, on either side, verifies nothing."
     },
     {
       "name": "compare: a sha mismatch denies",
@@ -900,9 +902,11 @@
         "ok": true
       },
       "expected": {
-        "ok": true
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - goalplan criteria cannot be read (criteria is not an array), so the QA requirement cannot be decided\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
       },
-      "classification": "identical"
+      "classification": "intentionally-changed",
+      "reason": "CRW-1114 (known-defects.md:1233): criteria that cannot be read are a precondition that is not in place."
     },
     {
       "name": "criteria elements that are not objects are skipped and a visual one among them demands QA",
@@ -928,10 +932,10 @@
       },
       "expected": {
         "ok": false,
-        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - goalplan criteria cannot be read (criterion 1 is not an object), so the QA requirement cannot be decided\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
       },
       "classification": "intentionally-changed",
-      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26)."
+      "reason": "CRW names: the refusal prefix \"[crw — final gate]\" (R23) and the evidence path \".crw/evidence/\" (R26). CRW-1114 (known-defects.md:1233): criteria that cannot be read are a precondition that is not in place."
     },
     {
       "name": "a surface that is not a string is not visual",
@@ -955,9 +959,11 @@
         "ok": true
       },
       "expected": {
-        "ok": true
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - goalplan criteria cannot be read (criterion 1 has a surface that is not a string), so the QA requirement cannot be decided\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
       },
-      "classification": "identical"
+      "classification": "intentionally-changed",
+      "reason": "CRW-1114 (known-defects.md:1233): criteria that cannot be read are a precondition that is not in place."
     },
     {
       "name": "finalGate.qaRequired does not decide, the criteria do",
@@ -1432,9 +1438,11 @@
         "ok": true
       },
       "expected": {
-        "ok": true
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt cannot be verified: the source identity of the receipt or of the tree is unavailable\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
       },
-      "classification": "identical"
+      "classification": "intentionally-changed",
+      "reason": "CRW-1114 (known-defects.md:1237): at a marked gate an identity git could not resolve, on either side, verifies nothing."
     },
     {
       "name": "a receipt with a source root against a tree without one is stale",
@@ -1942,9 +1950,11 @@
         "ok": true
       },
       "expected": {
-        "ok": true
+        "ok": false,
+        "reason": "[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - test receipt cannot be verified: the source identity of the receipt or of the tree is unavailable\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer."
       },
-      "classification": "identical"
+      "classification": "intentionally-changed",
+      "reason": "CRW-1114 (known-defects.md:1237): at a marked gate an identity git could not resolve, on either side, verifies nothing."
     },
     {
       "name": "a goalplan nested 9000 levels still parses",

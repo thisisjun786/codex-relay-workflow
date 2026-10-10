@@ -2,6 +2,7 @@ package role
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,34 @@ func sameError(id, want, got string) bool {
 	return want == got
 }
 
+// oracleUnusableReads are the recorded cases whose store, or one of whose roles, the oracle read as no override and the port reads
+// as an UnusableSettingsError (CRW-1119, intentionally changed): each read of them must fail with that error, the store untouched;
+// their writes keep the oracle's answers.
+var oracleUnusableReads = map[string]bool{
+	"read_not_json": true, "read_roles_array": true, "read_roles_null": true, "read_roles_string": true, "read_top_array": true,
+	"read_top_null": true, "read_top_string": true, "read_top_number": true, "read_top_true": true, "read_empty_file": true,
+	"read_trailing_garbage": true, "read_bom": true, "read_partial_values": true, "read_role_shapes": true,
+	"read_fallback_shapes": true, "store_is_directory": true,
+}
+
+// oracleIntent is the recorded op as the port answers it where CRW-1119 changes the answer on purpose: model_whitespace stores a
+// whitespace-only primary model in the oracle and is refused here (trimmed, as a fallback model is), so nothing is ever written.
+func oracleIntent(id string, i int, op recordedOp) recordedOp {
+	if id != "model_whitespace" {
+		return op
+	}
+	op.File = nil
+	switch i {
+	case 0:
+		refusal := "mode \"model\" requires a non-empty model id"
+		op.Error, op.Result = &refusal, nil
+	case 1:
+		defaults := string(must(Stringify(DefaultConfig(), "")))
+		op.Result = &defaults
+	}
+	return op
+}
+
 // oracleFile is the file the oracle printed, with the opaque members of extras_number_forms as the Go port keeps them.
 func oracleFile(id, file string) string {
 	if id != "extras_number_forms" {
@@ -72,6 +101,7 @@ func TestOracleReplay(t *testing.T) {
 				check(t, os.Chmod(dir, 0o755))
 			}
 			for i, op := range c.Ops {
+				op = oracleIntent(c.ID, i, op)
 				at := fmt.Sprintf("op %d (%s %s)", i, op.Op, op.Role)
 				var got any
 				var err error
@@ -89,7 +119,12 @@ func TestOracleReplay(t *testing.T) {
 				default:
 					t.Fatalf("%s: unknown op", at)
 				}
+				var unusable *UnusableSettingsError
 				switch {
+				case oracleUnusableReads[c.ID] && (op.Op == "settings" || op.Op == "config"):
+					if !errors.As(err, &unusable) {
+						t.Fatalf("%s: %v, want an UnusableSettingsError (CRW-1119)", at, err)
+					}
 				case op.Error != nil && err == nil:
 					t.Fatalf("%s: no error, want %q", at, *op.Error)
 				case op.Error != nil && !sameError(c.ID, *op.Error, err.Error()):

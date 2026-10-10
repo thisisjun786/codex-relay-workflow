@@ -1,6 +1,9 @@
 package spawn
 
 import (
+	"crypto/sha256"
+	"encoding/base32"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -23,7 +26,8 @@ import (
 // RunSpawnAttachHook (hook_route.go) finishes the answer (promptOverride, trust prefix, ciphertext restore, item re-assembly, the
 // output envelope) from the assembly. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
 //   - the skills directory: CRW_SKILLS_DIR, then <PLUGIN_ROOT>/skills where the oracle has the module-relative plugin directory;
-//   - an unusable store, a missing home and an unknown role stop with empty output, as the oracle's throw does;
+//   - an unusable store or role, or a store path that cannot be resolved, denies the spawn with the store's error (CRW-1119); an
+//     unknown role stops with empty output, as the oracle's throw does;
 //   - a subagent spawn whose grant scope cannot be resolved is denied, where the oracle's throw allows it (a security fix);
 //   - the working directory is read with the kernel call (syscall.Getwd), like process.cwd().
 
@@ -51,7 +55,16 @@ type spawnHookAssembly struct {
 	dispatchSource     string                      // dispatchSource: the source line that resolved (:893)
 	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
 	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
+	commit             *spawnHookCommit            // what this run has committed, shared with RunSpawnAttachHook
+	grant              *spawnGrantClaim            // a subagent's checked grant, spent by finish
+	record             func(answer string)         // records the answer of the call that spends grant, before the grant is spent, or nil
+	inputText          string                      // tool_input as JSON.stringify writes it, for the event's replay record
+	replay             func(answer string)         // records the answer of an event that minted a grant, or nil
+	settings           role.SettingsSnapshot       // the event's one read of the helper role settings
 	evidenceAssignment *evidence.Assignment        // CRW-1115: the evidence assignment the packet asked for, written once the spawn is allowed
+	supersedes         *evidence.Assignment        // this call's open assignment for an input it no longer carries: removed once the edited input is allowed
+	evidenceRecorded   bool                        // evidenceAssignment is the record an earlier delivery of this event wrote: kept as it is
+	promptForms        []string                    // the forms the role's prompt override can have in a reapplied message: as written, and as the hook's own normalization leaves it (CRW-1121)
 	guardReapplied     bool                        // guardReapplied: the message already starts with this surface's guard, so the hook runs over its own output (:983)
 }
 
@@ -63,7 +76,21 @@ type spawnHookAssembly struct {
 // obj is a decoded payload. tool_input and its items may be an ordered pyjson.Object or a plain map; a plain map is read with sorted
 // keys, which is a compatibility path, because a payload decoded into maps would otherwise read as no object and allow the spawn.
 func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembly, string, bool) {
-	stop := func(deny string) (spawnHookAssembly, string, bool) { return spawnHookAssembly{}, deny, true }
+	return spawnHookAssembleWith(obj, env, &spawnHookCommit{})
+}
+
+// spawnHookAssembleWith is spawnHookAssemble recording what it commits in commit. An answer that allows the spawn untouched
+// still spends a subagent's grant (spawnHookAssembly.finish), so a one-time grant never survives a spawn it let through.
+func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawnHookCommit) (spawnHookAssembly, string, bool) {
+	var grant *spawnGrantClaim
+	var record func(answer string) // set once the event's input is known: the subagent's spend of a grant is recorded with its answer
+	stop := func(deny string) (spawnHookAssembly, string, bool) {
+		if deny == "" && grant != nil {
+			deny = spawnHookAssembly{grant: grant, commit: commit, record: record}.finish("", env)
+		}
+		return spawnHookAssembly{}, deny, true
+	}
+	tmpRoot, now := spawnHookTmpDir(env), time.Now()
 	if event, _ := obj["hook_event_name"].(string); event != "PreToolUse" || !IsSpawnToolName(obj["tool_name"]) {
 		return stop("")
 	}
@@ -71,7 +98,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	if !ok {
 		return stop("")
 	}
-	a := spawnHookAssembly{toolInput: toolInput, firstText: -1}
+	a := spawnHookAssembly{toolInput: toolInput, firstText: -1, commit: commit}
 	a.v2Spawn = IsCollaborationToolName(obj["tool_name"]) || IsV2SpawnInput(spawnHookView(toolInput))
 	if session, ok := obj["session_id"].(string); ok {
 		a.sessionID = session
@@ -79,30 +106,31 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	if id, ok := obj["tool_use_id"].(string); ok {
 		a.toolUseID = &id
 	}
-
-	// Project only the caller's text, never attachment metadata (:870-880). A null message is present, so items are then unread.
-	if _, hasMessage := toolInput.Lookup("message"); !a.v2Spawn && !hasMessage {
-		a.itemInput, _ = toolInput.Get("items").([]any)
-	}
-	var records []pyjson.Object
-	a.validItems = len(a.itemInput) > 0
-	for _, raw := range a.itemInput {
-		item, ok := spawnHookRecord(raw)
-		kind, typed := item.Get("type").(string)
-		_, texted := item.Get("text").(string)
-		if !ok || !typed || (kind == "text" && !texted) {
-			a.validItems = false
-			break
+	// The same event applied again to its own input or to the input it answered with gets its recorded answer, so a minted grant is
+	// kept and none is minted again, and a subagent's spent grant answers the call that spent it, never another input (CRW-1121,
+	// CRW-1118). A tool_input too deep to digest has no record.
+	if a.toolUseID != nil && *a.toolUseID != "" && !spawnHookRouteDeep(toolInput) {
+		a.inputText = spawnHookRouteStringify(toolInput)
+		tool := *a.toolUseID
+		// The record holds the managed binding the event was issued under (root, record, role, candidate and native call), read when
+		// the answer is recorded, so a replay is checked against it (CRW-1122).
+		record = func(answer string) {
+			spawnHookReplayRecord(obj, tmpRoot, tool, spawnHookReplayBinding(a.managed, a.dispatchSource, tool), a.inputText, answer)
 		}
-		records = append(records, item)
+		if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
+			return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj), a.v2Spawn))
+		}
 	}
+
+	// Project only the caller's text, never attachment metadata (:870-880). A null message is no message, so the items are read
+	// (CRW-1114; the oracle counted a null member as present and left valid items unguarded).
+	var records []pyjson.Object
+	a.itemInput, records, a.validItems = spawnHookPacketItems(toolInput, a.v2Spawn)
 	message, isString := toolInput.Get("message").(string)
 	outgoing := message
 	if a.validItems {
-		a.itemInput = make([]any, len(records))
 		var texts []string
-		for i, item := range records {
-			a.itemInput[i] = item
+		for _, item := range records {
 			if item.Get("type") == "text" {
 				a.textItems = append(a.textItems, item)
 				texts = append(texts, item.Get("text").(string))
@@ -113,11 +141,35 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 
 	// D1: a spawn by a subagent needs a minted grant, and is denied before the message no-op below (:881-882). Where the oracle
 	// throws for a grant scope it cannot resolve (:396) and its outer catch prints nothing, which allows the spawn, the port denies:
-	// a failed grant check never lets a subagent recurse (known-defects, security).
-	tmpRoot, now := spawnHookTmpDir(env), time.Now()
+	// a failed grant check never lets a subagent recurse (known-defects, security). The grant is only checked here and spent with
+	// the answer, after every other refusal, so a refused spawn leaves it to the corrected retry (CRW-1118; the oracle spent it
+	// first).
 	spawnedBySubagent := IsSubagentSpawner(obj)
-	if spawnedBySubagent && !ConsumeRecursionGrant(obj, outgoing, tmpRoot, now) {
-		return stop(DenyEnvelope(RecurseDenyReason))
+	if spawnedBySubagent {
+		commit.subagent = true
+		tool := ""
+		if a.toolUseID != nil {
+			tool = *a.toolUseID
+		}
+		// Deliveries of one call are serialized from here to the end of the answer, so of two that carry the grant one spends it and
+		// the other finds the record of that spend.
+		if _, marked := spawnGrantOnlyMarker(outgoing); marked && a.inputText != "" {
+			release, err := spawnHookEventLock(obj, tmpRoot, tool, false)
+			if errors.Is(err, errSpawnHookEventBusy) {
+				return stop(DenyEnvelope(RecurseDenyReason))
+			}
+			if release != nil {
+				commit.unlock = release
+				if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
+					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj), a.v2Spawn))
+				}
+			}
+		}
+		claim, ok := spawnGrantCheck(obj, outgoing, tmpRoot, os.Getuid(), now, tool, a.inputText)
+		if !ok {
+			return stop(DenyEnvelope(RecurseDenyReason))
+		}
+		grant, a.grant, a.record = claim, claim, record
 	}
 
 	if a.validItems {
@@ -153,9 +205,20 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 			dispatchText = a.textItems[0].Get("text").(string)
 		}
 	}
-	sources, err := spawnDispatchSources(dispatchText, env)
+	// One settings snapshot serves the whole event: the dispatch sources, the role resolution, the prompt and the notice (CRW-1124;
+	// the oracle read the store up to three times, so a concurrent edit could reach one step and not another). The next event reads
+	// the store again.
+	var snapshot *role.SettingsSnapshot
+	settings := func() role.SettingsSnapshot {
+		if snapshot == nil {
+			s := spawnHookSettings(env)
+			snapshot = &s
+		}
+		return *snapshot
+	}
+	sources, err := spawnDispatchSourcesWith(dispatchText, settings)
 	if err != nil {
-		return stop("") // the oracle's readSettings throw, caught by its outer catch
+		return stop(spawnHookSettingsDeny(err)) // the oracle's readSettings throw, caught by its outer catch
 	}
 	if deny, stopped := spawnHookManaged(&a, sources); stopped {
 		return stop(deny)
@@ -163,7 +226,24 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	var minted string
 	if _, _, resolved := spawnGrantScope(obj); resolved && !spawnedBySubagent && strings.Contains(message, SubspawnToken) {
 		_ = os.MkdirAll(tmpRoot, 0o700)
+		// Deliveries of one event that passed the lookup together are serialized here: the lock is held until the answer is recorded, and
+		// the delivery that gets it second finds the first's record, so one event mints one grant (CRW-1121).
+		if a.inputText != "" {
+			release, err := spawnHookEventLock(obj, tmpRoot, *a.toolUseID, true)
+			if errors.Is(err, errSpawnHookEventBusy) {
+				return stop(DenyEnvelope(spawnHookBusyReason))
+			}
+			if release != nil {
+				commit.unlock = release
+				if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, *a.toolUseID, a.inputText); ok {
+					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj), a.v2Spawn))
+				}
+			}
+		}
 		minted, _ = MintRecursionGrant(obj, tmpRoot, now)
+	}
+	if minted != "" && a.inputText != "" {
+		a.replay = record
 	}
 
 	// Each text item is normalized on its own, so an attachment boundary never joins fences, links or mentions (:913-918).
@@ -202,11 +282,13 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	} else {
 		a.role = InferRole(toolInput.Get("agent_type"), roleSource)
 	}
-	resolution, err := role.ResolveSpawnConfig(env, a.role)
+	a.settings = settings()
+	resolution, err := a.settings.Resolve(a.role)
 	if err != nil {
-		return stop("") // the oracle's throw, caught by its outer catch
+		return stop(spawnHookSettingsDeny(err)) // the oracle's throw, caught by its outer catch
 	}
 	a.resolution = resolution
+	a.promptForms = spawnHookPromptForms(resolution.PromptOverride, skillsDir)
 
 	// A single message carries the bodies of the skills it mentions (:943); a v2 message that got none, within the size cap, gets the
 	// self-load instruction instead (:956-964). Text inside a closed inlined block never counts as a marker (:951).
@@ -222,7 +304,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 		}
 	}
 
-	// D2: the surface's guard (:972-979); a recognized exact guard prefix keeps a second pass idempotent (:983-985).
+	// D2: the surface's guard (:972-979); an owned guard already in front is replaced below, so a second pass is idempotent.
 	switch {
 	case a.v2Spawn && minted != "":
 		a.guard = LeafGuardBlockCoordinator
@@ -239,18 +321,134 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	if a.trustPrefix != "" {
 		affordance = strings.TrimPrefix(affordance, a.trustPrefix)
 	}
+	// A guard the hook writes, of any surface or authority, is replaced by this event's guard instead of stacked under it
+	// (CRW-1121; the oracle kept only an exact match of this event's guard, :983-985). A coordinator guard the caller wrote is
+	// replaced the same way, so its text authorizes nothing: only a grant this event mints does.
+	rest, owned := spawnHookOwnedGuard(affordance)
 	switch {
-	case affordance == a.guard || strings.HasPrefix(affordance, a.guard+"\n\n"):
-		a.updatedMessage, a.guardReapplied = affordance, true
+	case owned && rest == "":
+		a.updatedMessage, a.guardReapplied = a.guard, true
+	case owned:
+		a.updatedMessage, a.guardReapplied = a.guard+"\n\n"+rest, true
 	case a.validItems && affordance == "":
 		a.updatedMessage = a.guard
 	default:
 		a.updatedMessage = a.guard + "\n\n" + affordance
 	}
-	if deny := spawnHookEvidenceAssignment(&a, time.Now()); deny != "" {
+	// Deliveries of one event that registers an evidence assignment are serialized by the event's lock, held until the answer is
+	// given, so of two deliveries of one call the second finds the first's record and reuses it (CRW-1121 with CRW-1115).
+	serialize := func() string {
+		if commit.unlock != nil || a.inputText == "" {
+			return ""
+		}
+		if _, _, resolved := spawnGrantScope(obj); resolved {
+			_ = os.MkdirAll(tmpRoot, 0o700)
+		}
+		release, err := spawnHookEventLock(obj, tmpRoot, *a.toolUseID, true)
+		if errors.Is(err, errSpawnHookEventBusy) {
+			return DenyEnvelope(spawnHookBusyReason)
+		}
+		commit.unlock = release
+		return ""
+	}
+	if deny := spawnHookEvidenceAssignment(&a, time.Now(), serialize); deny != "" {
 		return stop(deny)
 	}
 	return a, "", false
+}
+
+// spawnHookPacketItems is the item projection of a spawn's tool_input (:870-880): the items of a v1 spawn whose message is absent or
+// null (raw, as the input holds them), and, when they are valid (non-empty, each an object with a string type and, for a text item,
+// a string text), the items as records and true. A v2 spawn and a v1 spawn with a message have no items. The first delivery and the
+// replay of an event (spawnHookPacketText) read the packet through this one projection, so they judge the same text (CRW-1122).
+func spawnHookPacketItems(toolInput pyjson.Object, v2 bool) ([]any, []pyjson.Object, bool) {
+	var raw []any
+	if value, hasMessage := toolInput.Lookup("message"); !v2 && (!hasMessage || value == nil) {
+		raw, _ = toolInput.Get("items").([]any)
+	}
+	records := make([]pyjson.Object, 0, len(raw))
+	for _, v := range raw {
+		item, ok := spawnHookRecord(v)
+		kind, typed := item.Get("type").(string)
+		_, texted := item.Get("text").(string)
+		if !ok || !typed || (kind == "text" && !texted) {
+			return raw, nil, false
+		}
+		records = append(records, item)
+	}
+	if len(records) == 0 {
+		return raw, nil, false
+	}
+	items := make([]any, len(records))
+	for i, item := range records {
+		items[i] = item
+	}
+	return items, records, true
+}
+
+// spawnHookPacketText is the text the final gate judges for a spawn's tool_input: its valid items' text joined by a blank line
+// (spawnHookPacketItems), else its message ("" when that is not a string).
+func spawnHookPacketText(toolInput pyjson.Object, v2 bool) string {
+	if _, records, valid := spawnHookPacketItems(toolInput, v2); valid {
+		var texts []string
+		for _, item := range records {
+			if item.Get("type") == "text" {
+				texts = append(texts, item.Get("text").(string))
+			}
+		}
+		return strings.Join(texts, "\n\n")
+	}
+	message, _ := toolInput.Get("message").(string)
+	return message
+}
+
+// spawnHookPromptForms are the spellings a role's prompt override can have in a message that carries the hook's earlier answer: as it
+// was inserted (trimmed), and as the hook's own normalization leaves it when it reads that message again (control markers stripped,
+// runs of blank lines collapsed, skill mentions rewritten). Both are the same prompt, so neither is inserted a second time (CRW-1121).
+func spawnHookPromptForms(prompt *string, skillsDir string) []string {
+	if prompt == nil || text.Trim(*prompt) == "" {
+		return nil
+	}
+	forms := []string{text.Trim(*prompt)}
+	for _, preserve := range []bool{false, true} {
+		form := StripControlMarkers(forms[0], preserve)
+		if skillsDir != "" {
+			form = NormalizeSkillMentions(form, skillsDir)
+		}
+		if form != "" && !slices.Contains(forms, form) {
+			forms = append(forms, form)
+		}
+	}
+	return forms
+}
+
+// spawnHookPromptLead is the form of the prompt that s starts with: s is that form, or the form is followed by a blank line.
+func spawnHookPromptLead(s string, forms []string) (string, bool) {
+	for _, form := range forms {
+		if s == form || strings.HasPrefix(s, form+"\n\n") {
+			return form, true
+		}
+	}
+	return "", false
+}
+
+// spawnHookReplayCwd is the working directory of an event: obj.cwd, else the process's.
+func spawnHookReplayCwd(obj map[string]any) string {
+	if cwd, _ := obj["cwd"].(string); cwd != "" {
+		return cwd
+	}
+	wd, _ := syscall.Getwd()
+	return wd
+}
+
+// spawnHookSettingsDeny is the answer for a settings read that failed: an unusable store or role, or a store path that cannot be
+// resolved, denies the recognized spawn with the store's error, whose text names the repair (CRW-1119; the oracle's catch printed
+// nothing, so the spawn ran on the main model without its configured routing). Any other failure keeps the oracle's empty output.
+func spawnHookSettingsDeny(err error) string {
+	if errors.As(err, new(*role.UnusableSettingsError)) {
+		return DenyEnvelope("crw: " + err.Error())
+	}
+	return ""
 }
 
 // spawnHookEvidenceAssignment is CRW-1115 (port: fixed; the oracle has no such step): when the caller's packet assigns its child a
@@ -261,8 +459,9 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 // cannot show its id, is taken out and this call gets an assignment of its own in its place, so two dispatches never share one;
 // a block at that place that names no record is refused. A marker elsewhere in the text registers nothing and suppresses
 // nothing. A native V2 ciphertext cannot be read, so it gets none. An ambiguous request or a tree that cannot be registered is a
-// deny envelope: the parent asked for a contract the gate could not honour.
-func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
+// deny envelope: the parent asked for a contract the gate could not honour. serialize takes the event's lock before a record of
+// the event is looked up, and returns a deny when another delivery keeps it.
+func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time, serialize func() string) string {
 	if a.encryptedV2Message {
 		return ""
 	}
@@ -285,17 +484,32 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
 	if a.guardReapplied && err == nil {
 		rest := strings.TrimPrefix(a.updatedMessage, a.guard)
 		rest = strings.TrimPrefix(rest, "\n\n")
-		if prompt := a.resolution.PromptOverride; prompt != nil && text.Trim(*prompt) != "" {
-			rest = strings.TrimPrefix(rest, text.Trim(*prompt)+"\n\n")
+		for _, form := range a.promptForms {
+			if after, ok := strings.CutPrefix(rest, form+"\n\n"); ok {
+				rest = after
+				break
+			}
 		}
 		if id, ok := evidence.LeadingAssignmentID(rest); ok {
 			recorded, readable := evidence.RecordedAssignment(a.cwd, a.sessionID, id)
-			if readable && recorded.RegisteredBy(toolUseID, worktree, mode) {
+			// An open record answers the input it was registered for (the digest of the input it answered the call with), not another
+			// input of the same call: an edit made before the child claimed it is a dispatch of its own (CRW-1121).
+			if readable && recorded.RegisteredBy(toolUseID, worktree, mode) &&
+				(a.inputText == "" || recorded.AnswerInput == "" || recorded.AnswerInput == spawnHookDigest(a.inputText)) {
+				return ""
+			}
+			// The input this call was answered with, delivered again, is the same event even after its child claimed the record: it
+			// keeps that record, where registering another would leave an open one no child claims (CRW-1121, verification round 4).
+			// The record holds the digest of that answered input, so another input of the call is still a dispatch of its own.
+			if readable && a.inputText != "" && recorded.ToolUseID == toolUseID && recorded.AnswerInput == spawnHookDigest(a.inputText) {
 				return ""
 			}
 			stale := ""
 			if readable {
 				stale = EvidenceAssignmentBlock(recorded.ID, recorded.Root, recorded.Mode == evidence.AssignNone)
+				if toolUseID != "" && recorded.ToolUseID == toolUseID && recorded.Status == evidence.AssignmentOpen && recorded.AgentID == "" {
+					a.supersedes = &recorded // this call's earlier registration, no child has it: the edited input replaces it
+				}
 			}
 			after, isBlock := strings.CutPrefix(rest, stale)
 			if stale == "" || !isBlock || after != "" && !strings.HasPrefix(after, "\n\n") {
@@ -317,14 +531,42 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
 		return DenyEnvelope("evidence assignment: " + err.Error())
 	}
 	assignment.ToolUseID = toolUseID
+	// The assignment of an event whose input is known is named after the event: its session, its tool call and that input. A
+	// delivery of the same event again (the host retrying the hook) finds the record the first delivery wrote and answers with it,
+	// claimed or not, instead of registering a second dispatch that no child would ever claim: an open record without a child
+	// refuses every later child of the session that is tied to no dispatch (CRW-1121 with CRW-1115). Another call, or another
+	// input of this call, is another name, so each dispatch still has its own contract; a call without an id gets a random one.
+	if a.inputText != "" {
+		if deny := serialize(); deny != "" {
+			return deny
+		}
+		assignment.ID = spawnHookEventAssignmentID(a.cwd, a.sessionID, toolUseID, a.inputText)
+		if recorded, ok := evidence.RecordedAssignment(a.cwd, a.sessionID, assignment.ID); ok && recorded.ToolUseID == toolUseID {
+			assignment, a.evidenceRecorded = recorded, true
+		}
+	}
 	a.evidenceAssignment = &assignment
-	block := EvidenceAssignmentBlock(assignment.ID, assignment.Root, none)
-	if a.updatedMessage == a.guard {
-		a.updatedMessage = a.guard + "\n\n" + block
+	block := EvidenceAssignmentBlock(assignment.ID, assignment.Root, assignment.Mode == evidence.AssignNone)
+	// The block goes right after the guard, or after the prompt override when the packet already has it there (an earlier answer
+	// whose block was taken out above): the route inserts the prompt only where it does not follow the guard yet, so a block put
+	// between them would get the prompt a second time (CRW-1121).
+	anchor := a.guard
+	if form, ok := spawnHookPromptLead(strings.TrimPrefix(a.updatedMessage, a.guard+"\n\n"), a.promptForms); ok && strings.HasPrefix(a.updatedMessage, a.guard+"\n\n") {
+		anchor = a.guard + "\n\n" + form
+	}
+	if a.updatedMessage == anchor {
+		a.updatedMessage = anchor + "\n\n" + block
 	} else {
-		a.updatedMessage = strings.Replace(a.updatedMessage, a.guard+"\n\n", a.guard+"\n\n"+block+"\n\n", 1)
+		a.updatedMessage = strings.Replace(a.updatedMessage, anchor+"\n\n", anchor+"\n\n"+block+"\n\n", 1)
 	}
 	return ""
+}
+
+// spawnHookEventAssignmentID is the assignment id of one event: the first 128 bits of the sha256 of its cwd, session, tool use id
+// and input, in the base32 alphabet of the ids NewAssignment mints (26 characters).
+func spawnHookEventAssignmentID(cwd, sessionID, toolUseID, input string) string {
+	sum := sha256.Sum256([]byte("crw-evidence-assignment\x00" + cwd + "\x00" + sessionID + "\x00" + toolUseID + "\x00" + input))
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:16])
 }
 
 // spawnHookRecord is isRecord over a decoded value: an ordered object, or a plain map with its keys sorted.

@@ -4,15 +4,24 @@ import (
 	"context"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"os"
 	"path/filepath"
 	"regexp"
+	"syscall"
 	"time"
 )
 
-// ManagedSpawnSelection ports managedSpawn's snapshot, without invoking a model.
+// ManagedSpawnSelection ports managedSpawn's snapshot, without invoking a model. It also keeps what the preview resolved (the
+// canonical dispatch root and the attempt it read), so the issuance works on the same root and attempt without resolving or
+// reading them again outside its lock (CRW-1124).
 type ManagedSpawnSelection struct {
 	Candidate DispatchCandidate
 	Role      RoleName
+	root      string
+	rootInfo  os.FileInfo // the preview's root as the file system names it, so the issuance records into that directory and no other
+	session   string
+	dispatch  string
+	attempt   string
 }
 
 // The oracle's multiline JS regexp admits CR, LF, LS and PS line boundaries.
@@ -26,12 +35,59 @@ func managedSpawnCarries(message, dispatch, attempt string) bool {
 	return regexp.MustCompile(`(?:^|[\r\n\x{2028}\x{2029}])\[CRW-DISPATCH:` + regexp.QuoteMeta(dispatch) + `:` + regexp.QuoteMeta(attempt) + `\](?:\r?\n|$|[\r\x{2028}\x{2029}])`).MatchString(message)
 }
 
+// ManagedSpawnResolver previews the managed spawns of one cwd. The dispatch root is resolved once, with the first message it is
+// asked about, and the answer (or its error) serves every later message: a hook event that has several candidate messages for one
+// marker does not run git for each of them (CRW-1124). A resolver serves one event and is not safe for concurrent use.
+type ManagedSpawnResolver struct {
+	cwd      string
+	resolved bool
+	root     string
+	rootInfo os.FileInfo
+	err      error
+	previews map[string]managedSpawnPreview
+}
+
+type managedSpawnPreview struct {
+	sel *ManagedSpawnSelection
+	err error
+}
+
+// NewManagedSpawnResolver is a resolver for the working directory cwd.
+func NewManagedSpawnResolver(cwd string) *ManagedSpawnResolver {
+	return &ManagedSpawnResolver{cwd: cwd}
+}
+
 // ManagedSpawn ports fallback-dispatch.ts:237-247 after name substitution.
 func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) {
-	root, err := dispatchRoot(cwd)
-	if err != nil {
-		return nil, err
+	return NewManagedSpawnResolver(cwd).Preview(session, message)
+}
+
+// Preview is ManagedSpawn over the resolver's root. A message asked about again for the same session gets the answer it got: the
+// record is read once per event (CRW-1124).
+func (r *ManagedSpawnResolver) Preview(session, message string) (*ManagedSpawnSelection, error) {
+	key := session + "\x00" + message
+	if p, ok := r.previews[key]; ok {
+		return p.sel, p.err
 	}
+	sel, err := r.preview(session, message)
+	if r.previews == nil {
+		r.previews = map[string]managedSpawnPreview{}
+	}
+	r.previews[key] = managedSpawnPreview{sel, err}
+	return sel, err
+}
+
+func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSelection, error) {
+	if !r.resolved {
+		r.resolved = true
+		if r.root, r.err = dispatchRoot(r.cwd); r.err == nil {
+			r.rootInfo, r.err = os.Stat(r.root)
+		}
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	root := r.root
 	match := managedSpawnMarker(message)
 	if match == nil {
 		return nil, nil
@@ -49,7 +105,7 @@ func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) 
 	if a.ID != match[2] || !a.Claimed || !dispatchIs(a.Status, "claimed") || !dispatchIs(d.Status, "active") {
 		return nil, errors.New("managed spawn attempt is not claimed or no longer current")
 	}
-	return &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role}, nil
+	return &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: root, rootInfo: r.rootInfo, session: session, dispatch: match[1], attempt: match[2]}, nil
 }
 
 // IssueManagedSpawn consumes issuance under the ledger lock (oracle:250-267).
@@ -68,35 +124,40 @@ var managedSpawnLookupBudget = 3 * time.Second
 // database and one that cannot be read record nothing; that only removes an early refusal, because the created check ties a
 // child to the issued call by the host's result of the call alone.
 func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env host.LookupEnv) (*ManagedSpawnSelection, error) {
-	root, err := dispatchRoot(cwd)
-	if err != nil {
+	resolved, err := ManagedSpawn(cwd, session, message)
+	if err != nil || resolved == nil {
 		return nil, err
 	}
-	match := managedSpawnMarker(message)
-	if match == nil {
-		return nil, nil
+	return IssueManagedSpawnSelection(resolved, toolUseID, env)
+}
+
+// IssueManagedSpawnSelection issues the attempt a preview (ManagedSpawn) selected: the record is read again under its lock, through
+// the directory pinned below the preview's canonical root, and the attempt must still be the record's current, claimed attempt of an
+// active dispatch with the role and the candidate the preview saw, not yet issued or issued to this same native call. The root is
+// not resolved again and the record is not read again outside the lock (CRW-1124), so a hook event resolves the root once and the
+// candidate it answers with is the one the issuance checked.
+func IssueManagedSpawnSelection(sel *ManagedSpawnSelection, toolUseID *string, env host.LookupEnv) (*ManagedSpawnSelection, error) {
+	if sel == nil || sel.root == "" {
+		return nil, errors.New("managed spawn issuance needs a preview of the attempt")
 	}
-	resolved, err := ManagedSpawn(root, session, message)
-	if err != nil {
-		return nil, err
-	}
-	dir, err := dispatchDirectory(root, session, nil)
+	dir, err := dispatchDirectoryOf(sel.root, sel.rootInfo, sel.session, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer dir.Close()
-	name := match[1] + ".json"
+	name := sel.dispatch + ".json"
 	release, err := dir.lock(name)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	d, err := dispatchPinnedRead(dir, name, session, match[1])
+	d, err := dispatchPinnedRead(dir, name, sel.session, sel.dispatch)
 	if err != nil {
 		return nil, err
 	}
 	a := &d.Attempts[len(d.Attempts)-1]
-	if a.ID != match[2] || !a.Claimed || !dispatchIs(a.Status, "claimed") || !dispatchIs(d.Status, "active") {
+	if a.ID != sel.attempt || !a.Claimed || !dispatchIs(a.Status, "claimed") || !dispatchIs(d.Status, "active") ||
+		d.Role != sel.Role || !managedSpawnSameCandidate(a.Candidate, sel.Candidate) {
 		return nil, errors.New("managed attempt changed before issuance")
 	}
 	if a.SpawnIssued && (toolUseID == nil || *toolUseID == "" || a.ToolUseID == nil || *a.ToolUseID != *toolUseID) {
@@ -104,7 +165,7 @@ func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env h
 	}
 	if !a.SpawnIssued && env != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), managedSpawnLookupBudget)
-		prior, err := createdCheckMarked(ctx, env, session, d.ID, a.ID)
+		prior, err := createdCheckMarked(ctx, env, sel.session, d.ID, a.ID)
 		cancel()
 		if err == nil && len(prior) > 0 {
 			for _, child := range prior {
@@ -120,5 +181,114 @@ func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env h
 	if err := dispatchSave(dir, name, &d, nil); err != nil {
 		return nil, err
 	}
-	return resolved, nil
+	return sel, nil
+}
+
+// managedSpawnSameCandidate reports whether two candidates name the same model and effort (null alike).
+func managedSpawnSameCandidate(a, b DispatchCandidate) bool {
+	same := func(x, y *string) bool { return (x == nil) == (y == nil) && (x == nil || *x == *y) }
+	ea, eb := (*string)(nil), (*string)(nil)
+	if a.Effort != nil {
+		v := string(*a.Effort)
+		ea = &v
+	}
+	if b.Effort != nil {
+		v := string(*b.Effort)
+		eb = &v
+	}
+	return same(a.Model, b.Model) && same(ea, eb)
+}
+
+// ManagedSpawnBinding is what one managed spawn was issued under (CRW-1122): the dispatch source line, the canonical dispatch root
+// and the device and inode of the directory it named, the session, dispatch and attempt, the dispatch's role, the attempt's candidate
+// and the native tool call it was issued to. The spawn hook records it with the answer of the event, and a replay of that answer is
+// given again only while VerifyManagedSpawnReplay finds the same binding.
+type ManagedSpawnBinding struct {
+	Source    string      `json:"source"`
+	Root      string      `json:"root"`
+	RootDev   uint64      `json:"rootDev"`
+	RootIno   uint64      `json:"rootIno"`
+	Session   string      `json:"session"`
+	Dispatch  string      `json:"dispatch"`
+	Attempt   string      `json:"attempt"`
+	Role      RoleName    `json:"role"`
+	Model     *string     `json:"model"`
+	Effort    *EffortName `json:"effort"`
+	ToolUseID string      `json:"toolUseId"`
+}
+
+// Binding is the binding of the attempt sel previewed, issued to the native call toolUseID from the source line source; false when sel
+// holds no preview of a root.
+func (sel *ManagedSpawnSelection) Binding(source, toolUseID string) (ManagedSpawnBinding, bool) {
+	if sel == nil || sel.root == "" || sel.rootInfo == nil {
+		return ManagedSpawnBinding{}, false
+	}
+	dev, ino, ok := managedSpawnFileID(sel.rootInfo)
+	if !ok {
+		return ManagedSpawnBinding{}, false
+	}
+	return ManagedSpawnBinding{Source: source, Root: sel.root, RootDev: dev, RootIno: ino, Session: sel.session, Dispatch: sel.dispatch,
+		Attempt: sel.attempt, Role: sel.Role, Model: sel.Candidate.Model, Effort: sel.Candidate.Effort, ToolUseID: toolUseID}, true
+}
+
+// managedSpawnFileID is the device and inode of info.
+func managedSpawnFileID(info os.FileInfo) (dev, ino uint64, ok bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, false
+	}
+	return uint64(st.Dev), uint64(st.Ino), true // Dev is an int32 on darwin
+}
+
+// errManagedSpawnReplay is the refusal of a replay whose binding no longer holds; the event is reconciled, never issued again.
+var errManagedSpawnReplay = errors.New("the recorded answer's managed attempt is no longer the one it was issued for; inspect the dispatch status and reconcile before retry")
+
+// VerifyManagedSpawnReplay reports whether the managed spawn b was issued under still holds for session in cwd, before the recorded
+// answer of its event is given again (CRW-1122): the dispatch root cwd resolves to now is the same canonical path and the same
+// directory (device and inode), and, read under the record's lock through the directory pinned below that root, the record's
+// current attempt is b's attempt, claimed, of an active dispatch with b's role and candidate, and issued to b's native call. Anything
+// else, or anything that cannot be read, is an error: the replay is refused rather than allowed on doubt. Nothing is written but
+// the record's lock.
+func VerifyManagedSpawnReplay(cwd, session string, b ManagedSpawnBinding) error {
+	if b.Root == "" || b.ToolUseID == "" || b.Session == "" || b.Session != session {
+		return errManagedSpawnReplay
+	}
+	for _, field := range []struct{ value, name string }{{b.Session, "sessionId"}, {b.Dispatch, "dispatchId"}, {b.Attempt, "attemptId"}} {
+		if _, err := dispatchID(field.value, field.name); err != nil {
+			return err
+		}
+	}
+	root, err := dispatchRoot(cwd)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	if dev, ino, ok := managedSpawnFileID(info); root != b.Root || !ok || dev != b.RootDev || ino != b.RootIno {
+		return errManagedSpawnReplay
+	}
+	dir, err := dispatchDirectoryOf(root, info, b.Session, nil)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	name := b.Dispatch + ".json"
+	release, err := dir.lock(name)
+	if err != nil {
+		return err
+	}
+	defer release()
+	d, err := dispatchPinnedRead(dir, name, b.Session, b.Dispatch)
+	if err != nil {
+		return err
+	}
+	a := d.Attempts[len(d.Attempts)-1]
+	if a.ID != b.Attempt || !a.Claimed || !dispatchIs(a.Status, "claimed") || !dispatchIs(d.Status, "active") || d.Role != b.Role ||
+		!managedSpawnSameCandidate(a.Candidate, DispatchCandidate{Model: b.Model, Effort: b.Effort}) ||
+		!a.SpawnIssued || a.ToolUseID == nil || *a.ToolUseID != b.ToolUseID {
+		return errManagedSpawnReplay
+	}
+	return nil
 }

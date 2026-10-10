@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 
@@ -187,6 +188,17 @@ func spawnInlineScanBlocks(message string) (map[string]bool, string) {
 // no linked folder/file, nonregular file or changed inode. The caller chooses
 // the root; hardlinks and privileged mounts are outside this boundary.
 func spawnInlineReadSkill(root *os.Root, skillsDir, folder string) (string, bool) {
+	return spawnInlineReadSkillPrefix(root, skillsDir, folder, 0)
+}
+
+// spawnInlineOpenSkill opens a skill file without blocking and without following a link (CRW-1114): a FIFO or device put in place
+// of the file that was checked cannot stop the hook, and the opened descriptor is judged after.
+func spawnInlineOpenSkill(dir *os.Root, name string) (*os.File, error) {
+	return dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+}
+
+// spawnInlineReadSkillPrefix is spawnInlineReadSkill reading at most limit bytes (0 reads the whole file).
+func spawnInlineReadSkillPrefix(root *os.Root, skillsDir, folder string, limit int64) (string, bool) {
 	if _, ok := spawnNormalizeSkillPath(skillsDir, folder); !ok {
 		return "", false
 	}
@@ -207,7 +219,7 @@ func spawnInlineReadSkill(root *os.Root, skillsDir, folder string) (string, bool
 	if err != nil || !info.Mode().IsRegular() {
 		return "", false
 	}
-	f, err := dir.Open("SKILL.md")
+	f, err := spawnInlineOpenSkill(dir, "SKILL.md")
 	if err != nil {
 		return "", false
 	}
@@ -224,7 +236,11 @@ func spawnInlineReadSkill(root *os.Root, skillsDir, folder string) (string, bool
 	if err != nil || !checked.IsDir() || !os.SameFile(dirInfo, checked) {
 		return "", false
 	}
-	data, err := io.ReadAll(f)
+	var reader io.Reader = f
+	if limit > 0 {
+		reader = io.LimitReader(f, limit)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return "", false
 	}

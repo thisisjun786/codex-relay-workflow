@@ -1,0 +1,31 @@
+{
+  "issue": "CRW-1121",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "hook__pre-tool-use-attaching-skills__items_control_token_whitespace",
+      "reason": "Claim handover from CRW-634: decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order. CRW-1121: the event mints a grant and has a tool use id, so its input and its answer are recorded beside the grant (event-<digest of the tool use id>), from which the same event applied again is answered the same way. The record starts with the kind of its spawner (root) and the managed binding it was issued under (empty here: a direct spawn, CRW-1122 evaluation round), and an empty lock file of the event (event-<digest>.lock) stays beside it (verification round 1).",
+      "set": {
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/content": "root\n\n{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"  lead spaces\\n\\n\\n\\nCRW-SUBSPAWN-ALLOWED coordinate  \\n\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,QUJD\"}]}\n{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"[CRW-SUBAGENT-SCOPE] This is one bounded delegated task with authorized\\nrecursion. The parent owns crw orchestration, loop, and goal state;\\ndo not invoke those commands. Stay within the stated file/write scope.\\nYou and any child you spawn run in the parent's own working directory, on its\\nbranch and HEAD - not a copy. Keep every write scope non-overlapping and do not\\nrun branch-level git commands (checkout, switch, branch, stash, reset, rebase,\\nmerge, pull).\\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:<GRANT_1>]\\n\\n  lead spaces\\n\\n\\n\\n coordinate  \\n\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,QUJD\"}]}}}\n",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/form": "text",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/mode": "0600",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/sha256": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/size": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/target": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09/type": "file",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/content": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/form": "empty",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/mode": "0600",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/sha256": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/size": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/target": "",
+        "tree/tmp/crw-subspawn-<UID>/<GRANTDIR_1>/event-60f146a1454bf318fa62f2b343d2ab09.lock/type": "file"
+      },
+      "remove": [
+        "calls/2",
+        "calls/1",
+        "calls/0"
+      ]
+    }
+  ]
+}

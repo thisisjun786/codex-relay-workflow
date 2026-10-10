@@ -423,44 +423,44 @@
     {
       "body": "name: crw-dev\r\ndescription:\t\"line\"\r\n",
       "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: line",
-      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: line",
+      "expected": "",
       "classification": "intentionally-changed",
-      "reason": "CRW metadata name substitution; regex quirks retained."
+      "reason": "CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill."
     },
     {
       "body": "# body\nname: crw-other\ndescription: \"body metadata\"\n",
       "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-other: body metadata",
-      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-other: body metadata",
+      "expected": "",
       "classification": "intentionally-changed",
-      "reason": "CRW metadata name substitution; regex quirks retained."
+      "reason": "CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill."
     },
     {
       "body": "name:\nnext-line-name\ndescription:\nnext-line-description\n",
       "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- next-line-name: next-line-description",
-      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- next-line-name: next-line-description",
+      "expected": "",
       "classification": "intentionally-changed",
-      "reason": "CRW metadata name substitution; regex quirks retained."
+      "reason": "CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill."
     },
     {
       "body": "name: crw-dev\ndescription: has \"quotes\" in middle\n",
       "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: ",
-      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: ",
+      "expected": "",
       "classification": "intentionally-changed",
-      "reason": "CRW metadata name substitution; regex quirks retained."
+      "reason": "CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill."
     },
     {
       "body": "name: crw-dev\ndescription: \"single\" name: extra\n",
       "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: single",
-      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: single",
+      "expected": "",
       "classification": "intentionally-changed",
-      "reason": "CRW metadata name substitution; regex quirks retained."
+      "reason": "CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill."
     },
     {
       "body": "name: crw-dev\ndescription: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
       "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "",
       "classification": "intentionally-changed",
-      "reason": "CRW metadata name substitution; regex quirks retained."
+      "reason": "CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill."
     }
   ]
 }

@@ -97,7 +97,9 @@ func UpdateSettings(env host.LookupEnv, body json.RawMessage) (Settings, error) 
 	case inherit && present > 0:
 		return Settings{}, errors.New("inherit cannot be combined with role settings")
 	case inherit:
-		_, err = ResetRole(env, role)
+		// A reset that committed answers with the settings even when another role stays unusable: the answer names that role instead
+		// of reporting a failure for a store that has changed (CRW-1119).
+		return resetSettings(env, role)
 	default:
 		_, err = SetRole(env, role, patch)
 	}
@@ -105,4 +107,29 @@ func UpdateSettings(env host.LookupEnv, body json.RawMessage) (Settings, error) 
 		return Settings{}, err
 	}
 	return ReadSettings(env)
+}
+
+// resetSettings is the settings after a reset of role, with the roles that stay unusable named in Unusable (and at their defaults).
+func resetSettings(env host.LookupEnv, role RoleName) (Settings, error) {
+	if _, err := ResetRoleReport(env, role); err != nil {
+		return Settings{}, err
+	}
+	s, unusable, err := readSettings(env)
+	if err != nil {
+		return Settings{}, err
+	}
+	for _, r := range Roles() {
+		if err := unusable[r]; err != nil {
+			if s.Unusable == nil {
+				s.Unusable = map[RoleName]string{}
+			}
+			var reason *UnusableSettingsError
+			if errors.As(err, &reason) {
+				s.Unusable[r] = reason.Reason
+			} else {
+				s.Unusable[r] = err.Error()
+			}
+		}
+	}
+	return s, nil
 }

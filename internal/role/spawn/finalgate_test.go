@@ -249,13 +249,14 @@ func TestCheckFinalGatePrereqsDoesNotWaitOnANamedPipe(t *testing.T) {
 	}
 }
 
-// The guard recaptures the tree with the session capture's defaults, which is how the oracle does it, while the receipt's producer and
-// the enforcing check leave out the state directory and the paths the check generates (known-defects.md): in an unbound repository
-// that does not ignore .crw/, and for a path the receipt declared generated, a receipt that is right for the tree reads as stale.
-func TestCheckFinalGatePrereqsRecapturesWithoutTheReceiptsExclusions(t *testing.T) {
+// The guard recaptures the tree under the receipt producer's own contract (CRW-1114, known-defects.md:1238): the state directory
+// and the paths the receipt declared generated are left out, so a receipt that is right for the tree is not stale, while a change
+// of a path the receipt did not declare still is.
+func TestCheckFinalGatePrereqsRecapturesWithTheReceiptsExclusions(t *testing.T) {
 	cwd := spawnFinalGateTestTree(t)
 	spawnFinalGateTestGit(t, cwd, "init", "-q", "-b", "main", ".")
 	spawnFinalGateTestWrite(t, cwd, "generated.txt", "one\n")
+	spawnFinalGateTestWrite(t, cwd, "source.txt", "one\n")
 	spawnFinalGateTestGit(t, cwd, "add", ".")
 	spawnFinalGateTestGit(t, cwd, "commit", "-qm", "first")
 	head := spawnFinalGateTestGit(t, cwd, "rev-parse", "HEAD")
@@ -264,10 +265,20 @@ func TestCheckFinalGatePrereqsRecapturesWithoutTheReceiptsExclusions(t *testing.
 	if receipt.Dirty {
 		t.Fatalf("the receipt's own capture is dirty: %+v", receipt)
 	}
-	spawnFinalGateTestPlan(t, cwd, receipt)
+	body, err := json.Marshal(map[string]any{"kind": "test", "sourceIdentity": receipt, "generatedPaths": []string{"generated.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spawnFinalGateTestWrite(t, cwd, ".crw/sessions/sess-1.json", `{"sessionId":"sess-1","slug":"demo"}`)
+	spawnFinalGateTestWrite(t, cwd, ".crw/goalplans/demo/goalplan.json", `{"criteria":[],"finalGate":{"testReceiptPath":".crw/evidence/test.json"}}`)
+	spawnFinalGateTestWrite(t, cwd, ".crw/evidence/test.json", string(body))
+	if got := CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", cwd, nil); !got.OK {
+		t.Fatalf("a receipt that is right under its own exclusions was refused: %+v", got)
+	}
+	spawnFinalGateTestWrite(t, cwd, "source.txt", "two\n")
 	got := CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", cwd, nil)
 	if want := "produced against " + head[:7] + ", but the tree is now " + head[:7] + "+dirty"; got.OK || !strings.Contains(got.Reason, want) {
-		t.Fatalf("a receipt that left out its generated path and the state directory was not stale: %+v", got)
+		t.Fatalf("a change of an undeclared path was not stale: %+v", got)
 	}
 }
 

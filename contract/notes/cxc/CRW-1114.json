@@ -1,0 +1,33 @@
+{
+  "issue": "CRW-1114",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_prerequisites_present_allowed",
+      "reason": "Claim handover from CRW-634: decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order. CRW-1114 (known-defects.md:1237): the workspace is no repository, so the tree's source identity is unavailable, and at a marked gate an unavailable identity verifies no receipt: the receipt is reported as one that cannot be verified.",
+      "set": {
+        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"rev-parse\",\"HEAD\"],\"cwd\":\"${WS}\"}",
+        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"status\",\"--porcelain=v1\",\"-z\",\"--untracked-files=all\"],\"cwd\":\"${WS}\"}",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\\n  - test receipt cannot be verified: the source identity of the receipt or of the tree is unavailable\\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer.\"}}"
+      },
+      "remove": [
+        "calls/4",
+        "calls/3",
+        "calls/2"
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_web_criterion_requires_qa",
+      "reason": "Claim handover from CRW-634: decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order. CRW-1114 (known-defects.md:1237): the workspace is no repository, so the tree's source identity is unavailable, and at a marked gate an unavailable identity verifies no receipt: the receipt is reported as one that cannot be verified.",
+      "set": {
+        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"rev-parse\",\"HEAD\"],\"cwd\":\"${WS}\"}",
+        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"status\",\"--porcelain=v1\",\"-z\",\"--untracked-files=all\"],\"cwd\":\"${WS}\"}",
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\\n  - test receipt cannot be verified: the source identity of the receipt or of the tree is unavailable\\n  - QA receipt path is not recorded in finalGate\\nRun the checks, record their receipts under .crw/evidence/, then dispatch the gate reviewer.\"}}"
+      },
+      "remove": [
+        "calls/3",
+        "calls/2"
+      ]
+    }
+  ]
+}

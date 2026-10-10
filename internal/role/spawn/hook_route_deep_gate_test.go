@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // This file is CRW-858's red-first test. In spawnHookRoute the final-gate prerequisite check
@@ -155,11 +157,15 @@ func TestSpawnHookDeepGateDeepWithoutMarkerPrintsNothing(t *testing.T) {
 // gate. With the deep field the answer is the depth return (""), the same as the baseline; with a
 // shallow input it is the ordinary allow envelope, never a deny.
 func TestSpawnHookDeepGatePassesWithTheReceipt(t *testing.T) {
+	spawnFinalGateTestTree(t) // a git environment that reads no machine configuration
 	rig := spawnHookNewRig(t, spawnHookReadFixture(t).Skills, spawnHookCase{})
 	spawnLegEnv(t, rig)
-	// A receipt whose identity is unavailable matches a working tree with no git, as Compare reads:
-	// an unavailable side is never "different", so the gate passes.
-	spawnHookDeepGatePlan(t, rig.ws, `{"kind":"test","sourceIdentity":{"kind":"unavailable","commitSha":"","dirty":false}}`)
+	// A receipt of the current commit passes the gate. An unavailable identity verifies nothing at a marked gate (CRW-1114), so the
+	// workspace is a repository whose state directory is ignored.
+	spawnFinalGateTestCommit(t, rig.ws, "first.txt")
+	identity, err := json.Marshal(source.Capture(rig.ws, source.Options{ExcludeStateArtifacts: true}))
+	spawnHookMust(t, err)
+	spawnHookDeepGatePlan(t, rig.ws, `{"kind":"test","sourceIdentity":`+string(identity)+`}`)
 	deep := spawnHookDeepGatePayload(rig.ws, "[CRW-FINAL-GATE] please review the final gate", spawnHookDeepGateJunk(5000))
 	if got := RunSpawnAttachHook(deep, rig.env); got != "" {
 		t.Errorf("a deep final-gate packet with a receipt reaches the depth return, got %.120q", got)

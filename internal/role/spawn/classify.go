@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -76,7 +78,7 @@ func DenyEnvelope(reason string) string {
 // InferRole is the oracle's inferRole. The order is the oracle's own: explicit worker/executor,
 // then explicit architect/reviewer, then the producer header's CRW-ROLE: line (which wins over an
 // explorer agent type), then explorer, then the review-keyword fallback over the lowercased
-// message. Non-string agent types match nothing.
+// message, matched at a word start (spawnClassifyWordStart). Non-string agent types match nothing.
 func InferRole(agentType any, message string) role.RoleName {
 	if s, ok := agentType.(string); ok {
 		switch s {
@@ -98,11 +100,40 @@ func InferRole(agentType any, message string) role.RoleName {
 	}
 	lower := spawnInlineLowerJS(message)
 	for _, keyword := range spawnClassifyReviewKeywords {
-		if strings.Contains(lower, keyword) {
+		if spawnClassifyWordStart(lower, keyword) {
 			return role.Reviewer
 		}
 	}
 	return role.Explorer
+}
+
+// spawnClassifyWordStart reports whether keyword occurs in s at the start of a word (CRW-1114; the oracle's substring search took
+// "preview" for a review): an ASCII keyword must not follow a letter, digit or underscore, while an inflection after it still counts
+// ("reviewer", "verifying"). A Hangul keyword is matched anywhere, since Korean writes compounds without a space ("코드리뷰").
+func spawnClassifyWordStart(s, keyword string) bool {
+	for from := 0; from < len(s); {
+		at := strings.Index(s[from:], keyword)
+		if at < 0 {
+			return false
+		}
+		at += from
+		if keyword[0] >= 0x80 || at == 0 || !spawnClassifyWordBefore(s[:at]) {
+			return true
+		}
+		from = at + 1
+	}
+	return false
+}
+
+// spawnClassifyWordBefore reports whether the character that ends s is part of a word: an ASCII letter, digit or underscore, or any
+// other letter, digit or combining mark. White space and punctuation of any script (a no-break space, an em dash, a curly quote)
+// are a boundary; a byte that is not valid UTF-8 stays a word byte, as before (CRW-1114).
+func spawnClassifyWordBefore(s string) bool {
+	r, size := utf8.DecodeLastRuneInString(s)
+	if r == utf8.RuneError && size <= 1 {
+		return true
+	}
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
 }
 
 // spawnClassifyTaskStart is the byte index of the first line-start "TASK:" in message, the cut
