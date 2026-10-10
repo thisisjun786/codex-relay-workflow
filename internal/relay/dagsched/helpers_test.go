@@ -75,26 +75,46 @@ func newFixtureOn(t *testing.T, path, socket string) *fixture {
 // store.Open that follows finds nothing to install. A copy is a store the test owns alone: the template itself is never opened again.
 var (
 	templateRoot string // the isolation root of the test process (TestMain), which removes it with everything under it
-	templateOnce sync.Once
-	templateErr  error
+	template     storeTemplateBuild
 )
 
+// A storeTemplateBuild builds the template once and keeps the outcome. The build runs under the first caller's t, and a failed Create
+// ends that goroutine with t.Fatalf (runtime.Goexit), which sync.Once counts as a completed run: without the deferred record below every
+// later caller would be handed the half-built directory and a nil error, and fail on a missing database instead of on the cause.
+type storeTemplateBuild struct {
+	once sync.Once
+	err  error
+}
+
+// get builds the template at dir (the first call) and returns the recorded outcome (every call). tb is the first caller's t; the build's
+// own failure fails it, and every later caller reads the error.
+func (b *storeTemplateBuild) get(tb testing.TB, dir string) error {
+	tb.Helper()
+	b.once.Do(func() {
+		done := false
+		defer func() {
+			if !done && b.err == nil {
+				b.err = fmt.Errorf("the store template was not built: the first fixture's setup failed (%s)", tb.Name())
+			}
+		}()
+		path := filepath.Join(dir, "relay.sqlite3")
+		testsupport.Create(tb, path, "", "go")
+		s, err := store.Open(context.Background(), path, "")
+		if err != nil {
+			b.err, done = err, true
+			return
+		}
+		b.err, done = s.Close(), true
+	})
+	return b.err
+}
+
 // storeTemplate is the directory holding the template, built by the first fixture that asks (under that fixture's t; a failure fails
-// that test and every later one reads templateErr).
+// that test and every later one reads the recorded error).
 func storeTemplate(t *testing.T) (string, error) {
 	t.Helper()
 	dir := filepath.Join(templateRoot, "store-template")
-	templateOnce.Do(func() {
-		path := filepath.Join(dir, "relay.sqlite3")
-		testsupport.Create(t, path, "", "go")
-		s, err := store.Open(context.Background(), path, "")
-		if err != nil {
-			templateErr = err
-			return
-		}
-		templateErr = s.Close()
-	})
-	return dir, templateErr
+	return dir, template.get(t, dir)
 }
 
 // copyStoreTemplate puts a copy of the store template at path (nothing may exist there) and re-homes its mirror the way
