@@ -398,59 +398,86 @@ func TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent(t *testing.T) {
 // session lock). The reader now refuses a state file that is not a regular file without reading it: the run ends
 // by itself with its refusal (exit 1), and a SIGINT sent at the start ends it too (130, or the refusal when the
 // refusal came first), with the lock gone either way.
+//
+// There is no "blocked on the FIFO" state to wait for any more: the refusal never reads, so the run is over within
+// milliseconds and nothing observable shows from outside that the process has installed its SIGINT handler
+// (serve installs it at the top of main, after the Go runtime and every package initialiser; /proc shows the
+// runtime's own handler from the first instruction). A signal that lands in that start-up window meets SIGINT's
+// default disposition, which is by design (decision 42, cmd/crw serve): the child is killed by the signal and has
+// no exit code (CRW-1167: 94 of 600 SIGINT subtests under a 24-process CPU load). That outcome says nothing
+// about the row, so the case reads it from the wait status (killed by SIGINT, not exit code -1 by accident) and
+// runs the case again on a fresh home, up to pabcd1167Attempts times; every other answer is judged as before.
 func TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter(t *testing.T) {
 	crw := testsupport.CRW(t)
 	for _, name := range []string{"loop steer", "memory allow-write", "scan record"} {
 		for _, signalled := range []bool{false, true} {
 			t.Run(name+map[bool]string{false: "/no signal", true: "/SIGINT"}[signalled], func(t *testing.T) {
-				home := t.TempDir()
-				root := filepath.Join(home, "work")
-				if err := os.MkdirAll(filepath.Join(root, ".crw", "sessions"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				path := state.StatePath(root, "s")
-				if err := syscall.Mkfifo(path, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				holder, err := os.OpenFile(path, os.O_RDWR, 0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer holder.Close()
-				cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows(pabcd1074Batch)[name])
-				if err := cmd.Start(); err != nil {
-					t.Fatal(err)
-				}
-				done := make(chan error, 1)
-				go func() { done <- cmd.Wait() }()
-				if signalled {
-					time.Sleep(20 * time.Millisecond)
-					_ = cmd.Process.Signal(syscall.SIGINT)
-				}
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-					<-done
-					t.Fatalf("the run did not end on a FIFO session file (signalled %v)\nstdout:\n%s\nstderr:\n%s", signalled, stdout.String(), stderr.String())
-				}
-				code := cmd.ProcessState.ExitCode()
-				switch {
-				case !signalled && code != 1:
-					t.Fatalf("exit code %d, want the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
-				case signalled && code != Interrupted && code != 1:
-					t.Fatalf("exit code %d, want %d or the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, Interrupted, stdout.String(), stderr.String())
-				}
-				if code == Interrupted && (stdout.Len() != 0 || stderr.Len() != 0) {
-					t.Fatalf("the interrupted run wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
-				}
-				if _, err := os.Lstat(path + ".lock"); !os.IsNotExist(err) {
-					t.Fatalf("the session lock was left behind: %v", err)
-				}
-				if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
-					t.Fatalf("the session state was replaced: %v %v", info, err)
+				for attempt := 1; ; attempt++ {
+					if pabcd1167FIFORun(t, crw, name, signalled, attempt) {
+						return
+					}
 				}
 			})
 		}
 	}
+}
+
+// pabcd1167Attempts bounds the runs of one SIGINT case whose signal beat the child's handler.
+const pabcd1167Attempts = 40
+
+// pabcd1167FIFORun is one run of the FIFO case on a fresh home. It reports false, having judged nothing, when the
+// SIGINT killed the child before its handler existed and another attempt is left.
+func pabcd1167FIFORun(t *testing.T, crw, name string, signalled bool, attempt int) bool {
+	t.Helper()
+	home := t.TempDir()
+	root := filepath.Join(home, "work")
+	if err := os.MkdirAll(filepath.Join(root, ".crw", "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := state.StatePath(root, "s")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows(pabcd1074Batch)[name])
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	if signalled {
+		time.Sleep(20 * time.Millisecond)
+		_ = cmd.Process.Signal(syscall.SIGINT)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		t.Fatalf("the run did not end on a FIFO session file (signalled %v)\nstdout:\n%s\nstderr:\n%s", signalled, stdout.String(), stderr.String())
+	}
+	if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && signalled && status.Signaled() && status.Signal() == syscall.SIGINT && attempt < pabcd1167Attempts {
+		return false
+	}
+	code := cmd.ProcessState.ExitCode()
+	switch {
+	case !signalled && code != 1:
+		t.Fatalf("exit code %d, want the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	case signalled && code != Interrupted && code != 1:
+		t.Fatalf("exit code %d (attempt %d), want %d or the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, attempt, Interrupted, stdout.String(), stderr.String())
+	}
+	if code == Interrupted && (stdout.Len() != 0 || stderr.Len() != 0) {
+		t.Fatalf("the interrupted run wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
+	}
+	if _, err := os.Lstat(path + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("the session lock was left behind: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("the session state was replaced: %v %v", info, err)
+	}
+	return true
 }
