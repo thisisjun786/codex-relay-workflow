@@ -154,7 +154,9 @@ func TestPumpSignalTimedOutCapacityEvaluationIsUnmeasured(t *testing.T) {
 	if after, err := os.ReadFile(statePath); err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("the capacity state changed after a timed-out evaluation (err %v):\nbefore %s\nafter  %s", err, before, after)
 	}
-	late = false
+	// The next round is a real read that must not run past a budget: it has the default one, since
+	// 50 ms is shorter than a real evaluation can take on a loaded host under -race.
+	late, pumpSignalCapacityBudget = false, savedBudget
 	st = f.round()
 	if st.Sources[pumpSignalCapacityName] != pumpSourceOK || len(st.Pending) != 1 || !strings.HasPrefix(st.Pending[0].ID, pumpSignalCapacityName) {
 		t.Fatalf("sources = %v pending = %v, want the next round to judge again and alert", st.Sources, pumpSignalIDs(st.Pending))
