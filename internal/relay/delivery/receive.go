@@ -2,12 +2,14 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
@@ -87,8 +89,14 @@ func ReadVerdictFile(path, event, turn string) (VerdictRequest, error) {
 	if err != nil {
 		return req, verdictFileError("could not be read: " + err.Error())
 	}
-	parsed, err := loads(string(raw))
+	// A new input, read strictly: one document with nothing after it, and no object repeating a key
+	// (the shared loads would keep the last value of a repeated key and let a closing bracket trail).
+	parsed, err := pyjson.Loads(string(raw), pyjson.LoadOptions{Numbers: pyjson.Int64FloatNumbers, RangeErrors: true, Unique: true, Trailing: pyjson.TrailingNothing})
 	if err != nil {
+		var repeated *pyjson.RepeatedKey
+		if errors.As(err, &repeated) {
+			return req, verdictFileError(fmt.Sprintf("gives %q twice", repeated.Key))
+		}
 		return req, verdictFileError("is not JSON: " + err.Error())
 	}
 	doc, ok := parsed.(Obj)
@@ -104,9 +112,6 @@ func ReadVerdictFile(path, event, turn string) (VerdictRequest, error) {
 				hint = ": the verdict is ruled from --ack-turn, the caller's own turn"
 			}
 			return req, verdictFileError(fmt.Sprintf("has the key %q, which is not an option of the verdict it carries (%s)%s", field.Key, strings.Join(verdictFileKeys, ", "), hint))
-		}
-		if seen[field.Key] {
-			return req, verdictFileError(fmt.Sprintf("gives %q twice", field.Key))
 		}
 		seen[field.Key] = true
 		switch field.Key {

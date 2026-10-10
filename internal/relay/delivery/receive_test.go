@@ -432,6 +432,10 @@ func TestReceiveVerdictFile(t *testing.T) {
 		"an unknown key":     `{"verdict":"verified","ack-proof":"x"}`,
 		"a mistyped list":    `{"verdict":"verified","finding":"c1=verified"}`,
 		"a mistyped reason":  `{"verdict":"verified","reason":3}`,
+		"a repeated key":     `{"verdict":"needs_changes","verdict":"verified"}`,
+		"a repeated nested":  `{"verdict":"verified","criteria":[{"id":"c1","id":"c2"}]}`,
+		"trailing data":      `{"verdict":"verified"}}not-json`,
+		"a second document":  `{"verdict":"verified"} {"verdict":"verified"}`,
 	} {
 		if _, err := ReadVerdictFile(write(text), event, turn); err == nil {
 			t.Errorf("%s was read", name)
