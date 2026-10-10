@@ -216,7 +216,8 @@ func TestInstallSwitchStatusNamesConflictAndOff(t *testing.T) {
 	if s := off.status(); s.State != "off" {
 		t.Fatalf("status = %+v", s)
 	}
-	// A damaged switch.json is reported, not guessed.
+	// A damaged switch.json is reported, and the hooks read it as on, so with both plugins enabled it
+	// is a conflict.
 	bad := newSwitchHome(t, switchConfig)
 	if err := os.MkdirAll(filepath.Dir(hookswitch.Path(bad.home)), 0o777); err != nil {
 		t.Fatal(err)
@@ -224,7 +225,7 @@ func TestInstallSwitchStatusNamesConflictAndOff(t *testing.T) {
 	if err := os.WriteFile(hookswitch.Path(bad.home), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if s := bad.status(); s.Switch.Error == "" || s.State != "cxc" {
+	if s := bad.status(); s.Switch.Error == "" || s.State != "conflict" {
 		t.Fatalf("status = %+v", s)
 	}
 }
@@ -328,4 +329,35 @@ func TestInstallSwitchStatusReadsTheCRWPluginsOwnKey(t *testing.T) {
 			t.Fatalf("status = %+v", s)
 		}
 	})
+}
+
+// status reports the side the hooks act on: the hook reads switch.json leniently, so a document the
+// installer's strict reader refuses (a field it does not know) still turns the CRW hooks on. The
+// refusal is reported, and it does not hide a live conflict (CRW-1174).
+func TestInstallSwitchStatusFollowsTheHooksReadingOfADocumentTheInstallerRefuses(t *testing.T) {
+	doc := `{"active":"crw","changedAt":"x","by":"y","extra":1}`
+	for name, c := range map[string]struct{ config, state string }{
+		"both plugins on is a conflict": {switchConfig, "conflict"},
+		"only crw on is crw":            {"[plugins.\"crw@crw\"]\nenabled=true\n\n[plugins.\"codexclaw@codexclaw\"]\nenabled=false\n", "crw"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newSwitchHome(t, c.config)
+			if err := os.MkdirAll(filepath.Dir(hookswitch.Path(h.home)), 0o777); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(hookswitch.Path(h.home), []byte(doc), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if r := hookswitch.ReadAt(h.home); !r.On || r.Problem != "" {
+				t.Fatalf("the hook reads %+v, want on without a problem", r)
+			}
+			s := h.status()
+			if s.State != c.state {
+				t.Fatalf("state = %q, want %q (status %+v)", s.State, c.state, s)
+			}
+			if s.Switch.Error == "" {
+				t.Fatalf("the installer's refusal of the document is not reported: %+v", s.Switch)
+			}
+		})
+	}
 }

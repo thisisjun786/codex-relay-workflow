@@ -1,9 +1,18 @@
 // Package hookswitch is the on/off switch of the ported hooks (CRW-392, J2): CRW installs beside
 // CXC with its K1 legs and the GitHub post guard declared, and they stay silent until the switch
 // says crw. The switch is the file <CODEX_HOME>/crw/switch.json, {"active":"crw"|"cxc",
-// "changedAt","by"}, which crw install switch writes (CRW-201) with a temporary file renamed into
-// place; the hook dispatch only reads it. The command a declaration names does not change with the
-// switch, so the hooks' trust hashes stay stable across it.
+// "changedAt","by"}. This package is both sides of that file, with one definition of it (the path,
+// the document, the two states and the rule for what a valid state is, State.check).
+//
+// The hook side (Read) is lenient: a switch that is there but cannot be read or parsed, in any way,
+// is on with a warning, because a protective guard is never silenced by a damaged file, and a field
+// it does not know is ignored. The installer side (Parse, Load, Marshal, Write, WriteRaw, KeepAside)
+// is strict: its reader refuses a document with an unknown field or content after the document and
+// an active value that is neither state, its writer refuses a state without its provenance (changedAt
+// and by), and crw install switch (CRW-201) repairs a switch.json it cannot use by
+// setting that entry aside (KeepAside; a directory is swapped, never moved away, so the path is never empty) and publishing a whole document with a temporary file renamed
+// into place. The command a declaration names does not change with the switch, so the hooks' trust
+// hashes stay stable across it.
 package hookswitch
 
 import (
@@ -36,6 +45,18 @@ type State struct {
 	Active    string `json:"active"`
 	ChangedAt string `json:"changedAt"`
 	By        string `json:"by"`
+}
+
+// Valid reports whether active names one of the two states.
+func Valid(active string) bool { return active == CRW || active == CXC }
+
+// check is the one rule for a state's validity, which the hook's Read, Parse and Marshal all apply:
+// active must name one of the two states. A reader that guessed would turn the wrong plugin on.
+func (s State) check() error {
+	if !Valid(s.Active) {
+		return fmt.Errorf("active %q is neither %q nor %q", s.Active, CRW, CXC)
+	}
+	return nil
 }
 
 // Path is the switch file under a Codex home.
@@ -78,6 +99,12 @@ func Read(env host.LookupEnv) Reading {
 	if err != nil {
 		return Reading{On: true, Problem: "codex home unresolved: " + err.Error()}
 	}
+	return ReadAt(codexHome)
+}
+
+// ReadAt is Read for a Codex home already resolved: what the hooks make of the switch under it.
+// The installer's status uses it, so what it reports as selected is what the hooks do.
+func ReadAt(codexHome string) Reading {
 	r := Reading{CodexHome: codexHome}
 	state, err := readState(Path(codexHome))
 	switch {
@@ -85,11 +112,12 @@ func Read(env host.LookupEnv) Reading {
 		return r
 	case err != nil:
 		r.On, r.Problem = true, err.Error()
-	case state.Active == CRW:
-		r.On = true
-	case state.Active == CXC:
 	default:
-		r.On, r.Problem = true, fmt.Sprintf("active is %q, neither %q nor %q", state.Active, CRW, CXC)
+		if cerr := state.check(); cerr != nil {
+			r.On, r.Problem = true, cerr.Error()
+		} else {
+			r.On = state.Active == CRW
+		}
 	}
 	return r
 }
@@ -97,7 +125,8 @@ func Read(env host.LookupEnv) Reading {
 // errAbsent is a switch path with nothing at it: no entry, not a link whose target is gone.
 var errAbsent = fmt.Errorf("switch absent: %w", fs.ErrNotExist)
 
-// readState reads the switch document, as readFile gives it.
+// readState reads the switch document, as readFile gives it. It is the lenient reading of the hook:
+// a field it does not know is ignored (Parse, the installer's reading, refuses it).
 func readState(path string) (State, error) {
 	var s State
 	data, err := readFile(path)

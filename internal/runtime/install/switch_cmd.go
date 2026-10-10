@@ -259,12 +259,18 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 	s := &SwitchStatus{Command: "switch", Action: "status", CodexHome: home, Plugins: map[string]switchPluginStatus{}, Roles: []switchRoleStatus{}, Notes: []string{}}
 	s.Switch.Path = hookswitch.Path(home)
-	selectedCRW := false
+	// Which side the hooks act on is what the hooks make of the file (lenient, and on when it is
+	// damaged), not what the installer's strict reader makes of it: a document the installer refuses
+	// still turns the CRW hooks on, and a conflict with the CXC plugin must not be hidden by it.
+	reading := hookswitch.ReadAt(home)
+	selectedCRW := reading.On
 	if st, err := hookswitch.Load(home); err != nil {
 		s.Switch.Error = err.Error()
+		if reading.On {
+			s.Notes = append(s.Notes, "the installer cannot use switch.json, and the hooks read it as crw (on): `crw install switch crw` or `cxc` sets it aside and replaces it")
+		}
 	} else if st != nil {
 		s.Switch.Active, s.Switch.ChangedAt, s.Switch.By = st.Active, st.ChangedAt, st.By
-		selectedCRW = st.Active == hookswitch.CRW
 	}
 	config, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
