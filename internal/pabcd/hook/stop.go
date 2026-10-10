@@ -249,7 +249,7 @@ const (
 	stopBumpBlock       stopBumpOutcome = iota // the counter allows a block
 	stopBumpPhaseCap                           // consecutive blocks at one phase exceeded the budget: release
 	stopBumpTotalCap                           // the turn's total exceeded the budget, first time: release with a systemMessage
-	stopBumpTotalSilent                        // the turn's total exceeded the budget, already announced: release
+	stopBumpTotalSilent                        // the turn's total exceeded the budget, already announced: release (stopCounted returns before, CRW-1091)
 )
 
 // stopBump is bumpStopCounter (hook.ts:1497-1521) on a state read inside the lock: the state to write
