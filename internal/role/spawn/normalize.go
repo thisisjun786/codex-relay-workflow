@@ -143,7 +143,13 @@ func spawnNormalizeSkillPath(skillsDir, folder string) (string, bool) {
 
 // spawnNormalizeContained reports whether path, links resolved, lies inside skillsDir, links resolved.
 func spawnNormalizeContained(skillsDir, path string) bool {
-	root, err := filepath.EvalSymlinks(skillsDir)
+	// Both sides are absolute before their links are resolved: a relative root resolves to a relative path, which no absolute skill
+	// file lies "inside" (CRW-1114).
+	abs, err := filepath.Abs(skillsDir)
+	if err != nil {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return false
 	}

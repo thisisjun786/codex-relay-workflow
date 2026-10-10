@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -115,7 +117,7 @@ func spawnClassifyWordStart(s, keyword string) bool {
 			return false
 		}
 		at += from
-		if keyword[0] >= 0x80 || at == 0 || !spawnClassifyWordByte(s[at-1]) {
+		if keyword[0] >= 0x80 || at == 0 || !spawnClassifyWordBefore(s[:at]) {
 			return true
 		}
 		from = at + 1
@@ -123,8 +125,15 @@ func spawnClassifyWordStart(s, keyword string) bool {
 	return false
 }
 
-func spawnClassifyWordByte(ch byte) bool {
-	return ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch >= 0x80
+// spawnClassifyWordBefore reports whether the character that ends s is part of a word: an ASCII letter, digit or underscore, or any
+// other letter, digit or combining mark. White space and punctuation of any script (a no-break space, an em dash, a curly quote)
+// are a boundary; a byte that is not valid UTF-8 stays a word byte, as before (CRW-1114).
+func spawnClassifyWordBefore(s string) bool {
+	r, size := utf8.DecodeLastRuneInString(s)
+	if r == utf8.RuneError && size <= 1 {
+		return true
+	}
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
 }
 
 // spawnClassifyTaskStart is the byte index of the first line-start "TASK:" in message, the cut
