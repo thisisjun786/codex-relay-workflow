@@ -2,12 +2,15 @@ package dagsched
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
@@ -113,7 +116,18 @@ func TestReleaseCreationRace(t *testing.T) {
 			}
 			snap := k.snapshot("rp")
 			n, _ := nodeOf(snap, "A")
-			results[i], errs[i] = s.Release(context.Background(), "rp", "A", "parent", k.request(n.Kind == dag.NodeImplementation))
+			// A caller that finds the request being advanced waits a bounded time (awaitBound: 200 reads, 50 ms apart) for the
+			// holder's child and, when the holder is slower than that, answers managed.ErrBusy: nothing changed and the same
+			// request can be repeated (its documented answer). The holder runs the whole creation on a host that may be loaded
+			// (12 s observed, CRW-1181), so the test repeats such a call, as its caller would, and judges where the calls end.
+			// The repetition is bounded by a hang guard, not by the time the creation takes.
+			guard := time.Now().Add(3 * time.Minute)
+			for {
+				results[i], errs[i] = s.Release(context.Background(), "rp", "A", "parent", k.request(n.Kind == dag.NodeImplementation))
+				if !errors.Is(errs[i], managed.ErrBusy) || time.Now().After(guard) {
+					break
+				}
+			}
 		}(i)
 	}
 	wg.Wait()
