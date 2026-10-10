@@ -1097,8 +1097,9 @@ func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheMarkerLockIs
 
 // CRW-1169 correction: the deadline bounds how long the caller waits, never whether a failed
 // recording retires the oracle's mtime cache. A legacy-only marker (no probeEvidence) whose recording
-// already ran out of time, with the marker lock free, is retired like the synchronous drop retired it,
-// so the next SessionStart does not return "cached" over flags the command just changed.
+// already ran out of time, with the marker lock free, is retired before the call returns, like the
+// synchronous drop retired it, so the next SessionStart does not return "cached" over flags the
+// command just changed.
 func TestSelfHealEvidenceFailedRecordingPastTheDeadlineStillRetiresTheLegacyCache(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1140,20 +1141,11 @@ func TestSelfHealEvidenceFailedRecordingPastTheDeadlineStillRetiresTheLegacyCach
 			if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx}); err != nil {
 				t.Fatal(err)
 			}
-			// The caller no longer waits for the drop after the deadline, so the retirement lands in the
-			// background: wait for it here the way a process that outlives the call would see it.
-			var marker *SelfHealMarker
-			var err error
-			retired := time.Now().Add(5 * time.Second)
-			for {
-				marker, err = ReadSelfHealMarkerFile(home)
-				if err == nil && marker != nil && marker.Probe == nil && (marker.AllEnabled == nil || !*marker.AllEnabled) {
-					break
-				}
-				if time.Now().After(retired) {
-					t.Fatalf("the failed recording left the legacy cache authoritative: %+v %v", marker, err)
-				}
-				time.Sleep(20 * time.Millisecond)
+			// The marker lock is free, so the retirement is done before the call returns: a CLI that
+			// exits right after it (enable renders and exits) cannot lose it to an unfinished goroutine.
+			marker, err := ReadSelfHealMarkerFile(home)
+			if err != nil || marker == nil || marker.Probe != nil || (marker.AllEnabled != nil && *marker.AllEnabled) {
+				t.Fatalf("the failed recording returned with the legacy cache still authoritative: %+v %v", marker, err)
 			}
 			// The project layer now turns a soft flag off while config.toml and its mtime are unchanged.
 			runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
