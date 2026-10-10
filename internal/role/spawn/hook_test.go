@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -222,6 +223,15 @@ func spawnHookReadFixture(t *testing.T) (fixture spawnHookFixture) {
 	return fixture
 }
 
+// spawnHookIntent are the recorded assembly steps whose answer CRW-1121 changes on purpose, as the expected value the port gives: a
+// reapplied message whose front is a guard the hook writes (here the coordinator guard of the first pass, its grant marker removed
+// by stripControlMarkers) gets this event's guard in its place instead of a second guard stacked on it. Without the event's tool
+// use id there is no record of the first pass, so the coordinator guard is not trusted and the plain guard replaces it.
+var spawnHookIntent = map[string]string{
+	"reapplied grant request/2": `{"updatedInput":{"task_name":"t","fork_turns":"none","message":"{{LEAF}}\n\ncoordinate\n\n{{AFFORDANCE}}"},"ciphertext":false}`,
+	"v1 items/4":                `{"updatedInput":{"items":[{"type":"text","text":"{{V1}}\n\n  keep  \n\n\n\nblank  tail  "},{"type":"attachment","ref":"a"}]},"ciphertext":false}`,
+}
+
 func TestSpawnHookOracleReplay(t *testing.T) {
 	fixture := spawnHookReadFixture(t)
 	if len(fixture.Cases) == 0 {
@@ -243,6 +253,9 @@ func TestSpawnHookOracleReplay(t *testing.T) {
 					t.Fatalf("step %d is unclassified", i+1)
 				}
 				at := fmt.Sprintf("step %d (%s)", i+1, step.Note)
+				if intent, ok := spawnHookIntent[c.Name+"/"+strconv.Itoa(i+1)]; ok {
+					step.Expected = json.RawMessage(intent)
+				}
 				input := rig.expand(spawnHookLoad(t, step.Input)).(pyjson.Object)
 				asm, deny, stop := spawnHookAssemble(spawnHookView(input), rig.env)
 				if m := regexp.MustCompile(`\[CRW-SUBSPAWN-GRANT:([a-f0-9]{64})\]`).FindStringSubmatch(asm.guard); m != nil {

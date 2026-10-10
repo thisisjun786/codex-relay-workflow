@@ -97,6 +97,25 @@ func (r *spawnHookRig) plain(s string) string {
 	return s
 }
 
+// spawnRouteIntent are the recorded route steps whose answer CRW-1121 changes on purpose, as the answer the port gives: the prompt
+// override is inserted as literal text (the oracle's String.replace expanded $$, $&, $' and $`), once (a reapplied message already
+// holding it after the guard is not given it again, as the items form was not), and after a guard that is the whole message.
+var spawnRouteIntent = map[string]string{
+	"route: prompt override/2":                 "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+	"route: prompt override/13":                "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+	"route: prompt override dollar patterns/1": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nA $& B $$ C $' D $` E $1 F $<x> G\\n\\nTASKTEXT\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+	"route: prompt override dollar patterns/2": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nA $& B $$ C $' D $` E $1 F $<x> G\\n\\nTASKTEXT\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+	"route: prompt override dollar patterns/3": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nA $& B $$ C $' D $` E $1 F $<x> G\\n\\nTASKTEXT\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+}
+
+// spawnRouteExpect is the recorded answer of a step, or the port's answer for a step CRW-1121 changes.
+func spawnRouteExpect(name string, i int, step spawnRouteStep) spawnRouteStep {
+	if intent, ok := spawnRouteIntent[name+"/"+strconv.Itoa(i+1)]; ok {
+		step.Expect, step.ExpectSha256 = intent, ""
+	}
+	return step
+}
+
 func TestSpawnHookRouteOracleReplay(t *testing.T) {
 	steps, envs := spawnRouteRead(t)
 	fixture := spawnHookReadFixture(t)
@@ -110,6 +129,7 @@ func TestSpawnHookRouteOracleReplay(t *testing.T) {
 			rig := spawnHookNewRig(t, fixture.Skills, envs[ci])
 			for i, step := range c.Steps {
 				total++
+				step = spawnRouteExpect(envs[ci].Name, i, step)
 				at := "step " + strconv.Itoa(i+1) + " (" + step.Note + ")"
 				if step.Class != "identical" && (step.Class != "intentionally-changed" || step.Reason == "") {
 					t.Fatalf("%s is unclassified", at)
@@ -151,8 +171,9 @@ func TestSpawnHookDenyEnvelopeSurrogates(t *testing.T) {
 	}
 }
 
-// The oracle's empty-guard branches (:1030-1046) cannot be reached through the hook, and String.replace expands $ patterns and finds
-// nothing in a message that lacks the guard: these expectations are read off the oracle's code, not recorded.
+// The oracle's empty-guard branches (:1030-1046) cannot be reached through the hook: these expectations are read off the oracle's
+// code, not recorded. The insertion is literal and a guard-only message gets the prompt (CRW-1121), where String.replace expanded $
+// patterns and found nothing in a message that is only the guard.
 func TestSpawnHookRoutePromptBranches(t *testing.T) {
 	for _, tc := range []struct {
 		name, message, guard, prompt string
@@ -161,12 +182,12 @@ func TestSpawnHookRoutePromptBranches(t *testing.T) {
 	}{
 		{"items guard only", "G", "G", "P", true, false, "G\n\nP"},
 		{"replace inserts at the first guard only", "G\n\nT\n\nG\n\nU", "G", "P", false, false, "G\n\nP\n\nT\n\nG\n\nU"},
-		{"a message that is only the guard finds nothing", "G", "G", "P", false, false, "G"},
+		{"a message that is only the guard gets the prompt too (CRW-1121)", "G", "G", "P", false, false, "G\n\nP"},
 		{"empty guard: after the marker's block", "x [CRW-SUBAGENT-SCOPE] a\n\nT", "", "P", false, false, "x [CRW-SUBAGENT-SCOPE] a\n\nP\n\nT"},
 		{"empty guard: v2 marker, no blank line after it", "[CRW-LEAF-GUARD] a", "", "P", false, true, "[CRW-LEAF-GUARD] a\n\nP"},
 		{"empty guard: no marker", "T", "", "P", false, false, "P\n\nT"},
 		{"empty guard: a v1 marker does not serve v2", "[CRW-SUBAGENT-SCOPE] a\n\nT", "", "P", false, true, "P\n\n[CRW-SUBAGENT-SCOPE] a\n\nT"},
-		{"$ patterns and a trailing $", "G\n\nT", "G", "$$ $& $' $` $1 $", false, false, "G\n\n$ G\n\n T  $1 $\n\nT"},
+		{"$ patterns stay literal (CRW-1121)", "G\n\nT", "G", "$$ $& $' $` $1 $", false, false, "G\n\n$$ $& $' $` $1 $\n\nT"},
 	} {
 		if got := spawnHookRoutePrompt(tc.message, tc.guard, tc.prompt, tc.items, tc.v2); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)

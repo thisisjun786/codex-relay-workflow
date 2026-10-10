@@ -270,7 +270,9 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	tooDeep := spawnHookRouteDeep(a.toolInput)
 	prompt, model, effort := spawnHookRouteSettings(a)
 	message := a.updatedMessage
-	if prompt != "" && !(a.validItems && (message == a.guard+"\n\n"+prompt || strings.HasPrefix(message, a.guard+"\n\n"+prompt+"\n\n"))) {
+	// A prompt that already follows the guard is not inserted again, in the single-message form as in the items form (CRW-1121;
+	// the oracle checked the items form only, so a reapplied message got the prompt twice).
+	if prompt != "" && !(message == a.guard+"\n\n"+prompt || strings.HasPrefix(message, a.guard+"\n\n"+prompt+"\n\n")) {
 		message = spawnHookRoutePrompt(message, a.guard, prompt, a.validItems, a.v2Spawn)
 	}
 	promptChanged := !a.encryptedV2Message && prompt != ""
@@ -366,7 +368,11 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if context != "" {
 		output = append(output, pyjson.Field{Key: "additionalContext", Value: context})
 	}
-	return a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
+	answer := a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
+	if a.replay != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
+		a.replay(spawnHookDigest(spawnHookRouteStringify(updated)), answer) // CRW-1121: the same event again gets this answer
+	}
+	return answer
 }
 
 // finish commits what an answer that lets the spawn run needs, after every refusal has been checked and the answer is written
@@ -435,15 +441,17 @@ func spawnHookRouteSettings(a spawnHookAssembly) (prompt, model, effort string) 
 	return prompt, model, effort
 }
 
-// spawnHookRoutePrompt is :1021-1046: the prompt after the guard. A message that is only the guard (items) becomes guard and prompt;
-// otherwise the first guard-and-blank-line is replaced, as String.replace does with its $ patterns. The oracle's empty-guard branches
-// (an existing guard marker's block, else a prefix) are ported, but the guard is never empty.
+// spawnHookRoutePrompt is :1021-1046: the prompt after the guard. A message that is only the guard becomes guard and prompt, in both
+// forms (CRW-1121; the oracle did this for items only, so a bare guard message lost its prompt); otherwise the prompt goes after the
+// first guard-and-blank-line as literal text (CRW-1121; the oracle's String.replace read the prompt's $$, $&, $` and $' as
+// replacement patterns). The oracle's empty-guard branches (an existing guard marker's block, else a prefix) are ported, but the
+// guard is never empty.
 func spawnHookRoutePrompt(message, guard, prompt string, items, v2 bool) string {
 	switch {
-	case items && message == guard:
+	case message == guard:
 		return guard + "\n\n" + prompt
 	case guard != "":
-		return spawnHookRouteReplace(message, guard+"\n\n", guard+"\n\n"+prompt+"\n\n")
+		return strings.Replace(message, guard+"\n\n", guard+"\n\n"+prompt+"\n\n", 1)
 	}
 	marker := ScopeGuardMarker
 	if v2 {
@@ -457,37 +465,6 @@ func spawnHookRoutePrompt(message, guard, prompt string, items, v2 bool) string 
 		return message[:at+end] + "\n\n" + prompt + message[at+end:]
 	}
 	return message + "\n\n" + prompt
-}
-
-// spawnHookRouteReplace is s.replace(search, replacement) for a string search: the first occurrence only, with the replacement's $$,
-// $&, $` and $' patterns expanded. A $n or $<name> stays as written: a string search has no captures.
-func spawnHookRouteReplace(s, search, replacement string) string {
-	at := strings.Index(s, search)
-	if at < 0 {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(replacement); i++ {
-		if replacement[i] != '$' || i+1 == len(replacement) {
-			b.WriteByte(replacement[i])
-			continue
-		}
-		switch replacement[i+1] {
-		case '$':
-			b.WriteByte('$')
-		case '&':
-			b.WriteString(search)
-		case '`':
-			b.WriteString(s[:at])
-		case '\'':
-			b.WriteString(s[at+len(search):])
-		default:
-			b.WriteByte('$')
-			continue
-		}
-		i++
-	}
-	return s[:at] + b.String() + s[at+len(search):]
 }
 
 // spawnHookRouteItems is :1053-1064: the first text item takes the message (or a new text item goes first when there is none), and the
