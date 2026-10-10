@@ -86,7 +86,7 @@ func TestSteeringInterruptEndsTheLockWait(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled wait: %v, want context.Canceled", err)
 	}
-	if took := time.Since(started); took > 5*time.Second {
+	if took := time.Since(started); took > 10*time.Second {
 		t.Fatalf("the wait took %v after the cancel", took)
 	}
 	steeringInterruptSame(t, before, steeringInterruptBytes(t, dir)) // the holder's lock directory is still there

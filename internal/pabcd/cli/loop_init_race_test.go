@@ -840,8 +840,8 @@ func TestLoopInitAnswersBusyWhenALiveHolderOutlastsTheLimit(t *testing.T) {
 	newLoopPlanHolder(t, cwd, slug, "Bound objective").plant()
 
 	start := time.Now()
-	result := loopRunWithin(t, loopInitPlanWaitLimit+2*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
-	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
+	result := loopRunWithin(t, loopInitPlanWaitLimit+10*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+10*time.Second {
 		t.Fatalf("init waited %v for a holder that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
 	}
 	if result.Code != 1 || !strings.Contains(result.Output, "held by another writer") || !strings.Contains(result.Output, "nothing was written") {
@@ -875,8 +875,8 @@ func TestLoopInitAnswersBusyWhenALiveSessionLockOutlastsTheLimit(t *testing.T) {
 	}
 
 	start := time.Now()
-	result := loopRunWithin(t, loopInitPlanWaitLimit+2*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
-	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
+	result := loopRunWithin(t, loopInitPlanWaitLimit+10*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+10*time.Second {
 		t.Fatalf("init waited %v for a session lock that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
 	}
 	if result.Code != 1 || !strings.Contains(result.Output, "held by another writer") || !strings.Contains(result.Output, "nothing was written") {

@@ -291,7 +291,10 @@ func TestCapRead_a_first_parent_whose_rows_vanish_costs_no_one_a_second_turn(t *
 // delivery direction the contract defines, but they are not events the relay produced, so an attempt
 // on one is refused, which is the same cost before and after the change. The number of rows the tick
 // reads is the measurement; the time is only bounded.
-// sequential: asserts a three-second wall-clock bound on a Deliver tick, which a host running the package's tests in parallel can exceed.
+// The row count is the property: a tick that scanned the backlog reads more than three rows. The time bound is a
+// regression ceiling only: a correct tick that read two rows took 4.03 s on a host at load 30-40 (CRW-1177), so a
+// three-second bound failed a correct tick, and thirty seconds leaves room for that load.
+// sequential: asserts a thirty-second wall-clock bound on a Deliver tick, which a host running the package's tests in parallel can exceed.
 func TestCapRead_a_backlog_of_ten_thousand_rows_is_not_read_by_the_tick(t *testing.T) {
 	const backlog = 10000
 	w := newScaleWorld(t, 2)
@@ -309,7 +312,7 @@ func TestCapRead_a_backlog_of_ten_thousand_rows_is_not_read_by_the_tick(t *testi
 	if most := 3; seen.rows > most {
 		t.Errorf("the tick read %d of %d due rows, want at most %d", seen.rows, backlog, most)
 	}
-	if elapsed > 3*time.Second {
+	if elapsed > 30*time.Second {
 		t.Errorf("a tick over %d due rows took %v", backlog, elapsed)
 	}
 }

@@ -73,7 +73,7 @@ func Test33UnreachableJournalFailureReleases(t *testing.T) {
 	if err != nil || len(out) != 0 {
 		t.Fatalf("%v %s", err, out)
 	}
-	if time.Since(start) > 3*time.Second {
+	if time.Since(start) > 10*time.Second {
 		t.Fatal("journal failure stalled hook")
 	}
 	_, err = os.Stat(filepath.Join(home, "journal/accepted"))

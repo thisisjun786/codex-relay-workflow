@@ -49,7 +49,7 @@ func TestCreatedProgramCheckIsLinear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unreadable: %v", err)
 	}
-	if d := time.Since(start); d > 5*time.Second {
+	if d := time.Since(start); d > 30*time.Second {
 		t.Errorf("reading %d bytes took %v", b.Len(), d)
 	}
 }

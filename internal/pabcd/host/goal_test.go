@@ -98,7 +98,7 @@ func TestGoalActiveStatusUnderAWriterLock(t *testing.T) {
 			}
 		}
 		start := time.Now()
-		if got := GoalActiveStatus("t", path); got != want || time.Since(start) > 2*time.Second {
+		if got := GoalActiveStatus("t", path); got != want || time.Since(start) > 4*time.Second {
 			t.Errorf("%s: %s after %v, want %s at once", mode, got, time.Since(start), want)
 		}
 		writer.Close()

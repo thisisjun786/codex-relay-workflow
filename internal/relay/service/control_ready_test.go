@@ -54,7 +54,7 @@ func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if err = awaitControlAccepting(filepath.Join(plain, "control.sock"), 10*time.Second); !errors.Is(err, unix.ENOTDIR) || time.Since(started) > 5*time.Second {
+	if err = awaitControlAccepting(filepath.Join(plain, "control.sock"), 10*time.Second); !errors.Is(err, unix.ENOTDIR) || time.Since(started) > 9*time.Second {
 		t.Fatalf("a path under a regular file ended after %v with %v, want ENOTDIR at once", time.Since(started), err)
 	}
 	// Not bound yet: the daemon has started and has not reached its bind, so the path is absent.

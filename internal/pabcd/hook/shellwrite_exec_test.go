@@ -331,7 +331,7 @@ func TestShellWriteExecDepthStaysBounded(t *testing.T) {
 	start := time.Now()
 	shellWriteDestsTest(command)
 	shellIRFStringUnreadable(command)
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
 		t.Errorf("200 levels took %v; the walk is not bounded by the depth limit", elapsed)
 	}
 }

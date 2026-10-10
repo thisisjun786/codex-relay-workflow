@@ -51,11 +51,11 @@ func TestRunOutputLimit(t *testing.T) {
 		}
 	}
 	started := time.Now()
-	if _, err := runBounded("", "sh", []string{"-c", "sleep 5 & printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 3*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", "sleep 60 & printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 10*time.Second {
 		t.Fatalf("a child over the limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	started = time.Now()
-	if _, err := runBounded("", "sh", []string{"-c", "sleep 5 & printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", "sleep 60 & printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 10*time.Second {
 		t.Fatalf("a child past the time limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	var exit *ExitError

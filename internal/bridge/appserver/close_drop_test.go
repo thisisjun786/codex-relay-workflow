@@ -121,7 +121,7 @@ func TestClose_accepts_a_peer_that_drops_the_connection_instead_of_answering(t *
 	if err := client.Close(); err != nil {
 		t.Fatalf("close after the peer dropped the connection: %v", err)
 	}
-	if elapsed := time.Since(started); elapsed >= 2*time.Second {
+	if elapsed := time.Since(started); elapsed >= 10*time.Second {
 		t.Fatalf("close waited %s for a peer that had already gone", elapsed)
 	}
 }

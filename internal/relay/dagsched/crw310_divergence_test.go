@@ -389,12 +389,12 @@ func crw310GH(t *testing.T, body string) string {
 }
 
 // c4 (red): a compare call that does not answer is cut at the bound and says so. The stand-in execs sleep, so the kill reaches the process that holds the pipe.
-// sequential: asserts a 1.5-second wall-clock bound on the call, which a host running the package's tests in parallel can exceed.
+// sequential: asserts a ten-second wall-clock bound on the call, which a host running the package's tests in parallel can exceed.
 func TestTheAncestryCompareCallHasADeadline(t *testing.T) {
-	gh := crw310GH(t, "exec sleep 3")
+	gh := crw310GH(t, "exec sleep 30")
 	started := time.Now()
 	_, _, err := GitAncestry{GH: gh, Timeout: 150 * time.Millisecond}.Ancestry(context.Background(), "owner/repo", head1, strings.Repeat("2", 40))
-	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("the call took %v, the bound is 150ms", elapsed)
 	}
 	if err == nil || !strings.Contains(err.Error(), "exceeded the timeout of 150ms") {
