@@ -26,6 +26,9 @@ import (
 
 const sigkillID = "conc"
 
+// sigkillUnreadable is the table's phase for a state file that a strict read judges unreadable (an empty file).
+const sigkillUnreadable state.Phase = "unreadable"
+
 // TestSigkillLeftoverChild is the child of the tests below: it runs one step and kills itself.
 func TestSigkillLeftoverChild(t *testing.T) {
 	step, cwd := os.Getenv("CRW_SIGKILL_STEP"), os.Getenv("CRW_SIGKILL_CWD")
@@ -54,6 +57,9 @@ var sigkillLeftovers = []struct {
 	{"ensure-after-link", "", []string{"conc.json", "conc.json.<pid>.<uuid>.tmp"}, state.PhaseIdle},
 	{"ensure-fallback-sync", "", []string{"conc.json.<pid>.<uuid>.tmp", "conc.json.<pid>.<uuid>.tmp"}, ""},
 	{"ensure-fallback-publish", "", []string{"conc.json.<pid>.<uuid>.tmp", "conc.json.<pid>.<uuid>.tmp"}, ""},
+	// the one write whose final path is not atomic (the best-effort limit of write.go publishWithoutLink): the file is created, then written
+	{"ensure-inplace-write", "", []string{"conc.json", "conc.json.<pid>.<uuid>.tmp"}, sigkillUnreadable},
+	{"ensure-inplace-sync", "", []string{"conc.json", "conc.json.<pid>.<uuid>.tmp"}, state.PhaseIdle},
 }
 
 var sigkillPidUUID = regexp.MustCompile(`\.[0-9]+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$`)
@@ -133,7 +139,11 @@ func TestSigkillLeftoverNamesAndNextAcquirer(t *testing.T) {
 			if !slices.Equal(normal, row.names) { // ReadDir sorts by name
 				t.Fatalf("%s leaves %v, the table says %v", row.step, normal, row.names)
 			}
-			if row.phase != "" {
+			if row.phase == sigkillUnreadable {
+				if _, unreadable := state.ReadStateStrict(cwd, sigkillID); !unreadable {
+					t.Fatalf("%s: the state file reads as whole, the table says unreadable", row.step)
+				}
+			} else if row.phase != "" {
 				got, unreadable := state.ReadStateStrict(cwd, sigkillID)
 				if unreadable || got.Phase != row.phase {
 					t.Fatalf("%s: state phase %q unreadable=%v, want %q", row.step, got.Phase, unreadable, row.phase)
@@ -208,5 +218,38 @@ func TestSigkillLeftoverIsRemovedByResetAndTheLockByTheNextAcquirer(t *testing.T
 				t.Fatalf("%s: the directory is not clean after reset and one acquirer: %v", row.step, names)
 			}
 		})
+	}
+}
+
+// The in-place fallback leaves a state file that is not whole (the best-effort limit): no later EnsureState repairs it and a strict
+// read keeps calling it unreadable, a lock holder's write replaces it, and `crw pabcd reset --state` removes it with the temp file.
+func TestSigkillLeftoverInPlaceStateFileIsNotRepairedByEnsureButByWriteAndReset(t *testing.T) {
+	for i, row := range sigkillLeftovers {
+		if row.step != "ensure-inplace-write" {
+			continue
+		}
+		cwd, _ := sigkillScene(t, i)
+		if raw, err := os.ReadFile(state.StatePath(cwd, sigkillID)); err != nil || len(raw) != 0 {
+			t.Fatalf("the killed in-place create left %d bytes, err %v; want an empty file", len(raw), err)
+		}
+		if created, err := state.EnsureState(cwd, sigkillID); created || err != nil {
+			t.Fatalf("EnsureState over the empty file: created %v err %v", created, err)
+		}
+		if _, unreadable := state.ReadStateStrict(cwd, sigkillID); !unreadable {
+			t.Fatal("EnsureState repaired the empty state file; the allowed leftover and the table say it does not")
+		}
+		result, err := reset.RunReset(cwd, reset.State)
+		if err != nil || len(result.Removed) != 2 {
+			t.Fatalf("reset: removed %v err %v, want the state file and the temp file", result.Removed, err)
+		}
+		if names := sigkillList(t, cwd); len(names) != 0 {
+			t.Fatalf("reset left %v", names)
+		}
+		if created, err := state.EnsureState(cwd, sigkillID); !created || err != nil {
+			t.Fatalf("EnsureState after reset: created %v err %v", created, err)
+		}
+		if _, unreadable := state.ReadStateStrict(cwd, sigkillID); unreadable {
+			t.Fatal("the state file is unreadable after reset and EnsureState")
+		}
 	}
 }

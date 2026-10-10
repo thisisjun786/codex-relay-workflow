@@ -12,6 +12,7 @@ var SigkillSteps = []string{
 	"lock-stage-record", "lock-before-publish", "lock-held", "lock-takeover-record",
 	"write-before-sync", "write-before-rename", "write-after-rename",
 	"ensure-before-link", "ensure-after-link", "ensure-fallback-sync", "ensure-fallback-publish",
+	"ensure-inplace-write", "ensure-inplace-sync",
 }
 
 // SigkillChild is the body of the child process of the SIGKILL leftover test: it runs the session state write up to step and then
@@ -75,6 +76,21 @@ func SigkillChild(step, cwd string) {
 		}
 		_, _ = ensureStateWith(cwd, id, now, func(string, string) error { return syscall.EPERM }, func(s ensureStep, _ string) error {
 			if s == want {
+				die()
+			}
+			return nil
+		})
+	case "ensure-inplace-write", "ensure-inplace-sync": // no hard links and no no-replace rename: the final path is created in place, then the kill
+		want := stepWrite // before the data: the final path is an empty file
+		if step == "ensure-inplace-sync" {
+			want = stepSync // after the data is written, before the fsync
+		}
+		final := StatePath(cwd, id)
+		_, _ = ensureStateWith(cwd, id, now, func(string, string) error { return syscall.EPERM }, func(s ensureStep, path string) error {
+			switch {
+			case s == stepPublish:
+				return syscall.ENOSYS // the stand-in for the no-replace rename: unsupported, so the file is created in place
+			case s == want && path == final:
 				die()
 			}
 			return nil
