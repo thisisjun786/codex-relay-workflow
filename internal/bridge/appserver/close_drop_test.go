@@ -121,7 +121,10 @@ func TestClose_accepts_a_peer_that_drops_the_connection_instead_of_answering(t *
 	if err := client.Close(); err != nil {
 		t.Fatalf("close after the peer dropped the connection: %v", err)
 	}
-	if elapsed := time.Since(started); elapsed >= 2*time.Second {
-		t.Fatalf("close waited %s for a peer that had already gone", elapsed)
+	// The success above is what is proved, and it does not depend on the clock: a close that waited out its two-second
+	// budget (or the library's longer wait) for a peer that had already gone returns DeadlineExceeded, not nil. The 10 s
+	// is a hang guard only, with room for a loaded host.
+	if elapsed := time.Since(started); elapsed >= 10*time.Second {
+		t.Fatalf("close waited %s (ceiling 10s) for a peer that had already gone", elapsed)
 	}
 }

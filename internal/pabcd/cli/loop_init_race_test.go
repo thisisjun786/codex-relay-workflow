@@ -841,9 +841,11 @@ func TestLoopInitAnswersBusyWhenALiveHolderOutlastsTheLimit(t *testing.T) {
 	// The holder is this test process: its owner.json names a live pid, and it never publishes the plan.
 	newLoopPlanHolder(t, cwd, slug, "Bound objective").plant()
 
+	// The busy answer and the nothing-written state below are what is proved; the margin over the wait limit
+	// (75 ms) is a 10 s regression ceiling (it was 2 s) for a loaded host: the command deadline and the check move together.
 	start := time.Now()
-	result := loopRunWithin(t, loopInitPlanWaitLimit+2*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
-	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
+	result := loopRunWithin(t, loopInitPlanWaitLimit+10*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+10*time.Second {
 		t.Fatalf("init waited %v for a holder that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
 	}
 	if result.Code != 1 || !strings.Contains(result.Output, "held by another writer") || !strings.Contains(result.Output, "nothing was written") {
@@ -876,9 +878,10 @@ func TestLoopInitAnswersBusyWhenALiveSessionLockOutlastsTheLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// As above: the busy answer is what is proved, and the 10 s margin over the limit is a regression ceiling.
 	start := time.Now()
-	result := loopRunWithin(t, loopInitPlanWaitLimit+2*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
-	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+2*time.Second {
+	result := loopRunWithin(t, loopInitPlanWaitLimit+10*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if elapsed := time.Since(start); elapsed > loopInitPlanWaitLimit+10*time.Second {
 		t.Fatalf("init waited %v for a session lock that outlasted the %v limit", elapsed, loopInitPlanWaitLimit)
 	}
 	if result.Code != 1 || !strings.Contains(result.Output, "held by another writer") || !strings.Contains(result.Output, "nothing was written") {

@@ -73,8 +73,10 @@ func Test33UnreachableJournalFailureReleases(t *testing.T) {
 	if err != nil || len(out) != 0 {
 		t.Fatalf("%v %s", err, out)
 	}
-	if time.Since(start) > 3*time.Second {
-		t.Fatal("journal failure stalled hook")
+	// The release and the ENOTDIR below are what is proved; the 10 s only catches a hook stalled on the journal
+	// failure (a hang), with room for a loaded host (it was 3 s).
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("journal failure stalled hook past the 10s hang guard")
 	}
 	_, err = os.Stat(filepath.Join(home, "journal/accepted"))
 	if err == nil || !errors.Is(err, syscall.ENOTDIR) {

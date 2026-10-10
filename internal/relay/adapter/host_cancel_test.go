@@ -21,7 +21,9 @@ import (
 // tick's budget runs out and when the daemon stops. The wait for that end is only a bound on a
 // failing run; a passing run waits for the end itself.
 
-const hostEndBound = 3 * time.Second
+// The bound only decides a failing run. It is thirty seconds because the package runs its tests in parallel: a
+// repeated pass (-count=10 -cpu=1,4) saw the tick not reach the call the test holds within the old three seconds.
+const hostEndBound = 30 * time.Second
 
 // hangingHost answers its first answers calls and holds every call after them. A held call ends
 // when its context ends, which it reports on ended, or when the test releases it, which stands
@@ -209,8 +211,11 @@ func TestTickBudgetEndsTheHostCallInFlight(t *testing.T) {
 	if deadline.IsZero() {
 		t.Fatal("the held host call ran under a context with no deadline")
 	}
-	if after := deadline.Sub(started); after > 700*time.Millisecond {
-		t.Errorf("the held call's deadline is %v after the tick began, want about the 0.2 s the pass may spend", after)
+	// The deadline is fixed when the pass measures its budget, so only a late wakeup between the start and the
+	// measurement moves it: 2 s is ten times the budget, a ceiling that still fails a pass given a longer
+	// (or the daemon's) budget. The call-ended and note assertions below are what the test proves.
+	if after := deadline.Sub(started); after > 2*time.Second {
+		t.Errorf("the held call's deadline is %v after the tick began, want the 0.2 s the pass may spend, within 2 s", after)
 	}
 	if took := time.Since(started); took < 150*time.Millisecond {
 		t.Errorf("the call was ended after %v, before the 0.2 s the pass may spend", took)

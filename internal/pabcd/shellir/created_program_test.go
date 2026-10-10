@@ -39,17 +39,36 @@ func TestProgramCreatedByTheText(t *testing.T) {
 }
 
 // TestCreatedProgramCheckIsLinear: a text of thousands of redirections and commands is read in time proportional to its size.
+//
+// The linearity is asserted on the work, not on the clock, so a loaded host cannot move it: the allocations of one
+// reading are counted (testing.AllocsPerRun is deterministic) for the text at the size limit and at a quarter of it, and
+// four times the text may cost at most five times the allocations. A linear read costs exactly four times (12962,
+// 51974 and 207954 allocations at 4, 16 and 64 KB); a read that rescans the records for each program word, which is
+// what the check was before CRW-1028 and what it does with the created set rebuilt on each call, costs fifteen times
+// (940270 and 14386934 at 16 and 64 KB). The time (30 s) is only the hang guard, and the text must be read whatever the cost.
 func TestCreatedProgramCheckIsLinear(t *testing.T) {
-	var b strings.Builder
-	for b.Len() < MaxCommandBytes-32 {
-		b.WriteString("echo a > f; ./g; ")
+	text := func(size int) string {
+		var b strings.Builder
+		for b.Len() < size-32 {
+			b.WriteString("echo a > f; ./g; ")
+		}
+		return b.String()
 	}
+	full, quarter := text(MaxCommandBytes), text(MaxCommandBytes/4)
+	cost := func(command string) float64 {
+		return testing.AllocsPerRun(3, func() {
+			if _, err := Analyze(command, "/work"); err != nil {
+				t.Fatalf("unreadable: %v", err)
+			}
+		})
+	}
+	small := cost(quarter)
 	start := time.Now()
-	_, err := Analyze(b.String(), "/work")
-	if err != nil {
-		t.Fatalf("unreadable: %v", err)
+	large := cost(full)
+	if d := time.Since(start); d > 30*time.Second {
+		t.Errorf("reading %d bytes took %v, past the hang guard", len(full), d)
 	}
-	if d := time.Since(start); d > 5*time.Second {
-		t.Errorf("reading %d bytes took %v", b.Len(), d)
+	if large > 5*small {
+		t.Errorf("reading %d bytes cost %.0f allocations and %d bytes %.0f: more than 5 times as much for 4 times the text", len(full), large, len(quarter), small)
 	}
 }

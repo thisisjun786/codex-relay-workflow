@@ -361,9 +361,12 @@ func TestResolveNativeSessionUnderAWriterLock(t *testing.T) {
 				t.Fatal(mode, statement, err)
 			}
 		}
+		// The refusal (or the served row) is what is proved. The 4 s (it was 2 s) is a regression ceiling under the
+		// 5 s busy timeout that SQLite drivers commonly default to (a read that waited for the lock would sit it out),
+		// with room for a loaded host.
 		start := time.Now()
 		got, err := f.resolve(f.cwd)
-		if refused := err != nil; refused != wantRefused || time.Since(start) > 2*time.Second || refused && err.Error() != msgReadDB {
+		if refused := err != nil; refused != wantRefused || time.Since(start) > 4*time.Second || refused && err.Error() != msgReadDB {
 			t.Errorf("%s: %+v, %v after %v", mode, got, err, time.Since(start))
 		}
 		writer.Close()

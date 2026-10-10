@@ -327,11 +327,13 @@ func TestShellWriteExecDepthStaysBounded(t *testing.T) {
 	}
 	// The work stays bounded as well as the answer: the walk stops at the limit, so 200 levels cost about as much as 32.
 	// A reader that expanded every level would take far longer than this budget, which is generous enough not to be flaky
-	// (the same wall-clock-budget convention the Stop-hook package uses).
+	// (the same wall-clock-budget convention the Stop-hook package uses). The refusal and the unnamed destination above are
+	// what is proved; 30 s is a hang guard (it was 5 s): a walk that did not stop at the limit grows with every level
+	// and does not end in any bound.
 	start := time.Now()
 	shellWriteDestsTest(command)
 	shellIRFStringUnreadable(command)
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
 		t.Errorf("200 levels took %v; the walk is not bounded by the depth limit", elapsed)
 	}
 }

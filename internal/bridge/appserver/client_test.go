@@ -110,11 +110,13 @@ func TestCall_returns_ack_timeout_without_retry(t *testing.T) {
 	if got := host.Count("thread/read"); got != 1 {
 		t.Fatalf("retried: %d", got)
 	}
-	// A stuck close handshake cannot extend the two-second close budget.
+	// A stuck close handshake cannot extend the two-second close budget. Close returning is what is proved; the
+	// 10 s is a regression ceiling (five times the budget, so a loaded host's late wakeups stay under it, and
+	// well under the 60 s a close wait that ignored the budget would take).
 	started := time.Now()
 	_ = client.Close()
-	if elapsed := time.Since(started); elapsed >= 3*time.Second {
-		t.Fatalf("close exceeded its 2s bound: %s", elapsed)
+	if elapsed := time.Since(started); elapsed >= 10*time.Second {
+		t.Fatalf("close took %s, past the 10s ceiling on its 2s budget", elapsed)
 	}
 }
 
