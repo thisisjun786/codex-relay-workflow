@@ -963,8 +963,10 @@ const (
 )
 
 // localEngineSources are the paths the engine's plan is compiled from: the engine package, the command
-// that runs it and the Makefile target that starts it (CRW-1025).
-var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile"}
+// that runs it and the Makefile target that starts it (CRW-1025), and the configuration package whose tool
+// roots the engine applies to every step's environment (CRW-958: crwconfig.LoadToolRoots and
+// ToolRoots.Apply execute from the caller's compiled source).
+var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile", "internal/crwconfig"}
 
 // localCompiledExt are the extensions of files the Go toolchain compiles or links into a package, so an
 // ignored file with one of them under the engine paths is engine source whatever git ignores.
