@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -243,11 +244,26 @@ const hitStoreBusyMs = 1000
 // resets derived rows: reading or counting the history is not a migration of the search index, which
 // stays as it is until a writer that ingests rebuilds it.
 func openHitCountStore(path string) (*RwDb, error) {
+	return openHitCountStoreBusy(path, hitStoreBusyMs)
+}
+
+// hitStoreBusyWithin is the lock wait the history store may use before until: its own bound, or what is
+// left of the time (rounded up to the millisecond), whichever is less; false when nothing is left.
+func hitStoreBusyWithin(until time.Time) (int, bool) {
+	left := time.Until(until)
+	if left <= 0 {
+		return 0, false
+	}
+	return min(hitStoreBusyMs, int((left+time.Millisecond-1)/time.Millisecond)), true
+}
+
+// openHitCountStoreBusy is openHitCountStore with the lock wait of the connection set to busyMs.
+func openHitCountStoreBusy(path string, busyMs int) (*RwDb, error) {
 	db, err := openDbReadWrite(path)
 	if err != nil {
 		return nil, err
 	}
-	if err = db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", hitStoreBusyMs)); err != nil {
+	if err = db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", busyMs)); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

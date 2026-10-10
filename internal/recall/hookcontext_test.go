@@ -359,7 +359,7 @@ func TestHookContextDefaultOwners(t *testing.T) {
 	if !reflect.DeepEqual(result.Refs, []string{"thread:t"}) {
 		t.Fatal("rendered refs", result.Refs)
 	}
-	recallHookCountHits(deps, result.Refs) // After the answer was written.
+	recallHookCountHits(deps, result.Refs, time.Time{}) // After the answer was written.
 	store, err = deps.OpenHitCounts()
 	if err != nil || store == nil {
 		t.Fatal("temporary sidecar unavailable", err)

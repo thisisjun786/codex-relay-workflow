@@ -345,6 +345,7 @@ func RunHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	}
 }
 func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Writer, env host.LookupEnv, cwd string, sessionStart RecallHookSessionStart) (code int) {
+	deadline := recallHookDeadline(ctx, time.Now())
 	defer func() {
 		if recover() != nil {
 			code = 0
@@ -409,6 +410,9 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 		}
 		src, _ := p["source"].(string)
 		deps = DefaultRecallDeps(env)
+		// Every wait of the history store, while the entries are chosen and when they are counted, ends
+		// with the hook's own time: a locked index cannot hold the hook past its timeout.
+		deps.OpenHitCounts = func() (HitCountStore, error) { return hookContextOpenSidecarHitCountsUntil(env, deadline), nil }
 		deps.Rendered = func(refs []string) { rendered = refs }
 		if invalidCwd {
 			// The oracle catches basename's type error before any context reader runs.
@@ -427,7 +431,7 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 		// shows nothing and counts nothing; one that succeeded is not proof the model read it, which
 		// the next start's ordinary repeat penalty already accepts.
 		if _, err := io.WriteString(out, answer); err == nil && len(rendered) > 0 {
-			recallHookCountHits(deps, rendered)
+			recallHookCountHits(deps, rendered, deadline)
 		}
 	}
 	return 0
@@ -436,8 +440,20 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 // recallHookCountHits raises the history of the rendered refs in one transaction, retrying a failed
 // attempt under the same event identity so that an attempt whose outcome is unknown cannot count twice.
 // A history that cannot be written changes nothing about the answer, which is already out.
-func recallHookCountHits(deps RecallContextDeps, refs []string) {
+//
+// Counting is best effort inside two bounds: recallHookCountBudget from now, and hookDeadline, the end of
+// the hook's own time as the hook started it (zero: none). No attempt, the first included, starts once
+// the bound is passed, and a store that can limit its waits (hitCountLimiter) is held to the same bound,
+// so a write lock held by another process cannot carry the hook past its timeout.
+func recallHookCountHits(deps RecallContextDeps, refs []string, hookDeadline time.Time) {
 	if deps.OpenHitCounts == nil {
+		return
+	}
+	until := time.Now().Add(recallHookCountBudget)
+	if !hookDeadline.IsZero() && hookDeadline.Before(until) {
+		until = hookDeadline
+	}
+	if !time.Now().Before(until) {
 		return
 	}
 	var id [16]byte
@@ -450,16 +466,35 @@ func recallHookCountHits(deps RecallContextDeps, refs []string) {
 		return
 	}
 	defer func() { _ = store.Close() }()
-	// The hook has a deadline of its own and the answer is already out: counting is best effort within
-	// a short budget. A retry starts only while the budget lasts, and each attempt waits for the write
-	// lock no longer than the store's busy bound, so the tail after the answer stays a few seconds at most.
-	deadline := time.Now().Add(recallHookCountBudget)
-	for attempt := 0; attempt < 3 && (attempt == 0 || time.Now().Before(deadline)); attempt++ {
+	if limiter, ok := store.(hitCountLimiter); ok {
+		limiter.LimitTo(until)
+	}
+	for attempt := 0; attempt < 3 && time.Now().Before(until); attempt++ {
 		if store.Bump(event, refs) == nil {
 			return
 		}
 	}
 }
 
+// hitCountLimiter is implemented by a store whose waits can be held to a point in time.
+type hitCountLimiter interface{ LimitTo(until time.Time) }
+
 // recallHookCountBudget bounds the time the hook spends counting its rendered entries after the answer.
 var recallHookCountBudget = 2 * time.Second
+
+// recallHookTimeout is the timeout of the hook declarations in plugins/crw/wiring/hooks that run this
+// code (session-start and post-compact, 10 s); recallHookReserve is what is left to the process to exit.
+var (
+	recallHookTimeout = 10 * time.Second
+	recallHookReserve = 500 * time.Millisecond
+)
+
+// recallHookDeadline is the last moment the hook may still wait for anything: the host's timeout counted
+// from the start of the hook, or the context's own deadline when that is earlier, less the reserve.
+func recallHookDeadline(ctx context.Context, started time.Time) time.Time {
+	deadline := started.Add(recallHookTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	return deadline.Add(-recallHookReserve)
+}

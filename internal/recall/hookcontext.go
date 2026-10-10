@@ -2,6 +2,7 @@
 package recall
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,20 +124,53 @@ func hookContextHome(env host.LookupEnv) (string, error) {
 	})
 }
 
-type hookContextSidecarStore struct{ db *RwDb }
+type hookContextSidecarStore struct {
+	db    *RwDb
+	until time.Time // zero: no bound beyond the store's own busy wait
+}
+
+var errHookOutOfTime = errors.New("recall: the hook's time is used up")
+
+// LimitTo holds every later wait of the store to the point in time; an earlier bound stays.
+func (s *hookContextSidecarStore) LimitTo(until time.Time) {
+	if s.until.IsZero() || until.Before(s.until) {
+		s.until = until
+	}
+}
+
+// withinTime sets the lock wait of the connection to what the bound leaves, at most the store's own
+// bound, and reports false when nothing is left.
+func (s *hookContextSidecarStore) withinTime() bool {
+	if s.until.IsZero() {
+		return true
+	}
+	ms, ok := hitStoreBusyWithin(s.until)
+	return ok && s.db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", ms)) == nil
+}
 
 func (s *hookContextSidecarStore) Read(refs []string) (map[string]float64, error) {
 	return readHitCounts(s.db, refs), nil
 }
 func (s *hookContextSidecarStore) Bump(event string, refs []string) error {
+	if !s.withinTime() {
+		return errHookOutOfTime
+	}
 	if err := recordHitEvent(s.db, event, refs, time.Now().UTC().Format("2006-01-02T15:04:05.000Z")); err != nil {
 		return err
 	}
-	forgetHitEvent(s.db, event) // Counted: nothing retries it now.
+	if s.withinTime() {
+		forgetHitEvent(s.db, event) // Counted: nothing retries it now. With no time left the age bound removes it.
+	}
 	return nil
 }
 func (s *hookContextSidecarStore) Close() error { return s.db.Close() }
 func hookContextOpenSidecarHitCounts(env host.LookupEnv) HitCountStore {
+	return hookContextOpenSidecarHitCountsUntil(env, time.Time{})
+}
+
+// hookContextOpenSidecarHitCountsUntil opens the history store with its waits held to until (zero: no
+// bound); with no time left there is no store.
+func hookContextOpenSidecarHitCountsUntil(env host.LookupEnv, until time.Time) HitCountStore {
 	path, err := indexPath(env)
 	if err != nil {
 		return nil
@@ -144,11 +178,18 @@ func hookContextOpenSidecarHitCounts(env host.LookupEnv) HitCountStore {
 	if _, err = os.Stat(path); err != nil {
 		return nil
 	}
-	db, err := openHitCountStore(path)
+	busy := hitStoreBusyMs
+	if !until.IsZero() {
+		var ok bool
+		if busy, ok = hitStoreBusyWithin(until); !ok {
+			return nil
+		}
+	}
+	db, err := openHitCountStoreBusy(path, busy)
 	if err != nil {
 		return nil
 	}
-	return &hookContextSidecarStore{db}
+	return &hookContextSidecarStore{db: db, until: until}
 }
 
 // Retain the cwd reader's split code unit through JSON quoting, rather than
