@@ -116,6 +116,41 @@ func tomlFormsCheck(t *testing.T, step string, before map[string]string, after m
 	}
 }
 
+// tomlFormsValue answers the decoded value of the key path names in content, and whether it is there.
+func tomlFormsValue(t *testing.T, content string, path []string) (any, bool) {
+	t.Helper()
+	doc, err := tomledit.Decode(content)
+	if err != nil {
+		t.Fatalf("config.toml does not decode: %v\n%s", err, content)
+	}
+	var cur any = doc
+	for _, part := range path {
+		table, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = table[part]; !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// tomlFormsWant asserts that step left the key path names at want (present), or absent when present is false.
+func tomlFormsWant(t *testing.T, step, content string, path []string, want any, present bool) {
+	t.Helper()
+	got, ok := tomlFormsValue(t, content, path)
+	if ok != present || present && !tomledit.Equal(got, want) {
+		t.Fatalf("%s left %s = %v (present %t), want %v (present %t):\n%s", step, strings.Join(path, "."), got, ok, want, present, content)
+	}
+}
+
+// tomlFormsFlags are the four flags the fake Codex enables and disables.
+var tomlFormsFlags = tomlFormsOwned[:4]
+
+// tomlFormsKey is the managed key.
+var tomlFormsKey = tomlFormsOwned[4]
+
 func TestFeaturesAndConfigCommandsKeepEveryTomlFormValid(t *testing.T) {
 	t.Parallel()
 	for name, content := range tomlFormsCases() {
@@ -127,20 +162,49 @@ func TestFeaturesAndConfigCommandsKeepEveryTomlFormValid(t *testing.T) {
 				code := Main(context.Background(), append([]string{"config"}, args...), h.env, &out, &err)
 				return code, out.String(), err.String()
 			}
+			// What the user had before crw: the managed key's value (or its absence) and which flags were on.
+			origKey, hadKey := tomlFormsValue(t, content, tomlFormsKey)
+			origOn := map[string]bool{}
+			for _, flag := range tomlFormsFlags {
+				v, _ := tomlFormsValue(t, content, flag)
+				origOn[flag[1]] = v == true
+			}
 			before := tomlFormsSnapshot(t, h.home)
 			code, out, errOut := h.run("enable")
 			tomlFormsCheck(t, "enable", before, tomlFormsSnapshot(t, h.home), code, out, errOut)
 			if code != 0 {
 				return
 			}
-			for _, step := range [][]string{{"set", "memories.dedicated_tools", "false"}, {"set", "memories.dedicated_tools", "true"}, {"unset", "memories.dedicated_tools"}} {
+			// Each step applied what it was asked for, not only exited 0 (CRW-1141).
+			for _, flag := range tomlFormsFlags {
+				tomlFormsWant(t, "enable", h.read("config.toml"), flag, true, true)
+			}
+			tomlFormsWant(t, "enable", h.read("config.toml"), tomlFormsKey, true, true)
+			for _, step := range []struct {
+				args    []string
+				want    any
+				present bool
+			}{
+				{[]string{"set", "memories.dedicated_tools", "false"}, false, true},
+				{[]string{"set", "memories.dedicated_tools", "true"}, true, true},
+				{[]string{"unset", "memories.dedicated_tools"}, origKey, hadKey},
+			} {
+				name := strings.Join(step.args, " ")
 				before = tomlFormsSnapshot(t, h.home)
-				code, out, errOut = config(step...)
-				tomlFormsCheck(t, strings.Join(step, " "), before, tomlFormsSnapshot(t, h.home), code, out, errOut)
+				code, out, errOut = config(step.args...)
+				tomlFormsCheck(t, name, before, tomlFormsSnapshot(t, h.home), code, out, errOut)
+				tomlFormsWant(t, name, h.read("config.toml"), tomlFormsKey, step.want, step.present)
 			}
 			before = tomlFormsSnapshot(t, h.home)
 			code, out, errOut = h.run("disable")
 			tomlFormsCheck(t, "disable", before, tomlFormsSnapshot(t, h.home), code, out, errOut)
+			// The disable turns off the flags crw turned on, leaves the ones the user had on, and leaves the key as the unset left it.
+			for _, flag := range tomlFormsFlags {
+				if v, _ := tomlFormsValue(t, h.read("config.toml"), flag); (v == true) != origOn[flag[1]] {
+					t.Fatalf("disable left %s = %v; the user had it on: %t\n%s", strings.Join(flag, "."), v, origOn[flag[1]], h.read("config.toml"))
+				}
+			}
+			tomlFormsWant(t, "disable", h.read("config.toml"), tomlFormsKey, origKey, hadKey)
 			if strings.Contains(content, "\r\n") && !strings.Contains(h.read("config.toml"), "command = \"npx\"\n[memories]\r\n") {
 				t.Fatalf("mixed line endings were rewritten: %q", h.read("config.toml"))
 			}
