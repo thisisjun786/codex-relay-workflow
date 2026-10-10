@@ -185,10 +185,15 @@ func InstallStubs(c *Case, g Given, install func(name string) error) error {
 	return nil
 }
 
-// mkdirAll is os.MkdirAll with mode 0755 on every directory it creates, whatever the umask.
+// mkdirAll is os.MkdirAll with mode 0755 on every directory it creates, whatever the umask. A
+// directory it would make where a link of the case leads into the account's real home is refused
+// before it is made (CRW-1186).
 func mkdirAll(path string) error {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return nil
+	}
+	if err := homeguard.Refuse(path); err != nil {
+		return err
 	}
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
@@ -203,8 +208,12 @@ func mkdirAll(path string) error {
 // umask is; one that already exists keeps its mode, as with os.WriteFile. The scenario may then run
 // the file (an executable Given.Modes entry or a Step.Write program), so the descriptor is open only
 // under syscall.ForkLock: a fork in that window would inherit it and leave the file unexecutable
-// (ETXTBSY, golang/go#22315).
+// (ETXTBSY, golang/go#22315). A file a link of the case leads into the account's real home is
+// refused before anything is made (CRW-1186).
 func writeFile(path string, data []byte) error {
+	if err := homeguard.Refuse(path); err != nil {
+		return err
+	}
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -232,6 +241,9 @@ const writtenStampLead = time.Hour
 func stampWritten(path string) error {
 	when := time.Now().Add(writtenStampLead)
 	for _, entry := range []string{path, filepath.Dir(path)} {
+		if err := homeguard.Refuse(entry); err != nil {
+			return err
+		}
 		if err := os.Chtimes(entry, when, when); err != nil {
 			return err
 		}
@@ -461,7 +473,9 @@ func casePath(c *Case, rel string) (string, error) {
 
 // setUp writes the given state. What it creates has the modes of umask 022 whatever the process
 // umask is (files and directories are chmod-ed when made, git runs under umask 022); SQLite seeding
-// and the step processes are the runtime's, and so is their umask.
+// and the step processes are the runtime's, and so is their umask. A given link may lead anywhere,
+// so every destination it writes, makes, links, chmod-s, stamps, seeds or makes a repository in is
+// refused when it lands in the account's real home (CRW-1186).
 func setUp(c *Case, g Given, rt Runtime) error {
 	for _, dir := range g.Dirs {
 		path, err := casePath(c, dir)
@@ -500,6 +514,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 			if err != nil {
 				return err
 			}
+			if err := homeguard.Refuse(path); err != nil {
+				return err
+			}
 			if err := mkdirAll(filepath.Dir(path)); err != nil {
 				return err
 			}
@@ -519,7 +536,7 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		if err := mkdirAll(filepath.Dir(path)); err != nil {
 			return err
 		}
-		if err := os.Symlink(c.Expand(g.Symlinks[rel]), path); err != nil {
+		if err := homeguard.Symlink(c.Expand(g.Symlinks[rel]), path); err != nil {
 			return err
 		}
 	}
@@ -530,6 +547,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		}
 		ws, err := casePath(c, dir)
 		if err != nil {
+			return err
+		}
+		if err := homeguard.Refuse(ws); err != nil {
 			return err
 		}
 		if err := mkdirAll(ws); err != nil {
@@ -547,6 +567,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 			if err != nil {
 				return err
 			}
+			if err := homeguard.Refuse(path); err != nil {
+				return err
+			}
 			steps = append(steps, []string{"worktree", "add", "-q", "-b", wt.Branch, path})
 		}
 		for _, args := range steps {
@@ -561,6 +584,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 	for _, rel := range sortedKeys(g.Modes) {
 		path, err := casePath(c, rel)
 		if err != nil {
+			return err
+		}
+		if err := homeguard.Refuse(path); err != nil {
 			return err
 		}
 		if err := os.Chmod(path, fs.FileMode(g.Modes[rel])); err != nil {
@@ -580,6 +606,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		when, err := time.Parse(time.RFC3339, g.Mtimes[rel])
 		if err != nil {
 			return fmt.Errorf("mtime %s: %w", rel, err)
+		}
+		if err := homeguard.Refuse(path); err != nil {
+			return err
 		}
 		if err := os.Chtimes(path, when, when); err != nil {
 			return err

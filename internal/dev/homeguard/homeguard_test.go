@@ -288,3 +288,33 @@ func TestRefuseEndsOnALinkCycle(t *testing.T) {
 		}
 	}
 }
+
+// os.MkdirAll makes each missing parent by the spelling it is given, ".." included, before the
+// destination: MkdirAll refuses a protected parent it would make even where the destination itself
+// lies outside every protected directory, and makes nothing.
+func TestMkdirAllRefusesAProtectedParentItWouldMake(t *testing.T) {
+	home := t.TempDir()
+	defer SetAccountHome(home)()
+	for _, rel := range []string{".codex/new/../../safe", ".crw/a/b/../../../safe", ".local/share/crw-runtime/n/../../../../safe"} {
+		err := MkdirAll(home+"/"+rel, 0o755)
+		var refusal *Error
+		if !errors.As(err, &refusal) {
+			t.Errorf("%s: want a refusal, got %v", rel, err)
+		}
+	}
+	for _, rel := range []string{".codex", ".crw", ".local/share/crw-runtime", "safe"} {
+		if _, err := os.Lstat(filepath.Join(home, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s was made (%v)", rel, err)
+		}
+	}
+	// a parent that exists is not made, so a protected one on the way is no reason to refuse
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MkdirAll(filepath.Join(home, ".codex")+"/../work/a", 0o755); err != nil {
+		t.Errorf("a destination outside, through an existing protected parent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "work", "a")); err != nil {
+		t.Error(err)
+	}
+}

@@ -248,10 +248,25 @@ func components(path string) []string {
 	return out
 }
 
-// MkdirAll is os.MkdirAll for a harness writer: it refuses a protected destination first.
+// MkdirAll is os.MkdirAll for a harness writer: it refuses a protected destination first, and every
+// parent os.MkdirAll would make on the way. os.MkdirAll makes each missing parent by the spelling it
+// is given, ".." included ("a/new/../b" makes a/new before a/b), so the destination alone does not
+// say where it writes; a parent that already exists is not made and is no reason to refuse.
 func MkdirAll(path string, perm os.FileMode) error {
 	if err := Refuse(path); err != nil {
 		return err
+	}
+	for i := 1; i < len(path); i++ {
+		if !os.IsPathSeparator(path[i]) || os.IsPathSeparator(path[i-1]) {
+			continue
+		}
+		parent := path[:i]
+		if _, err := os.Stat(parent); err == nil {
+			continue
+		}
+		if err := Refuse(parent); err != nil {
+			return err
+		}
 	}
 	return os.MkdirAll(path, perm)
 }
