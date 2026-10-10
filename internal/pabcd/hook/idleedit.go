@@ -83,6 +83,13 @@ func HandleIdleEditAdvisory(raw string, env host.LookupEnv) string {
 	count := s.IdleEditNudges
 	stillIdle := true
 	if !unsafeCounterWrite(s) {
+		// CRW-1140: the counter write creates the state of an armed thread that has none, so at a
+		// cwd away from an anchored root that holds nothing in flight the anchor follows the thread
+		// here first; an anchor that cannot follow leaves no state it does not track, and the
+		// advisory, cosmetic, is dropped (the thread's SessionStart and prompt say why).
+		if stateroot.Bootstrap(env, cwd, sid) != nil {
+			return ""
+		}
 		// Cosmetic failures stay fail-open; an unavailable lock uses the first read's count.
 		_ = state.WithSessionLock(cwd, sid, func() error {
 			fresh, bad := state.ReadStateStrict(cwd, sid)

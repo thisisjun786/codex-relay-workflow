@@ -293,3 +293,36 @@ func TestResumeBesideAnUntrustworthyAnchorIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// Round 4 (regression of the d2 fix): a resume the host took is followed to the cwd it reported
+// even when its answer disagrees with the record's model or effort. The turn is still withheld
+// for the mismatch, and the moved anchor keeps a later SessionStart elsewhere from opening an
+// empty state beside work the child starts at the reported cwd.
+func TestAResumeWhoseSettingsDisagreeStillFollowsTheReportedCwd(t *testing.T) {
+	a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("CRW_HOME", t.TempDir())
+	if _, err := state.EnsureState(a, "01child"); err != nil {
+		t.Fatal(err)
+	}
+	host := resumeHost(t, "notLoaded")
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"cwd": a, "model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+	host.Respond("thread/resume", fakehost.Reply{Result: map[string]any{"cwd": b, "model": "other", "reasoningEffort": "xhigh"}})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeSettingsAt(b), 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "m"})
+	var failure *resumeFailure
+	if !errors.As(err, &failure) || failure.Reason != resumeSettingsMismatch {
+		t.Fatalf("err = %v", err)
+	}
+	if host.Count("thread/resume") != 1 || host.Count("turn/start") != 0 {
+		t.Fatalf("resumes = %d, turns = %d", host.Count("thread/resume"), host.Count("turn/start"))
+	}
+	if got := resumeAnchor(t); got != b {
+		t.Fatalf("anchor %q, want the cwd the host reported %q", got, b)
+	}
+	resumeInFlightAt(t, b)
+	if err := stateroot.Bootstrap(os.LookupEnv, c, "01child"); stateroot.CodeOf(err) != stateroot.Code {
+		t.Fatalf("a SessionStart at %s beside the work at %s: %v", c, b, err)
+	}
+}

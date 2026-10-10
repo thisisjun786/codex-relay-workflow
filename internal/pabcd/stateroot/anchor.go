@@ -323,10 +323,11 @@ func Hold(env host.LookupEnv, cwd, sessionID string) error {
 	return judge(root, cwd, cwd, sessionID)
 }
 
-// Bootstrap is Hold for the SessionStart bootstrap, which then follows the thread: an anchored
-// thread whose root held nothing in flight starts its work at cwd, so the anchor moves there
-// before the state is created. A bootstrap whose anchor cannot follow is refused, so no state
-// exists at a cwd the anchor does not track. A thread without an anchor records nothing.
+// Bootstrap is Hold for the SessionStart bootstrap, and for a hook about to write the state at cwd
+// (a prompt's writers, the idle-edit counter), which then follows the thread: an anchored thread
+// whose root held nothing in flight starts its work at cwd, so the anchor moves there before the
+// state is created. A bootstrap or write whose anchor cannot follow is refused, so no state exists
+// at a cwd the anchor does not track. A thread without an anchor records nothing.
 func Bootstrap(env host.LookupEnv, cwd, sessionID string) error {
 	if env == nil {
 		env = os.LookupEnv

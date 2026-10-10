@@ -80,8 +80,16 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// root, prompted at another cwd, has no state of its own here: every write below (the memory
 	// marker, the Stop-budget stamp, the trigger bookkeeping) would publish an empty IDLE state
 	// beside the work, which SessionStart refused to create. Nothing is read or written at this cwd;
-	// the answer tells the agent where its state is. A thread without an anchor is unaffected.
-	if refusal := stateroot.Hold(env, p.Cwd, p.SessionID); refusal != nil {
+	// the answer tells the agent where its state is. A prompt that may write (the memory marker,
+	// or any prompt with PABCD on) away from an anchored root holding nothing in flight moves the
+	// anchor here first, as SessionStart does, and writes nothing when the anchor cannot follow, so
+	// no state exists at a cwd the anchor does not track. A thread without an anchor is unaffected.
+	remember := DetectMemoryWriteRequest(p.Prompt)
+	judge := stateroot.Hold
+	if remember || p.PabcdEnabled {
+		judge = stateroot.Bootstrap
+	}
+	if refusal := judge(env, p.Cwd, p.SessionID); refusal != nil {
 		return sessionHookStateRootContext(refusal)
 	}
 
@@ -98,7 +106,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// snapshot. A marker that cannot be persisted degrades to a deny the user can lift with
 	// `crw recall memory allow-write`; it must never break prompt handling, so a failed or
 	// refused write is dropped as the oracle's catch drops one.
-	if DetectMemoryWriteRequest(p.Prompt) {
+	if remember {
 		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			fresh.MemoryWriteRequested = true
 			fresh.MemoryWriteTurn = promptSubmitTurn(turn)

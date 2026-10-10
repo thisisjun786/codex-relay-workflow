@@ -482,16 +482,19 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return nil, err
 	}
 	// The host took the resume: the anchor follows the cwd it reports for the child, which is not
-	// necessarily the one the record asked for.
+	// necessarily the one the record asked for. It follows before the settings are compared: a
+	// resume whose answer disagrees with the record still runs the child at the reported cwd, and
+	// the child's next SessionStart or prompt there must find its anchor. Either failure withholds
+	// the turn.
 	var resumedSettings struct{ Model, ReasoningEffort, Cwd string }
 	if err := json.Unmarshal(resumed, &resumedSettings); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
 	}
-	if mismatch := resumeCompare(settings, resumedSettings.Model, resumedSettings.ReasoningEffort); mismatch != "" {
-		return nil, &resumeFailure{Reason: resumeSettingsMismatch, Detail: mismatch + "; no turn was started"}
-	}
 	if err := stateroot.Moved(rootEnv, read.Thread.Cwd, resumedSettings.Cwd, child); err != nil {
 		return nil, &resumeFailure{Reason: stateroot.CodeOf(err), Detail: err.Error() + "; the child was resumed but no turn was started"}
+	}
+	if mismatch := resumeCompare(settings, resumedSettings.Model, resumedSettings.ReasoningEffort); mismatch != "" {
+		return nil, &resumeFailure{Reason: resumeSettingsMismatch, Detail: mismatch + "; no turn was started"}
 	}
 	// 3. mcpServerStatus/list: every server this command stopped must read as disabled.
 	listed, err := call("mcpServerStatus/list", map[string]any{"threadId": child, "detail": "toolsAndAuthOnly", "limit": 500})

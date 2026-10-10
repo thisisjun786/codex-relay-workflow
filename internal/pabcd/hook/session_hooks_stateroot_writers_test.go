@@ -119,3 +119,73 @@ func TestSessionStartThatCannotMoveTheAnchorBootstrapsNothing(t *testing.T) {
 		t.Fatalf("answer %q", answer)
 	}
 }
+
+// Round 4 (regression of the d4 fix): the SessionStart refusal of an anchor that cannot follow the
+// thread is not undone by the next prompt. The prompt's writers (the memory marker with PABCD off,
+// every writer with it on) would create the state the bootstrap refused, at a cwd the anchor does
+// not track, so the prompt writes nothing and says why.
+func TestAPromptAfterASessionStartThatCannotMoveTheAnchorCreatesNoState(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pabcd off", true: "pabcd on"}[enabled], func(t *testing.T) {
+			a, b := t.TempDir(), t.TempDir()
+			env := rootEnv(filepath.Join(t.TempDir(), ".crw"))
+			if _, err := state.EnsureState(a, rootSession); err != nil {
+				t.Fatal(err)
+			}
+			if err := stateroot.Guard(env, a, a, rootSession); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Dir(stateroot.AnchorPath(env, rootSession))
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+			if answer := sessionHookSessionStart(SessionHookSessionStartPayload{Cwd: b, SessionID: rootSession}, env); answer == "" {
+				t.Fatal("SessionStart did not refuse")
+			}
+			answer := promptSubmitHandle(PromptSubmitPayload{Cwd: b, SessionID: rootSession, Prompt: "remember this: the build needs go1.27", TurnID: "turn-1", PabcdEnabled: enabled}, "linux", env, state.WithSessionLock)
+			if _, err := os.Stat(filepath.Join(b, ".crw")); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("the prompt created %s, which the anchor does not track: %v", filepath.Join(b, ".crw"), err)
+			}
+			if !strings.Contains(answer, stateroot.AnchorCode) || !strings.Contains(answer, stateroot.AnchorPath(env, rootSession)) {
+				t.Fatalf("the prompt answer does not say why:\n%s", answer)
+			}
+		})
+	}
+}
+
+// The control: a prompt that would write at a cwd away from an anchored root holding nothing in
+// flight moves the anchor there first, then writes as before; a prompt that writes nothing moves
+// nothing.
+func TestAPromptAwayFromAnIdleAnchorMovesTheAnchorBeforeItWrites(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	env := rootEnv(filepath.Join(t.TempDir(), ".crw"))
+	if err := stateroot.Guard(env, a, a, rootSession); err != nil {
+		t.Fatal(err)
+	}
+	anchored := func() string {
+		raw, err := os.ReadFile(stateroot.AnchorPath(env, rootSession))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec struct{ NativeCwd string }
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			t.Fatal(err)
+		}
+		return rec.NativeCwd
+	}
+	promptSubmitHandle(PromptSubmitPayload{Cwd: b, SessionID: rootSession, Prompt: "hello", TurnID: "turn-1"}, "linux", env, state.WithSessionLock)
+	if got := anchored(); got != a {
+		t.Fatalf("a prompt that writes nothing moved the anchor to %q", got)
+	}
+	promptSubmitHandle(PromptSubmitPayload{Cwd: b, SessionID: rootSession, Prompt: "remember this: x", TurnID: "turn-2"}, "linux", env, state.WithSessionLock)
+	if got := anchored(); got != b {
+		t.Fatalf("anchor %q, want %q", got, b)
+	}
+	if s, bad := state.ReadStateStrict(b, rootSession); bad || !s.MemoryWriteRequested {
+		t.Fatalf("no marker at the new cwd: %+v %v", s, bad)
+	}
+}
