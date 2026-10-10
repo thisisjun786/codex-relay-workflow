@@ -82,7 +82,9 @@ const (
 
 // Assignment is one recorded dispatch contract. RootDev and RootIno identify the tree directory registered; Head is its git HEAD
 // at dispatch, "" when it was not a git checkout. ToolUseID is the native tool call that registered it ("" when the call had none),
-// the only call whose second pass of the spawn hook may reuse it. AgentID and TurnID name the child that claimed it.
+// the only call whose second pass of the spawn hook may reuse it. AnswerInput is the hex sha256 of the tool_input the spawn hook
+// answered that call with ("" when it was not recorded): that input delivered again is the same event, claimed or not. AgentID and
+// TurnID name the child that claimed it.
 type Assignment struct {
 	Version   int            `json:"version"`
 	ID        string         `json:"id"`
@@ -97,6 +99,8 @@ type Assignment struct {
 	Status    string         `json:"status"`
 	AgentID   string         `json:"agentId"`
 	TurnID    string         `json:"turnId"`
+
+	AnswerInput string `json:"answerInput,omitempty"` // CRW-1121
 }
 
 const assignmentVersion = 1

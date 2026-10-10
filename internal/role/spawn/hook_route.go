@@ -356,15 +356,6 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if effort != "" {
 		updated = updated.Set("reasoning_effort", effort)
 	}
-	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed, and before a
-	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
-	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
-	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
-	if a.evidenceAssignment != nil && !a.evidenceRecorded {
-		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
-			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
-		}
-	}
 	if a.managed != nil {
 		// The candidate's model and effort replace whatever the caller sent, a null candidate field deleting the key (:1098-1101).
 		if a.managed.Candidate.Model == nil {
@@ -376,6 +367,19 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 			updated = spawnHookWithout(updated, "reasoning_effort")
 		} else {
 			updated = updated.Set("reasoning_effort", string(*a.managed.Candidate.Effort))
+		}
+	}
+	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed, and before a
+	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
+	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
+	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
+	// The record carries the digest of the input this answer gives, so that input delivered again is known as this event (CRW-1121).
+	if a.evidenceAssignment != nil && !a.evidenceRecorded {
+		if a.inputText != "" {
+			a.evidenceAssignment.AnswerInput = spawnHookDigest(spawnHookRouteStringify(updated))
+		}
+		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
+			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
 		}
 	}
 	output := pyjson.Object{{Key: "hookEventName", Value: "PreToolUse"}, {Key: "permissionDecision", Value: "allow"}, {Key: "updatedInput", Value: updated}}

@@ -134,3 +134,39 @@ func TestEvidenceAssignmentConcurrentDeliveriesShareOneRecord(t *testing.T) {
 		t.Fatalf("records: %v", records)
 	}
 }
+
+// The input the event answered with, delivered again after its child claimed the assignment, is still that event: it reuses the
+// claimed record instead of registering a dispatch no child will claim, so an unrelated native receipt still passes. The same call
+// with another input is another dispatch and gets an assignment of its own (verification round 4).
+func TestEvidenceAssignmentOwnAnswerRedeliveredAfterClaimKeepsOneAssignment(t *testing.T) {
+	r := newAssignedRig(t)
+	records := func() []string {
+		got, _ := filepath.Glob(filepath.Join(r.cwd, ".crw", "evidence-assignments", "*", "*.json"))
+		return got
+	}
+	first, _ := r.spawnCall("TASK: first\nCRW-WORKTREE: "+r.wt, "same-call")
+	firstID := assignedID.FindStringSubmatch(first)
+	if firstID == nil {
+		t.Fatalf("first answer has no assignment: %q", first)
+	}
+	r.deliver("worker", first)
+	receipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "receipt.txt"), "verified")
+	if out := r.stop("worker", "t1", "EVIDENCE_RECORDED: "+receipt); out != "" {
+		t.Fatalf("the delivered child was refused: %s", out)
+	}
+	if again, out := r.spawnCall(first, "same-call"); strings.Contains(out, `"deny"`) || again != "" && again != first {
+		t.Fatalf("the event's own answer delivered again after the claim changed it:\n%s", out)
+	}
+	if got := records(); len(got) != 1 {
+		t.Fatalf("the event's own answer delivered again after the claim registered another assignment: %v", got)
+	}
+	native := r.put(filepath.Join(r.cwd, ".crw", "evidence", "native.txt"), "verified native")
+	if out := r.stop("unrelated", "t2", "EVIDENCE_RECORDED: "+native); strings.Contains(out, `"decision":"block"`) {
+		t.Fatalf("an open record left by the redelivery blocks an unrelated native receipt: %s", out)
+	}
+	edited, out := r.spawnCall(strings.Replace(first, "TASK: first", "TASK: second", 1), "same-call")
+	ids := assignedID.FindAllStringSubmatch(edited, -1)
+	if strings.Contains(out, `"deny"`) || len(ids) != 1 || ids[0][1] == firstID[1] {
+		t.Fatalf("another input of the call shares the claimed assignment %s: %v\n%s", firstID[1], ids, out)
+	}
+}

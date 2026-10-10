@@ -416,6 +416,12 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time, serialize 
 			if readable && recorded.RegisteredBy(toolUseID, worktree, mode) {
 				return ""
 			}
+			// The input this call was answered with, delivered again, is the same event even after its child claimed the record: it
+			// keeps that record, where registering another would leave an open one no child claims (CRW-1121, verification round 4).
+			// The record holds the digest of that answered input, so another input of the call is still a dispatch of its own.
+			if readable && a.inputText != "" && recorded.ToolUseID == toolUseID && recorded.AnswerInput == spawnHookDigest(a.inputText) {
+				return ""
+			}
 			stale := ""
 			if readable {
 				stale = EvidenceAssignmentBlock(recorded.ID, recorded.Root, recorded.Mode == evidence.AssignNone)
