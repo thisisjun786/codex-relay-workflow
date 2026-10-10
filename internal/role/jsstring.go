@@ -8,11 +8,11 @@ import (
 	"strings"
 )
 
-const errToPrimitive = sentinel("Cannot convert object to primitive value")
-
 // jsString is String(value) of a parsed JSON value, which the oracle's messages print for a value of the wrong type; no raw is
-// undefined (an absent member). An array joins its elements with a comma and an empty text for null, an object is "[object Object]"
-// unless it has an own member toString, which no JSON value can make callable: its ToPrimitive then throws, and so does String().
+// undefined (an absent member). An array joins its elements with a comma and an empty text for null, and an object is "[object Object]".
+// The oracle's String() throws "Cannot convert object to primitive value" for an object with an own member toString (no JSON value can make
+// it callable), which hid the refusal the message belongs to; this converts nothing that can throw, so every object prints as its type
+// (CRW-1120).
 func jsString(raw json.RawMessage) (string, error) {
 	if raw == nil {
 		return "undefined", nil
@@ -58,10 +58,6 @@ func jsText(v any) (string, error) {
 			}
 		}
 		return strings.Join(parts, ","), nil
-	case map[string]any:
-		if _, ok := v["toString"]; ok {
-			return "", errToPrimitive
-		}
 	}
 	return "[object Object]", nil
 }

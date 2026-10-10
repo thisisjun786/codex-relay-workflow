@@ -10,10 +10,10 @@ import (
 )
 
 // This is mcp.ts:35-155 from CXC v0.2.40, as a library. It implements no
-// JSON-RPC transport and registers nothing. Definitions retain the oracle's
-// project scope, while the existing settings API only supports global scope
-// (decision 7). Callers should encode results with Stringify, without adding
-// structuredContent or reformatting the text payload.
+// JSON-RPC transport and registers nothing. The settings API only supports
+// global scope (decision 7), so the definitions advertise no project scope
+// (CRW-1120; the oracle's did). Callers should encode results with Stringify,
+// without adding structuredContent or reformatting the text payload.
 
 type MCPTool struct {
 	Name        string          `json:"name"`
@@ -24,8 +24,8 @@ type MCPTool struct {
 // MCPTools returns independent definitions in the oracle's get/set/list order.
 func MCPTools() []MCPTool {
 	return []MCPTool{
-		{Name: "subagents_get", Description: "Read the per-role subagent config (explorer/reviewer/executor/architect): mode, model, effort, promptOverride, source and scope. Project defaults to global, then original session.", InputSchema: json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string","enum":["project","global"]}},"additionalProperties":false}`)},
-		{Name: "subagents_set", Description: "Update one role's subagent config. mode is 'default' (main model) or 'model' (requires a model id); effort is a reasoning-effort override (null inherits the parent session's effort).", InputSchema: json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string","enum":["project","global"]},"inherit":{"type":"boolean","description":"Remove this entire role override and inherit the next scope; do not combine with role settings."},"role":{"type":"string","enum":["explorer","reviewer","executor","architect"]},"mode":{"type":"string","enum":["default","model"]},"model":{"type":["string","null"]},"effort":{"type":["string","null"],"enum":["low","medium","high","xhigh",null]},"fallback":{"type":["object","null"],"description":"Optional first fallback. Null clears; omitted nested effort inherits existing fallback effort or session effort.","properties":{"model":{"type":"string","minLength":1},"effort":{"type":["string","null"],"enum":["low","medium","high","xhigh",null]}},"additionalProperties":false},"promptOverride":{"type":["string","null"]}},"required":["role"],"additionalProperties":false}`)},
+		{Name: "subagents_get", Description: "Read the per-role subagent config (explorer/reviewer/executor/architect): mode, model, effort, promptOverride, source and scope. Only the global scope exists; a role with no override uses the original session.", InputSchema: json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string","enum":["global"]}},"additionalProperties":false}`)},
+		{Name: "subagents_set", Description: "Update one role's subagent config. mode is 'default' (main model) or 'model' (requires a model id); effort is a reasoning-effort override (null inherits the parent session's effort).", InputSchema: json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string","enum":["global"]},"inherit":{"type":"boolean","description":"Remove this entire role override and inherit the original session; do not combine with role settings."},"role":{"type":"string","enum":["explorer","reviewer","executor","architect"]},"mode":{"type":"string","enum":["default","model"]},"model":{"type":["string","null"]},"effort":{"type":["string","null"],"enum":["low","medium","high","xhigh",null]},"fallback":{"type":["object","null"],"description":"Optional first fallback. Null clears; omitted nested effort inherits existing fallback effort or session effort.","properties":{"model":{"type":"string","minLength":1},"effort":{"type":["string","null"],"enum":["low","medium","high","xhigh",null]}},"additionalProperties":false},"promptOverride":{"type":["string","null"]}},"required":["role"],"additionalProperties":false}`)},
 		{Name: "catalog_list", Description: "List selectable models: Codex-native entries first, then ocx-backed entries when ocx is active.", InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)},
 	}
 }
@@ -146,7 +146,10 @@ func DecorateSubagentsGet(s Settings, c *LiveCatalog, now time.Time, env host.Lo
 // across handlers; nil uses this handler's own reader. Do not copy a used handler.
 // ReadCatalog replaces only the get probe, as in the oracle; list always uses
 // the live reader. Discovery errors on get are folded into an unavailable
-// catalog. A list error escapes to the caller (the oracle sends no reply).
+// catalog. A list error is answered by one isError tool result that names it, so
+// a transport that registers the tools always has a reply to send (CRW-1120; the
+// oracle's rejection left the call without one). An error that escapes is a call
+// whose params are not JSON.
 type MCPToolHandler struct {
 	Options       CatalogOptions
 	Reader        *CatalogReader
@@ -208,7 +211,7 @@ func (h *MCPToolHandler) HandleToolCall(params json.RawMessage) (MCPToolResult, 
 		o.ForceRefresh = false
 		c, err := r.ReadCatalog(o)
 		if err != nil {
-			return MCPToolResult{}, err
+			return mcpToolError(err.Error())
 		}
 		return mcpToolResult(c)
 	default:

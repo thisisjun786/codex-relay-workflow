@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -69,6 +70,9 @@ func TestSettingsOracleReplay(t *testing.T) {
 					t.Fatalf("op %d: unknown op %q", i, op.Op)
 				}
 				at := op.Op + " " + op.Body + string(op.Role)
+				if want, ok := portFixedToPrimitive[c.ID+"/"+strconv.Itoa(i)]; ok {
+					op.Error = &want
+				}
 				intent := settingsIntent(c.ID, i)
 				if intent.keepFile {
 					op.File = lastFile
@@ -108,6 +112,21 @@ func TestSettingsOracleReplay(t *testing.T) {
 			}
 		})
 	}
+}
+
+// portFixedToPrimitive are the recorded oracle answers that CRW-1120 changes on purpose: the oracle's message converts the value it
+// refuses with JavaScript's String(), which throws "Cannot convert object to primitive value" for an object with an own toString
+// member and so hides the refusal. The port prints every object as the type it is, "[object Object]", with no conversion that can fail.
+var portFixedToPrimitive = map[string]string{
+	"get_scope_to_primitive/0": `invalid scope "[object Object]"`,
+	"get_scope_to_primitive/1": `invalid scope "[object Object]"`,
+	"get_scope_to_primitive/3": `invalid scope "[object Object]"`,
+	"update_to_primitive/0":    `unknown role "[object Object]"`,
+	"update_to_primitive/1":    `unknown role "[object Object]"`,
+	"update_to_primitive/3":    `invalid scope "[object Object]"`,
+	"update_to_primitive/4":    `invalid mode "[object Object]" (must be "default" or "model")`,
+	"update_to_primitive/6":    `invalid effort "[object Object]" (must be one of low/medium/high/xhigh or null)`,
+	"update_to_primitive/7":    `invalid fallback effort "[object Object]" (must be one of low/medium/high/xhigh or null)`,
 }
 
 // settingsIntent is how CRW-1119 changes a recorded op on purpose. The full store of get_global_full, response_get, resolve_full and
@@ -155,9 +174,10 @@ func TestJSString(t *testing.T) { // String() of a parsed JSON value
 	if got, err := jsString(nil); err != nil || got != "undefined" {
 		t.Errorf("absent: %q, %v", got, err)
 	}
-	for _, raw := range []string{`{"toString":null}`, `[1,{"toString":2}]`} { // an own toString member that is no function: ToPrimitive throws
-		if _, err := jsString(json.RawMessage(raw)); err == nil || err.Error() != "Cannot convert object to primitive value" {
-			t.Errorf("%s: err = %v", raw, err)
+	// An own toString member makes JavaScript's ToPrimitive throw; the port converts nothing and prints the object (CRW-1120).
+	for raw, want := range map[string]string{`{"toString":null}`: "[object Object]", `[1,{"toString":2}]`: "1,[object Object]", `{"toString":"x","valueOf":1}`: "[object Object]"} {
+		if got, err := jsString(json.RawMessage(raw)); err != nil || got != want {
+			t.Errorf("%s: %q, %v, want %q", raw, got, err, want)
 		}
 	}
 }
