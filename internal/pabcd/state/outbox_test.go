@@ -234,3 +234,186 @@ func TestLedgerOutboxRemovesAnOrphanTempFile(t *testing.T) {
 		t.Fatalf("the outbox with an orphan temp file was not cleaned: %v", err)
 	}
 }
+
+// A row counts as recorded only after the ledger is fsynced: a failed sync leaves the event pending (published, so it is not
+// judged again), and the next drain finds the row, syncs, and removes the event.
+func TestLedgerOutboxKeepsAnEventWhoseLedgerSyncFailed(t *testing.T) {
+	cwd := t.TempDir()
+	pre := DefaultState("s1", "")
+	pre.Phase = PhaseP
+	ev, mid := outboxPrepared(t, cwd, pre, PhaseA)
+	if err := WriteState(cwd, mid); err != nil {
+		t.Fatal(err)
+	}
+	real := syncLedgerFile
+	t.Cleanup(func() { syncLedgerFile = real })
+	syncLedgerFile = func(string) error { return errors.New("injected sync failure") }
+	report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{})
+	if report.Err == nil || len(report.Pending) != 1 {
+		t.Fatalf("a failed sync finished the event: %+v", report)
+	}
+	pending, _, err := PendingLedgerEvents(cwd, "s1")
+	if err != nil || len(pending) != 1 || !pending[0].Published {
+		t.Fatalf("the event after a failed sync: %+v %v", pending, err)
+	}
+	syncLedgerFile = real
+	report = DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{})
+	if report.Err != nil || len(report.Pending) != 0 || report.Appended != 0 {
+		t.Fatalf("the retry: %+v", report)
+	}
+	if lines := outboxLedgerLines(t, cwd); len(lines) != 1 || lines[0] != string(ev.Line) {
+		t.Fatalf("ledger: %v", lines)
+	}
+}
+
+// A sync that reaches both the ledger file and its directory.
+func TestLedgerOutboxSyncsTheFileAndItsDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	pre := DefaultState("s1", "")
+	pre.Phase = PhaseP
+	_, mid := outboxPrepared(t, cwd, pre, PhaseA)
+	if err := WriteState(cwd, mid); err != nil {
+		t.Fatal(err)
+	}
+	var synced []string
+	real := syncLedgerFile
+	t.Cleanup(func() { syncLedgerFile = real })
+	syncLedgerFile = func(path string) error { synced = append(synced, filepath.Base(path)); return real(path) }
+	if report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{}); report.Err != nil || report.Appended != 1 {
+		t.Fatalf("report: %+v", report)
+	}
+	if len(synced) != 2 || synced[0] != LedgerFile || synced[1] != crwdir.DirName {
+		t.Fatalf("synced: %v", synced)
+	}
+}
+
+// Two distinct events whose rows are byte for byte the same (same millisecond, same edge) are two rows: the second does not take
+// the first's row for its own, in one drain or across a drain that stopped between them.
+func TestLedgerOutboxRecordsDistinctEventsWithIdenticalRows(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		cwd := t.TempDir()
+		pre := DefaultState("s1", "")
+		pre.Phase = PhaseP
+		if err := WriteState(cwd, pre); err != nil {
+			t.Fatal(err)
+		}
+		pre = ReadState(cwd, "s1")
+		mid := pre
+		mid.Phase = PhaseA
+		ledger := filepath.Join(cwd, crwdir.DirName, LedgerFile)
+		if blocked {
+			if err := os.MkdirAll(ledger, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var evs [2]LedgerEvent
+		for i := range evs {
+			ev, err := NewLedgerEvent(cwd, pre, mid, outboxRow("s1", PhaseP, PhaseA), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareLedgerEvent(cwd, ev); err != nil {
+				t.Fatal(err)
+			}
+			evs[i] = ev
+		}
+		if evs[0].ID == evs[1].ID || string(evs[0].Line) != string(evs[1].Line) || evs[0].LedgerOffset != evs[1].LedgerOffset {
+			t.Fatalf("the two events are not identical but for their ids: %+v %+v", evs[0], evs[1])
+		}
+		if err := WriteState(cwd, mid); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			if report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{}); report.Err == nil || len(report.Pending) != 2 {
+				t.Fatalf("blocked report: %+v", report)
+			}
+			if err := os.Remove(ledger); err != nil {
+				t.Fatal(err)
+			}
+		}
+		report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{})
+		if report.Appended != 2 || len(report.Pending) != 0 || report.Err != nil {
+			t.Fatalf("blocked=%v report: %+v", blocked, report)
+		}
+		if lines := outboxLedgerLines(t, cwd); len(lines) != 2 {
+			t.Fatalf("blocked=%v ledger: %v", blocked, lines)
+		}
+	}
+}
+
+// The end of a recorded row is carried to the next identical event: when the drain stops at the second one (its ledger sync
+// fails), the retry still records the second row once and does not take the first row for it.
+func TestLedgerOutboxCarriesTheRowEndToTheNextIdenticalEvent(t *testing.T) {
+	cwd := t.TempDir()
+	pre := DefaultState("s1", "")
+	pre.Phase = PhaseP
+	if err := WriteState(cwd, pre); err != nil {
+		t.Fatal(err)
+	}
+	pre = ReadState(cwd, "s1")
+	mid := pre
+	mid.Phase = PhaseA
+	for range 2 {
+		ev, err := NewLedgerEvent(cwd, pre, mid, outboxRow("s1", PhaseP, PhaseA), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := PrepareLedgerEvent(cwd, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := WriteState(cwd, mid); err != nil {
+		t.Fatal(err)
+	}
+	real := syncLedgerFile
+	t.Cleanup(func() { syncLedgerFile = real })
+	calls := 0
+	syncLedgerFile = func(path string) error {
+		if calls++; calls == 3 {
+			return errors.New("injected sync failure")
+		}
+		return real(path)
+	}
+	if report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{}); report.Err == nil || len(report.Pending) != 1 {
+		t.Fatalf("first drain: %+v", report)
+	}
+	syncLedgerFile = real
+	if report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{}); report.Err != nil || len(report.Pending) != 0 {
+		t.Fatalf("retry: %+v", report)
+	}
+	if lines := outboxLedgerLines(t, cwd); len(lines) != 2 {
+		t.Fatalf("ledger: %v", lines)
+	}
+}
+
+// When a followup that is still pending is followed by an event whose append fails, the report keeps both events, in order.
+func TestLedgerOutboxPendingReportKeepsBothEvents(t *testing.T) {
+	cwd := t.TempDir()
+	pre := DefaultState("s1", "")
+	pre.Phase = PhaseP
+	first, mid := outboxPrepared(t, cwd, pre, PhaseA)
+	first.Followup = []byte(`{"x":1}`)
+	if err := writeLedgerEvent(cwd, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteState(cwd, mid); err != nil {
+		t.Fatal(err)
+	}
+	second, last := outboxPrepared(t, cwd, ReadState(cwd, "s1"), PhaseB)
+	if err := WriteState(cwd, last); err != nil {
+		t.Fatal(err)
+	}
+	real := syncLedgerFile
+	t.Cleanup(func() { syncLedgerFile = real })
+	calls := 0
+	syncLedgerFile = func(path string) error {
+		if calls++; calls == 3 {
+			return errors.New("injected sync failure")
+		}
+		return real(path)
+	}
+	report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{Followup: func(LedgerEvent) error { return errors.New("followup failed") }})
+	if len(report.Pending) != 2 || report.Pending[0].ID != first.ID || report.Pending[1].ID != second.ID {
+		t.Fatalf("pending: %+v", report.Pending)
+	}
+}

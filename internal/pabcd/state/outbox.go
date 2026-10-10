@@ -11,7 +11,11 @@ package state
 //
 // The rows keep the oracle's bytes: the event's identity is the outbox record (its id, the row's exact bytes and the ledger size
 // at the time it was prepared), so no key is added to a ledger row. A row is already recorded when that exact line stands in the
-// ledger at or after the recorded size, which is where an append made after the event was prepared can only be.
+// ledger at or after the recorded size, which is where an append made after the event was prepared can only be. Two events that
+// spell the same line are told apart by order: a drain searches for an event's line only after the end of the row of the event
+// before it (the end offset is carried into the next event's file before the earlier one is removed), so each of them records
+// its own line. A row counts as recorded only once the ledger file (and its directory) has been fsynced, so an event is removed
+// only when its row survives a power loss.
 //
 // Layout: one file per event in <state file>.ledger-outbox/, named by a zero-padded sequence and the event id so a listing sorts in
 // the order the events were prepared. The directory is per session, so its own session lock serialises every writer of it, and it
@@ -51,18 +55,21 @@ const ledgerEventSuffix = ".event"
 // transition and lives outside the session (the P>A plan-audit cleanup of CRW-1100): the drain hands it to the caller's
 // followup function, and the event is finished only when that succeeds too.
 type LedgerEvent struct {
-	ID           string          `json:"eventId"`
-	SessionID    string          `json:"sessionId"`
-	Seq          int64           `json:"seq"`
-	PrePhase     Phase           `json:"prePhase"`
-	PostPhase    Phase           `json:"postPhase"`
-	PreDigest    string          `json:"preDigest"`
-	PostDigest   string          `json:"postDigest"`
-	PreUpdatedAt string          `json:"preUpdatedAt"`
-	LedgerOffset int64           `json:"ledgerOffset"`
-	Published    bool            `json:"published,omitempty"`
-	RowRecorded  bool            `json:"rowRecorded,omitempty"`
-	Followup     json.RawMessage `json:"followup,omitempty"`
+	ID           string `json:"eventId"`
+	SessionID    string `json:"sessionId"`
+	Seq          int64  `json:"seq"`
+	PrePhase     Phase  `json:"prePhase"`
+	PostPhase    Phase  `json:"postPhase"`
+	PreDigest    string `json:"preDigest"`
+	PostDigest   string `json:"postDigest"`
+	PreUpdatedAt string `json:"preUpdatedAt"`
+	LedgerOffset int64  `json:"ledgerOffset"`
+	Published    bool   `json:"published,omitempty"`
+	RowRecorded  bool   `json:"rowRecorded,omitempty"`
+	// RowEnd is the ledger offset just after the row once it is recorded, so the events after it never take that row (or an
+	// identical one of an earlier event) for their own.
+	RowEnd   int64           `json:"rowEnd,omitempty"`
+	Followup json.RawMessage `json:"followup,omitempty"`
 	// Line is the row exactly as it is appended, without the line feed; nil for an event that carries no row.
 	Line []byte `json:"-"`
 }
@@ -291,7 +298,9 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 		return report
 	}
 	currentDigest := stateDigest(current)
+	floor := int64(0)
 	for i, ev := range events {
+		floor = max(floor, ev.RowEnd)
 		if !ev.RowRecorded && len(ev.Line) > 0 {
 			if !(ev.Published || o.Published[ev.ID] || ledgerEventPublished(ev, current, currentDigest)) {
 				if err := AbortLedgerEvent(cwd, ev); err != nil {
@@ -302,24 +311,32 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 				report.Dropped++
 				continue
 			}
-			present, err := ledgerHasLine(cwd, ev.LedgerOffset, ev.Line)
+			from := ev.LedgerOffset
+			end, present, err := ledgerFindLine(cwd, from, floor, ev.Line)
 			if err == nil && !present {
-				err = AppendLedgerLine(cwd, ev.Line)
-				if err == nil {
+				if err = AppendLedgerLine(cwd, ev.Line); err == nil {
 					report.Appended++
+					if end, present, err = ledgerFindLine(cwd, from, floor, ev.Line); err == nil && !present {
+						err = errors.New("the appended ledger row cannot be found again")
+					}
 				}
+			}
+			if err == nil {
+				err = syncLedger(cwd)
 			}
 			if err != nil {
 				// The transition is known to be published now; record that, so a later drain does not judge it again
 				// from a state that may have moved on, and stop: the rows after it wait for it.
-				ev.Published = true
+				ev.Published, ev.LedgerOffset = true, max(from, floor)
 				_ = writeLedgerEvent(cwd, ev)
+				at := len(report.Pending)
 				report.Pending = append(report.Pending, events[i:]...)
-				report.Pending[0] = ev
+				report.Pending[at] = ev
 				report.Err = cmpErr(report.Err, err)
 				return report
 			}
-			ev.RowRecorded = true
+			ev.RowRecorded, ev.RowEnd = true, end
+			floor = end
 		} else if !ev.RowRecorded && !(ev.Published || o.Published[ev.ID] || ledgerEventPublished(ev, current, currentDigest)) {
 			if err := AbortLedgerEvent(cwd, ev); err != nil {
 				report.Pending = append(report.Pending, ev)
@@ -336,6 +353,16 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 				err = o.Followup(ev)
 			}
 			if err != nil {
+				_ = writeLedgerEvent(cwd, ev)
+				report.Pending = append(report.Pending, ev)
+				report.Err = cmpErr(report.Err, err)
+				continue
+			}
+		}
+		if i+1 < len(events) && events[i+1].LedgerOffset < floor && !events[i+1].RowRecorded {
+			// The next event must not take this row for its own: carry the end of it into the next file before this one goes.
+			events[i+1].LedgerOffset = floor
+			if err := writeLedgerEvent(cwd, events[i+1]); err != nil {
 				_ = writeLedgerEvent(cwd, ev)
 				report.Pending = append(report.Pending, ev)
 				report.Err = cmpErr(report.Err, err)
@@ -381,38 +408,61 @@ func ledgerEventPublished(ev LedgerEvent, current State, currentDigest string) b
 	return current.UpdatedAt != ev.PreUpdatedAt
 }
 
-// ledgerHasLine reports whether the exact line stands in the transition ledger at or after offset. A ledger shorter than offset was
-// replaced or cut since, so the whole file is searched. Lines are read one at a time; nothing but the current line is held.
-func ledgerHasLine(cwd string, offset int64, line []byte) (bool, error) {
+// ledgerFindLine reports whether the exact line stands in the transition ledger at or after offset, and the offset just after the
+// first such line. A ledger shorter than offset was replaced or cut since, so the whole file is searched; floor, the end of the
+// row of an earlier event of the same drain, is then still honoured, since it was read from the ledger as it is now. Lines are read one at a
+// time; nothing but the current line is held.
+func ledgerFindLine(cwd string, offset, floor int64, line []byte) (end int64, found bool, err error) {
 	f, err := os.Open(filepath.Join(cwd, crwdir.DirName, LedgerFile))
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	if offset > info.Size() {
 		offset = 0
 	}
+	offset = max(offset, floor)
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return false, err
+		return 0, false, err
 	}
 	r := bufio.NewReader(f)
+	pos := offset
 	for {
 		got, err := r.ReadBytes('\n')
+		pos += int64(len(got))
 		if bytes.Equal(bytes.TrimSuffix(got, []byte{'\n'}), line) {
-			return true, nil
+			return pos, true, nil
 		}
 		if errors.Is(err, io.EOF) {
-			return false, nil
+			return 0, false, nil
 		}
 		if err != nil {
-			return false, err
+			return 0, false, err
 		}
 	}
+}
+
+// syncLedgerFile is the fsync of a path; a variable so a test can fail it.
+var syncLedgerFile = func(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(f.Sync(), f.Close())
+}
+
+// syncLedger makes the ledger's rows and the entry of the ledger file durable: the file, then its directory.
+func syncLedger(cwd string) error {
+	dir := filepath.Join(cwd, crwdir.DirName)
+	if err := syncLedgerFile(filepath.Join(dir, LedgerFile)); err != nil {
+		return err
+	}
+	return syncLedgerFile(dir)
 }
