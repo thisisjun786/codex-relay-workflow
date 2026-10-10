@@ -228,8 +228,18 @@ func promptOrchestrateSourceGate(p PromptSubmitPayload, current state.State) (st
 func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string, seams *promptDcloseSeams) (state.State, bool, string, string, error) {
 	next, landed, rowPending := state.State{}, false, ""
 	var publishedErr error
+	// The release of a goalplan slug is no phase move and writes no goalplan (CRW-146): it drains the outbox for rows only, so a
+	// followup an earlier writer left pending (a re-plan's plan-audit cleanup) stays pending, and it publishes the state its
+	// transition produced as it is, without the bookkeeping of a phase move.
+	release := verb == fsm.VerbUnbind
+	drain := func(published ...string) state.LedgerDrainReport {
+		if release {
+			return DrainSessionLedgerRows(p.Cwd, p.SessionID, published...)
+		}
+		return DrainSessionLedger(p.Cwd, p.SessionID, published...)
+	}
 	err := lock(p.Cwd, p.SessionID, func() error {
-		DrainSessionLedger(p.Cwd, p.SessionID)
+		drain()
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
 			return nil
@@ -241,9 +251,12 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 		if !applied.OK || applied.State == nil {
 			return nil
 		}
-		fields, ok := promptOrchestrateFields(p, *applied.State, fresh, current, command.Attest, turn)
-		if !ok {
-			return nil
+		fields := *applied.State
+		if !release {
+			var ok bool
+			if fields, ok = promptOrchestrateFields(p, fields, fresh, current, command.Attest, turn); !ok {
+				return nil
+			}
 		}
 		var event *state.LedgerEvent
 		if applied.Ledger != nil {
@@ -270,7 +283,7 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 		if promptOrchestrateAfterPublish(seams) {
 			return nil
 		}
-		rowPending = promptOrchestrateRecordRow(p, event)
+		rowPending = promptOrchestrateRecordRow(drain, event)
 		return nil
 	})
 	if !landed {
@@ -294,8 +307,8 @@ func promptOrchestrateAfterPublish(seams *promptDcloseSeams) bool {
 
 // promptOrchestrateRecordRow drains the session's outbox with event marked as just published and
 // answers the warning for a row left pending, "" when the row is in the ledger.
-func promptOrchestrateRecordRow(p PromptSubmitPayload, event *state.LedgerEvent) string {
-	report := DrainSessionLedger(p.Cwd, p.SessionID, promptOrchestrateEventIDs(event)...)
+func promptOrchestrateRecordRow(drain func(published ...string) state.LedgerDrainReport, event *state.LedgerEvent) string {
+	report := drain(promptOrchestrateEventIDs(event)...)
 	if event != nil && LedgerEventStillPending(report, event.ID) {
 		return promptOrchestrateRowPendingWarning(report)
 	}

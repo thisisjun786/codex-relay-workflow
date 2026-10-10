@@ -1,8 +1,13 @@
 package hook
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -45,5 +50,135 @@ func TestPromptOrchestrateUnbindIsRefusedInFlight(t *testing.T) {
 	}
 	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
 		t.Errorf("a refused unbind wrote a row: %+v", rows)
+	}
+}
+
+// CRW-146 verification fix round 1: the chat release writes the session state and one transition row and nothing else. It is not a
+// phase move, so none of the bookkeeping a phase move does (the injection cursor, the injected turns, the Stop stagnation reset)
+// applies, and the followups an earlier writer left pending in the outbox (a re-plan's plan-audit cleanup rewrites the goalplan) are
+// not run by it or by the prompt entry that carries it.
+
+func unbindChatSeed(t *testing.T, cwd string) {
+	t.Helper()
+	cleanupPlan(t, cwd, "demo")
+	phase := state.PhaseB
+	promptOrchestrateSeed(t, cwd, "s1", func(s *state.State) {
+		s.Slug = "demo"
+		pointer := "wp-1"
+		s.StopBlockWorkPhaseID = &pointer
+		s.StopBlockPhase, s.StopBlockCount = &phase, 2
+		s.InjectedTurns = []string{"old-turn"}
+	})
+}
+
+func unbindChatPending(t *testing.T, cwd string) {
+	t.Helper()
+	cleanup := NewPlanAuditCleanup("demo", "e-new", []string{"r1"})
+	followup, err := json.Marshal(cleanup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := state.ReadState(cwd, "s1")
+	ev, err := state.NewLedgerEvent(cwd, s, s, nil, followup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev.Published = true
+	if err := state.PrepareLedgerEvent(cwd, ev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// unbindChatNormalised is the session state with the fields the prompt entry stamps for every prompt (the Stop turn guard and the
+// write time) cleared: what is left is what the command itself decided.
+func unbindChatNormalised(t *testing.T, s state.State) string {
+	t.Helper()
+	s.UpdatedAt, s.StopBlockTotal, s.StopBlockTurnID, s.StopBlockCapNotified = "", 0, nil, false
+	b, err := state.Encode(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// Red on ab12f038: the command went through the phase-transition field rewrite, which cleared the Stop stagnation counters and the
+// injection cursor and appended the turn to the injected turns.
+func TestVerifyUnbindChatPreservesUnrelatedState(t *testing.T) {
+	cwd := t.TempDir()
+	unbindChatSeed(t, cwd)
+	before := state.ReadState(cwd, "s1")
+	if got := promptOrchestrateAnswer(t, cwd, "s1", "t1", "orchestrate unbind"); got != "[crw — unbound goalplan demo]" {
+		t.Fatalf("the answer %q", got)
+	}
+	want := before
+	want.Slug, want.StopBlockWorkPhaseID = "", nil
+	if got, wantJSON := unbindChatNormalised(t, state.ReadState(cwd, "s1")), unbindChatNormalised(t, want); got != wantJSON {
+		t.Fatalf("state\n got %s\nwant %s", got, wantJSON)
+	}
+}
+
+// Red on ab12f038: the command's drains ran the pending plan-audit cleanup, which rewrote the goalplan and appended a
+// review_round_superseded row to its ledger.
+func TestVerifyUnbindDoesNotWriteGoalplanThroughPendingCleanup(t *testing.T) {
+	cwd := t.TempDir()
+	unbindChatSeed(t, cwd)
+	unbindChatPending(t, cwd)
+	dir, err := goalplan.GoalplanDir(cwd, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) []byte {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		return b
+	}
+	planBefore, ledgerBefore := read("goalplan.json"), read(goalplan.GoalplanLedgerFile)
+	pending := func() int {
+		entries, _ := os.ReadDir(state.StatePath(cwd, "s1") + ".ledger-outbox")
+		return len(entries)
+	}
+	if pending() != 1 {
+		t.Fatalf("the outbox before: %d", pending())
+	}
+	if got := promptOrchestrateAnswer(t, cwd, "s1", "t1", "orchestrate unbind"); got != "[crw — unbound goalplan demo]" {
+		t.Fatalf("the answer %q", got)
+	}
+	if !bytes.Equal(planBefore, read("goalplan.json")) {
+		t.Fatal("the goalplan file changed")
+	}
+	if !bytes.Equal(ledgerBefore, read(goalplan.GoalplanLedgerFile)) {
+		t.Fatalf("the goalplan ledger changed: %s", read(goalplan.GoalplanLedgerFile))
+	}
+	if pending() != 1 {
+		t.Fatalf("the cleanup left the outbox: %d", pending())
+	}
+	rows := promptOrchestrateLedger(t, cwd)
+	if len(rows) != 1 || rows[0]["reason"] != "unbound" {
+		t.Fatalf("the transition rows: %+v", rows)
+	}
+}
+
+// The prompt entry's own drain is the same for a prompt that carries a remember request: the release never runs a followup.
+func TestVerifyUnbindDoesNotWriteGoalplanWhenThePromptAlsoAsksToRemember(t *testing.T) {
+	cwd := t.TempDir()
+	unbindChatSeed(t, cwd)
+	unbindChatPending(t, cwd)
+	dir, err := goalplan.GoalplanDir(cwd, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planBefore, err := os.ReadFile(filepath.Join(dir, "goalplan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	promptOrchestrateAnswer(t, cwd, "s1", "t1", "remember this for later\norchestrate unbind")
+	planAfter, err := os.ReadFile(filepath.Join(dir, "goalplan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(planBefore, planAfter) {
+		t.Fatal("the goalplan file changed")
 	}
 }

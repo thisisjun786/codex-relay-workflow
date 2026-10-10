@@ -73,7 +73,9 @@ func Unbound(s state.State) state.State {
 
 // unbindResult is the unbind verb (CRW-146, not in the oracle): the one release of a session's goalplan slug. It is judged from rest
 // only, so it never orphans a running cycle: a phase other than IDLE, and an IDLE that still holds a check epoch or a D-close
-// marker (reset's "work to clear"), are refused with the way out, which is to close the cycle or reset first. A session with no slug is
+// marker (reset's "work to clear"), are refused with the way out, which is to close the cycle or reset first. The judgement is of the state
+// as the reader returns it: a checkEpoch stored on an IDLE file with no D-close marker is not returned (state.ReadStateStrict keeps the epoch
+// only for phase C or an IDLE that holds a marker), so that file is the normalised rest, in which reset finds nothing to clear either. A session with no slug is
 // a recognised no-op, so a repeat is idempotent. The row is IDLE to IDLE with the released slug as its evidence.
 func unbindResult(s state.State, ts string) ApplyResult {
 	reset := "`crw pabcd orchestrate reset --session " + s.SessionID + "`"

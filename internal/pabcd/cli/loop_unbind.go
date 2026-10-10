@@ -5,7 +5,8 @@
 //
 // What it writes: the session state without its slug and without the work-phase pointer the Stop guard keeps for that slug, and one
 // row in the transition ledger (IDLE to IDLE, reason "unbound", the released slug as its evidence). What it never touches: the
-// goalplan file, the goalplan's own ledger, any other field of the session. It runs from rest only (the judgement is
+// goalplan file, the goalplan's own ledger (the outbox is drained for rows only, so a pending followup that would write a goalplan
+// stays pending), any other field of the session. It runs from rest only (the judgement is
 // fsm.ApplyHumanTransition's, shared with the chat command `orchestrate unbind`), so it cannot orphan a running cycle: a session
 // stranded in a phase is first closed with `crw pabcd orchestrate reset`, which keeps the slug, and then released here.
 package cli
@@ -34,7 +35,9 @@ func loopUnbind(ctx context.Context, args LoopCliArgs) (LoopCliResult, error) {
 	var answer LoopCliResult
 	err := state.WithSessionLockContext(ctx, args.Cwd, sessionID, func() error {
 		// A ledger row an earlier writer of this session left pending is recorded first, so this verb's row follows it (CRW-1097).
-		hook.DrainSessionLedger(args.Cwd, sessionID)
+		// Rows only: an event's followup (a re-plan's plan-audit cleanup rewrites the goalplan and appends to its ledger) stays pending
+		// for a writer that may run it, because this verb never writes a goalplan.
+		hook.DrainSessionLedgerRows(args.Cwd, sessionID)
 		var err error
 		answer, err = loopUnbindLocked(ctx, args.Cwd, sessionID)
 		return err
@@ -79,7 +82,24 @@ func loopUnbindLocked(ctx context.Context, cwd, sessionID string) (LoopCliResult
 	if !published.published {
 		return LoopCliResult{}, published.err
 	}
-	rowErr := orchestrateCommitRecord(cwd, sessionID, ev)
+	rowErr := loopUnbindRecord(cwd, sessionID, ev)
 	answer := "loop unbind: released goalplan '" + cur.Slug + "' from session " + sessionID + ". The goalplan file and its ledger were not changed."
 	return LoopCliResult{Output: orchestrateCommitAnswer(answer, orchestrateCommitWarn("loop unbind", published, rowErr, state.PhaseIdle, state.PhaseIdle)...)}, nil
+}
+
+// loopUnbindRecord records the row of the published release: the session's outbox is drained for rows only, with ev known as
+// published, so an earlier pending row goes first and no followup runs. The error is the reason ev's row is still pending, nil once
+// it is in the ledger.
+func loopUnbindRecord(cwd, sessionID string, ev *state.LedgerEvent) error {
+	if ev == nil {
+		return nil
+	}
+	report := hook.DrainSessionLedgerRows(cwd, sessionID, ev.ID)
+	if !hook.LedgerEventStillPending(report, ev.ID) {
+		return nil
+	}
+	if report.Err != nil {
+		return report.Err
+	}
+	return errors.New("it is still pending")
 }
