@@ -199,8 +199,10 @@ func pumpSignalDagLast(st *pumpState) []pumpSignalTuple {
 // the size at each reading that finds no offsets, a pump that ended or failed to save before its
 // offsets reached disk would take the next reading's larger size as the boundary, and a refusal
 // that arrived in between (one the first reading even collected) would read as history. A boundary
-// is written once and only ever dropped, once the saved pump state holds the rollout's offsets, so
-// writing it early can only make a reading report more, never less. A dry run writes none.
+// is written once and dropped once the saved pump state holds the rollout's offsets; it is only
+// taken again when the rollout is shorter than it (a replaced file). A rollout only grows, so the
+// boundary is never past what any first-sight reading's own size would be: writing it before the
+// pending events can only make a reading report more, never less. A dry run writes none.
 type pumpSignalDagOffsetStore struct {
 	st  *pumpState
 	dir string
@@ -242,13 +244,16 @@ func (o pumpSignalDagOffsetStore) save(state dagHostOffsets) error {
 	return nil
 }
 
-// pin is the rollout's kept first-sight boundary, or size, kept now (see the type).
+// pin is the rollout's kept first-sight boundary, or size, kept now (see the type). A kept boundary
+// past the rollout's end belongs to a file that was replaced or cut short, and would take the new
+// file's refusals up to the old size for history; it is taken again at the size the file has now,
+// so a boundary is never past the size a reading of the rollout sees.
 func (o pumpSignalDagOffsetStore) pin(path string, size int64) (int64, error) {
 	pins, err := pumpSignalDagLoadPins(o.dir)
 	if err != nil {
 		return 0, err
 	}
-	if at, ok := pins[path]; ok {
+	if at, ok := pins[path]; ok && at <= size {
 		return at, nil
 	}
 	if o.dry {
@@ -593,6 +598,13 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 	readCtx, cancel := context.WithTimeout(ctx, pumpSignalCapacityBudget)
 	defer cancel()
 	report, commit, err := pumpSignalCapacity(readCtx, e, cfg, st.dry)
+	if err == nil && readCtx.Err() != nil {
+		// A read that returns after its budget ran out (or after the round was cancelled) is not a
+		// judgement: the evaluation absorbs a failed signal read as an unknown signal, so a report
+		// built past the deadline may rest on reads the deadline cut off. It is unmeasured like a
+		// failed read: no event, no read time, no record and no commit, and it is made again.
+		err = fmt.Errorf("the capacity read ran past its budget of %v: %w", pumpSignalCapacityBudget, readCtx.Err())
+	}
 	if err != nil {
 		// A read nobody could take is unmeasured: it leaves the alerted state as it is and is made
 		// again on the next round.
