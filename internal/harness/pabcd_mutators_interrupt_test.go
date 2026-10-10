@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -540,39 +541,22 @@ func pabcd1167SteerRun(t *testing.T, crw string) {
 	}
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
-	type opened struct {
-		f   *os.File
-		err error
-	}
-	rendezvous := make(chan opened, 1)
-	go func() {
-		f, err := os.OpenFile(batch, os.O_WRONLY, 0)
-		rendezvous <- opened{f, err}
-	}()
+	writer := pabcd1167StartBatchWriter(func() (*os.File, error) { return os.OpenFile(batch, os.O_WRONLY, 0) })
 	ended := false
 	t.Cleanup(func() {
 		if !ended {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			<-done
 		}
-		if r, err := os.OpenFile(batch, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil { // release a writer still blocked in open
-			r.Close()
-		}
-		if o := <-rendezvous; o.f != nil {
-			o.f.Close()
-		}
+		writer.release(batch)
 	})
-	select {
-	case o := <-rendezvous:
-		if o.err != nil {
-			t.Fatal(o.err)
-		}
-		rendezvous <- o // for the cleanup
-	case <-done:
+	switch err := writer.await(done, 10*time.Second); err {
+	case nil:
+	case errBatchRunEnded:
 		ended = true
 		t.Fatalf("the run ended before it opened its batch: %v\nstdout:\n%s\nstderr:\n%s", cmd.ProcessState, stdout.String(), stderr.String())
-	case <-time.After(10 * time.Second):
-		t.Fatal("the run did not open its batch FIFO within 10 s")
+	default:
+		t.Fatal(err)
 	}
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
 		t.Fatalf("the SIGINT was not delivered: %v", err)
@@ -585,5 +569,78 @@ func pabcd1167SteerRun(t *testing.T, crw string) {
 	}
 	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
 		t.Fatalf("the session state was replaced: %v %v", info, err)
+	}
+}
+
+var (
+	errBatchRunEnded = errors.New("the run ended")
+	errBatchTimeout  = errors.New("the run did not open its batch FIFO within 10 s")
+)
+
+// pabcd1167BatchWriter is the test's O_WRONLY open of the batch FIFO, run in a goroutine because it blocks until the
+// child opens the FIFO for reading. The goroutine's single result is received once, by await or else by release.
+type pabcd1167BatchWriter struct {
+	result   chan pabcd1167BatchOpen
+	received bool
+	open     pabcd1167BatchOpen
+}
+
+type pabcd1167BatchOpen struct {
+	f   *os.File
+	err error
+}
+
+func pabcd1167StartBatchWriter(open func() (*os.File, error)) *pabcd1167BatchWriter {
+	w := &pabcd1167BatchWriter{result: make(chan pabcd1167BatchOpen, 1)}
+	go func() {
+		f, err := open()
+		w.result <- pabcd1167BatchOpen{f, err}
+	}()
+	return w
+}
+
+// await returns nil once the writer opened, the open's error, errBatchRunEnded when done closed first or
+// errBatchTimeout.
+func (w *pabcd1167BatchWriter) await(done <-chan struct{}, timeout time.Duration) error {
+	select {
+	case w.open = <-w.result:
+		w.received = true
+		return w.open.err
+	case <-done:
+		return errBatchRunEnded
+	case <-time.After(timeout):
+		return errBatchTimeout
+	}
+}
+
+// release frees a writer still blocked in its open (by opening the FIFO for reading), waits for the goroutine's
+// result unless await already took it, and closes the file.
+func (w *pabcd1167BatchWriter) release(batch string) {
+	if r, err := os.OpenFile(batch, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+		r.Close()
+	}
+	if !w.received {
+		w.open = <-w.result
+		w.received = true
+	}
+	if w.open.f != nil {
+		w.open.f.Close()
+	}
+}
+
+// TestPabcd1167BatchWriterReleasesAfterAFailedOpen: when the writer's open fails, the test's cleanup still gets
+// the goroutine's result out of release; a release that waited for a second result would hang the package.
+func TestPabcd1167BatchWriterReleasesAfterAFailedOpen(t *testing.T) {
+	openErr := errors.New("open failed")
+	w := pabcd1167StartBatchWriter(func() (*os.File, error) { return nil, openErr })
+	if err := w.await(make(chan struct{}), 5*time.Second); err != openErr {
+		t.Fatalf("await = %v, want the open's error", err)
+	}
+	released := make(chan struct{})
+	go func() { w.release(filepath.Join(t.TempDir(), "absent.fifo")); close(released) }()
+	select {
+	case <-released:
+	case <-time.After(3 * time.Second):
+		t.Fatal("release hung after the failed open: the only result was consumed by await")
 	}
 }
