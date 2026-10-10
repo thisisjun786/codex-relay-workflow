@@ -167,3 +167,45 @@ func TestStateSelection_an_unnameable_configuration_location_is_no_configuration
 		t.Errorf("selection %+v %v, want the XDG base to decide", got, err)
 	}
 }
+
+// CRW-958 round 2: a split key refuses the selection on its own, with no relay_state beside it, and
+// it refuses every source of the selection: the configuration is wrong whichever store is chosen,
+// so --state and CODEX_SESSION_RELAY_STATE do not make the split acceptable. A relay_state that the
+// selection does not use (--state or the environment variable chose the store) is not judged.
+func TestStateSelection_a_split_key_alone_is_refused_for_every_source(t *testing.T) {
+	home := storageConfig(t, "")
+	for _, key := range []string{"relay_store", "relay_db", "relay_wal", "relay_sidecar", "relay_sidecars"} {
+		t.Setenv("CRW_CONFIG", writeConfig(t, home, `"`+key+`":"`+filepath.Join(home, "other")+`"`))
+		t.Setenv("CODEX_SESSION_RELAY_STATE", "")
+		for name, resolve := range map[string]func() (StateSelection, error){
+			"discover": func() (StateSelection, error) { return DiscoverStateDir("/run/x.sock") },
+			"resolve":  func() (StateSelection, error) { return ResolveStateDir("", "/run/x.sock") },
+			"flag":     func() (StateSelection, error) { return ResolveStateDir(filepath.Join(home, "flag"), "/run/x.sock") },
+			"env": func() (StateSelection, error) {
+				t.Setenv("CODEX_SESSION_RELAY_STATE", filepath.Join(home, "env"))
+				defer t.Setenv("CODEX_SESSION_RELAY_STATE", "")
+				return ResolveStateDir("", "/run/x.sock")
+			},
+		} {
+			if _, err := resolve(); err == nil || !strings.Contains(err.Error(), "state_split") {
+				t.Errorf("%s alone, %s: %v, want state_split", key, name, err)
+			}
+		}
+	}
+	plain := filepath.Join(home, "plain")
+	if err := os.WriteFile(plain, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_CONFIG", writeConfig(t, home, `"relay_state":"`+plain+`"`))
+	if _, err := ResolveStateDir("", "/run/x.sock"); err == nil {
+		t.Error("an unusable relay_state the selection uses was accepted")
+	}
+	t.Setenv("CODEX_SESSION_RELAY_STATE", filepath.Join(home, "env"))
+	if got, err := ResolveStateDir("", "/run/x.sock"); err != nil || got.Source != "env" {
+		t.Errorf("env over an unused relay_state: %+v %v", got, err)
+	}
+	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
+	if got, err := ResolveStateDir(filepath.Join(home, "flag"), "/run/x.sock"); err != nil || got.Source != "flag" {
+		t.Errorf("--state over an unused relay_state: %+v %v", got, err)
+	}
+}

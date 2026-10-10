@@ -206,7 +206,15 @@ func socketHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:8])
 }
+
+// ResolveStateDir is the relay's one state selection: --state, then CODEX_SESSION_RELAY_STATE, then
+// DiscoverStateDir (a configured relay_state, then the XDG or home base). A configuration whose paths
+// section points a part of the state apart (CRW-958, state_split) is refused for every source: it is
+// wrong whichever store is chosen. A configured relay_state is judged only where it is used, below.
 func ResolveStateDir(explicit, socket string) (StateSelection, error) {
+	if err := crwconfig.RelayStateSplit(os.Getenv); err != nil {
+		return StateSelection{}, err
+	}
 	if explicit != "" {
 		path, err := absoluteExpanded(explicit)
 		return StateSelection{Path: path, Source: "flag", Detail: "--state " + explicit}, err

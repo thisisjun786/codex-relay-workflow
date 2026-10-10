@@ -147,3 +147,24 @@ func (t ToolRoots) Apply(env []string) []string {
 func (t ToolRoots) String() string {
 	return fmt.Sprintf("build_cache=%q module_cache=%q build_work=%q", t.BuildCache, t.ModuleCache, t.BuildWork)
 }
+
+// SetEnv returns env with name set to value: an entry of that name is replaced in place, and one is
+// appended when there is none. The slice it is given is never changed.
+func SetEnv(env []string, name, value string) []string {
+	out := make([]string, 0, len(env)+1)
+	set := false
+	for _, kv := range env {
+		if key, _, _ := strings.Cut(kv, "="); key == name {
+			if !set {
+				out = append(out, name+"="+value)
+				set = true
+			}
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !set {
+		out = append(out, name+"="+value)
+	}
+	return out
+}

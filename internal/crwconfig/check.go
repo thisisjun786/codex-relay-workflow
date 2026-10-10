@@ -1,6 +1,7 @@
 package crwconfig
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Level is how serious a finding is. An error is a structural fault: a product command that uses
@@ -69,6 +72,9 @@ type Probe struct {
 	// default placement is never refused for a fault the host did not choose. The split keys of
 	// relay_state are read either way.
 	ConfiguredOnly bool
+	// structuralOnly leaves out the readings that can only warn (the placements in use and their
+	// drift), for a refusal that reads no warning anyway.
+	structuralOnly bool
 }
 
 // RootStatus is what the check saw of one root.
@@ -80,9 +86,12 @@ type RootStatus struct {
 	Exists     bool   `json:"exists"`
 	Filesystem string `json:"filesystem,omitempty"`
 	FreeBytes  uint64 `json:"free_bytes,omitempty"`
-	// Observed is the placement already in use, when it holds data: the default location of the
-	// root, or Go's own cache. Empty when there is none.
+	// Observed is the first placement already in use, when one holds data. Empty when there is none.
 	Observed string `json:"observed,omitempty"`
+	// InUse is every placement already in use for this root that holds data: the default location,
+	// Go's own cache, the stores the relay's scope registry and the installer's unit name, the pump
+	// log and the relay daemon logs where they are now.
+	InUse []string `json:"in_use,omitempty"`
 }
 
 // Report is the result of Check: the configuration file, every checked root and the findings.
@@ -143,8 +152,9 @@ const defaultMinFree = 1 << 30
 // its own. The store, its WAL and its sidecars are one bundle, moved only by relay_state.
 var splitKeys = []string{"relay_store", "relay_db", "relay_wal", "relay_sidecar", "relay_sidecars"}
 
-// relaySidecars are the files beside a store that belong to its bundle.
-var relaySidecars = []string{"relay.sqlite3-wal", "relay.sqlite3-shm", "relay.sqlite3-journal", "daemon.json", "daemon.log", "control.sock"}
+// relaySidecars are the files beside a store that belong to its durable state bundle. The daemon
+// log is not one of them: it is a log, which a configured log_root moves (RelayLogFile).
+var relaySidecars = []string{"relay.sqlite3-wal", "relay.sqlite3-shm", "relay.sqlite3-journal", "daemon.json", "control.sock"}
 
 // Check validates the roots of a loaded configuration and reports. It reads the host and writes
 // nothing: it does not create a directory it finds missing. getenv is the environment the
@@ -184,9 +194,17 @@ func Check(file *File, getenv func(string) string, probe Probe) Report {
 			continue
 		}
 		status := RootStatus{Name: name, Path: root.Path, Source: root.Source, Set: root.Set()}
-		observed := observedPlacement(name, defaults[name], getenv)
+		var inUse []placement
+		if !probe.structuralOnly {
+			inUse = placementsInUse(file, name, defaults, getenv)
+		}
+		for _, p := range inUse {
+			status.InUse = append(status.InUse, p.path)
+		}
+		if len(status.InUse) > 0 {
+			status.Observed = status.InUse[0]
+		}
 		if !root.Set() {
-			status.Observed = observed
 			checked = append(checked, status)
 			continue
 		}
@@ -215,11 +233,12 @@ func Check(file *File, getenv func(string) string, probe Probe) Report {
 			}
 		}
 		checkSocket(name, root.Path, limit, add)
-		if observed != "" && root.Source == SourceConfig && !samePlace(observed, root.Path) {
-			status.Observed = observed
-			add(LevelWarning, name, CheckDrift, "%s is in use at %s, but the configuration points to %s; the check moves nothing", name, observed, root.Path)
-		} else if observed != "" {
-			status.Observed = observed
+		if root.Source == SourceConfig {
+			for _, p := range inUse {
+				if !p.agrees(root.Path) {
+					add(LevelWarning, name, CheckDrift, "%s is in use at %s (%s), but the configuration points to %s; the check moves nothing", name, p.path, p.what, root.Path)
+				}
+			}
 		}
 		if name == RootRelayState {
 			checkRelay(file, root.Path, getenv, add)
@@ -348,7 +367,7 @@ func checkRelayKeys(file *File, add func(Level, string, string, string, ...any))
 // is given), and returns the structural faults as one error; warnings never refuse. A product
 // command calls it for the roots it is about to use, and starts nothing against a root it cannot.
 func (f *File) Refusal(getenv func(string) string, only ...string) error {
-	return Check(f, getenv, Probe{Only: only, ConfiguredOnly: true}).Refusal()
+	return Check(f, getenv, Probe{Only: only, ConfiguredOnly: true, structuralOnly: true}).Refusal()
 }
 
 // checkShared warns when two uses name one directory.
@@ -385,15 +404,47 @@ func samePlace(a, b string) bool {
 	return aerr == nil && berr == nil && os.SameFile(ai, bi)
 }
 
-// observedPlacement is the directory already in use for a root, if it holds data: the root's
-// default location, and for the Go caches Go's own default or its environment variable. A
-// directory that is missing or empty is not a placement in use.
-func observedPlacement(name string, def Root, getenv func(string) string) string {
-	candidate := def.Path
+// placement is one place a root's data is already kept: a directory, or an entry (a relay store
+// directory, a log file) that belongs below the root. what says how it was found.
+type placement struct {
+	path, what string
+	entry      bool
+}
+
+// agrees reports whether the placement is where root puts it: the same directory, or for an entry,
+// a path below the root.
+func (p placement) agrees(root string) bool {
+	if !p.entry {
+		return samePlace(p.path, root)
+	}
+	at, under := canonical(p.path), canonical(root)
+	return at == under || strings.HasPrefix(at, strings.TrimRight(under, "/")+"/")
+}
+
+// placementsInUse is every placement already in use for a root that holds data, read from the
+// consumers of the root rather than from its default alone: the root's default location, Go's own
+// caches, the relay stores the scope registry and the installer's unit record, the management pump
+// log and the relay daemon logs. A directory that is missing or empty is no placement.
+func placementsInUse(file *File, name string, defaults map[string]Root, getenv func(string) string) []placement {
+	var out []placement
+	seen := map[string]bool{}
+	add := func(p placement) {
+		if p.path == "" || !filepath.IsAbs(p.path) || seen[p.path] {
+			return
+		}
+		seen[p.path] = true
+		out = append(out, p)
+	}
+	dir := func(path, what string) {
+		if holdsData(path) {
+			add(placement{path: path, what: what})
+		}
+	}
 	switch name {
 	case RootBuildCache:
-		candidate = getenv("GOCACHE")
+		candidate, what := getenv("GOCACHE"), "GOCACHE"
 		if candidate == "" {
+			what = "Go's own build cache"
 			if runtime.GOOS == "darwin" {
 				candidate = rootJoin(getenv("HOME"), "Library", "Caches", "go-build")
 			} else {
@@ -401,23 +452,147 @@ func observedPlacement(name string, def Root, getenv func(string) string) string
 				candidate = rootJoin(base, "go-build")
 			}
 		}
+		dir(candidate, what)
 	case RootModuleCache:
-		candidate = getenv("GOMODCACHE")
+		candidate, what := getenv("GOMODCACHE"), "GOMODCACHE"
 		if candidate == "" {
-			gopath := getenv("GOPATH")
-			if first := filepath.SplitList(gopath); len(first) > 0 && first[0] != "" {
+			what = "Go's own module cache"
+			if first := filepath.SplitList(getenv("GOPATH")); len(first) > 0 && first[0] != "" {
 				candidate = rootJoin(first[0], "pkg", "mod")
 			} else {
 				candidate = rootJoin(getenv("HOME"), "go", "pkg", "mod")
 			}
 		}
+		dir(candidate, what)
 	case RootBuildWork:
-		return ""
+	case RootRelayState:
+		dir(defaults[name].Path, "the default location")
+		for _, store := range registeredRelayStores(getenv) {
+			if holdsData(store.path) {
+				add(store)
+			}
+		}
+	case RootLog:
+		dir(defaults[name].Path, "the default location")
+		if manage := manageStateDir(file); manage != "" {
+			if pump := rootJoin(manage, "pump.log"); exists(pump) {
+				add(placement{path: pump, what: "the management pump log", entry: true})
+			}
+		}
+		for _, store := range relayStoresInUse(file, defaults, getenv) {
+			if log := rootJoin(store, RelayLogName); exists(log) {
+				add(placement{path: log, what: "the relay daemon log of the store " + store, entry: true})
+			}
+		}
+	default:
+		dir(defaults[name].Path, "the default location")
 	}
-	if candidate == "" || !filepath.IsAbs(candidate) || !holdsData(candidate) {
-		return ""
+	return out
+}
+
+// manageStateDir is the management tool's state directory, where its pump log is kept when no
+// log_root is configured: the manage object's state_dir, else the manage_state root.
+func manageStateDir(file *File) string {
+	var manage struct {
+		StateDir string `json:"state_dir"`
 	}
-	return candidate
+	if err := file.Section("manage", &manage); err == nil && manage.StateDir != "" {
+		return manage.StateDir
+	}
+	return file.roots[RootManage].Path
+}
+
+// relayStoresInUse is every relay store directory known to this host: the store directories below
+// the relay state root the selection uses (the configured relay_state, else the default), and the
+// stores the scope registry and the installer's unit record.
+func relayStoresInUse(file *File, defaults map[string]Root, getenv func(string) string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path != "" && !seen[path] {
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	for _, root := range []string{file.roots[RootRelayState].Path, defaults[RootRelayState].Path} {
+		if root == "" {
+			continue
+		}
+		entries, _ := os.ReadDir(root)
+		for _, entry := range entries {
+			if path := rootJoin(root, entry.Name()); isDir(path) {
+				add(path)
+			}
+		}
+	}
+	for _, store := range registeredRelayStores(getenv) {
+		add(store.path)
+	}
+	return out
+}
+
+// registeredRelayStores is every relay store a registered service names: each stateDir the relay's
+// scope registry records (CODEX_SESSION_RELAY_SCOPE_DIR, else ~/.codex-session-relay/scopes, where
+// every daemon claims its scope whatever --state it was started with), and the --state of the
+// installer's unit (crw-relay.service in the user unit directory). It reads what is there and
+// skips what it cannot read; the report is a warning, never a refusal.
+func registeredRelayStores(getenv func(string) string) []placement {
+	var out []placement
+	registry := getenv("CODEX_SESSION_RELAY_SCOPE_DIR")
+	if registry == "" && getenv("HOME") != "" {
+		registry = rootJoin(getenv("HOME"), ".codex-session-relay", "scopes")
+	}
+	if registry != "" {
+		claims, _ := filepath.Glob(filepath.Join(registry, "*.json"))
+		for _, claim := range claims {
+			raw, err := os.ReadFile(claim)
+			if err != nil {
+				continue
+			}
+			var record struct {
+				StateDir string `json:"stateDir"`
+			}
+			if json.Unmarshal(raw, &record) == nil && filepath.IsAbs(record.StateDir) {
+				out = append(out, placement{path: record.StateDir, what: "registered in " + claim, entry: true})
+			}
+		}
+	}
+	unitDir := ""
+	if base := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(base) {
+		unitDir = rootJoin(base, "systemd", "user")
+	} else if home := getenv("HOME"); home != "" {
+		unitDir = rootJoin(home, ".config", "systemd", "user")
+	}
+	if unitDir != "" {
+		unit := rootJoin(unitDir, "crw-relay.service")
+		if raw, err := os.ReadFile(unit); err == nil {
+			for _, line := range strings.Split(string(raw), "\n") {
+				command, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
+				if !ok {
+					continue
+				}
+				fields := strings.Fields(command)
+				for i := 0; i+1 < len(fields); i++ {
+					if fields[i] == "--state" && filepath.IsAbs(fields[i+1]) {
+						out = append(out, placement{path: fields[i+1], what: "named by " + unit, entry: true})
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// exists reports whether something is at path.
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// isDir reports whether path is a directory, a link to one included.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // holdsData reports whether path is a directory with at least one entry.
@@ -440,4 +615,52 @@ func size(n uint64) string {
 		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
 	}
 	return fmt.Sprintf("%d bytes", n)
+}
+
+// Preflight is the storage check a command runs before it changes the host (crw install, and the
+// report of crw doctor): every root checked and every finding reported, as crw config check does,
+// and the refusal a product command gives (Refusal: a structural fault of a root the configuration
+// names, or a split of the relay's state) as the error. A configuration that cannot be read is
+// refused too. A host that cannot name its configuration location has no configuration, and its
+// report is empty.
+func Preflight(getenv func(string) string) (Report, error) {
+	file, err := loadOptional(getenv, "")
+	if err != nil {
+		return Report{Findings: []Finding{}}, err
+	}
+	if file == nil {
+		return Report{Findings: []Finding{}}, nil
+	}
+	return Check(file, getenv, runProbe), file.Refusal(getenv)
+}
+
+// Ordered is the report as an ordered JSON object, for a command whose report is written in that
+// form (crw doctor, crw install): the configuration file, every root and every finding.
+func (r Report) Ordered() pyjson.Object {
+	roots := make([]any, 0, len(r.Roots))
+	for _, root := range r.Roots {
+		inUse := make([]any, 0, len(root.InUse))
+		for _, path := range root.InUse {
+			inUse = append(inUse, path)
+		}
+		roots = append(roots, pyjson.Object{
+			{Key: "name", Value: root.Name}, {Key: "path", Value: root.Path}, {Key: "source", Value: string(root.Source)},
+			{Key: "set", Value: root.Set}, {Key: "exists", Value: root.Exists}, {Key: "filesystem", Value: root.Filesystem},
+			{Key: "freeBytes", Value: int64(min(root.FreeBytes, 1<<62))}, {Key: "inUse", Value: inUse},
+		})
+	}
+	return pyjson.Object{
+		{Key: "config", Value: pyjson.Object{{Key: "path", Value: r.Config.Path}, {Key: "source", Value: string(r.Config.Source)}}},
+		{Key: "roots", Value: roots},
+		{Key: "findings", Value: r.FindingsOrdered()},
+	}
+}
+
+// FindingsOrdered is the findings as ordered JSON objects.
+func (r Report) FindingsOrdered() []any {
+	out := make([]any, 0, len(r.Findings))
+	for _, f := range r.Findings {
+		out = append(out, pyjson.Object{{Key: "level", Value: string(f.Level)}, {Key: "root", Value: f.Root}, {Key: "check", Value: f.Check}, {Key: "message", Value: f.Message}})
+	}
+	return out
 }

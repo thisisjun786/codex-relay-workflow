@@ -213,16 +213,21 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 	return coreConfigState{cfg: cfg}
 }
 
-// coreApplyStorage applies the storage roots the configuration file names (CRW-958). A root the
-// file names that fails a structural check refuses the configuration, so no command starts a tool
-// or the relay against it. The tool roots are kept for the commands that start go and for the
-// relay child; log_root moves the pump log. relay_state is checked here but not turned into a
-// state directory: the relay's own state selection reads it (store.DiscoverStateDir), after --state
-// and CODEX_SESSION_RELAY_STATE, so this tool and a relay started directly choose one bundle for one
-// configuration and one socket, and manage.relay.state, which is passed as --state, stays the more
+// coreApplyStorage applies the storage roots the configuration file names (CRW-958). A tool root or
+// log_root the file names that fails a structural check refuses the configuration, so no command
+// starts a tool against it or writes a log it cannot keep; a paths key that points a part of the
+// relay's state apart refuses it too, as it refuses every relay state selection
+// (store.ResolveStateDir). The tool roots are kept for the children this tool starts; log_root moves
+// the pump log. relay_state is not judged here and not turned into a state directory: the relay's own
+// state selection reads it (store.DiscoverStateDir), after --state and CODEX_SESSION_RELAY_STATE, and
+// judges it only when it is the source it uses, so this tool and a relay started directly choose one
+// bundle and refuse the same configurations. manage.relay.state, passed as --state, stays the more
 // specific setting. A root the file does not name changes nothing.
 func coreApplyStorage(e *Env, file *crwconfig.File, cfg *Config) error {
-	if err := file.Refusal(e.Getenv, crwconfig.RootBuildCache, crwconfig.RootModuleCache, crwconfig.RootBuildWork, crwconfig.RootLog, crwconfig.RootRelayState); err != nil {
+	if err := file.RelaySplit(); err != nil {
+		return err
+	}
+	if err := file.Refusal(e.Getenv, crwconfig.RootBuildCache, crwconfig.RootModuleCache, crwconfig.RootBuildWork, crwconfig.RootLog); err != nil {
 		return err
 	}
 	roots := file.Roots()
