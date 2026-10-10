@@ -102,12 +102,6 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 	return entries, ignored, nil
 }
 
-// pendingCount is how many regular files wait in pending.
-func (r *Runner) pendingCount() int {
-	entries, _, _ := r.listPending()
-	return len(entries)
-}
-
 // moveEntry moves a pending file to one of the other queue directories, only while it still
 // holds the head the run worked on: a coordinator that refreshed the head meanwhile keeps its
 // new file in pending. It reports whether the file moved.
