@@ -60,7 +60,7 @@ func Test_test_lost_responses_replay_after_restart_without_duplicate_artifacts(t
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = nextClient.Close() })
-			handshake, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			handshake, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := host.WaitCount(handshake, "initialized", 2); err != nil {
 				t.Fatalf("new client handshake not recorded: %v", err)

@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -113,12 +114,16 @@ func jsString(s string) string {
 // MarkerWriter, so the SubagentStop gate passes it to RecordTombstone. A second marker for one session and agent in the same
 // millisecond fails on the exclusive create, and the failure is the caller's to swallow. A symbolic link or a file at the state
 // directory or at the marker directory is refused with an error (makeMarkerDir), so nothing is created outside the workspace
-// through a link planted there.
+// through a link planted there. A session id that sanitising would rewrite, or an empty one, is refused with
+// state.ErrNonCanonicalSessionID before anything is created (CRW-1108: the oracle wrote a marker that a-b's status reads for a/b).
 func WriteUnrecordableMarker(cwd, sessionID, agentID string) error {
 	return writeUnrecordableMarker(cwd, sessionID, agentID, time.Now())
 }
 
 func writeUnrecordableMarker(cwd, sessionID, agentID string, now time.Time) error {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return state.ErrNonCanonicalSessionID
+	}
 	if err := makeMarkerDir(cwd); err != nil {
 		return err
 	}
@@ -144,19 +149,46 @@ func markerDirWritable(cwd string) bool {
 	return err == nil || errors.Is(err, fs.ErrNotExist)
 }
 
+// markerMayBelong reports whether the marker at path may be one of sessionID's. A marker names its session exactly in its body
+// (writeUnrecordableMarker), so one whose sessionId is another session's is not this session's (port: fixed, CRW-1106: the oracle
+// matches the name prefix only, so s1-x's marker refused s1's completion). A marker whose owner cannot be read (not a regular file,
+// unreadable, not a JSON object with a string sessionId) may be anyone's and counts, the denying direction.
+func markerMayBelong(path, sessionID string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return !errors.Is(err, fs.ErrNotExist)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return !errors.Is(err, fs.ErrNotExist)
+	}
+	var body map[string]any
+	if json.Unmarshal(raw, &body) != nil {
+		return true
+	}
+	owner, ok := body["sessionId"].(string)
+	return !ok || owner == sessionID
+}
+
 // UnrecordableVerdictStatus looks for the markers of a session. It is a tri-state on purpose: an unreadable marker directory
 // must not read as a session that never delegated. Only a missing directory is an absence, and then only if a marker could have
 // been written into it; a directory that holds no marker of the session is clean only if it is writable. A marker is a name
-// that starts with <session>-, so the markers of a session whose id continues with a dash after this one's count too. The query
+// that starts with <session>- and whose body names this session or no readable one (markerMayBelong). The query
 // is not read-only: it creates the state directory, its .gitignore and the marker directory, and writes and removes a probe. A
 // marker directory that is a link is read through, which can only deny: a marker of the session in the directory it leads to is
-// Present, and without one the probe is refused, so the answer is Unreadable.
+// Present, and without one the probe is refused, so the answer is Unreadable. A session id that sanitising would rewrite, or an empty
+// one, names no marker of its own: it is Unreadable without a read or a probe (CRW-1108: the oracle read a-b's markers for a/b).
 func UnrecordableVerdictStatus(cwd, sessionID string) VerdictStatus {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return VerdictStatus{Unreadable: true}
+	}
 	names, err := dirNames(unrecordableDir(cwd))
 	switch {
 	case err == nil:
 		prefix := state.SanitizeKey(sessionID) + "-"
-		present := slices.ContainsFunc(names, func(n string) bool { return strings.HasPrefix(n, prefix) })
+		present := slices.ContainsFunc(names, func(n string) bool {
+			return strings.HasPrefix(n, prefix) && markerMayBelong(filepath.Join(unrecordableDir(cwd), n), sessionID)
+		})
 		return VerdictStatus{Present: present, Unreadable: !present && !markerDirWritable(cwd)}
 	case errors.Is(err, fs.ErrNotExist):
 		return VerdictStatus{Unreadable: !markerDirWritable(cwd)}

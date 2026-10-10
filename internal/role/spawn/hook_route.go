@@ -356,6 +356,15 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if effort != "" {
 		updated = updated.Set("reasoning_effort", effort)
 	}
+	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed, and before a
+	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
+	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
+	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
+	if a.evidenceAssignment != nil {
+		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
+			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
+		}
+	}
 	if a.managed != nil {
 		// The candidate's model and effort replace whatever the caller sent, a null candidate field deleting the key (:1098-1101).
 		if a.managed.Candidate.Model == nil {
@@ -386,6 +395,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 // is an unknown outcome (RunSpawnAttachHook), never the caller's own input and never a grant given back.
 func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 	if a.grant != nil && !a.grant.reserve(time.Now()) {
+		a.dropEvidenceAssignment()
 		return DenyEnvelope(RecurseDenyReason) // another call took the grant first
 	}
 	if a.managed != nil {
@@ -394,6 +404,7 @@ func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 			if a.grant != nil {
 				a.grant.release()
 			}
+			a.dropEvidenceAssignment()
 			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
 		}
 		if a.commit != nil {
@@ -412,6 +423,14 @@ func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 		}
 	}
 	return answer
+}
+
+// dropEvidenceAssignment takes back the evidence assignment the route recorded (CRW-1115) when finish refuses the spawn, so a child
+// that never ran leaves no open assignment behind; the record was written before the issuance, which is a one-shot (CRW-1106).
+func (a spawnHookAssembly) dropEvidenceAssignment() {
+	if a.evidenceAssignment != nil {
+		a.evidenceAssignment.Remove(a.cwd)
+	}
 }
 
 // spawnHookDeepReason is why a managed spawn nested too deep is refused, with what the caller does about it.

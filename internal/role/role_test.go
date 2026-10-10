@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-func TestMain(m *testing.M) { testsupport.Main(m) }
+func TestMain(m *testing.M) { testsupport.Main(m, guidancerecord.RefuseAccountHome) }
 
 // home is a temporary CRW_HOME and an environment whose HOME and CODEX_HOME are temporary too, so no test reads or writes the
 // real home.

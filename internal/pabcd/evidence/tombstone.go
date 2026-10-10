@@ -65,11 +65,13 @@ func sameAgent(e state.UnverifiedSubagent, agentID, turnID string) bool {
 
 // HasTombstone reports whether the session already holds a terminal record for this agent and turn. It is the latch that makes
 // the release stick: without it the next stop would start the budget again. An unreadable session reads as no record.
+//
+// A verdict recorded beside a full main list (CRW-1110) counts too.
 func HasTombstone(cwd, sessionID string, p Payload) bool {
 	agentID, turnID, _ := tombstoneIdentity(p)
 	return slices.ContainsFunc(state.ReadState(cwd, sessionID).UnverifiedSubagents, func(e state.UnverifiedSubagent) bool {
 		return sameAgent(e, agentID, turnID)
-	})
+	}) || hasOverflow(cwd, sessionID, agentID, turnID)
 }
 
 // RecordTombstone records the terminal verdict of an agent that ran out of attempts and reports whether it did. The whole
@@ -80,7 +82,9 @@ func HasTombstone(cwd, sessionID string, p Payload) bool {
 //
 // Changed from the oracle, a fix for a loss of state: the oracle writes back what its read kept, so a file that stores more than 64
 // verdicts, or a receipt past 256 units, lost the rest (after the 65th verdict the 66th dropped it). Here a state whose rewrite
-// would change a stored record is unwritable in both tiers, and the verdict goes to marker.
+// would change a stored record is unwritable in both tiers, and the verdict goes to marker. Since CRW-1110 the main list never
+// passes the cap: a verdict that does not fit is recorded beside it (overflow.go), and a file written before that holds more is
+// recovered first (RecoverOverflow).
 func RecordTombstone(cwd, sessionID string, p Payload, attempts int, marker MarkerWriter) bool {
 	return recordTombstone(cwd, sessionID, p, attempts, time.Now(), state.WithSessionLock, marker)
 }
@@ -95,6 +99,12 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 	entry := state.UnverifiedSubagent{AgentID: agentID, TurnID: turnID, AgentType: p.AgentType, Attempts: float64(attempts),
 		ReceiptClaimed: claimed, RecordedAt: now.UTC().Format("2006-01-02T15:04:05.000Z"), Resolvable: resolvable}
 	commit := func() error {
+		if err := RecoverOverflow(cwd, sessionID, write); err != nil {
+			return err
+		}
+		if hasOverflow(cwd, sessionID, agentID, turnID) { // this verdict already lives beside the main list
+			return writeOverflow(cwd, sessionID, entry)
+		}
 		s, unreadable := state.ReadStateStrict(cwd, sessionID)
 		if unreadable {
 			return errUnreadable
@@ -102,10 +112,18 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		if !rewriteGuardKeeps(cwd, sessionID, s) {
 			return rewriteGuardLoses
 		}
-		s.SessionID = sessionID
-		s.UnverifiedSubagents = append(slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
+		kept := slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
-		}), entry)
+		})
+		// CRW-1110 (port: fixed): a new verdict that would take the main list past the cap the reader keeps is recorded beside it,
+		// and the list written is checked to read back whole before it is published.
+		if len(kept) == len(s.UnverifiedSubagents) && len(kept) >= state.MaxUnverifiedSubagents {
+			return writeOverflow(cwd, sessionID, entry)
+		}
+		s.SessionID, s.UnverifiedSubagents = sessionID, append(kept, entry)
+		if !publishable(s.UnverifiedSubagents) {
+			return rewriteGuardLoses
+		}
 		return write(cwd, s)
 	}
 	// A commit whose state reached the final path is committed, even when the write then failed the directory sync: the

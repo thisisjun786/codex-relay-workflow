@@ -31,6 +31,17 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
+// LoopMutationSession is the session id a loop command would change, as the verb reads it (trimmed), or "" when
+// the verb only reads or names no session: init binds its plan to the session it names, and the verbs this file
+// owns change the plan the session is bound to. The terminal row judges it against the native session before
+// the command runs (CRW-1108).
+func LoopMutationSession(args LoopCliArgs) string {
+	if args.Verb != LoopVerbInit && !loopIsMutatingVerb(args.Verb) {
+		return ""
+	}
+	return loopSessionID(args)
+}
+
 // loopIsMutatingVerb reports the verbs this file owns.
 func loopIsMutatingVerb(verb LoopVerb) bool {
 	switch verb {

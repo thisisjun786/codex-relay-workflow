@@ -26,6 +26,7 @@ func Test33PR181ClaimWriteFailurePython(t *testing.T) {
 	for _, role := range []string{"host", "accepted"} {
 		for _, code := range []syscall.Errno{syscall.ENOSPC, syscall.EIO} {
 			t.Run(role+"-"+strconv.Itoa(int(code)), func(t *testing.T) {
+				loadProofDeadlines(t)
 				home := hookHome(t, 5)
 				t.Setenv("CODEX_HOME", home)
 				writeTest(t, filepath.Join(home, "transcript.jsonl"), []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}`+"\n"+`{"type":"event_msg","payload":{"type":"item_completed","turn_id":"t","thread_id":"s","item":{"type":"AgentMessage","id":"i","content":[{"type":"Text","text":"done"}]}}}`+"\n"))

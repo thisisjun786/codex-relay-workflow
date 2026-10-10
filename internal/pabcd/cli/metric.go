@@ -51,6 +51,17 @@ func RenderMetricHelp() string { return metricCliHelp }
 
 // metricCliFlag is readFlag of metric-cli.ts:30-34: the first occurrence's next token, and false when the
 // flag is absent or is the last token (the oracle's argv[idx + 1] ?? null).
+// MetricCliSession is the session id the metric command reads from argv (without the metric token): --session,
+// else -s, "" when neither names one. The terminal row judges it against the native session before a writing
+// verb runs (CRW-1108).
+func MetricCliSession(argv []string) string {
+	sessionID, haveSession := metricCliFlag(argv, "--session")
+	if !haveSession {
+		sessionID, _ = metricCliFlag(argv, "-s")
+	}
+	return sessionID
+}
+
 func metricCliFlag(argv []string, name string) (string, bool) {
 	if value := readFlagValue(argv, name); value != nil {
 		return *value, true

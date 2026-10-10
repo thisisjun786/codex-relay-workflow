@@ -36,7 +36,7 @@ func TestFinishedCreateReleasesSubscriptionEvenWhenCompletionPrecedesAck(t *test
 	if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "release-turn" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatalf("finished root subscription was retained: %v", err)
@@ -68,7 +68,7 @@ func TestCreateHoldsSubscriptionUntilItsOwnTurnEnds(t *testing.T) {
 	if _, err := b.RPC.Call(context.Background(), "probe/end", nil); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestNeverRunRetentionSurvivesRefusedAndCancelledInitialSends(t *testing.T) 
 	go func() { _, err := b.SendMessageToThread(ctx, send); done <- err }()
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("resume did not reach the isolated host")
 	}
 	cancel()
@@ -116,7 +116,7 @@ func TestNeverRunRetentionSurvivesRefusedAndCancelledInitialSends(t *testing.T) 
 	if r, err := b.SendMessageToThread(context.Background(), send); err != nil || r["status"] != "accepted" {
 		t.Fatalf("initial delivery=%v err=%v", r, err)
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)

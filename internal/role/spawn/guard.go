@@ -1,5 +1,14 @@
 package spawn
 
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+)
+
 const LeafGuardMarker = "[CRW-LEAF-GUARD]"
 const ScopeGuardMarker = "[CRW-SUBAGENT-SCOPE]"
 const SkillAffordanceMarker = "[CRW-SKILL-AFFORDANCE]"
@@ -66,4 +75,59 @@ func SkillAffordanceBlock(skillsDir string) string {
 		block += "\n\n" + catalog
 	}
 	return block
+}
+
+// EvidenceAssignmentMarker opens the block that tells a child where its evidence goes (CRW-1115). The spawn hook writes it with the
+// id of the assignment it recorded for the parent's session: [CRW-EVIDENCE-ASSIGNMENT:<id>].
+const EvidenceAssignmentMarker = evidence.AssignmentMarker
+
+// The packet lines a parent writes to assign a child's evidence location: the absolute path of the worker's assigned worktree,
+// and "none" when the packet allows the child no evidence write at all (a one-file or read-only scope).
+const (
+	WorktreePacketField = "CRW-WORKTREE:"
+	EvidencePacketField = "CRW-EVIDENCE:"
+)
+
+// EvidenceAssignmentBlock is the block injected after the guard for a recorded assignment. A tree assignment names the approved
+// receipt directory of the assigned tree; a no-write assignment names the scope-conflict line instead, so the child never widens
+// its scope to satisfy the gate.
+func EvidenceAssignmentBlock(id, root string, none bool) string {
+	block := EvidenceAssignmentMarker + ":" + id + "]"
+	if root != "" {
+		block += " Your assigned worktree is " + root + ". Pass it as the shell workdir on every\n" +
+			"command; your native cwd is still the parent's tree."
+	}
+	if none {
+		return block + " Your packet allows you no evidence write: do\n" +
+			"not create a receipt or widen your scope to make one. Report exactly what you\n" +
+			"checked and what you could not, and make the LAST line of your reply exactly\n" +
+			"`EVIDENCE_SCOPE_CONFLICT: " + id + "`. Your parent then verifies the work itself."
+	}
+	return block + " Record your evidence receipt (the checks you ran, their output and your\n" +
+		"judgement) under " + filepath.Join(root, ".crw", "evidence") + "/ - that directory is in\n" +
+		"your write scope for the receipt only. End your reply with the line\n" +
+		"`" + evidence.AssignmentCitation + " " + id + "` and, as its LAST line, exactly\n" +
+		"`EVIDENCE_RECORDED: <absolute path of that file>`. Do not point at a receipt in any other directory."
+}
+
+// spawnEvidenceRequest reads the assignment lines of the caller's packet. A line counts when, after white space, it starts with the
+// field name. present is false when neither line is there. More than one worktree, or an evidence value other than none, is an
+// error: the parent's packet is ambiguous and the spawn is refused rather than guessed.
+func spawnEvidenceRequest(message string) (worktree string, none, present bool, err error) {
+	for _, line := range strings.FieldsFunc(message, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		line = text.Trim(line)
+		if value, ok := strings.CutPrefix(line, WorktreePacketField); ok {
+			value = text.Trim(value)
+			if worktree != "" && worktree != value || value == "" {
+				return "", false, false, fmt.Errorf("the packet must name one assigned worktree on its %s line", WorktreePacketField)
+			}
+			worktree, present = value, true
+		} else if value, ok := strings.CutPrefix(line, EvidencePacketField); ok {
+			if strings.ToLower(text.Trim(value)) != "none" {
+				return "", false, false, fmt.Errorf("%s takes only the value none", EvidencePacketField)
+			}
+			none, present = true, true
+		}
+	}
+	return worktree, none, present, nil
 }

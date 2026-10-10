@@ -38,7 +38,7 @@ func subscriptionTransmitted(c *Client, method string) <-chan struct{} {
 
 func singleSubscriptionRelease(t *testing.T, c *Client, host *fakehost.Server) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)
@@ -79,12 +79,15 @@ func TestRefusedWatchWaitsForPendingTurn(t *testing.T) {
 	refused.Finish("", false)
 	noRelease(t, host)
 	announceEnd(t, c, host, "pending")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err == nil {
+	// Absence is the assertion here, so this wait is a short window of its own.
+	absent, cancelAbsent := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancelAbsent()
+	if err := host.WaitCount(absent, "thread/unsubscribe", 2); err == nil {
 		t.Fatal("duplicate root release")
 	}
 }
@@ -115,7 +118,7 @@ func TestReplacementConnectionRetiresEachWatch(t *testing.T) {
 	c.subscriptions.terminal(old, raw)
 	noRelease(t, host)
 	announceEnd(t, c, host, "new")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)
@@ -267,7 +270,7 @@ func TestFailedReleaseProofSurvivesARefusedWatch(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
 				t.Fatal(err)

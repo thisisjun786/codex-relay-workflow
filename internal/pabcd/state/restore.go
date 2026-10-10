@@ -45,8 +45,13 @@ var ErrStateNotRegular = errors.New("session state is not a regular file")
 // (a FIFO, a device, a directory, or a link to one) is refused with ErrStateNotRegular without being read. CRW-1074:
 // the file is opened with O_NONBLOCK, which returns at once for a FIFO whatever its writers do, and judged by fstat
 // of the open descriptor, so the read that follows only ever touches a regular file and no stalled writer can hold
-// a caller past the first SIGINT. An absent file is fs.ErrNotExist, as os.ReadFile answers.
+// a caller past the first SIGINT. An absent file is fs.ErrNotExist, as os.ReadFile answers. CRW-1108: a session id that
+// sanitising would rewrite (a/b, "") is ErrNonCanonicalSessionID before any file access, so it never reads the state of
+// the session it aliases (a-b, missing); ReadStateStrict marks that read unreadable.
 func ReadStateFile(cwd, sessionID string) ([]byte, error) {
+	if !IsCanonicalSessionID(sessionID) {
+		return nil, ErrNonCanonicalSessionID
+	}
 	f, err := os.OpenFile(StatePath(cwd, sessionID), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err

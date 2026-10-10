@@ -36,6 +36,7 @@ func (c *journalDeadline) Err() error {
 func Test33LateVerdictPython(t *testing.T) {
 	for _, edge := range []string{"bookkeeping", "guard_timeout"} {
 		t.Run(edge, func(t *testing.T) {
+			loadProofDeadlines(t)
 			home := hookHome(t, 5)
 			t.Setenv("CODEX_HOME", home)
 			lateVerdictFixture(t, home)
@@ -66,7 +67,12 @@ func Test33LateVerdictPython(t *testing.T) {
 					return n, err
 				}))
 				var output bytes.Buffer
-				code := runAdapter(ctx, nil, bytes.NewReader(payload), &output, time.Now(), func(ctx context.Context, stop Object, options GuardOptions) (Object, error) {
+				// The host's stdin is a descriptor already holding the whole Stop (the readiness path of
+				// decision 32), and the hook starts stall late: a loaded host that delays the settings read
+				// or the input goroutine past the production 100 ms input allocation cannot end this test in
+				// stdin_unreadable before the guard it is about. The production allocation is untouched; the
+				// tests of it are in stall_test.go and stdin_read_test.go.
+				code := runAdapter(ctx, nil, pipeInput(t, payload), &output, time.Now().Add(-stall), func(ctx context.Context, stop Object, options GuardOptions) (Object, error) {
 					guardCtx = ctx
 					options.Now = "2026-01-01T00:00:00Z"
 					verdict, err := Evaluate(ctx, stop, options)
@@ -92,7 +98,7 @@ func Test33LateVerdictPython(t *testing.T) {
 				if attempt == 0 && edge == "bookkeeping" {
 					select {
 					case <-wrote:
-					case <-time.After(10 * time.Second):
+					case <-time.After(time.Minute):
 						t.Fatal("journal write not reached")
 					}
 				}

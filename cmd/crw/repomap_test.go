@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,7 +38,10 @@ func TestRepoMapLadderFromBin(t *testing.T) {
 		{"venv", []string{"."}, "", false, true, p.python, []string{"-B", p.script}},
 		{"bare", []string{"."}, "", false, false, "python3", []string{"-B", p.script}},
 		{"blank-uv", []string{"."}, " ", true, true, "uv", []string{"run", "--quiet", "--with-requirements", p.requirements, "python", "-B", p.script}},
-		{"blank-bare", []string{"."}, " ", false, false, " ", []string{"-B", p.script}},
+		{"blank-bare", []string{"."}, " ", false, false, "python3", []string{"-B", p.script}},
+		{"blank-venv", []string{"."}, " \t", false, true, p.python, []string{"-B", p.script}},
+		{"padded-override", []string{"."}, " /override/python ", true, true, "/override/python", []string{"-B", p.script}},
+		{"blank-help", []string{"--help"}, " ", true, true, "python3", []string{"-B", p.script}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			p.hasUv, p.hasVenv = c.uv, c.venv
@@ -75,15 +82,22 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 		calls          int
 		final          string
 		removed        bool
+		dirExisted     bool // the venv directory was there before this attempt
 	}{
-		{"success", false, false, "", 0, 0, 1, 4, "venv", false},
-		{"mk-fails", false, false, "", 1, 0, 1, 3, "python3", false},
-		{"pip-fails", false, false, "", 0, 1, 1, 4, "python3", true},
-		{"uv-wins-after-bootstrap", false, false, "", 0, 0, 0, 4, "uv", false},
-		{"help-still-bootstraps", true, false, "", 0, 0, 1, 4, "python3", false},
-		{"existing", false, true, "", 0, 0, 1, 2, "venv", false},
-		{"override", false, false, "/custom/python", 0, 0, 1, 2, "/custom/python", false},
-		{"blank-suppresses-bootstrap", false, false, " ", 0, 0, 1, 2, " ", false},
+		{"success", false, false, "", 0, 0, 1, 4, "venv", false, false},
+		{"mk-fails", false, false, "", 1, 0, 1, 3, "python3", false, false},
+		{"pip-fails", false, false, "", 0, 1, 1, 4, "python3", true, false},
+		// A tree that was there before this attempt is not this attempt's to delete, only the interpreter it made (CRW-1147).
+		{"pip-fails-preexisting-dir", false, false, "", 0, 1, 1, 4, "python3", true, true},
+		{"uv-wins-after-bootstrap", false, false, "", 0, 0, 0, 4, "uv", false, false},
+		// help answers before the bootstrap, the venv check and the uv probe (CRW-1147).
+		{"help-skips-bootstrap", true, false, "", 0, 0, 1, 1, "python3", false, false},
+		{"help-with-override", true, false, "/custom/python", 0, 0, 1, 1, "/custom/python", false, false},
+		{"existing", false, true, "", 0, 0, 1, 2, "venv", false, false},
+		// An explicit interpreter needs no uv probe (CRW-1147).
+		{"override", false, false, "/custom/python", 0, 0, 1, 1, "/custom/python", false, false},
+		// A blank override is unset: it neither runs as a command nor suppresses the bootstrap (CRW-1147).
+		{"blank-override-is-unset", false, false, " ", 0, 0, 1, 4, "venv", false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -96,6 +110,9 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 			var removed string
 			var stderr strings.Builder
 			d := mapDeps{exists: func(path string) bool {
+				if path == filepath.Join(root, "venvs", "repomap") {
+					return c.dirExisted
+				}
 				if path != p.python {
 					t.Fatal(path)
 				}
@@ -141,11 +158,23 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 			if !reflect.DeepEqual(last.args, want) {
 				t.Fatalf("argv %v want %v", last.args, want)
 			}
-			if (removed != "") != c.removed || c.removed && removed != root+"/venvs/repomap" {
-				t.Fatal("cleanup", removed)
+			wantRemoved := ""
+			if c.removed {
+				wantRemoved = root + "/venvs/repomap"
+				if c.dirExisted {
+					wantRemoved = p.python // the tree stays, the interpreter this attempt made goes
+				}
 			}
-			if strings.Contains(stderr.String(), "venv bootstrap failed") != c.removed {
+			if removed != wantRemoved {
+				t.Fatalf("cleanup %q want %q", removed, wantRemoved)
+			}
+			if strings.Contains(stderr.String(), "venv bootstrap failed") != (c.pip != 0 && !c.help && c.calls > 1) {
 				t.Fatal(stderr.String())
+			}
+			for _, call := range calls {
+				if call.cmd == "uv" && (c.help || c.override != "" && strings.TrimSpace(c.override) != "") {
+					t.Fatalf("uv probed for a run it cannot serve: %+v", calls)
+				}
 			}
 		})
 	}
@@ -298,4 +327,421 @@ func TestRepoMapFindsThePluginInstalledSkill(t *testing.T) {
 			t.Fatalf("script %q", got)
 		}
 	})
+}
+
+// fakeMapFS is a venv directory the fakes build, so two bootstraps can see one another's work.
+type fakeMapFS struct {
+	mu      sync.Mutex
+	present map[string]bool
+	removed []string
+}
+
+func (f *fakeMapFS) has(p string) bool { f.mu.Lock(); defer f.mu.Unlock(); return f.present[p] }
+func (f *fakeMapFS) set(p string)      { f.mu.Lock(); defer f.mu.Unlock(); f.present[p] = true }
+func (f *fakeMapFS) remove(p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removed = append(f.removed, p)
+	delete(f.present, p)
+	return nil
+}
+
+type lockedBuilder struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuilder) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuilder) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// Two bootstraps of one crw home run one after the other: the second waits, finds the first's venv and neither builds nor
+// deletes anything, where a failed pip of the second used to remove the tree the first was still using (CRW-1147).
+func TestRepoMapBootstrapsAreSerializedAndLeaveTheOthersTree(t *testing.T) {
+	root := t.TempDir()
+	env := mapEnv(map[string]string{"HOME": root, "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": root, "CRW_MAP_BOOTSTRAP": "1"})
+	p, err := repoMapPaths(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "venvs", "repomap")
+	fs := &fakeMapFS{present: map[string]bool{}}
+	pipStarted, pipRelease := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var venvRuns, pipRuns []string
+	mk := func(name string, pipFails bool, stderr io.Writer) mapDeps {
+		return mapDeps{
+			exists: fs.has, remove: fs.remove,
+			lock: func(venvs string) (func(), error) {
+				return repoMapBootstrapLock(context.Background(), venvs, stderr)
+			},
+			run: func(cmd string, args []string, quiet bool) (int, error) {
+				switch {
+				case len(args) >= 2 && args[0] == "-m" && args[1] == "venv":
+					mu.Lock()
+					venvRuns = append(venvRuns, name)
+					mu.Unlock()
+					fs.set(dir)
+				case len(args) >= 2 && args[0] == "-m" && args[1] == "pip":
+					mu.Lock()
+					pipRuns = append(pipRuns, name)
+					mu.Unlock()
+					if name == "A" {
+						close(pipStarted)
+						<-pipRelease
+					}
+					if pipFails {
+						return 1, nil
+					}
+					fs.set(p.python)
+				}
+				return 0, nil
+			},
+		}
+	}
+	oldPoll := repoMapLockPoll
+	repoMapLockPoll = 5 * time.Millisecond
+	t.Cleanup(func() { repoMapLockPoll = oldPoll })
+	var aErr, bErr lockedBuilder
+	done := make(chan int, 2)
+	go func() { done <- launchRepoMap([]string{"."}, env, &aErr, mk("A", false, &aErr)) }()
+	<-pipStarted
+	// B would fail its pip, and with no serialization it would delete A's tree.
+	go func() { done <- launchRepoMap([]string{"."}, env, &bErr, mk("B", true, &bErr)) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(bErr.String(), "waiting for another venv bootstrap") {
+		if time.Now().After(deadline) {
+			t.Fatalf("B never waited for A: %q", bErr.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(pipRelease)
+	for range 2 {
+		select {
+		case code := <-done:
+			if code != 0 {
+				t.Fatalf("exit %d, A %q B %q", code, aErr.String(), bErr.String())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("bootstraps did not finish")
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(venvRuns, []string{"A"}) || !reflect.DeepEqual(pipRuns, []string{"A"}) || len(fs.removed) != 0 || !fs.has(p.python) || !fs.has(dir) {
+		t.Fatalf("venv runs %v pip runs %v removed %v: B did not leave A's venv alone", venvRuns, pipRuns, fs.removed)
+	}
+}
+
+// python3 -m venv creates the interpreter before pip has installed anything. A second run that starts while the first is still
+// installing must wait for the lock instead of taking the half-built interpreter as a ready venv (CRW-1147).
+func TestRepoMapSecondRunWaitsWhileThePipInstallIsRunning(t *testing.T) {
+	root := t.TempDir()
+	env := mapEnv(map[string]string{"HOME": root, "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": root, "CRW_MAP_BOOTSTRAP": "1"})
+	p, err := repoMapPaths(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "venvs", "repomap")
+	fs := &fakeMapFS{present: map[string]bool{}}
+	pipStarted, pipRelease := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	pipDone := false
+	var earlyUse []string
+	mk := func(name string, stderr io.Writer) mapDeps {
+		return mapDeps{
+			exists: fs.has, remove: fs.remove,
+			lock: func(venvs string) (func(), error) {
+				return repoMapBootstrapLock(context.Background(), venvs, stderr)
+			},
+			run: func(cmd string, args []string, quiet bool) (int, error) {
+				switch {
+				case cmd == "uv":
+					return 1, nil // no uv: the run takes the venv interpreter
+				case len(args) >= 2 && args[0] == "-m" && args[1] == "venv":
+					fs.set(dir)
+					fs.set(p.python) // the interpreter exists before pip has installed the requirements
+				case len(args) >= 2 && args[0] == "-m" && args[1] == "pip":
+					close(pipStarted)
+					<-pipRelease
+					mu.Lock()
+					pipDone = true
+					mu.Unlock()
+				case cmd == p.python:
+					mu.Lock()
+					if !pipDone {
+						earlyUse = append(earlyUse, name)
+					}
+					mu.Unlock()
+				}
+				return 0, nil
+			},
+		}
+	}
+	oldPoll := repoMapLockPoll
+	repoMapLockPoll = 5 * time.Millisecond
+	t.Cleanup(func() { repoMapLockPoll = oldPoll })
+	var aErr, bErr lockedBuilder
+	done := make(chan int, 2)
+	go func() { done <- launchRepoMap([]string{"."}, env, &aErr, mk("A", &aErr)) }()
+	<-pipStarted
+	go func() { done <- launchRepoMap([]string{"."}, env, &bErr, mk("B", &bErr)) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(bErr.String(), "waiting for another venv bootstrap") {
+		if time.Now().After(deadline) {
+			close(pipRelease)
+			t.Fatalf("B did not wait for A's pip install: %q (it used the half-built interpreter: %v)", bErr.String(), func() []string { mu.Lock(); defer mu.Unlock(); return earlyUse }())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(pipRelease)
+	for range 2 {
+		select {
+		case code := <-done:
+			if code != 0 {
+				t.Fatalf("exit %d, A %q B %q", code, aErr.String(), bErr.String())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("bootstraps did not finish")
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(earlyUse) != 0 {
+		t.Fatalf("%v ran the map interpreter before the pip install finished", earlyUse)
+	}
+}
+
+// A failed pip in a venv directory that was there before keeps that directory, but the interpreter python3 -m venv made is not a
+// ready venv: the next opted-in run retries the install instead of running the map without its requirements, and a run that did
+// not opt in falls back to python3 meanwhile (CRW-1147).
+func TestRepoMapRetriesAFailedPipInAPreexistingVenvDir(t *testing.T) {
+	root := t.TempDir()
+	values := map[string]string{"HOME": root, "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": root, "CRW_MAP_BOOTSTRAP": "1"}
+	env := mapEnv(values)
+	p, err := repoMapPaths(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(filepath.Dir(p.python))
+	kept := filepath.Join(dir, "kept-from-before")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pipRuns, installed := 0, false
+	var mapRuns []string
+	d := mapDeps{
+		exists: func(path string) bool { _, err := os.Stat(path); return err == nil },
+		remove: os.RemoveAll,
+		lock: func(venvs string) (func(), error) {
+			return repoMapBootstrapLock(context.Background(), venvs, io.Discard)
+		},
+		run: func(cmd string, args []string, quiet bool) (int, error) {
+			switch {
+			case cmd == "uv":
+				return 1, nil
+			case len(args) >= 2 && args[0] == "-m" && args[1] == "venv":
+				if err := os.MkdirAll(filepath.Dir(p.python), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p.python, []byte("interpreter"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case len(args) >= 2 && args[0] == "-m" && args[1] == "pip":
+				if pipRuns++; pipRuns == 1 {
+					return 1, nil
+				}
+				installed = true
+			default:
+				if cmd == p.python && !installed {
+					mapRuns = append(mapRuns, "venv-without-requirements")
+				} else {
+					mapRuns = append(mapRuns, cmd)
+				}
+			}
+			return 0, nil
+		},
+	}
+	var stderr strings.Builder
+	if code := launchRepoMap([]string{"."}, env, &stderr, d); code != 0 {
+		t.Fatalf("first run exit %d: %q", code, stderr.String())
+	}
+	values["CRW_MAP_BOOTSTRAP"] = ""
+	if code := launchRepoMap([]string{"."}, env, &stderr, d); code != 0 {
+		t.Fatalf("run without the bootstrap exit %d: %q", code, stderr.String())
+	}
+	values["CRW_MAP_BOOTSTRAP"] = "1"
+	if code := launchRepoMap([]string{"."}, env, &stderr, d); code != 0 {
+		t.Fatalf("retry run exit %d: %q", code, stderr.String())
+	}
+	if want := []string{"python3", "python3", p.python}; pipRuns != 2 || !reflect.DeepEqual(mapRuns, want) {
+		t.Fatalf("pip runs %d (want 2), map runs %v (want %v): the failed install was taken as a ready venv; stderr %q", pipRuns, mapRuns, want, stderr.String())
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("the directory that was there before lost its contents: %v", err)
+	}
+}
+
+// The lock cannot be taken: the bootstrap is skipped (nothing built, nothing removed) and the run falls back.
+func TestRepoMapBootstrapSkippedWhenTheLockCannotBeTaken(t *testing.T) {
+	root := t.TempDir()
+	env := mapEnv(map[string]string{"HOME": root, "CODEX_HOME": filepath.Join(root, "codex"), "CRW_HOME": root, "CRW_MAP_BOOTSTRAP": "1"})
+	var calls []string
+	var stderr strings.Builder
+	d := mapDeps{exists: func(string) bool { return false }, remove: func(string) error { t.Fatal("removed"); return nil },
+		lock: func(string) (func(), error) { return nil, errors.New("lock unavailable") },
+		run: func(cmd string, args []string, quiet bool) (int, error) {
+			calls = append(calls, cmd+" "+strings.Join(args, " "))
+			return 1, nil
+		}}
+	launchRepoMap([]string{"."}, env, &stderr, d)
+	for _, c := range calls {
+		if strings.Contains(c, "-m venv") || strings.Contains(c, "-m pip") {
+			t.Fatalf("bootstrap ran without the lock: %v", calls)
+		}
+	}
+	if !strings.Contains(stderr.String(), "venv bootstrap skipped: lock unavailable") {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+}
+
+// The uv probe is bounded: a uv that does not answer is a tool that is not there, and the run goes on to python3 (CRW-1147).
+func TestRepoMapUvProbeIsBounded(t *testing.T) {
+	bin := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("uv", "exec /bin/sleep 30")
+	write("python3", `echo "ran $*"`)
+	root := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("CRW_HOME", root)
+	t.Setenv("CRW_MAP_BOOTSTRAP", "")
+	t.Setenv("CRW_PYTHON", "")
+	t.Setenv("CRW_SKILLS_DIR", "")
+	old := repoMapProbeTimeout
+	repoMapProbeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { repoMapProbeTimeout = old })
+	var out, errOut strings.Builder
+	started := time.Now()
+	code := runRepoMap(invocation{ctx: context.Background(), args: []string{"."}, stdout: &out, stderr: &errOut})
+	if code != 0 || !strings.Contains(out.String(), "ran -B") {
+		t.Fatalf("exit %d stdout %q stderr %q", code, out.String(), errOut.String())
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Fatalf("the run waited %v on a uv that never answers", took)
+	}
+}
+
+// The skills directory of an installed plugin is the one its manifest names (.codex-plugin/plugin.json "skills"), for the
+// active PLUGIN_ROOT and for each cached version; a manifest that cannot be read, names no relative directory inside the
+// plugin, or is absent keeps "skills" (CRW-1147).
+func TestRepoMapReadsTheSkillsDirectoryFromThePluginManifest(t *testing.T) {
+	script := func(t *testing.T, dir string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, "repomap.py")
+		if err := os.WriteFile(p, []byte("print()\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	manifest := func(t *testing.T, root, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, ".codex-plugin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, ".codex-plugin", "plugin.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("plugin root", func(t *testing.T) {
+		root := t.TempDir()
+		manifest(t, root, `{"name":"crw","skills":"./bundle/skills/"}`)
+		want := script(t, filepath.Join(root, "bundle", "skills", "crw-repo-map", "scripts"))
+		script(t, filepath.Join(root, "skills", "crw-repo-map", "scripts")) // not the declared directory
+		env := mapEnv(map[string]string{"CODEX_HOME": t.TempDir(), "PLUGIN_ROOT": root})
+		if got := installedRepoMapDir(env, "/absent/repomap.py"); got != filepath.Dir(want) {
+			t.Fatalf("dir %q, want the manifest's %q", got, filepath.Dir(want))
+		}
+	})
+	t.Run("cached version", func(t *testing.T) {
+		codex := t.TempDir()
+		version := filepath.Join(codex, "plugins", "cache", "market", "crw", "1.0.0")
+		manifest(t, version, `{"skills":"other"}`)
+		want := script(t, filepath.Join(version, "other", "crw-repo-map", "scripts"))
+		if got := installedRepoMapDir(mapEnv(map[string]string{"CODEX_HOME": codex}), "/absent/repomap.py"); got != filepath.Dir(want) {
+			t.Fatalf("dir %q, want the manifest's %q", got, filepath.Dir(want))
+		}
+	})
+	for name, body := range map[string]string{"absent": "", "unreadable": "{", "not a string": `{"skills":["x"]}`, "blank": `{"skills":" "}`,
+		"absolute": `{"skills":"/etc"}`, "outside": `{"skills":"../elsewhere"}`} {
+		t.Run("falls back: "+name, func(t *testing.T) {
+			root := t.TempDir()
+			if body != "" {
+				manifest(t, root, body)
+			}
+			script(t, filepath.Join(root, "elsewhere", "crw-repo-map", "scripts"))
+			want := script(t, filepath.Join(root, "skills", "crw-repo-map", "scripts"))
+			if got := installedRepoMapDir(mapEnv(map[string]string{"CODEX_HOME": t.TempDir(), "PLUGIN_ROOT": root}), "/absent/repomap.py"); got != filepath.Dir(want) {
+				t.Fatalf("dir %q, want the fixed %q", got, filepath.Dir(want))
+			}
+		})
+	}
+}
+
+// End to end with the real Python: `crw map --help` from a plugin whose manifest names its skills directory runs the plugin's
+// repomap.py with python3 and prints its usage, with no skills link, no venv and no uv (CRW-1147).
+func TestRepoMapHelpRunsThePluginScriptWithRealPython(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not on PATH")
+	}
+	scripts, err := filepath.Abs(filepath.Join("..", "..", "plugins", "crw", "skills", "crw-repo-map"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codex-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codex-plugin", "plugin.json"), []byte(`{"name":"crw","skills":"./bundled/"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "bundled"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(scripts, filepath.Join(root, "bundled", "crw-repo-map")); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	t.Setenv("CRW_HOME", filepath.Join(home, "crw"))
+	t.Setenv("PLUGIN_ROOT", root)
+	for _, k := range []string{"CRW_SKILLS_DIR", "CRW_PYTHON", "CRW_MAP_BOOTSTRAP"} {
+		t.Setenv(k, "")
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout, stderr strings.Builder
+	code := runRepoMap(invocation{ctx: context.Background(), args: []string{"--help"}, stdout: &stdout, stderr: &stderr})
+	if code != 0 || !strings.Contains(stdout.String(), "usage: crw map") {
+		t.Fatalf("exit %d\nstdout %q\nstderr %q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "crw", "venvs")); !os.IsNotExist(err) {
+		t.Fatalf("help touched the venvs directory: %v", err)
+	}
 }

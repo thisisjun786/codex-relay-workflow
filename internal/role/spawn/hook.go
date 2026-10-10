@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -58,6 +59,8 @@ type spawnHookAssembly struct {
 	inputText          string                      // tool_input as JSON.stringify writes it, for the event's replay record
 	replay             func(answer string)         // records the answer of an event that minted a grant, or nil
 	settings           role.SettingsSnapshot       // the event's one read of the helper role settings
+	evidenceAssignment *evidence.Assignment        // CRW-1115: the evidence assignment the packet asked for, written once the spawn is allowed
+	guardReapplied     bool                        // guardReapplied: the message already starts with this surface's guard, so the hook runs over its own output (:983)
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -329,13 +332,16 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	rest, owned := spawnHookOwnedGuard(affordance)
 	switch {
 	case owned && rest == "":
-		a.updatedMessage = a.guard
+		a.updatedMessage, a.guardReapplied = a.guard, true
 	case owned:
-		a.updatedMessage = a.guard + "\n\n" + rest
+		a.updatedMessage, a.guardReapplied = a.guard+"\n\n"+rest, true
 	case a.validItems && affordance == "":
 		a.updatedMessage = a.guard
 	default:
 		a.updatedMessage = a.guard + "\n\n" + affordance
+	}
+	if deny := spawnHookEvidenceAssignment(&a, time.Now()); deny != "" {
+		return stop(deny)
 	}
 	return a, "", false
 }
@@ -346,6 +352,80 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 func spawnHookSettingsDeny(err error) string {
 	if errors.As(err, new(*role.UnusableSettingsError)) {
 		return DenyEnvelope("crw: " + err.Error())
+	}
+	return ""
+}
+
+// spawnHookEvidenceAssignment is CRW-1115 (port: fixed; the oracle has no such step): when the caller's packet assigns its child a
+// worktree (CRW-WORKTREE:) or allows it no evidence write (CRW-EVIDENCE: none), it builds the session's evidence assignment and
+// injects its block right after the guard. The record itself is written by spawnHookRoute once the spawn is allowed. A packet
+// that starts, after the guard, with the block of an open assignment this very tool call recorded for this request (a second pass
+// of this hook: same tool_use_id) is left alone. The block of a record another call made (a copied packet), or of a call that
+// cannot show its id, is taken out and this call gets an assignment of its own in its place, so two dispatches never share one;
+// a block at that place that names no record is refused. A marker elsewhere in the text registers nothing and suppresses
+// nothing. A native V2 ciphertext cannot be read, so it gets none. An ambiguous request or a tree that cannot be registered is a
+// deny envelope: the parent asked for a contract the gate could not honour.
+func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
+	if a.encryptedV2Message {
+		return ""
+	}
+	worktree, none, present, err := spawnEvidenceRequest(a.message)
+	if err == nil && !present {
+		return ""
+	}
+	mode := evidence.AssignTree
+	if none {
+		mode = evidence.AssignNone
+	}
+	toolUseID := ""
+	if a.toolUseID != nil {
+		toolUseID = *a.toolUseID
+	}
+	// A second pass over the hook's own output has the guard first and the assignment block right after it. Only that block, and
+	// only when it names the open assignment this very tool call recorded for this request, stands for the registration; a marker
+	// anywhere else in the packet (a placeholder, a log, another dispatch's quoted block) is the parent's own text and registers
+	// nothing.
+	if a.guardReapplied && err == nil {
+		rest := strings.TrimPrefix(a.updatedMessage, a.guard)
+		rest = strings.TrimPrefix(rest, "\n\n")
+		if prompt := a.resolution.PromptOverride; prompt != nil && text.Trim(*prompt) != "" {
+			rest = strings.TrimPrefix(rest, text.Trim(*prompt)+"\n\n")
+		}
+		if id, ok := evidence.LeadingAssignmentID(rest); ok {
+			recorded, readable := evidence.RecordedAssignment(a.cwd, a.sessionID, id)
+			if readable && recorded.RegisteredBy(toolUseID, worktree, mode) {
+				return ""
+			}
+			stale := ""
+			if readable {
+				stale = EvidenceAssignmentBlock(recorded.ID, recorded.Root, recorded.Mode == evidence.AssignNone)
+			}
+			after, isBlock := strings.CutPrefix(rest, stale)
+			if stale == "" || !isBlock || after != "" && !strings.HasPrefix(after, "\n\n") {
+				return DenyEnvelope("evidence assignment: the packet starts with an assignment block that is not a recorded assignment of this session")
+			}
+			// The copied block is taken out; this call's own block goes right after the guard below.
+			head, remaining := a.updatedMessage[:len(a.updatedMessage)-len(rest)], strings.TrimPrefix(after, "\n\n")
+			if remaining == "" {
+				head = strings.TrimSuffix(head, "\n\n")
+			}
+			a.updatedMessage = head + remaining
+		}
+	}
+	var assignment evidence.Assignment
+	if err == nil {
+		assignment, err = evidence.NewAssignment(a.sessionID, worktree, mode, now)
+	}
+	if err != nil {
+		return DenyEnvelope("evidence assignment: " + err.Error())
+	}
+	assignment.ToolUseID = toolUseID
+	a.evidenceAssignment = &assignment
+	block := EvidenceAssignmentBlock(assignment.ID, assignment.Root, none)
+	if a.updatedMessage == a.guard {
+		a.updatedMessage = a.guard + "\n\n" + block
+	} else {
+		a.updatedMessage = strings.Replace(a.updatedMessage, a.guard+"\n\n", a.guard+"\n\n"+block+"\n\n", 1)
 	}
 	return ""
 }

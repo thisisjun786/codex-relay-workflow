@@ -34,6 +34,16 @@ type InstallManifest struct {
 	BackupPath, PostActivateHash *string
 	Flags                        map[string]FlagRecord
 	TableKeys                    map[string]TableKeyRecord
+	// ReleasedAt is set by a deactivation that reverted everything it owned (CRW-1145): the records stay as evidence, but
+	// they no longer describe ownership, so the next activation starts a new baseline and a second deactivation has nothing to
+	// revert. It is written only when set, so a manifest without it keeps the oracle's bytes.
+	ReleasedAt *string
+	// Unchanged marks an activation that found nothing to change and published nothing; RunBackupPath is the backup this run
+	// wrote. Neither is written.
+	Unchanged     bool
+	RunBackupPath *string
+	// Recovered names what this command recorded of an interrupted earlier change (CRW-1153); it is never written.
+	Recovered []string
 	// Switch is the `switch` section: what `crw install switch` changed and the values it changed
 	// them from. It is kept apart from TableKeys so Deactivate and `features disable` never touch it
 	// (CRW-201); every writer of the manifest carries it over.
@@ -75,7 +85,7 @@ func parseInstallManifest(input string) *InstallManifest {
 	if (version != 1 && version != 2) || path == nil || !ok {
 		return nil
 	}
-	m := &InstallManifest{Version: int(version), ConfigPath: *path, ActivatedAt: pyjson.Text(o.Get("activatedAt")), BackupPath: manifestString(o.Get("backupPath")), PostActivateHash: manifestString(o.Get("postActivateHash")), Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
+	m := &InstallManifest{Version: int(version), ConfigPath: *path, ActivatedAt: pyjson.Text(o.Get("activatedAt")), BackupPath: manifestString(o.Get("backupPath")), PostActivateHash: manifestString(o.Get("postActivateHash")), ReleasedAt: manifestString(o.Get("releasedAt")), Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
 	for _, entry := range flags {
 		rec, object := entry.Value.(pyjson.Object)
 		_, array := entry.Value.([]any)
@@ -200,6 +210,9 @@ func manifestBytes(m *InstallManifest) ([]byte, error) {
 		keys = append(keys, pyjson.Field{Key: id, Value: pyjson.Object{{Key: "table", Value: r.Table}, {Key: "key", Value: r.Key}, {Key: "priorValue", Value: manifestNullable(r.PriorValue)}, {Key: "appliedValue", Value: r.AppliedValue}, {Key: "setByCodexclaw", Value: r.SetByCodexclaw}}})
 	}
 	body := pyjson.Object{{Key: "version", Value: m.Version}, {Key: "activatedAt", Value: m.ActivatedAt}, {Key: "configPath", Value: m.ConfigPath}, {Key: "backupPath", Value: manifestNullable(m.BackupPath)}, {Key: "postActivateHash", Value: manifestNullable(m.PostActivateHash)}, {Key: "flags", Value: flags}, {Key: "tableKeys", Value: keys}}
+	if m.ReleasedAt != nil {
+		body = append(body, pyjson.Field{Key: "releasedAt", Value: *m.ReleasedAt})
+	}
 	if m.Switch != nil {
 		body = append(body, pyjson.Field{Key: "switch", Value: switchRecordObject(m.Switch)})
 	}

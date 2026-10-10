@@ -910,7 +910,7 @@ func stallSelfHealPublication(t *testing.T) (entered, done chan struct{}, releas
 // report success without its opt-out: the disable refuses before it changes anything, and a rerun
 // after the holder is done records the opt-out.
 func TestDisableRefusesWhileTheMarkerLockIsHeldPastItsWait(t *testing.T) {
-	for _, kind := range []string{"no_manifest", "manifest"} {
+	for _, kind := range []string{"no_manifest", "manifest", "released_manifest"} {
 		t.Run(kind, func(t *testing.T) {
 			home := activationHome(t)
 			path := filepath.Join(home, "config.toml")
@@ -918,8 +918,21 @@ func TestDisableRefusesWhileTheMarkerLockIsHeldPastItsWait(t *testing.T) {
 			var calls [][]string
 			state := map[string]bool{}
 			run := deactivationRun(t, path, state, &calls)
-			if kind == "manifest" {
+			if kind != "no_manifest" {
 				deactivationManifest(t, home, map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}, map[string]FlagRecord{})
+				if kind == "released_manifest" {
+					m, err := ReadInstallManifest(home)
+					if err != nil {
+						t.Fatal(err)
+					}
+					at := "2026-10-10T00:00:00.000Z"
+					m.ReleasedAt = &at
+					b, err := manifestBytes(m)
+					if err != nil {
+						t.Fatal(err)
+					}
+					activationWrite(t, manifestPath(home), string(b))
+				}
 			}
 			activationWrite(t, SelfHealMarkerPath(home), "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\"}\n")
 			prevWait := selfHealMarkerLockWait
@@ -936,7 +949,7 @@ func TestDisableRefusesWhileTheMarkerLockIsHeldPastItsWait(t *testing.T) {
 				t.Fatal("the recorder never reached its publication")
 			}
 			configBefore, manifestBefore := activationRead(t, path), ""
-			if kind == "manifest" {
+			if kind != "no_manifest" {
 				manifestBefore = activationRead(t, manifestPath(home))
 			}
 			calls = nil
@@ -947,7 +960,7 @@ func TestDisableRefusesWhileTheMarkerLockIsHeldPastItsWait(t *testing.T) {
 			if !errors.Is(err, errSelfHealMarkerBusy) {
 				t.Fatalf("error %v does not name the busy marker", err)
 			}
-			if len(calls) != 0 || activationRead(t, path) != configBefore || (kind == "manifest" && activationRead(t, manifestPath(home)) != manifestBefore) {
+			if len(calls) != 0 || activationRead(t, path) != configBefore || (kind != "no_manifest" && activationRead(t, manifestPath(home)) != manifestBefore) {
 				t.Fatalf("a refused disable changed something: calls %v", calls)
 			}
 			release()

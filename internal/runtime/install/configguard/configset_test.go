@@ -164,16 +164,20 @@ func TestConfigSetNoopOwnershipAndUnsupportedValues(t *testing.T) {
 	if r.Changed || rec.SetByCodexclaw || rec.PriorValue == nil || *rec.PriorValue != "true" {
 		t.Fatalf("%+v %+v", r, rec)
 	}
-	r = configSetApply(t, home, path, nil)
-	if r.Changed || r.AppliedValue != "true" {
-		t.Fatalf("%+v", r)
+	// CRW-1149: crw did not set the key (it already held the value), so unset writes nothing, keeps the record and says so.
+	if r, err := ApplyManagedKey(ConfigSetDeps{CodexHome: home}, configSetKey, nil); err != nil || r.OK || !strings.Contains(r.Reason, "not set by crw") {
+		t.Fatalf("%+v %v", r, err)
 	}
-	for _, raw := range []string{"[true]", `"oops`} {
+	if _, err := ReleaseManagedKey(ConfigSetDeps{CodexHome: home}, configSetKey); err != nil {
+		t.Fatal(err)
+	}
+	// CRW-1141: an unterminated string is a config.toml that does not decode, refused as such rather than as a value form.
+	for raw, reason := range map[string]string{"[true]": "will not rewrite", `"oops`: "is not valid TOML"} {
 		content := "[memories]\ndedicated_tools = " + raw + "\n"
 		activationWrite(t, path, content)
 		before := activationRead(t, manifestPath(home))
 		r, err := ApplyManagedKey(ConfigSetDeps{CodexHome: home}, configSetKey, &value)
-		if err != nil || r.OK || !strings.Contains(r.Reason, "will not rewrite") || activationRead(t, path) != content || activationRead(t, manifestPath(home)) != before {
+		if err != nil || r.OK || !strings.Contains(r.Reason, reason) || activationRead(t, path) != content || activationRead(t, manifestPath(home)) != before {
 			t.Fatalf("%+v %v", r, err)
 		}
 	}
@@ -181,7 +185,7 @@ func TestConfigSetNoopOwnershipAndUnsupportedValues(t *testing.T) {
 	configSetApply(t, home, path, &value)
 	activationWrite(t, path, "[memories]\ndedicated_tools = [true]\n")
 	r, err := ApplyManagedKey(ConfigSetDeps{CodexHome: home}, configSetKey, nil)
-	if err != nil || r.OK || !strings.Contains(r.Reason, "will not rewrite") {
+	if err != nil || r.OK || !strings.Contains(r.Reason, "form crw does not edit") {
 		t.Fatalf("%+v %v", r, err)
 	}
 }

@@ -150,7 +150,8 @@ func Legs() []Leg {
 				return ""
 			}
 			return pabcdhook.RunSubagentStopGate(pabcdhook.SubagentStopPayload{Cwd: p.Cwd, SessionID: p.SessionID,
-				AgentType: p.AgentType, AgentID: value(p.AgentID), TurnID: value(p.TurnID), LastAssistantMessage: value(p.LastAssistantMessage)}, os.Getenv)
+				AgentType: p.AgentType, AgentID: value(p.AgentID), TurnID: value(p.TurnID), LastAssistantMessage: value(p.LastAssistantMessage),
+				AgentTranscriptPath: value(p.AgentTranscriptPath)}, os.Getenv)
 		}},
 		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, InputRelease, false, true, true, func(c Call) string {
 			return pabcdhook.HandleReviewObserver(c.Raw)

@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
 // testdata/oracle-unrecordable.json holds what the CXC v0.2.40 oracle answered for the cases of testdata/cases-unrecordable.json,
@@ -209,12 +211,20 @@ func TestWriteUnrecordableMarker(t *testing.T) {
 		if skip {
 			continue
 		}
-		threw := []bool{}
+		threw, aliases := []bool{}, 0
 		for _, call := range k.Calls {
 			threw = append(threw, writeUnrecordableMarker(cwd, call.Session, call.Agent, now) != nil)
+			if !state.IsCanonicalSessionID(call.Session) {
+				aliases++
+			}
 		}
 		restore()
 		want, wantThrew := g.Marker[k.ID], []bool{}
+		if aliases > 0 && aliases == len(k.Calls) {
+			// port: fixed by CRW-1108: the oracle names the marker by the sanitised id, so a/b's marker is read as a-b's; the port
+			// refuses an id that sanitising would rewrite, or an empty one, before anything is created
+			want.Tree, want.Threw = []treeEntry{}, slices.Repeat([]any{true}, aliases)
+		}
 		if linkFollowed(k.ID) {
 			want.Threw, want.Out = []any{true}, []treeEntry{}
 			if k.ID == "state_dir_is_symlink" {
@@ -242,6 +252,11 @@ func TestUnrecordableVerdictStatus(t *testing.T) {
 		got := UnrecordableVerdictStatus(cwd, sessionOf(k.Session))
 		restore()
 		want := g.Status[k.ID]
+		if !state.IsCanonicalSessionID(sessionOf(k.Session)) {
+			// port: fixed by CRW-1108: the oracle reads a-b's markers for a/b and missing's for the empty id; the port names no
+			// marker for such an id and answers Unreadable, the closed side, without a read or a probe
+			want.Present, want.Unreadable = false, true
+		}
 		if linkFollowed(k.ID) {
 			want.Present, want.Unreadable, want.Out = false, true, []treeEntry{}
 			if k.ID == "state_dir_is_symlink" {
@@ -314,7 +329,7 @@ func TestResolveTombstone(t *testing.T) {
 			put(t, filepath.Join(cwd, ".crw"), []byte("x"))
 		}
 		if k.Lock {
-			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
+			put(t, filepath.Join(sessions, "s1.json.lock"), []byte(strconv.Itoa(os.Getpid()))) // a live holder: since CRW-1094 a dead owner's lock is taken over
 		}
 		path := filepath.Join(sessions, "s1.json")
 		before, _ := os.ReadFile(path)
@@ -336,8 +351,32 @@ func TestResolveTombstone(t *testing.T) {
 			}
 			slices.Sort(gotSessions)
 		}
-		if slices.Contains([]string{"sixty_six_entries_resolve_first", "malformed_entry_beside_resolved", "uppercase_key_hides_the_overflow", "no_agent_id_clears_idless_tombstones"}, k.ID) {
+		if slices.Contains([]string{"malformed_entry_beside_resolved", "no_agent_id_clears_idless_tombstones"}, k.ID) {
 			want.Returns, want.State = []bool{false}, stateOf(before)
+		}
+		if slices.Contains([]string{"sixty_six_entries_resolve_first", "sixty_six_entries_resolve_last", "uppercase_key_hides_the_overflow"}, k.ID) {
+			// Changed (port: fixed, CRW-1110): a file that holds 66 verdicts is recovered first, keeping every one: the first 64 stay
+			// in the main list and the rest move beside it, and then the exact verdict is resolved wherever it is. The oracle wrote
+			// back what its read kept, losing the 65th and 66th.
+			resolved := k.Payloads[0]["agent_id"].(string)
+			stored := overflowStoredIDs(t, before)
+			wantMain, wantBeside := slices.DeleteFunc(slices.Clone(stored[:64]), func(id string) bool { return id == resolved }),
+				slices.DeleteFunc(slices.Clone(stored[64:]), func(id string) bool { return id == resolved })
+			s, unreadable := state.ReadStateStrict(cwd, "s1")
+			var gotMain, gotBeside []string
+			for _, e := range s.UnverifiedSubagents {
+				gotMain = append(gotMain, e.AgentID)
+			}
+			beside, besideUnreadable := OverflowVerdicts(cwd, "s1")
+			for _, e := range beside {
+				gotBeside = append(gotBeside, e.AgentID)
+			}
+			slices.Sort(gotBeside)
+			slices.Sort(wantBeside)
+			if unreadable || s.UnverifiedCorrupt || besideUnreadable || !slices.Equal(gotMain, wantMain) || !slices.Equal(gotBeside, wantBeside) || !slices.Equal(returns, []bool{true}) {
+				t.Errorf("%s: returns %v, main %v (corrupt %v), beside %v, want main %v beside %v", k.ID, returns, gotMain, s.UnverifiedCorrupt, gotBeside, wantMain, wantBeside)
+			}
+			continue
 		}
 		if !slices.Contains(want.Returns, true) && before != nil && !bytes.Equal(after, before) {
 			t.Errorf("%s: nothing was resolved and the file changed: %q, was %q", k.ID, after, before)
@@ -351,4 +390,20 @@ func TestResolveTombstone(t *testing.T) {
 // linkFollowed names the recorded cases in which the oracle follows a symbolic link out of the workspace.
 func linkFollowed(id string) bool {
 	return slices.Contains([]string{"marker_dir_is_symlink_out", "marker_dir_symlink_to_dir", "state_dir_is_symlink"}, id)
+}
+
+// overflowStoredIDs is the agent ids of the unverifiedSubagents a raw session file stores, in order.
+func overflowStoredIDs(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var f map[string]json.RawMessage // the exact key: a struct tag would also match one that differs in case
+	var records []struct {
+		AgentID string `json:"agentId"`
+	}
+	must(t, json.Unmarshal(raw, &f))
+	must(t, json.Unmarshal(f["unverifiedSubagents"], &records))
+	ids := []string{}
+	for _, r := range records {
+		ids = append(ids, r.AgentID)
+	}
+	return ids
 }

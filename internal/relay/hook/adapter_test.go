@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -18,6 +19,21 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
+
+// loadProofDeadlines lengthens the hook's real absolute, guard and transcript scan deadlines for the
+// test that follows. Its subject is not a deadline, and its guard does real store and journal work
+// that a loaded host can stretch past the production 5 s and 3.5 s, as it can stretch the transcript
+// scan past 750 ms (CRW-1161). The settings' timeoutSeconds cannot do this: it only shortens the
+// deadline. The tests of the deadlines keep the production ones. The fake host's hang guard grows
+// with them: a peer that reads until the adapter hangs up waits out the guard's work.
+func loadProofDeadlines(t *testing.T) {
+	t.Helper()
+	was, wasGuard, wasPeer, wasScan := absoluteDeadline, guardDeadline, fakeControlDeadline, scanDeadline
+	absoluteDeadline, guardDeadline, fakeControlDeadline, scanDeadline = 2*time.Minute, time.Minute, 2*time.Minute, time.Minute
+	t.Cleanup(func() {
+		absoluteDeadline, guardDeadline, fakeControlDeadline, scanDeadline = was, wasGuard, wasPeer, wasScan
+	})
+}
 
 func hookHome(t *testing.T, budget float64) string {
 	t.Helper()
@@ -54,7 +70,7 @@ func hookCommand(t *testing.T, home, payload string) *exec.Cmd {
 	t.Helper()
 	// The first caller builds the binary; the timeout is for the hook, not the build.
 	built := binary(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, built, "hook")
 	cmd.Env = hookEnv(home)
@@ -81,8 +97,14 @@ func rowsAt(t *testing.T, home string) []map[string]any {
 	}
 	return rows
 }
+
+// fakeControlDeadline is the fake host's socket hang guard. loadProofDeadlines lengthens it with the
+// hook's own deadlines, since a peer that reads until the adapter hangs up waits out the guard's work.
+var fakeControlDeadline = 8 * time.Second
+
 func fakeControl(t *testing.T, home string, serve func(net.Conn) error) (<-chan error, func()) {
 	t.Helper()
+	deadline := fakeControlDeadline
 	path := filepath.Join(home, "state", "control.sock")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
@@ -106,7 +128,7 @@ func fakeControl(t *testing.T, home string, serve func(net.Conn) error) (<-chan 
 			return
 		}
 		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+		if err = conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 			result = err
 			return
 		}
@@ -123,7 +145,7 @@ func awaitHost(t *testing.T, done <-chan error) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(time.Minute):
 		t.Fatal("fake host did not finish")
 	}
 }
@@ -278,6 +300,7 @@ func Test33HookSlowGuardDeadline(t *testing.T) {
 	})
 }
 func Test33RecoveredGuardPanic(t *testing.T) {
+	loadProofDeadlines(t)
 	home := hookHome(t, 5)
 	t.Setenv("CODEX_HOME", home)
 	done, _ := fakeControl(t, home, func(conn net.Conn) error { _, err := io.Copy(io.Discard, conn); return err })
@@ -316,5 +339,89 @@ func Test33ClaimWithoutOutcomeNeverReplayed(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || a != "duplicate" || !bytes.Equal(before, after) {
 		t.Fatalf("%s %v", a, err)
+	}
+}
+
+// A peer that reads until the adapter hangs up waits out the guard's work, so under the load-proof
+// deadlines a guard slower than the fake host's hang guard still ends cleanly (CRW-1161).
+func Test33LoadProofDeadlinesOutlastTheFakeHostsHangGuard(t *testing.T) {
+	was := fakeControlDeadline
+	fakeControlDeadline = 200 * time.Millisecond // stands in for the 8 s hang guard; the guard outlasts it
+	t.Cleanup(func() { fakeControlDeadline = was })
+	loadProofDeadlines(t)
+	home := hookHome(t, 5)
+	t.Setenv("CODEX_HOME", home)
+	done, _ := fakeControl(t, home, func(conn net.Conn) error { _, err := io.Copy(io.Discard, conn); return err })
+	var stdout bytes.Buffer
+	code := runAdapter(context.Background(), nil, strings.NewReader(`{"session_id":"s"}`), &stdout, time.Now(), func(context.Context, Object, GuardOptions) (Object, error) {
+		time.Sleep(time.Second)
+		panic("injected guard panic")
+	})
+	awaitHost(t, done)
+	rows := rowsAt(t, home)
+	if code != 0 || stdout.Len() != 0 || len(rows) != 1 || rows[0]["adapterOutcome"] != "adapter_faulted" {
+		t.Fatalf("code=%d stdout=%s rows=%v", code, stdout.String(), rows)
+	}
+}
+
+// The load-proof deadlines are the hook's real ones: a guard slower than the production 3.5 s cap
+// (a loaded host's store and journal work) still answers under them, and does not without them.
+func Test33LoadProofDeadlinesOutlastASlowGuard(t *testing.T) {
+	for _, lengthened := range []bool{false, true} {
+		t.Run(fmt.Sprint("lengthened=", lengthened), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				if lengthened {
+					loadProofDeadlines(t)
+				}
+				home := hookHome(t, 5)
+				t.Setenv("CODEX_HOME", home)
+				writeTest(t, filepath.Join(home, "transcript.jsonl"), []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}`+"\n"+`{"type":"event_msg","payload":{"type":"item_completed","turn_id":"t","thread_id":"s","item":{"type":"AgentMessage","id":"i","content":[{"type":"Text","text":"done"}]}}}`+"\n"))
+				payload := `{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"done","transcript_path":` + strconv.Quote(filepath.Join(home, "transcript.jsonl")) + `}`
+				done, _ := fakeControl(t, home, func(net.Conn) error { return nil })
+				verdict := Object{{Key: "decision", Value: "block"}, {Key: "state", Value: "receipt_missing"}, {Key: "hook_output", Value: Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: "verify"}, {Key: "continue", Value: true}}}}
+				var out bytes.Buffer
+				code := runAdapter(context.Background(), nil, strings.NewReader(payload), &out, time.Now(), func(ctx context.Context, _ Object, _ GuardOptions) (Object, error) {
+					select {
+					case <-time.After(10 * time.Second):
+						return verdict, nil
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				})
+				awaitHost(t, done)
+				answered := out.String() == `{"decision": "block", "reason": "verify", "continue": true}`
+				if code != 0 || answered != lengthened {
+					t.Fatalf("lengthened=%v code=%d answer=%q", lengthened, code, out.String())
+				}
+			})
+		})
+	}
+}
+
+// The load-proof deadlines include the transcript scan's: the fault and replay tests identify the
+// event through a real transcript before the guard or the claim write they test, and a scan that a
+// loaded host stretches past its production 750 ms would skip both. A scan deadline already spent
+// (the unlengthened form) refuses the identity; the lengthened form establishes it.
+func Test33LoadProofDeadlinesLengthenTheTranscriptScan(t *testing.T) {
+	for _, lengthened := range []bool{false, true} {
+		t.Run(fmt.Sprint("lengthened=", lengthened), func(t *testing.T) {
+			previous := scanDeadline
+			t.Cleanup(func() { scanDeadline = previous }) // runs after loadProofDeadlines' own restore
+			scanDeadline = time.Nanosecond
+			if lengthened {
+				loadProofDeadlines(t)
+			}
+			home := t.TempDir()
+			path := filepath.Join(home, "transcript.jsonl")
+			writeTest(t, path, []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}`+"\n"+`{"type":"event_msg","payload":{"type":"item_completed","turn_id":"t","thread_id":"s","item":{"type":"AgentMessage","id":"i","content":[{"type":"Text","text":"done"}]}}}`+"\n"))
+			stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "done"}, {Key: "transcript_path", Value: path}}
+			_, identity := EventIdentity(context.Background(), stop)
+			if established := identity.Get("established") == true; established != lengthened {
+				t.Fatalf("lengthened=%v identity=%v", lengthened, identity)
+			}
+			if !lengthened && identity.Get("reason") != "scan_timed_out" {
+				t.Fatal(identity)
+			}
+		})
 	}
 }
