@@ -334,3 +334,67 @@ func TestAccountHomesSnapshot_fails_on_an_entry_it_cannot_read(t *testing.T) {
 		t.Errorf("a fixture change after an unreadable entry is not seen: %q", reported)
 	}
 }
+
+// CRW-1176: a watched directory can be spelled through a symlink followed by "..", which the kernel resolves
+// against the link's target (base/work/alias/../codex is storage/codex when alias points into storage), while
+// filepath.Join folds the ".." lexically (base/work/codex). The snapshot reads the directory the kernel
+// resolves: an unchanged physical home is silent whether or not its lexical counterpart exists, an in-place
+// edit of a physical fixture is reported, and an edit of a lexical twin is not.
+func TestAccountHomesSnapshot_reads_the_physical_directory_of_a_root_spelled_through_a_link_and_dotdot(t *testing.T) {
+	for _, lexicalExists := range []bool{false, true} {
+		name := "lexical counterpart absent"
+		if lexicalExists {
+			name = "lexical counterpart present"
+		}
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			storage := filepath.Join(base, "storage")
+			physical := filepath.Join(storage, "codex")
+			lexical := filepath.Join(base, "work", "codex")
+			for _, dir := range []string{filepath.Join(storage, "project"), physical, filepath.Join(base, "work")} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(filepath.Join(storage, "project"), filepath.Join(base, "work", "alias")); err != nil {
+				t.Fatal(err)
+			}
+			if lexicalExists {
+				if err := os.MkdirAll(lexical, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(lexical, "config.toml"), []byte("model = \"lexical\"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const original, edited = "model = \"a\"\n", "model = \"b\"\n"
+			fixture := filepath.Join(physical, "config.toml")
+			if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// Spelled by concatenation: filepath.Join would fold the ".." before the kernel sees it.
+			codex := base + "/work/alias/../codex"
+			h := WatchAccountHomes(t, t.TempDir(), codex, t.TempDir())
+			h.Snapshot()
+			h.Verify(func(msg string) { t.Errorf("an unchanged physical home is reported: %s", msg) })
+
+			if err := os.WriteFile(fixture, []byte(edited), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			reported := ""
+			h.Verify(func(msg string) { reported = msg })
+			if !strings.Contains(reported, "config.toml") {
+				t.Errorf("an in-place edit of the physical fixture is not reported: %q", reported)
+			}
+			if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if lexicalExists {
+				if err := os.WriteFile(filepath.Join(lexical, "config.toml"), []byte("model = \"changed\"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				h.Verify(func(msg string) { t.Errorf("an edit of the lexical twin is reported: %s", msg) })
+			}
+		})
+	}
+}

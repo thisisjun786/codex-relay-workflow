@@ -69,7 +69,8 @@ func (h *AccountHomes) Rebase() { h.before, h.beforeErr = h.state() }
 // calls it once they are in place: an in-place edit of a fixture keeps its name, so the name-only listing does
 // not see it. The snapshot walks each directory the code could take for an account home, recursively, and records
 // every entry's relative path, mode and, for a regular file, its sha256 digest or, for a symlink, its target. A watched
-// directory that is itself a symlink is recorded with its target and walked through the directory it resolves to.
+// directory that is itself a symlink is recorded with its target, and every watched directory is walked at the
+// physical directory its spelling resolves to (a link followed by "..", a link at the root).
 // HOME itself keeps its top-level names only: a home that a command rewrites on purpose may sit below it (the retrust
 // fixture keeps CODEX_HOME at HOME/codex), and a recursion into HOME would read that intended rewrite as a stray write.
 func (h *AccountHomes) Snapshot() {
@@ -135,25 +136,28 @@ func (h *AccountHomes) Contents() (string, error) {
 			parts = append(parts, label+": "+strings.Join(names, ","))
 			continue
 		}
-		// A watched directory that is itself a symlink keeps its own line (mode and target) and the walk starts at
-		// the directory it resolves to: WalkDir does not follow a link at its root, and the fixtures behind it
-		// would go unread.
+		// The walk starts at the physical directory. A watched directory that is itself a symlink keeps its own line
+		// (mode and target), and one spelled through a link followed by ".." names the directory the kernel resolves:
+		// WalkDir does not follow a link at its root and joins child paths lexically (filepath.Join folds the ".."),
+		// so a root left as spelled would read a lexical counterpart, or none, instead of the home itself.
 		var entries []string
-		root := dir
-		if info, err := os.Lstat(dir); err != nil {
+		info, err := os.Lstat(dir)
+		if err != nil {
 			parts = append(parts, unreadable(label, err))
 			continue
-		} else if info.Mode()&os.ModeSymlink != 0 {
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
 			target, err := os.Readlink(dir)
 			if err != nil {
 				parts = append(parts, unreadable(label, err))
 				continue
 			}
 			entries = append(entries, label+" "+info.Mode().String()+" -> "+target)
-			if root, err = filepath.EvalSymlinks(dir); err != nil {
-				parts = append(parts, strings.Join(append(entries, unreadable(label, err)), "\n"))
-				continue
-			}
+		}
+		root, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			parts = append(parts, strings.Join(append(entries, unreadable(label, err)), "\n"))
+			continue
 		}
 		// Every error reaches the callback, which marks the entry and goes on: returning it would end the walk of
 		// this directory, and the entries after it would go unread.
