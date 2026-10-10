@@ -77,6 +77,11 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	}
 	switch a.Cause {
 	case "unknown-destination":
+		// A general command is not a request to write memory, so it gets no grant route. An edit tool call is a write
+		// request whose destination could not be resolved, so the parent keeps the one-write grant route (CRW-1157).
+		if a.Surface == "edit" && !leaf {
+			return memoryGateUnknownEditReason(prefix, sid, cwd)
+		}
 		return prefix + "Cannot verify the program's write destination (unknown-destination). " + recovery
 	case "unreadable-program":
 		return prefix + "Cannot read the command or its program (unreadable-program); a protected write has not been established. " + recovery
@@ -98,6 +103,19 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 		cwd = "the session working directory"
 	}
 	stem := reason + "Ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
+	suffix := ". The grant is stored per cwd and permits one write."
+	budget := min(190, 700-len(stem)-len(suffix)-3)
+	return stem + memoryGateLabelLimit(cwd, budget) + suffix
+}
+
+func memoryGateUnknownEditReason(prefix, sid, cwd string) string {
+	if sid == "" {
+		sid = "<id>"
+	}
+	if cwd == "" {
+		cwd = "the session working directory"
+	}
+	stem := prefix + "Cannot verify the write destination of this edit (unknown-destination); use an absolute path. If it is a memory note, ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
 	suffix := ". The grant is stored per cwd and permits one write."
 	budget := min(190, 700-len(stem)-len(suffix)-3)
 	return stem + memoryGateLabelLimit(cwd, budget) + suffix

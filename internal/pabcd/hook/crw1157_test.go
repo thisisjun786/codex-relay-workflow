@@ -33,9 +33,35 @@ func TestCRW1157DenialCauses(t *testing.T) {
 	if !strings.Contains(reason, "authorization") || strings.Contains(reason, "secret-value") || len(reason) > 700 {
 		t.Errorf("state failure: %s", reason)
 	}
-	// An actual unknown memory note retains the parent grant route.
+	// A confirmed memory note keeps the parent grant route.
 	if r := gateDeny(t, HandleMemoryWriteGate(gatePayload(t, cwd, map[string]any{"session_id": "other"}), env)); !strings.Contains(r, "allow-write") {
 		t.Errorf("note recovery: %s", r)
+	}
+}
+
+// An actual write request (an edit tool call) whose destination cannot be resolved keeps the parent grant route while saying the
+// cause is unknown-destination; a leaf is sent to its parent, and a general shell command never receives the grant route.
+func TestCRW1157UnknownDestinationEditKeepsGrantRoute(t *testing.T) {
+	_, _, env := gateScene(t)
+	unknown := gatePayload(t, "", map[string]any{"tool_name": "Write", "tool_input": map[string]any{"file_path": "relative-note.md", "content": "x"}})
+	reason := gateDeny(t, HandleMemoryWriteGate(unknown, env))
+	for _, want := range []string{"MEMORY-WRITE-GATE", "unknown-destination", "allow-write --session " + gateSession, "permits one write"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("unknown edit destination lacks %q: %s", want, reason)
+		}
+	}
+	if strings.Contains(reason, "under the Codex memories directory") || len(reason) > 700 {
+		t.Errorf("unknown edit destination claims a confirmed protected write or exceeds the bound: %s", reason)
+	}
+	leaf := gatePayload(t, "", map[string]any{"agent_id": "leaf", "agent_type": "executor", "tool_name": "Write", "tool_input": map[string]any{"file_path": "relative-note.md"}})
+	reason = gateDeny(t, HandleMemoryWriteGate(leaf, env))
+	if !strings.Contains(reason, "unknown-destination") || !strings.Contains(reason, "parent") || strings.Contains(reason, "allow-write") || strings.Contains(reason, "ask the user") {
+		t.Errorf("leaf unknown edit destination: %s", reason)
+	}
+	cwd, _, _ := gateScene(t)
+	reason = gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, `python3 -c 'open(variable,"w")'`), env))
+	if strings.Contains(reason, "allow-write") || !strings.Contains(reason, "unknown-destination") {
+		t.Errorf("general command unknown destination: %s", reason)
 	}
 }
 
@@ -47,11 +73,9 @@ func TestCRW1157GithubRecovery(t *testing.T) {
 			t.Errorf("unreadable recovery: %s", reason)
 		}
 	}
-	// A lexical cwd outside the trusted temp roots does not need a real file to be rejected.
-	outside, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A lexical cwd outside the trusted temp roots does not need a real file to be rejected; the directory is fixed so the
+	// test does not depend on where the checkout or TMPDIR lives.
+	outside := "/"
 	if err := os.WriteFile(filepath.Join(cwd, "clean.md"), []byte("clean"), 0600); err != nil {
 		t.Fatal(err)
 	}
