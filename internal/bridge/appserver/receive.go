@@ -147,7 +147,7 @@ func (c *Client) serverRequest(ws *websocket.Conn, msg incoming) {
 	}
 	if r := c.responder; r != nil && owned != "" && r.owned(owned) {
 		request := ServerRequest{Method: msg.Method, ThreadID: owned, TurnID: params.TurnID, Params: msg.Params}
-		if answer, ok := r.answer(request); ok {
+		if answer, ok := r.answer(request); ok && Refuses(request, answer) {
 			c.answerWithResponder(ws, msg, request, approval, answer)
 			return
 		}

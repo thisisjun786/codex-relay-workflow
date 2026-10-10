@@ -81,6 +81,12 @@ func (f *Feed) Notifications() <-chan Notification { return f.events }
 // Lost signals that this feed may have missed notifications the host sent: its connection ended, or
 // the consumer fell behind and the oldest notifications were dropped. The consumer reads the turns
 // it is waiting for (Bus.ReconcileTurns) instead of waiting for a notification that may never come.
+//
+// A feed only receives what its client's connection receives, and the host sends a thread's
+// notifications to the connections subscribed to it. After a loss the client dials a new connection
+// that is subscribed to nothing: reading turns does not subscribe it (reads do not, see
+// docs/relay/subscriptions.md). A consumer that finds a turn still inProgress therefore resumes the
+// thread on the new connection (thread/resume) before it goes back to waiting on this feed.
 func (f *Feed) Lost() <-chan struct{} { return f.lost }
 
 // Dropped counts the notifications dropped because the consumer fell behind.
@@ -220,7 +226,9 @@ type itemsPage struct {
 // ReconcileTurns reads the turns named by turnIDs of thread by their exact ids, in the order given.
 // It pages thread/turns/list with itemsView "full" until every id is found (or the list ends), and
 // reads the items of a turn the list did not return in full with thread/items/list. It never asks
-// for includeTurns hydration. An error is returned when the host refuses the list itself; a turn
+// for includeTurns hydration. It only reads: it does not subscribe the connection it reads on, so a
+// reading of inProgress is a state at that moment, and a live completion is delivered to the feed only
+// after the caller resumes the thread on that connection (see Feed.Lost). An error is returned when the host refuses the list itself; a turn
 // whose items cannot be read is reported as found and not Readable.
 func (b *Bus) ReconcileTurns(ctx context.Context, thread string, turnIDs []string) ([]TurnReading, error) {
 	readings := make([]TurnReading, len(turnIDs))

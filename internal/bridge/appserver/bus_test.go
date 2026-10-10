@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -340,5 +341,59 @@ func TestBusReconcileStopsAtWantedAndKeepsUnreadableApart(t *testing.T) {
 	host.Script("thread/turns/list", fakehost.Reply{Error: &fakehost.RPCError{Code: -32600, Message: "ephemeral threads do not support thread/turns/list"}})
 	if _, err := client.Bus().ReconcileTurns(bounded(t), "thread-1", []string{"turn-a"}); err == nil {
 		t.Fatal("a refused list read as an empty thread")
+	}
+}
+
+// CRW-1193. Reading the turns after a reconnect recovers history; it does not re-subscribe the new
+// connection. A turn still in progress completes on a live notification only after the caller resumes
+// the thread on that connection, so a consumer that follows Lost resumes the thread (thread/resume)
+// whenever a reading says inProgress, and then goes back to waiting on the same feed.
+func TestBusReconcileDoesNotResubscribeAndResumeRestoresLiveDelivery(t *testing.T) {
+	host := fakehost.Start(t)
+	host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{
+		map[string]any{"id": "turn-a1", "status": "inProgress", "itemsView": "full", "items": []any{}},
+	}, "nextCursor": nil}})
+	var resumed atomic.Bool
+	host.Handle("thread/resume", func(json.RawMessage) fakehost.Reply {
+		resumed.Store(true)
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-a"}}}
+	})
+	// The host reports the turn's completion on a connection only once the thread is subscribed on it.
+	host.Handle("thread/read", func(json.RawMessage) fakehost.Reply {
+		if !resumed.Load() {
+			return fakehost.Reply{Result: map[string]any{}}
+		}
+		return fakehost.Reply{Result: map[string]any{}, Before: []fakehost.Notification{notificationFor(t, "notification-turn-completed", "thread-a")}}
+	})
+	client, feed := reconnected(t, host, "thread-a")
+
+	// When: the consumer reconciles after the loss.
+	readings, err := client.Bus().ReconcileTurns(bounded(t), "thread-a", []string{"turn-a1"})
+	if err != nil || len(readings) != 1 || !readings[0].Found || readings[0].Status != "inProgress" {
+		t.Fatalf("%+v %v", readings, err)
+	}
+
+	// Then: the reads sent no resume, and a later turn event is not delivered on the unsubscribed connection.
+	if n := host.Count("thread/resume"); n != 0 {
+		t.Fatalf("ReconcileTurns subscribed the thread: %d thread/resume", n)
+	}
+	if _, err := client.Call(bounded(t), "thread/read", map[string]any{"threadId": "thread-a"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-feed.Notifications():
+		t.Fatalf("a notification arrived before the thread was resumed: %s", n.Method)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// When: the consumer resumes the thread on the new connection, the same feed gets the completion.
+	if _, err := client.Call(bounded(t), "thread/resume", map[string]any{"threadId": "thread-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Call(bounded(t), "thread/read", map[string]any{"threadId": "thread-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := next(t, feed); n.Method != "turn/completed" {
+		t.Fatalf("method = %s", n.Method)
 	}
 }

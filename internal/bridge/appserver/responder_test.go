@@ -363,3 +363,78 @@ func TestRequestsReportNoteFollowsTheResponder(t *testing.T) {
 		t.Fatalf("plain note %q != default %q", got, left.Note)
 	}
 }
+
+// CRW-1193. The responder answers by refusing and records a refusal. A custom answer callback that
+// returns anything else (a grant, a user's answer, a tool result) is not sent and not recorded as a
+// denial: the request takes the default handling, so the record never says "nothing was granted" about
+// a request that was granted.
+func TestFlowResponderRecordsOnlyDenials(t *testing.T) {
+	grant := func(req appserver.ServerRequest) (appserver.ServerAnswer, bool) {
+		switch req.Method {
+		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+			return appserver.ServerAnswer{Result: map[string]any{"decision": "accept"}}, true
+		case "mcpServer/elicitation/request":
+			return appserver.ServerAnswer{Result: map[string]any{"action": "accept"}}, true
+		case "item/permissions/requestApproval":
+			return appserver.ServerAnswer{Result: map[string]any{"permissions": map[string]any{"network": map[string]any{"enabled": true}}, "scope": "turn"}}, true
+		case "execCommandApproval", "applyPatchApproval":
+			return appserver.ServerAnswer{Result: map[string]any{"decision": "approved"}}, true
+		case "item/tool/requestUserInput":
+			return appserver.ServerAnswer{Result: map[string]any{"answers": map[string]any{}}}, true
+		}
+		return appserver.ServerAnswer{Result: map[string]any{"ok": true}}, true
+	}
+	t.Run("a granting answer is not sent and not recorded as a denial", func(t *testing.T) {
+		host := fakehost.Start(t)
+		client, err := appserver.Dial(bounded(t), host.SocketPath, appserver.WithServerRequestResponder(func(string) bool { return true }, grant))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		mark := client.RequestMark()
+		methods := append(slices.Clone(fakehost.ApprovalMethods[:]), "item/tool/call")
+		raiseAs(t, host, client, "flow-1", methods, false)
+
+		report := client.RequestsSince(mark, "flow-1")
+		if report.DeniedByResponderForThisThread != 0 || report.ApprovalsLeftForThisThread != 7 || report.RefusedForThisThread != 1 {
+			t.Fatalf("%+v", report)
+		}
+		if strings.Contains(report.Note, "nothing was granted") {
+			t.Fatalf("the report claims a denial: %q", report.Note)
+		}
+		for _, a := range decodeAnswers(t, host) {
+			if a.Result != nil {
+				t.Fatalf("the responder sent a non-denial result: %v", a.Result)
+			}
+		}
+	})
+	t.Run("the protocol's own denial forms and an error are denials", func(t *testing.T) {
+		host := fakehost.Start(t)
+		answer := func(req appserver.ServerRequest) (appserver.ServerAnswer, bool) {
+			switch req.Method {
+			case "item/commandExecution/requestApproval":
+				return appserver.ServerAnswer{Result: map[string]any{"decision": "cancel"}}, true
+			case "mcpServer/elicitation/request":
+				return appserver.ServerAnswer{Result: map[string]any{"action": "cancel"}}, true
+			case "execCommandApproval":
+				return appserver.ServerAnswer{Result: map[string]any{"decision": "abort"}}, true
+			case "applyPatchApproval":
+				return appserver.ServerAnswer{Result: map[string]any{"decision": map[string]any{"denied": map[string]any{"rejection": "no"}}}}, true
+			case "item/tool/call":
+				return appserver.ServerAnswer{Error: &appserver.ServerError{Code: -32601, Message: "no"}}, true
+			}
+			return appserver.ServerAnswer{}, false
+		}
+		client, err := appserver.Dial(bounded(t), host.SocketPath, appserver.WithServerRequestResponder(func(string) bool { return true }, answer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		mark := client.RequestMark()
+		raiseAs(t, host, client, "flow-1", []string{"item/commandExecution/requestApproval", "mcpServer/elicitation/request", "execCommandApproval", "applyPatchApproval", "item/tool/call"}, true)
+		report := client.RequestsSince(mark, "flow-1")
+		if report.DeniedByResponderForThisThread != 5 || report.ApprovalsLeftForThisThread != 0 || report.RefusedForThisThread != 0 {
+			t.Fatalf("%+v", report)
+		}
+	})
+}
