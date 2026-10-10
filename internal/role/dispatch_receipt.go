@@ -52,6 +52,29 @@ func dispatchRawEncode(raw object, plain any) ([]byte, error) {
 	return o.MarshalJSON()
 }
 
+// dispatchCandidateKeeping is the candidate cur for a receipt that replaces one holding the candidate old: cur's members (the
+// ones the ledger owns and the attempt candidate's own extensions) are written over old's, so a member only the replaced
+// receipt's candidate holds stays.
+func dispatchCandidateKeeping(old, cur DispatchCandidate) (DispatchCandidate, error) {
+	if old.raw == nil {
+		return cur, nil
+	}
+	own, err := cur.MarshalJSON()
+	if err != nil {
+		return cur, err
+	}
+	written, err := parseObject(own)
+	if err != nil {
+		return cur, err
+	}
+	o := slices.Clone(old.raw)
+	for _, m := range written {
+		o.set(m.key, m.value)
+	}
+	cur.raw = o
+	return cur, nil
+}
+
 // DispatchReceipt is the one record of what a managed attempt asked for and what the host shows it got, written by the checked
 // boundary when a created report is accepted. Each part names its source: the candidate the ledger chose, the issuance the
 // spawn hook recorded, the child the host witnesses, how the child was tied to this attempt, the model the caller claims and

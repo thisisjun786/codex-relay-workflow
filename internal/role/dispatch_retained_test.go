@@ -99,3 +99,38 @@ func TestDispatchTerminationAndCleanupKeepMembersTheyDoNotOwn(t *testing.T) {
 		}
 	}
 }
+
+// A created report that replaces an unverified receipt with a spawn-result one keeps the members of the replaced receipt's
+// candidate that the boundary does not own: an extension only the receipt's candidate holds survives next to the attempt
+// candidate's own extension, and the members the ledger owns are the attempt candidate's.
+func TestDispatchReceiptReplacementKeepsCandidateMembersItDoesNotOwn(t *testing.T) {
+	ws := t.TempDir()
+	env, _ := home(t)
+	attempt, marker := dispatchReceiptClaim(t, ws, env, Reviewer, "review-test")
+	dispatchReceiptIssue(t, ws, marker, "call-1")
+	file := dispatchReceiptFile(ws, "review-test")
+	blind := dispatchReceiptNative(t, env, dispatchReceiptRow{id: "child-a", parent: "session-test"})
+	out, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-a"), blind, nil)
+	check(t, err)
+	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "unverified" {
+		t.Fatalf("first created receipt = %+v", r)
+	}
+	owned := dispatchCorrectionMember(t, file, 0, "candidate").(map[string]any)
+	dispatchCorrectionEdit(t, file, 0, func(a map[string]any) {
+		a["candidate"].(map[string]any)["attemptEvidence"] = "attempt-extension"
+		c := a["receipt"].(map[string]any)["candidate"].(map[string]any)
+		c["externalEvidence"] = "receipt-extension"
+		c["model"] = "foreign/model"
+	})
+	seen := dispatchReceiptNative(t, env, dispatchReceiptRow{id: "child-a", parent: "session-test", first: marker + "\nREVIEW"})
+	dispatchReceiptParent(t, seen, dispatchReceiptSpawn{"call-1", "completed", []string{"child-a"}})
+	out, err = CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, "child-a"), seen, nil)
+	check(t, err)
+	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "spawn-result" {
+		t.Fatalf("replacing created receipt = %+v", r)
+	}
+	c := dispatchCorrectionMember(t, file, 0, "receipt").(map[string]any)["candidate"].(map[string]any)
+	if c["externalEvidence"] != "receipt-extension" || c["attemptEvidence"] != "attempt-extension" || !reflect.DeepEqual(c["model"], owned["model"]) || !reflect.DeepEqual(c["effort"], owned["effort"]) {
+		t.Fatalf("the replacement receipt's candidate = %v (attempt candidate %v)", c, owned)
+	}
+}

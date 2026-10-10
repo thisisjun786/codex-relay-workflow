@@ -150,6 +150,9 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 			// A report that replaces an earlier receipt (the host showed no result of the issued call then) keeps the members of it
 			// that the boundary does not own.
 			receipt.raw, receipt.Issuance.raw, receipt.Child.raw, receipt.Host.raw = prior.raw, prior.Issuance.raw, prior.Child.raw, prior.Host.raw
+			if receipt.Candidate, err = dispatchCandidateKeeping(prior.Candidate, a.Candidate); err != nil {
+				return DispatchResult{}, err
+			}
 		}
 		a.Receipt = receipt
 		reason := ""
