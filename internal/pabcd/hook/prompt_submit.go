@@ -37,6 +37,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 )
 
 // promptSubmitMaxInjectedTurns is MAX_INJECTED_TURNS (hook.ts:578): the cap on the session state's
@@ -86,6 +87,23 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	}
 	turn := p.TurnID
 
+	// CRW-1140 (port: fixed): a relay-managed thread whose PABCD work is in flight at its anchored
+	// root, prompted at another cwd, has no state of its own here: every write below (the memory
+	// marker, the Stop-budget stamp, the trigger bookkeeping) would publish an empty IDLE state
+	// beside the work, which SessionStart refused to create. Nothing is read or written at this cwd;
+	// the answer tells the agent where its state is. A prompt that may write (the memory marker,
+	// or any prompt with PABCD on) away from an anchored root holding nothing in flight moves the
+	// anchor here first, as SessionStart does, and writes nothing when the anchor cannot follow, so
+	// no state exists at a cwd the anchor does not track. A thread without an anchor is unaffected.
+	remember := DetectMemoryWriteRequest(p.Prompt)
+	judge := stateroot.Hold
+	if remember || p.PabcdEnabled {
+		judge = stateroot.Bootstrap
+	}
+	if refusal := judge(env, p.Cwd, p.SessionID); refusal != nil {
+		return sessionHookStateRootContext(refusal)
+	}
+
 	// MEMORY-WRITE-GATE-01 (260909 wp1-A): record the remember request BEFORE the turn guard and
 	// before every early return below. PreToolUse carries no prompt (codex-rs
 	// hooks/src/schema.rs:278-296), so this write is the only place the gate's evidence can come
@@ -99,7 +117,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// snapshot. A marker that cannot be persisted degrades to a deny the user can lift with
 	// `crw recall memory allow-write`; it must never break prompt handling, so a failed or
 	// refused write is dropped as the oracle's catch drops one.
-	if DetectMemoryWriteRequest(p.Prompt) {
+	if remember {
 		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			fresh.MemoryWriteRequested = true
 			fresh.MemoryWriteTurn = promptSubmitTurn(turn)
@@ -130,20 +148,26 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			// CRW-869 finding 3: the stamp takes the session lock before the bound D-close handler, so a
 			// lock that is already busy fails here and the bound close never runs. On a goalplan-bound
 			// "orchestrate D" the answer is the bound close's busy refusal, carrying the lock failure's
-			// reason; every other prompt keeps the oracle's silence. The predicate mirrors the bound-D
+			// reason. Any other chat command is told it was not applied, naming the lock (CRW-1094), where the
+			// oracle answers nothing and the person cannot see why; a status read goes on to its read-only
+			// answer, and every other prompt keeps the oracle's silence. The predicate mirrors the bound-D
 			// dispatch (verb == D and a bound slug) on the same pre-stamp read. A matching retry's first
 			// attempt already published its marker, so the answer names it and leaves the goalplan
 			// unknown rather than naming nothing (CRW-930, d1); a fresh close published nothing of this
 			// close and keeps the bare text.
-			if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil && command.Verb == fsm.VerbD && current.Slug != "" {
+			switch command := fsm.ParseOrchestrateCommand(p.Prompt); {
+			case command == nil:
+				return ""
+			case command.Verb == fsm.VerbD && current.Slug != "":
 				reason := "the session lock could not be taken"
 				if stampErr != nil {
 					reason = stampErr.Error()
 				}
 				return promptDcloseRefusalNaming(promptDcloseNotApplied(reason),
 					promptDcloseRecoveryPublishedForPrompt(current, command))
+			case command.Verb != fsm.VerbStatus:
+				return promptSubmitNotApplied(p.Cwd, p.SessionID, command.Verb, stampErr)
 			}
-			return ""
 		}
 	}
 	if turn != "" && slices.Contains(current.InjectedTurns, turn) {
@@ -330,6 +354,8 @@ func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() er
 func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string, error) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
+		// CRW-1097: a ledger row an earlier writer of this session left pending is recorded first.
+		DrainSessionLedger(cwd, sessionID)
 		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
 		if unreadable || !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh) {
 			return nil
@@ -348,6 +374,21 @@ func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() err
 		return promptSubmitPublished, warning, nil
 	}
 	return promptSubmitFailed, "", err
+}
+
+// promptSubmitNotApplied is the answer to a chat orchestrate command whose turn stamp could not be written, so the command was
+// not applied (CRW-1094). A busy lock names the lock file: a live holder may still be inside it, and one that died is taken over
+// on the next attempt, so a retry is the remedy. Any other failure names its error.
+func promptSubmitNotApplied(cwd, sessionID string, verb fsm.OrchestrateVerb, err error) string {
+	reason := "the session state could not be written"
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrExist):
+		reason = "the session lock " + state.SessionLockPath(cwd, sessionID) + " could not be taken: another process holds it. Retry; a lock whose holder has died is taken over"
+	default:
+		reason += " (" + err.Error() + ")"
+	}
+	return "[crw \u2014 orchestrate " + string(verb) + " was not applied: " + reason + ". The phase and ledger were not changed.]"
 }
 
 // promptClaimOutcome is what an advisory answer's recording write found inside the session lock (CRW-1159).

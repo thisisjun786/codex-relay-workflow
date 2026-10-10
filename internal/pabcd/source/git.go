@@ -2,19 +2,25 @@ package source
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
 // GitEnv is base without the variables that point git at another repository (inherited, they would redirect
-// status and rev-parse to another tree, so a capture "for" a bound worktree could describe the native checkout);
-// nil means the process environment.
+// status and rev-parse to another tree); nil means the process environment. The receipt command runs with it; the
+// probes of this package and of the session binding run under gitprobe's probe policy instead (CRW-1135).
 func GitEnv(base []string) []string {
 	if base == nil {
 		base = os.Environ()
@@ -29,18 +35,66 @@ func isRoutingVar(name string) bool {
 	return slices.Contains([]string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}, name)
 }
 
-// run runs a command in cwd with the routing variables removed and returns its stdout. Stderr is read and dropped:
-// git failing here is an outcome the caller handles, so its diagnostics must not reach the user. Every failure
-// (command absent, cwd missing, non-zero exit, signal, over the limit) is the same error. The limit is Node's
-// maxBuffer: stdout and stderr share it, and going over it kills the child and returns at once, even if a
-// grandchild still holds the pipes.
-func run(cwd string, limit int, name string, args ...string) ([]byte, error) {
-	return Run(cwd, GitEnv(nil), limit, name, args...)
+// ProbeOptions bound one probe: the output limit (stdout and stderr together, Node's maxBuffer), the time limit,
+// and the trusted environment overrides applied once after gitprobe's probe environment.
+type ProbeOptions struct {
+	Limit   int
+	Timeout time.Duration
+	Env     []string
 }
 
-// Run is run for a caller that brings its own environment (the session source binding removes fewer routing variables than
-// GitEnv); nil is the process environment.
-func Run(cwd string, env []string, limit int, name string, args ...string) ([]byte, error) {
+// ExitError is a git that ran and failed: its exit status (-1 when a signal ended it) and what it wrote to stderr,
+// which is never shown to the user.
+type ExitError struct {
+	Code   int
+	Stderr string
+}
+
+func (e *ExitError) Error() string { return "git exited with status " + strconv.Itoa(e.Code) }
+
+// NotARepository is true only when git ran and said the directory is in no repository: exit status 128 with the
+// C locale's discovery answer as the whole of its fatal message, "fatal: not a git repository (or any of the parent
+// directories): .git" or, at a file system boundary, "fatal: not a git repository (or any parent up to mount point
+// /)" with its "Stopping at filesystem boundary" line (a probe that asks for it sets LC_ALL=C). Only "warning:" lines
+// may come before it. The answer is matched whole, not as a substring of stderr, because "not a git repository:
+// <gitdir>", which git prints for a repository whose Git directory it could not read, echoes a path that can spell
+// the discovery message (CRW-1135). A git that could not start, was stopped by the time limit, went over the output
+// limit or failed for another reason is not that answer either.
+func NotARepository(err error) bool {
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 128 {
+		return false
+	}
+	return discoveryAnswer.MatchString(exit.Stderr)
+}
+
+var discoveryAnswer = regexp.MustCompile(`\A(?:warning: [^\n]*\n)*fatal: not a git repository ` +
+	`(?:\(or any of the parent directories\): \.git|\(or any parent up to mount point [^\n]*\)` +
+	`(?:\nStopping at filesystem boundary \(GIT_DISCOVERY_ACROSS_FILESYSTEM not set\)\.)?)\n?\z`)
+
+// captureTimeout bounds the identity capture's status, which reads the whole tree (and runs its clean filters);
+// a probe of the session binding is bound by gitprobe.Timeout.
+const captureTimeout = 5 * time.Minute
+
+// run runs git in cwd under the probe policy with the capture's bounds and returns its stdout.
+func run(cwd string, limit int, args ...string) ([]byte, error) {
+	return Probe(cwd, ProbeOptions{Limit: limit, Timeout: captureTimeout}, args...)
+}
+
+// Probe runs git in cwd under gitprobe's read-only probe policy (every inherited GIT_* variable removed, no
+// prompt, no hooks, no file system monitor, no optional locks), given through the environment so the argument
+// list stays the one the oracle ran, and returns its stdout. Stderr is kept
+// only for the ExitError: git failing here is an outcome the caller handles, so its diagnostics must not reach
+// the user. Going over the output limit, as Node's maxBuffer does, or past the time limit kills the child and
+// returns at once, even if a grandchild still holds the pipes.
+func Probe(cwd string, o ProbeOptions, args ...string) ([]byte, error) {
+	return runBounded(cwd, "git", args, gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
+}
+
+// runBounded runs name with args in cwd and env and returns its stdout, within limit bytes of output and timeout.
+func runBounded(cwd, name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	outR, outW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -62,22 +116,36 @@ func Run(cwd string, env []string, limit int, name string, args ...string) ([]by
 		mu       sync.Mutex
 		used     int
 		over     bool
+		late     bool
 		out      bytes.Buffer
+		stderr   bytes.Buffer
 		drainers sync.WaitGroup
 	)
-	drain := func(r *os.File, keep bool) {
+	stopReading := func() { // with mu held
+		_ = cmd.Process.Kill()
+		_, _ = outR.Close(), errR.Close()
+	}
+	stop := context.AfterFunc(ctx, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !over {
+			late = true
+			stopReading()
+		}
+	})
+	defer stop()
+	drain := func(r *os.File, keep *bytes.Buffer) {
 		defer drainers.Done()
 		buf := make([]byte, 32<<10)
 		for {
 			n, err := r.Read(buf)
 			mu.Lock()
-			if used += n; used > limit && !over {
+			if used += n; used > limit && !over && !late {
 				over = true
-				_ = cmd.Process.Kill()
-				_, _ = outR.Close(), errR.Close()
+				stopReading()
 			}
-			if keep && !over {
-				out.Write(buf[:n])
+			if !over && !late {
+				keep.Write(buf[:n])
 			}
 			mu.Unlock()
 			if err != nil {
@@ -86,14 +154,23 @@ func Run(cwd string, env []string, limit int, name string, args ...string) ([]by
 		}
 	}
 	drainers.Add(2)
-	go drain(outR, true)
-	go drain(errR, false)
+	go drain(outR, &out)
+	go drain(errR, &stderr)
 	drainers.Wait()
 	werr := cmd.Wait()
-	if over {
+	mu.Lock()
+	defer mu.Unlock()
+	switch {
+	case over:
 		return nil, errors.New("output exceeds the limit")
+	case late:
+		return nil, ctx.Err()
 	}
 	if werr != nil {
+		var exit *exec.ExitError
+		if errors.As(werr, &exit) {
+			return nil, &ExitError{Code: exit.ExitCode(), Stderr: stderr.String()}
+		}
 		return nil, werr
 	}
 	return out.Bytes(), nil

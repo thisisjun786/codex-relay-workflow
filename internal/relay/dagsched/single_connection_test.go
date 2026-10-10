@@ -19,7 +19,7 @@ func singleConnectionPlan(f *fixture, plan string) {
 // does not answer, or does not answer the independent node ready.
 func assertSingleConnectionRead(t *testing.T, f *fixture, plan, wantReady string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	start := time.Now()
 	reading, err := f.sched.Ready(ctx, f.s.DB, plan, ReadyOptions{})

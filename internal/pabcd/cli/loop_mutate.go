@@ -31,6 +31,17 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
+// LoopMutationSession is the session id a loop command would change, as the verb reads it (trimmed), or "" when
+// the verb only reads or names no session: init binds its plan to the session it names, and the verbs this file
+// owns change the plan the session is bound to. The terminal row judges it against the native session before
+// the command runs (CRW-1108).
+func LoopMutationSession(args LoopCliArgs) string {
+	if args.Verb != LoopVerbInit && !loopIsMutatingVerb(args.Verb) {
+		return ""
+	}
+	return loopSessionID(args)
+}
+
 // loopIsMutatingVerb reports the verbs this file owns.
 func loopIsMutatingVerb(verb LoopVerb) bool {
 	switch verb {
@@ -234,8 +245,14 @@ func loopSteerRun(ctx context.Context, args LoopCliArgs, lock *goalplan.Goalplan
 		}
 		return LoopCliResult{Output: output, Code: 0}, nil
 	case goalplan.SteerResultDuplicate:
-		return LoopCliResult{Output: fmt.Sprintf("loop steer: %s was already applied at %s — nothing to do",
-			result.Entry.IdempotencyKey, result.Entry.AppliedAt), Code: 0}, nil
+		output := fmt.Sprintf("loop steer: %s was already applied at %s — nothing to do",
+			result.Entry.IdempotencyKey, result.Entry.AppliedAt)
+		if result.Warning != "" {
+			// CRW-1111: the retry recorded what it could of the rows the first attempt left out, and this
+			// row still could not be written.
+			output += "\n  warning: " + result.Warning
+		}
+		return LoopCliResult{Output: output, Code: 0}, nil
 	}
 	return LoopCliResult{Output: "loop steer: " + result.Reason, Code: 1}, nil
 }
@@ -330,7 +347,19 @@ func loopAddOp(args LoopCliArgs) (LoopCliResult, error) {
 		if reason := loopAddOpConflict(goalplan.ReadGoalplan(args.Cwd, slug), op); reason != "" {
 			return LoopCliResult{Output: fmt.Sprintf("loop %s: %s", args.Verb, reason), Code: 1}, nil
 		}
-		return LoopCliResult{Output: fmt.Sprintf("loop %s: already applied at %s - nothing to do", args.Verb, result.Entry.AppliedAt), Code: 0}, nil
+		output := fmt.Sprintf("loop %s: already applied at %s - nothing to do", args.Verb, result.Entry.AppliedAt)
+		if result.Warning != "" {
+			output += "\nwarning: " + result.Warning
+		}
+		return LoopCliResult{Output: output, Code: 0}, nil
+	case goalplan.SteerResultRejected:
+		// CRW-1111: a recorded batch under the same key that differs from this one is refused by the
+		// transaction; the add verb's own conflict text names the option that differs when it can.
+		if result.Entry != nil {
+			if reason := loopAddOpConflict(goalplan.ReadGoalplan(args.Cwd, slug), op); reason != "" {
+				return LoopCliResult{Output: fmt.Sprintf("loop %s: %s", args.Verb, reason), Code: 1}, nil
+			}
+		}
 	}
 	return LoopCliResult{Output: fmt.Sprintf("loop %s: %s", args.Verb, result.Reason), Code: 1}, nil
 }

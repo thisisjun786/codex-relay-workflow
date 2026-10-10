@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,9 @@ func TestActivationPreservesAcceptedSurrogatesAndCutsUTF16(t *testing.T) {
 	home := activationHome(t)
 	path := filepath.Join(home, "config.toml")
 	activationWrite(t, path, "[memories]\ndedicated_tools = true\n")
-	activationWrite(t, manifestPath(home), `{"version":2,"configPath":"x","flags":{},"tableKeys":{"memories.dedicated_tools":{"table":"memories","key":"dedicated_tools","priorValue":"\ud800","appliedValue":"true","setByCodexclaw":true}}}`)
+	// The manifest names this config file, so the activation carries its records (CRW-1145 carries only the same install's).
+	configJSON, _ := json.Marshal(path)
+	activationWrite(t, manifestPath(home), `{"version":2,"configPath":`+string(configJSON)+`,"flags":{},"tableKeys":{"memories.dedicated_tools":{"table":"memories","key":"dedicated_tools","priorValue":"\ud800","appliedValue":"true","setByCodexclaw":true}}}`)
 	var calls [][]string
 	deps := activationDeps(t, home, allActivationFlags(), &calls)
 	base := deps.Run
@@ -116,16 +119,14 @@ func TestActivationIntentionallyChangedCases(t *testing.T) {
 	}
 }
 
-func TestActivateMalformedReadableManifestIsAbsent(t *testing.T) {
+// CRW-1153 (port: fixed): a manifest that exists but cannot be read is refused, never replaced by a new activation.
+func TestActivateMalformedReadableManifestIsRefused(t *testing.T) {
 	home := activationHome(t)
 	activationWrite(t, manifestPath(home), "truncated {")
 	var calls [][]string
 	m, e := Activate(activationDeps(t, home, allActivationFlags(), &calls))
-	if e != nil || m == nil {
+	if e == nil || m != nil || activationRead(t, manifestPath(home)) != "truncated {" {
 		t.Fatalf("result=%+v error=%v", m, e)
-	}
-	if parseInstallManifest(activationRead(t, manifestPath(home))) == nil {
-		t.Fatal("new manifest missing")
 	}
 }
 
@@ -289,10 +290,12 @@ func TestActivateFailedConfigPublicationPreservesBytes(t *testing.T) {
 	state := allActivationFlags()
 	state["hooks"] = false
 	deps := activationDeps(t, home, state, &calls)
+	hooks := false
 	deps.Run = func(a []string) CodexRunResult {
 		if a[1] == "list" {
-			return CodexRunResult{Stdout: "multi_agent true\ngoals true\nhooks false\ndefault_mode_request_user_input true"}
+			return CodexRunResult{Stdout: fmt.Sprintf("multi_agent true\ngoals true\nhooks %t\ndefault_mode_request_user_input true", hooks)}
 		}
+		hooks = true
 		if e := os.Chmod(path, 0444); e != nil {
 			t.Fatal(e)
 		}
@@ -320,7 +323,13 @@ func TestActivateFailedConfigPublicationPreservesBytes(t *testing.T) {
 	if activationRead(t, path) != "# original\n" {
 		t.Fatal("config truncated")
 	}
-	if _, e = os.Stat(manifestPath(home)); !os.IsNotExist(e) {
-		t.Fatal("manifest published after failed config write")
+	// CRW-1153: the flag the CLI enabled before the failed key write is recorded as crw's, so the deactivation reverts it;
+	// the key that was never written is not.
+	m := parseInstallManifest(activationRead(t, manifestPath(home)))
+	if m == nil || !m.Flags["hooks"].EnabledByCodexclaw {
+		t.Fatalf("the flag enabled before the failed config write is not recorded: %+v", m)
+	}
+	if _, ok := m.TableKeys["memories.dedicated_tools"]; ok {
+		t.Fatal("a key that was never written is recorded")
 	}
 }

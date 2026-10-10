@@ -13,7 +13,8 @@ import (
 // null is a present value of the wrong shape): it returns a nil list for an absent key, a non-nil one (empty included) for a
 // present valid list, and false for the oracle's "invalid", which fails the whole plan.
 
-// reviveSteeringLog is reviveSteeringLog: every entry must hold five non-empty texts.
+// reviveSteeringLog is reviveSteeringLog: every entry must hold five non-empty texts. An entry's ops and events (CRW-1111) are
+// read when present, and a present one of the wrong shape fails the plan, as a malformed entry does.
 func reviveSteeringLog(m map[string]any, key string) ([]SteeringEntry, bool) {
 	raw, present := m[key]
 	if !present {
@@ -34,9 +35,118 @@ func reviveSteeringLog(m map[string]any, key string) ([]SteeringEntry, bool) {
 		if !ok {
 			return nil, false
 		}
-		out = append(out, SteeringEntry{IdempotencyKey: f[0], Rationale: f[1], Evidence: f[2], AppliedAt: f[3], Summary: f[4]})
+		ops, opsOK := reviveSteeringOps(e["ops"])
+		events, eventsOK := reviveSteeringEvents(e["events"])
+		if !opsOK || !eventsOK {
+			return nil, false
+		}
+		out = append(out, SteeringEntry{IdempotencyKey: f[0], Rationale: f[1], Evidence: f[2], AppliedAt: f[3], Summary: f[4], Ops: ops, Events: events})
 	}
 	return out, true
+}
+
+// reviveSteeringOps reads an entry's ops: absent is nil (a legacy entry), otherwise a non-empty list of op objects whose kind is
+// one of the three and whose other fields, when present, are texts (dependsOn a list of texts).
+func reviveSteeringOps(raw any) ([]SteeringOpRecord, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 {
+		return nil, false
+	}
+	out := make([]SteeringOpRecord, 0, len(list))
+	for _, item := range list {
+		o, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		kind, _ := text(o, "kind")
+		if !steeringOpsSupportedOps(kind) {
+			return nil, false
+		}
+		op := SteeringOpRecord{Kind: SteerOpKind(kind)}
+		for _, field := range []struct {
+			key string
+			to  *string
+		}{{"note", &op.Note}, {"scenario", &op.Scenario}, {"expectedEvidence", &op.ExpectedEvidence}, {"id", &op.ID}, {"title", &op.Title}} {
+			if v, present := o[field.key]; present {
+				s, isText := v.(string)
+				if !isText {
+					return nil, false
+				}
+				*field.to = s
+			}
+		}
+		if v, present := o["surface"]; present {
+			s, isText := v.(string)
+			if !isText {
+				return nil, false
+			}
+			op.Surface = CriterionSurface(s)
+		}
+		if v, present := o["presented"]; present {
+			s, isText := v.(string)
+			if !isText {
+				return nil, false
+			}
+			op.Presented = PresentedSurface(s)
+		}
+		if v, present := o["dependsOn"]; present {
+			deps, isList := v.([]any)
+			if !isList {
+				return nil, false
+			}
+			for _, d := range deps {
+				s, isText := d.(string)
+				if !isText {
+					return nil, false
+				}
+				op.DependsOn = append(op.DependsOn, s)
+			}
+		}
+		out = append(out, op)
+	}
+	return out, true
+}
+
+// reviveSteeringEvents reads an entry's events: absent is nil, otherwise a list of {id, event, detail} objects whose id is not
+// empty.
+func reviveSteeringEvents(raw any) ([]SteeringEventRecord, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 {
+		return nil, false
+	}
+	out := make([]SteeringEventRecord, 0, len(list))
+	for _, item := range list {
+		o, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		id, idOK := text(o, "id")
+		event, eventOK := text(o, "event")
+		detail, detailOK := text(o, "detail")
+		if !idOK || id == "" || !eventOK || !detailOK {
+			return nil, false
+		}
+		out = append(out, SteeringEventRecord{ID: id, Event: GoalplanLedgerEvent(event), Detail: detail})
+	}
+	return out, true
+}
+
+// validSchemaVersion reports whether a plan's schemaVersion is one a reader can honour (CRW-1109): absent, or a value that is no
+// number (both read as version 1, the legacy reading), or a whole finite number of at least 1. The oracle floors a fraction (2.9
+// reads as 2), keeps 0 and a negative number as written and drops -1e999, although no plan is ever written with such a version; the
+// port refuses them, so the plan is reported and its bytes are left as they are.
+func validSchemaVersion(m map[string]any) bool {
+	f, ok := jsNumber(m["schemaVersion"])
+	if !ok {
+		return true
+	}
+	return !math.IsInf(f, 0) && !math.IsNaN(f) && f >= 1 && f == math.Trunc(f)
 }
 
 // declaredSchemaVersion is declaredSchemaVersion: the number a plan names as its schemaVersion, 1 when it names none.
@@ -157,7 +267,7 @@ func reviveGoalplan(parsed any, expectedSlug *string) *Goalplan {
 	if !ok || !hasObjective || !hasSlug {
 		return nil
 	}
-	if _, err := ValidateGoalplanSlug(slug); err != nil || expectedSlug != nil && slug != *expectedSlug || declaredSchemaVersion(o) > SupportedMaxSchemaVersion {
+	if _, err := ValidateGoalplanSlug(slug); err != nil || expectedSlug != nil && slug != *expectedSlug || declaredSchemaVersion(o) > SupportedMaxSchemaVersion || !validSchemaVersion(o) {
 		return nil
 	}
 	phases, phasesOK := o["workPhases"].([]any)

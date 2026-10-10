@@ -1,6 +1,10 @@
 package job
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -26,14 +30,15 @@ crw relay job off | on | status                    완료 웨이크 스위치 (�
 crw relay job drain --session <id> [--json]        미전달 완료를 받아가고 전달 표시
 crw relay job removal                              제거 체크리스트`
 
-func cliFormatList(recs []BgRecord) string {
-	if len(recs) == 0 {
+// cliFormatList lists the records and then the broken record files, which are reported and left as they are (CRW-1134).
+func cliFormatList(recs []BgRecord, broken []BrokenRecord) string {
+	if len(recs) == 0 && len(broken) == 0 {
 		return "백그라운드 작업 없음"
 	}
-	lines := make([]string, len(recs))
+	lines := make([]string, len(recs), len(recs)+len(broken))
 	for i, rec := range recs {
 		lines[i] = DescribeRecord(rec)
-		if rec.Status != StatusRunning {
+		if IsTerminal(rec.Status) {
 			delivered := "미전달"
 			if rec.DeliveredAt != nil {
 				delivered = "전달됨"
@@ -41,7 +46,40 @@ func cliFormatList(recs []BgRecord) string {
 			lines[i] += "  [" + delivered + "]"
 		}
 	}
+	for _, b := range broken {
+		lines = append(lines, "- "+b.ID+" (손상된 기록: "+b.Reason+") — 파일을 그대로 둡니다")
+	}
 	return strings.Join(lines, "\n")
+}
+
+// cliJSONList is the JSON list: an array of the records, as it was. With broken record files in the store it is an object that holds
+// the records and the broken files instead, which the caller sees with a non-zero exit code, so a damaged store is never read as an
+// empty one (CRW-1134).
+func cliJSONList(recs []BgRecord, broken []BrokenRecord) (any, error) {
+	items := make([]json.RawMessage, 0, len(recs))
+	for _, rec := range recs {
+		b, err := encode(rec)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, b)
+	}
+	var doc any = items
+	if len(broken) > 0 {
+		list := make([]map[string]string, len(broken))
+		for i, b := range broken {
+			list[i] = map[string]string{"id": b.ID, "reason": b.Reason}
+		}
+		doc = struct {
+			Records []json.RawMessage   `json:"records"`
+			Broken  []map[string]string `json:"broken"`
+		}{items, list}
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	return pyjson.Loads(string(b), pyjson.LoadOptions{Surrogates: true})
 }
 
 func cliRecord(rec BgRecord) (any, error) {
@@ -74,6 +112,9 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 		rec, err = RunBackground(cwd, RunOptions{SessionID: session, Command: opts.Command, Note: opts.Note}, clock)
 		if err == nil {
 			result.Out = rec.ID
+			if rec.Status != StatusRunning { // the shell could not start: the record already says failed (CRW-1134)
+				result = CLIResult{Out: rec.ID + " " + string(rec.Status) + " (셸을 시작하지 못했습니다)", Code: 1}
+			}
 			if asJSON {
 				result.Out, err = cliRecord(rec)
 			}
@@ -81,21 +122,21 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 	case "list":
 		var recs []BgRecord
 		recs, err = ListRecords(cwd, clock)
-		result.Out = cliFormatList(recs)
+		broken := BrokenRecords(cwd)
+		result.Out = cliFormatList(recs, broken)
+		if len(broken) > 0 {
+			result.Code = 1 // a broken record is not "no job": the exit code says so in the text and the JSON form alike (CRW-1134)
+		}
 		if err == nil && asJSON {
-			items := make([]any, 0, len(recs))
-			for _, rec := range recs {
-				var item any
-				if item, err = cliRecord(rec); err != nil {
-					break
-				}
-				items = append(items, item)
-			}
-			result.Out = items
+			result.Out, err = cliJSONList(recs, broken)
 		}
 	case "get", "cancel":
-		rec, ok := ReadRecord(cwd, id)
-		if !ok {
+		rec, readErr := readRecord(cwd, id)
+		var broken BrokenRecord
+		if errors.As(readErr, &broken) {
+			return CLIResult{broken.Error() + " — 파일을 그대로 둡니다: " + RecordPath(cwd, id), 1}, nil
+		}
+		if readErr != nil {
 			code := 0
 			if verb == "get" {
 				code = 1
@@ -103,18 +144,20 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 			return CLIResult{"없는 id: " + id, code}, nil
 		}
 		if verb == "cancel" {
-			rec, err = Cancel(cwd, rec, clock)
-			result.Out = rec.ID + " " + string(rec.Status)
+			return cliCancel(cwd, rec, clock)
 		} else {
 			rec, err = Reconcile(cwd, rec, clock)
+			// The final newline ends the last line and is not a line of its own, and the lines are shown as they are, spaces and
+			// blank lines included (CRW-1134; the oracle counted the empty string after the last newline and trimmed the output).
 			body, _ := ReadText(OutPath(cwd, id))
-			lines := text.SplitLinesByteExact(body)
-			tail := cliTail(opts.Tail, len(lines))
-			shown := ""
-			if tail > 0 {
-				shown = strings.Join(lines[len(lines)-tail:], "\n")
+			var lines []string
+			if body != "" {
+				lines = text.SplitLinesByteExact(strings.TrimSuffix(body, "\n"))
 			}
-			result.Out = strings.TrimRightFunc(DescribeRecord(rec)+"\n\n"+shown, func(r rune) bool { return text.Trim(string(r)) == "" })
+			result.Out = DescribeRecord(rec)
+			if tail := cliTail(opts.Tail, len(lines)); tail > 0 {
+				result.Out = DescribeRecord(rec) + "\n\n" + strings.Join(lines[len(lines)-tail:], "\n")
+			}
 		}
 	case "off", "on":
 		result.Out, err = cliSwitch(cwd, verb, clock)
@@ -133,11 +176,18 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 			if state.Since != nil {
 				since = *state.Since
 			}
+			if state.Err != nil {
+				since = "읽을 수 없음: " + state.Err.Error()
+			}
 			flag = "  파일 플래그: off (" + since + ")"
 		}
 		var recs []BgRecord
 		recs, err = ListRecords(cwd, clock)
-		result.Out = strings.Join([]string{"wake: " + wake, flag, "  " + EnvVar + ": " + env, "  작업 " + strconv.Itoa(len(recs)) + "건"}, "\n")
+		count := "  작업 " + strconv.Itoa(len(recs)) + "건"
+		if broken := BrokenRecords(cwd); len(broken) > 0 {
+			count += ", 손상된 기록 " + strconv.Itoa(len(broken)) + "건 (crw relay job list)"
+		}
+		result.Out = strings.Join([]string{"wake: " + wake, flag, "  " + EnvVar + ": " + env, count}, "\n")
 	case "drain":
 		session := opts.Session
 		if session == nil {
@@ -162,12 +212,32 @@ func RunParsedCLI(opts CLIOptions, cwd string, getenv func(string) (string, bool
 	return result, err
 }
 
+// cliCancel prints the record's status after the cancel. A cancel that has not seen the job stop says so with how to follow it (the
+// status is cancellation-requested, not terminal), and a cancel that signalled nothing, or whose signal failed, exits 1 with why
+// (CRW-1155).
+func cliCancel(cwd string, rec BgRecord, clock func() time.Time) (CLIResult, error) {
+	got, err := Cancel(cwd, rec, clock)
+	var unproven ErrOwnerUnproven
+	var signal SignalError
+	switch {
+	case errors.As(err, &unproven):
+		return CLIResult{Out: got.ID + " " + string(got.Status) + "\n" + unproven.Error(), Code: 1}, nil
+	case errors.As(err, &signal):
+		return CLIResult{Out: got.ID + " " + string(got.Status) + "\n" + signal.Error(), Code: 1}, nil
+	case err != nil:
+		return CLIResult{Out: "", Code: 1}, err
+	}
+	out := got.ID + " " + string(got.Status)
+	if got.Status == StatusCancelRequested {
+		out += "\n아직 멈추지 않았습니다: 종료 신호를 보냈고 프로세스 그룹이 남아 있습니다. `crw relay job get " + got.ID +
+			"`로 cancelled가 될 때까지 확인하고, 계속 남으면 다시 cancel하면 SIGKILL을 보냅니다."
+	}
+	return CLIResult{Out: out, Code: 0}, nil
+}
+
 func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 	if _, err := EnsureDir(cwd); err != nil {
 		return "", err
-	}
-	if verb == "on" && !ReadDisabledState(cwd).Disabled {
-		return "bg wake 이미 ON", nil
 	}
 	path, event := DisabledPath(cwd), "disabled"
 	out := "bg wake OFF (이 워크트리). 다시 켜려면: crw relay job on"
@@ -175,16 +245,56 @@ func cliSwitch(cwd, verb string, clock func() time.Time) (string, error) {
 		path, event = EnabledAtPath(cwd), "enabled"
 		out = "bg wake ON. 꺼져 있는 동안 끝난 작업은 웨이크하지 않고 crw relay job list 에만 남습니다."
 	}
-	if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
+	// The switch and the enabled-at time change together under the store lock, and a failed on leaves both as they were: a
+	// completion that ended while the wake was off is held back by that time, so a time written by an on that did not turn the wake on
+	// would hide completions from the wake that is still off (CRW-1134). Whether the wake is already on is decided under the same
+	// lock: two ons that both read it off would otherwise both write the time, and the second would hide the completions that ended
+	// between them.
+	already := false
+	err := withLock(cwd, false, func() error {
+		if verb == "on" && !ReadDisabledState(cwd).Disabled {
+			already = true
+			return nil
+		}
+		prev, prevErr := readText(path)
+		if verb == "on" && prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
+			// A time that does not read cannot be put back after a failure, so nothing is changed.
+			return fmt.Errorf("the enabled-at time %s does not read: %w", path, prevErr)
+		}
+		if err := AtomicWrite(cwd, path, clock().UTC().Format(isoLayout)+"\n"); err != nil {
+			return err
+		}
+		if verb != "on" {
+			return nil
+		}
+		if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
+			return errors.Join(err, restoreText(cwd, path, prev, prevErr))
+		}
+		// RemovePath ignores what it cannot remove (a directory): the switch would stay off while on says ON (CRW-1134).
+		if _, err := os.Lstat(DisabledPath(cwd)); !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(fmt.Errorf("the off switch %s cannot be removed, so the wake stays off", DisabledPath(cwd)), restoreText(cwd, path, prev, prevErr))
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
-	if verb == "on" {
-		if err := RemovePath(cwd, DisabledPath(cwd)); err != nil {
-			return "", err
-		}
+	if already {
+		return "bg wake 이미 ON", nil
 	}
 	_ = appendLedger(cwd, Event{{"event", event}}, clock)
 	return out, nil
+}
+
+// restoreText puts a file back as readText found it: its text, or no file when it was not there. Its error is the restore's.
+func restoreText(cwd, path, prev string, prevErr error) error {
+	if prevErr == nil {
+		return AtomicWrite(cwd, path, prev)
+	}
+	if err := RemovePath(cwd, path); err != nil {
+		return fmt.Errorf("the enabled-at time %s could not be put back: %w", path, err)
+	}
+	return nil
 }
 
 func cliTail(arg *string, available int) int {
@@ -205,16 +315,12 @@ func cliTail(arg *string, available int) int {
 	return max(0, int(n))
 }
 
+// cliDrain selects and stamps under the store lock (deliver), so a drain and a hook never hand out one completion twice. Its text is
+// the relay's answer, which the dispatcher writes after it returns: the stamp still comes before that write. The text keeps the wake
+// budget as the JSON string the relay writes (wireSize), and a job it does not describe stays pending (CRW-1095).
 func cliDrain(cwd string, session *string, clock func() time.Time) string {
-	recs, err := SelectWake(cwd, session, WakeBatchLimit, clock)
-	if err != nil || len(recs) == 0 {
-		return ""
-	}
-	lines := []string{"[crw bg] 백그라운드 작업 " + strconv.Itoa(len(recs)) + "건이 끝났습니다."}
-	for _, rec := range recs {
-		lines = append(lines, DescribeRecord(rec))
-	}
-	lines = append(lines, "출력은 `crw relay job get <id> --tail 40`으로 봅니다. 전체 목록은 `crw relay job list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요.")
-	MarkDelivered(cwd, recs, clock)
-	return strings.Join(lines, "\n")
+	out, _ := deliver(cwd, session, clock, nil, func(recs []BgRecord) (string, []BgRecord) {
+		return fitWake(recs, completionBody, wireSize, wireSize)
+	}, acceptAll)
+	return out
 }

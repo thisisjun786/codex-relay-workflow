@@ -2,12 +2,12 @@ package configguard
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
 // CXC v0.2.40 config-guard/src/multi-agent-v2.ts:15-40, :64-119.
@@ -67,47 +67,22 @@ func multiAgentV2ConfigPath(deps MultiAgentV2Deps) string {
 	return filepath.Join(deps.CodexHome, "config.toml")
 }
 
-// The read-only oracle grammar (toml-edit.ts:52-69) is deliberately string-unaware.
-// TomlTableBody's string-aware writer fix must not change this reader's verdicts.
-func multiAgentV2TableBody(content, header string) (string, bool) {
-	lines := text.SplitLines(content)
-	re := regexp.MustCompile("^" + tomlSpace + "*\\[" + regexp.QuoteMeta(header) + "\\]" + tomlSpace + "*(?:#" + tomlNotEOL + "*)?$")
-	for i, line := range lines {
-		if !re.MatchString(line) {
-			continue
-		}
-		end := i + 1
-		for end < len(lines) && !strings.HasPrefix(tomlTrimStart(lines[end]), "[") {
-			end++
-		}
-		return strings.Join(lines[i+1:end], "\n"), true
-	}
-	return "", false
-}
-
-func multiAgentV2Bool(body, key string) (bool, bool) {
-	re := regexp.MustCompile("(?:^|" + activationLineEnd + ")" + tomlSpace + "*" + key + tomlSpace + "*=" + tomlSpace + "*(true|false)" + tomlSpace + "*(?:#" + tomlNotEOL + "*)?(?:$|" + activationLineEnd + ")")
-	match := re.FindStringSubmatch(body)
-	if match == nil {
-		return false, false
-	}
-	return match[1] == "true", true
-}
-
+// multiAgentV2EnabledIn reads the flag from the decoded document, the same semantic reader the writers use (CRW-1141):
+// [features] multi_agent_v2 = <bool>, or the table [features.multi_agent_v2] (or an inline table) with enabled = <bool>. The
+// oracle's line grammar read a header or an enabled line inside a string as configuration and took not_enabled = true for
+// enabled; a document that does not decode reads as v1, as a missing or unreadable one does.
 func multiAgentV2EnabledIn(content string) bool {
-	if body, ok := multiAgentV2TableBody(content, "features.multi_agent_v2"); ok {
-		enabled, _ := multiAgentV2Bool(body, "enabled")
-		return enabled
+	doc, err := tomledit.Decode(content)
+	if err != nil {
+		return false
 	}
-	if body, ok := multiAgentV2TableBody(content, "features"); ok {
-		if enabled, found := multiAgentV2Bool(body, "multi_agent_v2"); found {
-			return enabled
-		}
-		inline := regexp.MustCompile("(?:^|" + activationLineEnd + ")" + tomlSpace + "*multi_agent_v2" + tomlSpace + "*=" + tomlSpace + "*\\{([^}]*)\\}").FindStringSubmatch(body)
-		if inline != nil {
-			match := regexp.MustCompile("enabled" + tomlSpace + "*=" + tomlSpace + "*(true|false)").FindStringSubmatch(inline[1])
-			return match != nil && match[1] == "true"
-		}
+	features, _ := doc["features"].(map[string]any)
+	switch v := features["multi_agent_v2"].(type) {
+	case bool:
+		return v
+	case map[string]any:
+		enabled, _ := v["enabled"].(bool)
+		return enabled
 	}
 	return false
 }
@@ -127,68 +102,26 @@ func ReadMultiAgentV2State(deps MultiAgentV2Deps) MultiAgentV2State {
 	return MultiAgentV2State{version, enabled, MultiAgentV2StatusContext()}
 }
 
-// Shield complete multiline values from the oracle helper's trim/filter and
-// blank-line compression. Restoring raw blocks also preserves mixed internal EOLs.
-func multiAgentV2Preserve(pre, post string, enabled bool) (string, bool) {
-	prefix := "CRW_MULTI_AGENT_STRING_"
-	for strings.Contains(pre, prefix) || strings.Contains(post, prefix) {
-		prefix += "_"
-	}
-	pairs := []string{}
-	shield := func(content string) string {
-		lines := text.SplitLines(content)
-		mask := tomlInString(append(lines, "")) // sentinel detects an opener at EOF
-		raw := text.SplitLinesByteExact(content)
-		out := make([]string, 0, len(raw))
-		for i := 0; i < len(raw); i++ {
-			if !mask[i] && mask[i+1] {
-				end := i
-				for end+1 < len(raw) && mask[end+1] {
-					end++
-				}
-				block := strings.Join(raw[i:end+1], "\n")
-				suffix := ""
-				if end+1 < len(raw) && strings.HasSuffix(block, "\r") {
-					block = strings.TrimSuffix(block, "\r")
-					suffix = "\r"
-				}
-				token := fmt.Sprintf("%s%d_", prefix, len(pairs)/2)
-				pairs = append(pairs, token, block)
-				out = append(out, token+suffix)
-				i = end
-			} else {
-				out = append(out, raw[i])
-			}
-		}
-		return strings.Join(out, "\n")
-	}
-	a, b := shield(pre), shield(post)
-	if strings.Contains(pre, "\r\n") && !strings.Contains(a, "\r\n") {
-		a += "\r\n" // retain the helper's original EOL choice after shielding
-	}
-	repaired, changed := PreserveMultiAgentV2Table(a, b, enabled)
-	if !changed {
-		return "", false
-	}
-	return strings.NewReplacer(pairs...).Replace(repaired), true
-}
-
 // SetMultiAgentV2State refuses unreadable pre/post images and publishes repairs
 // atomically. The injected runner remains responsible for its own settings writes.
 func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*MultiAgentV2Change, error) {
 	path := multiAgentV2ConfigPath(deps)
 	// The pre-image read, the injected runner that rewrites config.toml, the repair and its publish
 	// are one critical section under the sidecar lock every CRW writer of config.toml takes
-	// (CRW-866), the shape of activate.go's activationSetKeyLocked: a retrust or an activation that
+	// (CRW-866), the shape of activate.go's activationPlanKey and activationPublishKey: a retrust or an activation that
 	// published in that window would otherwise be overwritten by the repair, which is computed from
 	// the pre-image this read took. An explicitly empty config path names no file, so it is not
 	// given a sidecar and keeps its missing-path no-op behaviour.
+	var lock *crwdir.ConfigLock
+	var dirInfo os.FileInfo
 	if path != "" {
-		lock, err := crwdir.LockConfig(path, activationLockWait)
+		var err error
+		lock, err = crwdir.LockConfig(path, activationLockWait)
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
+		dirInfo, _ = os.Stat(filepath.Dir(path))
 		// The lock is keyed by lock.Target, the caller's path with a symlink followed, so two writers
 		// reaching one file through different spellings share one lock. The content path stays the
 		// caller's (CRW-891), unlike the other writers of config.toml: the runner below may atomically
@@ -201,9 +134,17 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	if err != nil {
 		return nil, err
 	}
+	// A config.toml that does not decode is refused before the runner rewrites it (CRW-1141).
+	if err := validateConfig(path, string(pre)); err != nil {
+		return nil, err
+	}
 	want := version == MultiAgentV2
 	if multiAgentV2EnabledIn(string(pre)) == want {
 		return &MultiAgentV2Change{version, want, false, MultiAgentV2StatusContext()}, nil
+	}
+	// Tuning the Codex CLI would drop and crw cannot put back exactly is refused before the runner runs (CRW-1141).
+	if _, _, err := multiAgentV2Tuning(string(pre)); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	op := "disable"
 	if want {
@@ -213,17 +154,55 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	if res.ExitCode != 0 {
 		return nil, fmt.Errorf("codex features %s multi_agent_v2 failed (exit %d): %s", op, res.ExitCode, text.Trim(res.Stderr))
 	}
+	// The repair is published only under a lock that guards the file the caller's path names after the runner (CRW-1144).
+	if lock != nil {
+		extra, err := configIdentityAfterRunner(lock, path, dirInfo)
+		if err != nil {
+			return nil, fmt.Errorf("%w; the runner's change is in place, the multi_agent_v2 tuning repair was not written", err)
+		}
+		if extra != nil {
+			defer extra.Release()
+		}
+	}
+	// An exit 0 is not proof (CRW-1143): the file the runner left is measured, not guessed. A file that is gone, unreadable or
+	// not TOML is a failed measurement, never a verified disabled flag.
 	post, exists, err := activationReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if exists {
-		if repaired, changed := multiAgentV2Preserve(string(pre), string(post), want); changed {
-			if err := activationPublish(path, []byte(repaired)); err != nil {
-				return nil, err
-			}
-		}
+	if !exists && !want {
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but %s is gone, so the flag cannot be read; the runner's change is in place", op, path)
 	}
-	state := ReadMultiAgentV2State(deps)
-	return &MultiAgentV2Change{state.Version, state.V2Enabled, true, state.MultiAgentV2Context}, nil
+	if err := validateConfig(path, string(post)); err != nil {
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but the file it left cannot be read: %w", op, err)
+	}
+	var unsynced error
+	repaired, changed, err := multiAgentV2Preserve(string(pre), string(post), want)
+	if err != nil {
+		return nil, fmt.Errorf("%w; the runner's change is in place and the multi_agent_v2 tuning was not written back", err)
+	}
+	if changed {
+		if _, _, err := activationReadFile(path); err != nil {
+			return nil, err
+		}
+		if err := activationCrwdirPublish(path, []byte(repaired)); crwdir.Published(err) {
+			unsynced = err
+		} else if err != nil {
+			return nil, err
+		}
+		post = []byte(repaired)
+	}
+	enabled := multiAgentV2EnabledIn(string(post))
+	if enabled != want {
+		state := MultiAgentV1
+		if enabled {
+			state = MultiAgentV2
+		}
+		return nil, fmt.Errorf("codex features %s multi_agent_v2 exited 0, but config.toml still reads %s", op, state)
+	}
+	version = MultiAgentV1
+	if enabled {
+		version = MultiAgentV2
+	}
+	return &MultiAgentV2Change{version, enabled, multiAgentV2EnabledIn(string(pre)) != enabled, MultiAgentV2StatusContext()}, txDurability(unsynced)
 }

@@ -184,7 +184,7 @@
     },
     {
       "file": "references/durable-goalplan.md",
-      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit.",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit. CRW-1111: retain the steering idempotency, missing-row retry and stored annotate-note contract.",
       "hunks": [
         {
           "line": 22,
@@ -202,6 +202,19 @@
             "hook does not refuse the field, and `update_goal` is not a budget API.\n",
             "\n",
             "After `create_goal`, run `crw pabcd loop init --objective \"<same text>\"\n"
+          ]
+        },
+        {
+          "line": 92,
+          "old": [
+            "- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]`\n"
+          ],
+          "new": [
+            "- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]` — applies one\n",
+            "  batch once per `idempotencyKey`. Sending the same batch again under the same key applies nothing\n",
+            "  and records any ledger row the first attempt could not write; a different batch under a recorded\n",
+            "  key is refused, so give different content a new key. The goalplan keeps each batch's ops, an\n",
+            "  `annotate` note included, and `show` lists the notes.\n"
           ]
         },
         {

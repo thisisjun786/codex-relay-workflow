@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -117,7 +118,8 @@ func TestDeactivateDriftScenarios(t *testing.T) {
 		{name: "never_owned", config: deactivationConfig, unowned: true, reason: "changed"},
 		{name: "backup_preexisting_key", config: deactivationConfig, edit: "# edit\n" + deactivationConfig, backup: "[memories]\ndedicated_tools = false\n", reason: "unverifiable"},
 		{name: "nondestructive_drift", config: deactivationConfig, edit: "# edit\n" + deactivationConfig, prior: &prior, restore: true},
-		{name: "unsupported_reads_as_missing", config: "[memories]\ndedicated_tools = [true]\n", reason: "missing"},
+		// CRW-1141: a value the editor does not rewrite is not an absent key; it is no longer the value CRW applied.
+		{name: "unsupported_reads_as_changed", config: "[memories]\ndedicated_tools = [true]\n", reason: "changed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := activationHome(t)
@@ -177,7 +179,12 @@ func TestDeactivateActivationRoundTrip(t *testing.T) {
 			if err != nil || r.FileDrifted != drift || !reflect.DeepEqual(r.Disabled, []string{"goals", "hooks", "default_mode_request_user_input"}) || !reflect.DeepEqual(r.SkippedPreExisting, []string{"multi_agent"}) {
 				t.Fatalf("result=%+v error=%v", r, err)
 			}
-			if !state["multi_agent"] || state["goals"] || state["hooks"] || strings.Contains(activationRead(t, path), "dedicated_tools") || activationRead(t, manifestPath(home)) != beforeManifest {
+			// The records stay as evidence; a completed deactivation adds only its release (CRW-1145).
+			before, after := parseInstallManifest(beforeManifest), parseInstallManifest(activationRead(t, manifestPath(home)))
+			if before == nil || after == nil || after.ReleasedAt == nil || !reflect.DeepEqual(before.Flags, after.Flags) || !reflect.DeepEqual(before.TableKeys, after.TableKeys) || before.BackupPath == nil || after.BackupPath == nil || *before.BackupPath != *after.BackupPath {
+				t.Fatalf("the deactivation changed the ownership records: %+v -> %+v", before, after)
+			}
+			if !state["multi_agent"] || state["goals"] || state["hooks"] || strings.Contains(activationRead(t, path), "dedicated_tools") {
 				t.Fatal("roundtrip changed ownership or retained an owned setting")
 			}
 			if drift && !strings.Contains(activationRead(t, path), "# user edit\n") {
@@ -200,6 +207,7 @@ func TestDeactivateFlagPathsAndOrdering(t *testing.T) {
 			m.flagOrder = []string{"multi_agent", "goals", "hooks", "default_mode_request_user_input", "unknown", "failed"}
 			deactivationSaveManifest(t, home, m)
 			var calls [][]string
+			goals := true
 			run := func(a []string) CodexRunResult {
 				calls = append(calls, slices.Clone(a))
 				if strings.Contains(activationRead(t, path), "dedicated_tools") {
@@ -209,19 +217,30 @@ func TestDeactivateFlagPathsAndOrdering(t *testing.T) {
 					if broken {
 						return CodexRunResult{ExitCode: 127}
 					}
-					return CodexRunResult{Stdout: "goals stable true\nhooks stable false\n"}
+					// CRW-1143: the undeclared flag a manifest records is read back from its own row.
+					return CodexRunResult{Stdout: fmt.Sprintf("goals stable %t\nhooks stable false\nunknown stable false\n", goals)}
 				}
 				if a[2] == "failed" {
 					return CodexRunResult{ExitCode: 9}
+				}
+				if a[2] == "goals" {
+					goals = false
 				}
 				return CodexRunResult{}
 			}
 			r, err := Deactivate(deactivationDeps(home, run))
 			want := []string{"goals", "unknown"}
+			failed := []string{"failed"}
 			if broken {
-				want = []string{"goals", "hooks", "unknown"}
+				// CRW-1143: with the list unreadable an exit 0 cannot be confirmed, so those flags stay crw's and are
+				// reported as failures.
+				want, failed = []string{}, []string{"failed", "goals", "hooks", "unknown"}
 			}
-			if err != nil || r.FeaturesStateUnavailable != broken || !reflect.DeepEqual(r.Disabled, want) || !reflect.DeepEqual(r.SkippedPreExisting, []string{"multi_agent"}) {
+			var gotFailed []string
+			for _, f := range r.Failed {
+				gotFailed = append(gotFailed, f.Key)
+			}
+			if err != nil || r.FeaturesStateUnavailable != broken || !reflect.DeepEqual(r.Disabled, want) || !reflect.DeepEqual(gotFailed, failed) || !reflect.DeepEqual(r.SkippedPreExisting, []string{"multi_agent"}) {
 				t.Fatalf("result=%+v error=%v calls=%v", r, err, calls)
 			}
 			if !broken && !reflect.DeepEqual(r.SkippedExternal, []SkippedExternal{{"hooks", SkipMissing}}) {

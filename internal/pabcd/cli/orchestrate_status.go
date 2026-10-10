@@ -91,18 +91,28 @@ func RenderPhaseContext(s state.State, sessionID string) string {
 
 // RenderStatus ports :389-412, including the optional split-tree warning.
 func RenderStatus(s state.State, asJSON bool, elsewhere []string, selection string) (string, error) {
+	return renderStatusPending(s, asJSON, elsewhere, selection, 0)
+}
+
+// renderStatusPending is RenderStatus with the number of transition-ledger events the session still has pending (CRW-1097). Status
+// only reports them; it records nothing, and a count of 0 leaves the oracle's answer as it was.
+func renderStatusPending(s state.State, asJSON bool, elsewhere []string, selection string, pending int) (string, error) {
 	if asJSON {
 		return statusJSON(struct {
-			Phase       state.Phase `json:"phase"`
-			Flags       state.Flags `json:"flags"`
-			SessionID   string      `json:"sessionId"`
-			Selection   string      `json:"selection"`
-			AlsoFoundAt []string    `json:"alsoFoundAt,omitempty"`
-		}{s.Phase, s.Flags, s.SessionID, selection, elsewhere})
+			Phase               state.Phase `json:"phase"`
+			Flags               state.Flags `json:"flags"`
+			SessionID           string      `json:"sessionId"`
+			Selection           string      `json:"selection"`
+			AlsoFoundAt         []string    `json:"alsoFoundAt,omitempty"`
+			PendingLedgerEvents int         `json:"pendingLedgerEvents,omitempty"`
+		}{s.Phase, s.Flags, s.SessionID, selection, elsewhere, pending})
 	}
 	line := fmt.Sprintf("session=%s phase=%s interview=%t auditPassed=%t checkPassed=%t", s.SessionID, s.Phase, s.Flags.Interview, s.Flags.AuditPassed, s.Flags.CheckPassed)
 	if selection == "latest-file" {
 		line += " selection=latest-file (unverified terminal fallback)"
+	}
+	if pending > 0 {
+		line += fmt.Sprintf("\npending ledger rows: %d (status records nothing; the next orchestrate command or hook of this session does)", pending)
 	}
 	if len(elsewhere) == 0 {
 		return line, nil
@@ -152,7 +162,8 @@ func SiblingRoots(cwd string, process host.LookupEnv) []string {
 
 // RunOrchestrateRead ports the read-only prefix (:466-548) on a parser result:
 // help/errors/status terminate; passed mutation guards delegate to the transition
-// library. Native identity is corroborated only for implicit status, never hooks.
+// library. Native identity selects the session of an implicit status and bounds an explicit mutation
+// to the native session (nativeSessionMismatch); hooks never pass it.
 func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateReadResult, error) {
 	if parsed.Help != nil {
 		return readAnswer(0, RenderOrchestrateHelp("")), nil
@@ -168,6 +179,17 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 	if a.Verb != fsm.VerbStatus && nonemptySession(a.Session) && !state.IsCanonicalSessionID(*a.Session) {
 		return readAnswer(1, sessionAliasRefusalOutput(a.Verb)), nil
 	}
+	if env.Native == nil {
+		env.Native = func(string) (string, bool) { return "", false }
+	}
+	// CRW-1108 (B2-01): inside a native session a mutation may change only that session. Judged right
+	// after the id's shape and before the attestation-error branch, which would read the other
+	// session's phase, so a refused id is neither read nor written.
+	if a.Verb != fsm.VerbStatus && nonemptySession(a.Session) {
+		if refusal := nativeSessionMismatch(*a, env.Native); refusal != "" {
+			return readAnswer(1, refusal), nil
+		}
+	}
 	if a.AttestError != "" && a.Verb != fsm.VerbStatus && a.Verb != fsm.VerbReset {
 		context, hint := "", ""
 		var from *state.Phase
@@ -180,9 +202,6 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 			hint = RenderAttestShapeHint(a.Verb, from)
 		}
 		return readAnswer(1, "orchestrate "+VerbText(a.Verb)+": "+context+a.AttestError+"."+hint), nil
-	}
-	if env.Native == nil {
-		env.Native = func(string) (string, bool) { return "", false }
 	}
 	_, hasNative := env.Native("CODEX_THREAD_ID")
 	var sessionID *string
@@ -225,6 +244,42 @@ func readAnswer(code int, output string) OrchestrateReadResult {
 	return OrchestrateReadResult{Result: &CliResult{Code: code, Output: output}}
 }
 
+// nativeSessionMismatch is the refusal of an orchestrate mutation whose explicit --session is not the
+// native session the command runs in, or "" when the mutation may proceed (CRW-1108; NativeSessionRefusal).
+func nativeSessionMismatch(a OrchestrateCliArgs, native host.LookupEnv) string {
+	return NativeSessionRefusal("orchestrate "+VerbText(a.Verb), *a.Session, a.Cwd, native)
+}
+
+// NativeSessionRefusal is the refusal of a terminal command that would change session, when that is not the
+// native session the command runs in, or "" when the command may proceed (CRW-1108). command names the command
+// in the refusal ("memory allow-write"), session is the id the command would change, as the command itself
+// reads it, and cwd is the directory the native thread database is asked about. The oracle checks native
+// identity for an implicit orchestrate status only, so a command run inside one native session could change a
+// parent's, a sibling's or an earlier session's records with exit 0 (orchestrate-cli.ts:489; port: fixed).
+//
+// The subject is CODEX_THREAD_ID, set and nonempty; without it (a standalone terminal) the explicit id, the
+// reserved terminal key included, keeps working, and an empty session is left to the command's own refusal.
+// The absorbed resolver confirms the subject against the native thread database where it can, but a lookup
+// that fails (no database, another working directory, a worktree) is not widened into a refusal: the alias
+// guard is the id comparison alone, so an independent terminal flow that cannot reach the database is not
+// broken. Only the terminal rows supply native; hooks never do, because a subagent's CODEX_THREAD_ID is not
+// the root session id its hook payload carries, and the reading verbs and the maintenance commands (reset)
+// never call it.
+func NativeSessionRefusal(command, session, cwd string, native host.LookupEnv) string {
+	if native == nil || session == "" {
+		return ""
+	}
+	threadID, set := native("CODEX_THREAD_ID")
+	if !set || threadID == "" || session == threadID {
+		return ""
+	}
+	confirmed := ""
+	if resolved, err := host.ResolveNativeSession(cwd, native); err == nil && resolved.SessionID == threadID {
+		confirmed = ", confirmed by the native thread database"
+	}
+	return fmt.Sprintf("%s: --session '%s' is not the native Codex session this command runs in (CODEX_THREAD_ID %s%s). SESSION-IDENTITY-01: a mutation may change only your own session, never a parent, sibling or earlier session id or the terminal key 'cli'; pass your own id (crw relay session current shows it). Nothing was written.", command, session, threadID, confirmed)
+}
+
 func readStatus(a OrchestrateCliArgs, sessionID *string, hasNative bool, process host.LookupEnv) (OrchestrateReadResult, error) {
 	if !nonemptySession(sessionID) {
 		return readAnswer(0, "no active session"), nil
@@ -249,8 +304,22 @@ func readStatus(a OrchestrateCliArgs, sessionID *string, hasNative bool, process
 		selection = "native"
 	}
 	elsewhere := state.FindForeignSessionCopies(a.Cwd, *sessionID, SiblingRoots(a.Cwd, process))
-	output, err := RenderStatus(state.ReadState(a.Cwd, *sessionID), a.JSON, elsewhere, selection)
+	output, err := renderStatusPending(state.ReadState(a.Cwd, *sessionID), a.JSON, elsewhere, selection, pendingLedgerEventCount(a.Cwd, *sessionID))
 	return readAnswer(0, output), err
+}
+
+// pendingLedgerEventCount is the number of transition-ledger events the session has pending (CRW-1097). Status is a read
+// (phase-control.md: "status is read-only"; its latest-file selection is an unverified fallback), so it counts the outbox and
+// writes nothing: the rows are recorded, and the cleanups finished, by the next hook or orchestrate command of the session.
+func pendingLedgerEventCount(cwd, sessionID string) int {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return 0
+	}
+	events, damaged, err := state.PendingLedgerEvents(cwd, sessionID)
+	if err != nil {
+		return 0
+	}
+	return len(events) + len(damaged)
 }
 
 // Same compact JSON.stringify string rules as state.stringify, kept local because

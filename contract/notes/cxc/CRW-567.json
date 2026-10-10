@@ -15,13 +15,6 @@
       }
     },
     {
-      "id": "cli__chat__search_refresh_builds_index",
-      "reason": "the recall CLI now replays under the cxc domain's link-time clock (2026-01-01T00:00:00Z linked into main.recallTestClock); the oracle recorded under a clock that advanced 1 ms per Date read, so the recency-decayed hits[].score differs in the 1e-9 digits and this claim fixes the step stdout",
-      "set": {
-        "steps/0/stdout": "{\"hits\":[{\"ts\":\"<TS>\",\"role\":\"user\",\"text\":\"subagent task about the trigram index\",\"matchField\":\"content\",\"threadId\":\"<UUID_1>\",\"title\":\"subagent lane\",\"cwd\":\"${WS}\",\"gitBranch\":null,\"source\":\"subagent\",\"file\":\"${CODEX_HOME}/sessions/2025/12/31/rollout-2025-12-31T02-00-00-<UUID_1>.jsonl\",\"score\":0.029749663773784223,\"context\":[]},{\"ts\":\"<TS>\",\"role\":\"user\",\"text\":\"please deploy the trigram index for korean search\",\"matchField\":\"content\",\"threadId\":\"<UUID_2>\",\"title\":\"deploy trigram index\",\"cwd\":\"${WS}\",\"gitBranch\":\"main\",\"source\":\"main\",\"file\":\"${CODEX_HOME}/sessions/2025/12/31/rollout-2025-12-31T01-00-00-<UUID_2>.jsonl\",\"score\":0.028563885540156295,\"context\":[]},{\"ts\":\"<TS>\",\"role\":\"user\",\"text\":\"unrelated project question about the trigram index\",\"matchField\":\"content\",\"threadId\":\"<UUID_3>\",\"title\":null,\"cwd\":\"/proj/elsewhere\",\"gitBranch\":null,\"source\":\"main\",\"file\":\"${CODEX_HOME}/sessions/2025/12/30/rollout-2025-12-30T05-00-00-<UUID_3>.jsonl\",\"score\":0.028402134444126405,\"context\":[]},{\"ts\":\"<TS>\",\"role\":\"assistant\",\"text\":\"deployed the trigram index; korean 한글 검색 works now\",\"matchField\":\"content\",\"threadId\":\"<UUID_2>\",\"title\":\"deploy trigram index\",\"cwd\":\"${WS}\",\"gitBranch\":\"main\",\"source\":\"main\",\"file\":\"${CODEX_HOME}/sessions/2025/12/31/rollout-2025-12-31T01-00-00-<UUID_2>.jsonl\",\"score\":0.028125088226358983,\"context\":[]}],\"warnings\":[],\"scannedFiles\":4,\"matchedFiles\":3,\"totalFiles\":4,\"elapsedMs\":\"<DURATION>\",\"mode\":\"index\",\"index\":{\"lastIngestAt\":\"<TS>\",\"files\":4,\"sourceFiles\":4,\"staleFiles\":0,\"readOnly\":false},\"clipped\":false}"
-      }
-    },
-    {
       "id": "cli__memory__search_chat_fallback_and_no_chat",
       "reason": "the recall CLI now replays under the cxc domain's link-time clock (2026-01-01T00:00:00Z linked into main.recallTestClock); the oracle recorded under a clock that advanced 1 ms per Date read, so the recency-decayed hits[].score differs in the 1e-9 digits and this claim fixes the step stdout",
       "set": {

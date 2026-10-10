@@ -5,10 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // CRW-783 red-first cases: the guard is CRW's own protection, so no oracle case is replayed here.
@@ -96,41 +97,12 @@ func githubPostWrite(t *testing.T, dir, name, content string) {
 	}
 }
 
-// githubPostTempHome points the homes at temporary directories and checks the real ones are unchanged.
-func githubPostTempHome(t *testing.T) {
+// githubPostTempHome points the homes at temporary directories and checks the guard wrote nothing into them. It
+// observes only those directories: the real ~/.codex and ~/.crw are shared with the host's live Codex sessions,
+// whose sqlite files appear there at any moment, so a listing of them says nothing about the guard (CRW-1170).
+func githubPostTempHome(t *testing.T) *testsupport.AccountHomes {
 	t.Helper()
-	before := githubPostHomeListing()
-	t.Cleanup(func() {
-		if after := githubPostHomeListing(); after != before {
-			t.Errorf("the guard changed the real Codex home: %q became %q", before, after)
-		}
-	})
-	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
-		t.Setenv(name, t.TempDir())
-	}
-}
-
-// githubPostHomeListing is what ~/.codex and ~/.crw hold now.
-func githubPostHomeListing() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "no home"
-	}
-	out := []string{}
-	for _, dir := range []string{".codex", ".crw"} {
-		entries, err := os.ReadDir(filepath.Join(home, dir))
-		if err != nil {
-			out = append(out, dir+": absent")
-			continue
-		}
-		names := []string{}
-		for _, entry := range entries {
-			names = append(names, entry.Name())
-		}
-		slices.Sort(names)
-		out = append(out, dir+": "+strings.Join(names, ","))
-	}
-	return strings.Join(out, " | ")
+	return testsupport.SandboxAccountHomes(t)
 }
 
 // githubPostFake builds a key-shaped value from pieces, so no key-shaped literal sits in this file.
@@ -560,8 +532,8 @@ func TestGitHubPostAnswerBoundsThePayload(t *testing.T) {
 	if !strings.Contains(reason, "("+githubPostRuleUnread+") at "+githubPostWhereCommand+":") {
 		t.Errorf("over the bound denied as %q, want %s at %s", reason, githubPostRuleUnread, githubPostWhereCommand)
 	}
-	if answer := GitHubPostAnswer(githubPostFailingReader{}); answer != "" {
-		t.Errorf("a failed read answered %q, want nothing", answer)
+	if reason := githubPostAnswerReason(t, GitHubPostAnswer(githubPostFailingReader{})); !strings.Contains(reason, "("+githubPostRuleUnread+") at "+githubPostWhereCommand+":") {
+		t.Errorf("a failed read answered %q, want unreadable-post deny", reason)
 	}
 }
 

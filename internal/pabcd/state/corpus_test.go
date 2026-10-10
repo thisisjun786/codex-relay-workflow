@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The state files the CXC v0.2.40 oracle left in the expect.tree of contract/fixtures/cxc are goldens. They sit under .codexclaw/
@@ -22,6 +23,15 @@ type fixtureFile struct {
 			Text string          `json:"text"`
 		} `json:"tree"`
 	} `json:"expect"`
+}
+
+func restoreFixture(t *testing.T, cwd, id string) (State, bool) {
+	t.Helper()
+	raw, err := ReadStateFile(cwd, SanitizeKey(id))
+	if err != nil {
+		t.Fatalf("read %s: %v", id, err)
+	}
+	return restore(id, raw, time.Now())
 }
 
 func TestCorpusStateFilesAreGoldens(t *testing.T) {
@@ -53,7 +63,9 @@ func TestCorpusStateFilesAreGoldens(t *testing.T) {
 				}
 				golden = bind.Replace(pretty.String())
 			}
-			s, unreadable := ReadStateStrict(put(t, id, golden), id)
+			// the fixture ids are normalisation placeholders (<UUID_1>), not canonical keys, which ReadStateFile refuses
+			// (CRW-1108): read the file under its sanitised key and restore it for the placeholder id
+			s, unreadable := restoreFixture(t, put(t, id, golden), id)
 			var keys map[string]json.RawMessage
 			_ = json.Unmarshal([]byte(golden), &keys)
 			_, full := keys["dcloseRecovery"]

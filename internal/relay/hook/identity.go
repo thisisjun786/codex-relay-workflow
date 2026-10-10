@@ -20,6 +20,11 @@ import (
 
 const EventKeyTag = "crw-stop-event/1"
 const ScanMaxBytes = 64 << 20
+
+// scanDeadline is how long the transcript scan may take before it answers scan_timed_out. It is a
+// variable only so that a test of the byte bound can give a loaded host the time to read 64 MiB.
+var scanDeadline = 750 * time.Millisecond
+
 const scanChunk = 1 << 16
 
 // EventKey is byte-identical to stopadapter.event_key, including ensure_ascii.
@@ -74,7 +79,7 @@ func classify(row any, turn string) *transcriptItem {
 
 // EventIdentity scans newest-first, never crossing an unreadable or unfinished tail.
 func EventIdentity(ctx context.Context, stop Object) (string, Object) {
-	scanCtx, cancel := context.WithDeadline(ctx, time.Now().Add(750*time.Millisecond))
+	scanCtx, cancel := context.WithDeadline(ctx, time.Now().Add(scanDeadline))
 	defer cancel()
 	identity := Object{{Key: "established", Value: false}, {Key: "reason", Value: nil}, {Key: "answerItem", Value: nil}, {Key: "transcriptPath", Value: nil}, {Key: "scannedBytes", Value: 0}, {Key: "scannedLines", Value: 0}}
 	refuse := func(reason string) (string, Object) { return "", identity.Set("reason", reason) }

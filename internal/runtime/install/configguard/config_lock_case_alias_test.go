@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // CRW-993 c1b and d2 (CRW-899 evaluation d2): a case-only alias of the locked entry is accepted when the
@@ -101,7 +103,9 @@ func TestConfigLockCaseAliasFoldingDirectoryIsRestored(t *testing.T) {
 		cfgPath = cfg
 		configLockPathsCaseAliasSeams(t, configLockPathsFoldFolds, configLockPathsCaseAliasSameEntry(t, cfg))
 	})
-	if err != nil {
+	// The directory has no read permission (mode 0300), so its sync cannot be confirmed: the restore is in place and the
+	// command reports that (CRW-1153); only a refusal of the alias fails this case.
+	if err != nil && !crwdir.Published(err) {
 		t.Fatalf("a case-only alias of the locked entry was refused in a folding directory: %v", err)
 	}
 	if cfgPath != cfg {

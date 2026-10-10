@@ -45,11 +45,11 @@ const (
 )
 
 // GitHubPostAnswer is the component row's whole input policy: the guard's answer for the payload, or the
-// deny envelope when the payload is over the bound. A read that fails reads as empty input.
+// deny envelope when the payload is over the bound or its transport cannot be read.
 func GitHubPostAnswer(in io.Reader) string {
 	b, err := io.ReadAll(io.LimitReader(in, GitHubPostMaxStdinBytes+1))
 	if err != nil {
-		return ""
+		return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)
 	}
 	if len(b) > GitHubPostMaxStdinBytes {
 		return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)

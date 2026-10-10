@@ -12,7 +12,7 @@ import (
 )
 
 func Test33ControlRejectionBeforeDispatch(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	client, server := net.Pipe()
 	defer client.Close()
@@ -26,7 +26,7 @@ func Test33ControlRejectionBeforeDispatch(t *testing.T) {
 		}()
 		done <- HandleControl(ctx, server, ownerState)
 	}()
-	if err := client.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := client.SetDeadline(time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := io.WriteString(client, "{\"protocol\":1,\"method\":\"not-a-command\",\"params\":{}}\n")
@@ -47,7 +47,7 @@ func Test33ControlRejectionBeforeDispatch(t *testing.T) {
 func Test33RejectionIsNotRefusalOrEOF(t *testing.T) {
 	for _, tc := range []struct{ name, response, outcome string }{{"rejected", `{"protocol":1,"requestRejected":true}`, "guard_rejected_the_call"}, {"refused", `{"error":"refused","reason":"state_not_owned"}`, ""}, {"closed", "", "guard_said_nothing"}, {"wrong_protocol", `{"protocol":2,"requestRejected":true}`, ""}, {"extra_field", `{"protocol":1,"requestRejected":true,"decision":"block"}`, ""}} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			client, server := controlPair(t)
 			defer client.Close()

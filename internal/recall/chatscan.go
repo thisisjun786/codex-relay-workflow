@@ -122,7 +122,7 @@ func ChatMatchPlan(query string, anyMode, synonyms bool) MatchPlan {
 
 // searchViaScan consumes resolved shared inputs. The variadic clock replaces
 // Date.now for deterministic callers; NowMs remains an index-only option.
-// Metadata/list/parser errors escape; only the full-file read becomes a warning.
+// A listing error escapes; a file whose head or body cannot be read becomes a warning, and the rest is searched.
 func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, clock ...time.Time) (ChatSearchResult, error) {
 	now := time.Now
 	if len(clock) != 0 {
@@ -150,9 +150,12 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 	if err != nil {
 		return ChatSearchResult{}, err
 	}
-	files, err := ListRolloutFiles(shared.Home, shared.Days, now())
+	files, unread, err := listRolloutFiles(shared.Home, shared.Days, now())
 	if err != nil {
 		return ChatSearchResult{}, err
+	}
+	for _, dir := range unread {
+		result.Warnings = append(result.Warnings, unreadDirWarning(dir))
 	}
 	result.TotalFiles = len(files)
 	includeTools := opts.IncludeTools == nil || *opts.IncludeTools
@@ -164,7 +167,9 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 		}
 		meta, err := ReadRolloutMeta(file.Path)
 		if err != nil {
-			return ChatSearchResult{}, err
+			// One file that cannot be read is skipped, with a warning; it does not end the search.
+			result.Warnings = append(result.Warnings, "unreadable rollout: "+file.Path+" ("+err.Error()+")")
+			continue
 		}
 		if shared.Source != RolloutAll && meta.Source != shared.Source {
 			continue
@@ -178,7 +183,9 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 			result.Warnings = append(result.Warnings, "unreadable rollout: "+file.Path+" ("+err.Error()+")")
 			continue
 		}
-		if !MatchesFilePrefilter(Lower(content), shared.Plan) {
+		// The prefilter judges the content with its JSON escapes decoded: any escape (\u, \\, \", ...) in
+		// the raw text could otherwise hide a match the index, which stores decoded text, finds.
+		if !MatchesFilePrefilter(Lower(prefilterText(content)), shared.Plan) {
 			continue
 		}
 		entries, err := ParseRollout(content, includeTools)
@@ -315,4 +322,9 @@ func readChatScanFile(path string) (string, error) {
 		}
 	}
 	return decoded, nil
+}
+
+// unreadDirWarning tells that a rollout directory could not be listed, so a result may be incomplete.
+func unreadDirWarning(dir string) string {
+	return "unreadable rollout directory: " + dir + " — its rollouts are not covered, so the result may be incomplete"
 }

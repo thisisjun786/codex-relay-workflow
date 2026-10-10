@@ -423,8 +423,8 @@ gh pr comment 1 -b "$(env)"
 --cmd
 /usr/bin/timeout 30 bash post.sh
 
-=== PR845-92799ae0-d5 | Q
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== PR845-92799ae0-d5 | Q | deviation=attempt/deny/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -563,8 +563,8 @@ echo clean
 --cmd
 SCRIPT=post.sh; ./"$SCRIPT"
 
-=== PR845-ef89e0ed-d3 | Q
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== PR845-ef89e0ed-d3 | Q | deviation=attempt/deny/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -672,15 +672,15 @@ echo clean
 --cmd
 declare -x PATH=/evil:/usr/bin:/bin; source lib.sh
 
-=== PR845-f30490c1-d5 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== PR845-f30490c1-d5 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --cmd
 cd ./sub; bash clean.sh
 
-=== PR845-f30490c1-d5b | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== PR845-f30490c1-d5b | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --cmd

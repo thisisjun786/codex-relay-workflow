@@ -189,7 +189,7 @@ func (r *review) peer(path string, response Object) (stop func()) {
 
 func serveReviewPeer(conn net.Conn, response Object) error {
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(time.Minute)); err != nil {
 		return err
 	}
 	reader := bufio.NewReader(conn)

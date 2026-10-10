@@ -1,0 +1,25 @@
+{
+  "issue": "CRW-1126",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__subagents__dispatch_reconciled_then_task_failure",
+      "reason": "A task failure of a recorded child hands the attempt on only once the child is seen to have ended (CRW-1126). The replay has no App Server and no native thread row or rollout for the child, so its end cannot be observed: the report leaves the attempt reconcile with the child id kept and appends no attempt and no main-direct.",
+      "set": {
+        "steps/1/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-1\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":\"child-a\",\"observedModel\":null,\"code\":null,\"taskFailure\":{\"kind\":\"unusable_output\",\"evidence\":\"final message unrelated to the packet\"},\"status\":\"reconcile\",\"reconciliation\":\"child stopped; diff inspected\",\"spawnIssued\":false,\"toolUseId\":null}],\"reason\":\"the child's end could not be observed; confirm it stopped, then report again\"}",
+        "tree/ws/.crw/dispatches/rec-s1/one.json/content": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":\"child-a\",\"observedModel\":null,\"code\":null,\"taskFailure\":{\"kind\":\"unusable_output\",\"evidence\":\"final message unrelated to the packet\"},\"status\":\"reconcile\",\"reconciliation\":\"child stopped; diff inspected\",\"spawnIssued\":false,\"toolUseId\":null}],\"status\":\"active\"}"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli__subagents__dispatch_task_failed_to_main_direct",
+      "reason": "A task failure of a recorded child hands the attempt on only once the child is seen to have ended (CRW-1126). The replay has no App Server and no native thread row or rollout for the child, so its end cannot be observed: the report leaves the attempt reconcile with the child id kept and appends no attempt and no main-direct.",
+      "set": {
+        "steps/2/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-2\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":\"child-a\",\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"failed\",\"reconciliation\":\"first child stopped\",\"spawnIssued\":false,\"toolUseId\":null},{\"id\":\"att-2\",\"candidate\":{\"model\":\"rec/exec-fallback\",\"effort\":null},\"claimed\":true,\"agentId\":\"child-b\",\"observedModel\":null,\"code\":null,\"taskFailure\":{\"kind\":\"stagnation\",\"evidence\":\"no advancement at the stated review point\"},\"status\":\"reconcile\",\"reconciliation\":\"second child stopped; partial work preserved\",\"spawnIssued\":true,\"toolUseId\":\"rec-call-1\"}],\"reason\":\"the child's end could not be observed; confirm it stopped, then report again\"}",
+        "steps/3/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-2\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":\"child-a\",\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"failed\",\"reconciliation\":\"first child stopped\",\"spawnIssued\":false,\"toolUseId\":null},{\"id\":\"att-2\",\"candidate\":{\"model\":\"rec/exec-fallback\",\"effort\":null},\"claimed\":true,\"agentId\":\"child-b\",\"observedModel\":null,\"code\":null,\"taskFailure\":{\"kind\":\"stagnation\",\"evidence\":\"no advancement at the stated review point\"},\"status\":\"reconcile\",\"reconciliation\":\"second child stopped; partial work preserved\",\"spawnIssued\":true,\"toolUseId\":\"rec-call-1\"}]}",
+        "tree/ws/.crw/dispatches/rec-s1/one.json/content": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":\"child-a\",\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"failed\",\"reconciliation\":\"first child stopped\",\"spawnIssued\":false,\"toolUseId\":null},{\"id\":\"att-2\",\"candidate\":{\"model\":\"rec/exec-fallback\",\"effort\":null},\"claimed\":true,\"agentId\":\"child-b\",\"observedModel\":null,\"code\":null,\"taskFailure\":{\"kind\":\"stagnation\",\"evidence\":\"no advancement at the stated review point\"},\"status\":\"reconcile\",\"reconciliation\":\"second child stopped; partial work preserved\",\"spawnIssued\":true,\"toolUseId\":\"rec-call-1\"}],\"status\":\"active\"}"
+      },
+      "remove": []
+    }
+  ]
+}

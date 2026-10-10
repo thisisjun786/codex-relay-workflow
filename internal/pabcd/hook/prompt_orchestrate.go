@@ -67,6 +67,18 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return "", false
 	}
 
+	// CRW-1109: a recognized command whose form is broken, or whose --attest is explicitly malformed, is
+	// refused before it is judged or applied (the prompt entry has already stamped the session's turn; the command itself writes
+	// nothing). The oracle never reads attestError and reads a command line holding a CR, U+2028 or U+2029 as chat, so both used to pass: the free transition went
+	// ahead without the attestation the user typed, or the command was silently ignored. An attestation the
+	// user simply left out is still valid.
+	if command.FormError != "" {
+		return promptOrchestrateRefusal(command.FormError + ". This command was not applied."), true
+	}
+	if command.AttestError != "" {
+		return promptOrchestrateRefusal("the --attest of this command is malformed: " + command.AttestError + ". Fix it or leave --attest out; this command was not applied."), true
+	}
+
 	// SOURCE-ROOT: every verb but status and reset needs a session source that resolves. status is a
 	// read and reset is the operator's stand-down, so neither is refused by a broken binding.
 	if verb != fsm.VerbStatus && verb != fsm.VerbReset {
@@ -118,28 +130,27 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return "[crw — already IDLE]", true
 	}
 
-	// State-changing command: persist the phase and the 1355-1382 fields, then append the row. Both
-	// happen only if the locked write landed; otherwise nothing is written at all. A write that
-	// published the state and then failed the directory sync landed too, and carries a warning.
-	next, applied, landed, warning := promptOrchestrateWrite(lock, p, current, verb, command, turn)
+	// State-changing command: persist the phase and the 1355-1382 fields and record the row. Both happen
+	// only if the locked write landed; otherwise nothing is written at all. A write that published the
+	// state and then failed the directory sync landed too, and carries a warning.
+	//
+	// The row is the one of the transition applied to the state the lock found, not the one the pre-lock
+	// read produced: a participating writer that lands between the handler's read and its lock changes
+	// what the locked re-application decides (the I>P interview gate's override and scan evidence, for
+	// one), so the row must describe what was actually applied (docs/port-cxc/known-defects/CRW-845.md).
+	//
+	// The oracle writes the state and appends the row afterwards (:1360 then :1395) with nothing in
+	// between, so an append that fails, or a writer that dies, leaves an applied phase change that no row
+	// records and nothing repairs. The port keeps the state-first order and adds the session's ledger
+	// outbox (CRW-1097): the row is prepared as a pending event inside the session lock before the state
+	// is published and is appended in the same lock, and an event a dead writer or a failed append left
+	// behind is recorded by the next locked writer of the session.
+	next, landed, warning, rowPending, writeErr := promptOrchestrateWrite(lock, p, current, verb, command, turn, seams)
 	if !landed {
-		return "[crw — refused: the session state changed or cannot be rewritten without losing a stored record, so this command was not applied. Nothing was written.]", true
-	}
-	if applied != nil {
-		// The row is the one of the transition applied to the state the lock found, not the one the
-		// pre-lock read produced: a participating writer that lands between the handler's read and its
-		// lock changes what the locked re-application decides (the I>P interview gate's override and
-		// scan evidence, for one), so the row must describe what was actually applied. The oracle reads
-		// once without a lock and so cannot disagree with itself; this port's lock re-application is
-		// what introduced the split (docs/port-cxc/known-defects/CRW-845.md).
-		//
-		// The oracle writes the state and appends the row afterwards (:1360 then :1395), so an append
-		// that fails leaves an applied phase change unrecorded and answers nothing. That order is kept
-		// (the issue's step (9)), and so is the append's position outside the locked section, which
-		// belongs to promptSubmitWriteState (docs/port-cxc/known-defects/CRW-385.md).
-		if err := state.AppendLedger(p.Cwd, *applied); err != nil {
-			return "", true
+		if writeErr != nil {
+			return promptSubmitNotApplied(p.Cwd, p.SessionID, verb, writeErr), true
 		}
+		return "[crw — refused: the session state changed or cannot be rewritten without losing a stored record, so this command was not applied. Nothing was written.]", true
 	}
 
 	answer := ""
@@ -160,6 +171,11 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		// applied; the durability warning rides the success answer, as the CLI writers report one
 		// (CRW-744/793/811) and as the bound D-close does (CRW-797).
 		answer += "\n" + warning
+	}
+	if rowPending != "" {
+		// The transition was applied and its row is pending in the outbox: the answer says so, where
+		// the oracle answered nothing at all (CRW-1097).
+		answer += "\n" + rowPending
 	}
 	return answer, true
 }
@@ -190,40 +206,102 @@ func promptOrchestrateSourceGate(p PromptSubmitPayload, current state.State) (st
 }
 
 // promptOrchestrateWrite applies the command to the session state inside the lock and reports the
-// state it wrote, the ledger row of the transition it applied to that state, whether the write
-// landed, and the durability warning of a write that published the state and then failed the
-// directory sync. The state the lock finds must still be the one the handler read - same phase, same
-// slug - and the transition is applied to that fresh state rather than to a copy of the stale one, so
-// an update a participating writer landed in between survives and the row describes what was really
-// applied. A write that does not land leaves the file exactly as it was.
-func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string) (state.State, *state.LedgerEntry, bool, string) {
-	next, row, landed := state.State{}, (*state.LedgerEntry)(nil), false
-	outcome, warning := promptSubmitWriteStateWarning(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+// state it wrote, whether the write landed, the durability warning of a write that published the state
+// and then failed the directory sync, and the warning of a row it left pending. The state the lock finds
+// must still be the one the handler read - same phase, same slug - and the transition is applied to that
+// fresh state rather than to a copy of the stale one, so an update a participating writer landed in
+// between survives and the row describes what was really applied. A write that does not land leaves the
+// file exactly as it was and nothing pending. The last answer is the lock or pre-publication write error
+// (CRW-1094), nil when the locked state simply no longer matches the handler's read.
+//
+// Inside the lock, in order (CRW-1097): the session's pending ledger events are drained, so an earlier
+// transition's row goes first; the row of this transition is prepared as a pending event; the state is
+// published (a failure before the rename drops the event again); and the drain records the row. The
+// seam afterOrchestratePublish stops the write right after the publication, as a writer killed there
+// would, so a test can show the next writer recording the row.
+func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string, seams *promptDcloseSeams) (state.State, bool, string, string, error) {
+	next, landed, rowPending := state.State{}, false, ""
+	var publishedErr error
+	err := lock(p.Cwd, p.SessionID, func() error {
+		DrainSessionLedger(p.Cwd, p.SessionID)
+		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
+		if unreadable || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
+			return nil
+		}
 		if fresh.Phase != current.Phase || fresh.Slug != current.Slug {
-			return false
+			return nil
 		}
-		applied := fsm.ApplyHumanTransition(*fresh, verb, command.Attest)
+		applied := fsm.ApplyHumanTransition(fresh, verb, command.Attest)
 		if !applied.OK || applied.State == nil {
-			return false
+			return nil
 		}
-		fields, ok := promptOrchestrateFields(p, *applied.State, *fresh, current, command.Attest, turn)
+		fields, ok := promptOrchestrateFields(p, *applied.State, fresh, current, command.Attest, turn)
 		if !ok {
-			return false
+			return nil
 		}
-		// The change lands on the state the lock found, which is what promptSubmitWriteState writes,
-		// and the row is the transition's own, applied to that same read.
-		*fresh, next, row, landed = fields, fields, applied.Ledger, true
-		return true
+		var event *state.LedgerEvent
+		if applied.Ledger != nil {
+			ev, err := state.NewLedgerEvent(p.Cwd, fresh, fields, applied.Ledger, nil)
+			if err == nil {
+				err = state.PrepareLedgerEvent(p.Cwd, ev)
+			}
+			if err != nil {
+				return err
+			}
+			event = &ev
+		}
+		if err := state.WriteState(p.Cwd, fields); err != nil {
+			if !state.Published(err) {
+				if event != nil {
+					_ = state.AbortLedgerEvent(p.Cwd, *event)
+				}
+				return err
+			}
+			// Renamed into place and only the directory sync failed: the transition counts as applied.
+			publishedErr = err
+		}
+		next, landed = fields, true
+		if promptOrchestrateAfterPublish(seams) {
+			return nil
+		}
+		rowPending = promptOrchestrateRecordRow(p, event)
+		return nil
 	})
-	switch outcome {
-	case promptSubmitWrote:
-		return next, row, landed, ""
-	case promptSubmitPublished:
-		// The state is at its final path, so the command was applied; only its durability is in
-		// question, and the caller reports the warning on the success answer.
-		return next, row, landed, warning
+	if !landed {
+		return state.State{}, false, "", "", err
 	}
-	return state.State{}, nil, false, ""
+	// The state is at its final path, so the command was applied; only its durability may be in
+	// question (a *state.PublishedError, from the write or reported by the lock), and the caller
+	// reports the warning on the success answer.
+	if publishedErr == nil && state.Published(err) {
+		publishedErr = err
+	}
+	_, warning := promptDcloseWriteLanded(publishedErr)
+	return next, true, warning, rowPending, nil
+}
+
+// promptOrchestrateAfterPublish runs the test seam that stops a write right after its publication;
+// production holds none and goes on.
+func promptOrchestrateAfterPublish(seams *promptDcloseSeams) bool {
+	return seams != nil && seams.afterOrchestratePublish != nil && seams.afterOrchestratePublish()
+}
+
+// promptOrchestrateRecordRow drains the session's outbox with event marked as just published and
+// answers the warning for a row left pending, "" when the row is in the ledger.
+func promptOrchestrateRecordRow(p PromptSubmitPayload, event *state.LedgerEvent) string {
+	report := DrainSessionLedger(p.Cwd, p.SessionID, promptOrchestrateEventIDs(event)...)
+	if event != nil && LedgerEventStillPending(report, event.ID) {
+		return promptOrchestrateRowPendingWarning(report)
+	}
+	return ""
+}
+
+// promptOrchestrateEventIDs is the id of event, if there is one.
+func promptOrchestrateEventIDs(event *state.LedgerEvent) []string {
+	if event == nil {
+		return nil
+	}
+	return []string{event.ID}
 }
 
 // promptOrchestrateFields is the object the oracle's write spreads over result.state

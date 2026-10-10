@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
 type DeactivateDeps struct {
@@ -42,6 +43,20 @@ type DeactivateResult struct {
 	SkippedExternal          []SkippedExternal `json:"skippedExternal"`
 	FileDrifted              bool              `json:"fileDrifted"`
 	FeaturesStateUnavailable bool              `json:"featuresStateUnavailable"`
+	// Failed lists the flags crw owns whose disable did not succeed (CRW-1145); the ownership is not released while it is
+	// not empty, so a retry disables them.
+	Failed []FailedFlag `json:"failed"`
+	// Released reports a manifest a completed deactivation already released: there is nothing left to revert.
+	Released bool `json:"released"`
+	// Recovered names what this command recorded of an interrupted earlier change before reverting (CRW-1153).
+	Recovered []string `json:"recovered"`
+}
+
+// FailedFlag is one flag a deactivation could not disable.
+type FailedFlag struct {
+	Key      string `json:"key"`
+	ExitCode int    `json:"exitCode"`
+	Message  string `json:"message"`
 }
 
 // configLockPathsPinned answers the path this deactivation must work on, and refuses when the file
@@ -478,7 +493,8 @@ func DecideKeyRestore(rec TableKeyRecord, live *string, drift, backupKnown bool,
 		return false, SkipChanged
 	case live == nil:
 		return false, SkipMissing
-	case *live != rec.AppliedValue:
+	case *live != rec.AppliedValue && !tomledit.SameValue(*live, rec.AppliedValue):
+		// The values are compared as TOML values (CRW-1149): the same value written another way is still crw's.
 		return false, SkipChanged
 	case rec.PriorValue == nil && drift && (!backupKnown || backup != nil):
 		return false, SkipUnverifiable
@@ -504,19 +520,58 @@ func configLockWritersDeactivateWrites(m *InstallManifest) bool {
 
 // Deactivate restores owned table keys before asking the injected CLI to disable flags.
 // The manifest/backup remain ownership evidence, never overwritten by deactivation.
-func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
+func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	now := deps.Now
 	if now == nil {
 		now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 	}
-	// Oracle parity: marker failure never gates uninstall, including early exits. The
+	// Oracle parity: a marker failure never gates uninstall, including early exits. The
 	// marker API itself refuses unreadable records rather than replacing their consent data.
-	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
-	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}}
+	// unsynced is the durability error of a record this command published: it is in place and kept, and the command reports
+	// it (CRW-1153) instead of a success the directory sync did not back.
+	var unsynced, recoveryDur error
+	durability := func() error { return errors.Join(recoveryDur, txDurability(unsynced)) }
+	// A deactivation that stops after such a record was published reports the uncertainty with the stop.
+	defer func() { err = txWithDurability(err, errors.Join(recoveryDur, unsynced)) }()
+	// One failure does gate: another CRW writer holding the marker lock past the wait (an enable's
+	// recorder on a stalled filesystem) means the opt-out was not recorded, and a disable that then
+	// reported success would leave self-healing on against the user's explicit choice (CRW-1150). It
+	// refuses instead, before it has changed anything, and running it again records the opt-out.
+	markOptedOut := func() error {
+		if err := MarkSelfHealOptedOut(deps.CodexHome, now()); errors.Is(err, errSelfHealMarkerBusy) {
+			return fmt.Errorf("the self-heal opt-out could not be recorded, so nothing was changed; run the disable again: %w", err)
+		}
+		return nil
+	}
+	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}, Recovered: []string{}}
 	noManifest := func() (*DeactivateResult, error) {
-		markOptedOut()
+		if err := markOptedOut(); err != nil {
+			return nil, err
+		}
 		r.NoManifest = true
-		return r, nil
+		return r, durability()
+	}
+	// An interrupted change is recorded first, under the lock of the config file it is about, so this deactivation reverts
+	// what that change did (CRW-1153).
+	if pending, err := pendingIntentConfig(deps.CodexHome); err != nil {
+		return nil, err
+	} else if pending != "" {
+		lockPath := deps.ConfigPath
+		if lockPath == "" {
+			lockPath = pending
+		}
+		lock, err := crwdir.LockConfig(lockPath, activationLockWait)
+		if err != nil {
+			return nil, err
+		}
+		recovered, err := recoverIntent(deps.CodexHome, lockPath, deps.Run)
+		lock.Release()
+		if err != nil && !crwdir.Published(err) {
+			return nil, err
+		}
+		r.Recovered = recovered
+		// A record in place whose directory sync failed is reported with this command's result (CRW-1153).
+		recoveryDur = err
 	}
 	// The first reading decides only whether and where to lock; the reading every decision below uses
 	// is taken after the lock is held (CRW-877).
@@ -529,6 +584,18 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		return noManifest()
 	}
 	r.NoManifest = false
+	// A manifest a completed deactivation released owns nothing any more: reverting from it again would turn off a flag
+	// or reset a key the user set since (CRW-1145).
+	released := func() (*DeactivateResult, error) {
+		if err := markOptedOut(); err != nil {
+			return nil, err
+		}
+		r.Released = true
+		return r, durability()
+	}
+	if m.ReleasedAt != nil {
+		return released()
+	}
 	path := deps.ConfigPath
 	if path == "" {
 		path = m.ConfigPath
@@ -545,12 +612,19 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// deactivation writes config.toml, so an uninstall with nothing to restore and no flag CRW
 	// enabled is never gated on it, and an empty config path names no file to guard.
 	var pin *configLockPathsPin
+	// locks and dirInfo re-prove, after every CLI run, that the file the caller's path names is still guarded by a lock this
+	// command holds (CRW-1144): a disable may replace config.toml, and another writer may lock the new file.
+	var locks *configLocks
+	var dirInfo os.FileInfo
 	if path != "" && configLockWritersDeactivateWrites(m) {
 		lock, err := crwdir.LockConfig(path, activationLockWait)
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
+		locks = &configLocks{main: lock}
+		defer locks.releaseExtra()
+		dirInfo, _ = os.Stat(filepath.Dir(lockedPath))
 		var pinErr error
 		pin, pinErr = configLockPathsPinned(lock)
 		if pinErr != nil {
@@ -569,6 +643,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 		if m = parseInstallManifest(*fresh); m == nil {
 			return noManifest()
+		}
+		if m.ReleasedAt != nil {
+			return released()
 		}
 		// The lock is held on the file the first reading named. A manifest that now names a different
 		// config file would have this deactivation apply one file's ownership records to another, so
@@ -594,7 +671,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// The opt-out is recorded only once this deactivation is going to do its work: a busy lock
 	// refuses the command before this line, and a refusal must not leave self-healing off for an
 	// uninstall that never ran (the commit-order rule: never record an effect that did not happen).
-	markOptedOut()
+	if err := markOptedOut(); err != nil {
+		return nil, err
+	}
 	if m.PostActivateHash != nil {
 		hash, err := hashOrNull(path)
 		if err != nil {
@@ -608,6 +687,13 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A config.toml that does not decode is refused before any restore and before the CLI, which would rewrite it (CRW-1141):
+	// whenever this deactivation is to write, a key to restore or a flag to disable.
+	if content != nil && configLockWritersDeactivateWrites(m) {
+		if err := validateConfig(path, *content); err != nil {
+			return nil, err
+		}
+	}
 	if content != nil && len(m.TableKeys) > 0 {
 		// The restore is computed under the lock and published only when the pin still holds at the
 		// rename; the check runs here first so a refusal is reported before the keys are computed.
@@ -617,12 +703,18 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 				return nil, err
 			}
 		}
-		if err := deactivateTableKeys(path, *content, m, r, guard); err != nil {
+		if err := deactivateTableKeys(path, *content, m, r, guard); crwdir.Published(err) {
+			// The restored file is in place; its directory sync is reported at the end.
+			unsynced = errors.Join(unsynced, err)
+		} else if err != nil {
 			return nil, err
 		}
 	}
-	live, err := ReadDeclaredState(deps.Run)
+	live, err := ReadFeatureStates(deps.Run)
 	r.FeaturesStateUnavailable = err != nil
+	// ran holds the flags whose disable exited 0: they are not yet disabled, only asked to be, and are reported as disabled
+	// only once they are read back (CRW-1143).
+	ran := []string{}
 	for _, key := range manifestOrder(m.flagOrder, m.Flags) {
 		flag := m.Flags[key]
 		if flag.PriorEnabled {
@@ -632,15 +724,131 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		if !flag.EnabledByCodexclaw {
 			continue
 		}
-		if enabled, present := live[key]; present && !enabled {
+		// A flag the listing shows off has nothing to disable. A flag it has no row for is not shown off (CRW-1145): while
+		// config.toml holds it on, or in a form crw cannot read, the disable still runs and the read-back decides; the
+		// install is released only once the flag is confirmed off, or config.toml no longer turns it on.
+		if state, present := live[key]; present && (state == FeatureDisabled || state == FeatureUnsupported && !deactivateConfigHolds(path, key)) {
 			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{key, SkipMissing})
 			continue
 		}
-		if deps.Run([]string{"features", "disable", key}).ExitCode == 0 {
-			r.Disabled = append(r.Disabled, key)
+		res := deps.Run([]string{"features", "disable", key})
+		if res.ExitCode != 0 {
+			// A failed disable is reported, and keeps the ownership for a retry (CRW-1145).
+			r.Failed = append(r.Failed, FailedFlag{key, res.ExitCode, activationFailureMessage(res.Stderr)})
+		} else {
+			ran = append(ran, key)
+		}
+		// The disable may have replaced config.toml (CRW-1144): the next one runs only under a lock that guards the file the
+		// path names now. Otherwise nothing more runs, nothing is released, and the ownership stays for a retry.
+		if err := deactivateRecheck(locks, lockedPath, dirInfo); err != nil {
+			return r, fmt.Errorf("%w; the flags after %s were not disabled, the disables that ran are not confirmed, and crw's ownership is kept: run 'crw install features disable' again", err, key)
 		}
 	}
-	return r, nil
+	// An exit 0 is not proof (CRW-1143): the flags are read back, and a flag still enabled, or one that cannot be read back,
+	// is a failure that keeps the ownership.
+	if len(ran) > 0 {
+		observed, err := readFeatureStatesFor(deps.Run, ran)
+		confirmed := []string{}
+		for _, key := range ran {
+			// Only a flag read back disabled is confirmed: a flag without a row (unsupported) says nothing about the value
+			// config.toml holds, so it stays crw's (CRW-1143).
+			switch {
+			case err != nil:
+				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flags could not be read back to confirm it: " + err.Error()})
+			case observed[key] == FeatureDisabled:
+				confirmed = append(confirmed, key)
+			case observed[key] == FeatureEnabled:
+				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flag is still enabled"})
+			default:
+				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flag reads " + string(observed[key]) + " (codex features list has no row for it), so the disable is not confirmed"})
+			}
+		}
+		r.Disabled = confirmed
+		if err := deactivateRecheck(locks, lockedPath, dirInfo); err != nil {
+			return r, fmt.Errorf("%w; the disables are not confirmed and crw's ownership is kept: run 'crw install features disable' again", err)
+		}
+	}
+	// A deactivation that reverted everything it owned releases the manifest: the records stay as evidence, and the next
+	// activation starts a new baseline (CRW-1145). A flag that failed to disable, or a key whose provenance could not be
+	// proven, is unresolved ownership and keeps the manifest live for a retry. An install that owned nothing is released too,
+	// or the next activation would carry its first prior states as if they still described the flags. The release is written
+	// only under the config lock (the one this command holds when it owned something, otherwise taken now), and only over a
+	// regular file.
+	if len(r.Failed) == 0 && !deactivateUnresolved(r) && deactivateRegularFile(manifestPath(deps.CodexHome)) && (pin != nil || path != "") {
+		if pin == nil {
+			lock, err := crwdir.LockConfig(path, activationLockWait)
+			if err != nil {
+				return r, fmt.Errorf("crw owned nothing to revert, but the release of the install manifest could not be recorded under the config lock (%w); run 'crw install features disable' again", err)
+			}
+			defer lock.Release()
+			// An activation that published while this command waited owns what its manifest records: that manifest is not
+			// released from this command's reading.
+			if fresh, _ := readTextOrNull(manifestPath(deps.CodexHome)); fresh == nil || *fresh != *raw {
+				return r, errors.New("the install manifest changed while the deactivation ran, so it was not released; run 'crw install features disable' again")
+			}
+		}
+		at := now()
+		m.ReleasedAt = &at
+		b, err := manifestBytes(m)
+		if err != nil {
+			return r, err
+		}
+		if _, _, err := activationReadFile(manifestPath(deps.CodexHome)); err != nil {
+			return r, fmt.Errorf("everything crw owned was reverted, but the release could not be recorded in the install manifest: %w", err)
+		}
+		if err := activationCrwdirPublish(manifestPath(deps.CodexHome), b); crwdir.Published(err) {
+			// The release is in place and kept; it is not known to be durable, which the command reports.
+			unsynced = errors.Join(unsynced, fmt.Errorf("%s: %w", manifestPath(deps.CodexHome), err))
+		} else if err != nil {
+			return r, fmt.Errorf("everything crw owned was reverted, but the release could not be recorded in the install manifest: %w", err)
+		}
+	}
+	return r, durability()
+}
+
+// deactivateConfigHolds reports whether config.toml may turn the feature flag on: it holds true, holds a form crw cannot read, or
+// cannot be read at all. It is asked of a flag the listing has no row for.
+func deactivateConfigHolds(path, key string) bool {
+	content, err := readTextOrNull(path)
+	if err != nil {
+		return true
+	}
+	if content == nil {
+		return false
+	}
+	look := semanticRead(*content, "features", key)
+	switch look.State {
+	case tomledit.Absent:
+		return false
+	case tomledit.Found:
+		return !tomledit.SameValue(look.Raw, "false")
+	}
+	return true
+}
+
+// deactivateRecheck is configLocks.recheck for a deactivation that holds the config lock; one that holds none (an empty
+// config path) has no lock to re-prove.
+func deactivateRecheck(locks *configLocks, path string, dir os.FileInfo) error {
+	if locks == nil {
+		return nil
+	}
+	return locks.recheck(path, dir)
+}
+
+// deactivateUnresolved reports a key the deactivation left because its provenance could not be proven.
+func deactivateUnresolved(r *DeactivateResult) bool {
+	for _, skipped := range r.SkippedExternal {
+		if skipped.Reason == SkipUnverifiable {
+			return true
+		}
+	}
+	return false
+}
+
+// deactivateRegularFile reports whether path is (or links to) a regular file.
+func deactivateRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func deactivateTableKeys(path, content string, m *InstallManifest, r *DeactivateResult, guard func() error) error {
@@ -652,22 +860,31 @@ func deactivateTableKeys(path, content string, m *InstallManifest, r *Deactivate
 	changed := false
 	for _, id := range manifestOrder(m.tableOrder, m.TableKeys) {
 		rec := m.TableKeys[id]
-		value, found := ReadTableKey(content, rec.Table, rec.Key)
-		var live, prior *string
-		if found {
-			live = &value
+		// The live value and the backup's are read through the semantic editor (CRW-1141). A key the user rewrote in a form
+		// the editor does not touch is no longer the value CRW applied; a backup that does not decode proves nothing.
+		live, editable := semanticRaw(content, rec.Table, rec.Key)
+		if !editable {
+			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{id, SkipChanged})
+			continue
 		}
-		if backup != nil {
-			if v, ok := ReadTableKey(*backup, rec.Table, rec.Key); ok {
-				prior = &v
-			}
+		var prior *string
+		backupKnown := backup != nil
+		if backupKnown {
+			prior, backupKnown = semanticRaw(*backup, rec.Table, rec.Key)
 		}
-		restore, reason := DecideKeyRestore(rec, live, r.FileDrifted, backup != nil, prior)
+		restore, reason := DecideKeyRestore(rec, live, r.FileDrifted, backupKnown, prior)
 		if !restore {
 			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{id, reason})
 			continue
 		}
-		edit := RestoreTableKey(content, rec.Table, rec.Key, rec.PriorValue)
+		edit, _, err := semanticRestore(content, rec.Table, rec.Key, rec.PriorValue)
+		if err != nil {
+			return err
+		}
+		if edit.Action == TomlUnsupportedValue {
+			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{id, SkipChanged})
+			continue
+		}
 		content, changed = edit.Content, changed || edit.Changed
 		r.RestoredKeys = append(r.RestoredKeys, id)
 	}

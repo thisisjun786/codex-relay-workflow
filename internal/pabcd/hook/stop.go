@@ -205,6 +205,8 @@ type stopSnapshot struct {
 func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, due stopDue, build func(fresh state.State, next *state.State, snap stopSnapshot) string) StopAnswer {
 	var answer StopAnswer
 	err := lock(p.Cwd, p.SessionID, func() error {
+		// CRW-1097: a ledger row or plan-audit cleanup an earlier writer left pending is finished by this writer of the session too.
+		DrainSessionLedger(p.Cwd, p.SessionID)
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable || !stopSameBinding(judged, fresh) || fresh.StopBlockCapNotified || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
 			return nil

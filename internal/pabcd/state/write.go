@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -188,7 +190,8 @@ func Published(err error) bool {
 // the old file or the new one whole (writeState). The temp file is fsynced before the rename, and the directory afterward;
 // a directory sync error is returned as a PublishedError after publication, without removing the new state. This is not a
 // serialised read-modify-write: a caller that must not lose a concurrent update re-reads inside WithSessionLock. The tracker is
-// capped on the way out and updatedAt stamped.
+// capped on the way out and updatedAt stamped. A session id that sanitising would rewrite, or an empty one, is refused with
+// ErrNonCanonicalSessionID before anything is created (CRW-1108; the oracle writes the sanitised key).
 func WriteState(cwd string, next State) error {
 	return writeState(cwd, next, time.Now(), crwdir.Rename)
 }
@@ -197,6 +200,11 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	sync := (*os.File).Sync
 	if len(syncFile) > 0 {
 		sync = syncFile[0]
+	}
+	// CRW-1108: the id ensureState refuses is refused here too, before anything is created, so a/b can
+	// no longer replace a-b's file and an empty id no longer writes missing.json (known-defects.md:78).
+	if !IsCanonicalSessionID(next.SessionID) {
+		return ErrNonCanonicalSessionID
 	}
 	if err = makeSessionsDir(cwd); err != nil {
 		return err
@@ -312,17 +320,6 @@ func makeSessionsDir(cwd string) error {
 	return os.MkdirAll(filepath.Join(cwd, crwdir.DirName, SessionsSubdir), 0o777)
 }
 
-// createExclusive is writeFileSync(path, data, { flag: "wx" }): the file exists before it is written, and a failed write
-// leaves it behind.
-func createExclusive(path, data string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(data)
-	return errors.Join(err, f.Close())
-}
-
 // writeNew creates path, which must not exist (fs.ErrExist otherwise, nothing touched), writes data, fsyncs and closes it. On any
 // failure, a close error included, the file this call created is removed again, but only while the path still names that file;
 // a removal that fails is joined into the error, so a file left behind is never silent.
@@ -395,4 +392,22 @@ func tempPath(finalPath string) string {
 	_, _ = rand.Read(b[:]) // cannot fail: the runtime stops the program if it cannot read
 	b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80
 	return fmt.Sprintf("%s.%d.%x-%x-%x-%x-%x.tmp", finalPath, os.Getpid(), b[:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// orphanTempName matches the temp files the state writers make beside a state file: this port's <key>.json.<pid>.<uuid>.tmp
+// (tempPath), the oracle's <key>.json.<pid>.<ms>.tmp and the session lock's staged file <key>.json.lock.<pid>.<uuid>.tmp
+// (placeSessionLock). The key is a sanitised id.
+var orphanTempName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.json(?:\.lock)?\.([0-9]+)\.(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]+)\.tmp$`)
+
+// OrphanStateTemp reports whether name, an entry of the sessions directory, is a state writer's temp file whose writer is gone
+// (ProcessGone of the pid in its name), so nothing will rename it into place (CRW-1094, known-defects.md:79). Only an explicit
+// maintenance command removes one; a hook never sweeps. A writer that is alive, a pid that cannot be judged and any other name
+// answer false.
+func OrphanStateTemp(name string) bool {
+	m := orphanTempName.FindStringSubmatch(name)
+	if m == nil {
+		return false
+	}
+	pid, err := strconv.Atoi(m[1])
+	return err == nil && ProcessGone(pid)
 }

@@ -52,11 +52,11 @@ func TestHelperCLIParseErrors(t *testing.T) {
 		{[]string{"get"}, "unknown role '' (expected explorer|reviewer|executor|architect)"},
 		{[]string{"set", "nope"}, "unknown role 'nope' (expected explorer|reviewer|executor|architect)"},
 		{[]string{"set", "reviewer", "--mode", "weird"}, "--mode must be default|model (got 'weird')"},
-		{[]string{"set", "reviewer", "--mode"}, "--mode must be default|model (got '')"},
+		{[]string{"set", "reviewer", "--mode"}, "--mode requires a value"}, // CRW-1117: a missing value is refused
 		{[]string{"set", "reviewer"}, "set requires at least one of --mode/--model/--effort/--clear-effort/--prompt/--clear-prompt/--fallback-model/--fallback-effort/--clear-fallback"},
 		{[]string{"set", "reviewer", "--bogus"}, "unknown flag '--bogus'"},
 		{[]string{"set", "reviewer", "--effort", "turbo"}, "--effort must be low|medium|high|xhigh (got 'turbo')"},
-		{[]string{"set", "reviewer", "--effort"}, "--effort must be low|medium|high|xhigh (got '')"},
+		{[]string{"set", "reviewer", "--effort"}, "--effort requires a value"},
 		{[]string{"reset"}, "reset requires exactly one valid role"},
 		{[]string{"reset", "nope"}, "reset requires exactly one valid role"},
 		{[]string{"reset", "reviewer", "extra"}, "reset requires exactly one valid role"},
@@ -66,9 +66,11 @@ func TestHelperCLIParseErrors(t *testing.T) {
 		{[]string{"trust-token"}, "unknown subcommand 'trust-token'"},
 		{[]string{"dispatch"}, "unknown subcommand 'dispatch'"},
 		{[]string{"bogus"}, "unknown subcommand 'bogus'"},
-		{[]string{"set", "reviewer", "--fallback-model"}, "--fallback-model requires a model id"},
+		{[]string{"set", "reviewer", "--fallback-model"}, "--fallback-model requires a value"},
+		{[]string{"set", "reviewer", "--fallback-model", ""}, "--fallback-model requires a model id"},
 		{[]string{"set", "reviewer", "--fallback-model", "\ufeff"}, "--fallback-model requires a model id"},
-		{[]string{"set", "reviewer", "--fallback-effort"}, "invalid --fallback-effort"},
+		{[]string{"set", "reviewer", "--fallback-effort"}, "--fallback-effort requires a value"},
+		{[]string{"set", "reviewer", "--fallback-effort", ""}, "invalid --fallback-effort"},
 		{[]string{"set", "reviewer", "--fallback-effort", "max"}, "invalid --fallback-effort"},
 		{[]string{"set", "reviewer", "--clear-fallback", "--fallback-model", "m2"}, "--clear-fallback cannot be combined with fallback settings"},
 		{[]string{"set", "reviewer", "--fallback-effort", "inherit", "--clear-fallback"}, "--clear-fallback cannot be combined with fallback settings"},
@@ -120,7 +122,7 @@ func TestHelperCLIPromptSetClear(t *testing.T) {
 	}{
 		{[]string{"--prompt", "be terse"}, str("be terse")},
 		{[]string{"--clear-prompt"}, nil},
-		{[]string{"--prompt"}, str("")},
+		{[]string{"--prompt="}, str("")}, // CRW-1117: an empty value is written --prompt=
 	} {
 		helperCLIDecode[RoleConfig](t, RunHelper(ParseHelperArgs(append([]string{"set", "executor"}, tc.args...)), env))
 		if got := must(ReadConfig(env)).Roles[Executor].PromptOverride; !reflect.DeepEqual(got, tc.want) {
@@ -171,17 +173,18 @@ func TestHelperCLIParserQuirksAndScope(t *testing.T) {
 		args []string
 		want HelperArgs
 	}{
-		{[]string{"list", "ignored"}, HelperArgs{Action: "list"}},
-		{[]string{"get", "reviewer", "ignored"}, HelperArgs{Action: "get", Role: Reviewer}},
+		// CRW-1117: list and get refuse a trailing token, and a value that starts with '-' is written --flag=value.
+		{[]string{"list", "ignored"}, HelperArgs{Action: "list", Err: "list takes no arguments (got 'ignored')"}},
+		{[]string{"get", "reviewer", "ignored"}, HelperArgs{Action: "get", Role: Reviewer, Err: "get takes exactly one role (got 'ignored')"}},
 		{[]string{"help", "ignored"}, HelperArgs{Action: "help"}},
 		{[]string{"--global"}, HelperArgs{Action: "list", Scope: ScopeGlobal}},
 		{[]string{"get", "reviewer", "--global"}, HelperArgs{Action: "get", Role: Reviewer, Scope: ScopeGlobal}},
 		{[]string{"register", "architect"}, HelperArgs{Action: "register", Role: Architect}},
 		{[]string{"register", "executor"}, HelperArgs{Action: "register", Role: Executor}},
-		{[]string{"set", "reviewer", "--model"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Model: Some("")}}},
-		{[]string{"set", "reviewer", "--prompt", "--global"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{PromptOverride: Some("--global")}}},
-		{[]string{"set", "reviewer", "--model", "--global"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Model: Some("--global")}}},
-		{[]string{"set", "reviewer", "--fallback-model", "--global"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Fallback: Some(FallbackPatch{Model: Some("--global")})}}},
+		{[]string{"set", "reviewer", "--model="}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Model: Some("")}}},
+		{[]string{"set", "reviewer", "--prompt=--global"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{PromptOverride: Some("--global")}}},
+		{[]string{"set", "reviewer", "--model=--global"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Model: Some("--global")}}},
+		{[]string{"set", "reviewer", "--fallback-model=--global"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Fallback: Some(FallbackPatch{Model: Some("--global")})}}},
 		{[]string{"set", "reviewer", "--prompt", "first", "--clear-prompt", "--prompt", "last", "--global"}, HelperArgs{Action: "set", Role: Reviewer, Scope: ScopeGlobal, Patch: RolePatch{PromptOverride: Some("last")}}},
 		{[]string{"set", "reviewer", "--fallback-effort", "inherit"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Fallback: Some(FallbackPatch{Effort: Null[EffortName]()})}}},
 	} {

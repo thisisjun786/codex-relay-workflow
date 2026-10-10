@@ -94,6 +94,19 @@ func orNil[T comparable](v T) any {
 	return v
 }
 
+// portFixed are the scenarios whose recorded answers the port changes on purpose, with the answers it gives instead
+// (docs/port-cxc/known-defects/CRW-1135.md). The probes run under gitprobe's policy, so no inherited GIT_* variable
+// reaches them: an inherited GIT_OBJECT_DIRECTORY no longer fails a valid worktree, and an inherited
+// GIT_CEILING_DIRECTORIES no longer hides the native cwd's repository.
+var portFixed = map[string][]any{
+	"env_object_dir_breaks_probes": {map[string]any{"ok": "$R/wt"}, map[string]any{"ok": "$R/wt"}, map[string]any{"ok": map[string]any{"ok": true}}},
+	"bind_native_inside_source": {
+		map[string]any{"err": "Source must be a linked worktree root in the native session's repository."},
+		map[string]any{"err": "Source must be a linked worktree root in the native session's repository."},
+		map[string]any{"ok": "$R/main/sub"},
+	},
+}
+
 func TestOracleParity(t *testing.T) {
 	var file scenarioFile
 	var golden map[string][]any
@@ -177,6 +190,9 @@ func TestOracleParity(t *testing.T) {
 			var normalized []any
 			must(t, json.Unmarshal([]byte(strings.ReplaceAll(string(encoded), root, "$R")), &normalized))
 			want := golden[sc.ID]
+			if fixed, ok := portFixed[sc.ID]; ok {
+				want = fixed
+			}
 			for i, masked := range noHash {
 				if masked && len(want) > i {
 					maskHash(normalized[i])

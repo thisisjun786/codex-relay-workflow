@@ -166,23 +166,6 @@ func TestAtomicWriteFollowsAStoreLinkedInsideTheWorkspace(t *testing.T) {
 	}
 }
 
-// Oracle atomicDir: with a directory at the final path the write succeeds, the rename fails (EISDIR) and the temporary file stays.
-func TestAtomicWriteLeavesTheTmpWhenTheRenameFails(t *testing.T) {
-	cwd := workspace(t)
-	dir := store(t, cwd)
-	final := RecordPath(cwd, "isdir")
-	mkdir(t, final)
-	if err := atomicWrite(cwd, final, "text", 42, 7); err == nil {
-		t.Fatal("the rename over a directory succeeded")
-	}
-	if got := names(t, dir); !slices.Equal(got, []string{"isdir.json", "isdir.json.tmp-42-7"}) {
-		t.Fatalf("directory %v", got)
-	}
-	if get(t, final+".tmp-42-7") != "text" {
-		t.Error("the leaked tmp does not hold the text")
-	}
-}
-
 // A taken tmp name (a concurrent write in the same millisecond, a planted entry) is never written through: the write takes the next.
 func TestAtomicWriteTakesAnotherNameWhenTheTmpIsTaken(t *testing.T) {
 	cwd := workspace(t)

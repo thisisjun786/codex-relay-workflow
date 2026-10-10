@@ -50,8 +50,12 @@ func tupleDigest(agentID, turnID string) string {
 // ReadAttempts is the number of blocks already spent for the (session, agent, turn); an empty turnID is an absent turn. A file
 // that is absent, unreadable or not JSON is 0 (so a truncated counter restarts the budget). A JSON object or array whose
 // attempts is not a safe integer, or lies outside 0 to MaxAttempts, is MaxAttempts: corrupt verification data ends the budget,
-// it never extends it. Any other JSON value (null, a number, a string, true) is 0.
+// it never extends it. Any other JSON value (null, a number, a string, true) is 0. A session id that sanitising would rewrite, or
+// an empty one, names no counter of its own and is MaxAttempts without a read (CRW-1108: the oracle read a-b's counter for a/b).
 func ReadAttempts(cwd, sessionID, agentID, turnID string) int {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return MaxAttempts
+	}
 	raw, err := os.ReadFile(attemptsPath(cwd, sessionID, agentID, turnID))
 	if err != nil {
 		return 0
@@ -86,8 +90,12 @@ func ReadAttempts(cwd, sessionID, agentID, turnID string) int {
 
 // WriteAttempts persists the counter through a temp file and a rename, and reports whether it did: a false means nothing durable
 // was written, and the caller ends the budget instead of blocking again on a counter it cannot advance. A failed rename leaves
-// its temp file behind.
+// its temp file behind. A session id that sanitising would rewrite, or an empty one, is false before anything is created
+// (CRW-1108: the oracle wrote a-b's counter for a/b).
 func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) bool {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return false
+	}
 	path := attemptsPath(cwd, sessionID, agentID, turnID)
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return false
@@ -102,8 +110,12 @@ func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) 
 	return crwdir.Rename(tmp, path) == nil
 }
 
-// ClearAttempts removes the counter file, best effort: a missing file is fine and a directory in its place stays.
+// ClearAttempts removes the counter file, best effort: a missing file is fine and a directory in its place stays. A session id that
+// sanitising would rewrite, or an empty one, removes nothing (CRW-1108: the oracle removed a-b's counter for a/b).
 func ClearAttempts(cwd, sessionID, agentID, turnID string) {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return
+	}
 	path := attemptsPath(cwd, sessionID, agentID, turnID)
 	if info, err := os.Lstat(path); err == nil && !info.IsDir() {
 		_ = os.Remove(path)

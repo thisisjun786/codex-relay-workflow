@@ -368,7 +368,6 @@ func TestSwitchSectionSurvivesTheOtherManifestWriters(t *testing.T) {
 	if _, err := RunSwitch(switchDeps(home), "crw"); err != nil {
 		t.Fatal(err)
 	}
-	want := activationRead(t, filepath.Join(home, InstallManifestName))
 	section := func() string {
 		m, err := ReadInstallManifest(home)
 		if err != nil || m == nil || m.Switch == nil {
@@ -393,14 +392,16 @@ func TestSwitchSectionSurvivesTheOtherManifestWriters(t *testing.T) {
 	if got := section(); got != base {
 		t.Fatalf("ApplyManagedKey changed the switch section")
 	}
-	before := activationRead(t, filepath.Join(home, InstallManifestName))
-	if _, err := Deactivate(DeactivateDeps{CodexHome: home, Run: activationRun(t, home, state, &calls)}); err != nil {
+	if _, err := Deactivate(DeactivateDeps{CodexHome: home, Run: deactivationRun(t, filepath.Join(home, "config.toml"), state, &calls)}); err != nil {
 		t.Fatal(err)
 	}
-	if got := activationRead(t, filepath.Join(home, InstallManifestName)); got != before {
-		t.Fatalf("Deactivate rewrote the manifest")
+	// CRW-1145 deliberately records a completed disable; CRW-201's switch section still survives intact.
+	if got := section(); got != base {
+		t.Fatal("Deactivate changed the switch section")
 	}
-	_ = want
+	if m, err := ReadInstallManifest(home); err != nil || m.ReleasedAt == nil {
+		t.Fatalf("Deactivate did not release the feature ownership: %+v, %v", m, err)
+	}
 	cfg := activationRead(t, filepath.Join(home, "config.toml"))
 	if st := ReadTableKeyLine(cfg, `plugins."codexclaw@codexclaw"`, "enabled"); !st.Found || st.Value != "false" {
 		t.Fatalf("features disable undid the switch: %+v", st)

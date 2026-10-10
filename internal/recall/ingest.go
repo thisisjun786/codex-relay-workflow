@@ -3,9 +3,16 @@ package recall
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -16,12 +23,17 @@ const TOOL_TEXT_CAP = 8192
 const BACKFILL_BATCH = 1000
 
 type IngestResult struct {
-	Scanned   float64 `json:"scanned"`
-	Ingested  float64 `json:"ingested"`
-	Appended  float64 `json:"appended"`
-	Pruned    float64 `json:"pruned"`
-	Msgs      float64 `json:"msgs"`
-	ElapsedMs float64 `json:"elapsedMs"`
+	Scanned  float64 `json:"scanned"`
+	Ingested float64 `json:"ingested"`
+	Appended float64 `json:"appended"`
+	Pruned   float64 `json:"pruned"`
+	Msgs     float64 `json:"msgs"`
+	// Skipped counts the files that could not be read this time; the rest were indexed.
+	Skipped float64 `json:"skipped,omitempty"`
+	// UnreadDirs counts the rollout directories that could not be listed: what lies under them was
+	// neither indexed nor pruned this time.
+	UnreadDirs float64 `json:"unreadDirs,omitempty"`
+	ElapsedMs  float64 `json:"elapsedMs"`
 }
 
 type FreshnessBudget struct {
@@ -40,22 +52,155 @@ type IndexFreshness struct {
 	ExtraFiles   float64 `json:"extraFiles"`
 	StaleFiles   float64 `json:"staleFiles"`
 	Truncated    bool    `json:"truncated"`
+	// UnreadDirs counts the rollout directories that could not be listed. Files under them were not
+	// compared, so the counts are a lower bound (Truncated is set) and nothing is content-verified.
+	UnreadDirs float64 `json:"unreadDirs,omitempty"`
+	// Verified is set when the counts were decided from file content (the explicit strong path),
+	// not from size and mtime alone. A zero value means metadata-only freshness.
+	Verified bool `json:"verified,omitempty"`
+	// RebuildRequired is set when a content check was asked for on an index of an older schema: it
+	// holds no checkpoints to check against, so the counts are metadata-only and the next writer
+	// rebuilds the index.
+	RebuildRequired bool `json:"rebuildRequired,omitempty"`
 }
 
-type KnownFile struct{ MTimeMS, Size, BytesIngested, LastOrd float64 }
+// KnownFile is a file's stored cursor. FileID and Checkpoint are empty in the metadata-only reads.
+type KnownFile struct {
+	MTimeMS, Size, BytesIngested, LastOrd float64
+	FileID, Checkpoint                    string
+}
 
+// sameFile is false only when both sides name a file and the names differ.
+func sameFile(prev KnownFile, st os.FileInfo) bool {
+	id := fileIdentity(st)
+	return prev.FileID == "" || id == "" || prev.FileID == id
+}
+
+// fingerprintMatches is the metadata comparison: size, millisecond mtime and, where the cursor
+// stores one, the device and inode.
 func fingerprintMatches(prev KnownFile, st os.FileInfo) bool {
-	return prev.MTimeMS == float64(st.ModTime().UnixMilli()) && prev.Size == float64(st.Size())
+	return prev.MTimeMS == float64(st.ModTime().UnixMilli()) && prev.Size == float64(st.Size()) && sameFile(prev, st)
+}
+
+// The checkpoint covers the consumed prefix [0, n) of a rollout by two bounded windows: its first
+// and its last checkpointWindow bytes. It proves that the file still begins and ends, at the
+// consumed offset, as it did when those bytes were indexed. It does not prove the bytes in between:
+// the producer of a rollout only appends, and a rewrite that keeps both windows is not detected.
+const checkpointWindow = 4096
+
+func checkpointDigest(head, tail []byte) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%d:%d:", len(head), len(tail))
+	h.Write(head)
+	h.Write(tail)
+	return "1:" + hex.EncodeToString(h.Sum(nil))
+}
+
+func prefixWindows(prefix []byte) (head, tail []byte) {
+	return prefix[:min(len(prefix), checkpointWindow)], prefix[max(0, len(prefix)-checkpointWindow):]
+}
+
+// extendWindows returns the windows of the prefix that continues one with windows head and tail by appended.
+func extendWindows(head, tail, appended []byte) ([]byte, []byte) {
+	if len(head) < checkpointWindow {
+		head = append(bytes.Clone(head), appended[:min(len(appended), checkpointWindow-len(head))]...)
+	}
+	all := append(bytes.Clone(tail), appended...)
+	return head, all[max(0, len(all)-checkpointWindow):]
+}
+
+// readCheckpointWindows reads the windows of the first n bytes of the file; a file shorter than n is an error.
+func readCheckpointWindows(path string, n int64) (head, tail []byte, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	read := func(from, size int64) ([]byte, error) {
+		buf := make([]byte, size)
+		got, err := f.ReadAt(buf, from)
+		if got == len(buf) {
+			return buf, nil
+		}
+		if err == nil || err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	size := min(n, checkpointWindow)
+	if head, err = read(0, size); err != nil {
+		return nil, nil, err
+	}
+	if tail, err = read(n-size, size); err != nil {
+		return nil, nil, err
+	}
+	return head, tail, nil
+}
+
+// checkpointHolds reports whether the file still has, at the consumed offset, the content the cursor stored.
+func checkpointHolds(path string, prev KnownFile) (head, tail []byte, ok bool) {
+	if prev.Checkpoint == "" || prev.BytesIngested < 0 {
+		return nil, nil, false
+	}
+	head, tail, err := readCheckpointWindows(path, int64(prev.BytesIngested))
+	if err != nil || checkpointDigest(head, tail) != prev.Checkpoint {
+		return nil, nil, false
+	}
+	return head, tail, true
+}
+
+// unchanged is the skip decision for a file with a stored cursor. The strong path also requires the checkpoint to hold.
+func (o ingestOptions) unchanged(prev KnownFile, st os.FileInfo, path string) bool {
+	if !fingerprintMatches(prev, st) {
+		return false
+	}
+	if !o.Verify {
+		return true
+	}
+	_, _, ok := checkpointHolds(path, prev)
+	return ok
 }
 
 // Only overlapping paths are statted. Missing/extra are path-set differences;
 // a days-scoped walk cannot infer that older indexed files have disappeared.
 func measureIndexFreshness(home string, db *RwDb, days float64, budget *FreshnessBudget) (IndexFreshness, error) {
-	files, err := ListRolloutFiles(home, days)
+	return measureIndexFreshnessMode(home, db, days, budget, false)
+}
+
+// ingestFileError marks a failure of one rollout (it could not be read), as against the index database's.
+type ingestFileError struct{ err error }
+
+func (e ingestFileError) Error() string { return e.err.Error() }
+func (e ingestFileError) Unwrap() error { return e.err }
+
+// ingestOptions selects how far a refresh looks before it trusts a file's stored state.
+type ingestOptions struct {
+	// Verify re-reads every indexed file's checkpoint, not only the files whose size or mtime moved.
+	Verify bool
+}
+
+func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *FreshnessBudget, verify bool) (IndexFreshness, error) {
+	files, unread, err := listRolloutFiles(home, days)
 	if err != nil {
 		return IndexFreshness{}, err
 	}
-	stmt, err := db.Prepare("SELECT path, mtime_ms, size FROM files")
+	// An index written before the cursor carried a file identity and a checkpoint has nothing to
+	// verify content against; the next writer rebuilds it. It is reported as such, from metadata.
+	rebuild := verify && !(filesHasColumn(db, "file_id") && filesHasColumn(db, "checkpoint"))
+	if rebuild {
+		verify = false
+	}
+	// The file identity is compared whenever the index stores one, as the refresh does: a file
+	// replaced by another of the same size and mtime is stale in a metadata-only status too.
+	hasID := filesHasColumn(db, "file_id")
+	query := "SELECT path, mtime_ms, size FROM files"
+	if hasID {
+		query = "SELECT path, mtime_ms, size, file_id FROM files"
+	}
+	if verify {
+		query = "SELECT path, mtime_ms, size, bytes_ingested, file_id, checkpoint FROM files"
+	}
+	stmt, err := db.Prepare(query)
 	if err != nil {
 		return IndexFreshness{}, err
 	}
@@ -65,9 +210,22 @@ func measureIndexFreshness(home string, db *RwDb, days float64, budget *Freshnes
 	}
 	known := make(map[string]KnownFile, len(rows))
 	for _, row := range rows {
-		known[memoryStatusString(row["path"])] = KnownFile{MTimeMS: hitCountNumber(row["mtime_ms"]), Size: hitCountNumber(row["size"])}
+		prev := KnownFile{MTimeMS: hitCountNumber(row["mtime_ms"]), Size: hitCountNumber(row["size"])}
+		if hasID {
+			prev.FileID, _ = row["file_id"].(string)
+		}
+		if verify {
+			prev.BytesIngested = hitCountNumber(row["bytes_ingested"])
+			prev.Checkpoint, _ = row["checkpoint"].(string)
+		}
+		known[memoryStatusString(row["path"])] = prev
 	}
-	f := IndexFreshness{SourceFiles: float64(len(files)), IndexedFiles: float64(len(known))}
+	f := IndexFreshness{SourceFiles: float64(len(files)), IndexedFiles: float64(len(known)), Verified: verify, RebuildRequired: rebuild}
+	if len(unread) > 0 {
+		// What lies under a directory that could not be listed was not compared: the counts are a
+		// lower bound, and no content was verified for the index as a whole.
+		f.UnreadDirs, f.Truncated, f.Verified = float64(len(unread)), true, false
+	}
 	paths := make(map[string]bool, len(files))
 	for _, file := range files {
 		paths[file.Path] = true
@@ -77,7 +235,7 @@ func measureIndexFreshness(home string, db *RwDb, days float64, budget *Freshnes
 	}
 	if days == 0 {
 		for path := range known {
-			if !paths[path] {
+			if !paths[path] && !underAnyDir(path, unread) {
 				f.ExtraFiles++
 			}
 		}
@@ -97,7 +255,7 @@ func measureIndexFreshness(home string, db *RwDb, days float64, budget *Freshnes
 		if err != nil {
 			continue
 		}
-		if !fingerprintMatches(prev, st) {
+		if !(ingestOptions{Verify: verify}).unchanged(prev, st, file.Path) {
 			f.ChangedFiles++
 		}
 	}
@@ -124,9 +282,11 @@ func readSlice(path string, from, to int64) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// Per-file transactions, and separate backfill batches, match the oracle.
+// Per-file transactions, and separate backfill batches, match the oracle. Each one takes the
+// SQLite write permit first (BEGIN IMMEDIATE) so that what work reads is what it then writes:
+// a deferred BEGIN would let a decision taken from an older read commit over another refresh.
 func ingestTransaction(db *RwDb, work func() error) error {
-	if err := db.Exec("BEGIN"); err != nil {
+	if err := db.Exec("BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
 	if err := work(); err != nil {
@@ -144,6 +304,10 @@ func ingestTransaction(db *RwDb, work func() error) error {
 	return nil
 }
 
+// ingestBeforeFileLock is a test seam: it runs after a file is chosen for work and before
+// that file's write transaction begins.
+var ingestBeforeFileLock func(path string)
+
 type ingestStatements struct{ delMsgs, delFile, insFile, insMsg *Stmt }
 
 func prepareIngest(db *RwDb) (ingestStatements, error) {
@@ -154,7 +318,7 @@ func prepareIngest(db *RwDb) (ingestStatements, error) {
 	}{
 		{&s.delMsgs, "DELETE FROM msgs WHERE path = ?"},
 		{&s.delFile, "DELETE FROM files WHERE path = ?"},
-		{&s.insFile, "INSERT OR REPLACE INTO files (path, mtime_ms, size, thread_id, cwd, source, date, bytes_ingested, last_ord, repo_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"},
+		{&s.insFile, "INSERT OR REPLACE INTO files (path, mtime_ms, size, thread_id, cwd, source, date, bytes_ingested, last_ord, repo_key, file_id, checkpoint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"},
 		{&s.insMsg, "INSERT INTO msgs (path, ord, ts, role, match_field, synthetic, text) VALUES (?, ?, ?, ?, ?, ?, ?)"},
 	} {
 		stmt, err := db.Prepare(item.sql)
@@ -167,13 +331,17 @@ func prepareIngest(db *RwDb) (ingestStatements, error) {
 }
 
 func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
+	return ingestWith(home, db, days, ingestOptions{})
+}
+
+func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (IngestResult, error) {
 	started := time.Now().UnixMilli()
 	backfillRepoKeysFromThreads(home, db)
-	files, err := ListRolloutFiles(home, days)
+	files, unread, err := listRolloutFiles(home, days)
 	if err != nil {
 		return IngestResult{}, err
 	}
-	stmt, err := db.Prepare("SELECT path, mtime_ms, size, bytes_ingested, last_ord FROM files")
+	stmt, err := db.Prepare("SELECT path, mtime_ms, size, bytes_ingested, last_ord, file_id, checkpoint FROM files")
 	if err != nil {
 		return IngestResult{}, err
 	}
@@ -185,13 +353,13 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 	for _, row := range rows {
 		path := memoryStatusString(row["path"])
 		paths = append(paths, path)
-		known[path] = &KnownFile{hitCountNumber(row["mtime_ms"]), hitCountNumber(row["size"]), hitCountNumber(row["bytes_ingested"]), hitCountNumber(row["last_ord"])}
+		known[path] = ingestKnown(row)
 	}
 	s, err := prepareIngest(db)
 	if err != nil {
 		return IngestResult{}, err
 	}
-	r := IngestResult{Scanned: float64(len(files))}
+	r := IngestResult{Scanned: float64(len(files)), UnreadDirs: float64(len(unread))}
 	seen := make(map[string]bool, len(files))
 	for _, file := range files {
 		seen[file.Path] = true
@@ -200,28 +368,49 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 			continue
 		}
 		prev := known[file.Path]
-		if prev != nil && fingerprintMatches(*prev, st) {
+		if prev != nil && opts.unchanged(*prev, st, file.Path) {
 			continue
 		}
-		if err := ingestTransaction(db, func() error { return ingestFile(s, file, prev, st, &r) }); err != nil {
+		if ingestBeforeFileLock != nil {
+			ingestBeforeFileLock(file.Path)
+		}
+		// Only the lock holder decides: the cursor is read again inside the transaction, because
+		// another refresh may have committed this file since the snapshot above. No lock is held
+		// while the home is listed or while unchanged files are skipped.
+		if err := ingestTransaction(db, func() error { return ingestLocked(db, s, file, opts, &r) }); err != nil {
+			var unreadable ingestFileError
+			if errors.As(err, &unreadable) {
+				r.Skipped++ // The file is left as it was; one unreadable rollout does not stop the refresh.
+				continue
+			}
 			return IngestResult{}, err
 		}
 	}
 	if days == 0 {
 		for _, path := range paths {
-			if seen[path] {
-				continue
+			if seen[path] || underAnyDir(path, unread) {
+				continue // Listed, or in a directory that could not be read: not shown to be gone.
 			}
+			// The listing is a snapshot, and may be old by now: the file may have come back and
+			// been appended by another refresh. Only the lock holder decides, and it prunes a path
+			// only when the file is absent at that moment.
 			if err := ingestTransaction(db, func() error {
+				// A row of another home (the index is shared by the homes it is run for) is not shown to
+				// be live by an existing file: only a path of this home's tree is kept while it exists.
+				if !rolloutPathGone(path) && underRolloutRoots(home, path) {
+					return nil
+				}
 				if _, err := s.delMsgs.Run(path); err != nil {
 					return err
 				}
-				_, err := s.delFile.Run(path)
+				gone, err := s.delFile.Run(path)
+				if gone.Changes > 0 {
+					r.Pruned++ // Another refresh may have pruned it since the snapshot.
+				}
 				return err
 			}); err != nil {
 				return IngestResult{}, err
 			}
-			r.Pruned++
 		}
 	}
 	if r.Ingested+r.Appended+r.Pruned > 0 {
@@ -237,12 +426,104 @@ func ingest(home string, db *RwDb, days float64) (IngestResult, error) {
 	return r, nil
 }
 
-func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, st os.FileInfo, result *IngestResult) error {
-	meta, err := ReadRolloutMeta(file.Path)
+// rolloutPathGone is true only when the path is shown to be absent, or to be no longer a regular file
+// (a directory, a link to nothing). A stat that fails for any other reason (permission, I/O) proves
+// nothing, and the file's rows stay.
+func rolloutPathGone(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil {
+		return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+	}
+	return !st.Mode().IsRegular()
+}
+
+// underRolloutRoots reports whether path lies in the live or archived tree of the Codex home.
+func underRolloutRoots(home, path string) bool {
+	return underAnyDir(path, []string{sessionsDir(home), filepath.Join(home, "archived_sessions")})
+}
+
+// underAnyDir reports whether path lies below one of the directories.
+func underAnyDir(path string, dirs []string) bool {
+	for _, dir := range dirs {
+		if path == dir || strings.HasPrefix(path, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// ingestLocked runs inside the write transaction. It reads the file's committed cursor and the
+// file's state now, and decides from those: skip, append or rebuild. An append is chosen only
+// while the file is shown to continue what was indexed: the same file (device and inode), grown,
+// still holding at the consumed offset the content the cursor stored, with exactly the rows the
+// cursor counts. Any other change replaces the file's rows in this transaction.
+func ingestLocked(db *RwDb, s ingestStatements, file RolloutFile, opts ingestOptions, result *IngestResult) error {
+	st, err := os.Stat(file.Path)
+	if err != nil {
+		return nil // Gone since it was listed; a later refresh prunes its rows.
+	}
+	prev, err := ingestCursor(db, file.Path)
 	if err != nil {
 		return err
 	}
-	appendOnly := prev != nil && prev.BytesIngested > 0 && float64(st.Size()) > prev.Size
+	if prev != nil && opts.unchanged(*prev, st, file.Path) {
+		return nil // Another refresh already took this state.
+	}
+	var head, tail []byte
+	if prev != nil {
+		appendable := prev.BytesIngested > 0 && float64(st.Size()) > prev.Size && sameFile(*prev, st)
+		if appendable {
+			var held bool
+			head, tail, held = checkpointHolds(file.Path, *prev)
+			appendable = held
+		}
+		if appendable {
+			// The cursor is trusted only while it equals what is committed for the file.
+			stmt, err := db.Prepare("SELECT COUNT(*) AS n, MAX(ord) + 1 AS top FROM msgs WHERE path = ?")
+			if err != nil {
+				return err
+			}
+			row, err := stmt.Get(file.Path)
+			if err != nil {
+				return err
+			}
+			n := hitCountNumber(row["n"])
+			appendable = n == prev.LastOrd && (n == 0 || hitCountNumber(row["top"]) == n)
+		}
+		if !appendable {
+			prev = nil
+		}
+	}
+	return ingestFile(s, file, prev, head, tail, st, result)
+}
+
+func ingestKnown(row map[string]any) *KnownFile {
+	k := &KnownFile{MTimeMS: hitCountNumber(row["mtime_ms"]), Size: hitCountNumber(row["size"]), BytesIngested: hitCountNumber(row["bytes_ingested"]), LastOrd: hitCountNumber(row["last_ord"])}
+	k.FileID, _ = row["file_id"].(string)
+	k.Checkpoint, _ = row["checkpoint"].(string)
+	return k
+}
+
+func ingestCursor(db *RwDb, path string) (*KnownFile, error) {
+	stmt, err := db.Prepare("SELECT mtime_ms, size, bytes_ingested, last_ord, file_id, checkpoint FROM files WHERE path = ?")
+	if err != nil {
+		return nil, err
+	}
+	row, err := stmt.Get(path)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return ingestKnown(row), nil
+}
+
+// ingestFile indexes the file. A non-nil prev is an append from its consumed offset, and head and
+// tail are the windows of the prefix already indexed; nil prev replaces the file's rows.
+func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, head, tail []byte, st os.FileInfo, result *IngestResult) error {
+	meta, err := ReadRolloutMeta(file.Path)
+	if err != nil {
+		return ingestFileError{err}
+	}
+	appendOnly := prev != nil
 	var buf []byte
 	ord, offset := float64(0), float64(0)
 	if appendOnly {
@@ -252,12 +533,17 @@ func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, st os.Fil
 		buf, err = os.ReadFile(file.Path)
 	}
 	if err != nil {
-		return err
+		return ingestFileError{err}
 	}
 	boundary := completeLineBoundary(buf)
+	if appendOnly {
+		head, tail = extendWindows(head, tail, buf[:boundary])
+	} else {
+		head, tail = prefixWindows(buf[:boundary])
+	}
 	entries, err := ParseRollout(source.DecodeUTF8(buf[:boundary]), true)
 	if err != nil {
-		return err
+		return ingestFileError{err}
 	}
 	if !appendOnly {
 		if _, err := s.delMsgs.Run(file.Path); err != nil {
@@ -282,7 +568,7 @@ func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, st os.Fil
 		ord++
 		result.Msgs++
 	}
-	if _, err := s.insFile.Run(file.Path, st.ModTime().UnixMilli(), st.Size(), ingestString(meta.ThreadID), ingestString(meta.Cwd), string(meta.Source), file.Date, offset+float64(boundary), ord, ingestString(meta.RepoKey)); err != nil {
+	if _, err := s.insFile.Run(file.Path, st.ModTime().UnixMilli(), st.Size(), ingestString(meta.ThreadID), ingestString(meta.Cwd), string(meta.Source), file.Date, offset+float64(boundary), ord, ingestString(meta.RepoKey), fileIdentity(st), checkpointDigest(head, tail)); err != nil {
 		return err
 	}
 	if appendOnly {

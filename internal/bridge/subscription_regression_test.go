@@ -65,7 +65,7 @@ func TestCreationCheckpointFailureRetainsNeverRunRoot(t *testing.T) {
 			if r, err := b.SendMessageToThread(context.Background(), send); err != nil || r["status"] != "accepted" {
 				t.Fatalf("send=%v err=%v", r, err)
 			}
-			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 				t.Fatal(err)

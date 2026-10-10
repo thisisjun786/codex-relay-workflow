@@ -1,9 +1,12 @@
 package role
 
 import (
+	"context"
 	"errors"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // ManagedSpawnSelection ports managedSpawn's snapshot, without invoking a model.
@@ -15,6 +18,12 @@ type ManagedSpawnSelection struct {
 // The oracle's multiline JS regexp admits CR, LF, LS and PS line boundaries.
 func managedSpawnMarker(message string) []string {
 	return regexp.MustCompile(`(?:^|[\r\n\x{2028}\x{2029}])\[CRW-DISPATCH:([a-zA-Z0-9_-]+):([a-zA-Z0-9_-]+)\](?:\r?\n|$|[\r\x{2028}\x{2029}])`).FindStringSubmatch(message)
+}
+
+// managedSpawnCarries reports whether message carries the marker of this attempt of this dispatch, anywhere in it: a role's
+// prompt can be put before the work message, so other markers may come first.
+func managedSpawnCarries(message, dispatch, attempt string) bool {
+	return regexp.MustCompile(`(?:^|[\r\n\x{2028}\x{2029}])\[CRW-DISPATCH:` + regexp.QuoteMeta(dispatch) + `:` + regexp.QuoteMeta(attempt) + `\](?:\r?\n|$|[\r\x{2028}\x{2029}])`).MatchString(message)
 }
 
 // ManagedSpawn ports fallback-dispatch.ts:237-247 after name substitution.
@@ -46,6 +55,19 @@ func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) 
 // IssueManagedSpawn consumes issuance under the ledger lock (oracle:250-267).
 // Repeated hook delivery may reuse only the same nonempty host tool-use ID.
 func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*ManagedSpawnSelection, error) {
+	return IssueManagedSpawnEnv(cwd, session, message, toolUseID, nil)
+}
+
+// managedSpawnLookupBudget bounds the issuance's look at the host's marked children. It runs under the record's lock inside the
+// installed hook's own limit (10 seconds for the whole process), so it is kept to a third of that: when it runs out the
+// issuance is still saved and the lock released, with the children seen so far unrecorded.
+var managedSpawnLookupBudget = 3 * time.Second
+
+// IssueManagedSpawnEnv is IssueManagedSpawn that also records which children the host already shows with the attempt's marker
+// (see DispatchAttempt.PriorChildren), reading the native thread database through env. A nil env, a host without a thread
+// database and one that cannot be read record nothing; that only removes an early refusal, because the created check ties a
+// child to the issued call by the host's result of the call alone.
+func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env host.LookupEnv) (*ManagedSpawnSelection, error) {
 	root, err := dispatchRoot(cwd)
 	if err != nil {
 		return nil, err
@@ -79,6 +101,17 @@ func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*Manage
 	}
 	if a.SpawnIssued && (toolUseID == nil || *toolUseID == "" || a.ToolUseID == nil || *a.ToolUseID != *toolUseID) {
 		return nil, errors.New("attempt already issued to another native call; reconcile before retry")
+	}
+	if !a.SpawnIssued && env != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), managedSpawnLookupBudget)
+		prior, err := createdCheckMarked(ctx, env, session, d.ID, a.ID)
+		cancel()
+		if err == nil && len(prior) > 0 {
+			for _, child := range prior {
+				a.PriorChildren = append(a.PriorChildren, child.ID)
+			}
+			a.raw.set("priorChildren", a.PriorChildren)
+		}
 	}
 	a.SpawnIssued, a.ToolUseID = true, toolUseID
 	// The ledger marshaler overlays only the fields its own operations mutate.

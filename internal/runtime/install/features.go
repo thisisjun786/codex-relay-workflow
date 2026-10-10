@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -28,6 +30,14 @@ const featureUsage = "Usage:\n" +
 	"  --help / -h / help in any argument position prints this text and writes nothing.\n" +
 	"  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable reverts.\n"
 
+// featureEvidenceDeadline is the one deadline of the optional evidence recording after an enable
+// (CRW-1150). A variable only so a test can shorten it.
+var featureEvidenceDeadline = 8 * time.Second
+
+// featureEvidenceWaitDelay bounds how long a recording probe's output may be held open after it
+// exited or was killed.
+const featureEvidenceWaitDelay = 2 * time.Second
+
 // This surface keeps the oracle's text and exit codes, outside the installer's JSON verbs.
 func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stderr io.Writer) int {
 	for _, arg := range args {
@@ -41,36 +51,55 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 		return 2
 	}
 	home, err := resolveFeatureHome(env)
+	if err == nil {
+		// One physical home for the whole command (CRW-1144): the CLI is handed the same directory the edits, the backup,
+		// the manifest and the lock use, so a symlink followed by ".." cannot make them name different files.
+		home, err = configguard.ResolveCodexHome(home)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
 		return 1
 	}
-	run := featureRunner(ctx, env)
+	run := featureRunner(ctx, env.With("CODEX_HOME", home))
 	switch args[0] {
 	case "enable":
 		var m *configguard.InstallManifest
 		m, err = configguard.Activate(configguard.ActivateDeps{Run: run, CodexHome: home})
-		if err == nil {
-			// Explicit enable resumes healing; the optional marker never gates activation.
+		if m != nil {
+			// Explicit enable resumes healing; the optional marker never gates activation. A result that comes with an error
+			// is in place and recorded but not known to be durable (CRW-1153); it is shown, and the error fails the command.
 			_ = configguard.ClearSelfHealOptOut(home)
+			// The explicit command's verified listing lets SessionStart skip repeating it (CRW-1150).
+			// Failing to record it never fails the enable: the hook measures instead.
+			// The recording shares one short deadline: it is optional, so an enable that has already
+			// activated is never held by a codex that stops answering.
+			cwd, _ := os.Getwd()
+			evidenceCtx, endEvidence := context.WithTimeout(ctx, featureEvidenceDeadline)
+			_ = configguard.RecordSelfHealEvidence(configguard.RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: featureBoundedRunner(evidenceCtx, env.With("CODEX_HOME", home)), Ctx: evidenceCtx})
+			endEvidence()
 			renderFeatureEnable(stdout, stderr, m)
 		}
 	case "disable":
 		var result *configguard.DeactivateResult
 		result, err = configguard.Deactivate(configguard.DeactivateDeps{Run: run, CodexHome: home})
-		if err == nil {
+		if result != nil {
 			renderFeatureDisable(stdout, result)
 		}
+		if err == nil && result != nil && len(result.Failed) > 0 {
+			// A flag crw could not disable fails the command (CRW-1145); the ownership stays recorded for a retry.
+			for _, f := range result.Failed {
+				fmt.Fprintf(stderr, "crw: could not disable '%s' (exit %d): %s\n", f.Key, f.ExitCode, f.Message)
+			}
+			fmt.Fprintln(stderr, "crw: the flags above are still recorded as crw's; run 'crw install features disable' again once codex can disable them")
+			return 1
+		}
 	case "status":
-		var state map[string]bool
-		state, err = configguard.ReadDeclaredState(run)
+		// The observed state of each flag (CRW-1143): enabled, disabled, or unsupported by this Codex.
+		var states map[string]configguard.FeatureState
+		states, err = configguard.ReadFeatureStates(run)
 		if err == nil {
 			for _, key := range configguard.DeclaredFeatures() {
-				value := "disabled"
-				if state[string(key)] {
-					value = "enabled"
-				}
-				fmt.Fprintf(stdout, "%s: %s\n", key, value)
+				fmt.Fprintf(stdout, "%s: %s\n", key, states[string(key)])
 			}
 		}
 	}
@@ -105,7 +134,15 @@ func featureList(keys []string) string {
 	return strings.Join(keys, ", ")
 }
 
+// renderRecovered reports what a command recorded of an interrupted earlier change, and what it keeps pending (CRW-1153).
+func renderRecovered(stdout io.Writer, recovered []string) {
+	if len(recovered) > 0 {
+		fmt.Fprintf(stdout, "crw: recovered an interrupted earlier change: %s\n", strings.Join(recovered, ", "))
+	}
+}
+
 func renderFeatureEnable(stdout, stderr io.Writer, m *configguard.InstallManifest) {
+	renderRecovered(stdout, m.Recovered)
 	var enabled, failed, keys []string
 	for _, key := range configguard.DeclaredFeatures() {
 		r := m.Flags[string(key)]
@@ -122,6 +159,11 @@ func renderFeatureEnable(stdout, stderr io.Writer, m *configguard.InstallManifes
 			keys = append(keys, id)
 		}
 	}
+	if m.Unchanged {
+		// Nothing was changed and nothing published (CRW-1145).
+		fmt.Fprintf(stdout, "crw: already enabled [%s]; nothing changed\n", featureList(enabled))
+		return
+	}
 	fmt.Fprintf(stdout, "crw: enabled [%s]", featureList(enabled))
 	if len(keys) > 0 {
 		fmt.Fprintf(stdout, "\nconfig keys: %s", strings.Join(keys, ", "))
@@ -131,8 +173,8 @@ func renderFeatureEnable(stdout, stderr io.Writer, m *configguard.InstallManifes
 			fmt.Fprintf(stdout, "\n  %s", entry.Caution)
 		}
 	}
-	if m.BackupPath != nil && *m.BackupPath != "" {
-		fmt.Fprintf(stdout, "\nbackup: %s", *m.BackupPath)
+	if m.RunBackupPath != nil && *m.RunBackupPath != "" {
+		fmt.Fprintf(stdout, "\nbackup: %s", *m.RunBackupPath)
 	}
 	fmt.Fprintln(stdout)
 	for _, key := range failed {
@@ -158,8 +200,13 @@ func featureWarning(key string, rec *configguard.FlagRecord) string {
 }
 
 func renderFeatureDisable(stdout io.Writer, r *configguard.DeactivateResult) {
+	renderRecovered(stdout, r.Recovered)
 	if r.NoManifest {
 		fmt.Fprintln(stdout, "crw: no install manifest; nothing to revert")
+		return
+	}
+	if r.Released {
+		fmt.Fprintln(stdout, "crw: already disabled; nothing to revert")
 		return
 	}
 	fmt.Fprintf(stdout, "crw: disabled [%s]; kept pre-existing [%s]\n", featureList(r.Disabled), featureList(r.SkippedPreExisting))
@@ -232,6 +279,17 @@ func (w *featureCapture) Write(p []byte) (int, error) {
 }
 
 func featureRunner(ctx context.Context, env scope.Env) configguard.CodexRunner {
+	return featureRunnerWith(ctx, env, false)
+}
+
+// featureBoundedRunner is featureRunner for a call that must end with its context: the child leads
+// its own process group, which a cancellation kills whole, and the output wait ends shortly after,
+// so a descendant that keeps the pipe open cannot hold the caller (the SessionStart probe's rule).
+func featureBoundedRunner(ctx context.Context, env scope.Env) configguard.CodexRunner {
+	return featureRunnerWith(ctx, env, true)
+}
+
+func featureRunnerWith(ctx context.Context, env scope.Env, bounded bool) configguard.CodexRunner {
 	return func(args []string) configguard.CodexRunResult {
 		file, err := featureBinary(env)
 		if err != nil {
@@ -243,9 +301,15 @@ func featureRunner(ctx context.Context, env scope.Env) configguard.CodexRunner {
 		out, errOut := featureCapture{budget: &budget}, featureCapture{budget: &budget}
 		cmd := exec.CommandContext(run, file, args...)
 		cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, &errOut
+		if bounded {
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+			cmd.WaitDelay = featureEvidenceWaitDelay
+		}
 		err = cmd.Run()
 		result := configguard.CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
-		if !budget.overflow && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
+		// A probe that exited while a descendant still held its output open may have a cut-short answer.
+		if !budget.overflow && !errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			result.ExitCode = cmd.ProcessState.ExitCode()
 		}
 		if cmd.ProcessState == nil && result.Stderr == "" && err != nil {

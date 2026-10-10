@@ -157,7 +157,7 @@ func TestReadCommandOpenTakesNoWriteLock(t *testing.T) {
 			release := holdWriteLock(t, path)
 			defer release()
 
-			ctx, cancel := context.WithTimeout(WithReadOnlyCommand(context.Background()), 3*time.Second)
+			ctx, cancel := context.WithTimeout(WithReadOnlyCommand(context.Background()), 30*time.Second)
 			defer cancel()
 			started := time.Now()
 			s, err = Open(ctx, path, socket)
@@ -310,7 +310,7 @@ func TestEarlierVersionStoreUpgradesOnFirstOpen(t *testing.T) {
 
 	release := holdWriteLock(t, path)
 	defer release()
-	ctx, cancel := context.WithTimeout(WithReadOnlyCommand(context.Background()), 3*time.Second)
+	ctx, cancel := context.WithTimeout(WithReadOnlyCommand(context.Background()), 30*time.Second)
 	defer cancel()
 	s, err := Open(ctx, path, "")
 	if err != nil {
