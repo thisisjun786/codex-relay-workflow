@@ -39,11 +39,15 @@ test-binary:
 # spends about 55 s before its tests (checkout, toolchain, the one crw build) and the leg
 # compiles its own test binaries before it starts, so a leg takes about that plus its
 # slowest package or its packages' total over four CPUs, whichever is longer; list a slow
-# package first. runtime/install (about 175 s) and relay/dagsched (about 155 s) are by far
-# the slowest packages and both run their tests one after another, so each leads a different
-# part with only small packages beside it: install leads part 2 (registry, hook), dagsched
-# leads part 1 (cli). The other heavy packages are split so that no leg holds two of them
-# and no leg holds one beside a floor: relay/delivery leads part 4 beside the medium
+# package first. runtime/install (about 175 s) is by far the slowest package and runs its tests
+# one after another, so it leads part 2 with only small packages beside it (registry, hook).
+# relay/dagsched is the largest test package (about 38k lines) and leads part 1 (cli): it was
+# about 155 s on four CPUs when 160 of its tests ran one after another and each fixture built
+# its own store; it now copies one prepared store per fixture and only the tests that set the
+# process environment or assign a package variable stay sequential (CRW-1190), about 120 s of
+# CPU and under 50 s of wall clock on this package's measurements (docs/CI.md), so a loaded host
+# has the whole 10 m budget for it. The other heavy packages are split so that no leg holds two
+# of them and no leg holds one beside a floor: relay/delivery leads part 4 beside the medium
 # packages, and service, contracttest, mergeturn, supervisor, skill, managed and adapter
 # fill part 3. The leg that holds install is the floor, and no split goes under it while
 # install's own tests take about 175 s. The Stop-hook package has wall-clock budgets, so it
