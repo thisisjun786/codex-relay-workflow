@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -214,10 +215,18 @@ func TestAttemptsFileNames(t *testing.T) {
 	for _, k := range c.Names {
 		cwd := t.TempDir()
 		WriteAttempts(cwd, k.Session, k.Agent, 2, k.Turn)
+		if !state.IsCanonicalSessionID(k.Session) {
+			files := attemptsDir(cwd)
+			if files == nil {
+				files = []string{}
+			}
+			// CRW-1108's refusal takes precedence over CRW-1106's old v2 session layout. Every oracle row is retained.
+			same(t, k.ID, map[string]any{"files": files, "content": []string{}}, map[string]any{"files": []any{}, "content": []any{}})
+			continue
+		}
 		if ownDirectoryCounter(k.Session, k.Agent, k.Turn) {
-			// Changed (port: fixed, CRW-1106): a session id, an agent id or a turn id that sanitising changes shares the oracle's name
-			// with its sanitised twin (session_slash and session_dash are one file there), so its counter lives in its own directory
-			// and repeats the identity that the name cannot keep.
+			// Changed (port: fixed, CRW-1106): an agent or turn id that sanitising changes needs an identity-bearing counter
+			// in its canonical session's own directory, so a prefix-sharing session does not inherit its budget.
 			raw, err := os.ReadFile(counterPath(cwd, k.Session, k.Agent, k.Turn))
 			want := fmt.Sprintf(`{"attempts":2%s%s%s}`+"\n", jsonField("sessionId", k.Session), jsonField("agentId", k.Agent), jsonField("turnId", k.Turn))
 			if err != nil || string(raw) != want || len(attemptsDir(cwd)) != 1 || attemptsDir(cwd)[0] != counterVersionDir {
@@ -444,7 +453,7 @@ func TestTombstone(t *testing.T) {
 		lock := lockFunc(state.WithSessionLock)
 		switch k.Lock {
 		case "held":
-			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
+			put(t, filepath.Join(sessions, "s1.json.lock"), []byte(strconv.Itoa(os.Getpid()))) // a live holder: since CRW-1094 a dead owner's lock is taken over
 		case "sentinel_window": // the first acquisition fails, the second finds the lock free
 			calls := 0
 			lock = func(cwd, sessionID string, fn func() error) error {

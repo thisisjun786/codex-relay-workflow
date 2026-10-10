@@ -24,12 +24,13 @@ import (
 // <session>-<agent>-[<turn>-]<digest of the raw agent and turn>.json, so a name is this session's when one way of reading the part
 // after the prefix as an agent and a turn reproduces the digest, and another session's when a reading under a longer session
 // does; such a file is skipped. A name that no reading explains (a file of an earlier version for an agent or turn id that
-// sanitising changed) may be anyone's and still counts, the denying direction. The counters written since the fix for a session
-// whose id is not canonical, or for an agent or turn that sanitising changes, are in the session's own directory (counterVersionDir),
-// each matched by the identity it repeats, so they are exact; a file of the oracle's layout under a sanitised name may be its own from
-// before CRW-1106 or its canonical twin's, which cannot be told, so it counts too, until the session has a record of its own for
-// that tuple (written by its next attempt, or by a receipt that clears the tuple), which supersedes the shared file.
+// sanitising changed) may be anyone's and still counts, the denying direction. Counters of canonical sessions whose agent or
+// turn sanitising changes live in the session's own directory (counterVersionDir), each matched by the identity it repeats.
+// CRW-1108 refuses a non-canonical or empty session id without reading any counter; that session always answers spent.
 func HasSpentBudget(cwd, sessionID string) bool {
+	if !state.IsCanonicalSessionID(sessionID) { // CRW-1108: no alias read
+		return true
+	}
 	if sessionCountersSpent(cwd, sessionID) {
 		return true
 	}
@@ -46,24 +47,9 @@ func HasSpentBudget(cwd, sessionID string) bool {
 		if owner := counterOwner(n); owner != "" && owner != key {
 			return false
 		}
-		if sharedLegacyCounter(sessionID) && supersededByOwnRecord(cwd, sessionID, n) {
-			return false
-		}
 		c, _ := readCounterFile(filepath.Join(dir, n), nil)
 		return c.Spent()
 	})
-}
-
-// supersededByOwnRecord reports whether the session whose id is not canonical has written a record of its own for the tuple the
-// oracle's file name n spells (the digest at the end of the name fixes the agent and the turn): that record, which repeats the
-// session, is then the session's counter of the tuple and the shared file is not (CRW-1106).
-func supersededByOwnRecord(cwd, sessionID, n string) bool {
-	base, ok := strings.CutSuffix(n, ".json")
-	if !ok || len(base) < 33 {
-		return false
-	}
-	info, err := os.Lstat(filepath.Join(counterDir(cwd, sessionID), base[len(base)-32:]+".json"))
-	return err == nil && info.Mode().IsRegular()
 }
 
 // counterOwner is the session a counter name in the oracle's layout belongs to, or "" when no reading of the name explains it. The

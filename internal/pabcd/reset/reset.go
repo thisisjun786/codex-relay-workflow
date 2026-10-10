@@ -467,6 +467,17 @@ func resetSessions(crw *resetLinkWalkPin, base string, result *ResetResult) erro
 				return err
 			}
 		}
+		// CRW-1094 (known-defects.md:79): a state writer killed between its temp write and the rename leaves its
+		// temp file for good. A regular file named as the writers name theirs, whose writer is gone, is removed;
+		// one whose writer is alive may still be renamed into place and stays. The oracle sweeps nothing.
+		if state.OrphanStateTemp(name) && name == entry.Name() {
+			if info, err := sessions.Lstat(name); err == nil && info.Mode().IsRegular() {
+				if err := sessions.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+				result.Removed = append(result.Removed, filepath.Join(display, name))
+			}
+		}
 	}
 	return nil
 }

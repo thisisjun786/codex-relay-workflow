@@ -3,6 +3,7 @@ package configguard
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,12 +30,12 @@ import (
 const configLockPathsPre = "[features]\nhooks = false\n"
 const configLockPathsRunnerPost = "[features]\nmulti_agent = true\ngoals = true\nhooks = true\ndefault_mode_request_user_input = true\n"
 
-// configLockPathsFeatureList is the declared-state probe's answer with every flag off, so every
-// declared flag is an enable this activation would run.
-func configLockPathsFeatureList() string {
+// configLockPathsFeatureListWith is the declared-state probe's answer: every flag off until the runner enables it, so
+// every declared flag is an enable this activation would run, and the read-back after it (CRW-1143) observes the enable.
+func configLockPathsFeatureListWith(enabled map[string]bool) string {
 	rows := make([]string, 0, len(DeclaredFeatures()))
 	for _, key := range DeclaredFeatures() {
-		rows = append(rows, string(key)+" stable false")
+		rows = append(rows, fmt.Sprintf("%s stable %t", key, enabled[string(key)]))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -915,13 +916,15 @@ func TestConfigLockPathsComparisonDoesNotResolveThePinAgain(t *testing.T) {
 // regular file and the old target keeps its bytes.
 func configLockPathsRenameRunner(t *testing.T, path string, calls *[][]string) CodexRunner {
 	t.Helper()
+	enabled := map[string]bool{}
 	return func(args []string) CodexRunResult {
 		if calls != nil {
 			*calls = append(*calls, append([]string(nil), args...))
 		}
 		if args[1] == "list" {
-			return CodexRunResult{Stdout: configLockPathsFeatureList()}
+			return CodexRunResult{Stdout: configLockPathsFeatureListWith(enabled)}
 		}
+		enabled[args[2]] = args[1] == "enable"
 		tmp := path + ".runner.tmp"
 		if err := os.WriteFile(tmp, []byte(configLockPathsRunnerPost), 0600); err != nil {
 			t.Fatal(err)
@@ -937,13 +940,15 @@ func configLockPathsRenameRunner(t *testing.T, path string, calls *[][]string) C
 // config.toml in place does: the caller's pathname stays a link.
 func configLockPathsWriteThroughLinkRunner(t *testing.T, target string, calls *[][]string) CodexRunner {
 	t.Helper()
+	enabled := map[string]bool{}
 	return func(args []string) CodexRunResult {
 		if calls != nil {
 			*calls = append(*calls, append([]string(nil), args...))
 		}
 		if args[1] == "list" {
-			return CodexRunResult{Stdout: configLockPathsFeatureList()}
+			return CodexRunResult{Stdout: configLockPathsFeatureListWith(enabled)}
 		}
+		enabled[args[2]] = args[1] == "enable"
 		activationWrite(t, target, configLockPathsRunnerPost)
 		return CodexRunResult{}
 	}

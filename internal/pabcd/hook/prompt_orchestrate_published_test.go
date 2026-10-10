@@ -117,9 +117,11 @@ func TestPromptOrchestratePrePublicationFailureStillRefuses(t *testing.T) {
 	}
 	got := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "orchestrate P",
 		TurnID: turn, PabcdEnabled: true}, "", promptSubmitHost(cwd), lock)
-	want := "[crw — refused: the session state changed or cannot be rewritten without losing a stored record, so this command was not applied. Nothing was written.]"
-	if got != want {
-		t.Errorf("the pre-publication failure\n got %q\nwant %q", got, want)
+	// The write failed before the rename: the answer names the write error (CRW-1094) rather than the generic refusal.
+	for _, want := range []string{"orchestrate P was not applied", "the session state could not be written", "permission denied", "The phase and ledger were not changed."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the pre-publication failure\n got %q\nlacks %q", got, want)
+		}
 	}
 	after, err := os.ReadFile(state.StatePath(cwd, "s1"))
 	if err != nil || string(after) != string(before) {

@@ -84,7 +84,16 @@ func TestScanRecordOracle(t *testing.T) {
 					if err := json.Compact(&compact, a.Row); err != nil {
 						t.Fatal(err)
 					}
-					_, err = f.Write(append(compact.Bytes(), '\n'))
+					line := compact.Bytes()
+					var named map[string]json.RawMessage
+					if json.Unmarshal(line, &named) == nil && named != nil && named["sessionId"] == nil {
+						// the recorded rows name no session; the port counts the rows of the session asked for only (CRW-1108)
+						line = append([]byte(`{"sessionId":"s1",`), line[1:]...)
+						if len(named) == 0 {
+							line = []byte(`{"sessionId":"s1"}`)
+						}
+					}
+					_, err = f.Write(append(line, '\n'))
 					closeErr := f.Close()
 					if err != nil || closeErr != nil {
 						t.Fatalf("append: %v %v", err, closeErr)

@@ -29,6 +29,15 @@ func configValue(value *string, absent string) string {
 	return *value
 }
 
+// configStateValue shows a managed key's live value; a key written in a form crw does not edit is shown as such, never as
+// unset (CRW-1141).
+func configStateValue(state configguard.ManagedState) string {
+	if state.Unsupported {
+		return "(set in a form crw does not edit: " + state.Reason + ")"
+	}
+	return configValue(state.Value, "(unset)")
+}
+
 // runConfig ports cli.ts:48-113. Unlike the oracle, which looked for help only in the action
 // position and let set ignore every token past the value (CRW-1148), --help, -h and help in any
 // argument position print the usage before the home is resolved or anything is read or written,
@@ -51,6 +60,9 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 	}
 	arity := map[string]int{"list": 1, "get": 2, "unset": 2, "set": 3}
 	want, known := arity[action]
+	if action == "unset" && len(args) > 2 && args[2] == "--release" {
+		want = 3 // the explicit ownership release is the unset's one supported option (CRW-1149).
+	}
 	if !known {
 		fmt.Fprintf(stderr, "config: unknown action '%s'\n%s", action, configUsage)
 		return 2
@@ -60,6 +72,9 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		return 2
 	}
 	home, err := resolveFeatureHome(env)
+	if err == nil {
+		home, err = configguard.ResolveCodexHome(home) // one physical home (CRW-1144)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
 		return 1
@@ -72,7 +87,7 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 			return 1
 		}
 		for _, state := range states {
-			fmt.Fprintf(stdout, "%s = %s\n  %s\n", configguard.ManagedKeyID(state.Entry), configValue(state.Value, "(unset)"), state.Entry.Caution)
+			fmt.Fprintf(stdout, "%s = %s\n  %s\n", configguard.ManagedKeyID(state.Entry), configStateValue(state), state.Entry.Caution)
 		}
 		if len(states) == 0 {
 			fmt.Fprintln(stdout, "(no managed keys)")
@@ -94,14 +109,14 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "crw: "+err.Error())
 			return 1
 		}
-		var value *string
+		value := "(unset)"
 		for _, state := range states {
 			if configguard.ManagedKeyID(state.Entry) == id {
-				value = state.Value
+				value = configStateValue(state)
 				break
 			}
 		}
-		fmt.Fprintf(stdout, "%s = %s\n", id, configValue(value, "(unset)"))
+		fmt.Fprintf(stdout, "%s = %s\n", id, value)
 		return 0
 	}
 	var value *bool
@@ -123,11 +138,31 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "주의: %s\n", entry.Caution)
 	}
+	if action == "unset" && len(args) > 2 && args[2] == "--release" {
+		// The explicit release of a record crw no longer owns (CRW-1149): config.toml is not touched.
+		r, err := configguard.ReleaseManagedKey(configguard.ConfigSetDeps{CodexHome: home}, id)
+		if err != nil && !r.OK {
+			fmt.Fprintln(stderr, "crw: "+err.Error())
+			return 1
+		}
+		renderRecovered(stdout, r.Recovered)
+		if !r.OK {
+			fmt.Fprintf(stderr, "config unset: %s\n", r.Reason)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s: crw's record released; config.toml left as it is\n", id)
+		if err != nil {
+			fmt.Fprintln(stderr, "crw: "+err.Error())
+			return 1
+		}
+		return 0
+	}
 	r, err := configguard.ApplyManagedKey(configguard.ConfigSetDeps{CodexHome: home}, id, value)
-	if err != nil {
+	if err != nil && !r.OK {
 		fmt.Fprintln(stderr, "crw: "+err.Error())
 		return 1
 	}
+	renderRecovered(stdout, r.Recovered)
 	if !r.OK {
 		fmt.Fprintf(stderr, "config %s: %s\n", action, r.Reason)
 		return 1
@@ -145,6 +180,11 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 	}
 	if r.BackupPath != nil {
 		fmt.Fprintf(stdout, "backup: %s\n", *r.BackupPath)
+	}
+	if err != nil {
+		// In place and recorded, but not known to be durable (CRW-1153).
+		fmt.Fprintln(stderr, "crw: "+err.Error())
+		return 1
 	}
 	return 0
 }

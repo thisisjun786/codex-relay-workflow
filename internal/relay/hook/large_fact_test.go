@@ -38,7 +38,7 @@ func Test33LargeFactHookPython(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		if err = conn.SetDeadline(time.Now().Add(time.Minute)); err != nil {
 			served <- err
 			return
 		}

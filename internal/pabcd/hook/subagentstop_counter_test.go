@@ -155,7 +155,8 @@ func TestSubagentStopCorruptCounterStaysTerminal(t *testing.T) {
 }
 
 // A missing counter starts at attempt 1. Sessions own their counters and markers exactly: short-x's spent budget and marker do not
-// refuse short's completion, and a/b and a-b (which sanitise alike) never share a budget or clear each other's.
+// refuse short's completion. CRW-1108 releases a child with a non-canonical session without writing any alias counter,
+// and the parent keeps refusing that session even after a receipt.
 func TestSubagentStopCounterSessionOwnership(t *testing.T) {
 	cwd := subagentStopWorkspace(t)
 	for n := 1; n <= 3; n++ {
@@ -178,18 +179,22 @@ func TestSubagentStopCounterSessionOwnership(t *testing.T) {
 	}
 
 	fresh := subagentStopWorkspace(t)
-	for n := 1; n <= 2; n++ {
-		subagentStopBlock(t, counterStop(t, fresh, "a/b", "a1", "t1", ""), n)
+	for range 2 {
+		if out := counterStop(t, fresh, "a/b", "a1", "t1", ""); out != "" {
+			t.Fatalf("non-canonical session blocked a child: %s", out)
+		}
 	}
 	subagentStopBlock(t, counterStop(t, fresh, "a-b", "a1", "t1", ""), 1)
 	subagentStopPut(t, filepath.Join(fresh, ".crw/evidence/ok.md"), "ok")
 	if out := counterStop(t, fresh, "a-b", "a1", "t1", "EVIDENCE_RECORDED: .crw/evidence/ok.md"); out != "" {
 		t.Fatal(out)
 	}
-	if got := evidence.ReadAttempts(fresh, "a/b", "a1", "t1"); got != 2 {
-		t.Fatalf("a-b's receipt changed a/b's budget: %d", got)
+	if got := evidence.ReadAttempts(fresh, "a/b", "a1", "t1"); got != evidence.MaxAttempts {
+		t.Fatalf("a non-canonical session read a counter: %d", got)
 	}
-	subagentStopBlock(t, counterStop(t, fresh, "a/b", "a1", "t1", ""), 3)
+	if got := counterComplete(t, fresh, "a/b"); got == "" {
+		t.Fatal("a non-canonical session passed completion")
+	}
 }
 
 // A legacy counter (the oracle's file name, from before CRW-1106) whose owner cannot be told keeps refusing every session it may
@@ -245,9 +250,8 @@ func TestSubagentStopLockTimeoutLeavesTheCounterAlone(t *testing.T) {
 	}
 }
 
-// CRW-1106 post-evaluation round (d1): an upgrade between the third blocked stop and the terminal stop. The old flat counter of a
-// session whose id sanitising changes is that tuple's counter until a receipt clears it: the budget is not restarted, and a valid
-// receipt lifts the completion latch it held. A twin that shares the flat name (a-b for a/b) is never cleared by a/b's receipt.
+// CRW-1108 supersedes non-canonical-session migration: an old alias counter stays intact, and a receipt does not make a
+// non-canonical session pass completion. The canonical twin still owns its budget.
 func TestSubagentStopLegacyCounterOfANonCanonicalSession(t *testing.T) {
 	cwd := subagentStopWorkspace(t)
 	// The oracle's name of the tuple, shared by a/b and a-b: the file a canonical a-b writes is byte for byte the one a/b's old
@@ -260,7 +264,6 @@ func TestSubagentStopLegacyCounterOfANonCanonicalSession(t *testing.T) {
 		t.Fatalf("the flat counter: %v", files)
 	}
 	legacy := files[0]
-	subagentStopBlock(t, counterStop(t, cwd, "a/b", "x", "t", ""), 3) // the third attempt, not the first
 	if out := counterStop(t, cwd, "a/b", "x", "t", ""); out != "" {
 		t.Fatalf("the terminal stop blocked: %s", out)
 	}
@@ -271,8 +274,8 @@ func TestSubagentStopLegacyCounterOfANonCanonicalSession(t *testing.T) {
 	if out := counterStop(t, cwd, "a/b", "x", "t", "EVIDENCE_RECORDED: .crw/evidence/ok.md"); out != "" {
 		t.Fatal(out)
 	}
-	if got := counterComplete(t, cwd, "a/b"); got != "" {
-		t.Fatalf("a valid receipt did not lift the legacy counter's latch: %s", got)
+	if got := counterComplete(t, cwd, "a/b"); got == "" {
+		t.Fatal("a receipt lifted the non-canonical session refusal")
 	}
 	// The flat file is shared with the canonical twin a-b, so a/b's receipt does not remove it.
 	if _, err := os.Stat(legacy); err != nil {

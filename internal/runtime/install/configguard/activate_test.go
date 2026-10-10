@@ -67,7 +67,8 @@ func TestActivateSelectedFlagsBackupAndManifest(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	want := [][]string{{"features", "list"}, {"features", "enable", "hooks"}, {"features", "enable", "default_mode_request_user_input"}}
+	// The last call is the read-back of the flags it enabled (CRW-1143, intentionally changed from the oracle's calls).
+	want := [][]string{{"features", "list"}, {"features", "enable", "hooks"}, {"features", "enable", "default_mode_request_user_input"}, {"features", "list"}}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v", calls)
 	}
@@ -111,7 +112,7 @@ func TestActivateSelectedFlagsBackupAndManifest(t *testing.T) {
 	if err = json.Unmarshal(recorded, &oracle); err != nil {
 		t.Fatal(err)
 	}
-	if strings.ReplaceAll(raw, home, "<HOME>") != oracle.Manifest || content != oracle.Config || activationRead(t, *m.BackupPath) != oracle.Backup || !reflect.DeepEqual(calls, oracle.Calls) {
+	if strings.ReplaceAll(raw, home, "<HOME>") != oracle.Manifest || content != oracle.Config || activationRead(t, *m.BackupPath) != oracle.Backup || !reflect.DeepEqual(calls[:len(calls)-1], oracle.Calls) {
 		t.Fatal("activation differs from the recorded byte-exact manifest/config/backup or runner calls")
 	}
 }
@@ -134,8 +135,10 @@ func TestActivateRerunKeepsManagedPriorAndOwnership(t *testing.T) {
 	if len(calls) != 1 || key.PriorValue == nil || *key.PriorValue != "false" || !key.SetByCodexclaw {
 		t.Fatalf("rerun=%+v calls=%v", key, calls)
 	}
-	if !first.Flags["goals"].EnabledByCodexclaw || second.Flags["goals"].EnabledByCodexclaw || !second.Flags["goals"].PriorEnabled {
-		t.Fatal("oracle flag-rerun quirk changed")
+	// CRW-1145 (port: fixed): the rerun carries each flag's first prior state and crw's ownership, as it carries the managed
+	// key's, and an activation that changes nothing publishes nothing.
+	if !first.Flags["goals"].EnabledByCodexclaw || !second.Flags["goals"].EnabledByCodexclaw || second.Flags["goals"].PriorEnabled || !second.Unchanged {
+		t.Fatalf("flag ownership was not carried: %+v", second)
 	}
 }
 func TestActivateManagedValues(t *testing.T) {
@@ -185,8 +188,16 @@ func TestActivateFailurePaths(t *testing.T) {
 				if e == nil || m != nil || !strings.Contains(e.Error(), "failed (exit 7): failure") {
 					t.Fatalf("result=%+v error=%v", m, e)
 				}
-				if _, e := os.Stat(manifestPath(home)); !os.IsNotExist(e) {
-					t.Fatal("hard failure published manifest")
+				m := parseInstallManifest(activationRead2(t, manifestPath(home)))
+				if kind == "list" {
+					if m != nil {
+						t.Fatal("a failed probe published a manifest")
+					}
+					return
+				}
+				// CRW-1153 (port: fixed): the hard failure records the flag enabled before it, so it is not left unowned.
+				if m == nil || !m.Flags["multi_agent"].EnabledByCodexclaw || m.Flags["goals"].EnabledByCodexclaw {
+					t.Fatalf("hard failure record=%+v", m)
 				}
 				return
 			}
@@ -211,6 +222,9 @@ func TestActivateMissingConfigAndTickingClock(t *testing.T) {
 	if m.BackupPath != nil || m.TableKeys["memories.dedicated_tools"].PriorValue != nil {
 		t.Fatalf("manifest=%+v", m)
 	}
+	// The second activation has something to change (the managed key was removed), so it writes a backup; the baseline's
+	// backup (none: there was no config.toml) stays the manifest's evidence (CRW-1145).
+	activationWrite(t, filepath.Join(home, "config.toml"), "# user\n")
 	ticks := 0
 	deps.Now = func() string {
 		ticks++
@@ -223,7 +237,7 @@ func TestActivateMissingConfigAndTickingClock(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if ticks != 2 || m.ActivatedAt != "activation" || !strings.HasSuffix(*m.BackupPath, ".crw-backup.bak") {
+	if ticks != 2 || m.ActivatedAt != "activation" || m.BackupPath != nil || m.RunBackupPath == nil || !strings.HasSuffix(*m.RunBackupPath, ".crw-backup.bak") {
 		t.Fatalf("clock=%+v ticks=%d", m, ticks)
 	}
 }
@@ -296,4 +310,14 @@ func TestPreserveMultiAgentV2TableCRLF(t *testing.T) {
 	if !ok || got != want {
 		t.Fatalf("got%q/%v want%q", got, ok, want)
 	}
+}
+
+// activationRead2 reads a file that may be absent, as "".
+func activationRead2(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return string(b)
 }

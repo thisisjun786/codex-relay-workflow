@@ -128,6 +128,14 @@ func pluginSettingsPath() (string, error) {
 	return filepath.Abs(filepath.Join(home, ConfigName))
 }
 
+// absoluteDeadline is the invocation's end-to-end deadline and guardDeadline the most the guard call
+// may take within it. They are variables only so that an in-process test whose subject is not the
+// deadline can lengthen them to outlast a loaded host (CRW-1161); nothing in production assigns them.
+var (
+	absoluteDeadline = 5 * time.Second
+	guardDeadline    = 3500 * time.Millisecond
+)
+
 // The evaluator seam substitutes only the guard call; routing, identity, claims,
 // deadline enforcement, validation and journalling still run in fault tests.
 func runAdapter(parent context.Context, args []string, input io.Reader, output io.Writer, started time.Time, evaluator func(context.Context, Object, GuardOptions) (Object, error)) (code int) {
@@ -136,7 +144,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			code = 0
 		}
 	}()
-	absolute := started.Add(5 * time.Second)
+	absolute := started.Add(absoluteDeadline)
 	ctx, cancel := context.WithDeadline(parent, absolute)
 	defer cancel()
 	// The invocation's final row is bounded by the 5 s absolute deadline even when
@@ -371,7 +379,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		return 0
 	}
 	guardStarted := time.Now()
-	guardCtx, guardCancel := context.WithDeadline(work, guardStarted.Add(3500*time.Millisecond))
+	guardCtx, guardCancel := context.WithDeadline(work, guardStarted.Add(guardDeadline))
 	defer guardCancel()
 	verdict, err := bounded(guardCtx, func() (Object, error) {
 		options := GuardOptions{Root: pyjson.Text(settings.config.Get("markerRoot")), Mode: pyjson.Text(settings.config.Get("mode")), DBPath: pyjson.Text(settings.config.Get("dbPath")), SocketPath: pyjson.Text(settings.config.Get("socketPath")), Program: pyjson.Text(settings.config.Get("relayExecutable"))}

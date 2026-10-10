@@ -83,25 +83,33 @@ func TestMultiAgentV2TogglePreservesTable(t *testing.T) {
 	}
 }
 
-func TestMultiAgentV2OracleGrammar(t *testing.T) {
+// TestMultiAgentV2SemanticReader: the flag is read from the decoded document (CRW-1141). The oracle's line grammar read
+// not_enabled = true and enabled = trueish as enabled, a header or an enabled line inside a string as configuration, and
+// accepted forms the decoder refuses; each now reads as the decoder reads it, and a document that does not decode is v1.
+func TestMultiAgentV2SemanticReader(t *testing.T) {
 	cases := []struct {
 		name, body string
 		enabled    bool
 	}{
 		{"absent-key", "[features]\nother = true\n", false},
-		{"table-shadows", "[features]\nmulti_agent_v2 = true\n[features.multi_agent_v2]\nmax = 7\n", false},
-		{"first-scalar", "[features]\nmulti_agent_v2 = false\nmulti_agent_v2 = true\n", false},
-		{"inline-substring", "[features]\nmulti_agent_v2 = { not_enabled = true }\n", true},
-		{"inline-prefix", "[features]\nmulti_agent_v2 = { enabled = trueish }\n", true},
-		{"scalar-prefix", "[features]\nmulti_agent_v2 = trueish\n", false},
-		{"inside-string", "[features.multi_agent_v2]\nnote = \"\"\"\nenabled = true\n\"\"\"\n", true},
-		{"header-in-string", "note = \"\"\"\n[features.multi_agent_v2]\nenabled = true\n\"\"\"\n", true},
+		{"scalar", "[features]\nmulti_agent_v2 = true\n", true},
+		{"table", "[features.multi_agent_v2]\nenabled = true\nmax = 7\n", true},
+		{"table-without-enabled", "[features.multi_agent_v2]\nmax = 7\n", false},
+		{"table-and-scalar-do-not-decode", "[features]\nmulti_agent_v2 = true\n[features.multi_agent_v2]\nmax = 7\n", false},
+		{"duplicate-scalar-does-not-decode", "[features]\nmulti_agent_v2 = false\nmulti_agent_v2 = true\n", false},
+		{"inline-not-enabled", "[features]\nmulti_agent_v2 = { not_enabled = true }\n", false},
+		{"inline-not-enabled-and-enabled-false", "[features]\nmulti_agent_v2 = {not_enabled = true, enabled = false}\n", false},
+		{"inline-enabled", "[features]\nmulti_agent_v2 = { enabled = true }\n", true},
+		{"inline-prefix-does-not-decode", "[features]\nmulti_agent_v2 = { enabled = trueish }\n", false},
+		{"scalar-prefix-does-not-decode", "[features]\nmulti_agent_v2 = trueish\n", false},
+		{"inside-string", "[features.multi_agent_v2]\nnote = \"\"\"\nenabled = true\n\"\"\"\n", false},
+		{"header-in-string", "note = \"\"\"\n[features.multi_agent_v2]\nenabled = true\n\"\"\"\n", false},
 		{"comment", "[features] # header\nmulti_agent_v2 = true # value\n", true},
-		{"comment-line-separator", "[features] # header\u2028\nmulti_agent_v2 = true\n", false},
-		{"comment-paragraph-separator", "[features] # header\u2029\nmulti_agent_v2 = true\n", false},
-		{"unicode", "[features]\nmulti_agent_v2\u00a0=\u00a0true\n", true},
-		{"line-separator", "[features]\nother = 1\u2028multi_agent_v2 = true\n", true},
-		{"inline-multiline", "[features]\nmulti_agent_v2 = {\n enabled = true\n}\n", true},
+		{"comment-line-separator", "[features] # header\u2028\nmulti_agent_v2 = true\n", true},
+		{"unicode-space-does-not-decode", "[features]\nmulti_agent_v2\u00a0=\u00a0true\n", false},
+		{"line-separator-does-not-decode", "[features]\nother = 1\u2028multi_agent_v2 = true\n", false},
+		{"dotted", "features.multi_agent_v2.enabled = true\n", true},
+		{"quoted", "[\"features\"]\n\"multi_agent_v2\" = true\n", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -172,7 +180,8 @@ func TestMultiAgentV2RunnerOutcomes(t *testing.T) {
 				if err == nil {
 					t.Fatal("post read failure swallowed")
 				}
-			} else if err != nil || !got.Changed || got.Version != MultiAgentV1 || got.V2Enabled {
+			} else if err == nil || got != nil || !strings.Contains(err.Error(), "still reads v1") {
+				// CRW-1143 (port: fixed): an exit-0 runner whose config still reads v1 is not a change.
 				t.Fatalf("observed state = %+v, %v", got, err)
 			}
 		})
@@ -342,6 +351,13 @@ func TestMultiAgentV2RepairBoundaries(t *testing.T) {
 				return CodexRunResult{}
 			}}
 			got, err := SetMultiAgentV2State(deps, MultiAgentV2)
+			if mode == "opener-eof" {
+				// CRW-1141: a pre-image that does not decode is refused before the runner, and nothing is written.
+				if err == nil || !strings.Contains(err.Error(), "not valid TOML") || activationRead(t, path) != pre {
+					t.Fatalf("state = %+v, %v, config %q", got, err, activationRead(t, path))
+				}
+				return
+			}
 			if err != nil || !got.V2Enabled {
 				t.Fatalf("state = %+v, %v", got, err)
 			}

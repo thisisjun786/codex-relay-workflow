@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,38 +66,29 @@ func TestCounterLockLeavesNothing(t *testing.T) {
 	}
 }
 
-// A canonical session keeps the oracle's file and bytes; a session id that sanitising changes gets its own directory, so a/b and
-// a-b never share a budget. A spent counter of the twin's still counts for a/b in the oracle's layout (it cannot be told whose).
+// CRW-1108 refuses non-canonical sessions before touching either the flat alias or an old v2 record.
+// CRW-1106 still gives canonical sessions with raw agent/turn ids their own identity-bearing counters.
 func TestCounterLayoutBySessionShape(t *testing.T) {
 	cwd := t.TempDir()
-	if !WriteAttempts(cwd, "a-b", "x", 3, "t") || !WriteAttempts(cwd, "a/b", "x", 1, "t") {
-		t.Fatal("not written")
+	if !WriteAttempts(cwd, "a-b", "x", 3, "t") {
+		t.Fatal("canonical counter not written")
 	}
 	raw, err := os.ReadFile(attemptsPath(cwd, "a-b", "x", "t"))
 	if err != nil || string(raw) != "{\"attempts\":3}\n" {
 		t.Fatalf("canonical file %q %v", raw, err)
 	}
-	if got := ReadCounter(cwd, "a/b", "x", "t"); got != (Counter{CounterActive, 1}) {
-		t.Fatalf("a/b read %+v", got)
+	if WriteAttempts(cwd, "a/b", "x", 1, "t") {
+		t.Fatal("non-canonical counter written")
 	}
-	if got := ReadCounter(cwd, "a-b", "x", "t"); got != (Counter{CounterExhausted, 3}) {
-		t.Fatalf("a-b read %+v", got)
+	ClearAttempts(cwd, "a/b", "x", "t")
+	if got := ReadCounter(cwd, "a/b", "x", "t"); got.State != CounterUnreadable || !HasSpentBudget(cwd, "a/b") {
+		t.Fatalf("non-canonical session read as %+v", got)
 	}
-	if !HasSpentBudget(cwd, "a-b") || HasSpentBudget(cwd, "a/b") {
-		t.Fatal("a-b's spent counter must hold a-b, and a/b's own record of the tuple supersedes the shared name for a/b")
+	if got := ReadCounter(cwd, "a-b", "x", "t"); got != (Counter{CounterExhausted, 3}) || !HasSpentBudget(cwd, "a-b") {
+		t.Fatalf("a/b changed a-b: %+v", got)
 	}
-	put(t, attemptsPath(cwd, "a-b", "y", "t"), []byte("{\"attempts\":3}\n")) // a name no record of a/b explains: may be a/b's own
-	if !HasSpentBudget(cwd, "a/b") {
-		t.Fatal("a spent counter of the oracle's layout stopped counting")
-	}
-	_ = os.Remove(attemptsPath(cwd, "a-b", "y", "t"))
-	ClearAttempts(cwd, "a-b", "x", "t")
-	if HasSpentBudget(cwd, "a/b") || ReadCounter(cwd, "a/b", "x", "t") != (Counter{CounterActive, 1}) {
-		t.Fatal("clearing a-b changed a/b")
-	}
-	put(t, counterPath(cwd, "a/b", "x", "t"), []byte(`{"attempts":1,"sessionId":"a-b","agentId":"x","turnId":"t"}`))
-	if got := ReadCounter(cwd, "a/b", "x", "t"); got.State != CounterCorrupt || !HasSpentBudget(cwd, "a/b") {
-		t.Fatalf("a record naming another session read as %+v", got)
+	if _, err := os.Stat(counterDir(cwd, "a/b")); !os.IsNotExist(err) {
+		t.Fatalf("refused session created its counter directory: %v", err)
 	}
 }
 
@@ -151,43 +143,34 @@ func TestFreshCounterOwnershipWithRawActor(t *testing.T) {
 	}
 }
 
-// CRW-1106 post-evaluation round (d1): the flat counter of the oracle's layout under a non-canonical session's sanitised name is that
-// session's counter until a receipt clears it, but it may be a canonical twin's, so clearing never deletes it: a/b's own record of the
-// tuple supersedes it for a/b, and the twin keeps its budget.
+// CRW-1108 supersedes the old non-canonical-session migration: the shared flat file and any old v2 record stay untouched,
+// and neither a read nor a clear lets that session pass. A canonical session's raw actor migration remains covered above.
 func TestLegacyCounterOfANonCanonicalSession(t *testing.T) {
-	cwd := t.TempDir()
-	flat := attemptsPath(cwd, "a/b", "x", "t")
-	put(t, flat, []byte("{\"attempts\":3}\n"))
-	if got := ReadCounter(cwd, "a/b", "x", "t"); got != (Counter{CounterExhausted, MaxAttempts}) {
-		t.Fatalf("the flat counter read as %+v for a/b", got)
-	}
-	if !HasSpentBudget(cwd, "a/b") || !HasSpentBudget(cwd, "a-b") {
-		t.Fatal("an exhausted flat counter stopped counting")
-	}
-	ClearAttempts(cwd, "a/b", "x", "t")
-	if got := ReadCounter(cwd, "a/b", "x", "t"); got.Spent() {
-		t.Fatalf("a/b's cleared tuple still reads as %+v", got)
-	}
-	if HasSpentBudget(cwd, "a/b") {
-		t.Fatal("a/b is still held by the counter it cleared")
-	}
-	if _, err := os.Stat(flat); err != nil {
-		t.Fatalf("the flat counter, which a-b may own, was deleted: %v", err)
-	}
-	if got := ReadCounter(cwd, "a-b", "x", "t"); got != (Counter{CounterExhausted, MaxAttempts}) || !HasSpentBudget(cwd, "a-b") {
-		t.Fatalf("a/b's clear changed the twin a-b: %+v", got)
-	}
-	// An active flat counter carries its count into a/b's next attempt, and a/b's own write supersedes it.
-	other := t.TempDir()
-	put(t, attemptsPath(other, "a/b", "x", "t"), []byte("{\"attempts\":2}\n"))
-	if got := ReadCounter(other, "a/b", "x", "t"); got != (Counter{CounterActive, 2}) {
-		t.Fatalf("the flat counter read as %+v", got)
-	}
-	if !WriteAttempts(other, "a/b", "x", 3, "t") || ReadCounter(other, "a/b", "x", "t") != (Counter{CounterExhausted, MaxAttempts}) {
-		t.Fatal("a/b's own write did not supersede the flat counter")
-	}
-	ClearAttempts(other, "a/b", "x", "t")
-	if HasSpentBudget(other, "a/b") || ReadCounter(other, "a/b", "x", "t").Spent() {
-		t.Fatal("a/b is held after its receipt")
+	for _, count := range []int{2, MaxAttempts} {
+		cwd := t.TempDir()
+		flat := attemptsPath(cwd, "a/b", "x", "t")
+		old := counterPath(cwd, "a/b", "x", "t")
+		flatRaw := []byte(fmt.Sprintf("{\"attempts\":%d}\n", count))
+		oldRaw := []byte(`{"attempts":1,"sessionId":"a/b","agentId":"x","turnId":"t"}`)
+		put(t, flat, flatRaw)
+		put(t, old, oldRaw)
+		if got := ReadCounter(cwd, "a/b", "x", "t"); got.State != CounterUnreadable {
+			t.Fatalf("alias read %+v", got)
+		}
+		if WriteAttempts(cwd, "a/b", "x", 3, "t") {
+			t.Fatal("alias write accepted")
+		}
+		ClearAttempts(cwd, "a/b", "x", "t")
+		if !HasSpentBudget(cwd, "a/b") {
+			t.Fatal("alias clear lifted the completion latch")
+		}
+		for path, want := range map[string][]byte{flat: flatRaw, old: oldRaw} {
+			if raw, err := os.ReadFile(path); err != nil || string(raw) != string(want) {
+				t.Fatalf("legacy file changed: %s %q %v", path, raw, err)
+			}
+		}
+		if got := ReadAttempts(cwd, "a-b", "x", "t"); got != count {
+			t.Fatalf("alias changed the canonical twin: %d, want %d", got, count)
+		}
 	}
 }

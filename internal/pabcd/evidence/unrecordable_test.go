@@ -211,12 +211,20 @@ func TestWriteUnrecordableMarker(t *testing.T) {
 		if skip {
 			continue
 		}
-		threw := []bool{}
+		threw, aliases := []bool{}, 0
 		for _, call := range k.Calls {
 			threw = append(threw, writeUnrecordableMarker(cwd, call.Session, call.Agent, now) != nil)
+			if !state.IsCanonicalSessionID(call.Session) {
+				aliases++
+			}
 		}
 		restore()
 		want, wantThrew := g.Marker[k.ID], []bool{}
+		if aliases > 0 && aliases == len(k.Calls) {
+			// port: fixed by CRW-1108: the oracle names the marker by the sanitised id, so a/b's marker is read as a-b's; the port
+			// refuses an id that sanitising would rewrite, or an empty one, before anything is created
+			want.Tree, want.Threw = []treeEntry{}, slices.Repeat([]any{true}, aliases)
+		}
 		if linkFollowed(k.ID) {
 			want.Threw, want.Out = []any{true}, []treeEntry{}
 			if k.ID == "state_dir_is_symlink" {
@@ -244,6 +252,11 @@ func TestUnrecordableVerdictStatus(t *testing.T) {
 		got := UnrecordableVerdictStatus(cwd, sessionOf(k.Session))
 		restore()
 		want := g.Status[k.ID]
+		if !state.IsCanonicalSessionID(sessionOf(k.Session)) {
+			// port: fixed by CRW-1108: the oracle reads a-b's markers for a/b and missing's for the empty id; the port names no
+			// marker for such an id and answers Unreadable, the closed side, without a read or a probe
+			want.Present, want.Unreadable = false, true
+		}
 		if linkFollowed(k.ID) {
 			want.Present, want.Unreadable, want.Out = false, true, []treeEntry{}
 			if k.ID == "state_dir_is_symlink" {
@@ -316,7 +329,7 @@ func TestResolveTombstone(t *testing.T) {
 			put(t, filepath.Join(cwd, ".crw"), []byte("x"))
 		}
 		if k.Lock {
-			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
+			put(t, filepath.Join(sessions, "s1.json.lock"), []byte(strconv.Itoa(os.Getpid()))) // a live holder: since CRW-1094 a dead owner's lock is taken over
 		}
 		path := filepath.Join(sessions, "s1.json")
 		before, _ := os.ReadFile(path)

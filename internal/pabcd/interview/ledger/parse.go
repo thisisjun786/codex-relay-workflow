@@ -4,7 +4,7 @@
 // also holds the scan rows of internal/pabcd/state; each reader skips the other's rows.
 //
 // Behaviour is ported as-is, oracle defects included (docs/port-cxc/known-defects.md, "Found by the interview answer ledger port"),
-// with two differences:
+// with three differences:
 //
 //   - Appending to a file whose last line has no line feed first writes one: the oracle joins the new row to that line and both are
 //     lost (a record-file data-loss defect, fixed by decision). The guard covers the tail seen before the write; a sibling writer
@@ -12,6 +12,8 @@
 //   - A payload is the value encoding/json decodes, numbers kept as json.Number; any other Go value is no payload. A lone surrogate
 //     escape reads as U+FFFD (a Go string cannot hold one), an invalid UTF-8 byte is written as U+FFFD, and a document nested deeper
 //     than 10,000 levels reads as malformed.
+//   - Every reader and writer takes a canonical session id only (CRW-1108): the oracle names the file by SanitizeKey, so a/b and a-b
+//     shared one ledger. A non-canonical or empty id records nothing and reads no rows.
 //
 // Nothing here is a lock: the dedup check and the append are separate steps, as in the oracle.
 package ledger
@@ -22,6 +24,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -169,8 +172,12 @@ func answersBody(resp map[string]any) map[string]any {
 }
 
 // eachRow calls fn with every line of the session's ledger that, trimmed as JavaScript trims, is one JSON object. A file that cannot
-// be read has no rows.
+// be read has no rows, and a session id that sanitising would rewrite, or an empty one, has none either: it would read the ledger of
+// the canonical id it sanitises to (CRW-1108).
 func eachRow(cwd, sessionID string, fn func(line string, row map[string]any)) {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return
+	}
 	data, err := os.ReadFile(ledgerPath(cwd, sessionID))
 	if err != nil {
 		return

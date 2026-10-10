@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The divergence CLI port's tests. TestDivergenceCliMatchesTheRecordedOracle replays the answers the
@@ -21,7 +21,7 @@ import (
 // divergence.test.ts:153-225 and the divergence block of help-verbs.test.ts:120-125 literally; and
 // TestDivergenceCliQuoteSpellsAsTheMetricEncoderDoes pins the one string the wrapper spells itself.
 // Every test runs in a temporary workspace with HOME, CODEX_HOME and CRW_HOME pointed at a temporary
-// tree, and compares the real ~/.codex and ~/.crw top-level listings before and after.
+// tree (the real ~/.codex and ~/.crw are not observed, CRW-1170).
 
 type divergenceCliOracleCase struct {
 	ID    string            `json:"id"`
@@ -274,58 +274,26 @@ func divergenceCliFiles(want map[string]string) map[string]string {
 	return out
 }
 
-// divergenceCliSandbox points HOME, CODEX_HOME and CRW_HOME at a temporary tree (the operator rule
-// after a self-heal write reached a real CODEX_HOME) and compares the top-level listings of the real
-// ~/.codex and ~/.crw before and after. An artifact this port could create fails the test; any other
-// top-level change is logged only, because the host's own Codex session writes there while the test
-// runs. A difference is reported, never cleaned up.
+// divergenceCliSandbox points HOME, CODEX_HOME and CRW_HOME at temporary directories the test owns and
+// returns a separate workspace root. The run is held to those homes (SandboxAccountHomes fails the test
+// at its end if the run created or removed anything at the top level of them), so a divergence file written
+// under the account homes instead of the workspace is a failure. It does not observe the real ~/.codex or
+// ~/.crw: the host's own Codex sessions write there while the test runs (CRW-1170).
 func divergenceCliSandbox(t *testing.T) string {
 	t.Helper()
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeNames, beforeArtifacts := divergenceCliRealHome(realHome)
-	root := t.TempDir()
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
-	t.Setenv("CRW_HOME", filepath.Join(home, "crw"))
-	t.Cleanup(func() {
-		afterNames, afterArtifacts := divergenceCliRealHome(realHome)
-		for name := range afterArtifacts {
-			if !beforeArtifacts[name] {
-				t.Errorf("this test created the real artifact %s", name)
-			}
-		}
-		if !slices.Equal(beforeNames, afterNames) {
-			t.Logf("the real codex homes changed at the top level during this test (host activity): %v -> %v", beforeNames, afterNames)
-		}
-	})
-	return root
+	testsupport.SandboxAccountHomes(t)
+	return t.TempDir()
 }
 
-// divergenceCliRealHome lists the top-level entries of <home>/.codex and <home>/.crw and marks the
-// names this port could create: a divergence directory, a mode file, the archive, a mode temp file.
-func divergenceCliRealHome(home string) ([]string, map[string]bool) {
-	names := []string{}
-	artifacts := map[string]bool{}
-	for _, sub := range []string{".codex", crwdir.DirName} {
-		entries, err := os.ReadDir(filepath.Join(home, sub))
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			name := sub + "/" + entry.Name()
-			names = append(names, name)
-			if entry.Name() == metric.DivergenceDir || entry.Name() == metric.CandidatesFile || strings.HasSuffix(entry.Name(), ".mode.json") || strings.HasSuffix(entry.Name(), ".tmp") {
-				artifacts[name] = true
-			}
+// CRW-1170: the sandbox hands out a workspace and account homes that are different directories, and the
+// account homes are the ones the run's environment names, so a divergence file under CODEX_HOME or CRW_HOME is
+// seen by the homes' end-of-test check instead of being mistaken for workspace content.
+func TestDivergenceCliSandboxKeepsTheWorkspaceApartFromTheAccountHomes(t *testing.T) {
+	root := divergenceCliSandbox(t)
+	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
+		dir := os.Getenv(name)
+		if dir == "" || dir == root || strings.HasPrefix(dir, root+string(filepath.Separator)) {
+			t.Errorf("%s=%q is not apart from the workspace %q", name, dir, root)
 		}
 	}
-	slices.Sort(names)
-	return names, artifacts
 }

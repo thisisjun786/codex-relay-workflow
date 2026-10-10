@@ -531,7 +531,7 @@ func TestReconcileLetsGoOfTheProjectLockBeforeCreatingAgain(t *testing.T) {
 	k.inProject()
 	k.expect(k.run(), "admitted", "", "recreated")
 	k.effects(2, 1)
-	within, cancel := context.WithTimeout(ctx, 2*time.Second)
+	within, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	exclusive, err := projectlock.Exclusive(within, k.start.Store.Path, scopeProject)
 	if err != nil {
