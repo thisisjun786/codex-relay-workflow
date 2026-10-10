@@ -115,6 +115,10 @@ type Engine struct {
 	// inflight counts the goroutines of agent calls that have not written their terminal row; a run reports its end
 	// only after all of them have.
 	inflight sync.WaitGroup
+	// undelivered holds, by call id, the results a call ended on that the loop has not handed to the script yet; a run
+	// that is aborted reports them with the delivered ones.
+	undeliveredM sync.Mutex
+	undelivered  map[string]CallResult
 
 	spent  atomic.Int64
 	warned atomic.Bool
@@ -171,7 +175,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}}
+	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}}
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
 		"meta": json.RawMessage(prog.MetaJSON),
@@ -227,6 +231,11 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	// run's last one.
 	e.cancel()
 	e.inflight.Wait()
+	e.undeliveredM.Lock()
+	for _, r := range e.undelivered {
+		e.results = append(e.results, r)
+	}
+	e.undeliveredM.Unlock()
 	res.Spent = e.spent.Load()
 	sort.SliceStable(e.results, func(i, k int) bool {
 		if e.results[i].Path != e.results[k].Path {

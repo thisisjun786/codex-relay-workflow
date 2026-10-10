@@ -117,6 +117,10 @@ for (;;) { await agent.call('c', { agentType: 'explorer', label: 'c' }) }`, 8*ti
 	if st := terminalOf(h.callRows("a")); st == "" {
 		t.Errorf("a has no terminal row")
 	}
+	// the call the abort cut off is reported with the result it ended on, though the script never received it
+	if len(res.Calls) != 1 || res.Calls[0].Label != "a" || res.Calls[0].Status == "" {
+		t.Errorf("calls %+v", res.Calls)
+	}
 	assertEndsCleanly(t, h)
 	// a synchronous retry loop after the caught error ends the same way, without waiting for the step limit
 	h = newHarness(t)

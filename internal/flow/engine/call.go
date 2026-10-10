@@ -342,9 +342,16 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 	return res
 }
 
-// deliverNow hands the result to the loop, which settles the path and resolves the script's promise.
+// deliverNow hands the result to the loop, which settles the path and resolves the script's promise. Until the loop
+// runs that, the result is kept as undelivered, so a run aborted in between still reports it.
 func (c *callRun) deliverNow(res CallResult) {
+	c.e.undeliveredM.Lock()
+	c.e.undelivered[c.id] = res
+	c.e.undeliveredM.Unlock()
 	c.complete(func() {
+		c.e.undeliveredM.Lock()
+		delete(c.e.undelivered, c.id)
+		c.e.undeliveredM.Unlock()
 		c.path.settle(c.position)
 		c.e.results = append(c.e.results, res)
 		if res.Handle != "" {
