@@ -85,7 +85,9 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 		dirExisted     bool // the venv directory was there before this attempt
 	}{
 		{"success", false, false, "", 0, 0, 1, 4, "venv", false, false},
-		{"mk-fails", false, false, "", 1, 0, 1, 3, "python3", false, false},
+		// A venv that fails after it made the interpreter is cleaned up like a failed pip (CRW-1162).
+		{"mk-fails", false, false, "", 1, 0, 1, 3, "python3", true, false},
+		{"mk-fails-preexisting-dir", false, false, "", 1, 0, 1, 3, "python3", true, true},
 		{"pip-fails", false, false, "", 0, 1, 1, 4, "python3", true, false},
 		// A tree that was there before this attempt is not this attempt's to delete, only the interpreter it made (CRW-1147).
 		{"pip-fails-preexisting-dir", false, false, "", 0, 1, 1, 4, "python3", true, true},
@@ -113,7 +115,7 @@ func TestRepoMapBootstrapWithFakesOnly(t *testing.T) {
 				if path == filepath.Join(root, "venvs", "repomap") {
 					return c.dirExisted
 				}
-				if path != p.python {
+				if path != p.python && path != p.marker {
 					t.Fatal(path)
 				}
 				return c.existing
@@ -375,6 +377,7 @@ func TestRepoMapBootstrapsAreSerializedAndLeaveTheOthersTree(t *testing.T) {
 	mk := func(name string, pipFails bool, stderr io.Writer) mapDeps {
 		return mapDeps{
 			exists: fs.has, remove: fs.remove,
+			mark: func(path string) error { fs.set(path); return nil },
 			lock: func(venvs string) (func(), error) {
 				return repoMapBootstrapLock(context.Background(), venvs, stderr)
 			},
@@ -454,6 +457,7 @@ func TestRepoMapSecondRunWaitsWhileThePipInstallIsRunning(t *testing.T) {
 	mk := func(name string, stderr io.Writer) mapDeps {
 		return mapDeps{
 			exists: fs.has, remove: fs.remove,
+			mark: func(path string) error { fs.set(path); return nil },
 			lock: func(venvs string) (func(), error) {
 				return repoMapBootstrapLock(context.Background(), venvs, stderr)
 			},
@@ -539,6 +543,7 @@ func TestRepoMapRetriesAFailedPipInAPreexistingVenvDir(t *testing.T) {
 	d := mapDeps{
 		exists: func(path string) bool { _, err := os.Stat(path); return err == nil },
 		remove: os.RemoveAll,
+		mark:   writeRepoMapMarker,
 		lock: func(venvs string) (func(), error) {
 			return repoMapBootstrapLock(context.Background(), venvs, io.Discard)
 		},
