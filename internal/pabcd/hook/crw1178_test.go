@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -536,17 +537,16 @@ print(os.path.basename(cache))
 	}
 }
 
-// CRW-1178 verification round 8 (P1, already at the base) through both guards: PYTHONPYCACHEPREFIX makes the interpreter load
-// cache entries from <prefix>/<physical source directory>/, which the inventory never walks, even with -B. With no __pycache__ in
-// the project, a current entry there runs code neither guard read. The run is refused when the text assigns or exports the variable
-// and when the hook's own environment sets it, with the route; -E (the interpreter ignores PYTHON* variables) stays allowed.
-func TestCRW1178PycachePrefixIsRefusedByBothGuards(t *testing.T) {
-	python, bash := crw1178Python(t)
-	cwd, root, env := gateScene(t)
+// crw1178PrefixScene is the gate scene with a two-file project and, under the cache prefix pfx (no __pycache__ in the project), a
+// current entry of calc.py whose code writes the memory note marker: a run that reads caches under pfx runs code neither guard read.
+func crw1178PrefixScene(t *testing.T) (python, bash, cwd, root string, env host.LookupEnv, pfx, marker string) {
+	t.Helper()
+	python, bash = crw1178Python(t)
+	cwd, root, env = gateScene(t)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(root, "injected.md")
+	marker = filepath.Join(root, "injected.md")
 	for name, body := range map[string]string{
 		"calc.py":      "def add(a, b):\n    return a + b\n",
 		"test_calc.py": "import unittest\nimport calc\nclass T(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(calc.add(1, 2), 3)\n",
@@ -555,7 +555,7 @@ func TestCRW1178PycachePrefixIsRefusedByBothGuards(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pfx := filepath.Join(t.TempDir(), "pfx")
+	pfx = filepath.Join(t.TempDir(), "pfx")
 	setup := `import importlib.util,marshal,os,struct,sys
 src=os.path.join(os.path.realpath(sys.argv[1]),'calc.py');marker=sys.argv[2];sys.pycache_prefix=sys.argv[3]
 code=compile('open('+repr(marker)+', "w").write("unread bytecode ran")\ndef add(a, b):\n    return a + b\n',src,'exec')
@@ -566,6 +566,15 @@ open(cache,'wb').write(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,int(s.st
 	if out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, pfx).CombinedOutput(); err != nil {
 		t.Fatalf("setup: %v %s", err, out)
 	}
+	return python, bash, cwd, root, env, pfx, marker
+}
+
+// CRW-1178 verification round 8 (P1, already at the base) through both guards: PYTHONPYCACHEPREFIX makes the interpreter load
+// cache entries from <prefix>/<physical source directory>/, which the inventory never walks, even with -B. With no __pycache__ in
+// the project, a current entry there runs code neither guard read. The run is refused when the text assigns or exports the variable
+// and when the hook's own environment sets it, with the route; -E (the interpreter ignores PYTHON* variables) stays allowed.
+func TestCRW1178PycachePrefixIsRefusedByBothGuards(t *testing.T) {
+	python, bash, cwd, root, env, pfx, marker := crw1178PrefixScene(t)
 	deny := func(t *testing.T, what, out string, github bool) {
 		t.Helper()
 		var r string
@@ -635,5 +644,49 @@ open(cache,'wb').write(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,int(s.st
 	got = crw1178Run(t, bash, python, cwd, home, "PYTHONPYCACHEPREFIX="+pfx+" python3 -B -m unittest")
 	if b, err := os.ReadFile(marker); err != nil || string(b) != "unread bytecode ran" {
 		t.Fatalf("the prefixed cache never ran, so this test proves nothing: %v %s", err, got)
+	}
+}
+
+// CRW-1178 verification round 9 (P1) through both guards: under set -a, ${!N:=x} assigns and exports the variable whose name N
+// holds, built from parts the text never spells. With N built as PYTHONPYCACHEPREFIX, the module run loads a current entry under the
+// prefix and runs code neither guard read; both guards refuse it with the route, and -E stays allowed.
+func TestCRW1178PycachePrefixThroughAnIndirectAssignmentIsRefusedByBothGuards(t *testing.T) {
+	python, bash, cwd, root, env, pfx, marker := crw1178PrefixScene(t)
+	const built = "set -a; N=PYTHONPYCACHE; N+=PREFIX; "
+	for _, cmd := range []string{
+		built + ": ${!N:=../pfx}; python3 -B -m unittest",
+		built + ": ${!N:=" + pfx + "}; python3 -B -m unittest",
+		built + ": \"${!N:=" + pfx + "}\"; python3 -B -m unittest",
+		built + "x=${!N=" + pfx + "}; python3 -B -m unittest",
+		"set -a; x=PYTHONPYCACHE; x+=PREFIX=7; : $((x)); python3 -B -m unittest",
+		built + "let \"$N=7\"; python3 -B -m unittest",
+	} {
+		if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out == "" {
+			t.Errorf("memory gate allowed %q", cmd)
+		} else if r := gateDeny(t, out); !strings.Contains(r, "[crw command-reader]") || !strings.Contains(r, "unset PYTHONPYCACHEPREFIX") {
+			t.Errorf("memory gate %q: the reason lacks the reader wording or the route: %s", cmd, r)
+		}
+		if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out == "" {
+			t.Errorf("GitHub guard allowed %q", cmd)
+		} else if r := githubPostAnswerReason(t, out); !strings.Contains(r, "[crw command-reader]") || !strings.Contains(r, "unset PYTHONPYCACHEPREFIX") {
+			t.Errorf("GitHub guard %q: the reason lacks the reader wording or the route: %s", cmd, r)
+		}
+	}
+	ignored := built + ": ${!N:=" + pfx + "}; python3 -E -B -m unittest"
+	if out := HandleMemoryWriteGate(gateBash(t, cwd, ignored), env); out != "" {
+		t.Errorf("memory gate refused %q: %s", ignored, out)
+	}
+	if out := HandleGitHubPostGuard(gateBash(t, cwd, ignored)); out != "" {
+		t.Errorf("GitHub guard refused %q: %s", ignored, out)
+	}
+	// The premise: bash exports the prefix through the indirect assignment, and the run loads the entry under it; the -E run does not.
+	home := filepath.Dir(root)
+	got := crw1178Run(t, bash, python, cwd, home, ignored)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the -E run loaded the prefixed cache: %v %s", err, got)
+	}
+	got = crw1178Run(t, bash, python, cwd, home, built+": ${!N:="+pfx+"}; python3 -B -m unittest")
+	if b, err := os.ReadFile(marker); err != nil || string(b) != "unread bytecode ran" {
+		t.Fatalf("the prefixed cache never ran through the indirect assignment, so this test proves nothing: %v %s", err, got)
 	}
 }

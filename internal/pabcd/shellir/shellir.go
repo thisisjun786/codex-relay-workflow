@@ -301,8 +301,8 @@ type walker struct {
 	createdUpTo  int
 	// pipeOut is what the last pipeline the walk finished prints (see stageSource).
 	pipeOut *pipeSource
-	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command of it may set a
-	// variable whose name the reader does not know: either may give a later module run a cache prefix (CRW-1178).
+	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command or an expansion of
+	// it may assign a variable whose name it does not spell: either may give a later module run a cache prefix (CRW-1178).
 	prefixNamed, prefixUnknown bool
 }
 
@@ -811,12 +811,16 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if err != nil {
 				return err
 			}
+			// A quoted declaration ('a[i]=v') evaluates its subscript as arithmetic (CRW-1178).
+			w.nameSubscriptPrefix(st, v)
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
 				st.clearVars()
 				// A name built at run time, or a name reference, may be or reach PYTHONPYCACHEPREFIX (CRW-1178).
 				w.prefixUnknown = true
 			}
-			if mayNamePycachePrefix([]Word{v}) {
+			// An integer variable (declare -i) evaluates every value assigned to it as arithmetic, which may assign a name built
+			// at run time (CRW-1178).
+			if mayNamePycachePrefix([]Word{v}) || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "i") {
 				w.prefixUnknown = true
 			}
 			// A word that names a variable by a value built at run time (export "${n}PATH=/x") may name CDPATH.
@@ -825,6 +829,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			}
 			continue
 		}
+		w.assignArithm(a, st)
 		asg := Assign{Name: a.Name.Value, Append: a.Append}
 		switch {
 		case a.Array != nil:
@@ -929,6 +934,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 		if a.Name == nil {
 			return unreadablef("assignment without a name")
 		}
+		w.assignArithm(a, st)
 		asg := Assign{Name: a.Name.Value, Append: a.Append}
 		switch {
 		case a.Index != nil:
@@ -1174,6 +1180,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	if body, ok := st.funcs[name]; ok {
 		return w.callFunc(name, body, st, ctx)
 	}
+	w.builtinArithmPrefix(name, words[1:], st)
 	switch {
 	case isShell(name):
 		return w.shellCall(name, words[1:], redirs, st, ctx)
@@ -1219,7 +1226,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
 		st.clearVars()
-		if mayNamePycachePrefix(assignedNames(name, words[1:])) {
+		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
 		}
 		if mentionsCdpath(words[1:]) {
@@ -1268,6 +1275,66 @@ func unsetWords(args []Word, st *state) {
 	}
 }
 
+// builtinArithmPrefix is arithmPrefix for the words of a builtin that bash evaluates as arithmetic: every word of let, and the
+// subscript of a name[subscript] word a builtin takes as a variable name (unset, test -v, read, printf -v, declare 'a[i]=v'), which
+// may assign a name the text does not spell (CRW-1178). It runs before the builtin clears the variables the walk knows.
+func (w *walker) builtinArithmPrefix(name string, args []Word, st *state) {
+	switch {
+	case name == "let":
+		for _, a := range args {
+			if !a.Known || !arithmTextClear(a.Value, st) {
+				w.prefixUnknown = true
+			}
+		}
+	case name == "unset":
+		w.nameSubscriptPrefix(st, args...)
+	case name == "test" || name == "[":
+		for i := 0; i+1 < len(args); i++ {
+			if args[i].Known && args[i].Value == "-v" {
+				w.nameSubscriptPrefix(st, args[i+1])
+			}
+		}
+	case clobbersVars(name, args):
+		w.nameSubscriptPrefix(st, assignedNames(name, args)...)
+	}
+}
+
+// nameSubscriptPrefix is arithmPrefix for the subscript of words that name a variable: a known word with a subscript (a[i]) must
+// have a clear subscript; a word the walk does not know may hold any subscript.
+func (w *walker) nameSubscriptPrefix(st *state, words ...Word) {
+	for _, a := range words {
+		if !a.Known {
+			w.prefixUnknown = true
+			continue
+		}
+		i := strings.IndexByte(a.Value, '[')
+		if i < 0 {
+			continue
+		}
+		sub := a.Value[i+1:]
+		if j := strings.LastIndexByte(sub, ']'); j >= 0 {
+			sub = sub[:j]
+		}
+		if !arithmTextClear(sub, st) {
+			w.prefixUnknown = true
+		}
+	}
+}
+
+// declaresInteger is whether a declaration builtin may give a variable the integer attribute (declare -i), with which bash evaluates
+// every value assigned to it as arithmetic (CRW-1178).
+func declaresInteger(name string, args []Word) bool {
+	switch name {
+	case "declare", "typeset", "local":
+		for _, a := range args {
+			if !a.Known || strings.HasPrefix(a.Value, "-") && strings.Contains(a.Value, "i") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func clobbersVars(name string, args []Word) bool {
 	switch name {
 	case "read", "mapfile", "readarray", "getopts", "let", "export", "declare", "typeset", "local", "readonly":
@@ -1275,6 +1342,13 @@ func clobbersVars(name string, args []Word) bool {
 	case "printf":
 		for _, a := range args {
 			if !a.Known || a.Value == "-v" {
+				return true
+			}
+		}
+	case "wait":
+		// wait -p NAME assigns the job's process id to NAME
+		for _, a := range args {
+			if !a.Known || strings.HasPrefix(a.Value, "-") && strings.Contains(a.Value, "p") {
 				return true
 			}
 		}

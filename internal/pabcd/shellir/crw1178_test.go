@@ -3,10 +3,12 @@ package shellir
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // pycHeader is the 16-byte header Python writes: magic, flags, then either mtime and source size (flags 0) or the source hash.
@@ -391,6 +393,104 @@ func TestCRW1178PycachePrefixRefusesTheModuleRun(t *testing.T) {
 	} {
 		if _, err := AnalyzeEnv(c.cmd, cwd, c.lookup); err != nil {
 			t.Errorf("%s: refused: %v", c.cmd, err)
+		}
+	}
+}
+
+// CRW-1178 verification round 9 (P1): a name built at run time reaches PYTHONPYCACHEPREFIX through an expansion that assigns, which
+// the text never spells. Under set -a, ${!N:=x} assigns and exports the variable N names; an arithmetic assignment, increment or
+// let whose target is expanded at run time assigns the name it expands to; and bash evaluates a variable's value in an arithmetic
+// context as an expression of its own, so x='PYTHONPYCACHEPREFIX=7' (built from parts) assigns it from $((x)), [[ x -eq 1 ]], an
+// array subscript (a[x]=1, ${a[x]}, unset 'a[x]', printf -v 'a[x]', test -v 'a[x]'), a slice offset or an integer variable; and
+// wait -p "$N" assigns a process id to the name N holds. A later module run is refused with the route, as for a declaration
+// with a name the reader does not know (an expanded target of a parsed arithmetic assignment is a parse error, refused already);
+// nothing in the text assigning through a built name leaves the run as before.
+func TestCRW1178PycachePrefixThroughABuiltNameInAnExpansionIsRefused(t *testing.T) {
+	cwd := crw1178Project(t, nil)
+	const built = "set -a; N=PYTHONPYCACHE; N+=PREFIX; "
+	const expr = "set -a; x=PYTHONPYCACHE; x+=PREFIX=7; "
+	for _, cmd := range []string{
+		built + ": ${!N:=../pfx}; python3 -B -m unittest",
+		built + ": \"${!N:=../pfx}\"; python3 -B -m unittest",
+		built + "echo ${!N=../pfx} >/dev/null; python3 -B -m unittest",
+		built + "x=${!N:=../pfx}; python3 -B -m unittest",
+		built + ": ${!N:=../pfx}; python3 -m pytest",
+		"set -a; : ${!CRW1178_UNSET:=../pfx}; python3 -B -m unittest",
+		built + "let \"$N=3\"; python3 -B -m unittest",
+		expr + ": $((x)); python3 -B -m unittest",
+		expr + "(( x )); python3 -B -m unittest",
+		expr + "[[ x -eq 1 ]]; python3 -B -m unittest",
+		expr + "let x; python3 -B -m unittest",
+		expr + "s=abcdefgh; : ${s:x}; python3 -B -m unittest",
+		expr + "a=(1); : ${a[x]}; python3 -B -m unittest",
+		expr + "declare -i n; n=x; python3 -B -m unittest",
+		expr + "b[x]=1; python3 -B -m unittest",
+		expr + "b=([x]=1); python3 -B -m unittest",
+		expr + ": $[x]; python3 -B -m unittest",
+		expr + "case 1 in $((x))) ;; esac; python3 -B -m unittest",
+		expr + "y=x; : $((y)); python3 -B -m unittest",
+		"set -a; read -r x < /dev/null; (( x )); python3 -B -m unittest",
+		expr + "[[ -v b[x] ]]; python3 -B -m unittest",
+		expr + "b=(1); : ${#b[x]}; python3 -B -m unittest",
+		expr + "b=(1); unset 'b[x]'; python3 -B -m unittest",
+		expr + "printf -v 'b[x]' %s 1; python3 -B -m unittest",
+		expr + "read 'b[x]' < /dev/null; python3 -B -m unittest",
+		expr + "declare 'b[x]=1'; python3 -B -m unittest",
+		expr + "b=(1); [ -v 'b[x]' ]; python3 -B -m unittest",
+		expr + "b=(1); test -v 'b[x]'; python3 -B -m unittest",
+		expr + "builtin let x; python3 -B -m unittest",
+		expr + "cat > /dev/null <<E\n$((x))\nE\npython3 -B -m unittest",
+		built + "sleep 0 & wait -n -p \"$N\"; python3 -B -m unittest",
+	} {
+		_, err := Analyze(cmd, cwd)
+		var u *Unreadable
+		if !errors.As(err, &u) {
+			t.Errorf("%s: a module run after an assignment through a built name was allowed: %v", cmd, err)
+		} else if !strings.Contains(u.Reason, "PYTHONPYCACHEPREFIX") || !strings.Contains(u.Reason, "unset PYTHONPYCACHEPREFIX") {
+			t.Errorf("%s: the reason lacks the variable or the route: %q", cmd, u.Reason)
+		}
+	}
+	// Values that name each other many times over are followed within a bound, and refused past it rather than walked for long.
+	fan := ""
+	for i := 0; i < 8; i++ {
+		fan += fmt.Sprintf("v%d='%s'; ", i, strings.TrimSpace(strings.Repeat(fmt.Sprintf("v%d ", i+1), 16)))
+	}
+	start := time.Now()
+	var fanErr *Unreadable
+	if _, err := Analyze(fan+"(( v0 )); python3 -B -m unittest", cwd); !errors.As(err, &fanErr) {
+		t.Errorf("values that name each other many times over were cleared: %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("following values that name each other took %v", d)
+	}
+	// An expanded target of an arithmetic assignment or increment in parsed arithmetic is a parse error, already unreadable.
+	for _, cmd := range []string{
+		built + ": $(( $N = 5 )); python3 -B -m unittest",
+		built + "(( $N++ )); python3 -B -m unittest",
+		built + "for (( $N=1; 0; )); do :; done; python3 -B -m unittest",
+		"set -a; : $(( $CRW1178_UNSET = 5 )); python3 -B -m unittest",
+	} {
+		var u *Unreadable
+		if _, err := Analyze(cmd, cwd); !errors.As(err, &u) {
+			t.Errorf("%s: allowed: %v", cmd, err)
+		}
+	}
+	for _, cmd := range []string{
+		built + ": ${!N:=../pfx}; python3 -E -B -m unittest",
+		": ${n:=1}; python3 -B -m unittest",
+		"i=1; : $((i + 1)); python3 -B -m unittest",
+		"(( 2 + 3 )); python3 -B -m unittest",
+		"(( i = 1 )); python3 -B -m unittest",
+		"[[ 1 -eq 1 ]]; python3 -B -m unittest",
+		"s=abcdefgh; : ${s:2:3}; python3 -B -m unittest",
+		": ${!CRW1178_UNSET}; python3 -B -m unittest",
+		"b=(1 2); echo \"${b[@]}\" \"${b[1]}\"; python3 -B -m unittest",
+		"unset FOO; [ -v HOME ]; python3 -B -m unittest",
+		"read -r line < /dev/null; python3 -B -m unittest",
+		"sleep 0 & wait; python3 -B -m unittest",
+	} {
+		if _, err := Analyze(cmd, cwd); err != nil {
+			t.Errorf("%s: refused: %v", cmd, err)
 		}
 	}
 }

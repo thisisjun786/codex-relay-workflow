@@ -267,9 +267,10 @@ func shortRel(rel string) string {
 
 // pycachePrefixSet says how a module run may be given PYTHONPYCACHEPREFIX, or "" when it is not: the interpreter then reads and writes
 // every cache entry under <prefix>/<source directory>, even with -B, where the inventory never looks. The variable is set when the run
-// assigns it, when the text names it anywhere (an assignment, export, declare, eval, env: every literal way to set it spells the name),
-// when a command of the text may set a variable whose name the reader does not know, and when the environment the reader is given sets
-// it (empty is unset for the interpreter). -E and -I make the interpreter ignore it (CRW-1178).
+// assigns it, when the text names it anywhere (an assignment, export, declare, eval, env), when a command or an expansion of the text
+// may assign a variable whose name it does not spell (a name built at run time: export "$N", ${!N:=x}, an arithmetic evaluation of a
+// value the walk does not know or that names other variables, declare -i), and when the environment the reader is given sets it
+// (empty is unset for the interpreter). -E and -I make the interpreter ignore it (CRW-1178).
 func (w *walker) pycachePrefixSet(args []Word, assigns []Assign, st *state) string {
 	if moduleIgnoresEnv(args) {
 		return ""
@@ -280,7 +281,7 @@ func (w *walker) pycachePrefixSet(args []Word, assigns []Assign, st *state) stri
 	case w.prefixNamed:
 		return "named by the command text"
 	case w.prefixUnknown:
-		return "possibly set by a command whose variable names are not known"
+		return "possibly set through a variable name the command text does not spell"
 	}
 	if st.lookup != nil {
 		if v, ok := st.lookup("PYTHONPYCACHEPREFIX"); ok && v != "" {
