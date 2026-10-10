@@ -29,7 +29,7 @@ func shellwriteTarget() Target {
 		Name:     "shellwrite",
 		Generate: shellWriteGenerate,
 		Go:       shellWriteGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("shellwrite"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("shellwrite"), Root: OracleRoot()},
 		Compare:  shellWriteCompare,
 		Reading:  shellWriteReading,
 	}

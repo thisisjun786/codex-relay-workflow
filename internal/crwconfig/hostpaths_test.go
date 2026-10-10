@@ -14,7 +14,7 @@ import (
 // per-task directory of a lane, a device name and a mount of a named disk. A host places its
 // roots through the configuration file's paths section; product code, skills and packet
 // templates name a root (scratch_root, temp_root) and never a path.
-var hostPath = regexp.MustCompile(`/home/jun\b|(^|[^.\w])/(state/crw|scratch)(/|\b)|/var/tmp/crw|/dev/(nvme|sd[a-z]|vd[a-z]|xvd[a-z]|disk[0-9])|\bnvme[0-9]+n[0-9]+\b|/mnt/(disk|nvme|ssd|hdd|data)[0-9]*\b|\blina-os\b`)
+var hostPath = regexp.MustCompile(`/home/jun\b|(^|[^.\w])/(state/crw|scratch)(/|\b)|/var/tmp/crw|/var/tmp/cxc-v0\.2\.40/|/dev/(nvme|sd[a-z]|vd[a-z]|xvd[a-z]|disk[0-9])|\bnvme[0-9]+n[0-9]+\b|/mnt/(disk|nvme|ssd|hdd|data)[0-9]*\b|\blina-os\b`)
 
 // repositoryRoot walks up from the test's directory to the module root.
 func repositoryRoot(t *testing.T) string {
@@ -92,12 +92,12 @@ func TestNoHostPathOrDeviceNameInProduct(t *testing.T) {
 // The pattern itself: it names this host's places and a disk, and leaves the XDG defaults and the
 // word "scratch" alone.
 func TestHostPathPattern(t *testing.T) {
-	for _, line := range []string{"/home/jun/code", "/state/crw/mgmt", "/scratch/crw/fuzz", "/var/tmp/crw-12", "/dev/nvme0n1p2", "/dev/sda1", "nvme1n1", "/mnt/disk2", "lina-os"} {
+	for _, line := range []string{"/home/jun/code", "/state/crw/mgmt", "/scratch/crw/fuzz", "/var/tmp/crw-12", "/var/tmp/cxc-v0.2.40/plugins", "/dev/nvme0n1p2", "/dev/sda1", "nvme1n1", "/mnt/disk2", "lina-os"} {
 		if !hostPath.MatchString(line) {
 			t.Errorf("%q is not matched", line)
 		}
 	}
-	for _, line := range []string{"~/.local/state/crw", "scratch_root", "/tmp/crw", "$XDG_STATE_HOME/crw", "/mnt/user-data/outputs", "/var/tmp/cxc-v0.2.40"} {
+	for _, line := range []string{"~/.local/state/crw", "scratch_root", "/tmp/crw", "$XDG_STATE_HOME/crw", "/mnt/user-data/outputs", "cxc-v0.2.40/plugins/codexclaw", "/var/tmp/cxc-v0.2.40-rec"} {
 		if hostPath.MatchString(line) {
 			t.Errorf("%q is matched", line)
 		}

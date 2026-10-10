@@ -107,13 +107,13 @@ func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 			// The pool's own start-up request carries an empty root.
 			t.Run("empty root", func(t *testing.T) {
 				requireOracleModule(t, name)
-				checkStartupHandshake(t, root, name, "", DefaultOracleRoot, want)
+				checkStartupHandshake(t, root, name, "", OracleRoot(), want)
 			})
 			// The same request with the root set to an empty directory: the shim must still answer
 			// inertly and must leave that directory empty, so it did not run a case under it.
 			t.Run("empty directory root", func(t *testing.T) {
 				requireOracleModule(t, name)
-				checkStartupHandshake(t, root, name, t.TempDir(), DefaultOracleRoot, want)
+				checkStartupHandshake(t, root, name, t.TempDir(), OracleRoot(), want)
 			})
 			// The same request with the original root set to an empty directory. This case does not
 			// read the host's original tree, so it is not skipped when that tree is absent.

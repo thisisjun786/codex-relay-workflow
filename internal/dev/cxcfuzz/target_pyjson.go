@@ -21,7 +21,7 @@ func pyjsonTarget() Target {
 		Go:       pyjsonGo,
 		// The shim is a Node worker like the other targets, but it drives python3 json.tool, so
 		// python3 is required on PATH before any case runs.
-		Oracle:  Oracle{Command: "node", Shim: shimPath("pyjson"), Root: DefaultOracleRoot, Requires: []string{"python3"}},
+		Oracle:  Oracle{Command: "node", Shim: shimPath("pyjson"), Root: OracleRoot(), Requires: []string{"python3"}},
 		Compare: pyjsonCompare,
 	}
 }

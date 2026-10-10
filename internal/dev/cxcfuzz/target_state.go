@@ -33,7 +33,7 @@ func stateTarget() Target {
 		Name:     "state",
 		Generate: stateGenerate,
 		Go:       stateGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("state"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("state"), Root: OracleRoot()},
 		Compare:  stateCompare,
 	}
 }
