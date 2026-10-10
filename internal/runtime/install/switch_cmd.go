@@ -20,18 +20,19 @@ import (
 
 const switchUsage = "Usage:\n" +
 	"  crw install switch crw       select CRW: switch.json says crw, the CXC plugin off\n" +
-	"  crw install switch cxc       return to CXC: restore what the switch changed\n" +
+	"  crw install switch cxc       emergency stop: the ported CRW hooks off, and the recorded values restored\n" +
 	"  crw install switch status    which side is on, plugin keys, hook trust, role files\n\n" +
 	"  --json                 print one JSON document\n" +
 	"  --codex-home <dir>     the Codex home (default $CODEX_HOME or ~/.codex)\n" +
 	"  --plugin-root <dir>    the installed CRW plugin package whose hook trust status reports\n" +
 	"  --help / -h / help in any argument position prints this text and writes nothing.\n\n" +
 	"switch writes $CODEX_HOME/crw/switch.json, sets [plugins.\"codexclaw@codexclaw\"] enabled = false\n" +
-	"(crw@crw is never touched), and replaces CXC-owned agents/executor.toml and agents/architect.toml with the\n" +
+	"(crw@crw is never touched), and replaces agents/executor.toml and agents/architect.toml with the\n" +
 	"CRW role files. Every value it changes is recorded first in the `switch` section of\n" +
 	"$CODEX_HOME/.crw-install.json, config.toml and each role file are copied to a timestamped .crw-<ts>.bak\n" +
-	"before they change, and a step that fails undoes the steps before it. `switch cxc` puts the recorded\n" +
-	"values back byte for byte. `features disable` does not touch the switch.\n"
+	"before they change, and a step that fails undoes the steps before it. `switch cxc` is the emergency\n" +
+	"stop of the ported hooks: it turns them off and puts the recorded values back byte for byte. It does not\n" +
+	"re-activate CXC. `features disable` does not touch the switch.\n"
 
 // The four states status reports.
 const (
@@ -296,7 +297,7 @@ func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 	switch {
 	case surfaceCRW && surfaceCXC:
 		s.State = switchStateConflict
-		s.Notes = append(s.Notes, "both the CRW hooks and the CXC plugin are on: run `crw install switch crw` (CXC off) or `crw install switch cxc`")
+		s.Notes = append(s.Notes, "both the CRW hooks and the CXC plugin are on: run `crw install switch crw` (CXC off), or `crw install switch cxc` (emergency stop: the CRW hooks off)")
 	case surfaceCRW:
 		s.State = switchStateCRW
 	case surfaceCXC:
