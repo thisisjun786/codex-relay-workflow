@@ -131,6 +131,16 @@ func harnessInstallRecover(run func()) (thrown error) {
 	return nil
 }
 
+// harnessInstallRecoverCheck runs one check and fails the test if it panics.
+func harnessInstallRecoverCheck(t *testing.T, run func() HarnessCheck) HarnessCheck {
+	t.Helper()
+	var check HarnessCheck
+	if thrown := harnessInstallRecover(func() { check = run() }); thrown != nil {
+		t.Fatalf("the check panicked: %v", thrown)
+	}
+	return check
+}
+
 // harnessInstallValue is the JSON text of one value, as JSON.stringify writes it.
 func harnessInstallValue(value any) string {
 	// json.Marshal of these test documents cannot fail.
@@ -204,13 +214,21 @@ func TestHarnessInstallPabcdRecorded(t *testing.T) {
 			root := t.TempDir()
 			ws := harnessInstallPabcdWorkspace(t, root, recorded.Name)
 			if recorded.Threw != "" {
+				// The oracle's readdirSync throw outside every catch loses the report; the port
+				// answers a WARN that names the same failure (CRW-1152, port: fixed).
 				want := harnessInstallExpected(recorded.Threw, root)
-				thrown := harnessInstallRecover(func() { HarnessPabcdCheck(ws) })
-				if thrown == nil {
-					t.Fatalf("HarnessPabcdCheck(%s) did not throw, want %q", recorded.Name, want)
+				got := harnessInstallRecoverCheck(t, func() HarnessCheck { return HarnessPabcdCheck(ws) })
+				if got.Name != "pabcd-state" || got.Severity != HarnessWarn || got.Evidence != "cannot read .crw/sessions, check skipped: "+want {
+					t.Fatalf("HarnessPabcdCheck(%s) = %+v, want a skipped WARN carrying %q", recorded.Name, got, want)
 				}
-				if thrown.Error() != want {
-					t.Fatalf("HarnessPabcdCheck(%s) thrown = %q, want %q", recorded.Name, thrown.Error(), want)
+				return
+			}
+			if recorded.Name == "deep_10001" {
+				// JSON.parse accepts nesting past 10,000; the port stops at the parser's depth limit and
+				// says so instead of passing the slot (CRW-1152, port: fixed).
+				got := HarnessPabcdCheck(ws)
+				if got.Severity != HarnessWarn || got.Evidence != "1 corrupt session file(s): deep.json (nested past the depth limit)" {
+					t.Fatalf("HarnessPabcdCheck(deep_10001) = %+v, want the depth-limit WARN", got)
 				}
 				return
 			}
@@ -290,16 +308,34 @@ func harnessInstallManifestPayload(t *testing.T, root, name string) string {
 	return payload
 }
 
+// harnessInstallIndependentKinds applies the one deviation from the recorded oracle answers: the
+// oracle stops at the first document it cannot use and leaves the other kind unevaluated (or, for
+// a failure that is not a parse failure, answers one generic check), where the port evaluates the
+// hook and the MCP kind independently, so a kind whose document is fine is still reported
+// (CRW-1152, port: fixed).
+func harnessInstallIndependentKinds(name string, recorded []harnessInstallCheckRecorded) []harnessInstallCheckRecorded {
+	switch name {
+	case "unparseable_hook":
+		return []harnessInstallCheckRecorded{recorded[0], {Name: "mcp-targets", Severity: "PASS", Evidence: "all mcp target(s) present", Repair: recorded[1].Repair}}
+	case "unparseable_mcp":
+		return []harnessInstallCheckRecorded{{Name: "hooks", Severity: "PASS", Evidence: "all hook target(s) present", Repair: recorded[0].Repair}, recorded[1]}
+	case "nonparse_failure":
+		return []harnessInstallCheckRecorded{{Name: "hooks", Severity: recorded[0].Severity, Evidence: recorded[0].Evidence, Repair: recorded[0].Repair}, {Name: "mcp-targets", Severity: "PASS", Evidence: "all mcp target(s) present", Repair: recorded[0].Repair}}
+	}
+	return recorded
+}
+
 func TestHarnessInstallManifestTargetsRecorded(t *testing.T) {
 	for _, recorded := range harnessInstallOracleRecorded(t).ManifestTargets {
 		t.Run(recorded.Name, func(t *testing.T) {
 			root := t.TempDir()
 			payload := harnessInstallManifestPayload(t, root, recorded.Name)
 			got := HarnessManifestTargetChecks(payload)
-			if len(got) != len(recorded.Checks) {
-				t.Fatalf("HarnessManifestTargetChecks(%s) = %d checks, want %d: %+v", recorded.Name, len(got), len(recorded.Checks), got)
+			recordedChecks := harnessInstallIndependentKinds(recorded.Name, recorded.Checks)
+			if len(got) != len(recordedChecks) {
+				t.Fatalf("HarnessManifestTargetChecks(%s) = %d checks, want %d: %+v", recorded.Name, len(got), len(recordedChecks), got)
 			}
-			for i, want := range recorded.Checks {
+			for i, want := range recordedChecks {
 				expected := harnessInstallCheckRecorded{
 					Name:     want.Name,
 					Severity: want.Severity,
@@ -504,16 +540,17 @@ func TestHarnessInstallCodexHomePort(t *testing.T) {
 	}
 }
 
-// The resolver error must panic before any manifest read, as the oracle's homedir throw
-// propagates before runInstalledRootCheck reads its payload (audit round 3).
-func TestHarnessInstallResolverPanicsBeforeManifest(t *testing.T) {
+// The resolver error is a skipped WARN before any manifest read: the oracle's homedir throw
+// propagates before runInstalledRootCheck reads its payload and loses the report, the port keeps
+// the order and the report (CRW-1152, port: fixed).
+func TestHarnessInstallResolverErrorSkipsBeforeManifest(t *testing.T) {
 	read := false
-	thrown := harnessInstallRecover(func() {
-		harnessInstallInstalledRootCheck("/payload", func() (string, error) { return "", errors.New("no home") },
+	skipped := harnessInstallRecoverCheck(t, func() HarnessCheck {
+		return harnessInstallInstalledRootCheck("/payload", func() (string, error) { return "", errors.New("no home") },
 			func(string) ([]byte, error) { read = true; return nil, errors.New("the manifest must not be read") })
 	})
-	if thrown == nil || thrown.Error() != "no home" {
-		t.Fatalf("thrown = %v, want the resolver error", thrown)
+	if skipped.Name != "install-root" || skipped.Severity != HarnessWarn || !strings.Contains(skipped.Evidence, "no home") {
+		t.Fatalf("check = %+v, want the install-root WARN carrying the resolver error", skipped)
 	}
 	if read {
 		t.Fatal("the manifest was read before the resolver error propagated")
