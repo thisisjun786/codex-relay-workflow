@@ -29,8 +29,10 @@ func TestSkillsUnderARelativeRootAreContained(t *testing.T) {
 	if len(SkillBlocks([]string{"use $crw-dev"}, "skills")) == 0 {
 		t.Fatal("SkillBlocks over a relative root is empty")
 	}
-	if got := BuildLeafSkillCatalog("skills"); got != "" && !strings.Contains(got, "crw-dev") {
-		t.Fatalf("catalog = %q", got)
+	// The catalog lists the skill, as the absolute root's does; an empty catalog is a failure (post-evaluation verification).
+	abs = BuildLeafSkillCatalog(filepath.Join(dir, "skills"))
+	if got := BuildLeafSkillCatalog("skills"); !strings.Contains(got, "\n- crw-dev: Develop.") || !strings.Contains(abs, "\n- crw-dev: Develop.") {
+		t.Fatalf("catalog over a relative root = %q, over the absolute root = %q", got, abs)
 	}
 }
 
