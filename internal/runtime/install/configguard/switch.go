@@ -237,10 +237,9 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 			return nil, fmt.Errorf("%s is not a readable install manifest (left unchanged)", manifestFile)
 		}
 	}
-	prevState, err := hookswitch.ReadRaw(home)
-	if err != nil {
-		return nil, err
-	}
+	// switch.json is the switch's own file: one that cannot be read or parsed is not a reason to stop
+	// but a file to set aside and replace below (CRW-1174). Its read error is kept for the note.
+	prevState, stateReadErr := hookswitch.ReadRaw(home)
 	pre, preExists, err := activationReadFile(cfg)
 	if err != nil {
 		return nil, err
@@ -401,14 +400,32 @@ func RunSwitch(deps SwitchDeps, target string) (*SwitchReport, error) {
 	}
 
 	// switch.json
-	current, curErr := hookswitch.Parse(prevState)
-	if prevState == nil || curErr != nil || current.Active != target {
+	var current hookswitch.State
+	problem := stateReadErr
+	if problem == nil && prevState != nil {
+		current, problem = hookswitch.Parse(prevState)
+	}
+	broken := problem != nil
+	if broken || prevState == nil || current.Active != target {
+		var aside *hookswitch.Aside
 		err = tx.run("state", func() (func() error, error) {
 			undo := func() error {
-				if prevState == nil {
+				switch {
+				case aside != nil:
+					return aside.Restore()
+				case broken || prevState == nil:
 					return hookswitch.Remove(home)
 				}
 				return hookswitch.WriteRaw(home, prevState)
+			}
+			if broken {
+				var kerr error
+				if aside, kerr = hookswitch.KeepAside(home, switchStamp(stamp)); kerr != nil {
+					return nil, kerr
+				}
+				if aside != nil {
+					report.Notes = append(report.Notes, "switch.json could not be used ("+problem.Error()+"): it was replaced, and the file as it was is kept at "+aside.Path)
+				}
 			}
 			return undo, hookswitch.Write(home, hookswitch.State{Active: target, ChangedAt: stamp, By: SwitchBy})
 		})

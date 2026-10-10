@@ -104,9 +104,19 @@ writer of `config.toml` takes:
    never touch it, and `Activate` and `config set` carry it over unchanged). The section is written
    again, before the file it protects is replaced, to record the copy of each CXC role file;
 2. writes `<CODEX_HOME>/crw/switch.json`, `{"active":"crw","changedAt":"<RFC 3339 UTC>","by":"crw install switch"}`,
-   atomically (a synced temporary file in the same directory, renamed into place). The path, the
-   document and the writer are `internal/hookswitch`, the package the hooks read the file with, so the
-   file has one definition;
+   atomically (a synced temporary file in the same directory, renamed into place, then the directory
+   synced: a directory that cannot be opened or synced is an error that says the file is in place and
+   its durability is not confirmed, and the step is undone like any failed step; a filesystem that
+   gives a directory no sync at all (EINVAL, ENOTSUP, ENOSYS) is not an error). The path, the
+   document, the validity rule and the writer are `internal/hookswitch`, the package the hooks read
+   the file with, so the file has one definition. The installer reads the file strictly (a field it
+   does not know, content after the document, an `active` that is neither state, and a state without
+   `changedAt` or `by` are refused), where the hook is lenient and reads such a document as it can
+   (unreadable or invalid is on with a warning). The installer owns this file, so one it cannot use
+   (a link whose target is gone, a FIFO, a directory, a file over 64 KiB, a document it refuses) does
+   not stop the command: it is kept as `switch.json.crw-<ts>.bak` beside it (a hard link, so a hook
+   never sees the switch absent; a directory is moved), the reason and the backup are reported in the
+   notes, and a failed later step puts the entry back;
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
    `enabled=true`, a tab-separated line or a CRLF file to the byte. A key and a table are identified by

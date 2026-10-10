@@ -44,6 +44,8 @@ func TestParseRefusesWhatItCannotRead(t *testing.T) {
 		"empty active":   `{"changedAt":"x","by":"y"}`,
 		"not json":       `active: crw`,
 		"trailing":       `{"active":"crw","changedAt":"x","by":"y"} {}`,
+		"unknown field":  `{"active":"crw","changedAt":"x","by":"y","extra":1}`,
+		"trailing text":  `{"active":"crw","changedAt":"x","by":"y"} x`,
 	} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("%s: Parse accepted %q", name, in)
@@ -89,7 +91,7 @@ func TestRemoveToleratesAnAbsentFile(t *testing.T) {
 	if err := Remove(home); err != nil {
 		t.Fatal(err)
 	}
-	if err := Write(home, State{Active: CXC}); err != nil {
+	if err := Write(home, State{Active: CXC, ChangedAt: "a", By: "b"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Remove(home); err != nil {
@@ -97,6 +99,179 @@ func TestRemoveToleratesAnAbsentFile(t *testing.T) {
 	}
 	if _, err := os.Stat(Path(home)); !os.IsNotExist(err) {
 		t.Fatalf("file remains: %v", err)
+	}
+}
+
+// The installer's strictness does not reach the hook: a document with a field the hook does not
+// know is still read (and the installer replaces it at the next switch, see Parse).
+func TestHookReadsAnUnknownFieldWhereParseRefusesIt(t *testing.T) {
+	home, file := switchDir(t)
+	doc := `{"active":"cxc","changedAt":"x","by":"y","extra":1}`
+	if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := readWithin(t, home); r.On || r.Problem != "" {
+		t.Fatalf("a hook reads %+v, want off without a problem", r)
+	}
+	if _, err := Load(home); err == nil {
+		t.Fatal("Load accepted an unknown field")
+	}
+}
+
+// The validity of a state is one rule: the hook's problem is the rule's own text, which Parse and
+// Marshal carry.
+func TestValidityIsOneRuleForReadParseAndMarshal(t *testing.T) {
+	home, file := switchDir(t)
+	doc := `{"active":"both","changedAt":"x","by":"y"}`
+	if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := readWithin(t, home)
+	mustBeOnWithProblem(t, r)
+	_, perr := Parse([]byte(doc))
+	_, merr := Marshal(State{Active: "both", ChangedAt: "x", By: "y"})
+	if perr == nil || merr == nil || !strings.Contains(perr.Error(), r.Problem) || !strings.Contains(merr.Error(), r.Problem) {
+		t.Fatalf("hook problem %q, Parse %v, Marshal %v", r.Problem, perr, merr)
+	}
+}
+
+func TestWriteRefusesAStateWithoutItsProvenance(t *testing.T) {
+	for name, s := range map[string]State{
+		"no changedAt": {Active: CRW, By: "b"},
+		"no by":        {Active: CXC, ChangedAt: "a"},
+		"neither":      {Active: CRW},
+	} {
+		home := t.TempDir()
+		if err := Write(home, s); err == nil {
+			t.Errorf("%s: Write accepted %+v", name, s)
+		}
+		if _, err := Marshal(s); err == nil {
+			t.Errorf("%s: Marshal accepted %+v", name, s)
+		}
+		if _, err := os.Lstat(Path(home)); !os.IsNotExist(err) {
+			t.Errorf("%s: a file was published: %v", name, err)
+		}
+	}
+}
+
+// brokenEntries makes each kind of switch.json the hook cannot read at the switch path.
+var brokenEntries = map[string]func(t *testing.T, home, file string){
+	"dangling link": func(t *testing.T, home, file string) {
+		if err := os.Symlink(filepath.Join(home, "gone.json"), file); err != nil {
+			t.Fatal(err)
+		}
+	},
+	"fifo": func(t *testing.T, home, file string) {
+		if err := syscall.Mkfifo(file, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	},
+	"directory": func(t *testing.T, home, file string) {
+		if err := os.Mkdir(file, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(file, "inner"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	},
+	"over the size bound": func(t *testing.T, home, file string) {
+		if err := os.WriteFile(file, []byte(`{"active":"crw","changedAt":"`+strings.Repeat("x", MaxBytes)+`","by":"y"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	},
+}
+
+func TestKeepAsideKeepsWhateverIsAtThePathAndRestoreGivesItBack(t *testing.T) {
+	for name, mk := range brokenEntries {
+		t.Run(name, func(t *testing.T) {
+			home, file := switchDir(t)
+			mk(t, home, file)
+			before, err := os.Lstat(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadRaw(home); err == nil {
+				t.Fatal("ReadRaw read it")
+			}
+			a, err := KeepAside(home, "s1")
+			if err != nil || a == nil {
+				t.Fatalf("KeepAside = %v, %v", a, err)
+			}
+			if !strings.HasSuffix(a.Path, "switch.json.crw-s1.bak") || filepath.Dir(a.Path) != filepath.Dir(file) {
+				t.Fatalf("kept at %s", a.Path)
+			}
+			kept, err := os.Lstat(a.Path)
+			if err != nil || kept.Mode().Type() != before.Mode().Type() {
+				t.Fatalf("kept entry %v, %v; was %v", kept, err, before.Mode())
+			}
+			// The replacement publishes whole and leaves the kept entry as it was.
+			if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+				t.Fatal(err)
+			}
+			if s, err := Load(home); err != nil || s == nil || s.Active != CRW {
+				t.Fatalf("Load after the replacement = %v, %v", s, err)
+			}
+			if r := readWithin(t, home); !r.On || r.Problem != "" {
+				t.Fatalf("a hook reads %+v after the repair", r)
+			}
+			if kept, err := os.Lstat(a.Path); err != nil || kept.Mode().Type() != before.Mode().Type() {
+				t.Fatalf("kept entry after the replacement %v, %v", kept, err)
+			}
+			// Restore puts the entry back and leaves no backup name.
+			if err := a.Restore(); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.Lstat(file)
+			if err != nil || after.Mode().Type() != before.Mode().Type() {
+				t.Fatalf("restored entry %v, %v; was %v", after, err, before.Mode())
+			}
+			if _, err := os.Lstat(a.Path); !os.IsNotExist(err) {
+				t.Fatalf("the backup name remains: %v", err)
+			}
+		})
+	}
+}
+
+// A replacement that failed before it published leaves both names on the one entry; Restore ends
+// with the entry in place and no backup.
+func TestKeepAsideRestoreBeforeAnyPublication(t *testing.T) {
+	for name, mk := range brokenEntries {
+		t.Run(name, func(t *testing.T) {
+			home, file := switchDir(t)
+			mk(t, home, file)
+			a, err := KeepAside(home, "s2")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.Restore(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(file); err != nil {
+				t.Fatalf("the entry is gone: %v", err)
+			}
+			if _, err := os.Lstat(a.Path); !os.IsNotExist(err) {
+				t.Fatalf("the backup name remains: %v", err)
+			}
+		})
+	}
+}
+
+func TestKeepAsideOfNothingAndOfAnExistingBackup(t *testing.T) {
+	home, file := switchDir(t)
+	if a, err := KeepAside(home, "s3"); a != nil || err != nil {
+		t.Fatalf("KeepAside of an absent file = %v, %v", a, err)
+	}
+	if err := os.WriteFile(file, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file+".crw-s3.bak", []byte("older"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := KeepAside(home, "s3"); a != nil || err == nil {
+		t.Fatalf("KeepAside over an existing backup = %v, %v", a, err)
+	}
+	if b, _ := os.ReadFile(file + ".crw-s3.bak"); string(b) != "older" {
+		t.Fatalf("the existing backup was changed: %q", b)
 	}
 }
 
