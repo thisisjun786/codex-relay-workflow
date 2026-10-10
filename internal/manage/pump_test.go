@@ -23,6 +23,7 @@ var pumpTestNow = time.Date(2026, 10, 7, 3, 0, 0, 0, time.UTC)
 func pumpTestEnv(t *testing.T, now *time.Time) *Env {
 	t.Helper()
 	coreTempHome(t)
+	pumpSignalTestQuiet(t)
 	return &Env{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Getenv: os.Getenv,
 		Now: func() time.Time { return *now }, Executable: os.Args[0]}
 }
