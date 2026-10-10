@@ -53,21 +53,32 @@ type StaleNodesCheck func(ctx context.Context, checkout, integrationRef, head st
 // a batch split out is not read, and a batch of another integration ref is not read either.
 func (s *Scheduler) StaleIntegratedNodes(ctx context.Context, checkout, integrationRef, head string) ([]StaleNode, error) {
 	q := s.Store.Q(ctx)
-	marked, err := integratedAcceptances(ctx, q, integrationRef)
+	histories, err := integratedAcceptances(ctx, q, integrationRef)
 	if err != nil {
 		return nil, err
 	}
 	snaps := map[string]dag.Snapshot{}
 	var out []StaleNode
-	for _, m := range marked {
-		if !hasCommitIn(ctx, checkout, m.head) {
-			continue
+	for _, history := range histories {
+		// the acceptance of the node this head holds: the newest of the ref's integrated acceptances whose head is an ancestor
+		// of head. A newer one the head does not contain (another checkout of the store integrated it on a branch of the same
+		// name) is not what this head publishes, and must not hide the one it does.
+		var m markedAcceptance
+		held := false
+		for _, candidate := range history {
+			if !hasCommitIn(ctx, checkout, candidate.head) {
+				continue
+			}
+			included, err := isAncestorIn(ctx, checkout, candidate.head, head)
+			if err != nil {
+				return nil, err
+			}
+			if included {
+				m, held = candidate, true
+				break
+			}
 		}
-		included, err := isAncestorIn(ctx, checkout, m.head, head)
-		if err != nil {
-			return nil, err
-		}
-		if !included {
+		if !held {
 			continue
 		}
 		snap, ok := snaps[m.plan]
@@ -98,11 +109,12 @@ func (s *Scheduler) StaleIntegratedNodes(ctx context.Context, checkout, integrat
 	return out, nil
 }
 
-// markedAcceptance is the newest acceptance of one node that a batch of the ref merged, with the head it integrated.
+// markedAcceptance is one acceptance of a node that a batch of the ref merged, with the head it integrated.
 type markedAcceptance struct{ plan, node, acceptance, head string }
 
-// integratedAcceptances are, per plan and node, the newest acceptance a batch of integrationRef put in the branch. A batch puts
-// a candidate in the branch when it moved the branch onto a head that merged it, and when it marked it as already contained:
+// integratedAcceptances are, per plan and node, the acceptances a batch of integrationRef put in the branch, newest first: the
+// history of the node on the ref. A batch puts a candidate in the branch when it moved the branch onto a head that merged it,
+// and when it marked it as already contained:
 //   - a batch whose ref_moved row is durable merged the candidates its batch row lists (merged_json); a move the next run
 //     reconciled (the batch died after the swap, so it has no batch row) merged the candidates its verified-head intent
 //     covers, the one that names the head the branch moved to. Neither depends on a mark, so a batch that stopped after the
@@ -111,41 +123,50 @@ type markedAcceptance struct{ plan, node, acceptance, head string }
 //     candidate the branch already contained.
 //
 // A candidate a batch split out is in neither its merged list nor its verified head's covered set and has no mark; an
-// intent whose batch never moved the branch has no ref_moved row; a batch of another ref is not read. An older acceptance of
-// the same node that a later row replaced in the ref is not read: the later one is what the ref holds for the node.
-func integratedAcceptances(ctx context.Context, q store.Querier, integrationRef string) ([]markedAcceptance, error) {
-	newest := map[[2]string]markedAcceptance{}
-	order := map[[2]string]int64{}
+// intent whose batch never moved the branch has no ref_moved row; a batch of another ref is not read. The history keeps every
+// acceptance, newest first, because which of them a pushed head holds is decided against that head, not here: a ref name can
+// belong to more than one checkout of the store, and the newest acceptance of a node may sit in a head the pushed one does not
+// contain.
+func integratedAcceptances(ctx context.Context, q store.Querier, integrationRef string) ([][]markedAcceptance, error) {
+	byKey := map[[2]string][]orderedAcceptance{}
 	var keys [][2]string
-	add := func(m markedAcceptance, at int64) {
-		if m.node == "" || m.acceptance == "" {
+	add := func(r orderedAcceptance) {
+		if r.node == "" || r.acceptance == "" {
 			return
 		}
-		key := [2]string{m.plan, m.node}
-		if _, seen := newest[key]; !seen {
+		key := [2]string{r.plan, r.node}
+		if _, seen := byKey[key]; !seen {
 			keys = append(keys, key)
-		} else if at < order[key] {
-			return
 		}
-		newest[key], order[key] = m, at
+		byKey[key] = append(byKey[key], r)
 	}
 	marks, err := markedStageRows(ctx, q, integrationRef)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range marks {
-		add(r.markedAcceptance, r.at)
+		add(r)
 	}
 	moved, err := movedBatchMerges(ctx, q, integrationRef)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range moved {
-		add(r.markedAcceptance, r.at)
+		add(r)
 	}
-	out := make([]markedAcceptance, 0, len(keys))
+	out := make([][]markedAcceptance, 0, len(keys))
 	for _, key := range keys {
-		out = append(out, newest[key])
+		rows := byKey[key]
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].at > rows[j].at })
+		var history []markedAcceptance
+		seen := map[string]bool{}
+		for _, r := range rows {
+			if !seen[r.acceptance+"@"+r.head] {
+				seen[r.acceptance+"@"+r.head] = true
+				history = append(history, r.markedAcceptance)
+			}
+		}
+		out = append(out, history)
 	}
 	return out, nil
 }

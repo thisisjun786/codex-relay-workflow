@@ -384,3 +384,56 @@ func TestStaleNodesListTheVerifiedCandidatesOfAReconciledMove(t *testing.T) {
 		t.Fatalf("the reconciled move's verified candidate is listed and the split one is not: got %v", got)
 	}
 }
+
+// The acceptance a pushed head holds is judged, not the newest acceptance of the same ref name: another checkout of the store
+// integrated a newer acceptance of the node on a branch of the same name, a head the pushed one does not contain
+// (verification round 3, d4). The pushed head holds the superseded one and says so, whichever head is read.
+func TestStaleNodesJudgeTheAcceptanceTheHeadContainsNotANewerOneOutsideIt(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	pending := k.integrateNodes(t, "dev-int", "a") // checkout 1: integrated, not pushed
+	var first string
+	if err := k.s.DB.QueryRow("SELECT acceptance_id FROM dag_acceptances WHERE plan_id = 'g' AND node_id = 'a' AND state = 'active'").Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	// the corrected output of the node: a later commit of the node's branch, a newer report, and an acceptance that supersedes
+	// the first
+	var rel string
+	if err := k.s.DB.QueryRow("SELECT relationship_id FROM dag_acceptances WHERE acceptance_id = ?", first).Scan(&rel); err != nil {
+		t.Fatal(err)
+	}
+	k.repo.git("checkout", "-q", "feature-a")
+	k.repo.write("a2.txt", "a2\n")
+	k.repo.git("add", "a2.txt")
+	k.repo.git("commit", "-q", "-m", "node a corrected")
+	k.heads["a"] = k.repo.git("rev-parse", "HEAD")
+	k.repo.git("checkout", "-q", "dev")
+	k.supersedeReport(rel, "a", "g", "second")
+	k.exec("INSERT INTO dag_verified_heads (event_id, relationship_id, execution_generation, verdict_turn_id, head_sha, recorded_by_task_id, recorded_at) VALUES (?,?,?,?,?,?,?)",
+		"evt-second-"+rel, rel, 1, "verdict-turn-2", k.heads["a"], "parent", k.clock())
+	record := writeSealedRecord(t, k.repo.path, k.heads["a"], k.base, k.treeOf(k.heads["a"]), "pass")
+	second, err := k.sched.Accept(context.Background(), "g", "a", "parent", premergeWithRecord(k.sched, context.Background(), "g", "a", "parent", AcceptInput{
+		RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"}, Supersedes: first,
+		Commit: &CommitRef{Head: k.heads["a"], Base: k.base, Checkout: k.repo.path, Record: record},
+	}))
+	if err != nil || second.SupersededID != first {
+		t.Fatalf("the corrected output supersedes the first acceptance: %+v, %v", second, err)
+	}
+	// checkout 2: its dev-int starts from the base and integrates the corrected output
+	k.repo.git("branch", "-D", "dev-int")
+	in := k.batchIn()
+	in.Nodes = []string{"a"}
+	res, err := k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: inProcessVerifier(t), Update: updateIntegrationRef})
+	if err != nil || len(res.Merged) != 1 || res.Merged[0].AcceptanceID != second.AcceptanceID {
+		t.Fatalf("the second checkout integrates the corrected acceptance: %+v, %v", res, err)
+	}
+	if got := staleSummary(k.staleNodes(t, "dev-int", pending)); !reflect.DeepEqual(got, []string{"a:acceptance_superseded"}) {
+		t.Fatalf("the pushed head holds the superseded acceptance and must list it, got %v", got)
+	}
+	if got := k.staleNodes(t, "dev-int", pending); len(got) != 1 || got[0].AcceptanceID != first {
+		t.Fatalf("the listed acceptance is the one the head holds (%s), got %+v", first, got)
+	}
+	// the head of the corrected acceptance holds the newer one, which the plan stands behind
+	if got := staleSummary(k.staleNodes(t, "dev-int", res.NewHead)); !reflect.DeepEqual(got, []string{}) {
+		t.Fatalf("the corrected head is not stale, got %v", got)
+	}
+}
