@@ -1,8 +1,12 @@
 package configguard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // The second verification round of this lane (CRW-1141, CRW-1143, CRW-1144, CRW-1145, CRW-1153) reproduced six defects with
@@ -52,6 +56,61 @@ func TestUnsupportedReadbackDoesNotProveDisabled(t *testing.T) {
 	m := parseInstallManifest(activationRead(t, manifestPath(home)))
 	if !failed || m.ReleasedAt != nil || !m.Flags["goals"].EnabledByCodexclaw {
 		t.Fatalf("goals is not reported as unconfirmed, or its ownership was released: %+v released=%v", r, m.ReleasedAt)
+	}
+}
+
+// CRW-1144: the deactivation re-proves the config lock after every disable runner. A runner that replaced the linked
+// config.toml with a file another writer then locked stops the deactivation before the next disable.
+func TestDeactivateRechecksLockBeforeNextRunner(t *testing.T) {
+	home := activationHome(t)
+	path := filepath.Join(home, "config.toml")
+	target := filepath.Join(home, "target.toml")
+	activationWrite(t, target, configLockPathsRunnerPost)
+	if err := os.Symlink("target.toml", path); err != nil {
+		t.Fatal(err)
+	}
+	m := &InstallManifest{Version: 2, ConfigPath: path, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
+	for _, k := range DeclaredFeatures() {
+		m.Flags[string(k)] = FlagRecord{EnabledByCodexclaw: true}
+	}
+	b, err := manifestBytes(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationWrite(t, manifestPath(home), string(b))
+	state := allActivationFlags()
+	var other *crwdir.ConfigLock
+	t.Cleanup(func() {
+		if other != nil {
+			other.Release()
+		}
+	})
+	writes := []string{}
+	run := func(args []string) CodexRunResult {
+		if args[1] == "list" {
+			return CodexRunResult{Stdout: configLockPathsFeatureListWith(state)}
+		}
+		if other != nil {
+			writes = append(writes, args[2])
+		} else {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			activationWrite(t, path, configLockPathsRunnerPost)
+			var err error
+			if other, err = crwdir.LockConfig(path, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		state[args[2]] = false
+		return CodexRunResult{}
+	}
+	r, err := Deactivate(deactivationDeps(home, run))
+	if len(writes) > 0 || err == nil {
+		t.Fatalf("disables ran while another writer holds the file config.toml names now: %v; result=%+v err=%v", writes, r, err)
+	}
+	if after := parseInstallManifest(activationRead(t, manifestPath(home))); after.ReleasedAt != nil {
+		t.Fatal("the manifest was released by a deactivation that stopped")
 	}
 }
 

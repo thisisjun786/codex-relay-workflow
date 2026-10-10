@@ -597,12 +597,19 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// deactivation writes config.toml, so an uninstall with nothing to restore and no flag CRW
 	// enabled is never gated on it, and an empty config path names no file to guard.
 	var pin *configLockPathsPin
+	// locks and dirInfo re-prove, after every CLI run, that the file the caller's path names is still guarded by a lock this
+	// command holds (CRW-1144): a disable may replace config.toml, and another writer may lock the new file.
+	var locks *configLocks
+	var dirInfo os.FileInfo
 	if path != "" && configLockWritersDeactivateWrites(m) {
 		lock, err := crwdir.LockConfig(path, activationLockWait)
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
+		locks = &configLocks{main: lock}
+		defer locks.releaseExtra()
+		dirInfo, _ = os.Stat(filepath.Dir(lockedPath))
 		var pinErr error
 		pin, pinErr = configLockPathsPinned(lock)
 		if pinErr != nil {
@@ -703,9 +710,14 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		if res.ExitCode != 0 {
 			// A failed disable is reported, and keeps the ownership for a retry (CRW-1145).
 			r.Failed = append(r.Failed, FailedFlag{key, res.ExitCode, activationFailureMessage(res.Stderr)})
-			continue
+		} else {
+			r.Disabled = append(r.Disabled, key)
 		}
-		r.Disabled = append(r.Disabled, key)
+		// The disable may have replaced config.toml (CRW-1144): the next one runs only under a lock that guards the file the
+		// path names now. Otherwise nothing more runs, nothing is released, and the ownership stays for a retry.
+		if err := deactivateRecheck(locks, lockedPath, dirInfo); err != nil {
+			return r, fmt.Errorf("%w; the flags after %s were not disabled, the disables that ran are not confirmed, and crw's ownership is kept: run 'crw install features disable' again", err, key)
+		}
 	}
 	// An exit 0 is not proof (CRW-1143): the flags are read back, and a flag still enabled, or one that cannot be read back,
 	// is a failure that keeps the ownership.
@@ -727,6 +739,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			}
 		}
 		r.Disabled = confirmed
+		if err := deactivateRecheck(locks, lockedPath, dirInfo); err != nil {
+			return r, fmt.Errorf("%w; the disables are not confirmed and crw's ownership is kept: run 'crw install features disable' again", err)
+		}
 	}
 	// A deactivation that reverted everything it owned releases the manifest: the records stay as evidence, and the next
 	// activation starts a new baseline (CRW-1145). A flag that failed to disable, or a key whose provenance could not be
@@ -751,6 +766,15 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 	}
 	return r, durability()
+}
+
+// deactivateRecheck is configLocks.recheck for a deactivation that holds the config lock; one that holds none (an empty
+// config path) has no lock to re-prove.
+func deactivateRecheck(locks *configLocks, path string, dir os.FileInfo) error {
+	if locks == nil {
+		return nil
+	}
+	return locks.recheck(path, dir)
 }
 
 // deactivateUnresolved reports a key the deactivation left because its provenance could not be proven.
