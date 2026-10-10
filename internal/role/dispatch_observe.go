@@ -189,7 +189,11 @@ func dispatchHandoffGate(ctx context.Context, env host.LookupEnv, h DispatchHost
 		case !dispatchTerminalTurn(o.Newest):
 			return reconcile("the child's end could not be observed; confirm it stopped, then report again")
 		}
-		a.Termination = &DispatchTermination{Newest: o.Newest, ThreadStatus: o.Status, Source: o.Source, Note: dispatchTerminationNote}
+		t := &DispatchTermination{Newest: o.Newest, ThreadStatus: o.Status, Source: o.Source, Note: dispatchTerminationNote}
+		if a.Termination != nil {
+			t.raw = a.Termination.raw
+		}
+		a.Termination = t
 		return nil, nil
 	}
 }
@@ -204,6 +208,18 @@ type DispatchTermination struct {
 	ThreadStatus string `json:"threadStatus,omitempty"`
 	Source       string `json:"source"`
 	Note         string `json:"note"`
+	raw          object
+}
+
+func (t *DispatchTermination) UnmarshalJSON(data []byte) (err error) {
+	type plain DispatchTermination
+	t.raw, err = dispatchRawDecode(data, (*plain)(t))
+	return err
+}
+
+func (t DispatchTermination) MarshalJSON() ([]byte, error) {
+	type plain DispatchTermination
+	return dispatchRawEncode(t.raw, plain(t))
 }
 
 // DispatchCleanup is the outstanding cleanup of a child whose dispatch a policy stopped: "pending" when the stop left the
@@ -216,4 +232,16 @@ type DispatchCleanup struct {
 	Newest   string `json:"newestTurn,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Note     string `json:"note,omitempty"`
+	raw      object
+}
+
+func (c *DispatchCleanup) UnmarshalJSON(data []byte) (err error) {
+	type plain DispatchCleanup
+	c.raw, err = dispatchRawDecode(data, (*plain)(c))
+	return err
+}
+
+func (c DispatchCleanup) MarshalJSON() ([]byte, error) {
+	type plain DispatchCleanup
+	return dispatchRawEncode(c.raw, plain(c))
 }

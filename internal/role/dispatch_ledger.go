@@ -36,6 +36,12 @@ type DispatchCandidate struct {
 	raw    object
 }
 
+func (c *DispatchCandidate) UnmarshalJSON(data []byte) (err error) {
+	type plain DispatchCandidate
+	c.raw, err = dispatchRawDecode(data, (*plain)(c))
+	return err
+}
+
 func (c DispatchCandidate) MarshalJSON() ([]byte, error) {
 	if c.raw != nil {
 		return c.raw.MarshalJSON()
@@ -538,6 +544,12 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 			a.Cleanup = &DispatchCleanup{}
 			if json.Unmarshal(cleanup, a.Cleanup) != nil {
 				return d, errors.New("invalid attempt cleanup")
+			}
+		}
+		if termination := dispatchRaw(a.raw, "termination"); termination != nil && string(termination) != "null" {
+			a.Termination = &DispatchTermination{}
+			if json.Unmarshal(termination, a.Termination) != nil {
+				return d, errors.New("invalid attempt termination")
 			}
 		}
 		tf := dispatchRaw(a.raw, "taskFailure")

@@ -144,8 +144,14 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 				*v.dst, settings.Source = &value, "native-thread-database"
 			}
 		}
-		a.Receipt = &DispatchReceipt{Candidate: a.Candidate, Issuance: issuance, Child: DispatchChild{AgentID: agent, Parent: identity.Parent, Witness: witness},
+		receipt := &DispatchReceipt{Candidate: a.Candidate, Issuance: issuance, Child: DispatchChild{AgentID: agent, Parent: identity.Parent, Witness: witness},
 			Correlation: correlation, ObservedModel: a.ObservedModel, Host: settings}
+		if prior != nil {
+			// A report that replaces an earlier receipt (the host showed no result of the issued call then) keeps the members of it
+			// that the boundary does not own.
+			receipt.raw, receipt.Issuance.raw, receipt.Child.raw, receipt.Host.raw = prior.raw, prior.Issuance.raw, prior.Child.raw, prior.Host.raw
+		}
+		a.Receipt = receipt
 		reason := ""
 		switch correlation {
 		case "unverified":
@@ -278,10 +284,18 @@ func dispatchPolicyStopCleanup(d *Dispatch, r DispatchResult) DispatchResult {
 	if a.AgentID == nil || *a.AgentID == "" || dispatchIs(a.Status, "failed") || dispatchIs(a.Status, "complete") {
 		return r
 	}
-	a.Cleanup = &DispatchCleanup{Status: "pending", Note: "the policy stopped the dispatch; the recorded child is not yet accounted for"}
+	a.Cleanup = dispatchCleanupOver(a.Cleanup, DispatchCleanup{Status: "pending", Note: "the policy stopped the dispatch; the recorded child is not yet accounted for"})
 	r.Attempts = d.Attempts
 	r.Reason += "; the recorded child's cleanup is outstanding: once it has ended, report outcome stopped with its agentId, executionState stopped and reconciliation"
 	return r
+}
+
+// dispatchCleanupOver is the cleanup c that replaces old, keeping the members of old it does not own.
+func dispatchCleanupOver(old *DispatchCleanup, c DispatchCleanup) *DispatchCleanup {
+	if old != nil {
+		c.raw = old.raw
+	}
+	return &c
 }
 
 // dispatchCleanupRecord records the cleanup evidence of a stopped dispatch's child on its attempt, which the caller then saves;
@@ -290,11 +304,11 @@ func dispatchPolicyStopCleanup(d *Dispatch, r DispatchResult) DispatchResult {
 // the evidence is recorded as unconfirmed and the id stays held. It returns the reason of the answer.
 func dispatchCleanupRecord(a *DispatchAttempt, evidence, newest, source string) string {
 	if !dispatchTerminalTurn(newest) {
-		a.Cleanup = &DispatchCleanup{Status: "unconfirmed", Evidence: evidence, Note: "the child's end was not observed"}
+		a.Cleanup = dispatchCleanupOver(a.Cleanup, DispatchCleanup{Status: "unconfirmed", Evidence: evidence, Note: "the child's end was not observed"})
 		return "dispatch stays stopped; cleanup evidence recorded, but the child's end was not confirmed, so its id stays held; report again once it can be observed"
 	}
 	a.Status, a.Reconciliation = "failed", &evidence
-	a.Cleanup = &DispatchCleanup{Status: "confirmed", Evidence: evidence, Newest: newest, Source: source, Note: dispatchTerminationNote}
+	a.Cleanup = dispatchCleanupOver(a.Cleanup, DispatchCleanup{Status: "confirmed", Evidence: evidence, Newest: newest, Source: source, Note: dispatchTerminationNote})
 	return "dispatch stays stopped; child cleanup recorded and its id released"
 }
 
