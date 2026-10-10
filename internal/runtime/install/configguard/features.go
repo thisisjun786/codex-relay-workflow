@@ -81,11 +81,20 @@ const (
 // rather than read as disabled (the oracle's ParseFeaturesList dropped them silently, so a later or earlier row decided). A
 // declared flag without a row is unsupported.
 func ParseFeatureStates(stdout string) (map[string]FeatureState, error) {
-	declared := DeclaredFeatures()
+	keys := []string{}
+	for _, key := range DeclaredFeatures() {
+		keys = append(keys, string(key))
+	}
+	return parseFeatureStatesFor(stdout, keys)
+}
+
+// parseFeatureStatesFor is ParseFeatureStates for the flags named by keys, declared or not: a deactivation reads back every
+// flag its manifest records, including one an earlier crw declared (CRW-1143).
+func parseFeatureStatesFor(stdout string, keys []string) (map[string]FeatureState, error) {
 	seen := map[string]FeatureState{}
 	for _, line := range text.SplitLines(stdout) {
 		fields := strings.FieldsFunc(line, tomlIsSpace)
-		if len(fields) == 0 || !slices.Contains(declared, DeclaredFeature(fields[0])) {
+		if len(fields) == 0 || !slices.Contains(keys, fields[0]) {
 			continue
 		}
 		var state FeatureState
@@ -103,12 +112,12 @@ func ParseFeatureStates(stdout string) (map[string]FeatureState, error) {
 		seen[fields[0]] = state
 	}
 	states := map[string]FeatureState{}
-	for _, key := range declared {
-		state, ok := seen[string(key)]
+	for _, key := range keys {
+		state, ok := seen[key]
 		if !ok {
 			state = FeatureUnsupported
 		}
-		states[string(key)] = state
+		states[key] = state
 	}
 	return states, nil
 }
@@ -120,6 +129,15 @@ func ReadFeatureStates(run CodexRunner) (map[string]FeatureState, error) {
 		return nil, fmt.Errorf("codex features list failed (exit %d): %s", res.ExitCode, text.Trim(res.Stderr))
 	}
 	return ParseFeatureStates(res.Stdout)
+}
+
+// readFeatureStatesFor is ReadFeatureStates for the flags named by keys.
+func readFeatureStatesFor(run CodexRunner, keys []string) (map[string]FeatureState, error) {
+	res := run([]string{"features", "list"})
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("codex features list failed (exit %d): %s", res.ExitCode, text.Trim(res.Stderr))
+	}
+	return parseFeatureStatesFor(res.Stdout, keys)
 }
 
 // ReadDeclaredState is ReadFeatureStates as enabled or not: a flag without a row reads as not enabled, and a list crw cannot

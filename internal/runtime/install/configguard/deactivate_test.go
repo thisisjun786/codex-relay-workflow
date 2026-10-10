@@ -217,7 +217,8 @@ func TestDeactivateFlagPathsAndOrdering(t *testing.T) {
 					if broken {
 						return CodexRunResult{ExitCode: 127}
 					}
-					return CodexRunResult{Stdout: fmt.Sprintf("goals stable %t\nhooks stable false\n", goals)}
+					// CRW-1143: the undeclared flag a manifest records is read back from its own row.
+					return CodexRunResult{Stdout: fmt.Sprintf("goals stable %t\nhooks stable false\nunknown stable false\n", goals)}
 				}
 				if a[2] == "failed" {
 					return CodexRunResult{ExitCode: 9}

@@ -710,16 +710,20 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// An exit 0 is not proof (CRW-1143): the flags are read back, and a flag still enabled, or one that cannot be read back,
 	// is a failure that keeps the ownership.
 	if len(r.Disabled) > 0 {
-		observed, err := ReadFeatureStates(deps.Run)
+		observed, err := readFeatureStatesFor(deps.Run, r.Disabled)
 		confirmed := []string{}
 		for _, key := range r.Disabled {
+			// Only a flag read back disabled is confirmed: a flag without a row (unsupported) says nothing about the value
+			// config.toml holds, so it stays crw's (CRW-1143).
 			switch {
 			case err != nil:
 				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flags could not be read back to confirm it: " + err.Error()})
+			case observed[key] == FeatureDisabled:
+				confirmed = append(confirmed, key)
 			case observed[key] == FeatureEnabled:
 				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flag is still enabled"})
 			default:
-				confirmed = append(confirmed, key)
+				r.Failed = append(r.Failed, FailedFlag{key, 0, "codex features disable exited 0, but the flag reads " + string(observed[key]) + " (codex features list has no row for it), so the disable is not confirmed"})
 			}
 		}
 		r.Disabled = confirmed
