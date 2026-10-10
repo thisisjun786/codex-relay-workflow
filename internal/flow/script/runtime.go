@@ -119,47 +119,40 @@ func (p *Program) NewRuntimeOn(loop *Loop, limits Limits) (*Runtime, error) {
 // Enter runs fn on the runtime under the step and heap limits. It is the only way into the VM after NewRuntime, and
 // must be called from the loop's goroutine.
 func (r *Runtime) Enter(fn func() error) error {
-	var m sync.Mutex
 	var hit *LimitError
-	done := make(chan struct{})
-	timer := time.AfterFunc(r.limits.Step, func() {
-		m.Lock()
-		if hit == nil {
-			hit = &LimitError{Kind: "step", Detail: fmt.Sprintf("a step of the script ran longer than %s without awaiting", r.limits.Step)}
-		}
-		m.Unlock()
-		r.VM.Interrupt("step limit")
-	})
+	stop := make(chan struct{})
+	finished := make(chan struct{})
 	base := heapBytes()
 	go func() {
-		t := time.NewTicker(5 * time.Millisecond)
-		defer t.Stop()
+		defer close(finished)
+		deadline := time.NewTimer(r.limits.Step)
+		defer deadline.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
 		for {
 			select {
-			case <-done:
+			case <-stop:
 				return
-			case <-t.C:
+			case <-deadline.C:
+				hit = &LimitError{Kind: "step", Detail: fmt.Sprintf("a step of the script ran longer than %s without awaiting", r.limits.Step)}
+			case <-tick.C:
 				if cur := heapBytes(); cur > base && cur-base > r.limits.HeapBytes {
-					m.Lock()
-					if hit == nil {
-						hit = &LimitError{Kind: "heap", Detail: fmt.Sprintf("the heap grew by more than %d bytes during one step", r.limits.HeapBytes)}
-					}
-					m.Unlock()
-					r.VM.Interrupt("heap limit")
-					return
+					hit = &LimitError{Kind: "heap", Detail: fmt.Sprintf("the heap grew by more than %d bytes during one step", r.limits.HeapBytes)}
 				}
+			}
+			if hit != nil {
+				r.VM.Interrupt(hit.Kind + " limit")
+				return
 			}
 		}
 	}()
 	err := fn()
-	timer.Stop()
-	close(done)
-	m.Lock()
-	lim := hit
-	m.Unlock()
-	if lim != nil {
+	close(stop)
+	// The watchdog has returned once finished is closed, so hit is settled and no interrupt can arrive later.
+	<-finished
+	if hit != nil {
 		r.VM.ClearInterrupt()
-		return lim
+		return hit
 	}
 	return err
 }

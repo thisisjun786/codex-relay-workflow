@@ -179,7 +179,6 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		return nil, err
 	}
 	promise, err := main.start()
-	var loopErr error
 	if err != nil {
 		e.fail(limitKind(err), err)
 	}
@@ -198,7 +197,6 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	default:
 		res.Value = main.jsonOf(promise.Result())
 	}
-	_ = loopErr
 	sort.SliceStable(e.results, func(i, k int) bool {
 		if e.results[i].Path != e.results[k].Path {
 			return e.results[i].Path < e.results[k].Path
