@@ -39,7 +39,9 @@ import (
 // line EVIDENCE_ASSIGNMENT: <id>, and an actor that already claimed an assignment keeps it. A child that has a contract is judged by
 // it alone: its native-cwd receipt counts for nothing, a contract it names that cannot be read (removed, damaged, an unreadable
 // directory) refuses the receipt instead of falling back on the native root, and a different actor, or an actor whose packet did not
-// hold the id, cannot claim it. Only a child with no contract at all keeps the native root.
+// hold the id, cannot claim it. An actor without an agent id claims nothing, but the contract its packet names stands and refuses its
+// receipt. A child tied to no dispatch at all (no readable packet, no citation, nothing claimed) is refused while an assignment of the
+// session is still unclaimed, because it may be that assignment's child. Only a child with no contract at all keeps the native root.
 //
 //   - mode tree: the receipt is verified under <root>/.crw/evidence of the registered tree, with the native checks (inside the
 //     root lexically and physically, a regular non-empty file that is not a link) and more: the tree must still be the directory
@@ -186,14 +188,75 @@ func (a Assignment) Persist(cwd string) error {
 	return writeRecord(filepath.Join(dir, a.ID+".json"), a)
 }
 
-// writeRecord publishes v as JSON at path through a temp file of this attempt and a rename; on a failure the temp file is removed.
+// Remove deletes the assignment's record under cwd, best effort: the spawn that would have used it was refused after the record was
+// written, and nothing may be left that no packet names.
+func (a Assignment) Remove(cwd string) {
+	if dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID)); err == nil {
+		removeFile(filepath.Join(dir, a.ID+".json"))
+	}
+}
+
+// LeadingAssignmentID is the id of the assignment block that text starts with (the place the spawn hook writes it), and whether it
+// does. A marker anywhere later in a packet is the parent's own text and is not looked at.
+func LeadingAssignmentID(text string) (string, bool) {
+	rest, ok := strings.CutPrefix(text, AssignmentMarker+":")
+	if !ok {
+		return "", false
+	}
+	end := strings.IndexByte(rest, ']')
+	if end < 0 || !validAssignmentID(rest[:end]) {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// OpenAssignmentMatches reports whether id names an assignment of the session that the spawn hook recorded for this very request
+// and that no actor has claimed yet: the mode asked for, and for a tree the same real directory. The hook running over its own
+// output reuses such a record instead of registering the packet a second time; a block that names anything else is not adopted.
+func OpenAssignmentMatches(cwd, sessionID, id, worktree string, mode AssignmentMode) bool {
+	if sessionID == "" || !validAssignmentID(id) {
+		return false
+	}
+	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
+	if err != nil {
+		return false
+	}
+	a, ok := readAssignment(filepath.Join(dir, id+".json"), id)
+	if !ok || a.SessionID != sessionID || a.Status != AssignmentOpen || a.AgentID != "" || a.Mode != mode {
+		return false
+	}
+	if worktree == "" {
+		return a.Root == ""
+	}
+	real, _, _, err := treeIdentity(worktree)
+	return err == nil && real == a.Root
+}
+
+// The two syncs of a durable record write, as variables so that a test can see their order and fail them.
+var (
+	syncFile      = func(f *os.File) error { return f.Sync() }
+	syncDirectory = crwdir.SyncDir
+)
+
+// writeRecord publishes v as JSON at path through a temp file of this attempt and a rename; on a failure before the rename the temp
+// file is removed. The data is fsynced before the rename and the directory after it, so a record that this returns nil for survives
+// a power failure whole (CRW-1110: a verdict moved beside the main list is the only copy once the list is shortened). An error
+// from the directory sync is returned although the rename has happened: the record is in place, but not known to be durable.
 func writeRecord(path string, v any) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
 	tmp := fmt.Sprintf("%s.%d.%s.tmp", path, os.Getpid(), rand.Text())
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o666); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o666)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(append(raw, '\n'))
+	if err == nil {
+		err = syncFile(f)
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
@@ -201,7 +264,22 @@ func writeRecord(path string, v any) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return nil
+	return syncDirectory(filepath.Dir(path))
+}
+
+// syncRecordChain makes the directories ensureRecordDir created, or may have created, durable: each directory below cwd/.crw named
+// by parts, then cwd/.crw and cwd, deepest first, so the entry of every directory on the way to a record is on stable storage.
+func syncRecordChain(cwd string, parts ...string) error {
+	dirs := []string{stateDir(cwd)}
+	for _, part := range parts {
+		dirs = append(dirs, filepath.Join(dirs[len(dirs)-1], part))
+	}
+	dirs = append(dirs, cwd)
+	var err error
+	for i := len(dirs) - 1; i >= 0; i-- {
+		err = errors.Join(err, syncDirectory(dirs[i]))
+	}
+	return err
 }
 
 // readAssignment decodes one record strictly: a single JSON object of the current version whose id matches its file name.
@@ -368,7 +446,7 @@ func contractID(transcriptPath, message string) (id string, fromPacket bool) {
 // NoContract when it has none (the native root), AssignedRefused when its packet or citation names a contract that cannot be read
 // or does not belong to the session (removed, damaged, an unreadable directory: never the native root), and AssignedAccepted with
 // the record when it is there. Where the transcript showed no packet and the child cites nothing, the one assignment an actor of
-// this id already claimed is its contract.
+// this id already claimed is its contract; with none claimed, the child is refused while an assignment of the session is open.
 func childAssignment(cwd, sessionID, agentID, transcriptPath, message string) (Assignment, AssignedVerdict) {
 	id, fromPacket := contractID(transcriptPath, message)
 	dir, dirErr := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
@@ -396,31 +474,46 @@ func childAssignment(cwd, sessionID, agentID, transcriptPath, message string) (A
 		return Assignment{}, AssignedRefused
 	}
 	var held *Assignment
+	open := false
 	for _, name := range names {
 		id, isRecord := strings.CutSuffix(name, ".json")
 		if !isRecord || !validAssignmentID(id) {
 			continue
 		}
-		if a, ok := load(id); ok && a.AgentID == agentID && (held == nil || a.CreatedAt > held.CreatedAt) {
-			held = &a
+		if a, ok := load(id); ok {
+			if agentID != "" && a.AgentID == agentID && (held == nil || a.CreatedAt > held.CreatedAt) {
+				held = &a
+			}
+			open = open || a.AgentID == "" && a.Status == AssignmentOpen
 		}
 	}
-	if held == nil {
-		return Assignment{}, NoContract
+	if held != nil {
+		return *held, AssignedAccepted
 	}
-	return *held, AssignedAccepted
+	// The child is tied to no dispatch (no packet in a readable transcript, no citation, nothing claimed) while a recorded
+	// assignment of the session is still unclaimed: that child may be the one it was made for, and the parent's native tree is no
+	// proof of anything for it. It is refused until its transcript or its citation says which dispatch it is.
+	if open {
+		return Assignment{}, AssignedRefused
+	}
+	return Assignment{}, NoContract
 }
 
 // JudgeAssignedReceipt judges receipt (absolute, or relative to the assigned tree) of the child agentID against the contract that
 // child was dispatched with (see the rules above) and binds the assignment to the child when the receipt passes. A child with no
-// id, or with no contract, is NoContract and the caller applies the native root; a child whose contract cannot be read is refused.
+// contract is NoContract and the caller applies the native root; a child whose contract cannot be read is refused, and so is one
+// without an agent id whose transcript names a contract: it can claim nothing, but the contract it was dispatched with stands, and
+// the parent's native tree is no way around it (CRW-1106).
 func JudgeAssignedReceipt(cwd, sessionID, agentID, transcriptPath, message, receipt string) AssignedVerdict {
-	if agentID == "" || sessionID == "" {
+	if sessionID == "" {
 		return NoContract
 	}
 	a, found := childAssignment(cwd, sessionID, agentID, transcriptPath, message)
 	if found != AssignedAccepted {
 		return found
+	}
+	if agentID == "" {
+		return AssignedRefused
 	}
 	if a.Mode != AssignTree || receipt == "" || (a.AgentID != "" && a.AgentID != agentID) || !assignedReceiptValid(a, receipt) {
 		return AssignedRefused

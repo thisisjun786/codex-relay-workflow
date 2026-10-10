@@ -110,11 +110,17 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 				index, matches, turn = i, matches+1, entry.TurnID
 			}
 		}
-		overflow, _ := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
+		overflow, overflowUnreadable := evidence.OverflowVerdicts(a.Cwd, a.SessionID)
 		for _, entry := range overflow {
 			if cliEvidenceMatches(a, entry) {
 				matches, turn = matches+1, entry.TurnID
 			}
+		}
+		// CRW-1110: a request that names no turn is a request for the agent's one verdict, which can be shown only when both
+		// places were read completely. A record beside the list that cannot be read may be a second verdict of the same agent, so
+		// the request resolves nothing; naming the turn makes it exact.
+		if a.TurnID == nil && overflowUnreadable {
+			return errors.New("the unverified records beside the session state cannot be read completely, so one record for the agent cannot be shown; pass --turn <turn-id>")
 		}
 		if matches > 1 {
 			ambiguous = true

@@ -213,3 +213,89 @@ func TestEvidenceCLIImplicitTurnRechecksAmbiguityUnderTheLock(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1110 post-evaluation round (d2): a resolve that names no turn is a request for the one verdict of the agent, so it needs both
+// places read completely. The same agent's other turn sits beside the full list in a directory the command cannot list: the
+// request is not shown to be unique, and it resolves nothing.
+func TestEvidenceCLIImplicitResolveRefusesWhenTheOverflowCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	cwd := subagentStopWorkspace(t)
+	overflowSeed(t, cwd, state.MaxUnverifiedSubagents)
+	for n := 1; n <= 3; n++ {
+		subagentStopBlock(t, counterStop(t, cwd, "s1", "a0", "second-turn", ""), n)
+	}
+	if out := counterStop(t, cwd, "s1", "a0", "second-turn", ""); out != "" {
+		t.Fatalf("terminal stop blocked: %s", out)
+	}
+	dir := filepath.Join(cwd, ".crw", evidence.OverflowSubdir)
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("precondition: one overflow session directory: %v %v", entries, err)
+	}
+	unreadable := filepath.Join(dir, entries[0].Name())
+	if err := os.Chmod(unreadable, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+	receipt := filepath.Join(cwd, ".crw/evidence/parent.md")
+	subagentStopPut(t, receipt, "parent verified")
+	out, code := cli.RunEvidenceCLI(cli.EvidenceResolveArgs{Verb: "resolve", SessionID: "s1", AgentID: "a0", Receipt: receipt, Cwd: cwd})
+	if code == 0 {
+		t.Fatalf("an implicit resolve settled on the main list's verdict although the overflow was unreadable: %q", out)
+	}
+	if !evidence.HasTombstone(cwd, "s1", evidence.Payload{AgentID: "a0", TurnID: "t"}) {
+		t.Fatal("the unverifiable request removed the verdict of turn t")
+	}
+	// Naming the turn is a request that needs no uniqueness: it resolves the main list's verdict.
+	turn := "t"
+	if out, code := cli.RunEvidenceCLI(cli.EvidenceResolveArgs{Verb: "resolve", SessionID: "s1", AgentID: "a0", Receipt: receipt, Cwd: cwd, TurnID: &turn}); code != 0 {
+		t.Fatalf("a named turn was refused: %s", out)
+	}
+}
+
+// CRW-1112 post-evaluation round (d1): .crw/evidence-overflow is a link to a directory of another store that holds the record of
+// this very session, agent and turn. Neither the parent's resolve nor the child's late receipt may unlink it.
+func TestOverflowLinkedAncestorIsNeverUnlinked(t *testing.T) {
+	cwd, outside := subagentStopWorkspace(t), t.TempDir()
+	real := filepath.Join(outside, "backup")
+	// Record a verdict beside a full list in a store of its own, then link its overflow directory into this workspace.
+	other := subagentStopWorkspace(t)
+	overflowSeed(t, other, state.MaxUnverifiedSubagents)
+	overflowExhaust(t, other, "a64")
+	if err := os.Rename(filepath.Join(other, ".crw", evidence.OverflowSubdir), real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, ".crw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(cwd, ".crw", evidence.OverflowSubdir)); err != nil {
+		t.Fatal(err)
+	}
+	var external string
+	_ = filepath.WalkDir(real, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			external = path
+		}
+		return nil
+	})
+	if external == "" {
+		t.Fatal("precondition: the external record")
+	}
+	receipt := filepath.Join(cwd, ".crw/evidence/parent.md")
+	subagentStopPut(t, receipt, "parent verified")
+	turn := "t"
+	if out, code := cli.RunEvidenceCLI(cli.EvidenceResolveArgs{Verb: "resolve", SessionID: "s1", AgentID: "a64", Receipt: receipt, Cwd: cwd, TurnID: &turn}); code == 0 {
+		t.Fatalf("a record behind a link was resolved: %s", out)
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatalf("the CLI unlinked the external record: %v", err)
+	}
+	if out := counterStop(t, cwd, "s1", "a64", "t", "EVIDENCE_RECORDED: .crw/evidence/parent.md"); out != "" {
+		t.Fatalf("the late receipt stop: %s", out)
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatalf("the late receipt unlinked the external record: %v", err)
+	}
+}

@@ -51,14 +51,20 @@ func overflowPath(cwd, sessionID, agentID, turnID string) string {
 	return filepath.Join(overflowDir(cwd, sessionID), tupleDigest(agentID, turnID)+".json")
 }
 
-// writeOverflow records e beside the main list, replacing the verdict of the same agent and turn.
+// writeOverflow records e beside the main list, replacing the verdict of the same agent and turn. It returns nil only when the
+// record and every directory on its way are durable (CRW-1110): an error leaves the caller's copy of the verdict in place.
 func writeOverflow(cwd, sessionID string, e state.UnverifiedSubagent) error {
 	if _, err := ensureRecordDir(cwd, OverflowSubdir, sessionRecordDir(sessionID)); err != nil {
 		return err
 	}
-	return writeRecord(overflowPath(cwd, sessionID, e.AgentID, e.TurnID), overflowRecord{SessionID: sessionID, AgentID: e.AgentID,
+	if err := writeRecord(overflowPath(cwd, sessionID, e.AgentID, e.TurnID), overflowRecord{SessionID: sessionID, AgentID: e.AgentID,
 		TurnID: e.TurnID, AgentType: e.AgentType, Attempts: e.Attempts, ReceiptClaimed: e.ReceiptClaimed, RecordedAt: e.RecordedAt,
-		Resolvable: e.Resolvable})
+		Resolvable: e.Resolvable}); err != nil {
+		return err
+	}
+	// The record's own directory entry is synced by writeRecord; the entries of the directories on the way to it are synced here,
+	// so a recovery that shortens the main list afterwards never leaves the only copy of a verdict in a directory the disk lacks.
+	return syncRecordChain(cwd, OverflowSubdir, sessionRecordDir(sessionID))
 }
 
 // readOverflow decodes the overflow record at path, named name in the session's directory: a single object of the session whose
@@ -89,12 +95,18 @@ func readOverflow(path, name, sessionID string) (state.UnverifiedSubagent, bool)
 // listed, or an entry that is not one of its records, makes unreadable true, so a completion gate denies rather than reads it as
 // no verdict. A missing directory holds none.
 func OverflowVerdicts(cwd, sessionID string) (verdicts []state.UnverifiedSubagent, unreadable bool) {
-	dir := overflowDir(cwd, sessionID)
+	dir, err := existingRecordDir(cwd, OverflowSubdir, sessionRecordDir(sessionID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false
+	}
+	if err != nil {
+		return nil, true // a link or a file anywhere in the chain: records behind it are not this session's to read
+	}
 	names, err := dirNames(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false
 	}
-	if err != nil || requireDirectory(dir) != nil {
+	if err != nil {
 		return nil, true
 	}
 	for _, name := range names {
@@ -113,8 +125,12 @@ func OverflowVerdicts(cwd, sessionID string) (verdicts []state.UnverifiedSubagen
 
 // hasOverflow reports whether the exact verdict is recorded beside the main list.
 func hasOverflow(cwd, sessionID, agentID, turnID string) bool {
+	dir, err := existingRecordDir(cwd, OverflowSubdir, sessionRecordDir(sessionID)) // every step a real directory (CRW-1112)
+	if err != nil {
+		return false
+	}
 	name := tupleDigest(agentID, turnID) + ".json"
-	_, ok := readOverflow(filepath.Join(overflowDir(cwd, sessionID), name), name, sessionID)
+	_, ok := readOverflow(filepath.Join(dir, name), name, sessionID)
 	return ok
 }
 
