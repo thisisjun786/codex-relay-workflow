@@ -101,10 +101,12 @@ type Context struct {
 	Coprocess   bool
 	Subshell    bool
 	Pipeline    bool
-	Loop        bool
-	FuncBody    bool
-	CmdSubst    bool
-	ProcSubst   bool
+	// pipeID names the pipeline the command is a stage of (0 outside one): its stages run at the same time.
+	pipeID    int
+	Loop      bool
+	FuncBody  bool
+	CmdSubst  bool
+	ProcSubst bool
 	// Stdin is the source of standard input: one of the Stdin constants.
 	Stdin string
 	// stdinFile is the file the last input redirection names when Stdin is StdinFile and the reader knows it; inTextPipe is
@@ -304,6 +306,11 @@ type walker struct {
 	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command or an expansion of
 	// it may assign a variable whose name it does not spell: either may give a later module run a cache prefix (CRW-1178).
 	prefixNamed, prefixUnknown bool
+	// pythonPathNamed is whether a text the walk read spells PYTHONPATH (CRW-1187). moduleRuns are the module runs of the text whose directory
+	// was checked, and pipeSeq numbers its pipelines (Context.pipeID).
+	pythonPathNamed bool
+	moduleRuns      []moduleRun
+	pipeSeq         int
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
@@ -659,6 +666,10 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 		}
 		return nil
 	case syntax.Pipe, syntax.PipeAll:
+		if ctx.pipeID == 0 {
+			w.pipeSeq++
+			ctx.pipeID = w.pipeSeq
+		}
 		lctx := ctx
 		lctx.Pipeline = true
 		before := len(w.out)
