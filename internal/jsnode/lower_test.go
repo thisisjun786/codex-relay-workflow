@@ -90,7 +90,7 @@ func finalSigmaByUnits(rs []rune, i int) bool {
 
 func TestLowerAgreesWithTheArrayReading(t *testing.T) {
 	pieces := []string{"A", "a", "z", "Z", "1", " ", ".", "'", ":", "^", "Σ", "Σ", "σ", "Α", "́", "·", "İ", "K",
-		"ǅ", "É", "’", "‍", "ʰ", "\U0001F600", "배", "\xed\xa0\x80", "\xed\xbf\xbf", "\xff", "\xed", "\xe2\x80", "\xf0\x9f", "\x80"}
+		"ǅ", "É", "’", "\u200d", "ʰ", "\U0001F600", "배", "\xed\xa0\x80", "\xed\xbf\xbf", "\xff", "\xed", "\xe2\x80", "\xf0\x9f", "\x80"}
 	rng := rand.New(rand.NewSource(451))
 	for n := 0; n < 200000; n++ {
 		var b strings.Builder
