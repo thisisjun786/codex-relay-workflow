@@ -80,7 +80,8 @@ const (
 )
 
 // Assignment is one recorded dispatch contract. RootDev and RootIno identify the tree directory registered; Head is its git HEAD
-// at dispatch, "" when it was not a git checkout. AgentID and TurnID name the child that claimed it.
+// at dispatch, "" when it was not a git checkout. ToolUseID is the native tool call that registered it ("" when the call had none),
+// the only call whose second pass of the spawn hook may reuse it. AgentID and TurnID name the child that claimed it.
 type Assignment struct {
 	Version   int            `json:"version"`
 	ID        string         `json:"id"`
@@ -91,6 +92,7 @@ type Assignment struct {
 	RootIno   uint64         `json:"rootIno"`
 	Head      string         `json:"head"`
 	CreatedAt string         `json:"createdAt"`
+	ToolUseID string         `json:"toolUseId,omitempty"`
 	Status    string         `json:"status"`
 	AgentID   string         `json:"agentId"`
 	TurnID    string         `json:"turnId"`
@@ -179,13 +181,26 @@ func NewAssignment(sessionID, worktree string, mode AssignmentMode, now time.Tim
 }
 
 // Persist writes the assignment under cwd (the parent's native cwd) through a temp file and a rename, refusing links in the
-// state tree.
+// state tree. An error means the spawn is refused, so nothing of it may stay open: a record that the rename published before a
+// later step failed (its directory sync) is removed again, because an open record no child will ever claim would refuse every
+// later child of the session that is tied to no dispatch. When that removal fails too, the error says the record is left and
+// where, so the refusal names what the parent has to remove.
 func (a Assignment) Persist(cwd string) error {
 	dir, err := ensureRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
 	if err != nil {
 		return err
 	}
-	return writeRecord(filepath.Join(dir, a.ID+".json"), a)
+	path := filepath.Join(dir, a.ID+".json")
+	err = writeRecord(path, a)
+	if err == nil {
+		return nil
+	}
+	if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() {
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			return fmt.Errorf("%w; the published record %s could not be removed and stays open until it is removed: %v", err, path, rmErr)
+		}
+	}
+	return err
 }
 
 // Remove deletes the assignment's record under cwd, best effort: the spawn that would have used it was refused after the record was
@@ -210,19 +225,25 @@ func LeadingAssignmentID(text string) (string, bool) {
 	return rest[:end], true
 }
 
-// OpenAssignmentMatches reports whether id names an assignment of the session that the spawn hook recorded for this very request
-// and that no actor has claimed yet: the mode asked for, and for a tree the same real directory. The hook running over its own
-// output reuses such a record instead of registering the packet a second time; a block that names anything else is not adopted.
-func OpenAssignmentMatches(cwd, sessionID, id, worktree string, mode AssignmentMode) bool {
+// RecordedAssignment is the readable record of the session that id names, and whether there is one.
+func RecordedAssignment(cwd, sessionID, id string) (Assignment, bool) {
 	if sessionID == "" || !validAssignmentID(id) {
-		return false
+		return Assignment{}, false
 	}
 	dir, err := existingRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(sessionID))
 	if err != nil {
-		return false
+		return Assignment{}, false
 	}
 	a, ok := readAssignment(filepath.Join(dir, id+".json"), id)
-	if !ok || a.SessionID != sessionID || a.Status != AssignmentOpen || a.AgentID != "" || a.Mode != mode {
+	return a, ok && a.SessionID == sessionID
+}
+
+// RegisteredBy reports whether a is the record the native tool call toolUseID registered for this very request and that no actor has
+// claimed yet: the same call (a call without an id proves nothing), the mode asked for, and for a tree the same real directory. The
+// hook running over its own output reuses such a record instead of registering the packet a second time; another call that carries
+// a copy of the block (the hook's output with another task) is a dispatch of its own and must not share the assignment.
+func (a Assignment) RegisteredBy(toolUseID, worktree string, mode AssignmentMode) bool {
+	if toolUseID == "" || a.ToolUseID != toolUseID || a.Status != AssignmentOpen || a.AgentID != "" || a.Mode != mode {
 		return false
 	}
 	if worktree == "" {

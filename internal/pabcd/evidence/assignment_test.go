@@ -2,6 +2,8 @@ package evidence
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -315,5 +317,28 @@ func TestAssignmentUntiedChildIsRefusedWhileAnAssignmentIsOpen(t *testing.T) {
 	}
 	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w2", "", "", receipt); got != NoContract {
 		t.Fatalf("every assignment claimed, an untied child judged %v", got)
+	}
+}
+
+// CRW-1115 verification round 3: a record whose directory cannot be synced after its rename is published but not known to be durable;
+// Persist fails, the spawn hook refuses the spawn, and nothing of that refused spawn may stay open, or every later child of the
+// session that is tied to no dispatch would be refused for an assignment no child was ever made for.
+func TestAssignmentPersistFailureAfterThePublicationLeavesNoOpenRecord(t *testing.T) {
+	r := newAssignTestRig(t)
+	a, err := NewAssignment(assignTestSession, r.tree, AssignTree, time.Now())
+	assignMust(t, err)
+	oldDir := syncDirectory
+	t.Cleanup(func() { syncDirectory = oldDir })
+	syncDirectory = func(dir string) error { return errors.New("injected directory sync failure") }
+	if err := a.Persist(r.cwd); err == nil {
+		t.Fatal("a record whose directory could not be synced was reported durable")
+	}
+	syncDirectory = oldDir
+	if _, err := os.Lstat(r.recordPath(a.ID)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the refused spawn's record was left behind: %v", err)
+	}
+	native := filepath.Join(r.cwd, ".crw", "evidence", "native.txt")
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w1", "", "EVIDENCE_RECORDED: "+native, native); got != NoContract {
+		t.Fatalf("an unrelated child after the refused spawn judged %v, want the native root", got)
 	}
 }

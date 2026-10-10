@@ -77,8 +77,18 @@ func assignedGit(t *testing.T, dir string, args ...string) {
 // spawn untouched) and the raw answer.
 func (r *assignedRig) spawn(message string) (string, string) {
 	r.t.Helper()
-	payload, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "spawn_agent", "session_id": "s1", "cwd": r.cwd,
-		"tool_input": map[string]any{"agent_type": "worker", "message": message}})
+	return r.spawnCall(message, "call-1")
+}
+
+// spawnCall is spawn for the native tool call toolUseID; "" sends a payload without a tool_use_id.
+func (r *assignedRig) spawnCall(message, toolUseID string) (string, string) {
+	r.t.Helper()
+	fields := map[string]any{"hook_event_name": "PreToolUse", "tool_name": "spawn_agent", "session_id": "s1", "cwd": r.cwd,
+		"tool_input": map[string]any{"agent_type": "worker", "message": message}}
+	if toolUseID != "" {
+		fields["tool_use_id"] = toolUseID
+	}
+	payload, err := json.Marshal(fields)
 	spawnHookMust(r.t, err)
 	out := RunSpawnAttachHook(string(payload), r.rig.env)
 	if out == "" || strings.Contains(out, `"deny"`) {
@@ -661,10 +671,56 @@ func TestEvidenceAssignmentBlockAtTheInjectedPlaceMustBeARecordOfTheRequest(t *t
 	if _, out := r.spawn(forged); !strings.Contains(out, `"deny"`) || !strings.Contains(out, "evidence assignment") {
 		t.Fatalf("a block with no record was adopted: %q", out)
 	}
-	// The same block with another request's lines (another tree) is not this request's record either.
+	// The same block with another request's lines (another tree) is not this request's record either: the call gets a contract
+	// of its own in its place.
+	oldID := assignedID.FindStringSubmatch(child)[1]
 	moved := strings.Replace(child, "CRW-WORKTREE: "+r.wt, "CRW-WORKTREE: "+other, 1)
-	if _, out := r.spawn(moved); !strings.Contains(out, `"deny"`) {
+	got, out := r.spawn(moved)
+	ids := assignedID.FindAllStringSubmatch(got, -1)
+	if strings.Contains(out, `"deny"`) || len(ids) != 1 || ids[0][1] == oldID {
 		t.Fatalf("a block recorded for another tree was adopted: %q", out)
+	}
+}
+
+// CRW-1115 verification round 3: only the very tool call that registered an assignment reuses it on a second pass. A packet copied
+// from an earlier call (the hook's output with another task) arrives with another tool_use_id, and a call without one cannot show it
+// is the same; each gets a contract of its own in place of the copied block, so two workers never share one assignment and each
+// worker's receipt in the shared tree passes.
+func TestEvidenceAssignmentAnotherCallOfTheSameTreeGetsItsOwnContract(t *testing.T) {
+	r := newAssignedRig(t)
+	records := func() int {
+		got, _ := filepath.Glob(filepath.Join(r.cwd, ".crw", "evidence-assignments", "*", "*.json"))
+		return len(got)
+	}
+	first, _ := r.spawnCall("TASK: first\nCRW-WORKTREE: "+r.wt, "call-A")
+	firstID := assignedID.FindStringSubmatch(first)[1]
+	if again, out := r.spawnCall(first, "call-A"); strings.Contains(out, `"deny"`) || records() != 1 ||
+		again != "" && strings.Count(again, EvidenceAssignmentMarker) != 1 {
+		t.Fatalf("the same call's second pass was not idempotent (records %d): %q", records(), out)
+	}
+	copied := strings.Replace(first, "TASK: first", "TASK: second", 1)
+	second, out := r.spawnCall(copied, "call-B")
+	ids := assignedID.FindAllStringSubmatch(second, -1)
+	if strings.Contains(out, `"deny"`) || len(ids) != 1 || ids[0][1] == firstID || records() != 2 {
+		t.Fatalf("a copied packet of another call reused the first call's assignment (records %d):\n%s\n%s", records(), second, out)
+	}
+	r.deliver("w1", first)
+	r.deliver("w2", second)
+	firstReceipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "first.txt"), "first ok")
+	secondReceipt := r.put(filepath.Join(r.wt, ".crw", "evidence", "second.txt"), "second ok")
+	if out := r.stop("w1", "t1", "EVIDENCE_RECORDED: "+firstReceipt); out != "" {
+		t.Fatalf("the first worker's receipt was refused: %s", out)
+	}
+	if out := r.stop("w2", "t2", "EVIDENCE_RECORDED: "+secondReceipt); out != "" {
+		t.Fatalf("the second worker's receipt was refused: %s", out)
+	}
+	// A call without a tool_use_id cannot show it is the call that registered the block: it is registered afresh.
+	plain, _ := r.spawnCall("TASK: third\nCRW-WORKTREE: "+r.wt, "")
+	plainID := assignedID.FindStringSubmatch(plain)[1]
+	again, out := r.spawnCall(plain, "")
+	ids = assignedID.FindAllStringSubmatch(again, -1)
+	if strings.Contains(out, `"deny"`) || len(ids) != 1 || ids[0][1] == plainID {
+		t.Fatalf("a call without a tool_use_id reused a block it cannot show it registered:\n%s\n%s", again, out)
 	}
 }
 
