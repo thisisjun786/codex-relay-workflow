@@ -1,0 +1,289 @@
+# CRW-951: pathlib touch() and mkdir() create a file or a directory at their receiver, like write_text() writes one (re-check of
+# 2026-10-09, rows RC-951-*). A protected destination is an attempt; a computed receiver is the unknown destination of criterion c1e.
+# Format: see shellwrite_repro_test.go.
+
+=== CRW-951-touch-01-joinpath | W
+--why RC-951: Path(root).joinpath("a").touch() creates a file in the protected memory root.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("a").touch()'
+
+=== CRW-951-mkdir-01-joinpath | W
+--why RC-951: Path(root).joinpath("a").mkdir() creates a directory in the protected memory root.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(root).joinpath("a").mkdir()'
+
+=== CRW-951-touch-02-literal | W
+--why RC-951: a literal Path(m).touch() with m inside the protected root.
+python3 -c 'from pathlib import Path; m="{MEMORY}/a"; Path(m).touch()'
+
+=== CRW-951-touch-03-inline-literal | W
+--why Path("{MEMORY}/a").touch() with the destination written in the call.
+python3 -c 'from pathlib import Path; Path("{MEMORY}/a").touch()'
+
+=== CRW-951-mkdir-02-inline-literal | W
+--why Path("{MEMORY}/d").mkdir(parents=True, exist_ok=True) with the destination written in the call.
+python3 -c 'import pathlib; pathlib.Path("{MEMORY}/d").mkdir(parents=True, exist_ok=True)'
+
+=== CRW-951-mkdir-03-literal | W
+--why A literal Path(m).mkdir() with m inside the protected root.
+python3 -c 'from pathlib import Path; m="{MEMORY}/d"; Path(m).mkdir()'
+
+=== CRW-951-touch-04-division | W
+--why (Path(root) / "a").touch(): a parenthesised receiver is a computed destination.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "a").touch()'
+
+=== CRW-951-mkdir-04-division | W
+--why (Path(root) / "d").mkdir(): a parenthesised receiver is a computed destination.
+python3 -c 'from pathlib import Path; root="{MEMORY}"; (Path(root) / "d").mkdir()'
+
+=== CRW-951-touch-05-bound-name | W
+--why The receiver is a name bound to a path: p = Path(m); p.touch() (criterion c1e).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/a"); p.touch()'
+
+=== CRW-951-mkdir-05-bound-name | W
+--why The receiver is a name bound to a path: p = Path(m); p.mkdir() (criterion c1e).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/d"); p.mkdir()'
+
+=== CRW-951-touch-06-unbound-method | W
+--why The unbound method Path.touch(Path(m)).
+python3 -c 'from pathlib import Path; Path.touch(Path("{MEMORY}/a"))'
+
+=== CRW-951-touch-07-method-alias | W
+--why The method is bound to a name and called later.
+python3 -c 'from pathlib import Path; f = Path("{MEMORY}/a").touch; f()'
+
+=== CRW-951-touch-08-in-exec | E
+--why The same call inside a program text passed to exec.
+python3 -c 'exec("from pathlib import Path; Path(\"{MEMORY}/a\").touch()")'
+
+=== CRW-951-touch-09-work-tree | B
+--why Allow counterexample: Path("/w/x").touch() inside the work tree is no protected destination.
+python3 -c 'from pathlib import Path; Path("/w/x").touch()'
+
+=== CRW-951-mkdir-06-work-tree | B
+--why Allow counterexample: Path("/w/d").mkdir() inside the work tree is no protected destination.
+python3 -c 'from pathlib import Path; Path("/w/d").mkdir()'
+
+=== CRW-951-mkdir-07-work-tree-parents | B
+--why Allow counterexample: Path("/w/d/e").mkdir(parents=True, exist_ok=True) inside the work tree.
+python3 -c 'import pathlib; pathlib.Path("/w/d/e").mkdir(parents=True, exist_ok=True)'
+
+=== CRW-951-read-01-exists | B
+--why Allow counterexample: Path(m).exists() reads the protected path and writes nothing.
+python3 -c 'from pathlib import Path; m="{MEMORY}/a"; print(Path(m).exists())'
+
+=== CRW-951-read-02-is-dir | B
+--why Allow counterexample: Path(m).is_dir() reads.
+python3 -c 'from pathlib import Path; m="{MEMORY}"; print(Path(m).is_dir())'
+
+=== CRW-951-read-03-stat | B
+--why Allow counterexample: Path(m).stat() reads.
+python3 -c 'from pathlib import Path; m="{MEMORY}/a"; print(Path(m).stat())'
+
+=== CRW-951-read-04-os-path-exists | B
+--why Allow counterexample: os.path.exists(m) reads.
+python3 -c 'import os; m="{MEMORY}/a"; print(os.path.exists(m))'
+
+=== CRW-951-read-05-string-data | B
+--why Allow counterexample: the text touch() as data in a string writes nothing.
+python3 -c 'print("touch()")'
+
+=== CRW-951-read-06-string-data-with-api | B
+--why Allow counterexample: the text touch() and mkdir() as string data next to a read of a path.
+python3 -c 'import os; print("touch() and mkdir()", os.path.exists("/w/x"))'
+
+=== CRW-951-read-07-bare-names | B
+--why Allow counterexample: bare names touch and mkdir are no pathlib method.
+python3 -c 'import os; touch = 1; mkdir = 2; print(touch + mkdir, os.path.exists("/w/x"))'
+
+=== CRW-951-mkdir-08-os-mkdir-work-tree | B
+--why Allow counterexample: os.mkdir("/w/d") is another call (not a pathlib method) and names a work tree path.
+python3 -c 'import os; os.mkdir("/w/d")'
+
+=== CRW-951-node-01-touch-method | B
+--why Allow counterexample (fix round 1): a Node program with its own Path().touch() method writes nothing; the touch/mkdir rule reads Python only.
+node -e 'function Path(x) { return {touch() { console.log(x) }} }; Path("{MEMORY}/a").touch()'
+
+=== CRW-951-node-02-mkdir-method | B
+--why Allow counterexample (fix round 1): a Node program with its own Path().mkdir() method writes nothing.
+node -e 'function Path(x) { return {mkdir() { console.log(x) }} }; Path("{MEMORY}/d").mkdir()'
+
+=== CRW-951-read-08-string-data-dotted-touch | B
+--why Allow counterexample (fix round 1): the text p.touch() inside a string literal is data, not a call.
+python3 -c 'import os; print("p.touch()", os.path.exists("/w/x"))'
+
+=== CRW-951-read-09-comment-dotted-mkdir | B
+--why Allow counterexample (fix round 1): the text p.mkdir() in a comment is not a call.
+python3 -c 'import os; print(os.path.exists("/w/x")) # p.mkdir()'
+
+=== CRW-951-read-10-docstring-dotted-touch | B
+--why Allow counterexample (fix round 1): the text p.touch() in a triple-quoted string is data.
+python3 -c 'import os; print("""a p.touch() b""", os.path.exists("/w/x"))'
+
+=== CRW-951-touch-10-fstring-field | B
+--why The field is code, but its computed create has no protected reference (CRW-951 item 3).
+python3 -c 'import os; print(f"{p.touch()}", os.path.exists("/w/x"))'
+
+=== CRW-951-touch-11-exec-program-name-receiver | R
+--why The decoded create has no protected reference; the separate worktree guard still refuses exec.
+python3 -c 'import os; exec("p.touch()"); os.path.exists("/w/x")'
+
+=== CRW-951-mkdir-09-comment-then-call | B
+--why A comment does not hide the call, but the computed create has no protected reference.
+python3 -c 'import os
+# note
+p.mkdir()
+os.path.exists("/w/x")'
+
+
+# Fix round 2 (evaluation of 8a68d4f01, defects d1 to d6): coordinator decisions E1 to E6.
+
+=== CRW-951-touch-12-fstring-arg | W
+--why E1: Path(f"{root}/n.md").touch(): an f-string argument with a replacement field is a computed destination, not the literal text with braces (evaluation d1).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n.md").touch()'
+
+=== CRW-951-mkdir-10-fstring-arg | W
+--why E1: Path(f"{root}/n").mkdir() with a computed f-string argument is the unknown destination (evaluation d1).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n").mkdir()'
+
+=== CRW-951-write-text-03-fstring-arg | W
+--why E1: Path(f"{root}/n.md").write_text("x") has the same answer as touch (the Path argument decoder is shared).
+python3 -c 'from pathlib import Path; root="{MEMORY}"; Path(f"{root}/n.md").write_text("x")'
+
+=== CRW-951-touch-13-fstring-literal-only | B
+--why E1 keep: an f-string with no replacement field is the literal /w/x, a work tree path.
+python3 -c 'from pathlib import Path; Path(f"/w/x").touch()'
+
+=== CRW-951-touch-14-exec-escaped-method | E
+--why E2: a literal exec program is read like a top-level program: p.\x74ouch() decodes to p.touch(), an unattributed receiver.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x74ouch()")'
+
+=== CRW-951-write-text-04-exec-escaped-method | E
+--why E2: exec("p.\x77rite_text('x')") decodes to p.write_text('x'), an unattributed receiver.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_text(\"x\")")'
+
+=== CRW-951-exec-01-print | R
+--why E2 keep: exec("print(1)") writes nothing the reader can name; the memory gate stays none.
+python3 -c 'exec("print(1)")'
+
+=== CRW-951-mkdir-11-os-rebound-path | W
+--why E3: os=Path(...); os.mkdir() is a Path receiver spelled os, not the module (evaluation d3).
+python3 -c 'from pathlib import Path; os=Path("{MEMORY}/d"); os.mkdir()'
+
+=== CRW-951-mkdir-12-os-parameter | W
+--why E3: a parameter named os is not the module.
+--cmd
+python3 -c 'from pathlib import Path
+def f(os): os.mkdir()
+f(Path("{MEMORY}/d"))'
+
+=== CRW-951-mkdir-13-os-loop-target | W
+--why E3: a loop target named os is not the module.
+--cmd
+python3 -c 'from pathlib import Path
+import os
+for os in [Path("{MEMORY}/d")]: os.mkdir()'
+
+=== CRW-951-mkdir-14-os-import-as-other | W
+--why E3: import sys as os binds os to another module.
+python3 -c 'import sys as os; os.mkdir("{MEMORY}/d")'
+
+=== CRW-951-mkdir-15-os-module-import | B
+--why E3 keep: import os; os.mkdir(path) is the module call, not judged (the pathlib methods only).
+python3 -c 'import os; os.mkdir("/w/d")'
+
+=== CRW-951-mkdir-16-os-module-import-list | B
+--why E3 keep: import sys, os binds the os module.
+python3 -c 'import sys, os; os.mkdir("/w/d"); print(os.path.exists("/w/d"))'
+
+=== CRW-951-mkdir-17-os-module-import-dotted | B
+--why E3 keep: import os.path binds the os module.
+python3 -c 'import os.path; os.mkdir("/w/d")'
+
+=== CRW-951-fstring-data-01-text | B
+--why E5: the literal text of an f-string is data: f"p.touch()" has no replacement field.
+python3 -c 'import os; print(f"p.touch()", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-fstring-data-02-doubled-braces | B
+--why E5: doubled braces are literal braces, so f"{{p.touch()}}" is data.
+python3 -c 'import os; print(f"{{p.touch()}}", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-runs-text-01-string-exec-word | R
+--why E6: the word exec inside a string is data and does not switch off the string reading (the worktree guard's own raw exec word check, unchanged, still denies).
+python3 -c 'import os; print("exec p.touch()", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-runs-text-02-comment-execute-word | R
+--why E6: the word execute in a comment is data (the worktree guard's own raw exec word check, unchanged, still denies).
+python3 -c 'import os; print(os.path.exists("{MEMORY}/n.md")) # execute p.touch()'
+
+=== CRW-951-runs-text-03-fstring-field-call | W
+--why E5 keep: a call inside an f-string replacement field is program text and stays an attempt.
+python3 -c 'import os; print(f"{p.touch()}", os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-fstring-data-03-string-in-field | B
+--why Verifier round 2: a plain string inside an f-string replacement field is data, f"{'p.touch()'}" holds no call.
+python3 -c "import os; print(f\"{'p.touch()'}\", os.path.exists('{MEMORY}/n.md'))"
+
+=== CRW-951-fstring-data-04-nested-fstring-in-field | B
+--why Verifier round 2: the literal text of an f-string nested in a replacement field is data, f"{f'p.touch()'}" holds no call.
+python3 -c "import os; print(f\"{f'p.touch()'}\", os.path.exists('{MEMORY}/n.md'))"
+
+=== CRW-951-fstring-data-05-exec-word-in-field-string | R
+--why Verifier round 2: the word exec inside a string in a replacement field is data and does not switch off the string reading (the worktree guard's own raw exec word check, unchanged, still denies).
+python3 -c "import os; print(f\"{'exec'} p.touch()\", os.path.exists('{MEMORY}/n.md'))"
+
+=== CRW-951-fstring-data-06-comment-in-field | R
+--why Verifier round 2: a comment inside a multi-line replacement field is data (the worktree guard's own raw execute word check, unchanged, still denies).
+python3 -c "import os
+print(f\"{'x' # execute p.touch()
+}\", os.path.exists('{MEMORY}/n.md'))"
+
+=== CRW-951-fstring-data-07-call-beside-string-in-field | W
+--why Verifier round 2 keep: a real call in a replacement field that also holds a string stays an attempt.
+python3 -c "import os; print(f\"{'a' + str(p.touch())}\", os.path.exists('{MEMORY}/n.md'))"
+
+=== CRW-951-exec-02-decoded-print-data | R
+--why Verifier round 2 (E2): the decoded program of a literal exec is read with its own strings: print("p.touch()") is data; the enclosing exec token does not make it code (the worktree guard's own raw exec word check, unchanged, still denies).
+python3 -c 'import os; exec("print(\"p.\x74ouch()\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-03-nested-escaped-touch | E
+--why Verifier round 2 (P2): a nested literal exec keeps the file API and the names of its ancestors: the outer literal decodes to exec("p.\x74ouch()"), whose receiver p is unattributed.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x65\x78\x65\x63\x28\x22\x70\x2e\x5c\x78\x37\x34\x6f\x75\x63\x68\x28\x29\x22\x29")'
+
+=== CRW-951-fstring-data-08-exec-call-in-field | E
+--why Verifier round 2 keep: an exec call inside a replacement field runs its string, so the field's program text is code and the decoded p.touch() is an attempt.
+python3 -c "from pathlib import Path; p=Path('{MEMORY}/n.md'); print(f\"{exec('p.touch()')}\")"
+
+=== CRW-951-exec-04-decoded-write-text-data | R
+--why Verifier round 3: the decoded program of a literal exec is read with its own strings for every write name, not only touch and mkdir: print("p.write_text()") is data (the worktree guard's own raw exec word check, unchanged, still denies).
+python3 -c 'import os; exec("print(\"p.\x77rite_text()\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-05-decoded-write-bytes-data | R
+--why Verifier round 3: print("p.write_bytes()") in a decoded exec program is data.
+python3 -c 'import os; exec("print(\"p.\x77rite_bytes()\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-06-decoded-write-text-comment | R
+--why Verifier round 3: a comment in a decoded exec program is data: # p.write_text() holds no call.
+python3 -c 'import os; exec("# p.\x77rite_text()\nprint(1)"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-07-decoded-runtime-name-data | R
+--why Verifier round 3 (same class): a run-time name in a string of a decoded exec program is data: print("getattr") calls nothing.
+python3 -c 'import os; exec("print(\"\x67etattr\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-08-decoded-write-bytes-call | E
+--why Verifier round 3 keep: a real decoded p.write_bytes(b"x") call stays an attempt (an unattributed receiver).
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("p.\x77rite_bytes(b\"x\")")'
+
+=== CRW-951-exec-09-decoded-getattr-call | E
+--why Verifier round 3 keep: a real decoded getattr call is a run-time name and stays an attempt.
+python3 -c 'from pathlib import Path; p=Path("{MEMORY}/n.md"); exec("\x67etattr(p, \"write_text\")(\"x\")")'
+
+=== CRW-951-exec-10-decoded-mode-open-data | R
+--why Verifier round 3 (same class, P2): an io.open("w") text in a string of a decoded exec program is data, not an open on a module (the dot is escaped so the enclosing text shows no .open call).
+python3 -c 'import os; exec("print(\"io\x2eopen(\x27w\x27)\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-11-decoded-subscript-data | R
+--why Verifier round 3 (same class, P2): a computed subscript text a[i] in a string of a decoded exec program is data.
+python3 -c 'import os; exec("print(\"a\x5bi]\")"); print(os.path.exists("{MEMORY}/n.md"))'
+
+=== CRW-951-exec-12-decoded-subscript-call | E
+--why Verifier round 3 keep: a real computed subscript in a decoded exec program stays an attempt.
+python3 -c 'import os; k="w"; exec("os.__dict__\x5bk]")'
