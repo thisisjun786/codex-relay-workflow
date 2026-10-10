@@ -14,9 +14,22 @@ import (
 
 func bounded(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+// connectedWithShortAck returns a client whose own ack bound is the short ack, already connected: the
+// handshake runs under generous bounds, as the tested call's ack bound is the subject and the
+// initialize that precedes it is setup a loaded host can stretch past a few milliseconds (CRW-1161).
+func connectedWithShortAck(t *testing.T, socket string, ack time.Duration) *appserver.Client {
+	t.Helper()
+	client := appserver.New(socket, appserver.PhaseBounds{Establish: 30 * time.Second, Transmit: 30 * time.Second, Ack: ack})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Connect(appserver.WithAckBound(bounded(t), 30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	return client
 }
 
 func TestCall_correlates_interleaved_responses(t *testing.T) {
@@ -83,9 +96,10 @@ func TestCall_returns_ack_timeout_without_retry(t *testing.T) {
 	// Given: the host delays its acknowledgement beyond the phase bound.
 	host := fakehost.Start(t)
 	host.Respond("thread/read", fakehost.Reply{Delay: time.Second})
-	client := appserver.New(host.SocketPath, appserver.PhaseBounds{Establish: time.Second, Transmit: time.Second, Ack: 20 * time.Millisecond})
+	// The handshake itself answers later than the ack bound, as it does on a loaded host.
+	host.Script("initialize", fakehost.Reply{Delay: 150 * time.Millisecond})
+	client := connectedWithShortAck(t, host.SocketPath, 20*time.Millisecond)
 	ctx := bounded(t)
-	defer client.Close()
 	// When
 	_, err := client.Call(ctx, "thread/read", map[string]any{"threadId": "a"})
 	// Then

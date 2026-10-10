@@ -32,7 +32,7 @@ func subscriptionSignal(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("lifecycle signal not observed")
 	}
 }
@@ -68,7 +68,7 @@ func TestUnsubscribeGateOrdersNextResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	announceEnd(t, c, host, "second")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
 		t.Fatal(err)

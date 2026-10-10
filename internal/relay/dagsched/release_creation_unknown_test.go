@@ -211,8 +211,11 @@ func releaseUntilBound(t *testing.T, k *realKit, most int) (ReleaseResult, int) 
 	return ReleaseResult{}, 0
 }
 
+// shortBounds are the client's phase bounds for the legacy-profile test. The host loses an answer by
+// ending the connection, never by holding it back, so no bound is reached here and none is short: a
+// 250 ms ack bound only failed the handshake and the reads on a loaded host (CRW-1161).
 func shortBounds() appserver.PhaseBounds {
-	return appserver.PhaseBounds{Establish: 2 * time.Second, Transmit: 2 * time.Second, Ack: 250 * time.Millisecond}
+	return appserver.PhaseBounds{Establish: 30 * time.Second, Transmit: 30 * time.Second, Ack: 30 * time.Second}
 }
 
 func (k *realKit) assertOneChild(t *testing.T, res ReleaseResult, thread string, starts int) {

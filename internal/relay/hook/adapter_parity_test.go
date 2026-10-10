@@ -138,7 +138,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(time.Minute):
 		t.Fatal("control peer did not finish")
 	}
 	var normalize func(value any, path string) any
@@ -233,7 +233,7 @@ func serveAdapterOwner(listener net.Listener, invocations int, timeout bool, pay
 		}
 		err = func() error {
 			defer conn.Close()
-			if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			if err := conn.SetDeadline(time.Now().Add(time.Minute)); err != nil {
 				return err
 			}
 			reader := bufio.NewReader(conn)
