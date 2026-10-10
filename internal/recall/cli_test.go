@@ -347,6 +347,7 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			session := normal.NewSession(c.Bindings())
+			actualThreads, expectedThreads := map[string]string{}, map[string]string{}
 			for i, step := range fixture.Run.Steps {
 				args, ok := sub.MapArgv(step.CLI)
 				if !ok {
@@ -405,8 +406,10 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 						hit.(map[string]any)["score"] = scores[i]
 					}
 				}
-				if _, deviates := recallCLIPortFixedFixtures[id]; deviates {
-					actual, expected = recallCLIPortNormalized(actual), recallCLIPortNormalized(expected)
+				if reason, deviates := recallCLIPortFixedFixtures[id]; deviates {
+					// The actual hits keep their order and their thread identities; only the recorded side is put in the port's order.
+					actual = recallCLIPortNormalized(actual, false, actualThreads)
+					expected = recallCLIPortNormalized(expected, reason == recallCLIPortOrderReason, expectedThreads)
 				}
 				if !recallCLICompareJSON(actual, expected) {
 					t.Errorf("step%d got %s want %s", i, out, sub.Expected(string(want.StdoutJSON)))
@@ -436,13 +439,15 @@ func recallCLIPortOutputEqual(out, want string) bool {
 
 // recallCLIPortFixedFixtures are the recorded fixtures whose answer the port changed on purpose (CRW-1128, docs/port-cxc/known-defects/CRW-1128.md):
 // equal hits are ordered by a stable identity instead of V8's sort schedule (:694), and a memory fallback says what its chat search said (:818).
-// They are compared with the hits ordered by score then path, the thread placeholders (numbered by appearance) alike, and the warnings
-// the chat search adds left out.
+// The warnings the chat search adds are left out of both sides. Where the order changed, the recorded hits are put in the port's order
+// (recallCLIPortHitBefore) and the actual hits are not sorted: they must come in that order themselves.
 var recallCLIPortFixedFixtures = map[string]string{
 	"cli__memory__search_chat_fallback_and_no_chat":              "chat warnings are propagated",
-	"cli__memory__search_cwd_boost_filter_and_origin_federation": "equal hits are ordered by identity",
+	"cli__memory__search_cwd_boost_filter_and_origin_federation": recallCLIPortOrderReason,
 	"cli__memory__search_plain_envelope":                         "chat warnings are propagated",
 }
+
+const recallCLIPortOrderReason = "equal hits are ordered by identity"
 
 var recallCLIPortWarning = regexp.MustCompile(`(?m)^(index unavailable|state db not found)[^\n]*\n`)
 
@@ -450,7 +455,42 @@ func recallCLIDropPortWarnings(text string) string {
 	return recallCLIPortWarning.ReplaceAllString(text, "")
 }
 
-func recallCLIPortNormalized(v any) any {
+// recallCLIPortHitBefore is the port's order of two hits as the JSON prints them (compareMemoryHits): score, newer first, relpath,
+// start line, origin, kind.
+func recallCLIPortHitBefore(a, b map[string]any) int {
+	as, _ := a["score"].(float64)
+	bs, _ := b["score"].(float64)
+	if as != bs {
+		if as > bs {
+			return -1
+		}
+		return 1
+	}
+	if c := strings.Compare(fmt.Sprint(b["updatedAt"]), fmt.Sprint(a["updatedAt"])); c != 0 {
+		return c
+	}
+	if c := strings.Compare(fmt.Sprint(a["relpath"]), fmt.Sprint(b["relpath"])); c != 0 {
+		return c
+	}
+	al, _ := a["startLine"].(float64)
+	bl, _ := b["startLine"].(float64)
+	if al != bl {
+		if al < bl {
+			return -1
+		}
+		return 1
+	}
+	if c := strings.Compare(fmt.Sprint(a["origin"]), fmt.Sprint(b["origin"])); c != 0 {
+		return c
+	}
+	return strings.Compare(fmt.Sprint(a["kind"]), fmt.Sprint(b["kind"]))
+}
+
+// recallCLIPortNormalized drops the warnings the chat search adds and, with order, puts the hits in the port's order. A thread id is
+// kept as an identity: the placeholders number the ids by appearance, which the order changes, so each is named by the relpath of the
+// first hit that carried it in this fixture (threads is shared by the steps of one side). A hit whose thread id belongs to another
+// file than on the other side, or is missing, differs.
+func recallCLIPortNormalized(v any, order bool, threads map[string]string) any {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return v
@@ -470,32 +510,73 @@ func recallCLIPortNormalized(v any) any {
 	}
 	if hits, ok := m["hits"].([]any); ok {
 		sorted := slices.Clone(hits)
-		for i, h := range sorted {
-			if hm, ok := h.(map[string]any); ok {
-				c := map[string]any{}
-				for k, val := range hm {
-					c[k] = val
-				}
-				delete(c, "threadId")
-				sorted[i] = c
-			}
+		if order {
+			slices.SortStableFunc(sorted, func(a, b any) int {
+				am, _ := a.(map[string]any)
+				bm, _ := b.(map[string]any)
+				return recallCLIPortHitBefore(am, bm)
+			})
 		}
-		slices.SortStableFunc(sorted, func(a, b any) int {
-			am, _ := a.(map[string]any)
-			bm, _ := b.(map[string]any)
-			as, _ := am["score"].(float64)
-			bs, _ := bm["score"].(float64)
-			if c := strings.Compare(fmt.Sprint(bs), fmt.Sprint(as)); as != bs && c != 0 {
-				if as > bs {
-					return -1
-				}
-				return 1
+		for i, h := range sorted {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
 			}
-			return strings.Compare(fmt.Sprint(am["relpath"], am["excerpt"]), fmt.Sprint(bm["relpath"], bm["excerpt"]))
-		})
+			c := map[string]any{}
+			for k, val := range hm {
+				c[k] = val
+			}
+			if id, ok := c["threadId"].(string); ok {
+				first, seen := threads[id]
+				if !seen {
+					first = fmt.Sprint(c["relpath"])
+					threads[id] = first
+				}
+				c["threadId"] = "thread of " + first
+			}
+			sorted[i] = c
+		}
 		out["hits"] = sorted
 	}
 	return out
+}
+
+// TestRecallCLIPortNormalizationKeepsIdentityAndOrder pins what the port-fixed comparison still checks: the hits' order, their thread
+// identities across the steps, and a thread id that is missing.
+func TestRecallCLIPortNormalizationKeepsIdentityAndOrder(t *testing.T) {
+	hit := func(relpath, thread string, score float64) any {
+		h := map[string]any{"relpath": relpath, "score": score, "updatedAt": "<TS>", "startLine": 1.0, "origin": "file", "kind": "rollout"}
+		if thread != "" {
+			h["threadId"] = thread
+		}
+		return h
+	}
+	env := func(hits ...any) any { return map[string]any{"hits": hits} }
+	same := recallCLICompareJSON
+	// The recorded order is a, b with <UUID_1>, <UUID_2>; the port prints b, a (equal scores order by path) and numbers its ids by appearance.
+	recorded := env(hit("z.md", "<UUID_1>", 2), hit("a.md", "<UUID_2>", 2))
+	actual := env(hit("a.md", "<UUID_1>", 2), hit("z.md", "<UUID_2>", 2))
+	if !same(recallCLIPortNormalized(actual, false, map[string]string{}), recallCLIPortNormalized(recorded, true, map[string]string{})) {
+		t.Fatal("the port's order with its own numbering differs from the recorded hits in the port's order")
+	}
+	// The recorded order is not accepted as the actual order.
+	if same(recallCLIPortNormalized(recorded, false, map[string]string{}), recallCLIPortNormalized(recorded, true, map[string]string{})) {
+		t.Error("a hit list in the recorded order passes as the port's order")
+	}
+	// The ids of a second step are judged against the files they were bound to in the first.
+	actualThreads, expectedThreads := map[string]string{}, map[string]string{}
+	recallCLIPortNormalized(actual, false, actualThreads)
+	recallCLIPortNormalized(recorded, true, expectedThreads)
+	if !same(recallCLIPortNormalized(actual, false, actualThreads), recallCLIPortNormalized(recorded, true, expectedThreads)) {
+		t.Error("the same ids on the same files differ in a second step")
+	}
+	moved := env(hit("z.md", "<UUID_1>", 2), hit("a.md", "<UUID_2>", 2)) // ids that belonged to the other files in the first step
+	if same(recallCLIPortNormalized(moved, false, actualThreads), recallCLIPortNormalized(recorded, true, expectedThreads)) {
+		t.Error("ids that moved to another file between the steps pass")
+	}
+	if same(recallCLIPortNormalized(env(hit("a.md", "", 2), hit("z.md", "<UUID_2>", 2)), false, map[string]string{}), recallCLIPortNormalized(recorded, true, map[string]string{})) {
+		t.Error("a missing thread id passes")
+	}
 }
 
 func recallCLICompareJSON(actual, expected any) bool {

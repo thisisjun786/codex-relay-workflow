@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"errors"
 	"math"
+	"math/big"
 	"os"
 	"slices"
 	"strconv"
@@ -42,8 +43,8 @@ type RequeueResult struct {
 	Changed        float64            `json:"changed"`
 	Retries        float64            `json:"retries"`
 
-	// selectedFile is the store file as it was when the rows were selected; the write opens the same file or none (known-defects.md :623).
-	selectedFile os.FileInfo
+	// options are the options the rows were selected with; the apply selects again, on the connection it writes through.
+	options RequeueOptions
 	// keyColumns are the primary key columns that name a row of a table without rowids; noIdentity is set when the rows have neither a
 	// rowid nor a primary key, so that no write can name one row (known-defects.md :624).
 	keyColumns []string
@@ -95,19 +96,12 @@ func RequeueExhaustedMemoryJobs(home string, options ...RequeueOptions) RequeueR
 	if _, err := os.Stat(path); path == "" || err != nil {
 		return emptyRequeue(MemoryStatusUnavailable, "no memories store found under "+home, nil, retries)
 	}
-	// The store file is held open from selection to the end of the apply: while it is open its inode cannot be given to a file put in its
-	// place, so the identity the apply compares names this file and no later one (known-defects.md :623).
-	var selectedFile os.FileInfo
-	if hold, err := os.Open(path); err == nil {
-		defer hold.Close()
-		selectedFile, _ = hold.Stat()
-	}
 	db, err := openDbReadOnly(path)
 	if err != nil {
 		return emptyRequeue(MemoryStatusUnavailable, "could not open "+path+": "+err.Error(), &path, retries)
 	}
 	r, err := readMemoryRequeue(db, path, retries, opts)
-	r.selectedFile = selectedFile
+	r.options = opts
 	_ = db.Close() // Close before opening a write connection, including on read failures.
 	if err != nil {
 		return emptyRequeue(MemoryStatusUnsupported, "could not read the jobs table: "+err.Error(), &path, retries)
@@ -182,7 +176,9 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 		query := "SELECT typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error"
 		for i, c := range pk {
 			quoted := `"` + strings.ReplaceAll(c.name, `"`, `""`) + `"`
-			query += ", " + quoted + " AS pk" + strconv.Itoa(i) + ", typeof(" + quoted + ") AS pt" + strconv.Itoa(i) + ", CAST(" + quoted + " AS TEXT) AS ps" + strconv.Itoa(i)
+			// The key is read as its type and as text only: a raw integer past 2^53 cannot be read as a number, and the text is the
+			// integer itself (and the text of a text key).
+			query += ", typeof(" + quoted + ") AS pt" + strconv.Itoa(i) + ", CAST(" + quoted + " AS TEXT) AS ps" + strconv.Itoa(i)
 			keyColumns = append(keyColumns, quoted)
 		}
 		if rows, err = read(query + where); err != nil {
@@ -219,16 +215,22 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 			}
 			for i := range keyColumns {
 				// A key column is bound back as it was read; a value of another type than text or integer cannot be bound back exactly.
-				value, typ := row["pk"+strconv.Itoa(i)], row["pt"+strconv.Itoa(i)]
-				if text, ok := row["ps"+strconv.Itoa(i)].(string); ok && typ == "integer" {
+				text, isText := row["ps"+strconv.Itoa(i)].(string)
+				var value any
+				switch typ := row["pt"+strconv.Itoa(i)]; {
+				case isText && typ == "text":
+					value = text
+				case isText && typ == "integer":
 					number, err := strconv.ParseInt(text, 10, 64)
 					if err != nil {
-						addRequeueCause(&r.SkippedByCause, "untyped-key")
-						c.key = nil
+						isText = false
 						break
 					}
-					value = number
-				} else if _, ok := value.(string); !ok || typ != "text" {
+					value = big.NewInt(number) // bound as an integer, whatever its size
+				default:
+					isText = false
+				}
+				if !isText {
 					addRequeueCause(&r.SkippedByCause, "untyped-key")
 					c.key = nil
 					break
@@ -262,66 +264,89 @@ func presentFold(present map[string]bool, name string) bool {
 // requeueIsConsolidation is a job kind of the memory consolidation pass, which is not an extraction that can be retried unchanged.
 func requeueIsConsolidation(kind string) bool { return strings.Contains(Lower(kind), "consolidat") }
 
+// applyMemoryRequeue writes through a connection that selects the rows itself: the store is opened for writing without CREATE, BEGIN
+// IMMEDIATE takes the write lock, and the rows are selected again on that connection and written in that transaction. The rows that are
+// written were therefore read from the file the writing connection has open, whatever the store name pointed to when the first,
+// read-only selection (the dry run's) was made; a store removed since then is reported and not created again (known-defects.md :623).
 func applyMemoryRequeue(r RequeueResult) RequeueResult {
 	if r.noIdentity {
 		r.State, r.Detail = MemoryStatusUnavailable, "the jobs table has neither rowids nor a primary key to name a row by; nothing was changed"
 		return r
 	}
-	// The store is opened for writing without CREATE, and it must be the file the rows were selected from: a store removed or replaced
-	// since then is reported, not recreated empty or written blindly (known-defects.md :623).
 	db, err := openDbReadWriteExisting(*r.StorePath)
 	if err != nil {
 		r.State, r.Detail = MemoryStatusUnavailable, "could not open for writing: "+err.Error()
 		return r
 	}
 	defer db.Close()
-	if now, err := os.Stat(*r.StorePath); err != nil || r.selectedFile != nil && !os.SameFile(r.selectedFile, now) {
-		r.State, r.Detail = MemoryStatusUnavailable, "the store changed between selection and apply; nothing was changed"
+	if err := db.Exec("BEGIN IMMEDIATE"); err != nil {
+		// BEGIN did not succeed, so there is nothing to roll back (known-defects.md :622).
+		r.State, r.Detail = MemoryStatusUnavailable, "requeue did not start and nothing was changed: "+err.Error()
 		return r
 	}
-	changed, began, err := writeMemoryRequeue(db, r)
-	if err != nil {
-		if !began {
-			// BEGIN did not succeed, so there is nothing to roll back (known-defects.md :622).
-			r.State, r.Detail = MemoryStatusUnavailable, "requeue did not start and nothing was changed: "+err.Error()
-			return r
-		}
-		detail := "requeue failed and was rolled back: " + err.Error()
+	// rollBack ends the transaction and returns why that failed, if it did.
+	rollBack := func() string {
 		if rb := db.Exec("ROLLBACK"); rb != nil && rb.Error() != "cannot rollback - no transaction is active" {
-			detail = "requeue failed and the rollback failed too (" + rb.Error() + "): " + err.Error()
+			return rb.Error()
 		}
-		r.State, r.Detail = MemoryStatusUnavailable, detail
+		return ""
+	}
+	fail := func(r RequeueResult, detail string) RequeueResult {
+		if failed := rollBack(); failed != "" {
+			detail = "requeue failed and the rollback failed too (" + failed + "): " + detail
+		} else {
+			detail = "requeue failed and was rolled back: " + detail
+		}
+		r.State, r.Detail, r.Applied, r.Changed = MemoryStatusUnavailable, detail, false, 0
 		return r
 	}
-	r.Applied, r.Changed = true, changed
-	return r
+	selected, err := readMemoryRequeue(db, *r.StorePath, r.Retries, r.options)
+	if err != nil {
+		return fail(r, "could not read the jobs table: "+err.Error())
+	}
+	selected.options = r.options
+	if selected.State != MemoryStatusOK || len(selected.Selected) == 0 || selected.noIdentity {
+		// The store that is open now is not a store the requeue knows, has no row identity, or has nothing to give retries to: nothing is written.
+		if failed := rollBack(); failed != "" {
+			return fail(selected, failed)
+		}
+		if selected.noIdentity && selected.State == MemoryStatusOK {
+			selected.State, selected.Detail = MemoryStatusUnavailable, "the jobs table has neither rowids nor a primary key to name a row by; nothing was changed"
+		}
+		selected.Applied = selected.State == MemoryStatusOK
+		return selected
+	}
+	changed, err := writeMemoryRequeue(db, selected)
+	if err != nil {
+		return fail(selected, err.Error())
+	}
+	selected.Applied, selected.Changed = true, changed
+	return selected
 }
 
-// writeMemoryRequeue writes in one transaction and says whether BEGIN succeeded. Each selected row is written by its own identity, and the
-// changes reported are the changes the database made.
-func writeMemoryRequeue(db *RwDb, r RequeueResult) (changed float64, began bool, err error) {
-	if err := db.Exec("BEGIN IMMEDIATE"); err != nil {
-		return 0, false, err
-	}
+// writeMemoryRequeue writes the selected rows inside the transaction the caller began. Each selected row is written by its own identity,
+// and the changes reported are the changes the database made. A rowid or an integer key is bound as an integer (a *big.Int, which the
+// binder passes to SQLite as 64-bit): an int would be bound as a double and lose the low digits past 2^53.
+func writeMemoryRequeue(db *RwDb, r RequeueResult) (changed float64, err error) {
 	// A candidate the host has picked up since selection must not be clobbered.
 	const set = "UPDATE jobs SET retry_remaining = ?, retry_at = NULL WHERE status = 'error' AND retry_remaining = 0 AND "
 	var byRow *Stmt
 	if r.rowidAlias != "" {
 		if byRow, err = db.Prepare(set + r.rowidAlias + " = ? AND kind = ? AND job_key = ?"); err != nil {
-			return 0, true, err
+			return 0, err
 		}
 	}
 	var byPK *Stmt
 	if len(r.keyColumns) != 0 {
 		if byPK, err = db.Prepare(set + "kind = ? AND job_key = ? AND " + strings.Join(r.keyColumns, " = ? AND ") + " = ?"); err != nil {
-			return 0, true, err
+			return 0, err
 		}
 	}
 	for _, c := range r.Selected {
 		var info RunResult
 		switch {
 		case c.hasRowid && byRow != nil:
-			info, err = byRow.Run(r.Retries, c.rowid, c.Kind, c.JobKey)
+			info, err = byRow.Run(r.Retries, big.NewInt(c.rowid), c.Kind, c.JobKey)
 		case byPK != nil && len(c.key) == len(r.keyColumns):
 			info, err = byPK.Run(append([]any{r.Retries, c.Kind, c.JobKey}, c.key...)...)
 		default:
@@ -329,14 +354,14 @@ func writeMemoryRequeue(db *RwDb, r RequeueResult) (changed float64, began bool,
 			err = errors.New("a selected row has no rowid or primary key to be written by")
 		}
 		if err != nil {
-			return 0, true, err
+			return 0, err
 		}
 		changed += info.Changes
 	}
 	if err := db.Exec("COMMIT"); err != nil {
-		return 0, true, err
+		return 0, err
 	}
-	return changed, true, nil
+	return changed, nil
 }
 
 func requeueCauseText(counts CauseCounts) string {

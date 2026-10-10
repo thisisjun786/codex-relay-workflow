@@ -111,7 +111,7 @@ func TestSweep1131FailedBeginIsNotARollback(t *testing.T) {
 	}
 }
 
-// :623 -- the write opens the store that was selected from, and creates nothing.
+// :623 -- the write opens a store that is there and creates nothing; the rows it writes are selected on the connection that writes them.
 func TestSweep1131ApplyNeverCreatesOrSwitchesTheStore(t *testing.T) {
 	home := requeueTestHome(t, requeueTestSchema, requeueTestRow("a", "capacity"))
 	path := filepath.Join(home, "memories_1.sqlite")
@@ -119,13 +119,6 @@ func TestSweep1131ApplyNeverCreatesOrSwitchesTheStore(t *testing.T) {
 	if len(r.Selected) != 1 {
 		t.Fatalf("%+v", r)
 	}
-	// The requeue holds the selected file open until its apply ends; the test holds it the same way, so that the file put in its place
-	// below cannot be given the removed file's inode.
-	hold, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer hold.Close()
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +129,10 @@ func TestSweep1131ApplyNeverCreatesOrSwitchesTheStore(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("a removed store was created again: %v", err)
 	}
-	// A store put in its place after the selection is another file: nothing is written to it.
-	other := requeueTestHome(t, requeueTestSchema, requeueTestRow("a", "capacity"))
+	// A store put in its place after the selection is the store the path names now: the apply selects from it, on the connection it
+	// writes through, and gives retries to exactly the rows it selected there. The rows of the store that was selected first are not
+	// carried over to it by their rowid, kind and key.
+	other := requeueTestHome(t, requeueTestSchema, requeueTestRow("b-only", "capacity"), "INSERT INTO jobs VALUES ('memory_stage1','a','error',0,999,'context window exceeded',10,5)")
 	data, err := os.ReadFile(filepath.Join(other, "memories_1.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -148,10 +143,107 @@ func TestSweep1131ApplyNeverCreatesOrSwitchesTheStore(t *testing.T) {
 	if err := os.Rename(path+".new", path); err != nil { // another file under the same name
 		t.Fatal(err)
 	}
-	before := requeueTestRows(t, home)
 	applied = applyMemoryRequeue(r)
-	if applied.Applied || !strings.Contains(applied.Detail, "changed between selection and apply") || !reflect.DeepEqual(requeueTestRows(t, home), before) {
+	if !applied.Applied || !slices.Equal(requeueKeys(applied), []string{"b-only"}) || applied.Changed != 1 {
 		t.Fatalf("%+v", applied)
+	}
+	for _, row := range requeueTestRows(t, home) {
+		if (row["job_key"] == "b-only") != (row["retry_remaining"] == float64(3)) {
+			t.Fatalf("a row the replacing store did not select was written, or the selected one was not: %v", row)
+		}
+	}
+}
+
+// :623 -- a store name that is retargeted between the selection and the apply (A, then B, and A again) never mixes the two: what is written
+// is what the writing connection selected.
+func TestSweep1131RetargetedStoreNameNeverMixesSelectionAndWrite(t *testing.T) {
+	home := requeueTestHome(t, requeueTestSchema, requeueTestRow("a", "capacity"))
+	storeA := filepath.Join(home, "memories_1.sqlite")
+	other := requeueTestHome(t, requeueTestSchema, requeueTestRow("a", "capacity"), requeueTestRow("b", "capacity"))
+	storeB := filepath.Join(home, "store-b.sqlite")
+	data, err := os.ReadFile(filepath.Join(other, "memories_1.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(storeB, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The name is a symlink to B when the rows are selected and to A when they are written.
+	link := filepath.Join(t.TempDir(), "memories_1.sqlite")
+	if err := os.Symlink(storeB, link); err != nil {
+		t.Fatal(err)
+	}
+	r := RequeueExhaustedMemoryJobs(filepath.Dir(link))
+	if !slices.Equal(requeueKeys(r), []string{"a", "b"}) {
+		t.Fatalf("%+v", r)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(storeA, link); err != nil {
+		t.Fatal(err)
+	}
+	applied := applyMemoryRequeue(r)
+	if !applied.Applied || !slices.Equal(requeueKeys(applied), []string{"a"}) || applied.Changed != 1 {
+		t.Fatalf("the apply reports rows that B had, though it wrote A: %+v", applied)
+	}
+	if n := countRows(requeueTestRows(t, home), "retry_remaining", float64(3)); n != 1 {
+		t.Fatalf("%d rows of A were written", n)
+	}
+	db, err := openDbReadOnly(storeB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := recallStmt(t, db, "SELECT retry_remaining FROM jobs").All()
+	if err != nil || countRows(rows, "retry_remaining", float64(0)) != 2 {
+		t.Fatalf("B was written: %v %v", rows, err)
+	}
+}
+
+// :624 -- a rowid or an integer key past 2^53 is read and written exactly: it is not routed through a float, so the row that was selected
+// is the row that is written, and a neighbour that shares its kind and key (here one the cause excludes) is not.
+func TestSweep1131LargeIntegerRowIdentitiesAreExact(t *testing.T) {
+	const big, near = "9007199254740993", "9007199254740992"
+	const cols = "kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT"
+	for _, tc := range []struct {
+		name, schema string
+		rows         []string
+		idColumn     string
+	}{
+		{"rowid", "CREATE TABLE jobs (" + cols + ")", []string{
+			"INSERT INTO jobs (rowid, kind, job_key, status, retry_remaining, retry_at, last_error) VALUES (" + near + ",'memory_stage1','a','error',0,9,'context window exceeded')",
+			"INSERT INTO jobs (rowid, kind, job_key, status, retry_remaining, retry_at, last_error) VALUES (" + big + ",'memory_stage1','a','error',0,9,'capacity')"}, "rowid"},
+		{"integer primary key without rowid", "CREATE TABLE jobs (id INTEGER PRIMARY KEY, " + cols + ") WITHOUT ROWID", []string{
+			"INSERT INTO jobs VALUES (" + near + ",'memory_stage1','a','error',0,9,'context window exceeded')",
+			"INSERT INTO jobs VALUES (" + big + ",'memory_stage1','a','error',0,9,'capacity')"}, "id"},
+		{"rowid column shadowing, integer key", "CREATE TABLE jobs (rowid INTEGER, _rowid_ INTEGER, oid INTEGER, id INTEGER PRIMARY KEY, " + cols + ")", []string{
+			"INSERT INTO jobs VALUES (1,1,1," + near + ",'memory_stage1','a','error',0,9,'context window exceeded')",
+			"INSERT INTO jobs VALUES (1,1,1," + big + ",'memory_stage1','a','error',0,9,'capacity')"}, "id"},
+	} {
+		home := requeueTestHome(t, append([]string{tc.schema}, tc.rows...)...)
+		for _, apply := range []bool{false, true} {
+			r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: apply, Retries: requeueNumber(4)})
+			if r.State != MemoryStatusOK || len(r.Selected) != 1 || r.Applied != apply || (apply && r.Changed != 1) {
+				t.Fatalf("%s apply=%v: %+v", tc.name, apply, r)
+			}
+		}
+		db, err := openDbReadOnly(filepath.Join(home, "memories_1.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := recallStmt(t, db, "SELECT CAST("+tc.idColumn+" AS TEXT) AS id, retry_remaining FROM jobs").All()
+		db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[any]any{}
+		for _, row := range rows {
+			got[row["id"]] = row["retry_remaining"]
+		}
+		if got[big] != float64(4) || got[near] != float64(0) {
+			t.Errorf("%s: the selected row %s and its neighbour %s: %v", tc.name, big, near, got)
+		}
 	}
 }
 
