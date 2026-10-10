@@ -105,6 +105,11 @@ func scriptSupervisorHost(host *fakehost.Server, status string) {
 	})
 }
 
+// supervisorRunBound only ends a run that hangs. The run starts a program and has it open the
+// store, dial the host and write; a bound of 15 s over all of that killed the program on a loaded
+// host, and the golden then read a signal exit instead of the command's own (CRW-1181).
+const supervisorRunBound = 3 * time.Minute
+
 func runSupervisorBinary(t *testing.T, program, state, socket, message string) []supervisorRun {
 	t.Helper()
 	prefix := []string{}
@@ -115,7 +120,7 @@ func runSupervisorBinary(t *testing.T, program, state, socket, message string) [
 	commands := [][]string{{"--state", state, "--socket", socket, "supervisor-send", "--message", message}, {"--state", state, "--socket", socket, "supervisor-read", "--message", message, "--turn", "supervisor-turn", "--proof", hex.EncodeToString(proof[:]), "--as", "supervisor"}}
 	var runs []supervisorRun
 	for _, argv := range commands {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), supervisorRunBound)
 		cmd := exec.CommandContext(ctx, program, append(prefix, argv...)...)
 		var out, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &stderr

@@ -112,20 +112,22 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 		_, err := a.SendMessage(context.Background(), "req-cancelled", "thread-a", "hello", &delivery.TaskSettings{Data: ordered(authorized()).(delivery.Obj)})
 		cancelled <- err
 	}()
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+	entered := time.NewTimer(stepWait)
+	defer entered.Stop()
 	select {
 	case <-rpc.entered:
-	case <-timer.C:
+	case <-entered.C:
 		t.Fatal("send not reached")
 	}
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}
 	var cancellation error
+	settledWait := time.NewTimer(stepWait)
+	defer settledWait.Stop()
 	select {
 	case cancellation = <-cancelled:
-	case <-timer.C:
+	case <-settledWait.C:
 		t.Fatal("send not settled")
 	}
 	if cancellation == nil {
