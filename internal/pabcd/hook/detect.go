@@ -396,7 +396,15 @@ const (
 	PromptRoleUnknown PromptRole = ""
 	PromptRoleParent  PromptRole = "parent"
 	PromptRoleTask    PromptRole = "task"
+	// PromptRoleSupervisor is a session whose only live binding is a supervisor seat (initiative or store scope; CRW-386).
+	PromptRoleSupervisor PromptRole = "supervisor"
 )
+
+// Coordinates is whether the role is a non-implementing seat that runs no PABCD loop for itself (decision 6): a project parent or
+// a supervisor. Every hook leg that withholds the loop from a coordinating seat (UserPromptSubmit's loop-arm recipe, Stop's
+// goal-idle block, the loop pointer of SessionStart and of the compaction restore) asks this one question, so the legs agree.
+// An unknown role, a dispatched task and any mixed role are not coordinating seats: they keep the oracle's text.
+func (r PromptRole) Coordinates() bool { return r == PromptRoleParent || r == PromptRoleSupervisor }
 
 // ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical and reads
 // only the request clauses requestLines keeps, after scopeText has dropped the example spans, so a quoted, listed, fenced or

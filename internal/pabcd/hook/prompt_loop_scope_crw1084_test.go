@@ -37,6 +37,8 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a Linear project link", "Run crw-loop on " + linearProject, PromptRoleUnknown, "pointer"},
 		{"coordination words", "crw-loop 돌려서 프로젝트 조정해줘", PromptRoleUnknown, "pointer"},
 		{"an already bound parent, whatever it asks", "Run crw-loop for this task", PromptRoleParent, "pointer"},
+		{"a verified supervisor, whatever it asks (CRW-386)", "Run crw-loop for this task", PromptRoleSupervisor, "pointer"},
+		{"an explicit current-task implementation for a supervisor", "crw-loop로 이 세션에서 구현해줘, 프로젝트 CRW", PromptRoleSupervisor, "recipe"},
 		{"a single-task loop", "Run crw-loop for this task", PromptRoleUnknown, "recipe"},
 		{"a single-task loop in Korean", "이 유닛 crw-loop로 알아서 끝까지 해줘", PromptRoleUnknown, "recipe"},
 		{"a dispatched task that names the project", "Start crw-loop for the migration project.", PromptRoleTask, "recipe"},

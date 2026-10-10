@@ -263,7 +263,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			// The explicit current-task request is the recipe whatever the registry says, so the read is for the other scopes.
 			role = promptSubmitRole(seams, p.Cwd, p.SessionID)
 		}
-		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role == PromptRoleParent || scope == LoopScopeProject)
+		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role.Coordinates() || scope == LoopScopeProject)
 		if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, promptClaimInputs{read: current}, func(fresh *state.State) bool {
 			if !pointer {
 				fresh.LoopArmSeen = true

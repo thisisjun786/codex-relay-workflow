@@ -34,7 +34,8 @@
 // under the lock reads the metrics ledger and the bound goalplan once and shares them, a Stop after
 // the turn's announced total cap reads and writes nothing, and a prompt without turn_id that lands before
 // the lock releases the earlier turn's Stop (the turn generation). CRW-1107.md: the goal-idle block's IDLE->P
-// command carries no attest.
+// command carries no attest. CRW-386.md: a session the registry verifies as a project parent or a supervisor gets no goal-idle block
+// (StopHandleWithRole).
 package hook
 
 import (
@@ -84,12 +85,23 @@ type StopAnswer struct{ Stdout, Context string }
 // attest-file commands); empty selects this host's platform. env resolves the goals database and the
 // crw invocation of the commands in the block.
 func StopHandle(p StopPayload, platform string, env host.LookupEnv) StopAnswer {
-	return stopHandle(p, platform, env, state.WithSessionLock)
+	return stopHandleWith(p, platform, env, state.WithSessionLock, nil)
+}
+
+// StopHandleWithRole is StopHandle with the role reader of CRW-386: role is called at most once, only for a Stop that would
+// answer the goal-idle block, with the payload's cwd and session id. nil is no reader (every session keeps the oracle's behavior).
+func StopHandleWithRole(p StopPayload, platform string, env host.LookupEnv, role func(cwd, sessionID string) PromptRole) StopAnswer {
+	return stopHandleWith(p, platform, env, state.WithSessionLock, role)
 }
 
 // stopHandle takes the session lock as an argument so that a test can land a participating writer's
 // update, or a lock that cannot be taken, where the oracle's unlocked write would have been.
 func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error) StopAnswer {
+	return stopHandleWith(p, platform, env, lock, nil)
+}
+
+// stopHandleWith is stopHandle with the role reader (nil: none, every session keeps the oracle's behavior).
+func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, role func(cwd, sessionID string) PromptRole) StopAnswer {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -119,6 +131,13 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 			return StopAnswer{}
 		}
 		if stopContextPressure(p) {
+			return StopAnswer{}
+		}
+		// CRW-386 (port: fixed): a session the registry verifies as a project parent or a supervisor runs no PABCD loop for itself
+		// (decision 6), so the block that tells it to arm the next work-phase is withheld whole: a release, no budget spent, no
+		// write, whether or not a goalplan is bound. The read comes after every other release, so only a Stop that would block
+		// reads the registry, and an unknown role (no reader, no binding, a mixed role, a store that cannot be read) keeps the block.
+		if role != nil && role(p.Cwd, p.SessionID).Coordinates() {
 			return StopAnswer{}
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
