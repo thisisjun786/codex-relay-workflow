@@ -128,8 +128,8 @@ func localPath(target string) string {
 	return target
 }
 
-// LinkErrors is every unfenced local Markdown link in the file root/name that does not resolve
-// to an existing path inside root, and, for a file the anchor check covers (anchorScope), every
+// LinkErrors is every local Markdown link outside code and raw HTML in the file root/name that
+// does not resolve to an existing path inside root, and, for a file the anchor check covers (anchorScope), every
 // link whose #fragment is neither a heading slug nor an explicit anchor of the file it leads to
 // (a link to the same file included). name is the path relative to root as reported.
 func LinkErrors(root, name string) ([]string, error) {
@@ -144,24 +144,15 @@ func linkErrors(root, name string, cache map[string]map[string]bool) ([]string, 
 		return nil, err
 	}
 	var errs []string
-	fence := ""
 	resolvedRoot := resolve(root)
 	checkAnchors := anchorScope(name)
-	for number, line := range lines(text) {
-		if marker := fenceMarker.FindStringSubmatch(strings.TrimLeft(line, " \t")); marker != nil {
-			delimiter := marker[1]
-			if fence == "" {
-				fence = delimiter
-			} else if delimiter[0] == fence[0] && len(delimiter) >= len(fence) {
-				fence = ""
-			}
-			continue
-		}
-		if fence != "" {
-			continue
-		}
-		for _, match := range markdownLink.FindAllStringSubmatch(line, -1) {
-			target := strings.Trim(match[1], "<>")
+	// Only the paragraphs and headings hold links: code (fenced, indented, code spans over one line
+	// or several), raw HTML blocks and the frontmatter render no link.
+	for _, block := range parseMarkdown(text).blocks {
+		masked := maskCodeSpans(block.joined())
+		for _, match := range markdownLink.FindAllStringSubmatchIndex(masked, -1) {
+			number := block.lines[0].number - 1 + strings.Count(masked[:match[0]], "\n")
+			target := strings.Trim(masked[match[2]:match[3]], "<>")
 			fragment, hasFragment := fragmentOf(target)
 			local := localPath(target)
 			if local == "" {

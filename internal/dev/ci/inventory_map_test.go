@@ -169,8 +169,12 @@ func registryErrors(root string, registry []rowTestRead) []string {
 }
 
 // covers reports whether the registered read path covers the row path: they are the same, or the row
-// path lies below the read path.
+// path lies below the read path. Both are plain repository-relative paths (plainPath), so a path
+// that leaves the read path through ".." is not below it.
 func covers(read, path string) bool {
+	if plainPath(read) != nil || plainPath(path) != nil {
+		return false
+	}
 	read, path = strings.TrimSuffix(read, "/"), strings.TrimSuffix(path, "/")
 	return read == path || strings.HasPrefix(path, read+"/")
 }
@@ -336,13 +340,7 @@ func inventoryMapErrors(root string, m inventoryMap, ids []string, registry []ro
 }
 
 // relativePath is the error of a path that is not a plain repository-relative path.
-func relativePath(path string) error {
-	clean := filepath.ToSlash(filepath.Clean(path))
-	if path == "" || filepath.IsAbs(path) || clean == ".." || strings.HasPrefix(clean, "../") {
-		return fmt.Errorf("must be a repository-relative path")
-	}
-	return nil
-}
+func relativePath(path string) error { return plainPath(path) }
 
 // descriptionTableErrors is the shape of the descriptions table.
 func descriptionTableErrors(m inventoryMap) []string {
@@ -555,6 +553,21 @@ func TestSkillInventoryMapComplete(t *testing.T) {
 		check("registered test missing", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": open(nil)}, ids, missingTest, false,
 			"rowTestReads TestNoSuchTest: no top-level func")
 		check("registered twice", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": open(nil)}, ids, append(slicesClone(registry), registry...), false, "registered twice")
+	})
+	t.Run("fixture: a path not written plainly is refused and proves nothing", func(t *testing.T) {
+		for _, path := range []string{"plugins/crw/skills/../../../README.md", "plugins/crw/skills/./a/", "plugins//crw/skills/a/", "./plugins/crw/skills/a/"} {
+			row := fixtureRow("done", func(r *inventoryRow) { r.Paths = []string{path} })
+			check(path, map[string]inventoryRow{"collisions[0]": row, "collisions[1]": open(nil)}, ids, registry, false,
+				"collisions[0]: path "+strconv.Quote(path), "collisions[0]: a done fix row needs evidence")
+			asserted := fixtureRow("done", func(r *inventoryRow) {
+				r.Assert = []inventoryAssert{{Path: path, Pattern: "text", Want: "present"}}
+			})
+			check(path+" assert", map[string]inventoryRow{"collisions[0]": asserted, "collisions[1]": open(nil)}, ids, registry, false,
+				"collisions[0]: assert 1: path "+strconv.Quote(path))
+		}
+		if covers("plugins/crw/skills/", "plugins/crw/skills/../../../README.md") {
+			t.Error("a path that leaves the registered directory through .. is covered by it")
+		}
 	})
 	t.Run("fixture: the completion mode wants no open row", func(t *testing.T) {
 		done := fixtureRow("done", func(r *inventoryRow) {

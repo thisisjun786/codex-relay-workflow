@@ -87,6 +87,71 @@ func TestMarkdownAnchorsBlocks(t *testing.T) {
 	has("## Title <a id=\"in-heading\"></a>\n", []string{"in-heading", "title"}, nil)
 }
 
+// A list marker needs a space, a tab or the line end after it, the content of a list item and of a
+// block quote is read as blocks of its own, raw HTML blocks hold no Markdown, and a code span runs
+// over the lines of its paragraph.
+func TestMarkdownAnchorsContainers(t *testing.T) {
+	has := func(text string, want []string, unwanted []string) {
+		t.Helper()
+		anchors := markdownAnchors(text)
+		for _, name := range want {
+			if !anchors[name] {
+				t.Errorf("%q: anchor %q missing from %v", text, name, anchors)
+			}
+		}
+		for _, name := range unwanted {
+			if anchors[name] {
+				t.Errorf("%q: anchor %q must not exist: %v", text, name, anchors)
+			}
+		}
+	}
+	// No list marker: these are setext headings.
+	has("**Bold** title\n=====\n", []string{"bold-title"}, nil)
+	has("*em* title\n=====\n", []string{"em-title"}, nil)
+	has("-flag\n=====\n", []string{"-flag"}, nil)
+	has("+1\n=====\n", []string{"1"}, nil)
+	has("1.5\n=====\n", []string{"15"}, nil)
+	has("- item\n---\n", nil, []string{"item"})
+	has("1. item\n===\n", nil, []string{"item"})
+	// The first line of a list item and of a block quote is a block.
+	has("- # Heading\n\n- ```md\n  # Not a heading\n  ```\n", []string{"heading"}, []string{"not-a-heading"})
+	has("1. ## Numbered\n2) ### Other\n", []string{"numbered", "other"}, nil)
+	has("- ```\n  # In fence\n  ```\n- # After fence\n", []string{"after-fence"}, []string{"in-fence"})
+	has("- item\n\n  ```\n  # Nested fence\n  ```\n\n  # Nested real\n", []string{"nested-real"}, []string{"nested-fence"})
+	has("> ```\n> # Quoted fence\n> ```\n> # Quoted real\n", []string{"quoted-real"}, []string{"quoted-fence"})
+	has("> - # Quoted item\n", []string{"quoted-item"}, nil)
+	has("- > # Item quote\n", []string{"item-quote"}, nil)
+	has(">     # Quoted code\n", nil, []string{"quoted-code"})
+	// Raw HTML blocks.
+	has("<div>\n# Not a heading\n</div>\n\n# Real\n\n# Not a heading\n", []string{"real", "not-a-heading"}, []string{"not-a-heading-1"})
+	has("<div>\n\n# Inside\n\n</div>\n", []string{"inside"}, nil)
+	has("<!--\n# Commented\n-->\n# After comment\n", []string{"after-comment"}, []string{"commented"})
+	has("<pre>\n# Pre\n\n# Still pre\n</pre>\n# After pre\n", []string{"after-pre"}, []string{"pre", "still-pre"})
+	has("<details>\n<summary>S</summary>\n<a id=\"in-html\"></a>\n</details>\n", []string{"in-html"}, nil)
+	has("<custom-tag>\nNot setext\n===\n", nil, []string{"not-setext"})
+	has("Text\n<span>\n# After span\n", []string{"after-span"}, []string{"text-span"})
+	// Code spans over lines.
+	has("Text `code\n<a id=ghost></a>\nend` here\n", nil, []string{"ghost"})
+	has("Para `one\ntwo` <a id=\"live\"></a>\n", []string{"live"}, nil)
+	has("Open `tick\n\n<a id=\"next\"></a> `\n", []string{"next"}, nil)
+	has("Escaped \\`not code <a id=\"esc\"></a> `\n", []string{"esc"}, nil)
+}
+
+// Links in code (fenced, indented, code spans over one line or several), in raw HTML blocks and in
+// list-item fences are not links; a link on a later line of a paragraph is reported on its line.
+func TestLinksOutsideCodeOnly(t *testing.T) {
+	r := newRepo(t)
+	r.write("docs/a.md", "# Real\n\nUse `[x](#not-a-link)` here.\n\n    [x](#not-a-link)\n\n"+
+		"A `multi\n[x](#not-a-link)\nline` span.\n\n<div>\n[x](#not-a-link)\n</div>\n\n"+
+		"- ```md\n  [x](#not-a-link)\n  [y](missing-in-code.md)\n  ```\n\n`[z](missing-in-span.md)`\n\n"+
+		"First line\n[bad](#gone) second line\n\n- item [ok](#real) [bad](#gone-too)\n")
+	errs, err := LinkErrors(r.root, "docs/a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectEqual(t, "errors", errs, []string{"docs/a.md:23: invalid anchor #gone", "docs/a.md:25: invalid anchor #gone-too"})
+}
+
 // anchorFixture is a repository with the documents in files; the first of a failing pair is the
 // document, the rest the fixture's other files.
 func anchorFixture(t *testing.T, files map[string]string) []string {

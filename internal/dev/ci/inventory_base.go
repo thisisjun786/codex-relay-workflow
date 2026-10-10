@@ -138,11 +138,22 @@ func duplicateKeyError(data []byte) error {
 	}
 }
 
+// plainPath is the error of a path that is not a plain repository-relative path: one written as its
+// clean form (no "..", ".", empty or leading "./" element), with a trailing "/" allowed for a
+// directory. A path the inventory map names is compared by prefix, so it names the file it reads.
+func plainPath(path string) error {
+	trimmed := strings.TrimSuffix(path, "/")
+	clean := filepath.ToSlash(filepath.Clean(trimmed))
+	if trimmed == "" || filepath.IsAbs(path) || clean != trimmed || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("must be a plain repository-relative path")
+	}
+	return nil
+}
+
 // validate is the shape of the assert: a repository-relative path, and a want that fits the pattern.
 func (a inventoryAssert) validate() error {
-	clean := filepath.ToSlash(filepath.Clean(a.Path))
-	if a.Path == "" || filepath.IsAbs(a.Path) || clean == ".." || strings.HasPrefix(clean, "../") {
-		return fmt.Errorf("path %q must be a repository-relative path", a.Path)
+	if err := plainPath(a.Path); err != nil {
+		return fmt.Errorf("path %q %v", a.Path, err)
 	}
 	switch {
 	case a.Want == "exists" || a.Want == "missing":

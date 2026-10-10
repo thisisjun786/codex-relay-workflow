@@ -358,7 +358,7 @@ their own authorization. The installer tests use temporary destinations and leav
 installed skills alone. The validator is repository-owned structural validation, not the Codex
 validator or proof of instruction quality: its metadata checker reads this repository's
 single-line frontmatter and interface strings (not general YAML), and its link check covers inline
-local paths outside fenced examples, and the `#fragment` of a link in `plugins/crw/skills` and `docs` (not remote URLs, reference-style links or the fragments of other documents).
+local paths outside code (fenced, indented, code spans) and raw HTML blocks, and the `#fragment` of a link in `plugins/crw/skills` and `docs` (not remote URLs, reference-style links or the fragments of other documents).
 The ordinary CI environment has no Linear credentials, CXC installation, App Server or private
 runtime state.
 
