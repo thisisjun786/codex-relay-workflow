@@ -128,18 +128,7 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 		s.scannedFiles++
 		content := source.DecodeUTF8(data)
 		lowerFile := Lower(content)
-		if tally {
-			markGroupPresence(lowerFile, s.groups, s.present)
-		}
-		if !PlanMatches(lowerFile, plan) {
-			continue
-		}
 		threadID, fileCwd := frontmatterThreadID(content), frontmatterCwd(content)
-		relpath, err := filepath.Rel(s.root, file)
-		if err != nil {
-			return nil, nil, err
-		}
-		kind := KindOfRelpath(filepath.ToSlash(relpath), "file")
 		repoKey := ""
 		if threadID != nil && s.scope != nil {
 			if meta, found := s.scope.threadCwd[*threadID]; found {
@@ -151,6 +140,29 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 				}
 			}
 		}
+		if tally {
+			// Presence is evidence the scoped search could return, so it is judged the way the hits
+			// are: paragraph by paragraph. A term in a paragraph the scope rejects adds none, even
+			// when another paragraph of the same file mentions the cwd.
+			if s.scope == nil {
+				markGroupPresence(lowerFile, s.groups, s.present)
+			} else {
+				for _, chunk := range ParagraphChunks(content) {
+					lower := Lower(chunk.Text)
+					if keep, _ := memorySearchScopeAdjust(s.scope, fileCwd, lower, repoKey); keep {
+						markGroupPresence(lower, s.groups, s.present)
+					}
+				}
+			}
+		}
+		if !PlanMatches(lowerFile, plan) {
+			continue
+		}
+		relpath, err := filepath.Rel(s.root, file)
+		if err != nil {
+			return nil, nil, err
+		}
+		kind := KindOfRelpath(filepath.ToSlash(relpath), "file")
 		updatedAt := memorySearchISO(stamp)
 		base := MemoryHit{Origin: "file", Kind: kind, Relpath: filepath.ToSlash(relpath), ThreadID: threadID, UpdatedAt: &updatedAt, Cwd: fileCwd}
 		keptBefore, paragraphMatches := len(candidates), 0

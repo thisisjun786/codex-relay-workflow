@@ -560,8 +560,8 @@ func TestGitHubPostAnswerBoundsThePayload(t *testing.T) {
 	if !strings.Contains(reason, "("+githubPostRuleUnread+") at "+githubPostWhereCommand+":") {
 		t.Errorf("over the bound denied as %q, want %s at %s", reason, githubPostRuleUnread, githubPostWhereCommand)
 	}
-	if answer := GitHubPostAnswer(githubPostFailingReader{}); answer != "" {
-		t.Errorf("a failed read answered %q, want nothing", answer)
+	if reason := githubPostAnswerReason(t, GitHubPostAnswer(githubPostFailingReader{})); !strings.Contains(reason, "("+githubPostRuleUnread+") at "+githubPostWhereCommand+":") {
+		t.Errorf("a failed read answered %q, want unreadable-post deny", reason)
 	}
 }
 

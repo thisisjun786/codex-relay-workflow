@@ -238,7 +238,9 @@ func chatSearchMakeReadOnly(t *testing.T, index string) {
 	if os.Geteuid() == 0 {
 		t.Skip("write-protection witness requires a non-root host")
 	}
-	chatSearchConfigureIndex(t, index, "UPDATE meta SET value='1' WHERE key='schema_version'")
+	// A missing table makes the writer's schema step write, which a write-protected file refuses; the
+	// index keeps its schema version, so the read-only reader still accepts it.
+	chatSearchConfigureIndex(t, index, "DROP TABLE recall_hit_counts")
 	if err := os.Chmod(index, 0o444); err != nil {
 		t.Fatal(err)
 	}
@@ -391,6 +393,13 @@ func TestChatSearchRankAndHistory(t *testing.T) {
 	}
 }
 
+var chatSearchLaneScoreFixes = map[string][]float64{
+	"cold":           {0.02977260708619778, 0.02929666842940243},
+	"warm":           {0.02977260708619778, 0.02929666842940243},
+	"read-only":      {0.02977260708619778, 0.02929666842940243},
+	"read-only-open": {0.02977260708619778, 0.02929666842940243},
+}
+
 func TestChatSearchRecordedOracle(t *testing.T) {
 	data, err := os.ReadFile("testdata/chatsearch/oracle.json")
 	if err != nil {
@@ -450,6 +459,13 @@ func TestChatSearchRecordedOracle(t *testing.T) {
 			}
 			if err := json.Unmarshal(c.Out, &want); err != nil {
 				t.Fatal(err)
+			}
+			// port: fixed (docs/port-cxc/known-defects/CRW-1087.md): the lanes rank the eligible rows, so
+			// the main rows no longer rank behind the subagent and archived rows the search excludes.
+			if scores, ok := chatSearchLaneScoreFixes[c.Name]; ok {
+				for i, hit := range want.(map[string]any)["hits"].([]any) {
+					hit.(map[string]any)["score"] = scores[i]
+				}
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("oracle differs\ngot %s\nwant %s", b, c.Out)

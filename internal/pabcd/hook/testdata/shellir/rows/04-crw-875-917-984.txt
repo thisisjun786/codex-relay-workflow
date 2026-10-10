@@ -342,8 +342,8 @@ echo clean
 --cmd
 declare -x PATH=/evil:/usr/bin:/bin; source lib.sh
 
-=== CRW-984-05 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-984-05 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --cmd

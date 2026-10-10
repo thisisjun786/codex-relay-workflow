@@ -29,16 +29,35 @@ func configValue(value *string, absent string) string {
 	return *value
 }
 
-// runConfig ports cli.ts:48-113; help is only the first argument, not a global flag.
+// runConfig ports cli.ts:48-113. Unlike the oracle, which looked for help only in the action
+// position and let set ignore every token past the value (CRW-1148), --help, -h and help in any
+// argument position print the usage before the home is resolved or anything is read or written,
+// and a token past the action's arity is a usage error before any read or write.
 func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, configUsage)
 		return 2
 	}
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" || arg == "help" {
+			fmt.Fprint(stdout, configUsage)
+			return 0
+		}
+	}
 	action := args[0]
-	if action == "--help" || action == "-h" || action == "help" {
-		fmt.Fprint(stdout, configUsage)
-		return 0
+	if action != "list" && (len(args) < 2 || args[1] == "") {
+		fmt.Fprintf(stderr, "config %s: a <table.key> argument is required\n%s", action, configUsage)
+		return 2
+	}
+	arity := map[string]int{"list": 1, "get": 2, "unset": 2, "set": 3}
+	want, known := arity[action]
+	if !known {
+		fmt.Fprintf(stderr, "config: unknown action '%s'\n%s", action, configUsage)
+		return 2
+	}
+	if len(args) > want {
+		fmt.Fprintf(stderr, "config %s: unexpected argument '%s'\n%s", action, args[want], configUsage)
+		return 2
 	}
 	home, err := resolveFeatureHome(env)
 	if err != nil {
@@ -60,11 +79,11 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if len(args) < 2 || args[1] == "" {
-		fmt.Fprintf(stderr, "config %s: a <table.key> argument is required\n%s", action, configUsage)
-		return 2
-	}
+	// The resolved id, not the spelling typed, names the key in every action (CRW-1148).
 	id := args[1]
+	if entry, _ := configguard.ResolveManagedKey(id); entry != nil {
+		id = configguard.ManagedKeyID(*entry)
+	}
 	if action == "get" {
 		if entry, reason := configguard.ResolveManagedKey(id); entry == nil {
 			fmt.Fprintln(stderr, reason)
@@ -84,10 +103,6 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "%s = %s\n", id, configValue(value, "(unset)"))
 		return 0
-	}
-	if action != "set" && action != "unset" {
-		fmt.Fprintf(stderr, "config: unknown action '%s'\n%s", action, configUsage)
-		return 2
 	}
 	var value *bool
 	if action == "set" {
@@ -117,11 +132,17 @@ func runConfig(args []string, env scope.Env, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "config %s: %s\n", action, r.Reason)
 		return 1
 	}
-	suffix := ""
-	if !r.Changed {
-		suffix = " (already set; recorded)"
+	if action == "unset" {
+		// An unset restores the value from before crw set it; the "prior -> applied" line of a set
+		// would read as a no-op change here.
+		fmt.Fprintf(stdout, "%s: restored to %s\n", id, configValue(r.PriorValue, "(unset)"))
+	} else {
+		suffix := ""
+		if !r.Changed {
+			suffix = " (already set; recorded)"
+		}
+		fmt.Fprintf(stdout, "%s: %s -> %s%s\n", id, configValue(r.PriorValue, "(unset)"), r.AppliedValue, suffix)
 	}
-	fmt.Fprintf(stdout, "%s: %s -> %s%s\n", id, configValue(r.PriorValue, "(unset)"), r.AppliedValue, suffix)
 	if r.BackupPath != nil {
 		fmt.Fprintf(stdout, "backup: %s\n", *r.BackupPath)
 	}

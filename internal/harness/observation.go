@@ -158,7 +158,7 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 	}
 	digest := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 	home, set := env("CODEX_HOME")
-	if !set {
+	if !set || home == "" {
 		h, err := host.Home(env)
 		if err != nil {
 			return false

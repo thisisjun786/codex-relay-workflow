@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 )
 
 // NudgeEvery is the 0-indexed interval: calls 1, 6, 11, ... of eligible edits advise.
@@ -61,6 +62,11 @@ func HandleIdleEditAdvisory(raw string, env host.LookupEnv) string {
 	if !editTool(tool) || sid == "" || cwd == "" {
 		return ""
 	}
+	// CRW-1140: at a cwd away from the anchored root of a thread whose work is in flight there is
+	// no state of this session to nudge about, and the counter write would create one.
+	if stateroot.Hold(env, cwd, sid) != nil {
+		return ""
+	}
 	s, unreadable := state.ReadStateStrict(cwd, sid)
 	if unreadable || s.Phase != state.PhaseIdle || s.OrchestrationActive {
 		return ""
@@ -77,6 +83,13 @@ func HandleIdleEditAdvisory(raw string, env host.LookupEnv) string {
 	count := s.IdleEditNudges
 	stillIdle := true
 	if !unsafeCounterWrite(s) {
+		// CRW-1140: the counter write creates the state of an armed thread that has none, so at a
+		// cwd away from an anchored root that holds nothing in flight the anchor follows the thread
+		// here first; an anchor that cannot follow leaves no state it does not track, and the
+		// advisory, cosmetic, is dropped (the thread's SessionStart and prompt say why).
+		if stateroot.Bootstrap(env, cwd, sid) != nil {
+			return ""
+		}
 		// Cosmetic failures stay fail-open; an unavailable lock uses the first read's count.
 		_ = state.WithSessionLock(cwd, sid, func() error {
 			fresh, bad := state.ReadStateStrict(cwd, sid)

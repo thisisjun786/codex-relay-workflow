@@ -20,8 +20,8 @@ for i in 1; do command true; done; bash prog.sh
 --why c1: the descriptor script behind a loop of a harmless function; judged as the same command without the loop (CRW-1064-11).
 f() { :; }; for i in 1; do f; done; bash /dev/fd/0 </dev/null
 
-=== CRW-1064-04 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-1064-04 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/prog.sh
 echo ok
 --cmd

@@ -2,13 +2,16 @@ package configguard
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"golang.org/x/sys/unix"
 )
 
 const SelfHealMarkerName = "crw-self-heal.json"
@@ -20,7 +23,12 @@ type SelfHealMarker struct {
 	OptedOutAt, CheckedAt  *string
 	ConfigMtimeMs          *float64
 	HealedKeys, CachedKeys []string
-	order                  []string
+	// Probe is the verified execution evidence an explicit command recorded (CRW-1150).
+	Probe *SelfHealProbeEvidence
+	// probeSeen is true when the marker read carried a probeEvidence field, parsed or not: such a
+	// marker is never judged by the legacy mtime cache (CRW-1150).
+	probeSeen bool
+	order     []string
 }
 
 func SelfHealMarkerPath(home string) string { return filepath.Join(home, SelfHealMarkerName) }
@@ -63,6 +71,8 @@ func ParseSelfHealMarker(raw string) *SelfHealMarker {
 	}
 	m.HealedKeys = stringsOnly(o.Get("healedKeys"))
 	m.CachedKeys = stringsOnly(o.Get("cachedKeys"))
+	probe, probeSeen := o.Lookup("probeEvidence")
+	m.Probe, m.probeSeen = parseSelfHealProbeEvidence(probe), probeSeen
 	return m
 }
 
@@ -111,6 +121,9 @@ func selfHealMarkerObject(m *SelfHealMarker) (pyjson.Object, error) {
 	if m.CachedKeys != nil {
 		add("cachedKeys", m.CachedKeys)
 	}
+	if m.Probe != nil {
+		add("probeEvidence", selfHealProbeEvidenceObject(m.Probe))
+	}
 	ordered := pyjson.Object{}
 	for _, key := range m.order {
 		if value, ok := fields.Lookup(key); ok {
@@ -128,6 +141,9 @@ func selfHealMarkerObject(m *SelfHealMarker) (pyjson.Object, error) {
 // WriteSelfHealMarkerFile publishes through the same protected, fsynced temporary
 // file and rename as activation. It never reuses another writer's fixed .tmp path.
 func WriteSelfHealMarkerFile(home string, marker *SelfHealMarker) error {
+	if marker.Probe != nil || marker.probeSeen {
+		selfHealRetireLegacyCache(marker)
+	}
 	fields, err := selfHealMarkerObject(marker)
 	if err != nil {
 		return err
@@ -143,39 +159,85 @@ func WriteSelfHealMarkerFile(home string, marker *SelfHealMarker) error {
 }
 
 // MarkSelfHealOptedOut merges the explicit disable choice with accepted cache and
-// healed-key consent fields. Newly present overrides append in JS spread order.
+// healed-key consent fields. Newly present overrides append in JS spread order. It reads and
+// publishes under the marker lock, so an enable's recorder cannot publish an older marker over it.
 func MarkSelfHealOptedOut(home, at string) error {
-	m, err := ReadSelfHealMarkerFile(home)
-	if err != nil {
-		return err
-	}
-	if m == nil {
-		m = &SelfHealMarker{}
-	}
-	fields, err := selfHealMarkerObject(m)
-	if err != nil {
-		return err
-	}
-	for _, field := range fields {
-		m.order = append(m.order, field.Key)
-	}
-	for _, key := range []string{"optedOut", "optedOutAt", "allEnabled"} {
-		if !slices.Contains(m.order, key) {
-			m.order = append(m.order, key)
+	return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
+		m, err := ReadSelfHealMarkerFile(home)
+		if err != nil {
+			return nil, err
 		}
-	}
-	opted, enabled := true, false
-	m.OptedOut, m.OptedOutAt, m.AllEnabled = &opted, &at, &enabled
-	return WriteSelfHealMarkerFile(home, m)
+		if m == nil {
+			m = &SelfHealMarker{}
+		}
+		fields, err := selfHealMarkerObject(m)
+		if err != nil {
+			return nil, err
+		}
+		for _, field := range fields {
+			m.order = append(m.order, field.Key)
+		}
+		for _, key := range []string{"optedOut", "optedOutAt", "allEnabled"} {
+			if !slices.Contains(m.order, key) {
+				m.order = append(m.order, key)
+			}
+		}
+		opted, enabled := true, false
+		m.OptedOut, m.OptedOutAt, m.AllEnabled = &opted, &at, &enabled
+		// The flags this opt-out reverts no longer match what the evidence verified.
+		m.Probe = nil
+		return m, nil
+	})
 }
 
 // ClearSelfHealOptOut clears only the explicit opt-out fields; an absent or
 // readable malformed marker stays untouched, and a read failure is refused.
 func ClearSelfHealOptOut(home string) error {
-	m, err := ReadSelfHealMarkerFile(home)
-	if err != nil || m == nil {
+	if m, err := ReadSelfHealMarkerFile(home); err != nil || m == nil {
 		return err
 	}
-	m.OptedOut, m.OptedOutAt = nil, nil
-	return WriteSelfHealMarkerFile(home, m)
+	return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
+		m, err := ReadSelfHealMarkerFile(home)
+		if err != nil || m == nil {
+			return nil, err
+		}
+		m.OptedOut, m.OptedOutAt = nil, nil
+		return m, nil
+	})
+}
+
+var errSelfHealMarkerBusy = errors.New("the self-heal marker is busy: another CRW writer holds its lock")
+
+// selfHealMarkerLockWait is how long a marker writer waits for another's lock. A holder keeps it only
+// for one read and one publication. It is a variable so a test can shorten it.
+var selfHealMarkerLockWait = activationLockWait
+
+// lockSelfHealMarker takes an exclusive advisory lock on the codex home directory, which every writer
+// of the marker shares. The directory is locked rather than a sidecar file so that the lock leaves
+// nothing in CODEX_HOME (the recorded home trees of the disable cases are compared whole); it is a
+// different file from config.toml's sidecar lock, so it never contends with the activation's.
+func lockSelfHealMarker(home string) (func(), error) {
+	if err := os.MkdirAll(home, 0777); err != nil {
+		return nil, err
+	}
+	dir, err := os.Open(home)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(selfHealMarkerLockWait)
+	for {
+		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return func() { _ = unix.Flock(int(dir.Fd()), unix.LOCK_UN); _ = dir.Close() }, nil
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EACCES) {
+			_ = dir.Close()
+			return nil, err
+		}
+		if !time.Now().Before(deadline) {
+			_ = dir.Close()
+			return nil, errSelfHealMarkerBusy
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

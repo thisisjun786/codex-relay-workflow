@@ -231,7 +231,13 @@ func hookTrustConfigEscapeRegExp(value string) string {
 // document order, each only when its body holds no structural enabled = false line (spaces, tabs
 // and a trailing comment allowed). A config.toml that does not exist answers no key.
 func ReadInstalledPluginKeys(codexHome, pluginName string) ([]string, error) {
-	content, present, err := hookTrustConfigReadConfig(codexHome)
+	return readInstalledPluginKeys(codexHome, pluginName, os.ReadFile)
+}
+
+// readInstalledPluginKeys is ReadInstalledPluginKeys reading config.toml with read: os.ReadFile
+// for the exported reader the retrust command shares, harnessReadBounded for the harness check.
+func readInstalledPluginKeys(codexHome, pluginName string, read hookTrustConfigReader) ([]string, error) {
+	content, present, err := hookTrustConfigReadConfig(codexHome, read)
 	if err != nil {
 		return nil, err
 	}
@@ -298,14 +304,20 @@ func hookTrustTomlExactHookSections(content, key string) []hookTrustTomlSection 
 // holds exactly one such line, and nil otherwise; a config.toml that does not exist reads as an
 // empty document, so every hook is untrusted. The listing's own error is returned as it is.
 func DiagnoseHookTrust(codexHome, pluginRoot, pluginKey string) ([]HookTrustResult, error) {
-	content, present, err := hookTrustConfigReadConfig(codexHome)
+	return diagnoseHookTrust(codexHome, pluginRoot, pluginKey, os.ReadFile, 0)
+}
+
+// diagnoseHookTrust is DiagnoseHookTrust reading config.toml with read (readInstalledPluginKeys) and
+// the plugin's documents within limit bytes (0: no bound; listHookTrustEntries).
+func diagnoseHookTrust(codexHome, pluginRoot, pluginKey string, read hookTrustConfigReader, limit int64) ([]HookTrustResult, error) {
+	content, present, err := hookTrustConfigReadConfig(codexHome, read)
 	if err != nil {
 		return nil, err
 	}
 	if !present {
 		content = ""
 	}
-	entries, err := ListHookTrustEntries(pluginRoot, pluginKey)
+	entries, err := listHookTrustEntries(pluginRoot, pluginKey, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -330,16 +342,24 @@ func DiagnoseHookTrust(codexHome, pluginRoot, pluginKey string) ([]HookTrustResu
 	return results, nil
 }
 
+// hookTrustConfigReader reads the bytes of the file at path.
+type hookTrustConfigReader func(path string) ([]byte, error)
+
 // hookTrustConfigReadConfig is the config.toml read the two entry points share (hook-trust.ts:300
 // and :331): whether the file exists, and its bytes as Buffer.toString("utf8") holds them (one
 // U+FFFD for each maximal invalid subpart). A path that cannot be looked at reads as absent, the
-// oracle's existsSync; once it is known to exist a read that fails is an engine error.
-func hookTrustConfigReadConfig(codexHome string) (string, bool, error) {
+// oracle's existsSync; once it is known to exist a read that fails is an engine error. read is
+// the read itself: the exported readers, which `crw doctor retrust` shares for its own reads and
+// its pre-write verification, read the file whole with os.ReadFile, as before CRW-1152; only the
+// harness check (`crw doctor harness`) reads it with harnessReadBounded, which never blocks on a
+// FIFO and refuses a file past harnessReadLimit (CRW-1152: the bound is the harness's own, so a
+// large valid config.toml is still retrusted).
+func hookTrustConfigReadConfig(codexHome string, read hookTrustConfigReader) (string, bool, error) {
 	path := filepath.Join(codexHome, "config.toml")
 	if _, err := os.Stat(path); err != nil {
 		return "", false, nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := read(path)
 	if err != nil {
 		return "", false, err
 	}

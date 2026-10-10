@@ -16,13 +16,18 @@ type Refusal string
 func (r Refusal) Error() string { return string(r) }
 
 // NativeSession is a Codex session whose id and working directory the thread database confirms.
-type NativeSession struct{ SessionID, Cwd, DBPath string }
+//
+// Note is the diagnostic of the root policy (Root.Note) when the databases were read under a root other than the
+// one an earlier reading took (an empty HOME); it is set on a refusal too, because a refusal is when the person
+// needs it. A caller shows it on stderr.
+type NativeSession struct{ SessionID, Cwd, DBPath, Note string }
 
 const (
 	noThreadID    = Refusal("CODEX_THREAD_ID is absent. Run this command inside the native Codex session.")
 	badThreadID   = Refusal("CODEX_THREAD_ID must be an unmodified native UUID.")
 	noWorkdir     = Refusal("Cannot resolve the working directory. Run from the native session's directory.")
 	noStateDB     = Refusal("Cannot locate the native state database. Check CODEX_SQLITE_HOME or CODEX_HOME.")
+	relativeRoot  = Refusal("Native state database directory is not an absolute path. Set CODEX_SQLITE_HOME or CODEX_HOME to an absolute directory, or HOME to an absolute home; a relative or empty home is not read from the working directory.")
 	noStateFile   = Refusal("Native state database is missing. Check CODEX_SQLITE_HOME or CODEX_HOME.")
 	notRegular    = Refusal("Newest native state database must be a regular file, not a symlink or directory.")
 	unreadable    = Refusal("Cannot read the newest native state database or its threads schema. Check database access and Node SQLite support.")
@@ -37,8 +42,13 @@ const (
 // ResolveNativeSession verifies CODEX_THREAD_ID and cwd against the newest state_<N>.sqlite
 // (resolveNativeSession): a root session (cli, vscode, exec or mcp), not archived, whose stored
 // working directory is cwd after symlinks. It is corroboration for a CLI only, never a hook's
-// identity resolver, and it never creates or migrates a native database.
+// identity resolver, and it never creates or migrates a native database. The databases are read
+// under CodexSQLiteRoot, the directory the goals database is read under too.
 func ResolveNativeSession(cwd string, env LookupEnv) (NativeSession, error) {
+	return resolveNativeSession(cwd, env, accountHome)
+}
+
+func resolveNativeSession(cwd string, env LookupEnv, account func() (string, error)) (NativeSession, error) {
 	id, set := env("CODEX_THREAD_ID")
 	if !set {
 		return NativeSession{}, noThreadID
@@ -48,43 +58,44 @@ func ResolveNativeSession(cwd string, env LookupEnv) (NativeSession, error) {
 	}
 	// Node holds every string it reads, from argv, the environment, the account database, the file
 	// system and SQLite, decoded from UTF-8 with U+FFFD for each invalid sequence, so the oracle never
-	// names a path by its invalid bytes. The decode sits where a path enters (cwd, home, the stored
-	// cwd) and where the OS answers with one (canonical, getcwd); ids and sources cannot match
-	// whichever way they are decoded.
+	// names a path by its invalid bytes. The decode sits where a working directory enters (cwd, the
+	// stored cwd) and where the OS answers with one (canonical, getcwd); ids and sources cannot match
+	// whichever way they are decoded. The database root is not decoded (CRW-1136): it is listed and
+	// opened as the bytes the environment gave.
 	cwd = decodeUTF8([]byte(cwd))
 	canonicalCwd, err := canonical(cwd)
 	if info, statErr := os.Lstat(canonicalCwd); err != nil || statErr != nil || !info.IsDir() {
 		return NativeSession{}, noWorkdir
 	}
-	home, err := CodexSQLiteHome(env)
+	root, err := codexSQLiteRoot(env, account)
 	if err != nil {
-		return NativeSession{}, noStateDB
+		return NativeSession{}, relativeRoot
 	}
-	home = decodeUTF8([]byte(home))
-	dbPath, err := newestStateDB(home)
+	refuse := func(err error) (NativeSession, error) { return NativeSession{Note: root.Note}, err }
+	dbPath, err := newestStateDB(root)
 	if err != nil {
-		return NativeSession{}, err
+		return refuse(err)
 	}
 	db, err := openReadOnly(dbPath)
 	if err != nil {
-		return NativeSession{}, unreadable
+		return refuse(unreadable)
 	}
 	defer db.Close()
 	rows, err := db.Query(ThreadQuery, id)
 	if err != nil {
-		return NativeSession{}, unreadable
+		return refuse(unreadable)
 	}
 	defer rows.Close()
 	if !rows.Next() {
 		if rows.Err() != nil { // a lock, or a malformed file: never an older database
-			return NativeSession{}, unreadable
+			return refuse(unreadable)
 		}
-		return NativeSession{}, noRow
+		return refuse(noRow)
 	}
 	names, err := rows.Columns()
 	var field [4]any
 	if err != nil || rows.Scan(&field[0], &field[1], &field[2], &field[3]) != nil || !safe(field[:]...) {
-		return NativeSession{}, unreadable
+		return refuse(unreadable)
 	}
 	// JavaScript reads the columns as properties of the row, which keep the case the table declares,
 	// so a column declared ID, CWD, ARCHIVED or SOURCE leaves the field it names missing.
@@ -95,37 +106,40 @@ func ResolveNativeSession(cwd string, env LookupEnv) (NativeSession, error) {
 	}
 	rowID, rowCwd, archived, source := field[0], field[1], field[2], field[3]
 	if got, _ := rowID.(string); got != id {
-		return NativeSession{}, noRow
+		return refuse(noRow)
 	}
 	if !isZero(archived) {
-		return NativeSession{}, archivedRow
+		return refuse(archivedRow)
 	}
 	if kind, _ := source.(string); kind != "cli" && kind != "vscode" && kind != "exec" && kind != "mcp" {
-		return NativeSession{}, notRootSource
+		return refuse(notRootSource)
 	}
 	// node:sqlite hands TEXT to JavaScript decoded as UTF-8 with U+FFFD for each invalid sequence, so
 	// the path the oracle resolves is not always the bytes stored (a known defect, kept).
 	stored, _ := rowCwd.(string)
 	stored = decodeUTF8([]byte(stored))
 	if !filepath.IsAbs(stored) {
-		return NativeSession{}, badStoredCwd
+		return refuse(badStoredCwd)
 	}
 	storedCanonical, err := canonical(stored)
 	if err != nil {
-		return NativeSession{}, noStoredCwd
+		return refuse(noStoredCwd)
 	}
 	if storedCanonical != canonicalCwd {
-		return NativeSession{}, otherCwd
+		return refuse(otherCwd)
 	}
-	return NativeSession{SessionID: id, Cwd: canonicalCwd, DBPath: dbPath}, nil
+	return NativeSession{SessionID: id, Cwd: canonicalCwd, DBPath: dbPath, Note: root.Note}, nil
 }
 
-// newestStateDB is the highest-numbered state_<N>.sqlite in home (ties in name order), which must
-// be a regular file: no fallback to an older database. The directory is listed as the OS resolves
-// home, but the path that is opened is cleaned lexically, as path.resolve does, so a home ending in
-// <symlink>/.. lists one directory and opens a file of another (a known defect, kept).
-func newestStateDB(home string) (string, error) {
-	entries, err := os.ReadDir(home)
+// newestStateDB is the highest-numbered state_<N>.sqlite in root (ties in name order), which must
+// be a regular file, not a symlink: no fallback to an older database. The directory listed and the
+// path opened are the root as spelled, joined without cleaning (Root.Join), so a root ending in
+// <symlink>/.. lists and opens the one directory the kernel resolves it to. The oracle cleaned the
+// opened path lexically (path.resolve) and read another directory's file; CRW-1136 fixed that. A
+// symlinked directory on the way to the root is followed; only the database file itself must not be
+// a link.
+func newestStateDB(root Root) (string, error) {
+	entries, err := os.ReadDir(root.Path)
 	if err != nil {
 		return "", noStateDB
 	}
@@ -146,10 +160,7 @@ func newestStateDB(home string) (string, error) {
 	if best == "" {
 		return "", noStateFile
 	}
-	path, err := workdirPath(filepath.Join(home, best))
-	if err != nil {
-		return "", noStateDB
-	}
+	path := root.Join(best)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return "", noStateDB
@@ -229,20 +240,6 @@ func canonical(path string) (string, error) {
 		pending = target
 	}
 	return decodeUTF8([]byte(resolved)), nil
-}
-
-// workdirPath is path.resolve of one path: cleaned lexically and, when relative, joined to the
-// working directory as getcwd reports it (process.cwd(), decoded as a JavaScript string), where
-// os.Getwd would answer with $PWD.
-func workdirPath(path string) (string, error) {
-	if !filepath.IsAbs(path) {
-		wd, err := syscall.Getwd()
-		if err != nil {
-			return "", err
-		}
-		path = decodeUTF8([]byte(wd)) + string(filepath.Separator) + path
-	}
-	return filepath.Clean(path), nil
 }
 
 // safe is false when a scanned INTEGER is beyond what a JavaScript number holds exactly: node:sqlite

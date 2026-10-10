@@ -10,6 +10,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
@@ -125,6 +127,15 @@ type resumeFailureDoc struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// resumeLookupEnv is the run's environment as the PABCD packages read it: a variable the run's
+// Getenv answers empty for is unset.
+func resumeLookupEnv(e *Env) host.LookupEnv {
+	return func(key string) (string, bool) {
+		value := e.Getenv(key)
+		return value, value != ""
+	}
+}
+
 // resumeExit is the status a refusal ends with: the recorded settings or the stopped-server list
 // are what the operator must fix (2), a disagreement with the host about what the child runs is
 // not something this command may resolve (4), and everything else is the relay or the host (3).
@@ -132,7 +143,7 @@ func resumeExit(f *resumeFailure) int {
 	switch f.Reason {
 	case resumeSettingsUnavailable, resumeDisabledServersUnset:
 		return usageExit
-	case resumeSettingsMismatch, resumeMCPNotDisabled:
+	case resumeSettingsMismatch, resumeMCPNotDisabled, stateroot.Code:
 		return 4
 	default:
 		return 3
@@ -412,8 +423,8 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	}
 	var read struct {
 		Thread struct {
-			Model, ReasoningEffort string
-			Status                 struct{ Type string }
+			Model, ReasoningEffort, Cwd string
+			Status                      struct{ Type string }
 		}
 	}
 	if err := json.Unmarshal(raw, &read); err != nil {
@@ -421,6 +432,22 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	}
 	if read.Thread.Status.Type == "active" {
 		return nil, &resumeFailure{Reason: resumeThreadActive, Detail: "the thread is active; nothing was sent"}
+	}
+	// CRW-1140: the child's PABCD state lives at the cwd the host reports for it now, not at the
+	// recorded cwd, which a later settings record may have changed. A record that would resume the
+	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
+	// included, and the preserved state is named. Only a run that goes on to resume records the
+	// child's anchor, and it is refused when that record cannot be written (the child's SessionStart
+	// could not be guarded); the dry run writes nothing.
+	rootEnv := resumeLookupEnv(e)
+	var refusal error
+	if opts.dryRun {
+		refusal = stateroot.Resolve(rootEnv, read.Thread.Cwd, settings.CWD, child)
+	} else {
+		refusal = stateroot.Guard(rootEnv, read.Thread.Cwd, settings.CWD, child)
+	}
+	if refusal != nil {
+		return nil, &resumeFailure{Reason: stateroot.CodeOf(refusal), Detail: refusal.Error() + "; nothing was sent"}
 	}
 	if opts.dryRun {
 		// The settings comparison the dry run is for, against what the thread reports now. A thread
@@ -454,9 +481,17 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
-	var resumedSettings struct{ Model, ReasoningEffort string }
+	// The host took the resume: the anchor follows the cwd it reports for the child, which is not
+	// necessarily the one the record asked for. It follows before the settings are compared: a
+	// resume whose answer disagrees with the record still runs the child at the reported cwd, and
+	// the child's next SessionStart or prompt there must find its anchor. Either failure withholds
+	// the turn.
+	var resumedSettings struct{ Model, ReasoningEffort, Cwd string }
 	if err := json.Unmarshal(resumed, &resumedSettings); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
+	}
+	if err := stateroot.Moved(rootEnv, read.Thread.Cwd, resumedSettings.Cwd, child); err != nil {
+		return nil, &resumeFailure{Reason: stateroot.CodeOf(err), Detail: err.Error() + "; the child was resumed but no turn was started"}
 	}
 	if mismatch := resumeCompare(settings, resumedSettings.Model, resumedSettings.ReasoningEffort); mismatch != "" {
 		return nil, &resumeFailure{Reason: resumeSettingsMismatch, Detail: mismatch + "; no turn was started"}

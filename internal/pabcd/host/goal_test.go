@@ -31,9 +31,20 @@ func TestGoalsDBPathHonorsSQLiteHomeOverCodexHome(t *testing.T) {
 	if got, _ := GoalsDBPath(envOf(map[string]string{"CODEX_SQLITE_HOME": "/sq", "CODEX_HOME": "/ch"})); got != "/sq/goals_1.sqlite" {
 		t.Errorf("both set: %q", got)
 	}
-	// path.join cleans a ".." lexically, so a symlink before it is not followed (a known defect, kept).
-	if got, _ := GoalsDBPath(envOf(map[string]string{"CODEX_SQLITE_HOME": "/a/alias/.."})); got != "/a/goals_1.sqlite" {
-		t.Errorf("a .. is cleaned like path.join: %q", got)
+	// The root is joined without cleaning, so a ".." after a symlink is left to the kernel (CRW-1136;
+	// the oracle's path.join removed it lexically).
+	if got, _ := GoalsDBPath(envOf(map[string]string{"CODEX_SQLITE_HOME": "/a/alias/.."})); got != "/a/alias/../goals_1.sqlite" {
+		t.Errorf("a .. is kept: %q", got)
+	}
+	for _, vars := range []map[string]string{{"CODEX_SQLITE_HOME": "sq"}, {"CODEX_HOME": "ch"}, {"HOME": "h"}} {
+		if got, err := goalsDBPath(envOf(vars), func() (string, error) { return "/account", nil }); err == nil {
+			t.Errorf("%v: a relative root gave %q", vars, got)
+		}
+	}
+	for _, vars := range []map[string]string{{"HOME": ""}, {}} {
+		if got, err := goalsDBPath(envOf(vars), func() (string, error) { return "/account", nil }); err != nil || got != "/account/.codex/goals_1.sqlite" {
+			t.Errorf("%v: %q, %v, want the account home's", vars, got, err)
+		}
 	}
 }
 

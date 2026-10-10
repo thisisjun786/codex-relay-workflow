@@ -39,7 +39,9 @@ printf '%s\n' 'fake map'`)
 		want string
 	}{
 		{[]string{"provider", "detect"}, `"mode":"provider"`},
-		{[]string{"provider", "--help", "ignored"}, `"port":10100`},
+		{[]string{"provider", "status"}, `"port":10100`},
+		{[]string{"provider", "detect", "--help", "ignored"}, `"port":10100`},
+		{[]string{"provider", "--help", "ignored"}, "usage: crw provider [detect|status]"},
 		{[]string{"map", ".", "--tokens", "20"}, "fake map\n"},
 		{[]string{"map"}, "fake map\n"},
 	} {

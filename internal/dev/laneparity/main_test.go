@@ -25,5 +25,9 @@ func TestMain(m *testing.M) {
 	if dir := os.Getenv(contracttest.RecDirEnv); dir != "" {
 		os.Exit(contracttest.RunStubHelper(dir))
 	}
+	// A real-host test runs this test binary as a stand-in Codex.
+	if mode := os.Getenv(fakeCodexEnv); mode != "" {
+		os.Exit(fakeCodex(mode))
+	}
 	testsupport.Main(m, testsupport.TempDirInRoot)
 }

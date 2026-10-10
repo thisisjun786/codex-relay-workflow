@@ -76,7 +76,9 @@ func TestRevivalNumberForms(t *testing.T) {
 		v    any
 		want float64
 		ok   bool
-	}{{float64(2.9), 2, true}, {json.Number("2.9"), 2, true}, {json.Number("-0"), 0, true}, {float64(4), 0, false}, {json.Number("1e999"), 0, false}} {
+	}{{float64(2), 2, true}, {json.Number("3"), 3, true}, {json.Number("1.0"), 1, true}, {float64(4), 0, false}, {json.Number("1e999"), 0, false},
+		// CRW-1109: a version that is not a whole number from 1 is refused, where the oracle floored 2.9 and kept -0 as 0.
+		{float64(2.9), 0, false}, {json.Number("2.9"), 0, false}, {json.Number("-0"), 0, false}, {json.Number("0"), 0, false}, {json.Number("-1e999"), 0, false}} {
 		plan := reviveGoalplan(base(c.v), nil)
 		if (plan != nil) != c.ok || (c.ok && (plan.SchemaVersion == nil || *plan.SchemaVersion != c.want)) {
 			t.Errorf("schemaVersion %#v: %+v", c.v, plan)

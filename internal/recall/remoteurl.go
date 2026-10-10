@@ -334,7 +334,22 @@ func strictPercentDecode(s string) (string, bool) {
 		if !a || !c {
 			return "", false
 		}
-		b = append(b, hi<<4|lo)
+		if decoded := hi<<4 | lo; decoded == '/' || decoded == '\\' || decoded == '%' {
+			// An encoded separator is part of its segment. Decoded it would join two segments and
+			// give a/b and a%2Fb one identity, so it stays encoded, in one spelling. A decoded
+			// percent stays encoded too: the key's escapes are then all real escapes, and %252F
+			// (a literal %2F) cannot be read as the preserved %2F.
+			switch decoded {
+			case '/':
+				b = append(b, '%', '2', 'F')
+			case '\\':
+				b = append(b, '%', '5', 'C')
+			default:
+				b = append(b, '%', '2', '5')
+			}
+		} else {
+			b = append(b, decoded)
+		}
 		i += 2
 	}
 	return string(b), utf8.Valid(b)

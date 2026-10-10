@@ -276,22 +276,22 @@ bash missing.sh
 --cmd
 bash post.sh
 
-=== CRW-875-22-20 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-875-22-20 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --cmd
 CDPATH=/x; cd {WORK}/sub; bash clean.sh
 
-=== CRW-875-22-21 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-875-22-21 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --cmd
 CDPATH=/x; cd ./sub; bash clean.sh
 
-=== CRW-875-22-22 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-875-22-22 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --file sub/more.sh
@@ -299,8 +299,8 @@ echo more
 --cmd
 export CDPATH=/x:.; cd ./sub; bash clean.sh; bash more.sh
 
-=== CRW-875-22-23 | Q
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-875-22-23 | Q | deviation=attempt/deny/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file post.sh
 echo clean
 --file sub/post.sh
@@ -777,8 +777,8 @@ echo clean
 --cmd
 CDPATH=/x source entry.sh
 
-=== CRW-875-22-51 | T
---why CRW-951 and CRW-1085: a cd inside a carried shell file may fail; a later relative child script has an unproven directory. Keep dev memory expectation.
+=== CRW-875-22-51 | T | deviation=attempt/allow/deny
+--why CRW-951 and CRW-1085: a cd inside a carried shell file may fail; a later relative child script has an unproven directory. Keep dev memory expectation. CRW-1099 refuses worktree operations with an unproven directory.
 --file entry.sh
 cd ./sub
 bash post.sh
@@ -815,8 +815,8 @@ echo clean
 --cmd
 for CDPATH in /x; do :; done; cd sub; bash clean.sh
 
-=== CRW-875-22-53 | T
---why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub and worktree keep their existing verdicts.
+=== CRW-875-22-53 | T | deviation=attempt/allow/deny
+--why CRW-951: cd may fail and execution can continue; the memory reader cannot prove the script directory. GitHub keeps its existing verdict; CRW-1099 refuses worktree operations with an unproven directory.
 --file sub/clean.sh
 echo clean
 --cmd

@@ -30,13 +30,14 @@ INSERT INTO threads VALUES ('b','B','/b','', '  origin  ',1.5),('a','A','/a',NUL
 	}
 }
 
-func TestRecallThreadMetaLegacyAndUnsafeFallback(t *testing.T) {
+// An unsafe integer in git_origin_url is not a missing column: the reader reports it instead of
+// silently dropping the origin (port: fixed, CRW-1123, :393). TestSweepThreadMetaRetriesOnlyAMissingLegacyColumn.
+func TestRecallThreadMetaLegacyFallback(t *testing.T) {
 	for _, c := range []struct {
 		schema, insert string
 		want           ThreadMeta
 	}{
 		{`CREATE TABLE threads(id,title,cwd,git_branch,updated_at_ms)`, `INSERT INTO threads VALUES ('x','Legacy','/old',NULL,5)`, ThreadMeta{Title: "Legacy", Cwd: "/old", UpdatedAtMs: recallTime(5)}},
-		{`CREATE TABLE threads(id,title,cwd,git_branch,git_origin_url,updated_at_ms)`, `INSERT INTO threads VALUES ('x','Origin','/p',NULL,9007199254740992,1)`, ThreadMeta{Title: "Origin", Cwd: "/p", UpdatedAtMs: recallTime(1)}},
 	} {
 		p := filepath.Join(t.TempDir(), "state.sqlite")
 		d := recallDB(t, p)
@@ -53,7 +54,7 @@ func TestRecallThreadMetaWarningsAndCase(t *testing.T) {
 	for _, c := range []struct{ schema, want string }{
 		{`CREATE TABLE other(x)`, "state db unreadable (no such table: threads)"},
 		{`CREATE TABLE threads(id,title,cwd,git_branch,git_origin_url,updated_at_ms);INSERT INTO threads VALUES ('x','unsafe','/p',NULL,NULL,9007199254740992)`, "state db unreadable (Value is too large to be represented as a JavaScript number: 9007199254740992)"},
-		{`CREATE TABLE threads(ID,TITLE,CWD,GIT_BRANCH,GIT_ORIGIN_URL,UPDATED_AT_MS);INSERT INTO threads VALUES ('x','Title','/p',NULL,NULL,1)`, ""},
+		{`CREATE TABLE threads(id,title,cwd,git_branch,git_origin_url,updated_at_ms);INSERT INTO threads VALUES ('x','unsafe origin','/p',NULL,9007199254740992,1)`, "state db unreadable (Value is too large to be represented as a JavaScript number: 9007199254740992)"},
 	} {
 		p := filepath.Join(t.TempDir(), "state.sqlite")
 		d := recallDB(t, p)

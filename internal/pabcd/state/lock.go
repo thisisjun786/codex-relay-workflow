@@ -31,6 +31,8 @@ import (
 // busy error (a *fs.PathError on the lock path that errors.Is fs.ErrExist). A record that cannot be written leaves no lock file and
 // returns the write's error, and the release, which also runs when fn panics, removes the lock file only while the path still names
 // the file this holder locked (known-defects.md :76 and :77, port: fixed).
+// Once held, the pending ledger events of the session are judged first (JudgeLedgerOutbox); a verdict that cannot be kept is
+// answered as ErrLedgerJudgment and fn does not run (CRW-1097).
 func WithSessionLock(cwd, sessionID string, fn func() error) error {
 	return WithSessionLockContext(context.Background(), cwd, sessionID, fn)
 }
@@ -53,7 +55,8 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 // no context passes context.Background(), which is what WithSessionLock does: its behaviour and its sleep seam are
 // unchanged.
 func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
-	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep, nil)
+	retryDelays, onBusy := lockWaitProbe()
+	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, time.Sleep, retryDelays, onBusy)
 }
 
 // orchestrateInterruptLockContext is the acquisition both entries share. retryDelays is a test seam: a
@@ -128,6 +131,12 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		}
 	}
 	defer held.release()
+	// CRW-1097: an event an earlier writer of the session left pending is judged now, from the state that writer left, before this
+	// holder changes anything, so no later drain mistakes this holder's write for the event's transition. A verdict that could not be
+	// kept refuses the holder: fn does not run, and the next holder judges again.
+	if err := JudgeLedgerOutbox(cwd, sessionID); err != nil {
+		return err
+	}
 	return fn()
 }
 

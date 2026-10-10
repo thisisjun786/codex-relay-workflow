@@ -68,7 +68,13 @@ type SelfHealReportOutcome struct {
 // SelfHealReportDeps are injected, so the rule never resolves a home or starts a binary itself.
 type SelfHealReportDeps struct {
 	CodexHome string
-	Run       CodexRunner
+	// Cwd is the directory the hook's codex runs in; "" means it is not known, and recorded evidence
+	// is not reused (CRW-1150).
+	Cwd string
+	Run CodexRunner
+	// Ctx is the round's deadline: a fingerprint read that has not finished when it ends is abandoned
+	// and the round measures (CRW-1150). nil means no deadline.
+	Ctx context.Context
 }
 
 // SelfHealReport is selfHealDeclaredFeatures without its writes. The marker is read only, and the
@@ -87,22 +93,31 @@ func SelfHealReport(deps SelfHealReportDeps) []SelfHealReportOutcome {
 	configMtimeMs := selfHealReportMtimeMs(filepath.Join(deps.CodexHome, "config.toml"))
 	// A cache that predates a SOFT_FEATURES addition must not vouch for the new key.
 	cacheCoversCurrentKeys := marker != nil && marker.CachedKeys != nil && selfHealReportCovers(marker.CachedKeys, healable)
-	if marker != nil && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
+	// A marker that carries verified evidence, even evidence that no longer parses, is judged by the
+	// evidence alone: the mtime cache an older CXC wrote must not vouch ahead of a newer explicit
+	// finding (CRW-1150).
+	if marker != nil && marker.Probe == nil && !marker.probeSeen && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
 		marker.ConfigMtimeMs != nil && configMtimeMs != nil && *marker.ConfigMtimeMs == *configMtimeMs {
 		return []SelfHealReportOutcome{{Action: SelfHealReportSkipped, Reason: SelfHealReasonCached}}
-	}
-
-	state, err := ReadDeclaredState(deps.Run)
-	if err != nil {
-		// Measurement failure, not a state. Nothing is cached (the oracle leaves the marker as it
-		// was) and nothing is said.
-		return []SelfHealReportOutcome{{Action: SelfHealReportUnavailable, Message: err.Error()}}
 	}
 
 	healedKeys := []string{}
 	if marker != nil {
 		healedKeys = marker.HealedKeys
 	}
+	// The record an explicit command made of a verified listing stands in for the listing while the
+	// codex version and config.toml are the ones it was measured against (CRW-1150).
+	state, fromEvidence := selfHealEvidenceState(deps, marker, healable)
+	if !fromEvidence {
+		var err error
+		state, err = ReadDeclaredState(deps.Run)
+		if err != nil {
+			// Measurement failure, not a state. Nothing is cached (the oracle leaves the marker as it
+			// was) and nothing is said.
+			return []SelfHealReportOutcome{{Action: SelfHealReportUnavailable, Message: err.Error()}}
+		}
+	}
+
 	outcomes := []SelfHealReportOutcome{}
 	for _, key := range healable {
 		if state[string(key)] {
@@ -178,16 +193,24 @@ func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if err != nil {
 		return 0
 	}
-	context := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: SelfHealReportRunner(ctx, env)}))
+	// Every codex call of the round shares one short deadline (CRW-1150). A probe that overruns it is
+	// a measurement that failed, which the round answers with silence, so a slow codex cannot spend
+	// the hook's whole time limit and rely on the host to kill it.
+	probeCtx, endProbe := context.WithTimeout(ctx, selfHealReportProbeDeadline)
+	defer endProbe()
+	// codex runs in the hook's working directory, which decides the project layers that apply; when it
+	// cannot be read, recorded evidence is not reused.
+	cwd, _ := os.Getwd()
+	additional := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: SelfHealReportRunner(probeCtx, env), Ctx: probeCtx}))
 	if ctx.Err() != nil {
 		// The probe was cancelled while it ran: nothing is rendered or written after cancellation.
 		return harness.Interrupted
 	}
-	if context == "" {
+	if additional == "" {
 		return 0
 	}
 	answer := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":` +
-		pyjson.Dumps(context, pyjson.Options{Compact: true, Unicode: true}) + "}}\n"
+		pyjson.Dumps(additional, pyjson.Options{Compact: true, Unicode: true}) + "}}\n"
 	if _, err := io.WriteString(out, answer); err != nil {
 		return 0
 	}
@@ -263,6 +286,9 @@ func SelfHealReportRunner(ctx context.Context, env host.LookupEnv) CodexRunner {
 		// starts, the last start failure is the answer, and the round stays silent (CRW-977).
 		result := CodexRunResult{Stderr: errSelfHealReportENOENT.Error(), ExitCode: 1}
 		for _, file := range candidates {
+			if ctx.Err() != nil {
+				break
+			}
 			var started bool
 			var startErr error
 			result, started, startErr = selfHealReportRunOne(ctx, file, args)
@@ -362,7 +388,13 @@ func (e errSelfHealReport) Error() string { return string(e) }
 // killed, the same bound internal/runtime/doctor's commandWaitDelay gives its codex probe: a
 // descendant that inherited the pipe would otherwise hold the hook (and the session start) until it
 // exits. A variable only so a test can shorten it.
-var selfHealReportWaitDelay = 5 * time.Second
+var selfHealReportWaitDelay = 2 * time.Second
+
+// selfHealReportProbeDeadline is the one deadline the round's codex calls share (CRW-1150). The
+// SessionStart declaration allows the whole hook 20 seconds (K1); the deadline plus the pipe
+// cleanup above ends the round well inside that, and a normal listing takes a fraction of a second.
+// A variable only so a test can shorten it.
+var selfHealReportProbeDeadline = 8 * time.Second
 
 // selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
 type selfHealReportBudget struct {

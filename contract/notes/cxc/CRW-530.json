@@ -7,35 +7,9 @@
   ],
   "identical": [
     "cli__subagents__dispatch_claim_fail_handoff",
-    "cli__subagents__dispatch_failure_outcomes",
-    "cli__subagents__dispatch_reconciled_then_task_failure",
-    "cli__subagents__dispatch_task_failed_to_main_direct"
+    "cli__subagents__dispatch_failure_outcomes"
   ],
   "intentionally-changed": [
-    {
-      "id": "cli-help__subagents__dispatch_dashdash_help",
-      "reason": "Go JSON parser wording differs; dispatch still ignores --help and reads stdin.",
-      "set": {
-        "steps/0/stdout": "{\"error\":\"unexpected end of JSON input\"}"
-      },
-      "remove": []
-    },
-    {
-      "id": "cli__subagents__dispatch_created_complete",
-      "reason": "Created now refuses invented/offline identities without a real host subagent parent witness. Complete then refuses the unrecorded ID; status and claim remain reconcile, and the original compact given ledger is preserved. Refusal also preserves the given file mode instead of the oracle publication mode.",
-      "set": {
-        "steps/0/exit": "1",
-        "steps/0/stdout": "{\"error\":\"host could not verify created agent; copy agentId from the native spawn result and ensure the native thread database is readable; close an old wrong-ID report with outcome stopped, executionState stopped and reconciliation\"}",
-        "steps/1/exit": "1",
-        "steps/1/stdout": "{\"error\":\"complete requires the recorded agentId\"}",
-        "steps/2/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-1\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}]}",
-        "steps/3/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-1\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"reason\":\"attempt already claimed; do not spawn again\"}",
-        "tree/ws/.crw/dispatches/rec-s1/one.json/content": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"status\":\"active\"}",
-        "tree/ws/.crw/dispatches/rec-s1/one.json/form": "json-line",
-        "tree/ws/.crw/dispatches/rec-s1/one.json/mode": "0644"
-      },
-      "remove": []
-    },
     {
       "id": "cli__subagents__dispatch_held_lock_fails_closed",
       "reason": "Go filesystem error wording differs; held lock still fails closed.",

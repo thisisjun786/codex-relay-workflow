@@ -49,9 +49,20 @@ func TestReadRecordedDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
+	// CRW-1109 names the field these recorded refusals are about, where the oracle answered (unknown); what is refused is
+	// unchanged (docs/port-cxc/known-defects/CRW-1109.md).
+	namedFields := map[string]string{
+		"slug":           "slug (the stored slug is not the requested one)",
+		"criterion_id":   "criteria[].id",
+		"steering_entry": "steeringLog[] entries (each needs idempotencyKey/rationale/evidence/appliedAt/summary)",
+	}
 	for _, c := range record.Cases {
 		if strings.Contains(c.ID, "symlink") || strings.Contains(c.ID, "dangling") {
 			continue
+		}
+		if field, ok := namedFields[c.ID]; ok && c.Read.Diagnostic != nil {
+			detail := "the goalplan parsed as JSON but field '" + field + "' did not satisfy the schema"
+			c.Read.Diagnostic.Field, c.Read.Diagnostic.Detail, c.Lock.Reason = field, detail, detail
 		}
 		t.Run(c.ID, func(t *testing.T) {
 			cwd, dir := readWorkspace(t)
@@ -120,7 +131,7 @@ func TestReadStoredPlans(t *testing.T) {
 			raw := strings.ReplaceAll(c.Raw, "rec-plan", "demo")
 			writeReadFile(t, filepath.Join(dir, GoalplanFile), raw)
 			want := "null"
-			if c.Oracle != nil {
+			if c.Oracle != nil && !oraclePlanRefusedVersions[name] {
 				want = strings.ReplaceAll(*c.Oracle, "rec-plan", "demo")
 			}
 			if got := compact(t, ReadGoalplan(cwd, "demo")); got != want {

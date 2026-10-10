@@ -274,7 +274,24 @@ func appendRow(cwd, sub, name string, row []member, closeTail bool) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, name)
+	return appendLine(filepath.Join(dir, name), line, closeTail)
+}
+
+// AppendLedgerLine appends a row already spelled (a pending event's line, CRW-1097) to <state dir>/ledger.jsonl, with the same
+// directory steps and the same tail rule as AppendLedger.
+func AppendLedgerLine(cwd string, line []byte) error {
+	if _, err := crwdir.EnsureDir(cwd); err != nil {
+		return err
+	}
+	dir := filepath.Join(cwd, crwdir.DirName)
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return err
+	}
+	return appendLine(filepath.Join(dir, LedgerFile), append([]byte{}, line...), true)
+}
+
+// appendLine is the one appended line of appendRow and AppendLedgerLine.
+func appendLine(path string, line []byte, closeTail bool) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err

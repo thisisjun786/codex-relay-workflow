@@ -61,7 +61,7 @@ type cxcReplayer struct {
 	observe func(id string, got cxccorpus.Expect)
 	mutate  func(id string, got *cxccorpus.Expect)
 	// seed puts a harness's own files into each case root and takes them out before it is observed.
-	seed func(c *cxccorpus.Case) (undo func() error, err error)
+	seed func(c *cxccorpus.Case, env []string) (undo func() error, err error)
 }
 
 func newCXCReplayer(root, crw string) (*cxcReplayer, error) {

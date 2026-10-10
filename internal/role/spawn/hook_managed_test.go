@@ -1,9 +1,12 @@
 package spawn
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -158,4 +161,70 @@ func spawnTestObject(pairs ...string) pyjson.Object {
 		o = o.Set(pairs[i], pairs[i+1])
 	}
 	return o
+}
+
+// spawnManagedNative writes a native thread database under codex holding the session's subagents (id -> first message) and,
+// when spawns is not empty, a parent row whose rollout holds the host's completed spawn items (tool use id -> child).
+func spawnManagedNative(t *testing.T, codex, session string, children map[string]string, spawns map[string]string) {
+	t.Helper()
+	spawnHookMust(t, os.RemoveAll(codex))
+	spawnHookMust(t, os.MkdirAll(codex, 0o755))
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.Join(codex, "state_5.sqlite")}).String())
+	spawnHookMust(t, err)
+	defer db.Close()
+	_, err = db.Exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, source TEXT, archived INTEGER, first_user_message TEXT)")
+	spawnHookMust(t, err)
+	source, _ := json.Marshal(map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": session, "depth": 1}}})
+	for id, first := range children {
+		_, err = db.Exec("INSERT INTO threads VALUES (?,?,?,0,?)", id, "", string(source), first)
+		spawnHookMust(t, err)
+	}
+	if len(spawns) == 0 {
+		return
+	}
+	var lines []string
+	for call, child := range spawns {
+		item := map[string]any{"type": "CollabAgentToolCall", "id": call, "tool": "spawn_agent", "status": "completed", "sender_thread_id": session, "receiver_thread_ids": []string{child}}
+		line, _ := json.Marshal(map[string]any{"type": "event_msg", "payload": map[string]any{"type": "item_completed", "thread_id": session, "item": item}})
+		lines = append(lines, string(line))
+	}
+	rollout := filepath.Join(codex, "rollout-parent.jsonl")
+	spawnHookMust(t, os.WriteFile(rollout, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	_, err = db.Exec("INSERT INTO threads VALUES (?,?,?,0,?)", session, rollout, "cli", "")
+	spawnHookMust(t, err)
+}
+
+// The spawn hook's own issuance records the marked child the host already shows, and the created check then ties a child to
+// the issued native call only by the host's result of that call: the old child is refused, the new one stays unverified until
+// the result is shown, and is then tied.
+func TestSpawnHookManagedIssuanceTiesOnlyTheCallsResult(t *testing.T) {
+	rig := spawnHookNewRig(t, spawnHookReadFixture(t).Skills, spawnHookCase{})
+	ledger := filepath.Join(rig.ws, ".crw", "dispatches", "rec-s1", "one.json")
+	spawnHookMust(t, os.MkdirAll(filepath.Dir(ledger), 0o755))
+	spawnHookMust(t, os.WriteFile(ledger, []byte(`{"version":1,"sessionId":"rec-s1","id":"one","role":"executor","candidates":[{"model":"rec/exec-primary","effort":"high"}],"attempts":[{"id":"att-1","candidate":{"model":"rec/exec-primary","effort":"high"},"claimed":true,"agentId":null,"observedModel":null,"code":null,"taskFailure":null,"status":"claimed","reconciliation":null,"spawnIssued":false,"toolUseId":null}],"status":"active"}`), 0o644))
+	codex, _ := rig.env("CODEX_HOME")
+	marked := "[CRW-DISPATCH:one:att-1]\nTASK: locate the owner"
+	spawnManagedNative(t, codex, "rec-s1", map[string]string{"child-old": marked}, nil)
+	stdin := `{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","session_id":"rec-s1","cwd":"` + rig.ws + `","tool_use_id":"native-1","tool_input":{"agent_type":"executor","message":"[CRW-DISPATCH:one:att-1]\nTASK: locate the owner"}}`
+	if got := RunSpawnAttachHook(stdin, rig.env); !strings.Contains(got, `"permissionDecision":"allow"`) {
+		t.Fatalf("managed hook = %q", got)
+	}
+	created := func(agent string) map[string]any {
+		return map[string]any{"action": "report", "sessionId": "rec-s1", "dispatchId": "one", "attemptId": "att-1", "outcome": "created", "agentId": agent}
+	}
+	spawnManagedNative(t, codex, "rec-s1", map[string]string{"child-old": marked, "child-new": marked}, nil)
+	if _, err := role.CheckedDispatch(context.Background(), rig.ws, created("child-old"), rig.env, nil); err == nil || !strings.Contains(err.Error(), "when the spawn was issued") {
+		t.Fatalf("created of the child the host showed at issuance = %v", err)
+	}
+	out, err := role.CheckedDispatch(context.Background(), rig.ws, created("child-new"), rig.env, nil)
+	spawnHookMust(t, err)
+	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "unverified" {
+		t.Fatalf("created without the call's result = %+v", out.Attempts[0].Receipt)
+	}
+	spawnManagedNative(t, codex, "rec-s1", map[string]string{"child-old": marked, "child-new": marked}, map[string]string{"native-1": "child-new"})
+	out, err = role.CheckedDispatch(context.Background(), rig.ws, created("child-new"), rig.env, nil)
+	spawnHookMust(t, err)
+	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "spawn-result" {
+		t.Fatalf("created once the call's result is shown = %+v", out.Attempts[0].Receipt)
+	}
 }

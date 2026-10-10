@@ -140,7 +140,7 @@ func TestStopLegFailuresAreNotABlock(t *testing.T) {
 	// that names the limit, exit 0), and the handler never runs, so the state is not touched
 	big := strings.Repeat("x", MaxStdinBytes+1)
 	before, _ := os.ReadFile(state.StatePath(cwd, "s1"))
-	if code, out, _ := stopHook(Legs(), big, env); code != 0 || out != OversizedHookOutput("stop") {
+	if code, out, _ := stopHook(Legs(), big, env); code != 0 || out != block {
 		t.Errorf("an oversized input: %d %q", code, out)
 	}
 	if after, _ := os.ReadFile(state.StatePath(cwd, "s1")); string(after) != string(before) {

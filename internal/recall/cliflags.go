@@ -19,7 +19,7 @@ func Usage() string {
 		`crw recall chat search "<query>" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]`,
 		"                           [--limit N] [--context N] [--any] [--all] [--no-tools]",
 		"                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]",
-		"crw recall chat index [--rebuild] [--status] [--json]",
+		"crw recall chat index [--rebuild] [--status] [--verify] [--json]",
 		`crw recall memory search "<query>" [--days N] [--limit N] [--any] [--no-synonyms]`,
 		"                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]",
 		"crw recall memory status [--json] [--home PATH]",
@@ -46,6 +46,7 @@ func Usage() string {
 		"  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)",
 		"  --json       machine-readable output (text fields clipped at 500 chars)",
 		"  --full       with --json: emit unclipped text fields",
+		"  --verify     chat index: decide freshness from file content, not only size and mtime (with --status, report without writing)",
 		"  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)",
 	}, "\n")
 }
@@ -56,6 +57,10 @@ type ParsedFlags struct {
 }
 
 const boolFlagNames = "any all no-tools rank recent scan no-refresh no-synonyms synonyms no-chat full rebuild status json"
+
+// portBoolFlagNames are boolean flags of the port that the oracle does not have. They are accepted,
+// but a parse that did not see one does not list it, so the parsed shape of every oracle case is unchanged.
+const portBoolFlagNames = "verify"
 
 func WantsHelp(args []string) bool {
 	for _, s := range args {
@@ -119,7 +124,7 @@ func flagOption(name string) (string, bool) {
 	case "days", "limit", "context", "role", "cwd", "cwd-only", "source", "home", "index-path":
 		return name, false
 	}
-	for _, key := range strings.Fields(boolFlagNames) {
+	for _, key := range strings.Fields(boolFlagNames + " " + portBoolFlagNames) {
 		if key == name {
 			return name, true
 		}
