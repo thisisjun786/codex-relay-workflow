@@ -147,6 +147,10 @@ func shellVerbSedWrites(args []string) []string {
 // template literal must not open a triple-quoted region and swallow the rest of the program, which would lose the destination
 // of a later write; a Node program keeps the single-quote walk the reader always had.
 func shellVerbScriptWritesIn(script string, hard, python bool) []string {
+	return shellVerbScriptWritesInDir(script, hard, python, false)
+}
+
+func shellVerbScriptWritesInDir(script string, hard, python, protectDir bool) []string {
 	s, dot, pre := lintSpace, lintDot, "[rRuUbBfF]*"
 	quoted := func(body string) string { return "(?:'(" + body + ")'|\"(" + body + ")\")" }
 	callQuote, callGroups := quoted(dot+"*?"), 2
@@ -170,7 +174,8 @@ func shellVerbScriptWritesIn(script string, hard, python bool) []string {
 	}
 	if hard {
 		out = append(out, shellWriteEscapeJSWrites(script, out)...)
-		out = append(out, shellVerbOpenWritesIn(script, python)...)
+		more, _ := shellWriteExecScanIn(shellVerbWithoutComments(script, python), python, 0, shellWriteCopyImports{protectDir: protectDir})
+		out = append(out, more...)
 	}
 	return out
 }
@@ -451,8 +456,13 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 			case top.kind == 'u' && c == ')':
 				dests = append(dests, shellIRUnknownDest)
 			case top.kind == 'p' && c == ')':
-				if shellVerbWriteMethod(rs, i+1) {
-					dests = append(dests, shellWriteEscapePath(rs, spans)...)
+				if method := shellVerbWriteMethod(rs, i+1, python); method != "" {
+					for _, dest := range shellWriteEscapePath(rs, spans) {
+						if dest == shellIRUnknownDest && shellIRPyPathCreateName(method) && !binds.protectDir && !shellIRPyProtectedReference(binds.scope) {
+							continue
+						}
+						dests = append(dests, dest)
+					}
 				} else if python {
 					if at, kind, ok := shellWritePathMethodCall(rs, i+1); ok {
 						pending = pendingCall{at: at, kind: kind, recv: spans}
@@ -507,7 +517,16 @@ func shellWriteExecProgram(rs []rune, spans [][2]int, depth int, outer shellWrit
 			// literal with no declaration decodes as UTF-8, which is what this reader already reads.
 			return nil, shellWriteExecUnreadableWhat
 		}
-		return shellWriteExecScanIn(shellVerbWithoutComments(program, true), true, depth+1, outer)
+		more, inner := shellWriteExecScanIn(shellVerbWithoutComments(program, true), true, depth+1, outer)
+		// The text a literal exec, eval or compile runs gets the same structural write analysis as a top-level program, read in
+		// the scope that holds it (it inherits the names and imports of the enclosing text); a write the enclosing text
+		// already makes unknown is not counted twice (CRW-951, E2).
+		// enclosing is the text of every program that holds this one (outer.scope, which already ends with rs), so a name or an
+		// import of an ancestor stays in scope in a nested literal program.
+		if enclosing := outer.scope; shellIRStructuralWriteUnknownFrom(enclosing+"\n"+program, len(enclosing)+1, true, outer.protectDir) && !shellIRStructuralWriteUnknownFrom(enclosing, 0, true, outer.protectDir) {
+			more = append(more, shellIRUnknownDest)
+		}
+		return more, inner
 	}
 	return nil, shellWriteExecUnreadableWhat
 }
@@ -607,25 +626,34 @@ func shellVerbCallKind(rs []rune, i int, c rune) byte {
 	return 0
 }
 
-// shellVerbWriteMethod reports whether .write_text( or .write_bytes( follows at j (blanks allowed), as after Path(...).
-func shellVerbWriteMethod(rs []rune, j int) bool {
+// shellVerbWriteMethod names .write_text( or .write_bytes( when it follows at j (blanks allowed), as after Path(...); for a Python
+// program also .touch( and .mkdir(, the pathlib methods that create their receiver (CRW-951). A Node program's Path(...).touch() is
+// the program's own method and writes nothing the reader can name, so the two names stay out of its list.
+func shellVerbWriteMethod(rs []rune, j int, python bool) string {
 	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
 		j++
 	}
 	if j >= len(rs) || rs[j] != '.' {
-		return false
+		return ""
 	}
 	for j++; j < len(rs) && shellVerbSpaceRune(rs[j]); {
 		j++
 	}
-	for _, name := range []string{"write_text", "write_bytes"} {
+	names := []string{"write_text", "write_bytes"}
+	if python {
+		names = append(names, "touch", "mkdir")
+	}
+	for _, name := range names {
 		if end := j + len(name); end <= len(rs) && string(rs[j:end]) == name {
 			for ; end < len(rs) && shellVerbSpaceRune(rs[end]); end++ {
 			}
-			return end < len(rs) && rs[end] == '('
+			if end < len(rs) && rs[end] == '(' {
+				return name
+			}
+			return ""
 		}
 	}
-	return false
+	return ""
 }
 
 // shellWritePathMethodCall reads the method call that follows a Path(...) receiver at j (CRW-900): its bracket index and the
@@ -847,6 +875,11 @@ func shellWriteCopyFunc(module, name string) bool {
 type shellWriteCopyImports struct {
 	alias map[string][]string
 	from  map[string][]string
+	// scope is the text of the program being read and of every program that holds it (empty outside the walk), for the
+	// structural write analysis of a literal exec program (CRW-951).
+	scope string
+	// protectDir carries the effective shell directory into fields and decoded programs.
+	protectDir bool
 }
 
 // shellWriteCopyBind records that a statement bound local to module, once per module.
@@ -863,7 +896,7 @@ func shellWriteCopyBind(binds map[string][]string, local, module string) {
 // program's imports beside its own, because an f-string replacement field and a literal passed to exec both run in the
 // scope that holds them (CRW-900 review).
 func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCopyImports {
-	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}}
+	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, protectDir: outer.protectDir}
 	for _, binds := range []shellWriteCopyImports{outer, inner} {
 		for local, modules := range binds.alias {
 			for _, module := range modules {
@@ -889,6 +922,10 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 // which is the fail-open direction).
 func shellWriteCopyImportsOf(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
 	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}})
+	binds.scope = string(rs)
+	if outer.scope != "" {
+		binds.scope = outer.scope + "\n" + string(rs)
+	}
 	words := []string{}
 	flush := func() {
 		if len(words) > 0 {
@@ -1531,7 +1568,7 @@ func shellWriteEscapeUnquote(body []rune, quote rune) string {
 
 // shellWriteEscapePath is what a Path(...) call names: posixpath.join of its string literal arguments (a trailing comma leaves a
 // blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
-// that is no literal, or an f-string with a field, leaves the rest of the path unknown, so the call names the literal prefix, the
+// that is no literal, or an f-string with a field (never read as its own text), leaves the rest of the path unknown, so the call names the literal prefix, the
 // directory the write lands under (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix
 // names nothing. Such a call, and one with a single argument, also keeps the earlier reading, its first argument when that is a
 // literal, read as that reading did (shellWriteEscapeLiteral), so the join never names fewer destinations than before; only a call
@@ -1544,10 +1581,15 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 			continue
 		}
 		part, ok := shellVerbLiteral(rs[span[0]:span[1]])
-		if parts++; parts == 1 {
+		// An f-string with a replacement field is a computed part: its text with the braces in it is no path (CRW-951, E1).
+		field := shellWriteEscapeField(rs[span[0]:span[1]])
+		if field {
+			ok = false
+		}
+		if parts++; parts == 1 && !field {
 			head, _ = shellWriteEscapeLiteral(rs[span[0]:span[1]], true)
 		}
-		dynamic = dynamic || !ok || shellWriteEscapeField(rs[span[0]:span[1]])
+		dynamic = dynamic || !ok
 		switch {
 		case !ok:
 			known = false

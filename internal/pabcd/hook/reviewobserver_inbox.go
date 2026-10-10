@@ -69,7 +69,10 @@ type reviewInboxEntry struct {
 	LaunchID    string           `json:"launchId"`
 	AgentID     string           `json:"agentId"`
 	Verdict     goalplan.Verdict `json:"verdict"`
-	ReceivedAt  string           `json:"receivedAt"`
+	// CRW-1116: keep the counted verdict whole, including when a lock defers its publication.
+	Blockers   int      `json:"blockers,omitempty"`
+	Findings   []string `json:"findings,omitempty"`
+	ReceivedAt string   `json:"receivedAt"`
 }
 
 // reviewInboxItem is an entry with the name of the inbox file it came from; an empty name is an entry held in memory only.
@@ -349,6 +352,7 @@ func reviewObserverBounded(s string) string {
 // names a round the plan shows, else the one active now; both are read without a lock, which is why a drain judges them again.
 func reviewObserverNewEntry(sessionID string, st state.State, plan *goalplan.Goalplan, agentID string, signoff *review.ReviewSignoff) reviewInboxEntry {
 	e := reviewInboxEntry{Version: 1, SessionID: sessionID, Slug: st.Slug, LaunchID: signoff.LaunchID, AgentID: agentID, Verdict: signoff.Verdict,
+		Blockers: signoff.Blockers, Findings: signoff.Findings,
 		ReceivedAt: time.Now().UTC().Format(reviewObserverReceivedAtLayout)}
 	if st.PlanEpoch != nil {
 		e.PlanEpoch = *st.PlanEpoch

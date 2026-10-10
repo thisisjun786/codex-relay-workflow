@@ -91,7 +91,7 @@ func TestFallbackComponentHookRoutesSessionStart(t *testing.T) {
 	t.Setenv("CODEX_MODELS_CACHE_PATH", filepath.Join(t.TempDir(), "missing.json"))
 	for _, args := range [][]string{{"session-start", "--leg", "session-start-announcing-subagent-fallback"}, {"session-start", "--leg=session-start-announcing-subagent-fallback"}} {
 		var out strings.Builder
-		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: args, stdout: &out}, strings.NewReader(`{}`), componentHooks())
+		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: args, stdout: &out}, strings.NewReader(`{"session_id":"s1"}`), componentHooks())
 		if !claimed || code != 0 || !strings.Contains(out.String(), `"hookEventName":"SessionStart"`) {
 			t.Fatalf("claimed=%v code=%d output=%q", claimed, code, out.String())
 		}
@@ -156,8 +156,12 @@ func TestFallbackHookRecordedRawInputs(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			if code := fallbackComponentHook(context.Background(), bytes.NewReader(data), &out); code != c.Exit || out.String() != c.Stdout || c.Stderr != "" {
-				t.Fatalf("hook: exit=%d output=%q want=%q", code, out.String(), c.Stdout)
+			// Port deviation (CRW-1130): none of the recorded inputs names a session, so the oracle's root and dispatch cards for
+			// them (agent_type only, primitives, a bare object) are no longer sent; the recorded silent cases stay silent. The
+			// card for a session start is pinned by TestFallbackHookObservationAndErrorOrder ("root") and in internal/role.
+			want := ""
+			if code := fallbackComponentHook(context.Background(), bytes.NewReader(data), &out); code != c.Exit || out.String() != want || c.Stderr != "" {
+				t.Fatalf("hook: exit=%d output=%q want=%q", code, out.String(), want)
 			}
 		})
 	}
@@ -169,6 +173,15 @@ func (fallbackBrokenIO) Read(p []byte) (int, error) {
 	return copy(p, []byte(`{"session_id":"fixture-session"}`)), errors.New("read failure")
 }
 func (fallbackBrokenIO) Write([]byte) (int, error) { return 0, errors.New("write failure") }
+
+// fallbackFailingWriter fails every write and counts the attempts, so a test can tell an error handled at the writer from an input
+// that never reached the writer.
+type fallbackFailingWriter struct{ writes int }
+
+func (w *fallbackFailingWriter) Write([]byte) (int, error) {
+	w.writes++
+	return 0, errors.New("write failure")
+}
 
 type fallbackSignalReader struct {
 	in                io.Reader
@@ -283,8 +296,12 @@ func TestFallbackHookObservationAndErrorOrder(t *testing.T) {
 		})
 	}
 	_ = fallbackComponentEnv(t)
-	if code := fallbackComponentHook(context.Background(), strings.NewReader(`{}`), fallbackBrokenIO{}); code != 0 {
+	failing := &fallbackFailingWriter{}
+	if code := fallbackComponentHook(context.Background(), strings.NewReader(`{"session_id":"fixture-session"}`), failing); code != 0 {
 		t.Fatal("writer error visible")
+	}
+	if failing.writes == 0 {
+		t.Fatal("the writer error case never reached the writer")
 	}
 }
 

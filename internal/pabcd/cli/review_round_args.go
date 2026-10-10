@@ -520,7 +520,8 @@ const (
 )
 
 // reviewRoundArgsRenderOpenPacket ports renderOpenPacket (review-round-cli.ts:192-208): what the agent that opened a round is told
-// to do next, with the role header as rule R9 of the name table renames it. The error is that of reviewRoundArgsV2SpawnSurface.
+// to do next, with the role header as rule R9 of the name table renames it. The verdict line also names `GO-WITH-FIXES (blockers=N)`, the
+// form the reviewer skill asks for and review.ParseSignoff reads (CRW-1116, port: fixed). The error is that of reviewRoundArgsV2SpawnSurface.
 func reviewRoundArgsRenderOpenPacket(round goalplan.ReviewRoundState, fileCount int, env host.LookupEnv) (string, error) {
 	v2, err := reviewRoundArgsV2SpawnSurface(env)
 	if err != nil {
@@ -538,7 +539,7 @@ func reviewRoundArgsRenderOpenPacket(round goalplan.ReviewRoundState, fileCount 
 		"final message with exactly these two lines:",
 		"",
 		"  LAUNCH: " + launchID,
-		"  VERDICT: PASS | NEAR-PASS | FAIL",
+		"  VERDICT: PASS | NEAR-PASS | FAIL | GO-WITH-FIXES (blockers=N)",
 		"",
 		"The verdict is recorded when that reviewer exits. There is no way to write it here.",
 	}, "\n"), nil

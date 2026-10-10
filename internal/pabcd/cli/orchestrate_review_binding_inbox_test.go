@@ -16,6 +16,39 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
+// A counted verdict kept under a held lock still requires dev's structured dispositions at A>B.
+func TestOrchestrateReviewBindingDrainsCountedVerdictBeforeCheckingBlockerDispositions(t *testing.T) {
+	id := "review-binding-counted-inbox"
+	cwd, entry := orchestrateReviewInboxKept(t, id, "GO-WITH-FIXES (blockers=2; findings=c1,r2)")
+	attestation := map[string]any{"from": "A", "to": "B", "did": "audited the plan", "workPhaseId": "wp1",
+		"auditVerdict": "near-pass", "auditOutput": "VERDICT: GO-WITH-FIXES (blockers=2)", "auditResidual": "both findings handled"}
+	body, err := json.Marshal(attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := orchestrateCommitRunOK(t, cwd, nil, "B", "--session", id, "--attest", string(body))
+	if got.Code != 1 || !strings.Contains(got.Output, "auditBlockers") || state.ReadState(cwd, id).Phase != state.PhaseA {
+		t.Fatalf("a drained counted verdict needs dispositions before B: %+v", got)
+	}
+	r := orchestrateReviewInboxRound(t, cwd, id)
+	if r.Lane.Blockers != 2 || strings.Join(r.Lane.Findings, ",") != "c1,r2" {
+		t.Fatalf("the drain lost the counted verdict: %+v", r)
+	}
+	if _, err := os.Lstat(entry); !os.IsNotExist(err) {
+		t.Fatalf("the recorded verdict was not removed: %v", err)
+	}
+	attestation["auditBlockers"] = []map[string]any{{"blocker": 1, "disposition": "folded", "reason": "the plan carries the fix"},
+		{"blocker": 2, "disposition": "rebutted", "reason": "the gate already owns it"}}
+	body, err = json.Marshal(attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = orchestrateCommitRunOK(t, cwd, nil, "B", "--session", id, "--attest", string(body))
+	if got.Code != 0 || state.ReadState(cwd, id).Phase != state.PhaseB {
+		t.Fatalf("a disposed counted verdict enters B: %+v", got)
+	}
+}
+
 // CRW-1113 correction round 3. The A>B transition drains the reviewer sign-offs the observer kept. Two things it must hold to:
 // an inbox it cannot read is not an empty inbox (a kept FAIL is never lost or stepped over), and the drain is the command's first
 // durable effect, so a cancelled invocation writes nothing before it answers Interrupted (130).
@@ -39,7 +72,7 @@ func orchestrateReviewInboxKept(t *testing.T, id, verdict string) (cwd, entry st
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": cwd, "session_id": id, "agent_type": "explorer",
-		"agent_id": "reviewer-1", "last_assistant_message": "done\nLAUNCH: r1-20260101000000\nVERDICT: " + strings.ToUpper(verdict)})
+		"agent_id": "reviewer-1", "last_assistant_message": "done\nLAUNCH: r1-20260101000000\nVERDICT: " + verdict})
 	if out := hook.HandleReviewObserver(string(payload)); out != "" {
 		t.Fatalf("the observer answers nothing: %q", out)
 	}

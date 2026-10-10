@@ -97,42 +97,51 @@ func Read(env host.LookupEnv) Reading {
 // errAbsent is a switch path with nothing at it: no entry, not a link whose target is gone.
 var errAbsent = fmt.Errorf("switch absent: %w", fs.ErrNotExist)
 
-// readState reads the switch document. It never waits on the file: the open is non-blocking, and
-// the opened handle must be a regular file, so a FIFO, a device or a socket is a read error at
-// once, whether it is the entry or the target of a link, and whatever a writer does with it.
-// ENOENT is an absent switch only when nothing is at the path; a link whose target is gone is
-// there and cannot be read.
+// readState reads the switch document, as readFile gives it.
 func readState(path string) (State, error) {
 	var s State
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {
-				return s, errAbsent
-			}
-			return s, fmt.Errorf("%s: %w", path, err)
-		}
-		return s, err
-	}
-	defer f.Close()
-	info, err := f.Stat()
+	data, err := readFile(path)
 	if err != nil {
 		return s, err
-	}
-	if !info.Mode().IsRegular() {
-		return s, fmt.Errorf("%s is not a regular file (%s)", path, info.Mode().Type())
-	}
-	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
-	if err != nil {
-		return s, err
-	}
-	if len(data) > MaxBytes {
-		return s, fmt.Errorf("%s is over %d bytes", path, MaxBytes)
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
 		return s, fmt.Errorf("%s: %w", path, err)
 	}
 	return s, nil
+}
+
+// readFile reads the switch file's bytes. It never waits on the file: the open is non-blocking, and
+// the opened handle must be a regular file, so a FIFO, a device or a socket is a read error at
+// once, whether it is the entry or the target of a link, and whatever a writer does with it.
+// ENOENT is an absent switch only when nothing is at the path; a link whose target is gone is
+// there and cannot be read.
+func readFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {
+				return nil, errAbsent
+			}
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (%s)", path, info.Mode().Type())
+	}
+	data, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxBytes {
+		return nil, fmt.Errorf("%s is over %d bytes", path, MaxBytes)
+	}
+	return data, nil
 }
 
 // Warn records that leg ran on a switch it could not read. It is a diagnostic: it never fails the

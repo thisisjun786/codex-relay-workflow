@@ -1,6 +1,7 @@
 package hook_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,54 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
+
+// A kept CRW-1116 verdict must retain its count and findings across CRW-1113's deferred drain.
+func TestReviewObserverInboxKeepsTheBlockerCountAndFindings(t *testing.T) {
+	for name, hold := range map[string]func(reviewObsEnv, *testing.T) func(){
+		"session lock":  reviewObsEnv.holdSessionLock,
+		"goalplan lock": reviewObsEnv.holdGoalplanLock,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := reviewObsSeed(t, "counted-inbox", nil)
+			launch := e.open(t)
+			release := hold(e, t)
+			t.Cleanup(func() {
+				if release != nil {
+					release()
+				}
+			})
+			e.stop(t, reviewObsType("explorer"), "reviewer-1", reviewObsSignoff(launch, "GO-WITH-FIXES (blockers=2; findings=c1,r2)"))
+			files := e.inboxFiles(t)
+			if len(files) != 1 {
+				t.Fatalf("one kept verdict: %v", files)
+			}
+			raw, err := os.ReadFile(files[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var kept struct {
+				Blockers int
+				Findings []string
+			}
+			if err := json.Unmarshal(raw, &kept); err != nil {
+				t.Fatal(err)
+			}
+			if kept.Blockers != 2 || strings.Join(kept.Findings, ",") != "c1,r2" {
+				t.Fatalf("kept verdict lost its metadata: %s", raw)
+			}
+			release()
+			release = nil
+			e.stop(t, nil, "other", "nothing")
+			r := e.round(t)
+			if r.Status != goalplan.ReviewApproved || r.Lane.Verdict != goalplan.VerdictNearPass || r.Lane.Blockers != 2 || strings.Join(r.Lane.Findings, ",") != "c1,r2" {
+				t.Fatalf("drained verdict lost its metadata: %+v", r)
+			}
+			if len(e.inboxFiles(t)) != 0 {
+				t.Fatal("the recorded verdict stayed in the inbox")
+			}
+		})
+	}
+}
 
 // CRW-1113 (A3-06, port: fixed). A sign-off that meets a held session or goalplan lock used to be dropped: the observer kept it in a
 // local variable only, released the child, and the round stayed in_flight after the lock was gone. The sign-off is now kept in an

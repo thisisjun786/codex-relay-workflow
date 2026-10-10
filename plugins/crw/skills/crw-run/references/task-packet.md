@@ -276,7 +276,7 @@ Execution:
   Where an initiative above it has a supervisor, that supervisor works through your parent:
   it does not instruct you, and you report to your parent. See
   [Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
-- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. That publication scope is the explicit push approval `DEV-GIT-PUSH-01` (`crw-dev`) requires, the standing authorization of [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration) carried by this packet: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
+- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. `crw-dev` `DEV-GIT-PUSH-01` defines when a push is allowed; this packet is evidence that the standing grant of [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration) applies to your task branch, not a new consent: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
 - Run your own independent review in the order your workflow chooses; the two may overlap, because preparation and review are parallel. The review meant here is the one your workflow runs on the candidate inside this task; whether and how often it runs is that workflow's decision, which this packet does not change. Where one runs, it ends on a head and the handoff names it, lists the commits made after it, and says which head the review answered ([what a handoff discloses](#what-a-handoff-discloses)).
@@ -551,11 +551,11 @@ field in brackets where that reduced shape names it differently.
   and the `Return:` block [`Scope:` write authority and `Return:`]: what finishing means
   here, what the coordinator owns after it.
 - Publication scope — the publication sentence under `Execution:` and the `Delivery:` line
-  under `Authorized execution:`. The packet says that its publication scope is the explicit
-  push approval `DEV-GIT-PUSH-01` requires (push the task branch,
+  under `Authorized execution:`. The packet says whether it carries the standing grant that
+  `DEV-GIT-PUSH-01` (`crw-dev`) accepts (push the task branch,
   never merge), or that its scope excludes publication and the child pushes nothing.
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
-  owns the rule; this line checks that the packet carries it. [A Non-PR packet has no
+  names the grant and `crw-dev` owns the rule; this line checks that the packet carries the grant. [A Non-PR packet has no
   publication to approve.]
 - Escalation route — the `Execution:` bullet on a question only a person can answer:
   `blocked_needs_input` with the question written out, never `request_user_input`. [A Non-PR
@@ -1489,9 +1489,9 @@ says, so read the level first and the fields second:
   and a child that lost its first assignment answers a review in whatever language it drifts to.
 - The publication scope and the escalation route, restated. Like the workflow and the language
   they have no transport field, and a child that compacted away its first assignment is left with
-  `crw-dev`'s own rules, which say never to push without approval and point a question at the
-  user. Say whether its publication scope is still the explicit push approval
-  `DEV-GIT-PUSH-01` requires (push its task branch and, where a pull request exists, update it, never merge, nothing
+  `crw-dev`'s own rules, which allow a push only under an applicable grant and point a question at the
+  user. Say whether its packet still carries the standing grant that
+  `DEV-GIT-PUSH-01` (`crw-dev`) accepts (push its task branch and, where a pull request exists, update it, never merge, nothing
   wider) or that it is not, and that a question only a person can answer goes to the parent as
   `blocked_needs_input` with the question written out. These are pointers to
   [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration),

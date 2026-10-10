@@ -80,9 +80,9 @@ func Legs() []Leg {
 			// The platform argument stays empty: LoopArmDirective resolves this host's platform when
 			// it is not given, which is the oracle's default (process.platform). The handler answers
 			// the context, and ContextOutput is the port of buildContextOutput that wraps it.
-			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandle(pabcdhook.PromptSubmitPayload{
+			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandleWithRole(pabcdhook.PromptSubmitPayload{
 				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, TranscriptPath: transcript,
-				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
+				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv, registryPromptRole))
 		}},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, func(c Call) string {
 			p, ok := ParseStop(c.Raw)
