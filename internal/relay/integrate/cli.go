@@ -105,16 +105,37 @@ func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args
 	}
 	defer func() { _ = s.Close() }()
 	sched := &dagsched.Scheduler{Store: s}
-	result, err := dagsched.PushIntegration(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto)
+	result, err := dagsched.PushIntegration(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto, sched.StaleIntegratedNodes)
 	if err != nil {
 		return nil, err
+	}
+	return pushObject(result), nil
+}
+
+// pushObject is the document dag-integrate-push prints. stale_nodes is output only (CRW-1026, d2): the integrated nodes of the
+// pushed head whose acceptance the plan no longer stands behind, each named by plan, node and acceptance; the checkout and the
+// integration ref are the push's own fields. stale_nodes_error is null unless the list could not be read.
+func pushObject(result dagsched.PushResult) contract.OrderedObject {
+	stale := make([]any, len(result.StaleNodes))
+	for i, n := range result.StaleNodes {
+		stale[i] = contract.OrderedObject{{Key: "plan_id", Value: n.PlanID}, {Key: "node_id", Value: n.NodeID}, {Key: "acceptance_id", Value: n.AcceptanceID},
+			{Key: "reason", Value: n.Reason}, {Key: "accepted_criteria_digest", Value: nullableText(n.AcceptedCriteria)}, {Key: "current_criteria_digest", Value: nullableText(n.CurrentCriteria)}}
 	}
 	return contract.OrderedObject{
 		{Key: "ok", Value: result.Outcome != dagsched.PushDeferred}, {Key: "schema", Value: dagsched.SchemaIntegrationPush},
 		{Key: "remote", Value: result.Remote}, {Key: "remote_ref", Value: result.RemoteRef},
 		{Key: "local_head", Value: result.LocalHead}, {Key: "remote_head", Value: result.RemoteHead},
 		{Key: "outcome", Value: result.Outcome}, {Key: "detail", Value: result.Detail},
-	}, nil
+		{Key: "stale_nodes", Value: stale}, {Key: "stale_nodes_error", Value: nullableText(result.StaleNodesError)},
+	}
+}
+
+// nullableText is a string that prints as null when empty.
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // commandVerifier runs the one verification command, given as an argument vector (never a shell), in the directory

@@ -62,6 +62,10 @@ type PushResult struct {
 	RemoteHead        string
 	Outcome           string
 	Detail            string
+	// StaleNodes are the integrated nodes of the pushed head whose acceptance the plan no longer stands behind (CRW-1026, d2).
+	// The list only informs: it never blocks the push. StaleNodesError is why it could not be read, when it could not.
+	StaleNodes      []StaleNode
+	StaleNodesError string
 }
 
 // MovedHeadCheck answers whether the relay verified a commit and moved an integration ref onto it.
@@ -69,8 +73,9 @@ type MovedHeadCheck func(ctx context.Context, integrationRef, commit string) (bo
 
 // PushIntegration moves a remote branch to a local integration branch's commit by a fast-forward only. The branch's tip
 // must be a head the relay verified and moved the branch onto; any other tip is refused before the remote is read (CRW-965,
-// parent decision D6).
-func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck) (PushResult, error) {
+// parent decision D6). stale, when given, lists the integrated nodes of that head whose acceptance is no longer current; it is
+// read once the head is known to be the relay's, and neither its answer nor its failure changes what is pushed (CRW-1026, d2).
+func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck, stale StaleNodesCheck) (PushResult, error) {
 	out := PushResult{Remote: remote, RemoteRef: remoteRef}
 	// a name that starts with a dash would be read by git as an option (CRW-965 review): refused before git runs
 	if strings.HasPrefix(remote, "-") || strings.HasPrefix(remoteRef, "-") {
@@ -90,6 +95,13 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 	}
 	if !verified {
 		return out, refuse(contract.RefusalMergeBaseMismatch, "%s in %s points at %s, which the relay did not verify and move the branch onto: nothing is pushed", integrationRef, checkout, local)
+	}
+	if stale != nil {
+		if nodes, err := stale(ctx, checkout, integrationRef, local); err != nil {
+			out.StaleNodesError = err.Error()
+		} else {
+			out.StaleNodes = nodes
+		}
 	}
 	pushTarget := remoteURLForPush(ctx, checkout, remote)
 	remoteHead, unreachableRemote, err := lsRemoteHead(ctx, checkout, pushTarget, remoteRef)
