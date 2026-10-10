@@ -1,16 +1,12 @@
 package evidence
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -19,14 +15,23 @@ import (
 
 // HasSpentBudget reports whether a counter of the session still sits at the cap, or cannot be shown to sit below it. The counter
 // reaches MaxAttempts during normal operation and only a valid receipt clears it, so it outlives a tombstone, the corruption
-// sentinel and a marker that could not be written, and closes the case of a failure at terminal time followed by recovery. Only a
-// missing attempts directory is an absence; an unreadable one, and a counter that is not a JSON object with an integer attempts
-// from 0 below MaxAttempts, count as spent. A counter is a file named <session>-...json, so the counters of a session whose id
-// continues with a dash after this one's count too. A counter nested deeper than Go's JSON limit of 10,000 levels reads as spent,
-// where the oracle parses it and may find the attempts beside the nesting unspent. A session id that sanitising would rewrite, or an
-// empty one, cannot be shown below the cap and counts as spent without a read (CRW-1108: the oracle read a-b's counters for a/b).
+// sentinel and a marker that could not be written, and closes the case of a failure at terminal time followed by recovery. Every
+// counter is judged by ReadCounter's classification, so this gate and the SubagentStop gate read one file alike: only an active
+// counter below the cap is unspent. A directory that cannot be read counts as spent; only a missing one is an absence.
+//
+// Changed from the oracle (port: fixed, CRW-1106): the oracle finds a session's counters by the name prefix <session>-, so the
+// counters of a session whose id continues with a dash after this one's (s1-x for s1) count too. A counter name is
+// <session>-<agent>-[<turn>-]<digest of the raw agent and turn>.json, so a name is this session's when one way of reading the part
+// after the prefix as an agent and a turn reproduces the digest, and another session's when a reading under a longer session
+// does; such a file is skipped. A name that no reading explains (a file of an earlier version for an agent or turn id that
+// sanitising changed) may be anyone's and still counts, the denying direction. Counters of canonical sessions whose agent or
+// turn sanitising changes live in the session's own directory (counterVersionDir), each matched by the identity it repeats.
+// CRW-1108 refuses a non-canonical or empty session id without reading any counter; that session always answers spent.
 func HasSpentBudget(cwd, sessionID string) bool {
-	if !state.IsCanonicalSessionID(sessionID) {
+	if !state.IsCanonicalSessionID(sessionID) { // CRW-1108: no alias read
+		return true
+	}
+	if sessionCountersSpent(cwd, sessionID) {
 		return true
 	}
 	dir := filepath.Join(cwd, crwdir.DirName, AttemptsSubdir)
@@ -34,32 +39,73 @@ func HasSpentBudget(cwd, sessionID string) bool {
 	if err != nil {
 		return !errors.Is(err, fs.ErrNotExist)
 	}
-	prefix := state.SanitizeKey(sessionID) + "-"
+	key := state.SanitizeKey(sessionID)
 	return slices.ContainsFunc(names, func(n string) bool {
-		return strings.HasPrefix(n, prefix) && strings.HasSuffix(n, ".json") && !counterUnspent(filepath.Join(dir, n))
+		if !strings.HasPrefix(n, key+"-") || !strings.HasSuffix(n, ".json") {
+			return false
+		}
+		if owner := counterOwner(n); owner != "" && owner != key {
+			return false
+		}
+		c, _ := readCounterFile(filepath.Join(dir, n), nil)
+		return c.Spent()
 	})
 }
 
-// counterUnspent parses the counter the way JSON.parse does (all of the file, a number beyond float64 is Infinity and not an
-// error) and applies the oracle's test to attempts: a safe integer from 0 below MaxAttempts. The two bounds already exclude
-// an infinity and an integer beyond 2^53, so only the integer test is left to make.
-func counterUnspent(path string) bool {
-	raw, err := os.ReadFile(path)
+// counterOwner is the session a counter name in the oracle's layout belongs to, or "" when no reading of the name explains it. The
+// name is <session>-<agent>-[<turn>-]<digest>.json with each id sanitised; a reading splits the part before the digest at two (or,
+// without a turn, one) of its dashes and is right when the digest of the agent and turn it names is the name's digest. Two
+// readings that reproduce one digest name one agent and turn, and the name then fixes the session.
+func counterOwner(name string) string {
+	base, ok := strings.CutSuffix(name, ".json")
+	if !ok || len(base) < 34 || base[len(base)-33] != '-' {
+		return ""
+	}
+	digest, head := base[len(base)-32:], base[:len(base)-33]
+	dashes := []int{}
+	for i := range len(head) {
+		if head[i] == '-' {
+			dashes = append(dashes, i)
+		}
+	}
+	for i, a := range dashes {
+		session, rest := head[:a], head[a+1:]
+		if state.SanitizeKey(rest) == rest && (tupleDigest(rest, "") == digest || rest == "missing" && tupleDigest("", "") == digest) {
+			return session
+		}
+		for _, b := range dashes[i+1:] {
+			agent, turn := head[a+1:b], head[b+1:]
+			if state.SanitizeKey(agent) != agent || state.SanitizeKey(turn) != turn {
+				continue
+			}
+			if tupleDigest(agent, turn) == digest || agent == "missing" && tupleDigest("", turn) == digest {
+				return session
+			}
+		}
+	}
+	return ""
+}
+
+// sessionCountersSpent is HasSpentBudget for the counters in the session's own directory, each record matched by the identity it
+// repeats.
+func sessionCountersSpent(cwd, sessionID string) bool {
+	dir := counterDir(cwd, sessionID)
+	names, err := dirNames(dir)
 	if err != nil {
-		return false
+		return !errors.Is(err, fs.ErrNotExist)
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var o map[string]any
-	if dec.Decode(&o) != nil {
-		return false
+	if requireDirectory(dir) != nil {
+		return true
 	}
-	if _, err := dec.Token(); err != io.EOF {
-		return false
-	}
-	n, isNumber := o["attempts"].(json.Number)
-	f, _ := strconv.ParseFloat(string(n), 64)
-	return isNumber && f == math.Trunc(f) && f >= 0 && f < MaxAttempts
+	return slices.ContainsFunc(names, func(n string) bool {
+		if !strings.HasSuffix(n, ".json") {
+			return false // a temp file
+		}
+		c, _ := readCounterFile(filepath.Join(dir, n), func(r counterRecord) bool {
+			return r.SessionID == sessionID && tupleDigest(r.AgentID, r.TurnID)+".json" == n
+		})
+		return c.Spent()
+	})
 }
 
 // ResolveTombstone clears the tombstone of an agent and turn, for the gate to call when a late valid receipt arrives, so the
@@ -88,11 +134,18 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc, published
 	}
 	removed := false
 	_ = lock(cwd, sessionID, func() error { // a lock that cannot be had never runs the function, so removed stays false
+		if err := RecoverOverflow(cwd, sessionID, write); err != nil {
+			return err
+		}
 		s := state.ReadState(cwd, sessionID)
 		next := slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
 		})
-		if len(next) == len(s.UnverifiedSubagents) || storedVerdicts(cwd, sessionID) != len(s.UnverifiedSubagents) || !rewriteGuardKeeps(cwd, sessionID, s) {
+		if len(next) == len(s.UnverifiedSubagents) {
+			removed = removeOverflow(cwd, sessionID, agentID, turnID) // CRW-1110: a verdict recorded beside the main list
+			return nil
+		}
+		if storedVerdicts(cwd, sessionID) != len(s.UnverifiedSubagents) || !rewriteGuardKeeps(cwd, sessionID, s) {
 			return nil
 		}
 		s.SessionID, s.UnverifiedSubagents = sessionID, next

@@ -259,7 +259,8 @@ func TestEvidenceAuditFailureAndUnresolvable(t *testing.T) {
 	}
 }
 
-// intentionally-changed: both oracle writes discard malformed/overflow verdict records.
+// intentionally-changed: both oracle writes discard malformed/overflow verdict records. Since CRW-1110 evidence resolve recovers an
+// overflowed list instead of refusing it (the overflow verdicts move beside the main list); memory allow-write still refuses.
 func TestCLIDataLossPreservesVerdictBytes(t *testing.T) {
 	for _, command := range []string{"evidence", "memory"} {
 		for _, kind := range []string{"overflow", "malformed", "non-array"} {
@@ -287,6 +288,21 @@ func TestCLIDataLossPreservesVerdictBytes(t *testing.T) {
 					out, code = RunEvidenceCLI(a)
 				} else {
 					out, code = RunMemoryCLI(MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd})
+				}
+				if command == "evidence" && kind == "overflow" {
+					// CRW-1110: resolve recovers a file that holds more verdicts than the reader keeps before it rewrites it: the
+					// verdicts past the cap move beside the main list, so resolving a1 loses none of the others.
+					s, unreadable := state.ReadStateStrict(cwd, "rec-s1")
+					beside, besideUnreadable := evidence.OverflowVerdicts(cwd, "rec-s1")
+					if code != 0 || unreadable || s.UnverifiedCorrupt || besideUnreadable || len(s.UnverifiedSubagents)+len(beside) != state.MaxUnverifiedSubagents {
+						t.Fatalf("recovering resolve: code %d (%s), main %d corrupt %v, beside %d", code, out, len(s.UnverifiedSubagents), s.UnverifiedCorrupt, len(beside))
+					}
+					for _, e := range append(s.UnverifiedSubagents, beside...) {
+						if e.AgentID == "a1" {
+							t.Fatal("a1 was not resolved")
+						}
+					}
+					return
 				}
 				if code != 1 {
 					t.Fatalf("data-loss refusal missing: %s", out)

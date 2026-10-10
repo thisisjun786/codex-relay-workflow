@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -167,6 +168,15 @@ func TestGatedAgentTypesAndBudget(t *testing.T) {
 
 func TestExtractReceiptPath(t *testing.T) {
 	c, g := load(t)
+	// Changed (port: fixed, CRW-1112): the marker is the last line that is a marker with a path, and nothing is read past its
+	// line. An empty marker no longer takes the next line's text (U+2028 ends a line too), a marker inside a sentence or after
+	// other text on its line is not a marker line, and of two marker lines the last wins.
+	none, port := (*string)(nil), map[string]*string{}
+	for _, id := range []string{"newline_after_colon", "ws_u2028", "prefixed_marker", "inline_in_prose"} {
+		port[id] = none
+	}
+	later, renamed := "later.md", ".codexclaw/evidence/x.md"
+	port["empty_first_then_valid"], port["first_marker_wins"] = &later, &renamed
 	for _, k := range c.Extract {
 		msg := ""
 		if k.Message != nil {
@@ -177,7 +187,11 @@ func TestExtractReceiptPath(t *testing.T) {
 		if ok {
 			gotPtr = &got
 		}
-		same(t, k.ID, gotPtr, g.Extract[k.ID])
+		want := g.Extract[k.ID]
+		if p, ok := port[k.ID]; ok {
+			want = p
+		}
+		same(t, k.ID, gotPtr, want)
 	}
 }
 
@@ -201,6 +215,25 @@ func TestAttemptsFileNames(t *testing.T) {
 	for _, k := range c.Names {
 		cwd := t.TempDir()
 		WriteAttempts(cwd, k.Session, k.Agent, 2, k.Turn)
+		if !state.IsCanonicalSessionID(k.Session) {
+			files := attemptsDir(cwd)
+			if files == nil {
+				files = []string{}
+			}
+			// CRW-1108's refusal takes precedence over CRW-1106's old v2 session layout. Every oracle row is retained.
+			same(t, k.ID, map[string]any{"files": files, "content": []string{}}, map[string]any{"files": []any{}, "content": []any{}})
+			continue
+		}
+		if ownDirectoryCounter(k.Session, k.Agent, k.Turn) {
+			// Changed (port: fixed, CRW-1106): an agent or turn id that sanitising changes needs an identity-bearing counter
+			// in its canonical session's own directory, so a prefix-sharing session does not inherit its budget.
+			raw, err := os.ReadFile(counterPath(cwd, k.Session, k.Agent, k.Turn))
+			want := fmt.Sprintf(`{"attempts":2%s%s%s}`+"\n", jsonField("sessionId", k.Session), jsonField("agentId", k.Agent), jsonField("turnId", k.Turn))
+			if err != nil || string(raw) != want || len(attemptsDir(cwd)) != 1 || attemptsDir(cwd)[0] != counterVersionDir {
+				t.Errorf("%s: %q (%v), want %q in %s", k.ID, raw, err, want, counterDir(cwd, k.Session))
+			}
+			continue
+		}
 		files, content := attemptsDir(cwd), []string{}
 		if files == nil {
 			files = []string{}
@@ -210,14 +243,17 @@ func TestAttemptsFileNames(t *testing.T) {
 			must(t, err)
 			content = append(content, string(raw))
 		}
-		want := g.Names[k.ID]
-		if !state.IsCanonicalSessionID(k.Session) {
-			// port: fixed by CRW-1108 (known-defects.md:172): the oracle writes the counter under the sanitised id, which a-b's
-			// counter shares with a/b's; the port writes nothing for an id that sanitising would rewrite, or an empty one
-			want = map[string]any{"files": []any{}, "content": []any{}}
-		}
-		same(t, k.ID, map[string]any{"files": files, "content": content}, want)
+		same(t, k.ID, map[string]any{"files": files, "content": content}, g.Names[k.ID])
 	}
+}
+
+// jsonField is `,"key":"value"` for a value that is not empty, as the record's omitempty fields are written.
+func jsonField(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	raw, _ := json.Marshal(value)
+	return `,"` + key + `":` + string(raw)
 }
 
 func TestReadAttempts(t *testing.T) {
@@ -225,6 +261,12 @@ func TestReadAttempts(t *testing.T) {
 	// A counter nested deeper than Go's JSON depth limit that JSON.parse rejects for another reason (cut off, trailing
 	// text) reads as the cap here, where the oracle reads 0: the port stops at the depth error.
 	port := map[string]int{"depth_20000_truncated": MaxAttempts, "depth_20000_trailing_text": MaxAttempts}
+	// Changed (port: fixed, CRW-1106): a counter file that is there but is not an object with an integer count from 0 to
+	// MaxAttempts read as 0 in the oracle, which restarted the budget; it ends the budget now, as hasSpentBudget always read it.
+	for _, id := range []string{"json_null", "json_zero", "json_five", "json_empty_string", "json_string", "json_true", "json_false",
+		"counter_garbage", "counter_empty", "bom", "trailing_garbage", "path_is_directory"} {
+		port[id] = MaxAttempts
+	}
 	for _, k := range c.Counter {
 		cwd := t.TempDir()
 		at := [3]string{"s1", "a1", ""}
@@ -304,7 +346,13 @@ func TestWriteAndClearAttempts(t *testing.T) {
 			}
 			files, content = names, texts
 		}
-		same(t, k.ID, map[string]any{"returns": returns, "files": files, "content": content}, g.Writes[k.ID])
+		want := g.Writes[k.ID]
+		if k.ID == "write_counter_is_directory" {
+			// Changed (port: fixed, CRW-1106): the write whose rename fails removes its own temp file; the oracle leaves it.
+			w := want.(map[string]any)
+			want = map[string]any{"returns": w["returns"], "files": w["files"].([]any)[:1], "content": w["content"].([]any)[:1]}
+		}
+		same(t, k.ID, map[string]any{"returns": returns, "files": files, "content": content}, want)
 	}
 }
 
@@ -363,8 +411,12 @@ func TestHasValidReceipt(t *testing.T) {
 				must(t, os.Chmod(at(o.Chmod), os.FileMode(mode)))
 			}
 		}
-		if got := HasValidReceipt(cwd, sub(k.Claim, cwd, out)); got != g.Receipt[k.ID] {
-			t.Errorf("%s: %v, want %v", k.ID, got, g.Receipt[k.ID])
+		want := g.Receipt[k.ID]
+		if k.ID == "receipt_name_starts_with_dotdot" || k.ID == "dotdot_directory_name" {
+			want = true // changed (port: fixed, CRW-1112): a name that starts with two dots lies inside the root
+		}
+		if got := HasValidReceipt(cwd, sub(k.Claim, cwd, out)); got != want {
+			t.Errorf("%s: %v, want %v", k.ID, got, want)
 		}
 	}
 }
@@ -442,14 +494,32 @@ func TestTombstone(t *testing.T) {
 			gotState = fileState(raw)
 		}
 		wantState, wantMarkers := any(want.State), want.Markers
+		wantReturns := want.Returns
+		if k.ID == "record_65th_when_64_exist" {
+			// Changed (port: fixed, CRW-1110): the 65th verdict is recorded beside the main list, which keeps the 64 the reader
+			// reads, and hasTombstone finds it there; the oracle appended it to the file, where no reader finds it.
+			wantReturns, wantState = []bool{true, true}, fileStateSeed(t, want.Seed)
+			if _, ok := readOverflow(overflowPath(cwd, "s1", "a1", "t1"), tupleDigest("a1", "t1")+".json", "s1"); !ok {
+				t.Errorf("%s: no overflow verdict of a1", k.ID)
+			}
+		}
 		switch {
 		case k.Changed:
 			wantState, wantMarkers = fileState([]byte(*k.StateRaw)), []marked{{"s1", "a1"}}
 		case k.ID == "tier3_state_dir_is_file": // the oracle's marker write fails there too; the port still hands over
 			wantMarkers = []marked{{"s1", "a1"}}
 		}
-		same(t, k.ID+" returns", returns, want.Returns)
+		same(t, k.ID+" returns", returns, wantReturns)
 		same(t, k.ID+" state", gotState, wantState)
 		same(t, k.ID+" markers", markers, wantMarkers)
 	}
+}
+
+// fileStateSeed is a recorded seed state as a map without its updatedAt.
+func fileStateSeed(t *testing.T, seed *string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	must(t, json.Unmarshal([]byte(*seed), &m))
+	delete(m, "updatedAt")
+	return m
 }

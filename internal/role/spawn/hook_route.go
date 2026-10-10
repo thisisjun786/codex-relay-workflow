@@ -332,10 +332,22 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if effort != "" {
 		updated = updated.Set("reasoning_effort", effort)
 	}
+	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed, and before a
+	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
+	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
+	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
+	if a.evidenceAssignment != nil {
+		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
+			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
+		}
+	}
 	if a.managed != nil {
 		// Issue the managed spawn (:1094-1097): a failure is the deny envelope. The candidate's model and effort then replace
 		// whatever the caller sent, a null candidate field deleting the key.
 		if _, err := role.IssueManagedSpawnEnv(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID, env); err != nil {
+			if a.evidenceAssignment != nil {
+				a.evidenceAssignment.Remove(a.cwd)
+			}
 			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
 		}
 		if a.managed.Candidate.Model == nil {

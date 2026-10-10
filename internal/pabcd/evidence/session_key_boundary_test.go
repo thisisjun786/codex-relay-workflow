@@ -38,6 +38,18 @@ func TestEvidenceBoundariesRefuseNonCanonicalSessionIDs(t *testing.T) {
 			t.Errorf("HasSpentBudget(%q) = false; want the closed answer", c.alias)
 		}
 
+		freshLock := t.TempDir()
+		ran := false
+		if err := WithCounterLock(freshLock, c.alias, "x", "t", func() error { ran = true; return nil }); !errors.Is(err, state.ErrNonCanonicalSessionID) || ran {
+			t.Errorf("WithCounterLock(%q) = %v, ran %v; want refusal before the callback", c.alias, err, ran)
+		}
+		if _, err := os.Lstat(filepath.Join(freshLock, ".crw")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%q: a refused counter lock created .crw (%v)", c.alias, err)
+		}
+		if got := ReadCounter(freshLock, c.alias, "x", "t"); got != (Counter{State: CounterUnreadable}) {
+			t.Errorf("ReadCounter(%q) = %+v; want unreadable", c.alias, got)
+		}
+
 		fresh := t.TempDir()
 		if err := WriteUnrecordableMarker(fresh, c.alias, "x"); !errors.Is(err, state.ErrNonCanonicalSessionID) {
 			t.Errorf("WriteUnrecordableMarker(%q) = %v; want ErrNonCanonicalSessionID", c.alias, err)

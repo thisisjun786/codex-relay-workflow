@@ -2,6 +2,7 @@ package hook
 
 import (
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -117,7 +118,15 @@ func goalCompleteApplyGuard(p goalGatePreToolUse, pabcdEnabled bool, deps goalCo
 	// Independent durable signal: a retry counter still at the cap means an agent exhausted verification and was
 	// never verified. It is written during NORMAL operation (calls 1..3) and cleared only by a valid receipt, so
 	// it survives a transient failure at terminal time even if the filesystem later recovers.
-	unresolved := s.UnverifiedSubagents
+	// CRW-1110: the verdicts recorded beside a full main list count as much as the list's own, and a directory of them that
+	// cannot be read is as unreadable as the list.
+	overflow, overflowUnreadable := evidence.OverflowVerdicts(p.Cwd, p.SessionID)
+	if overflowUnreadable {
+		return goalCompleteDenyEnvelope(
+			"GOAL-COMPLETE-GATE-01: the subagent verification record for this session is unreadable or overflowed, so unresolved evidence failures cannot be ruled out. Re-verify the delegated work, or use update_goal status \"blocked\".",
+			deps.Invocation)
+	}
+	unresolved := append(slices.Clone(s.UnverifiedSubagents), overflow...)
 	if len(unresolved) > 0 {
 		named := make([]string, 0, 3)
 		for i := 0; i < len(unresolved) && i < 3; i++ {

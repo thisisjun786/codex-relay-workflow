@@ -2,33 +2,75 @@ package evidence
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// attemptsPath is the counter file of an agent in a turn: the sanitised ids, kept so that a person can read the directory, and
-// a digest of the raw pair, because sanitising is not injective ("a/b" and "a-b" are one string). An absent turn has the same
-// name shape without the turn part.
+// attemptsPath is the counter file the oracle names for an agent in a turn: the sanitised ids, kept so that a person can read the
+// directory, and a digest of the raw agent and turn, because sanitising is not injective ("a/b" and "a-b" are one string). An absent
+// turn has the same name shape without the turn part. For a canonical session id (state.IsCanonicalSessionID: sanitising changes
+// nothing) the name is exact for the tuple: the digest fixes the agent and the turn, and then the rest of the name fixes the
+// session. It is the counter path of every canonical session, so its files stay the oracle's.
 func attemptsPath(cwd, sessionID, agentID, turnID string) string {
 	name := state.SanitizeKey(sessionID) + "-" + state.SanitizeKey(agentID) + "-"
 	if turnID != "" {
 		name += state.SanitizeKey(turnID) + "-"
 	}
 	return filepath.Join(cwd, crwdir.DirName, AttemptsSubdir, name+tupleDigest(agentID, turnID)+".json")
+}
+
+// sanitizingChanges reports whether an agent or turn id names a different file part than it is: a part that is absent (an empty turn,
+// which has no part) is not one. An empty agent id is named "missing", which counterOwner reads back (an agent of that name and
+// an empty one have different digests).
+func sanitizingChanges(id string) bool { return id != "" && state.SanitizeKey(id) != id }
+
+// counterVersionDir holds counters whose agent or turn sanitising changes (CRW-1106), in a directory per exact session,
+// one file per (agent, turn) named by tupleDigest. Each record repeats its identity. Non-canonical session ids are refused
+// at the public boundaries (CRW-1108); records of such sessions written by earlier versions are left alone.
+const counterVersionDir = "v2"
+
+func counterDir(cwd, sessionID string) string {
+	return filepath.Join(cwd, crwdir.DirName, AttemptsSubdir, counterVersionDir, sessionRecordDir(sessionID))
+}
+
+// counterPath is where the counter of the exact tuple lives: the oracle's name when that name fixes the tuple's session (a canonical
+// session whose agent and turn sanitising leaves as they are), the session's own directory otherwise.
+func counterPath(cwd, sessionID, agentID, turnID string) string {
+	if !ownDirectoryCounter(sessionID, agentID, turnID) {
+		return attemptsPath(cwd, sessionID, agentID, turnID)
+	}
+	return filepath.Join(counterDir(cwd, sessionID), tupleDigest(agentID, turnID)+".json")
+}
+
+// ownDirectoryCounter reports whether the tuple's counter has the session's own directory and repeats its identity (CRW-1106). The
+// oracle's name keeps the sanitised ids, so two tuples whose ids differ only where sanitising changes them, or two sessions whose
+// keys continue one another, can share it; only for a canonical session and an agent and turn that sanitising leaves as they are
+// does the name, with its digest, fix the whole tuple.
+func ownDirectoryCounter(sessionID, agentID, turnID string) bool {
+	return !state.IsCanonicalSessionID(sessionID) || sanitizingChanges(agentID) || sanitizingChanges(turnID)
+}
+
+// legacyCounterPath is the oracle's old name of a canonical session's raw agent/turn tuple. Its count stays until the tuple
+// writes its identity-bearing record or a receipt clears both. Public boundaries refuse non-canonical sessions (CRW-1108).
+func legacyCounterPath(cwd, sessionID, agentID, turnID string) (string, bool) {
+	if !state.IsCanonicalSessionID(sessionID) || !ownDirectoryCounter(sessionID, agentID, turnID) {
+		return "", false
+	}
+	return attemptsPath(cwd, sessionID, agentID, turnID), true
 }
 
 // tupleDigest is the first 32 hex digits of the SHA-256 of "<len>:<agent>:<len>:<turn>" taken as UTF-16 code units in
@@ -47,76 +89,185 @@ func tupleDigest(agentID, turnID string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// ReadAttempts is the number of blocks already spent for the (session, agent, turn); an empty turnID is an absent turn. A file
-// that is absent, unreadable or not JSON is 0 (so a truncated counter restarts the budget). A JSON object or array whose
-// attempts is not a safe integer, or lies outside 0 to MaxAttempts, is MaxAttempts: corrupt verification data ends the budget,
-// it never extends it. Any other JSON value (null, a number, a string, true) is 0. A session id that sanitising would rewrite, or
-// an empty one, names no counter of its own and is MaxAttempts without a read (CRW-1108: the oracle read a-b's counter for a/b).
+// CounterState is what a counter file says about an agent's retry budget (CRW-1106): one reader for the SubagentStop gate and the
+// goal-complete gate, so one file never means two things.
+type CounterState int
+
+const (
+	CounterMissing    CounterState = iota // no counter: the budget has not started
+	CounterActive                         // attempts from 0 below MaxAttempts
+	CounterExhausted                      // attempts at MaxAttempts
+	CounterCorrupt                        // a file that is not a counter of this tuple: empty, cut, not an object, a bad count
+	CounterUnreadable                     // a file that cannot be read, or something that is not a regular file
+)
+
+// Counter is a counter snapshot. Attempts is the count of an active or exhausted counter, else 0.
+type Counter struct {
+	State    CounterState
+	Attempts int
+}
+
+// Spent reports whether the counter ends the budget: exhausted, corrupt or unreadable. Only a missing or active counter leaves
+// room for another attempt.
+func (c Counter) Spent() bool { return c.State != CounterMissing && c.State != CounterActive }
+
+// counterRecord is a counter file. A file in the oracle's layout holds attempts only, as the oracle writes it; a file in the session's
+// own directory (ownDirectoryCounter) repeats its identity.
+type counterRecord struct {
+	Attempts  int    `json:"attempts"`
+	SessionID string `json:"sessionId,omitempty"`
+	AgentID   string `json:"agentId,omitempty"`
+	TurnID    string `json:"turnId,omitempty"`
+}
+
+// ReadCounter reads the budget of the exact (session, agent, turn) without changing anything. Only a file that does not exist is
+// missing: a file that cannot be read (or a file where a directory of its path belongs) is unreadable, and one that holds anything
+// but an object whose attempts is an integer from 0 to MaxAttempts (and, for a raw agent/turn tuple, its exact
+// identity) is corrupt. A non-canonical session id is unreadable without accessing any file (CRW-1108).
+//
+// Changed from the oracle (port: fixed, CRW-1106): readAttempts reads an unreadable or garbled file as 0, so a truncated counter
+// restarted the budget and the next write replaced the evidence, while hasSpentBudget read the same file as spent.
+func ReadCounter(cwd, sessionID, agentID, turnID string) Counter {
+	if !state.IsCanonicalSessionID(sessionID) { // CRW-1108: refuse before reading or creating an alias
+		return Counter{State: CounterUnreadable}
+	}
+	var owns func(counterRecord) bool
+	if ownDirectoryCounter(sessionID, agentID, turnID) {
+		owns = func(r counterRecord) bool {
+			return r.SessionID == sessionID && r.AgentID == agentID && r.TurnID == turnID
+		}
+	}
+	c, err := readCounterFile(counterPath(cwd, sessionID, agentID, turnID), owns)
+	if errors.Is(err, fs.ErrNotExist) {
+		if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+			c, _ = readCounterFile(legacy, nil) // a counter an earlier version wrote for this tuple
+		}
+	}
+	return c
+}
+
+// ReadAttempts is ReadCounter as a count: 0 for a missing counter, the count of an active one, MaxAttempts for any counter that ends
+// the budget.
 func ReadAttempts(cwd, sessionID, agentID, turnID string) int {
-	if !state.IsCanonicalSessionID(sessionID) {
-		return MaxAttempts
+	switch c := ReadCounter(cwd, sessionID, agentID, turnID); c.State {
+	case CounterMissing, CounterActive:
+		return c.Attempts
 	}
-	raw, err := os.ReadFile(attemptsPath(cwd, sessionID, agentID, turnID))
+	return MaxAttempts
+}
+
+// readCounterFile classifies one counter file. owns, when set, is the identity check of a CRW-1106 record; a legacy file has none.
+// The error is fs.ErrNotExist exactly when the file does not exist.
+func readCounterFile(path string, owns func(counterRecord) bool) (Counter, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Counter{State: CounterMissing}, fs.ErrNotExist
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return Counter{State: CounterUnreadable}, nil
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return 0
+		if errors.Is(err, fs.ErrNotExist) { // removed between the two calls
+			return Counter{State: CounterMissing}, fs.ErrNotExist
+		}
+		return Counter{State: CounterUnreadable}, nil
 	}
+	return classifyCounter(raw, owns), nil
+}
+
+// classifyCounter parses a counter the way JSON.parse does (all of the file; a number beyond float64 is Infinity, not an error).
+func classifyCounter(raw []byte, owns func(counterRecord) bool) Counter {
+	corrupt := Counter{State: CounterCorrupt}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		if strings.Contains(err.Error(), "exceeded max depth") { // JSON.parse has no such limit
-			return MaxAttempts
-		}
-		return 0
+	var o map[string]any
+	if dec.Decode(&o) != nil || o == nil {
+		return corrupt
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return 0
+		return corrupt
 	}
-	var attempts any
-	switch o := v.(type) {
-	case map[string]any:
-		attempts = o["attempts"]
-	case []any:
-	default:
-		return 0
+	n, isNumber := o["attempts"].(json.Number)
+	f, _ := strconv.ParseFloat(string(n), 64)
+	if !isNumber || math.IsInf(f, 0) || f != math.Trunc(f) || f < 0 || f > MaxAttempts {
+		return corrupt
 	}
-	n, isNumber := attempts.(json.Number)
-	f, _ := strconv.ParseFloat(string(n), 64) // beyond float64 is ±Inf, as in JavaScript
-	if !isNumber || math.IsInf(f, 0) || f != math.Trunc(f) || math.Abs(f) > 1<<53-1 || f < 0 || f > MaxAttempts {
-		return MaxAttempts
+	if owns != nil {
+		session, _ := o["sessionId"].(string)
+		agent, _ := o["agentId"].(string)
+		turn, _ := o["turnId"].(string)
+		if !owns(counterRecord{SessionID: session, AgentID: agent, TurnID: turn}) {
+			return corrupt
+		}
 	}
-	return int(f)
+	if f == MaxAttempts {
+		return Counter{State: CounterExhausted, Attempts: MaxAttempts}
+	}
+	return Counter{State: CounterActive, Attempts: int(f)}
 }
 
-// WriteAttempts persists the counter through a temp file and a rename, and reports whether it did: a false means nothing durable
-// was written, and the caller ends the budget instead of blocking again on a counter it cannot advance. A failed rename leaves
-// its temp file behind. A session id that sanitising would rewrite, or an empty one, is false before anything is created
-// (CRW-1108: the oracle wrote a-b's counter for a/b).
+// WithCounterLock runs fn holding the lock of the exact (session, agent, turn), so the check, the reservation of the next attempt and
+// its publication, and a receipt's resolution, are one step for that child (CRW-1106). The lock file lives in the state directory,
+// which it creates when missing, and is removed when the lock is released (withFileLock), so it leaves nothing behind. An error
+// (a link or a file at the state directory, a lock held past fileLockWait) means fn did not run. It is taken before the session
+// lock.
+func WithCounterLock(cwd, sessionID, agentID, turnID string, fn func() error) error {
+	if !state.IsCanonicalSessionID(sessionID) { // CRW-1108: refuse before reading or creating an alias
+		return state.ErrNonCanonicalSessionID
+	}
+	dir, err := ensureStateDir(cwd)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%s", len(sessionID), sessionID, tupleDigest(agentID, turnID), "counter")))
+	return withFileLock(filepath.Join(dir, "evidence-lock-"+hex.EncodeToString(sum[:16])+".lock"), fn)
+}
+
+// WriteAttempts persists the counter of the exact tuple through a temp file and a rename, and reports whether it did: a false means
+// nothing durable was written, and the caller ends the budget instead of blocking again on a counter it cannot advance. A failed
+// write removes the temp file this call made and nothing else (port: fixed, CRW-1106; the oracle leaves it behind).
 func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) bool {
-	if !state.IsCanonicalSessionID(sessionID) {
+	if !state.IsCanonicalSessionID(sessionID) { // CRW-1108: refuse before reading or creating an alias
 		return false
 	}
-	path := attemptsPath(cwd, sessionID, agentID, turnID)
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
+	path := counterPath(cwd, sessionID, agentID, turnID)
+	record := counterRecord{Attempts: attempts}
+	if !ownDirectoryCounter(sessionID, agentID, turnID) {
+		if _, err := crwdir.EnsureDir(cwd); err != nil {
+			return false
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+			return false
+		}
+	} else {
+		if _, err := ensureRecordDir(cwd, AttemptsSubdir, counterVersionDir, sessionRecordDir(sessionID)); err != nil {
+			return false
+		}
+		record = counterRecord{Attempts: attempts, SessionID: sessionID, AgentID: agentID, TurnID: turnID}
+	}
+	if writeRecord(path, record) != nil {
 		return false
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
-		return false
+	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+		removeFile(legacy) // the counter now lives in the session's directory
 	}
-	tmp := fmt.Sprintf("%s.%d.%s.tmp", path, os.Getpid(), rand.Text())
-	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("{\"attempts\":%d}\n", attempts)), 0o666); err != nil {
-		return false
-	}
-	return crwdir.Rename(tmp, path) == nil
+	return true
 }
 
-// ClearAttempts removes the counter file, best effort: a missing file is fine and a directory in its place stays. A session id that
-// sanitising would rewrite, or an empty one, removes nothing (CRW-1108: the oracle removed a-b's counter for a/b).
+// ClearAttempts removes the counter of the tuple and its own old flat file, best effort. A missing file is fine and a directory
+// in its place stays. A non-canonical session id removes nothing (CRW-1108), including records written by earlier versions.
 func ClearAttempts(cwd, sessionID, agentID, turnID string) {
 	if !state.IsCanonicalSessionID(sessionID) {
 		return
 	}
-	path := attemptsPath(cwd, sessionID, agentID, turnID)
+	removeFile(counterPath(cwd, sessionID, agentID, turnID))
+	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+		removeFile(legacy)
+	}
+}
+
+func removeFile(path string) {
 	if info, err := os.Lstat(path); err == nil && !info.IsDir() {
 		_ = os.Remove(path)
 	}
