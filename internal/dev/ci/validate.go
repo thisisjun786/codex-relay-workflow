@@ -21,7 +21,6 @@ import (
 
 var (
 	markdownLink = regexp.MustCompile(`\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+"[^"]*")?\)`)
-	fenceMarker  = regexp.MustCompile("^(`{3,}|~{3,})")
 	skillName    = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	urlScheme    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 )
