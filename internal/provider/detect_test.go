@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -219,10 +218,16 @@ func TestHookInputPolicyAndObservation(t *testing.T) {
 // it; startup, clear, a later compact, another session's compact and a line that changed between them say it.
 func TestHookCompactRightAfterAResumeDoesNotRepeatTheLine(t *testing.T) {
 	path := providerPath(t, "printf '%s' '{\"proxy\":{\"running\":true}}'")
+	// Each session's transcript shows its resumed turn compacting before the SessionStart hooks run, as codex 0.154.0 writes it.
+	transcripts := map[string]*pairTranscript{}
 	start := func(session, source string) string {
 		t.Helper()
+		if transcripts[session] == nil {
+			transcripts[session] = newPairTranscript(t).turn("t1", true)
+		}
 		var out bytes.Buffer
-		if RunHook(context.Background(), strings.NewReader(`{"session_id":"`+session+`","source":"`+source+`"}`), &out, os.LookupEnv) != 0 {
+		raw := `{"session_id":"` + session + `","source":"` + source + `","transcript_path":"` + transcripts[session].path + `"}`
+		if RunHook(context.Background(), strings.NewReader(raw), &out, os.LookupEnv) != 0 {
 			t.Fatal("exit")
 		}
 		return out.String()
@@ -234,7 +239,7 @@ func TestHookCompactRightAfterAResumeDoesNotRepeatTheLine(t *testing.T) {
 	if got := start("s1", "resume"); got != line {
 		t.Fatalf("resume = %q", got)
 	}
-	guidancerecord.NoteUserPrompt(os.LookupEnv, "s1", "turn-of-s1") // the resume's own prompt reaches the prompt hook before the compaction
+	transcripts["s1"].said()
 	if got := start("s1", "compact"); got != "" {
 		t.Fatalf("compact in the turn of a resume repeated the line: %q", got)
 	}
@@ -257,7 +262,7 @@ func TestHookCompactRightAfterAResumeDoesNotRepeatTheLine(t *testing.T) {
 	}
 	// The bridge stopping between the resume and the compact is a different line, and it is said.
 	start("s6", "resume")
-	guidancerecord.NoteUserPrompt(os.LookupEnv, "s6", "turn-of-s6")
+	transcripts["s6"].said()
 	syscall.ForkLock.RLock()
 	writeErr := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":false}}'\n"), 0o755)
 	syscall.ForkLock.RUnlock()

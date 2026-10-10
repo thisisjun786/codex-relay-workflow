@@ -143,13 +143,14 @@ const mapAffordanceLeg = "map-affordance"
 // missing or unknown source always gets the whole list, except the compact start that follows, in the same turn, a resume that gave the
 // whole list (CRW-1180): that one adds nothing, once.
 func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (string, func(written bool)) {
-	cwd, sid, source := fallbackCwd, "", ""
+	cwd, sid, source, transcript := fallbackCwd, "", "", ""
 	if p := object(text.Trim(raw)); p != nil {
 		if s, ok := p["cwd"].(string); ok && s != "" {
 			cwd = s
 		}
 		sid, _ = p["session_id"].(string)
 		source, _ = p["source"].(string)
+		transcript, _ = p["transcript_path"].(string) // the evidence of the turn a resume and a compact run in (CRW-1180)
 	}
 	resumed := source == "resume"
 	lines := []harness.ContextSection{}
@@ -197,7 +198,7 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 		case !written:
 			guidancerecord.ClearResume(env, sid, mapAffordanceLeg)
 		case resumed:
-			guidancerecord.RecordResume(env, sid, mapAffordanceLeg, given, command)
+			guidancerecord.RecordResume(env, sid, mapAffordanceLeg, given, command, transcript)
 		default:
 			guidancerecord.Record(env, sid, mapAffordanceLeg, given, command)
 		}
@@ -206,7 +207,7 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 	// output after the compaction record, so saying it again stacks it twice.
 	pair, part := guidancerecord.PairNone, ""
 	if source == "compact" && sid != "" {
-		pair, part = guidancerecord.TakePair(env, sid, mapAffordanceLeg, given, command)
+		pair, part = guidancerecord.TakePair(env, sid, mapAffordanceLeg, given, command, transcript)
 	}
 	if pair == guidancerecord.PairWhole {
 		return "", func(bool) {}
@@ -223,7 +224,7 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 			if !written {
 				head = ""
 			}
-			guidancerecord.RecordResumePart(env, sid, mapAffordanceLeg, head)
+			guidancerecord.RecordResumePart(env, sid, mapAffordanceLeg, head, transcript)
 		}
 	}
 	for i, pointer := range pointers {

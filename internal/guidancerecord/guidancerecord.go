@@ -131,22 +131,22 @@ func writeRecord(path, text, command string) bool {
 const resumeSuffix = ".resume"
 
 // PairWindow bounds the pair from above: a compact start comes right after the resume start of the same turn (the host compacts a
-// resumed session's first turn before it samples). The window alone does not tell a turn from the next one, so the user prompts
-// that follow the resume end the pair too (NoteUserPrompt); the window only bounds a pair whose later prompts the hook did not see.
+// resumed session's first turn before it samples, then runs both starts' hooks). The window is no evidence of the turn: that is the
+// session's transcript (see turn.go), and the user prompts that follow the resume end a pair earlier (NoteUserPrompt).
 const PairWindow = 15 * time.Minute
 
-// promptSeen is the stamp, beside a session's records, that the session's user-prompt hook has run (NoteUserPrompt). Without it nothing
-// tells a compact of the resume's turn from one of a later turn, so a compact never takes a pair then (see takePair).
-const promptSeen = "prompt-hook"
-
 // mark is what a resume leaves: what it gave (the whole text, or only the Part whose SHA-256 is named, the rest of the text being in the
-// context from before). It is written once, whole, under a generation of its own (Gen), and afterwards only deleted: a hook that is
-// slow, or that gave up waiting for the session's lock, can end the pair by deleting it, and nothing can bring it back. The user
-// prompts that follow the resume are kept as files of their own beside it, named by the generation (see countPrompt).
+// context from before), and the evidence of its turn (turn.go): the SHA-256 of the turn id and of the transcript's path, and the offset where
+// the transcript ended when the resume read it. It is written once, whole, under a generation of its own (Gen), and afterwards only
+// deleted: a hook that is slow, or that gave up waiting for the session's lock, can end the pair by deleting it, and nothing can bring it
+// back. The user prompts that follow the resume are kept as files of their own beside it, named by the generation (see countPrompt).
 type mark struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Part          string `json:"part,omitempty"`
 	Gen           string `json:"gen"`
+	Turn          string `json:"turn"`
+	Transcript    string `json:"transcript"`
+	Offset        int64  `json:"offset"`
 }
 
 // Pair is what a compact start finds of the resume of its turn.
@@ -176,7 +176,7 @@ func readMark(path string) (mark, os.FileInfo, bool) {
 	}
 	data, err := os.ReadFile(path)
 	var m mark
-	if err != nil || json.Unmarshal(data, &m) != nil || m.SchemaVersion != 1 || m.Gen == "" {
+	if err != nil || json.Unmarshal(data, &m) != nil || m.SchemaVersion != 1 || m.Gen == "" || m.Turn == "" || m.Transcript == "" || m.Offset < 0 {
 		return mark{}, nil, false
 	}
 	return m, st, true
@@ -260,18 +260,33 @@ func writeMark(path string, m mark) bool {
 
 // RecordResume is Record for a resume that gave the whole text: besides the record it leaves a mark that lets the compact start of
 // the same turn stay silent, once (TakePair). Codex appends the resume's output after the compaction record, so the compact start
-// would otherwise stack the same text a second time (CRW-1180).
-func RecordResume(env host.LookupEnv, session, leg, text, command string) {
-	record(env, session, leg, text, command, &mark{})
+// would otherwise stack the same text a second time (CRW-1180). The mark is left only when the transcript the start names shows that the
+// resume's turn compacted before it ran (resumeTurn); otherwise the compact says the text.
+func RecordResume(env host.LookupEnv, session, leg, text, command, transcript string) {
+	record(env, session, leg, text, command, resumeMark(transcript, ""))
+}
+
+// resumeMark is the mark of a resume that gave the part (the whole text when part is ""), or nil when the transcript is no evidence of
+// the resume's turn.
+func resumeMark(transcript, part string) *mark {
+	turn, offset, ok := resumeTurn(transcript)
+	if !ok {
+		return nil
+	}
+	return &mark{Part: part, Turn: digest(turn), Transcript: digest(transcript), Offset: offset}
 }
 
 // RecordResumePart notes that a resume of a session that was given the text before gave only this part of it (the session binding and
 // the PATH banner): the compact start of the same turn must say the rest of the text, and leave that part out. The record is the
-// earlier one and stays; an empty part gave nothing and leaves no pair.
-func RecordResumePart(env host.LookupEnv, session, leg, part string) {
+// earlier one and stays; an empty part gave nothing and leaves no pair, and neither does a transcript that is no evidence of the turn.
+func RecordResumePart(env host.LookupEnv, session, leg, part, transcript string) {
 	path := slot(env, session, leg)
 	if path == "" {
 		return
+	}
+	var m *mark
+	if d := PartDigest(part); d != "" {
+		m = resumeMark(transcript, d)
 	}
 	unlock, ok := lockSession(filepath.Dir(path), true)
 	if !ok {
@@ -280,8 +295,8 @@ func RecordResumePart(env host.LookupEnv, session, leg, part string) {
 	}
 	defer unlock()
 	_ = removeMark(path + resumeSuffix)
-	if d := PartDigest(part); d != "" {
-		writeMark(path+resumeSuffix, mark{Part: d})
+	if m != nil {
+		writeMark(path+resumeSuffix, *m)
 	}
 }
 
@@ -300,15 +315,16 @@ func ClearResume(env host.LookupEnv, session, leg string) {
 
 // TakePair reports whether a compact start that would say this text follows a resume of its own turn, and takes the pair: the next
 // compact is a compaction of its own. A missing, stale, other-text or later-turn pair answers PairNone, so the compact says the text
-// as it did before records. A pair ends with the second user prompt after its resume (NoteUserPrompt), and after PairWindow. The pair
-// is read and taken holding the session's lock, so of two compacts, or of a compact and a prompt, that race, a taken pair stays taken.
-func TakePair(env host.LookupEnv, session, leg, text, command string) (Pair, string) {
-	kind, part, _ := takePair(env, session, leg, text, command, false)
+// as it did before records. The turn is told by the transcript the compact start names (compactOfTurn); a pair also ends with the second
+// user prompt after its resume (NoteUserPrompt), and after PairWindow. The pair is read and taken holding the session's lock, so of two
+// compacts, or of a compact and a prompt, that race, a taken pair stays taken.
+func TakePair(env host.LookupEnv, session, leg, text, command, transcript string) (Pair, string) {
+	kind, part, _ := takePair(env, session, leg, text, command, transcript, false)
 	return kind, part
 }
 
 // takePair is TakePair; with end set, a start that does not take the pair ends it under the same lock (Begin).
-func takePair(env host.LookupEnv, session, leg, text, command string, end bool) (Pair, string, bool) {
+func takePair(env host.LookupEnv, session, leg, text, command, transcript string, end bool) (Pair, string, bool) {
 	path := slot(env, session, leg)
 	if path == "" {
 		return PairNone, "", false
@@ -322,9 +338,9 @@ func takePair(env host.LookupEnv, session, leg, text, command string, end bool) 
 	defer unlock()
 	m, st, ok := readMark(markPath)
 	switch {
-	case !ok, promptsOf(markPath, m.Gen) > 1, time.Since(st.ModTime()) > PairWindow, !promptHookSeen(filepath.Dir(path)):
-		// A mark that cannot be read, or of a later turn, or stale, is not a pair. Neither is one of a session whose prompt hook never
-		// ran: nothing then tells the compact of the resume's turn from one of a later turn, and a compaction of its own must say the text.
+	case !ok, promptsOf(markPath, m.Gen) > 1, time.Since(st.ModTime()) > PairWindow, !compactOfTurn(transcript, m):
+		// A mark that cannot be read, or of a later turn, or stale, is not a pair; neither is one whose turn the compact's transcript does
+		// not show to be the compact's own: a compaction of its own must say the text.
 		_ = removeMark(markPath)
 		return PairNone, "", true
 	case !Delivered(env, session, leg, text, command):
@@ -342,16 +358,10 @@ func takePair(env host.LookupEnv, session, leg, text, command string, end bool) 
 	return PairWhole, "", true
 }
 
-// promptHookSeen reports whether the session's user-prompt hook has run since its records began.
-func promptHookSeen(dir string) bool {
-	st, err := os.Lstat(filepath.Join(dir, promptSeen))
-	return err == nil && st.Mode().IsRegular()
-}
-
 // CompactRepeatsResume reports whether a compact start that would say this text is the second half of a resume that already gave
 // exactly it in the same turn, and takes the pair (see TakePair).
-func CompactRepeatsResume(env host.LookupEnv, session, leg, text, command string) bool {
-	kind, _ := TakePair(env, session, leg, text, command)
+func CompactRepeatsResume(env host.LookupEnv, session, leg, text, command, transcript string) bool {
+	kind, _ := TakePair(env, session, leg, text, command, transcript)
 	return kind == PairWhole
 }
 
@@ -359,13 +369,13 @@ func CompactRepeatsResume(env host.LookupEnv, session, leg, text, command string
 // compact start that repeats a whole resume of its turn takes the pair and answers true, and the hook says nothing; any other start
 // ends a pair a resume left open, whether or not the hook says anything, because it begins a new generation. A resume that says
 // something leaves its own pair after the hook wrote (RecordResume, Said). The returned pair and part are for a leg that can take
-// part of a pair; the live-state legs ignore them.
-func Begin(env host.LookupEnv, session, source, leg, text, command string) (Pair, string) {
+// part of a pair; the live-state legs ignore them. The transcript is the one the start names (transcript_path), the evidence of the turn.
+func Begin(env host.LookupEnv, session, source, leg, text, command, transcript string) (Pair, string) {
 	if session == "" {
 		return PairNone, ""
 	}
 	if source == "compact" {
-		if kind, part, ended := takePair(env, session, leg, text, command, true); kind != PairNone || ended {
+		if kind, part, ended := takePair(env, session, leg, text, command, transcript, true); kind != PairNone || ended {
 			return kind, part
 		}
 	}
@@ -375,10 +385,10 @@ func Begin(env host.LookupEnv, session, source, leg, text, command string) (Pair
 
 // NoteUserPrompt counts a user prompt of a session against every pair its resumes left open: the first prompt after a resume is the
 // turn the pair belongs to, and a prompt of another turn ends it, so a compaction of a later turn is a compaction of its own and says
-// the text. Without a turn id every prompt counts. It also stamps the session as one whose prompt hook runs (promptSeen), which a compact
-// needs to take a pair. It counts by adding a file beside the mark, never by rewriting the mark, so a prompt that is slow cannot bring
-// back a mark a compact took or a start ended meanwhile. Best effort: whatever it cannot read or lock is ended, which only makes a hook
-// say more.
+// the text. Without a turn id every prompt counts. A prompt only ends pairs early: the evidence a compact needs to take one is the
+// transcript (compactOfTurn), so a prompt the hook never sees costs nothing. It counts by adding a file beside the mark, never by
+// rewriting the mark, so a prompt that is slow cannot bring back a mark a compact took or a start ended meanwhile. Best effort: whatever
+// it cannot read or lock is ended, which only makes a hook say more.
 func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 	path := slot(env, session, "x")
 	if path == "" {
@@ -388,9 +398,6 @@ func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 	unlock, locked := lockSession(dir, false)
 	if locked {
 		defer unlock()
-		if f, err := os.OpenFile(filepath.Join(dir, promptSeen), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
-			_ = f.Close()
-		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -423,31 +430,39 @@ var promptPause func()
 // member is absent or not a string. It is for the legs whose text is live state (the provider line, the flag warning), which keep no
 // record at a start and need the pair only.
 func StartOf(raw string) (session, source string) {
+	session, source, _ = startOf(raw)
+	return session, source
+}
+
+// startOf is StartOf with the transcript the payload names (transcript_path), the evidence of the turn.
+func startOf(raw string) (session, source, transcript string) {
 	var p struct {
-		Session any `json:"session_id"`
-		Source  any `json:"source"`
+		Session    any `json:"session_id"`
+		Source     any `json:"source"`
+		Transcript any `json:"transcript_path"`
 	}
 	if json.Unmarshal([]byte(raw), &p) != nil {
-		return "", ""
+		return "", "", ""
 	}
 	session, _ = p.Session.(string)
 	source, _ = p.Source.(string)
-	return session, source
+	transcript, _ = p.Transcript.(string)
+	return session, source, transcript
 }
 
 // SilentCompact reports whether a live-state leg that would say text on this SessionStart payload stays silent because it is the
 // compact start of the turn in which a resume said exactly that (CRW-1180), and ends any pair a start that is not that compact left
 // open. The text is "" for a leg that has nothing to say, which then only ends the pair. It takes the pair.
 func SilentCompact(env host.LookupEnv, raw, leg, text string) bool {
-	session, source := StartOf(raw)
-	kind, _ := Begin(env, session, source, leg, text, "")
+	session, source, transcript := startOf(raw)
+	kind, _ := Begin(env, session, source, leg, text, "", transcript)
 	return kind == PairWhole
 }
 
 // Said notes, after a live-state leg wrote text whole, what the start gave: a resume leaves the record and the mark that let the
 // compact start of the same turn stay silent. Any other start already ended the pair (SilentCompact).
 func Said(env host.LookupEnv, raw, leg, text string) {
-	if session, source := StartOf(raw); session != "" && source == "resume" {
-		RecordResume(env, session, leg, text, "")
+	if session, source, transcript := startOf(raw); session != "" && source == "resume" {
+		RecordResume(env, session, leg, text, "", transcript)
 	}
 }

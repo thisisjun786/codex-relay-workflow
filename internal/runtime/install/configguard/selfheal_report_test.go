@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -384,9 +383,14 @@ func TestSelfHealReportCompactRightAfterAResumeDoesNotRepeatTheWarning(t *testin
 	home := selfHealReportTempHome(t)
 	selfHealReportWriteConfig(t, home)
 	log := selfHealReportFakeCodex(t, selfHealReportSoftOff)
+	// Each session's transcript shows its resumed turn compacting before the SessionStart hooks run, as codex 0.154.0 writes it.
+	transcripts := map[string]*pairTranscript{}
 	start := func(session, source string) string {
 		t.Helper()
-		out, code := selfHealReportRun(t, home, "{\"hook_event_name\":\"SessionStart\",\"session_id\":\""+session+"\",\"cwd\":\"/ws\",\"source\":\""+source+"\"}")
+		if transcripts[session] == nil {
+			transcripts[session] = newPairTranscript(t).turn("t1", true)
+		}
+		out, code := selfHealReportRun(t, home, "{\"hook_event_name\":\"SessionStart\",\"session_id\":\""+session+"\",\"cwd\":\"/ws\",\"source\":\""+source+"\",\"transcript_path\":\""+transcripts[session].path+"\"}")
 		if code != 0 {
 			t.Fatalf("exit = %d", code)
 		}
@@ -397,7 +401,7 @@ func TestSelfHealReportCompactRightAfterAResumeDoesNotRepeatTheWarning(t *testin
 	if got := start("s1", "resume"); got != warning {
 		t.Fatalf("resume = %q", got)
 	}
-	guidancerecord.NoteUserPrompt(selfHealReportEnv(home), "s1", "turn-of-s1") // the resume's own prompt reaches the prompt hook before the compaction
+	transcripts["s1"].said()
 	if got := start("s1", "compact"); got != "" {
 		t.Fatalf("compact in the turn of a resume repeated the warning: %q", got)
 	}

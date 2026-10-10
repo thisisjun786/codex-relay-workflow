@@ -239,36 +239,43 @@ func TestFallbackNoticeHookCompactAfterAWholeResumeAnswerIsSilentOnce(t *testing
 	if got := run(compact); got != whole {
 		t.Errorf("compact after a silent resume answered %q", got)
 	}
-	// A resume of a session never given the notice answers whole; the compact of the same turn adds nothing.
-	if got := run(`{"session_id":"n","source":"resume"}`); got != whole {
+	// A resume of a session never given the notice answers whole; the compact of the same turn adds nothing. The transcript shows the
+	// resumed turn compacting before the SessionStart hooks run, as codex 0.154.0 writes it.
+	start := func(session, source string, tr *pairTranscript) string {
+		return run(`{"session_id":"` + session + `","source":"` + source + `","transcript_path":"` + tr.path + `"}`)
+	}
+	n := newPairTranscript(t).turn("t1", true)
+	if got := start("n", "resume", n); got != whole {
 		t.Fatalf("resume of a session never given the notice answered %q", got)
 	}
-	guidancerecord.NoteUserPrompt(env, "n", "turn-of-n") // the resume's own prompt reaches the prompt hook before the compaction
-	if got := run(`{"session_id":"n","source":"compact"}`); got != "" {
+	n.said()
+	if got := start("n", "compact", n); got != "" {
 		t.Errorf("compact in the same turn as a whole resume repeated the notice: %q", got)
 	}
-	if got := run(`{"session_id":"n","source":"compact"}`); got != whole {
+	if got := start("n", "compact", n); got != whole {
 		t.Errorf("the next compact did not say the notice: %q", got)
 	}
 	// The notice changing between the resume and the compact is said.
-	if got := run(`{"session_id":"c","source":"resume"}`); got != whole {
+	c := newPairTranscript(t).turn("t1", true)
+	if got := start("c", "resume", c); got != whole {
 		t.Fatalf("resume answered %q", got)
 	}
-	guidancerecord.NoteUserPrompt(env, "c", "turn-of-c")
+	c.said()
 	m["CRW_SPAWN_V1"] = "1"
-	if got := run(`{"session_id":"c","source":"compact"}`); got == "" || got == whole {
+	if got := start("c", "compact", c); got == "" || got == whole {
 		t.Errorf("compact after the notice changed answered %q", got)
 	}
 	// Another session's compact is not the pair.
-	run(`{"session_id":"d","source":"resume"}`)
-	guidancerecord.NoteUserPrompt(env, "d", "turn-of-d")
-	if got := run(`{"session_id":"e","source":"compact"}`); got == "" {
+	d := newPairTranscript(t).turn("t1", true)
+	start("d", "resume", d)
+	d.said()
+	if got := start("e", "compact", d); got == "" {
 		t.Error("another session's compact was silenced")
 	}
 }
 
-// CRW-1180 (evaluation d1): a session whose prompt hook never ran has no evidence of the resume's turn, so its compact says the notice.
-func TestFallbackNoticeHookCompactWithoutPromptHookEvidenceSaysTheNotice(t *testing.T) {
+// CRW-1180 (evaluation d1): a start that names no transcript has no evidence of the resume's turn, so its compact says the notice.
+func TestFallbackNoticeHookCompactWithoutTranscriptEvidenceSaysTheNotice(t *testing.T) {
 	_, env := fallbackTestEnv(t)
 	run := func(raw string) string {
 		var out strings.Builder
@@ -298,12 +305,13 @@ func TestFallbackNoticeHookCompactInALaterTurnSaysTheNotice(t *testing.T) {
 		return out.String()
 	}
 	whole := run(`{"session_id":"s"}`)
-	if got := run(`{"session_id":"n","source":"resume"}`); got != whole {
+	tr := newPairTranscript(t).turn("t1", true)
+	if got := run(`{"session_id":"n","source":"resume","transcript_path":"` + tr.path + `"}`); got != whole {
 		t.Fatalf("resume of a session never given the notice answered %q", got)
 	}
 	guidancerecord.NoteUserPrompt(env, "n", "turn-1")
 	guidancerecord.NoteUserPrompt(env, "n", "turn-2")
-	if got := run(`{"session_id":"n","source":"compact"}`); got != whole {
+	if got := run(`{"session_id":"n","source":"compact","transcript_path":"` + tr.path + `"}`); got != whole {
 		t.Errorf("compact in a later turn answered %q, want the notice", got)
 	}
 }
