@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,8 +21,8 @@ import (
 // codex on PATH and a plugin package that declares two command hooks, and points HOME, CODEX_HOME and
 // CRW_HOME into it (the operator rule after CRW-499). Two hooks are declared because the oracle's
 // safety pin refuses a plugin whose every existing entry is drifted, so the update path needs one
-// entry that still matches. TestHookTrustRetrust_real_home_is_untouched compares the real ~/.codex
-// and ~/.crw listings before and after the file runs.
+// entry that still matches. TestHookTrustRetrust_real_home_is_untouched holds a run to the homes the
+// command is handed; the real ~/.codex and ~/.crw are never listed (CRW-1170).
 
 type retrustFixture struct {
 	t       *testing.T
@@ -469,14 +470,76 @@ func TestHookTrustRetrustCLI_unknown_option(t *testing.T) {
 }
 
 // TestHookTrustRetrust_real_home_is_untouched is the operator rule after CRW-499: the run writes nothing into
-// the account homes it can resolve. HOME, CODEX_HOME and CRW_HOME are temporary directories and those are
-// checked; the real ~/.codex and ~/.crw are not observed, because the host's Codex sessions write there at
-// any moment (CRW-1170).
+// the account homes it can resolve beyond the config rewrite it is for. The real ~/.codex and ~/.crw are not
+// observed, because the host's Codex sessions write there at any moment (CRW-1170). The process variables are
+// temporary (SandboxAccountHomes), and the homes the command is handed through f.env() are watched: HOME, its
+// .codex and .crw, and CRW_HOME stay as they were, and CODEX_HOME gains the backup and the lock
+// sidecar of the config rewrite and nothing else.
 func TestHookTrustRetrust_real_home_is_untouched(t *testing.T) {
 	testsupport.SandboxAccountHomes(t)
 	f := newRetrustFixture(t, "")
 	f.write(f.config(), f.installed())
+	original := f.read(f.config())
+	retrustWatchHomes(t, f)
 	if _, stderr, code := f.run("--bootstrap-ok"); code != 0 {
 		t.Fatalf("bootstrap: code=%d stderr=%q", code, stderr)
+	}
+	entries, err := os.ReadDir(f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	// The rewrite leaves config.toml, its backup and the O_EXCL lock sidecar it wrote under, which stays
+	// beside the file by design (docs/port/decisions.md 33); any other name is an unintended write.
+	if want := []string{"config.toml", filepath.Base(f.backupName()), "config.toml.crw-lock"}; !slices.Equal(names, want) {
+		t.Fatalf("CODEX_HOME holds %v after the run, want %v", names, want)
+	}
+	if got := f.read(f.backupName()); got != original {
+		t.Fatalf("the backup does not hold the original bytes: %q", got)
+	}
+}
+
+// retrustWatchHomes watches the account homes f.env() hands the command, read back from that environment so
+// the watch and the run cannot name different directories. CODEX_HOME, which the command rewrites on purpose,
+// is left to the caller.
+func retrustWatchHomes(t *testing.T, f *retrustFixture) *testsupport.AccountHomes {
+	t.Helper()
+	env := f.env()
+	home, _ := env("HOME")
+	crw, _ := env("CRW_HOME")
+	if home == "" || crw == "" {
+		t.Fatalf("the fixture environment names HOME=%q CRW_HOME=%q", home, crw)
+	}
+	return testsupport.WatchAccountHomes(t, home, "", crw)
+}
+
+// TestHookTrustRetrust_home_watch_reaches_the_command_homes shows the watch above is not blind: a file
+// created below HOME, HOME/.codex, HOME/.crw or CRW_HOME of the command's environment is reported.
+func TestHookTrustRetrust_home_watch_reaches_the_command_homes(t *testing.T) {
+	testsupport.SandboxAccountHomes(t)
+	f := newRetrustFixture(t, "")
+	env := f.env()
+	home, _ := env("HOME")
+	crw, _ := env("CRW_HOME")
+	for _, dir := range []string{home, filepath.Join(home, ".codex"), filepath.Join(home, ".crw"), crw} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := retrustWatchHomes(t, f)
+	for _, dir := range []string{home, filepath.Join(home, ".codex"), filepath.Join(home, ".crw"), crw} {
+		stray := filepath.Join(dir, "crw1170-unexpected-write")
+		f.write(stray, "")
+		reported := ""
+		w.Verify(func(msg string) { reported = msg })
+		if !strings.Contains(reported, "crw1170-unexpected-write") {
+			t.Errorf("a write below %s is not reported: %q", dir, reported)
+		}
+		if err := os.Remove(stray); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

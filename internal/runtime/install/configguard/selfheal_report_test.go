@@ -86,7 +86,42 @@ func selfHealReportTempHome(t *testing.T) string {
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", home)
 	t.Setenv("CRW_HOME", filepath.Join(root, "crw"))
+	// A PLUGIN_ROOT the test process inherits (a run inside a Codex session that loaded the plugin) has
+	// every run leave an observation record in CODEX_HOME; a test that wants that record sets its own.
+	t.Setenv("PLUGIN_ROOT", "")
 	return home
+}
+
+// selfHealReportPlugin points PLUGIN_ROOT at a temporary plugin whose manifest declares a version, so a
+// run leaves the shared component-hook observation record below CODEX_HOME/crw/hook-observations.
+func selfHealReportPlugin(t *testing.T) {
+	t.Helper()
+	plugin := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(plugin, ".codex-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, ".codex-plugin", "plugin.json"), []byte("{\"version\":\"0.4.0\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PLUGIN_ROOT", plugin)
+}
+
+// selfHealReportObservations is every file below CODEX_HOME/crw/hook-observations.
+func selfHealReportObservations(t *testing.T, home string) []string {
+	t.Helper()
+	var found []string
+	if err := filepath.WalkDir(filepath.Join(home, "crw", "hook-observations"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			found = append(found, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("the observation record is missing: %v", err)
+	}
+	return found
 }
 
 func selfHealReportEnv(home string) host.LookupEnv {
@@ -592,14 +627,7 @@ func TestSelfHealReportObservationIsTheOnlyWrite(t *testing.T) {
 	if err := os.WriteFile(manifest, []byte("{\"version\":2}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plugin := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(plugin, ".codex-plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(plugin, ".codex-plugin", "plugin.json"), []byte("{\"version\":\"0.4.0\"}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PLUGIN_ROOT", plugin)
+	selfHealReportPlugin(t)
 	selfHealReportFakeCodex(t, selfHealReportSoftOff)
 
 	before := map[string]string{}
@@ -624,19 +652,7 @@ func TestSelfHealReportObservationIsTheOnlyWrite(t *testing.T) {
 			t.Fatalf("%s was rewritten:\n before %q\n after  %q", name, before[name], string(raw))
 		}
 	}
-	observations := filepath.Join(home, "crw", "hook-observations")
-	var found []string
-	if err := filepath.WalkDir(observations, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			found = append(found, path)
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("the observation record is missing: %v", err)
-	}
+	found := selfHealReportObservations(t, home)
 	if len(found) != 1 {
 		t.Fatalf("observation records = %v, want exactly one", found)
 	}
@@ -652,16 +668,47 @@ func TestSelfHealReportObservationIsTheOnlyWrite(t *testing.T) {
 // TestSelfHealReportNeverTouchesTheRealHomes lists the temporary homes the runs are given (HOME, CODEX_HOME,
 // CRW_HOME and the .codex and .crw below HOME) before and after runs whose inputs are all temporary. The real
 // ~/.codex and ~/.crw are not listed: the host's Codex sessions write there at any moment (CRW-1170), and with
-// the variables repointed the hook cannot resolve them. A difference is reported, never cleaned up here.
+// the variables repointed the hook cannot resolve them. An unexpected difference is reported, never cleaned up.
+//
+// The test sets PLUGIN_ROOT both ways, so it does not depend on the one the test process inherits: with none,
+// the runs write nothing; with a plugin, the shared observation record below CODEX_HOME/crw is the one write,
+// and it is checked by name before the listing is compared without it.
 func TestSelfHealReportNeverTouchesTheRealHomes(t *testing.T) {
-	homes := testsupport.SandboxAccountHomes(t)
-	selfHealReportWriteConfig(t, homes.Codex)
-	selfHealReportFakeCodex(t, selfHealReportSoftOff)
-	homes.Rebase()
-	for _, in := range []string{selfHealReportSessionStart, "garbage", ""} {
-		if _, code := selfHealReportRun(t, homes.Codex, in); code != 0 {
-			t.Fatalf("exit = %d, want 0", code)
+	for _, withPlugin := range []bool{false, true} {
+		name := "no plugin root"
+		if withPlugin {
+			name = "an inherited plugin root"
 		}
+		t.Run(name, func(t *testing.T) {
+			homes := testsupport.SandboxAccountHomes(t)
+			t.Setenv("PLUGIN_ROOT", "")
+			if withPlugin {
+				selfHealReportPlugin(t)
+			}
+			selfHealReportWriteConfig(t, homes.Codex)
+			selfHealReportFakeCodex(t, selfHealReportSoftOff)
+			homes.Rebase()
+			for _, in := range []string{selfHealReportSessionStart, "garbage", ""} {
+				if _, code := selfHealReportRun(t, homes.Codex, in); code != 0 {
+					t.Fatalf("exit = %d, want 0", code)
+				}
+			}
+			if !withPlugin {
+				return
+			}
+			crw := filepath.Join(homes.Codex, "crw")
+			entries, err := os.ReadDir(crw)
+			if err != nil || len(entries) != 1 || entries[0].Name() != "hook-observations" {
+				t.Fatalf("CODEX_HOME/crw holds %v (%v), want only hook-observations", entries, err)
+			}
+			if found := selfHealReportObservations(t, homes.Codex); len(found) != 1 {
+				t.Fatalf("observation records = %v, want the one the session start leaves", found)
+			}
+			// The record is the expected write; the listing the sandbox compares at the end is taken without it.
+			if err := os.RemoveAll(crw); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

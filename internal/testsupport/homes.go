@@ -43,6 +43,8 @@ func SandboxAccountHomes(t *testing.T) *AccountHomes {
 // end, if anything was created or removed at the top level of home, home/.codex, home/.crw, codex and crw; the
 // top level of home is watched too, since the child's HOME is the directory its own startup would write to.
 // The directories exist when it is called; a test that puts fixtures there calls Rebase once they are in place.
+// An empty codex or crw is not watched: a command that writes one of its homes on purpose (a config rewrite
+// with its backup) has the test check that home's contents itself.
 func WatchAccountHomes(t *testing.T, home, codex, crw string) *AccountHomes {
 	t.Helper()
 	h := &AccountHomes{Home: home, Codex: codex, CRW: crw, watchHome: true}
@@ -65,6 +67,9 @@ func (h *AccountHomes) Listing() string {
 		dirs = append([]string{h.Home}, dirs...)
 	}
 	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
 		label := strings.TrimPrefix(dir, h.Home)
 		if dir == h.Home {
 			label = "HOME"

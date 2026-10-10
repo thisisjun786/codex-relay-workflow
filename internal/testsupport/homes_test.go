@@ -120,3 +120,32 @@ func TestWatchAccountHomes_reports_a_write_below_the_homes_it_was_given(t *testi
 		}
 	}
 }
+
+// A watch given no codex directory still reports a write below HOME, HOME/.codex, HOME/.crw and crw, and does
+// not take the empty name for the working directory.
+func TestWatchAccountHomes_leaves_an_unnamed_home_to_the_test(t *testing.T) {
+	home, crw := t.TempDir(), t.TempDir()
+	h := WatchAccountHomes(t, home, "", crw)
+	if parts := strings.Split(h.Listing(), " | "); len(parts) != 4 {
+		t.Errorf("the listing has %d parts, want HOME, /.codex, /.crw and crw: %s", len(parts), h.Listing())
+	}
+	for _, dir := range []string{home, filepath.Join(home, ".codex"), filepath.Join(home, ".crw"), crw} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		h.Rebase()
+		reported := ""
+		stray := filepath.Join(dir, "stray")
+		if err := os.WriteFile(stray, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.Verify(func(msg string) { reported = msg })
+		if !strings.Contains(reported, "stray") {
+			t.Errorf("a write below %s is not reported: %q", dir, reported)
+		}
+		if err := os.Remove(stray); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.Rebase()
+}
