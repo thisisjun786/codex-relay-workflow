@@ -47,6 +47,12 @@ func TestOrchestrateArgsStrictOptions(t *testing.T) {
 		{"reset", "--session", "s1", "--attest", "--cwd=/elsewhere"},
 		{"status", "--session", "s1", "--attest", "--cwd", "/elsewhere"},
 		{"P", "--session", "s1", "--attest", "--session=s2"},
+		// Verification round 2: a missing --attest or --attest-file value is refused for every verb, reset included.
+		{"reset", "--session", "s1", "--attest"},
+		{"reset", "--session", "s1", "--attest-file"},
+		{"status", "--session", "s1", "--attest"},
+		{"A", "--session", "s1", "--attest"},
+		{"A", "--session", "s1", "--attest-file"},
 	} {
 		if p := ParseOrchestrateCliArgs(argv, "/ws"); p.Error == nil {
 			t.Errorf("%q was accepted: %+v", argv, p.Args)

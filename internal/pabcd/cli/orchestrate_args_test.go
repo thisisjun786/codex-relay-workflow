@@ -119,8 +119,8 @@ func assertArgs(t *testing.T, argv []string, cwd string, want recordedArgs) {
 
 // orchestrateArgsChanged holds the recorded parser cases CRW-1109 answers differently on purpose
 // (docs/port-cxc/known-defects/CRW-1109.md): constructor and __proto__ are unknown verbs, the options are
-// scanned strictly and once, help counts only in an option position, and a conflicting repeat of
-// --session or --cwd is refused. The recording itself is unchanged.
+// scanned strictly and once (a missing --attest or --attest-file value included), help counts only in an
+// option position, and a conflicting repeat of --session or --cwd is refused. The recording itself is unchanged.
 func orchestrateArgsChanged() map[string]recordedArgs {
 	unknown := func(token string) string {
 		return "unknown orchestrate verb '" + token + "' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help"
@@ -142,6 +142,11 @@ func orchestrateArgsChanged() map[string]recordedArgs {
 		"argv_29": {Error: refused("--session needs a value, but the next argument is the option --json (use --session=<value> for a value that starts with --)"), Cwd: "/ws"},
 		"argv_30": {Error: refused("--cwd needs a value, but the next argument is the option --json (use --cwd=<value> for a value that starts with --)"), Cwd: "/ws"},
 		"argv_31": {Error: refused("--json takes no value, got --json=true"), Session: &x, Cwd: y},
+		"argv_32": {Error: refused("--attest requires a JSON argument"), Cwd: "/ws"},
+		"argv_44": {Error: refused("--attest-file requires a path argument"), Cwd: "/ws"},
+		"argv_47": {Error: refused("--attest-file requires a path argument"), Cwd: "/ws"},
+		// A files case: $R is the case's root.
+		"file_error_sticks": {Error: refused("--attest-file requires a path argument"), Cwd: "$R"},
 	}
 }
 
@@ -167,9 +172,13 @@ func TestOrchestrateArgsRecorded(t *testing.T) {
 			for i := range argv {
 				argv[i] = strings.ReplaceAll(argv[i], "$R", root)
 			}
-			c.Want.Cwd = strings.ReplaceAll(c.Want.Cwd, "$R", root)
-			c.Want.AttestError = strings.ReplaceAll(c.Want.AttestError, "$R", root)
-			assertArgs(t, argv, "/unused", c.Want)
+			want := c.Want
+			if override, ok := changed[c.ID]; ok {
+				want = override
+			}
+			want.Cwd = strings.ReplaceAll(want.Cwd, "$R", root)
+			want.AttestError = strings.ReplaceAll(want.AttestError, "$R", root)
+			assertArgs(t, argv, "/unused", want)
 			for p, want := range c.Files {
 				b, err := os.ReadFile(filepath.Join(root, p))
 				if err != nil || string(b) != want {

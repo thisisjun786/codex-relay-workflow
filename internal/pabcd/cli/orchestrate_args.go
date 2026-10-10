@@ -148,21 +148,21 @@ func readCliAttest(file, cwd string) (*attest.Attestation, string) {
 // option position; err is the first strictness refusal; session and cwd are nil and the input cwd when a
 // conflicting repeat makes them ambiguous.
 type orchestrateCliFlags struct {
-	help        bool
-	err         string
-	session     *string
-	cwd         string
-	json        bool
-	attest      []*string // each --attest value in order, nil for one that is missing
-	attestFile  *string
-	fileMissing bool
+	help       bool
+	err        string
+	session    *string
+	cwd        string
+	json       bool
+	attest     []string // each --attest value in order
+	attestFile *string
 }
 
 // scanOrchestrateCliFlags reads the options strictly: --session, --cwd, --attest and --attest-file take
 // a value, either the next argument or after "=" in the same one; --json takes none. An unknown option, a
-// stray argument, a missing --session or --cwd value, a value that is itself an option (a typo would
-// otherwise send the work to the input cwd or to no session), and a --session or --cwd repeated with a
-// different value are refusals. A help token in an option position is help; as an option's value it is
+// stray argument, a missing value of any of the four (refused for every verb, reset and status included,
+// so no command runs with a malformed option), a value that is itself an option (a typo would otherwise
+// send the work to the input cwd or to no session), and a --session or --cwd repeated with a different
+// value are refusals. A help token in an option position is help; as an option's value it is
 // that value. The forms the skills use - space-separated values - are unchanged.
 func scanOrchestrateCliFlags(args []string, cwd string) orchestrateCliFlags {
 	f := orchestrateCliFlags{cwd: cwd}
@@ -224,14 +224,13 @@ func scanOrchestrateCliFlags(args []string, cwd string) orchestrateCliFlags {
 			cwds = append(cwds, value)
 		case "--attest":
 			if !present {
-				f.attest = append(f.attest, nil)
+				fail("--attest requires a JSON argument")
 				continue
 			}
-			v := value
-			f.attest = append(f.attest, &v)
+			f.attest = append(f.attest, value)
 		case "--attest-file":
 			if !present {
-				f.fileMissing = true
+				fail("--attest-file requires a path argument")
 				continue
 			}
 			v := value
@@ -283,11 +282,7 @@ func ParseOrchestrateCliArgs(argv []string, cwd string) OrchestrateCliParsed {
 	}
 	a := &OrchestrateCliArgs{Verb: verb, Cwd: flags.cwd, Session: flags.session, JSON: flags.json}
 	for _, raw := range flags.attest {
-		if raw == nil {
-			a.AttestError = "--attest requires a JSON argument"
-			continue
-		}
-		att, err := decodeCliAttest(*raw)
+		att, err := decodeCliAttest(raw)
 		if err != nil {
 			a.AttestError = "attest JSON is not valid JSON"
 		} else if att == nil {
@@ -295,9 +290,6 @@ func ParseOrchestrateCliArgs(argv []string, cwd string) OrchestrateCliParsed {
 		} else {
 			a.Attest = att
 		}
-	}
-	if flags.fileMissing {
-		a.AttestError = "--attest-file requires a path argument"
 	}
 	if flags.attestFile != nil {
 		if len(flags.attest) > 0 {

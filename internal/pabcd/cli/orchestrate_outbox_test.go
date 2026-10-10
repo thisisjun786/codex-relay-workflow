@@ -235,3 +235,29 @@ func TestOrchestrateRoundTripsDuringALedgerFailureAreAllRecorded(t *testing.T) {
 		t.Fatalf("pending after status: %+v", pending)
 	}
 }
+
+// Verification round 2: `reset --attest` and `reset --attest-file` with no value are parse errors, so the reset refuses and the
+// session's bytes stay as they were (red at d9a805df: both parsed, the reset ran and the session went to IDLE).
+func TestOrchestrateResetRefusesAMissingAttestValue(t *testing.T) {
+	for _, flag := range []string{"--attest", "--attest-file"} {
+		t.Run(flag, func(t *testing.T) {
+			cwd, id := orchestrateTransitionRoot(t), "missing-attest"
+			orchestrateTransitionSession(t, cwd, id, `{"phase":"P","orchestrationActive":true}`)
+			before, err := os.ReadFile(state.StatePath(cwd, id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed := ParseOrchestrateCliArgs([]string{"reset", "--session", id, flag}, cwd)
+			if parsed.Error == nil {
+				t.Fatalf("the missing value was parsed: %+v", parsed.Args)
+			}
+			got, err := orchestrateCommitTry(t, cwd, nil, "reset", "--session", id, flag)
+			if err != nil || got.Code == 0 {
+				t.Fatalf("the reset did not refuse: %+v %v", got, err)
+			}
+			if after, err := os.ReadFile(state.StatePath(cwd, id)); err != nil || string(after) != string(before) {
+				t.Fatalf("the session changed: %v\n%s", err, after)
+			}
+		})
+	}
+}
