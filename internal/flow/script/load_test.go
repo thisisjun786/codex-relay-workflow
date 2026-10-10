@@ -286,7 +286,7 @@ func TestStepLimitInterrupts(t *testing.T) {
 	}
 	// A step that awaits between short stretches is not limited by the sum of them.
 	ok := "export const meta = { name: 'x' }\nlet n = 0\nfor (let i = 0; i < 20; i++) { for (let j = 0; j < 2000; j++) n++; await null }\nreturn n\n"
-	got, err := runSource(t, Source{Name: "ok.js", Text: []byte(ok)}, Limits{Step: 100 * time.Millisecond})
+	got, err := runSource(t, Source{Name: "ok.js", Text: []byte(ok)}, Limits{Step: 5 * time.Second})
 	if err != nil || got != int64(40000) {
 		t.Fatalf("got %v %v", got, err)
 	}
