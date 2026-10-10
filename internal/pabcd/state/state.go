@@ -138,6 +138,10 @@ type State struct {
 	StopBlockTotal       float64 `json:"stopBlockTotal"`
 	StopBlockTurnID      *string `json:"stopBlockTurnId"`
 	StopBlockCapNotified bool    `json:"stopBlockCapNotified"`
+	// StopTurnGeneration counts the user prompts without turn_id that ended a turn (CRW-1086, CRW-1091, not in the oracle): such a
+	// prompt has no turn id to stamp, so this is the stamp a Stop holds against the state its lock finds, as it holds the turn id;
+	// absent until the first such prompt.
+	StopTurnGeneration float64 `json:"stopTurnGeneration,omitempty"`
 	// StopDivergenceWindows is, per evaluation series (metric and work phase), the row count of the window the Stop plateau block
 	// was last answered for, so one window asks for divergence once even when the active work phase leaves it and comes back
 	// (CRW-1088, not in the oracle); absent until a plateau block is answered.

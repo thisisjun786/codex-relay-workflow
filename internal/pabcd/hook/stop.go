@@ -31,8 +31,9 @@
 // per-phase budget latches instead of recharging on the next Stop. CRW-1088.md: a metric row is progress
 // only against the earlier row of its own metric and work phase, the plateau of a bound goalplan is its
 // active work phase's, and one evaluation window gets the plateau block once. CRW-1091.md: the judgment
-// under the lock reads the metrics ledger and the bound goalplan once and shares them, and a Stop after
-// the turn's announced total cap reads and writes nothing. CRW-1107.md: the goal-idle block's IDLE->P
+// under the lock reads the metrics ledger and the bound goalplan once and shares them, a Stop after
+// the turn's announced total cap reads and writes nothing, and a prompt without turn_id that lands before
+// the lock releases the earlier turn's Stop (the turn generation). CRW-1107.md: the goal-idle block's IDLE->P
 // command carries no attest.
 package hook
 
@@ -258,10 +259,13 @@ func stopCounted(p StopPayload, judged state.State, platform string, env host.Lo
 }
 
 // stopSameBinding is whether the state the lock found still has the phase, the cycle, the goalplan
-// binding and the user turn stamp the decision was made on.
+// binding and the user turn stamp the decision was made on. The stamp is the turn id and, for a prompt
+// without one, the turn generation it advanced (CRW-1091: a turn-id-less prompt between the first read
+// and the lock cleared the total and left the turn id as it was, so the earlier turn's Stop read the
+// cleared total as the first Stop of the new turn and blocked in it).
 func stopSameBinding(a, b state.State) bool {
 	return a.Phase == b.Phase && a.OrchestrationActive == b.OrchestrationActive && a.Slug == b.Slug &&
-		stopSameText(a.StopBlockTurnID, b.StopBlockTurnID)
+		stopSameText(a.StopBlockTurnID, b.StopBlockTurnID) && a.StopTurnGeneration == b.StopTurnGeneration
 }
 
 type stopBumpOutcome int
