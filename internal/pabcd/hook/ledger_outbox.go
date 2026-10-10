@@ -114,8 +114,8 @@ var planAuditSync = goalplan.SyncGoalplanArtifacts
 
 // SupersedePlanAuditRounds closes the rounds of c on plan, which the caller's write lock of c.Slug read, and
 // records one review_round_superseded row per round this cleanup closed, now or in an earlier attempt (the
-// round records the cleanup's id): a row the plan's ledger already holds is not written again, and a round
-// that closed some other way (an abort, whatever its stamp) is never given a row. A plan write that published and then failed its directory sync, and a row that is
+// round records the cleanup's id; see closedEarlier for a cleanup queued before it had one): a row the plan's ledger already holds is
+// not written again, and a round that closed some other way (an abort, whatever its stamp) is never given a row by a cleanup with an id. A plan write that published and then failed its directory sync, and a row that is
 // visible but was never fsynced, are not taken for done: the plan's ledger and directory are made durable
 // before the cleanup counts as finished, and the first failure is returned, so the caller keeps the work
 // pending.
@@ -131,7 +131,7 @@ func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *g
 	owed := []string{}
 	for _, r := range swept.ReviewRounds {
 		if r.Purpose == goalplan.PurposePlanAudit && r.Status == goalplan.ReviewInconclusive && slices.Contains(c.Rounds, r.RoundID) &&
-			!slices.Contains(owed, r.RoundID) && (slices.Contains(closed, r.RoundID) || c.ID != "" && r.SupersededBy == c.ID) {
+			!slices.Contains(owed, r.RoundID) && (slices.Contains(closed, r.RoundID) || c.closedEarlier(r)) {
 			owed = append(owed, r.RoundID)
 		}
 	}
@@ -157,6 +157,24 @@ func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *g
 		first = planAuditSync(cwd, c.Slug)
 	}
 	return first
+}
+
+// closedEarlier reports whether an earlier attempt of this cleanup closed r, a listed plan_audit round that is inconclusive. A cleanup
+// with an id knows its rounds by that id alone, so an abort with the same millisecond stamp is never taken for one of them. A cleanup
+// queued before the cleanup had an id (the lane's builds up to 63b65d5bb) closed its rounds, then and now, without one, so they are
+// known the way that build knew them: by the cleanup's closing stamp, or, for a cleanup queued before it had a stamp (0664b63bb), by
+// carrying no verdict. A round aborted on its own that matches gets a superseded row it was not given; that is the price of never
+// losing the row of a round the cleanup did close, and it is paid only for those legacy cleanups.
+func (c PlanAuditCleanup) closedEarlier(r goalplan.ReviewRoundState) bool {
+	switch {
+	case c.ID != "":
+		return r.SupersededBy == c.ID
+	case r.SupersededBy != "":
+		return false
+	case c.ClosedAt != "":
+		return r.ClosedAt != nil && *r.ClosedAt == c.ClosedAt
+	}
+	return r.Lane.Verdict == ""
 }
 
 // planAuditSupersededRows is the set of round ids the plan's ledger already holds a review_round_superseded

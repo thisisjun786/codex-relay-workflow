@@ -5,6 +5,7 @@ package hook
 // finished.
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
 const cleanupStamp = "2026-10-10T00:00:00.000Z"
@@ -155,5 +157,101 @@ func TestSupersedePlanAuditRoundsGivesNoRowToAnAbortWithTheCleanupsStamp(t *test
 	}
 	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 1 || rows[0] != "r1" {
 		t.Fatalf("superseded rows after the replay: %v, want r1 only", rows)
+	}
+}
+
+// legacyCleanupPayloads are the cleanups the lane's earlier builds queued before the cleanup had an id: with the closing stamp
+// (eb083d37f to 63b65d5bb) and without one (0664b63bb).
+func legacyCleanupPayloads() map[string]PlanAuditCleanup {
+	return map[string]PlanAuditCleanup{
+		"stamp":    {Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp},
+		"no-stamp": {Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}},
+	}
+}
+
+// Red on b7072ad9 (verify-r4 P1): a cleanup queued without an id closed its rounds with no supersededBy, its row append failed, and the
+// retry, which closes nothing and has no id to match, owed no row and reported the cleanup finished, so the rounds' audit rows were lost.
+func TestSupersedePlanAuditRoundsKeepsTheRowsOfALegacyCleanupAcrossAFailedAppend(t *testing.T) {
+	for name, c := range legacyCleanupPayloads() {
+		t.Run(name, func(t *testing.T) {
+			cwd := t.TempDir()
+			plan := cleanupPlan(t, cwd, "demo")
+			dir, err := goalplan.GoalplanDir(cwd, "demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledger := filepath.Join(dir, goalplan.GoalplanLedgerFile)
+			if err := os.Mkdir(ledger, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err == nil {
+				t.Fatal("a blocked ledger finished the cleanup")
+			}
+			if err := os.Remove(ledger); err != nil {
+				t.Fatal(err)
+			}
+			if err := SupersedePlanAuditRounds(cwd, "s1", c, goalplan.ReadGoalplan(cwd, "demo")); err != nil {
+				t.Fatal(err)
+			}
+			if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 2 {
+				t.Fatalf("superseded rows: %v, want r1 and r2", rows)
+			}
+		})
+	}
+}
+
+// Red on b7072ad9 (verify-r4 P1): the same through the session's outbox: a P>A event queued with an id-less cleanup, a drain whose row
+// append fails, and the next drain, which retired the event with no superseded row.
+func TestDrainKeepsALegacyCleanupPendingUntilItsRowsAreRecorded(t *testing.T) {
+	for name, c := range legacyCleanupPayloads() {
+		t.Run(name, func(t *testing.T) {
+			cwd := t.TempDir()
+			plan := cleanupPlan(t, cwd, "demo")
+			payload, err := json.Marshal(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pre := state.DefaultState("s1", "")
+			pre.Phase = state.PhaseP
+			if err := state.WriteState(cwd, pre); err != nil {
+				t.Fatal(err)
+			}
+			pre = state.ReadState(cwd, "s1")
+			post := pre
+			post.Phase = state.PhaseA
+			ev, err := state.NewLedgerEvent(cwd, pre, post, nil, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := state.PrepareLedgerEvent(cwd, ev); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.WriteState(cwd, post); err != nil {
+				t.Fatal(err)
+			}
+			dir, err := goalplan.GoalplanDir(cwd, plan.Slug)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledger := filepath.Join(dir, goalplan.GoalplanLedgerFile)
+			if err := os.Mkdir(ledger, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if report := DrainSessionLedger(cwd, "s1"); report.Err == nil || len(report.Pending) != 1 {
+				t.Fatalf("a drain over a blocked plan ledger: %+v", report)
+			}
+			if err := os.Remove(ledger); err != nil {
+				t.Fatal(err)
+			}
+			report := DrainSessionLedger(cwd, "s1")
+			rows := cleanupSupersededRows(t, cwd, "demo")
+			events, _, err := state.PendingLedgerEvents(cwd, "s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 2 || len(events) != 0 || report.Err != nil {
+				t.Fatalf("rows=%v pending=%d report=%+v, want r1 and r2 recorded and the event retired", rows, len(events), report)
+			}
+		})
 	}
 }
