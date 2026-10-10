@@ -846,12 +846,13 @@ func TestSelfHealEvidenceRecordingDoesNotOverwriteALaterOptOut(t *testing.T) {
 	prev := activationCrwdirPublish
 	var fired atomic.Bool
 	var optOut sync.WaitGroup
+	optOutErr := make(chan error, 1)
 	activationCrwdirPublish = func(path string, b []byte) error {
 		if fired.CompareAndSwap(false, true) {
 			optOut.Add(1)
 			go func() {
 				defer optOut.Done()
-				_ = MarkSelfHealOptedOut(home, "2026-10-10T00:00:01.000Z")
+				optOutErr <- MarkSelfHealOptedOut(home, "2026-10-10T00:00:01.000Z")
 			}()
 			time.Sleep(200 * time.Millisecond)
 		}
@@ -860,6 +861,9 @@ func TestSelfHealEvidenceRecordingDoesNotOverwriteALaterOptOut(t *testing.T) {
 	t.Cleanup(func() { activationCrwdirPublish = prev })
 	selfHealEvidenceRecord(t, home, &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn})
 	optOut.Wait()
+	if err := <-optOutErr; err != nil {
+		t.Fatalf("the opt-out reported %v", err)
+	}
 	marker, err := ReadSelfHealMarkerFile(home)
 	if err != nil || marker == nil {
 		t.Fatalf("marker %+v %v", marker, err)

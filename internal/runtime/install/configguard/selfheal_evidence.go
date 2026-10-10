@@ -252,8 +252,9 @@ type RecordSelfHealEvidenceDeps struct {
 	Cwd string
 	Run CodexRunner
 	Now func() string
-	// Ctx ends the recording: a fingerprint read or a publication that has not finished when it ends
-	// is abandoned and nothing is recorded. nil means no deadline.
+	// Ctx ends the recording: a subprocess, a fingerprint read or a marker lock wait that has not
+	// finished when it ends is abandoned and the call returns. A marker publication already running
+	// cannot be cancelled and finishes on its own (see RecordSelfHealEvidence). nil means no deadline.
 	Ctx context.Context
 }
 
@@ -297,25 +298,47 @@ func RecordSelfHealEvidence(deps RecordSelfHealEvidenceDeps) error {
 	probe := &SelfHealProbeEvidence{CodexVersion: version, ConfigSHA256: after, LayersSHA256: layersBefore, RecordedAt: now(), Features: state}
 	// The marker is read and published under its lock, so a disable that completes meanwhile is read
 	// here and keeps its opt-out, or waits and overwrites this record (never the reverse).
-	return updateSelfHealMarker(deps.CodexHome, true, func() (*SelfHealMarker, error) {
-		marker, err := ReadSelfHealMarkerFile(deps.CodexHome)
-		if err != nil {
-			return nil, err
-		}
-		if marker == nil {
-			if _, statErr := os.Stat(SelfHealMarkerPath(deps.CodexHome)); statErr == nil {
-				// A readable but malformed marker is left alone, as ClearSelfHealOptOut leaves it.
+	publish := func() error {
+		return updateSelfHealMarker(deps.CodexHome, true, func() (*SelfHealMarker, error) {
+			if ctx != nil && ctx.Err() != nil {
+				// The deadline ended while this waited for the lock: nothing is recorded.
 				return nil, nil
 			}
-			marker = &SelfHealMarker{}
-		}
-		if marker.OptedOut != nil && *marker.OptedOut {
-			// An explicit opt-out that came after the enable's own clear stands.
-			return nil, nil
-		}
-		marker.Probe = probe
-		return marker, nil
-	})
+			marker, err := ReadSelfHealMarkerFile(deps.CodexHome)
+			if err != nil {
+				return nil, err
+			}
+			if marker == nil {
+				if _, statErr := os.Stat(SelfHealMarkerPath(deps.CodexHome)); statErr == nil {
+					// A readable but malformed marker is left alone, as ClearSelfHealOptOut leaves it.
+					return nil, nil
+				}
+				marker = &SelfHealMarker{}
+			}
+			if marker.OptedOut != nil && *marker.OptedOut {
+				// An explicit opt-out that came after the enable's own clear stands.
+				return nil, nil
+			}
+			marker.Probe = probe
+			return marker, nil
+		})
+	}
+	if ctx == nil {
+		return publish()
+	}
+	// The deadline also bounds the caller's wait for the lock, the read and the publication. A file
+	// operation cannot be cancelled, so one already running when the deadline ends finishes on its
+	// own, still under the lock and from the marker it read under it: it neither overwrites an
+	// opt-out nor outlives the lock, and the evidence it writes is checked against the config
+	// digests before every use. A step that has not started when the deadline ends writes nothing.
+	published := make(chan error, 1)
+	go func() { published <- publish() }()
+	select {
+	case err := <-published:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 // updateSelfHealMarker is the one read-modify-write of the marker file, under an exclusive lock so the
