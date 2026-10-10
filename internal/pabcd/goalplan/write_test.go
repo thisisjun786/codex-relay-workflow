@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -390,13 +389,8 @@ func TestWriteDirectoryDoesNotNeedReadPermission(t *testing.T) {
 	writeTestRequire(t, os.MkdirAll(dir, 0700))
 	writeTestRequire(t, os.Chmod(dir, 0300))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
-	if runtime.GOOS == "darwin" {
-		// Existing open_darwin.go requires readable ancestors and fails closed.
-		if WriteGoalplan(cwd, p) == nil {
-			t.Fatal("Darwin unreadable directory accepted")
-		}
-		return
-	}
+	// Darwin opens the directory search-only (open_darwin.go, CRW-581), so the save and the append succeed there as on Linux
+	// (the Darwin run is not executed on this host; open_darwin_test.go pins the open itself).
 	writeTestRequire(t, WriteGoalplan(cwd, p))
 	writeTestRequire(t, AppendGoalplanLedger(cwd, p.Slug, GoalplanLedgerEntry{Slug: p.Slug, Event: EventCreated}))
 }
