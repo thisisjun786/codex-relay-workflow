@@ -3,6 +3,7 @@ package recall
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -198,11 +199,70 @@ func ensureRepoKeyColumn(db *RwDb) {
 	_ = db.Exec("CREATE INDEX IF NOT EXISTS idx_files_repo_key ON files(repo_key)")
 }
 
+// openIndexReadOnly opens the index for reading rows. An index of another schema version is refused:
+// its rows were written under other rules (the repository key, the cursor), so a reader must not
+// serve them. Only a writer that goes on to ingest resets it; the refusal sends a search to the scan.
 func openIndexReadOnly(path string) (*RwDb, error) {
+	db, err := openIndexReadOnlyAnySchema(path)
+	if err != nil {
+		return nil, err
+	}
+	if version, current := indexSchemaOf(db); !current {
+		_ = db.Close()
+		return nil, fmt.Errorf("index at %s is of schema version %s, not %s — a refreshing search or `recall chat index` rebuilds it", path, version, IndexSchemaVersion)
+	}
+	return db, nil
+}
+
+// openIndexReadOnlyAnySchema is for the status, which reports on an index of an older schema.
+func openIndexReadOnlyAnySchema(path string) (*RwDb, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, errors.New("no index at " + path)
 	}
 	return openDbReadOnly(path)
+}
+
+// indexSchemaOf reads the version the index was written under; an index that records none is current.
+func indexSchemaOf(db *RwDb) (version string, current bool) {
+	stmt, err := db.Prepare("SELECT value FROM meta WHERE key = 'schema_version'")
+	if err != nil {
+		return "", true
+	}
+	row, err := stmt.Get()
+	if err != nil || row == nil {
+		return "", true
+	}
+	version, _ = row["value"].(string)
+	return version, version == IndexSchemaVersion
+}
+
+// hitStoreBusyMs bounds how long the hook's history store waits for the write lock of the index.
+const hitStoreBusyMs = 1000
+
+// openHitCountStore opens the index file for the repeat history only. It never applies the schema or
+// resets derived rows: reading or counting the history is not a migration of the search index, which
+// stays as it is until a writer that ingests rebuilds it.
+func openHitCountStore(path string) (*RwDb, error) {
+	db, err := openDbReadWrite(path)
+	if err != nil {
+		return nil, err
+	}
+	if err = db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", hitStoreBusyMs)); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	stmt, err := db.Prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'recall_hit_counts'")
+	if err == nil {
+		var row map[string]any
+		if row, err = stmt.Get(); err == nil && row == nil {
+			err = db.Exec(hitCountsDDL)
+		}
+	}
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 func indexStatus(db *RwDb, path string) (IndexStatus, error) {

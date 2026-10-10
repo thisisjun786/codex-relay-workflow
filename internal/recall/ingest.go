@@ -29,8 +29,11 @@ type IngestResult struct {
 	Pruned   float64 `json:"pruned"`
 	Msgs     float64 `json:"msgs"`
 	// Skipped counts the files that could not be read this time; the rest were indexed.
-	Skipped   float64 `json:"skipped,omitempty"`
-	ElapsedMs float64 `json:"elapsedMs"`
+	Skipped float64 `json:"skipped,omitempty"`
+	// UnreadDirs counts the rollout directories that could not be listed: what lies under them was
+	// neither indexed nor pruned this time.
+	UnreadDirs float64 `json:"unreadDirs,omitempty"`
+	ElapsedMs  float64 `json:"elapsedMs"`
 }
 
 type FreshnessBudget struct {
@@ -49,6 +52,9 @@ type IndexFreshness struct {
 	ExtraFiles   float64 `json:"extraFiles"`
 	StaleFiles   float64 `json:"staleFiles"`
 	Truncated    bool    `json:"truncated"`
+	// UnreadDirs counts the rollout directories that could not be listed. Files under them were not
+	// compared, so the counts are a lower bound (Truncated is set) and nothing is content-verified.
+	UnreadDirs float64 `json:"unreadDirs,omitempty"`
 	// Verified is set when the counts were decided from file content (the explicit strong path),
 	// not from size and mtime alone. A zero value means metadata-only freshness.
 	Verified bool `json:"verified,omitempty"`
@@ -184,7 +190,13 @@ func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *Fres
 	if rebuild {
 		verify = false
 	}
+	// The file identity is compared whenever the index stores one, as the refresh does: a file
+	// replaced by another of the same size and mtime is stale in a metadata-only status too.
+	hasID := filesHasColumn(db, "file_id")
 	query := "SELECT path, mtime_ms, size FROM files"
+	if hasID {
+		query = "SELECT path, mtime_ms, size, file_id FROM files"
+	}
 	if verify {
 		query = "SELECT path, mtime_ms, size, bytes_ingested, file_id, checkpoint FROM files"
 	}
@@ -199,14 +211,21 @@ func measureIndexFreshnessMode(home string, db *RwDb, days float64, budget *Fres
 	known := make(map[string]KnownFile, len(rows))
 	for _, row := range rows {
 		prev := KnownFile{MTimeMS: hitCountNumber(row["mtime_ms"]), Size: hitCountNumber(row["size"])}
+		if hasID {
+			prev.FileID, _ = row["file_id"].(string)
+		}
 		if verify {
 			prev.BytesIngested = hitCountNumber(row["bytes_ingested"])
-			prev.FileID, _ = row["file_id"].(string)
 			prev.Checkpoint, _ = row["checkpoint"].(string)
 		}
 		known[memoryStatusString(row["path"])] = prev
 	}
 	f := IndexFreshness{SourceFiles: float64(len(files)), IndexedFiles: float64(len(known)), Verified: verify, RebuildRequired: rebuild}
+	if len(unread) > 0 {
+		// What lies under a directory that could not be listed was not compared: the counts are a
+		// lower bound, and no content was verified for the index as a whole.
+		f.UnreadDirs, f.Truncated, f.Verified = float64(len(unread)), true, false
+	}
 	paths := make(map[string]bool, len(files))
 	for _, file := range files {
 		paths[file.Path] = true
@@ -340,7 +359,7 @@ func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (Ingest
 	if err != nil {
 		return IngestResult{}, err
 	}
-	r := IngestResult{Scanned: float64(len(files))}
+	r := IngestResult{Scanned: float64(len(files)), UnreadDirs: float64(len(unread))}
 	seen := make(map[string]bool, len(files))
 	for _, file := range files {
 		seen[file.Path] = true
@@ -376,7 +395,9 @@ func ingestWith(home string, db *RwDb, days float64, opts ingestOptions) (Ingest
 			// been appended by another refresh. Only the lock holder decides, and it prunes a path
 			// only when the file is absent at that moment.
 			if err := ingestTransaction(db, func() error {
-				if !rolloutPathGone(path) {
+				// A row of another home (the index is shared by the homes it is run for) is not shown to
+				// be live by an existing file: only a path of this home's tree is kept while it exists.
+				if !rolloutPathGone(path) && underRolloutRoots(home, path) {
 					return nil
 				}
 				if _, err := s.delMsgs.Run(path); err != nil {
@@ -414,6 +435,11 @@ func rolloutPathGone(path string) bool {
 		return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 	}
 	return !st.Mode().IsRegular()
+}
+
+// underRolloutRoots reports whether path lies in the live or archived tree of the Codex home.
+func underRolloutRoots(home, path string) bool {
+	return underAnyDir(path, []string{sessionsDir(home), filepath.Join(home, "archived_sessions")})
 }
 
 // underAnyDir reports whether path lies below one of the directories.

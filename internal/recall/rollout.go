@@ -291,9 +291,11 @@ func readFirstLineBounded(path string) (line string, truncated bool, err error) 
 			return head, false, nil
 		}
 		if size >= cap {
+			// The line is cut only when its content goes on past the bound: a line break right after
+			// the bound ends a line that is complete, and so does the end of the file.
 			more := make([]byte, 1)
 			extra, _ := f.ReadAt(more, cap)
-			return head, extra > 0, nil
+			return head, extra > 0 && more[0] != '\n', nil
 		}
 	}
 }

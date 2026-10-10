@@ -35,7 +35,7 @@ func TestVerifiedStatusOfAnOlderSchemaIndexSaysRebuildRequired(t *testing.T) {
 	if code := Run([]string{"chat", "index", "--home", home, "--index-path", path, "--status", "--verify"}, &out, &errOut, time.Now()); code != 0 || !bytes.Contains(out.Bytes(), []byte("(rebuild-required)")) {
 		t.Errorf("%d %q %q", code, out.String(), errOut.String())
 	}
-	check, err := openIndexReadOnly(path)
+	check, err := openIndexReadOnlyAnySchema(path)
 	if err != nil {
 		t.Fatal(err)
 	}

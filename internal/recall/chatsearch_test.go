@@ -238,7 +238,9 @@ func chatSearchMakeReadOnly(t *testing.T, index string) {
 	if os.Geteuid() == 0 {
 		t.Skip("write-protection witness requires a non-root host")
 	}
-	chatSearchConfigureIndex(t, index, "UPDATE meta SET value='1' WHERE key='schema_version'")
+	// A missing table makes the writer's schema step write, which a write-protected file refuses; the
+	// index keeps its schema version, so the read-only reader still accepts it.
+	chatSearchConfigureIndex(t, index, "DROP TABLE recall_hit_counts")
 	if err := os.Chmod(index, 0o444); err != nil {
 		t.Fatal(err)
 	}

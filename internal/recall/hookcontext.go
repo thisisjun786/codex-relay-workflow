@@ -144,7 +144,7 @@ func hookContextOpenSidecarHitCounts(env host.LookupEnv) HitCountStore {
 	if _, err = os.Stat(path); err != nil {
 		return nil
 	}
-	db, err := openIndex(path)
+	db, err := openHitCountStore(path)
 	if err != nil {
 		return nil
 	}

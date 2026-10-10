@@ -150,9 +150,12 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 	if err != nil {
 		return ChatSearchResult{}, err
 	}
-	files, err := ListRolloutFiles(shared.Home, shared.Days, now())
+	files, unread, err := listRolloutFiles(shared.Home, shared.Days, now())
 	if err != nil {
 		return ChatSearchResult{}, err
+	}
+	for _, dir := range unread {
+		result.Warnings = append(result.Warnings, unreadDirWarning(dir))
 	}
 	result.TotalFiles = len(files)
 	includeTools := opts.IncludeTools == nil || *opts.IncludeTools
@@ -319,4 +322,9 @@ func readChatScanFile(path string) (string, error) {
 		}
 	}
 	return decoded, nil
+}
+
+// unreadDirWarning tells that a rollout directory could not be listed, so a result may be incomplete.
+func unreadDirWarning(dir string) string {
+	return "unreadable rollout directory: " + dir + " — its rollouts are not covered, so the result may be incomplete"
 }
