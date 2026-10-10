@@ -672,12 +672,14 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if content != nil && len(m.TableKeys) > 0 {
-		// A config.toml that does not decode is refused before any restore and before the CLI, which would rewrite it
-		// (CRW-1141).
+	// A config.toml that does not decode is refused before any restore and before the CLI, which would rewrite it (CRW-1141):
+	// whenever this deactivation is to write, a key to restore or a flag to disable.
+	if content != nil && configLockWritersDeactivateWrites(m) {
 		if err := validateConfig(path, *content); err != nil {
 			return nil, err
 		}
+	}
+	if content != nil && len(m.TableKeys) > 0 {
 		// The restore is computed under the lock and published only when the pin still holds at the
 		// rename; the check runs here first so a refusal is reported before the keys are computed.
 		guard := func() error { return configLockPathsPublishGuard(pin) }
@@ -693,8 +695,11 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 			return nil, err
 		}
 	}
-	live, err := ReadDeclaredState(deps.Run)
+	live, err := ReadFeatureStates(deps.Run)
 	r.FeaturesStateUnavailable = err != nil
+	// ran holds the flags whose disable exited 0: they are not yet disabled, only asked to be, and are reported as disabled
+	// only once they are read back (CRW-1143).
+	ran := []string{}
 	for _, key := range manifestOrder(m.flagOrder, m.Flags) {
 		flag := m.Flags[key]
 		if flag.PriorEnabled {
@@ -704,7 +709,10 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 		if !flag.EnabledByCodexclaw {
 			continue
 		}
-		if enabled, present := live[key]; present && !enabled {
+		// A flag the listing shows off has nothing to disable. A flag it has no row for is not shown off (CRW-1145): while
+		// config.toml holds it on, or in a form crw cannot read, the disable still runs and the read-back decides; the
+		// install is released only once the flag is confirmed off, or config.toml no longer turns it on.
+		if state, present := live[key]; present && (state == FeatureDisabled || state == FeatureUnsupported && !deactivateConfigHolds(path, key)) {
 			r.SkippedExternal = append(r.SkippedExternal, SkippedExternal{key, SkipMissing})
 			continue
 		}
@@ -713,7 +721,7 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 			// A failed disable is reported, and keeps the ownership for a retry (CRW-1145).
 			r.Failed = append(r.Failed, FailedFlag{key, res.ExitCode, activationFailureMessage(res.Stderr)})
 		} else {
-			r.Disabled = append(r.Disabled, key)
+			ran = append(ran, key)
 		}
 		// The disable may have replaced config.toml (CRW-1144): the next one runs only under a lock that guards the file the
 		// path names now. Otherwise nothing more runs, nothing is released, and the ownership stays for a retry.
@@ -723,10 +731,10 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	}
 	// An exit 0 is not proof (CRW-1143): the flags are read back, and a flag still enabled, or one that cannot be read back,
 	// is a failure that keeps the ownership.
-	if len(r.Disabled) > 0 {
-		observed, err := readFeatureStatesFor(deps.Run, r.Disabled)
+	if len(ran) > 0 {
+		observed, err := readFeatureStatesFor(deps.Run, ran)
 		confirmed := []string{}
-		for _, key := range r.Disabled {
+		for _, key := range ran {
 			// Only a flag read back disabled is confirmed: a flag without a row (unsupported) says nothing about the value
 			// config.toml holds, so it stays crw's (CRW-1143).
 			switch {
@@ -781,6 +789,26 @@ func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 		}
 	}
 	return r, durability()
+}
+
+// deactivateConfigHolds reports whether config.toml may turn the feature flag on: it holds true, holds a form crw cannot read, or
+// cannot be read at all. It is asked of a flag the listing has no row for.
+func deactivateConfigHolds(path, key string) bool {
+	content, err := readTextOrNull(path)
+	if err != nil {
+		return true
+	}
+	if content == nil {
+		return false
+	}
+	look := semanticRead(*content, "features", key)
+	switch look.State {
+	case tomledit.Absent:
+		return false
+	case tomledit.Found:
+		return !tomledit.SameValue(look.Raw, "false")
+	}
+	return true
 }
 
 // deactivateRecheck is configLocks.recheck for a deactivation that holds the config lock; one that holds none (an empty

@@ -170,6 +170,10 @@ func TestDeactivateRechecksLockBeforeNextRunner(t *testing.T) {
 	if len(writes) > 0 || err == nil {
 		t.Fatalf("disables ran while another writer holds the file config.toml names now: %v; result=%+v err=%v", writes, r, err)
 	}
+	// CRW-1143: the disable that ran was not read back, so it is not reported as disabled.
+	if r == nil || len(r.Disabled) != 0 {
+		t.Fatalf("an unconfirmed disable is reported as disabled: %+v", r)
+	}
 	if after := parseInstallManifest(activationRead(t, manifestPath(home))); after.ReleasedAt != nil {
 		t.Fatal("the manifest was released by a deactivation that stopped")
 	}
