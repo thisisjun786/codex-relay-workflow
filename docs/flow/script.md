@@ -238,7 +238,7 @@ diff was read line by line.
 
 | Module | Pinned to | Why this pin | License | Check |
 | --- | --- | --- | --- | --- |
-| `github.com/dop251/goja` | `v0.0.0-20260917113740-793a2a65c13b` (commit `793a2a65c13b`, 2026-09-17) | The module publishes no tags, so the pin is a commit; this is the newest merge commit older than two weeks at the time of the change. | MIT (Dmitry Panov, from Robert Krimen's otto) | History since 2016-11-04 (623 commits), maintainer `dop251`, source `github.com/dop251/goja`. |
+| `github.com/dop251/goja` | `v0.0.0-20260917113740-793a2a65c13b` (commit `793a2a65c13b`, 2026-09-17) | The module publishes no tags, so the pin is a commit: the maintainer's merge of pull request 739 (2026-09-17), more than three weeks old at the time of the change. Two later commits older than two weeks add `for await` support the loader does not use. | MIT (Dmitry Panov, from Robert Krimen's otto) | History since 2016-11-04 (623 commits), maintainer `dop251`, source `github.com/dop251/goja`. |
 | `github.com/evanw/esbuild` | `v0.28.2` (2026-08-08) | The newest tagged release older than two weeks. Only `pkg/api` is imported, so the build uses esbuild as a pure Go library. | MIT (Evan Wallace) | 438 tagged releases since v0.8.0 (2020-10-28), maintainer `evanw`, source `github.com/evanw/esbuild`. |
 | `github.com/google/jsonschema-go` | `v0.4.3` (already in `go.mod`) | Moved from indirect to a direct dependency: the engine validates every call result with it. | MIT | Unchanged pin. |
 
