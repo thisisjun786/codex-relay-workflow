@@ -37,7 +37,7 @@ func TestAutomationOwnershipLegAnswersThroughTheEnvelope(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store, "automation.toml"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	homes.Rebase()
+	homes.Snapshot() // the fixture is in place: an in-place edit of it keeps its name (CRW-1176)
 
 	leg := worktreeLeg(t, "pre-tool-use-guarding-automation-ownership")
 	if leg.Stage != harness.Guard || leg.Recover || leg.Slug != "pre-tool-use-automation-ownership" {

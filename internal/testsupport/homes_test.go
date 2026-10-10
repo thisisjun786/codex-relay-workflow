@@ -149,3 +149,73 @@ func TestWatchAccountHomes_leaves_an_unnamed_home_to_the_test(t *testing.T) {
 	}
 	h.Rebase()
 }
+
+// CRW-1176: a fixture edited in place keeps its name and its place, so the name-only listing does not move. A
+// home that holds fixtures takes the content snapshot instead, and a change to a fixture's bytes is reported.
+func TestAccountHomesSnapshot_reports_an_in_place_fixture_edit(t *testing.T) {
+	h := SandboxAccountHomes(t)
+	dir := filepath.Join(h.Codex, "automations", "one")
+	fixture := filepath.Join(dir, "automation.toml")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const original, edited = "status = \"ACTIVE\"\n", "status = \"PAUSED\"\n"
+	if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.Snapshot()
+	// Given: the run edits the fixture in place, same name and same size.
+	if err := os.WriteFile(fixture, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Then: the edit is reported.
+	reported := ""
+	h.Verify(func(msg string) { reported = msg })
+	if !strings.Contains(reported, "automation.toml") {
+		t.Errorf("an in-place edit of a fixture is not reported: %q", reported)
+	}
+	if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A snapshot of untouched fixtures reports nothing, a chmod of a fixture is reported, and a fixture the run adds
+// below a watched directory is reported by name.
+func TestAccountHomesSnapshot_stays_silent_until_a_fixture_changes(t *testing.T) {
+	h := SandboxAccountHomes(t)
+	dir := filepath.Join(h.Codex, "automations", "one")
+	fixture := filepath.Join(dir, "automation.toml")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture, []byte("status = \"ACTIVE\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.Snapshot()
+	h.Verify(func(msg string) { t.Errorf("an untouched fixture is reported: %s", msg) })
+
+	reported := ""
+	if err := os.Chmod(fixture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.Verify(func(msg string) { reported = msg })
+	if !strings.Contains(reported, "automation.toml") {
+		t.Errorf("a mode change of a fixture is not reported: %q", reported)
+	}
+	if err := os.Chmod(fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reported = ""
+	stray := filepath.Join(dir, "stray")
+	if err := os.WriteFile(stray, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.Verify(func(msg string) { reported = msg })
+	if !strings.Contains(reported, "stray") {
+		t.Errorf("a fixture added below a watched directory is not reported: %q", reported)
+	}
+	if err := os.Remove(stray); err != nil {
+		t.Fatal(err)
+	}
+}

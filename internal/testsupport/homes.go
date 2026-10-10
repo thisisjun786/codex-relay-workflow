@@ -1,6 +1,8 @@
 package testsupport
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +20,7 @@ type AccountHomes struct {
 	Home, Codex, CRW string
 	before           string
 	watchHome        bool
+	content          bool
 }
 
 // SandboxAccountHomes points HOME, CODEX_HOME and CRW_HOME at fresh temporary directories for the test (t
@@ -55,45 +58,143 @@ func WatchAccountHomes(t *testing.T, home, codex, crw string) *AccountHomes {
 	return h
 }
 
-// Rebase takes the current listing as the one later changes are measured against.
-func (h *AccountHomes) Rebase() { h.before = h.Listing() }
+// Rebase takes the current state as the one later changes are measured against: the name-only listing, or the
+// content snapshot once Snapshot has been called.
+func (h *AccountHomes) Rebase() { h.before = h.state() }
+
+// Snapshot switches the homes to the content snapshot and takes it as the baseline. A home that holds fixtures
+// calls it once they are in place: an in-place edit of a fixture keeps its name, so the name-only listing does
+// not see it. The snapshot walks each directory the code could take for an account home, recursively, and records
+// every entry's relative path, mode and, for a regular file, its sha256 digest or, for a symlink, its target.
+// HOME itself keeps its top-level names only: a home that a command rewrites on purpose may sit below it (the retrust
+// fixture keeps CODEX_HOME at HOME/codex), and a recursion into HOME would read that intended rewrite as a stray write.
+func (h *AccountHomes) Snapshot() {
+	h.content = true
+	h.Rebase()
+}
 
 // Listing is the top-level names below each directory the code could take for an account home, sorted, with
 // an absent directory marked.
 func (h *AccountHomes) Listing() string {
 	parts := []string{}
-	dirs := []string{filepath.Join(h.Home, ".codex"), filepath.Join(h.Home, ".crw"), h.Codex, h.CRW}
-	if h.watchHome {
-		dirs = append([]string{h.Home}, dirs...)
-	}
-	for _, dir := range dirs {
-		if dir == "" {
-			continue
-		}
-		label := strings.TrimPrefix(dir, h.Home)
-		if dir == h.Home {
-			label = "HOME"
-		} else if label == dir {
-			label = filepath.Base(dir)
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			parts = append(parts, label+": absent")
-			continue
-		}
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			names = append(names, entry.Name())
-		}
-		slices.Sort(names)
-		parts = append(parts, label+": "+strings.Join(names, ","))
+	for _, dir := range h.dirs() {
+		parts = append(parts, h.label(dir)+": "+topLevelNames(dir))
 	}
 	return strings.Join(parts, " | ")
 }
 
-// Verify reports through fail when the listing differs from the one Rebase took.
+// topLevelNames is the sorted names directly below dir, or "absent".
+func topLevelNames(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "absent"
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
+}
+
+// Contents is the recursive snapshot of each watched directory, one line per path, with an absent directory
+// marked. The recursion covers every directory the code could take for an account home except HOME, which
+// contributes its top-level names as Listing lists them.
+func (h *AccountHomes) Contents() string {
+	parts := []string{}
+	for _, dir := range h.dirs() {
+		label := h.label(dir)
+		if _, err := os.Stat(dir); err != nil {
+			parts = append(parts, label+": absent")
+			continue
+		}
+		if dir == h.Home {
+			parts = append(parts, label+": "+topLevelNames(dir))
+			continue
+		}
+		var entries []string
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				return err
+			}
+			name := label
+			if rel != "." {
+				name += "/" + filepath.ToSlash(rel)
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			entry := name + " " + info.Mode().String()
+			switch {
+			case info.Mode().IsRegular():
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				sum := sha256.Sum256(raw)
+				entry += " sha256:" + hex.EncodeToString(sum[:])
+			case info.Mode()&os.ModeSymlink != 0:
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				entry += " -> " + target
+			}
+			entries = append(entries, entry)
+			return nil
+		})
+		if err != nil {
+			entries = append(entries, label+": unreadable: "+err.Error())
+		}
+		parts = append(parts, strings.Join(entries, "\n"))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Verify reports through fail when the state differs from the one Rebase took.
 func (h *AccountHomes) Verify(fail func(string)) {
-	if after := h.Listing(); after != h.before {
+	if after := h.state(); after != h.before {
 		fail(fmt.Sprintf("the run changed an account home it was given:\nbefore %s\nafter  %s", h.before, after))
 	}
+}
+
+// state is what Rebase and Verify compare: the content snapshot of a home that holds fixtures, else the listing.
+func (h *AccountHomes) state() string {
+	if h.content {
+		return h.Contents()
+	}
+	return h.Listing()
+}
+
+// dirs are the directories the code could take for an account home, HOME first when the watch covers it; an
+// unnamed directory is left out.
+func (h *AccountHomes) dirs() []string {
+	dirs := []string{filepath.Join(h.Home, ".codex"), filepath.Join(h.Home, ".crw"), h.Codex, h.CRW}
+	if h.watchHome {
+		dirs = append([]string{h.Home}, dirs...)
+	}
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if dir != "" {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+// label names a watched directory in the listing: HOME for the home, the path under it for a directory below it,
+// and the base name for one elsewhere.
+func (h *AccountHomes) label(dir string) string {
+	if dir == h.Home {
+		return "HOME"
+	}
+	if rel := strings.TrimPrefix(dir, h.Home); rel != dir {
+		return rel
+	}
+	return filepath.Base(dir)
 }
