@@ -520,7 +520,7 @@ func configLockWritersDeactivateWrites(m *InstallManifest) bool {
 
 // Deactivate restores owned table keys before asking the injected CLI to disable flags.
 // The manifest/backup remain ownership evidence, never overwritten by deactivation.
-func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
+func Deactivate(deps DeactivateDeps) (_ *DeactivateResult, err error) {
 	now := deps.Now
 	if now == nil {
 		now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
@@ -532,6 +532,8 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// it (CRW-1153) instead of a success the directory sync did not back.
 	var unsynced, recoveryDur error
 	durability := func() error { return errors.Join(recoveryDur, txDurability(unsynced)) }
+	// A deactivation that stops after such a record was published reports the uncertainty with the stop.
+	defer func() { err = txWithDurability(err, errors.Join(recoveryDur, unsynced)) }()
 	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}, Failed: []FailedFlag{}, Recovered: []string{}}
 	noManifest := func() (*DeactivateResult, error) {
 		markOptedOut()

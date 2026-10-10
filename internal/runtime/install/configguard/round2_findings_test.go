@@ -1,6 +1,7 @@
 package configguard
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,34 @@ import (
 
 // The second verification round of this lane (CRW-1141, CRW-1143, CRW-1144, CRW-1145, CRW-1153) reproduced six defects with
 // counterexamples; each test below is one of them, written to fail on the code that was verified and to pass on the fix.
+
+// CRW-1153: a hard flag failure whose manifest publication is in place but not synced reports both the failure and the
+// durability uncertainty.
+func TestHardFailureAlsoReportsDurability(t *testing.T) {
+	home, _, deps, _ := txActivationFixture(t)
+	base := deps.Run
+	deps.Run = func(args []string) CodexRunResult {
+		if args[1] == "enable" && args[2] == "goals" {
+			return CodexRunResult{ExitCode: 2, Stderr: "hard failure"}
+		}
+		return base(args)
+	}
+	saved := activationCrwdirPublish
+	t.Cleanup(func() { activationCrwdirPublish = saved })
+	activationCrwdirPublish = func(p string, b []byte) error {
+		if err := saved(p, b); err != nil {
+			return err
+		}
+		if p == manifestPath(home) {
+			return &crwdir.PublishedError{Err: errors.New("manifest directory sync failed")}
+		}
+		return nil
+	}
+	_, err := Activate(deps)
+	if err == nil || !strings.Contains(err.Error(), "enable goals failed") || !strings.Contains(err.Error(), "directory sync failed") {
+		t.Fatalf("the hard failure and the durability uncertainty are not both reported: %v", err)
+	}
+}
 
 // CRW-1143: a disable whose read-back has no row for the flag (unsupported) has not been shown to have disabled it; the
 // ownership is kept and the manifest is not released.
@@ -56,6 +85,38 @@ func TestUnsupportedReadbackDoesNotProveDisabled(t *testing.T) {
 	m := parseInstallManifest(activationRead(t, manifestPath(home)))
 	if !failed || m.ReleasedAt != nil || !m.Flags["goals"].EnabledByCodexclaw {
 		t.Fatalf("goals is not reported as unconfirmed, or its ownership was released: %+v released=%v", r, m.ReleasedAt)
+	}
+}
+
+// CRW-1153: an attempt marker that was published but not synced, for an effect that therefore did not run, is taken back:
+// when the manifest cannot be committed either, the recovery must not record a flag the user turned on since as crw's.
+func TestUnrunAttemptIsNotRecoveredAsCrws(t *testing.T) {
+	home, path, deps, state := txActivationFixture(t)
+	failIntentSync(t, home, 3) // the first intent, the multi_agent attempt, the goals attempt (which does not run)
+	txHook = func(step string) error {
+		if step == "manifest" {
+			return errors.New("manifest unavailable")
+		}
+		return nil
+	}
+	t.Cleanup(func() { txHook = nil })
+	_, err := Activate(deps)
+	txHook = nil
+	if err == nil || state["goals"] || !state["multi_agent"] {
+		t.Fatalf("fixture did not stop before goals: %v %v", err, state)
+	}
+	state["goals"] = true // the user turns the flag on after the failed command
+	activationWrite(t, path, SetTableKey(activationRead(t, path), "features", "goals", true).Content)
+	activationCrwdirPublish = crwdir.Publish
+	if _, err := recoverIntent(home, path, deps.Run); err != nil {
+		t.Fatal(err)
+	}
+	m := parseInstallManifest(activationRead(t, manifestPath(home)))
+	if m.Flags["goals"].EnabledByCodexclaw {
+		t.Fatalf("a flag the user enabled was recorded as crw's from an effect that never ran: %+v", m.Flags["goals"])
+	}
+	if !m.Flags["multi_agent"].EnabledByCodexclaw {
+		t.Fatalf("the flag crw did enable lost its ownership: %+v", m.Flags["multi_agent"])
 	}
 }
 

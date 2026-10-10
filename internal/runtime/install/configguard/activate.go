@@ -215,7 +215,11 @@ func activationFailureMessage(s string) string {
 }
 
 // Activate is the injected activation orchestration. It never resolves a home or starts a binary.
-func Activate(deps ActivateDeps) (*InstallManifest, error) {
+func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
+	// unsynced is the durability error of every record this command (or the recovery it ran first) published whose directory
+	// sync failed. A command that stops after such a publication reports that uncertainty with the stop (CRW-1153).
+	var unsynced error
+	defer func() { err = txWithDurability(err, unsynced) }()
 	path := deps.ConfigPath
 	if path == "" {
 		// The command resolves CodexHome once through the kernel (ResolveCodexHome, CRW-1144) and
@@ -278,6 +282,8 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if recErr != nil && !crwdir.Published(recErr) {
 		return nil, recErr
 	}
+	// A recovery whose directory sync failed is reported with this command's own durability.
+	unsynced = recErr
 	state, e := ReadDeclaredState(deps.Run)
 	if e != nil {
 		return nil, e
@@ -377,11 +383,6 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e = txPrecheck(targets...); e != nil {
 		return nil, e
 	}
-	// A recovery whose directory sync failed is reported with this command's own durability.
-	var unsynced error
-	if recErr != nil {
-		unsynced = recErr
-	}
 	if exists {
 		info, e := os.Stat(path)
 		if e != nil {
@@ -419,6 +420,8 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	// written, the intent stays for the next explicit command.
 	finish := func(cause error) (*InstallManifest, error) {
 		m.ActivatedAt = now()
+		// A stop on cause still reports the records already published whose directory sync failed: the deferred
+		// txWithDurability joins them to whatever error this returns.
 		var err error
 		if m.PostActivateHash, err = hashOrNull(path); err != nil {
 			return nil, errors.Join(cause, err)

@@ -96,6 +96,16 @@ func txDurability(unsynced error) error {
 	return &crwdir.PublishedError{Err: fmt.Errorf("the changes are in place and recorded, but a directory could not be synced, so they may not survive a power failure: %w", unsynced)}
 }
 
+// txWithDurability is the error of a command that stops on cause after it already published a record whose directory sync
+// failed (CRW-1153): the stop is reported together with that uncertainty. The uncertainty is joined as text, not as a
+// *crwdir.PublishedError, so the stop is never mistaken for a change that is in place and only not known to be durable.
+func txWithDurability(cause, unsynced error) error {
+	if cause == nil || unsynced == nil || crwdir.Published(cause) {
+		return cause
+	}
+	return errors.Join(cause, fmt.Errorf("a record this command already published is in place, but a directory could not be synced, so it may not survive a power failure: %v", unsynced))
+}
+
 // txPrecheck refuses before any change when a file the transaction will publish could not be written: an existing file must
 // open for writing and its directory must accept a new entry (CRW-1153). A readable manifest the process cannot write used to
 // fail only after config.toml had changed.
@@ -180,11 +190,40 @@ func (in *installIntent) publish(step string) error {
 func (in *installIntent) abandon() { _ = os.Remove(intentPath(in.home)) }
 
 // attempt marks effect i attempted and publishes the intent before the effect runs. An intent that could not be made durable
-// leaves the effect unattempted: it does not run.
+// leaves the effect unattempted: it does not run. A publication that failed only its directory sync is in place, so the file
+// on disk names the effect attempted although it never runs; the recovery would then record as crw's whatever the user does
+// to that flag or key later. The marker is therefore taken back on disk too (CRW-1153): the intent is published again
+// without it, and either version a power failure may leave holds the effect unattempted. When that publication fails as well
+// and no other effect depends on the intent, the intent is removed; otherwise the error says which effect it names wrongly.
 func (in *installIntent) attempt(i int) error {
 	in.Effects[i].Attempted = true
-	if err := in.publish("intent"); err != nil {
-		in.Effects[i].Attempted = false
+	err := in.publish("intent")
+	if err == nil {
+		return nil
+	}
+	in.Effects[i].Attempted = false
+	if rollback := in.rewrite(); rollback != nil {
+		for _, e := range in.Effects {
+			if e.Attempted {
+				return fmt.Errorf("%w; the intent could not be rewritten either (%v), so it may name %s as attempted although it did not run: check that change before the next 'crw install features enable' or 'disable', which records it", err, rollback, in.Effects[i].Name)
+			}
+		}
+		in.abandon()
+	}
+	return err
+}
+
+// rewrite publishes the intent as it is in memory, counting a publication whose file is in place as done: it only takes
+// back a marker, which is safe in either version a power failure may leave.
+func (in *installIntent) rewrite() error {
+	b, err := json.MarshalIndent(in, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := txStep("intent-rollback"); err != nil {
+		return err
+	}
+	if err := activationCrwdirPublish(intentPath(in.home), append(b, '\n')); err != nil && !crwdir.Published(err) {
 		return err
 	}
 	return nil
