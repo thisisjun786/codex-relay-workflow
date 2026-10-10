@@ -204,7 +204,7 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 				return
 			}
 			marks[i], paths[i] = mark, path
-			results[i] = auditGradeOne(ctx, e, section, bundles[i], resolved[i], jobs[i], &logs[i])
+			results[i] = auditGradeOne(ctx, e, cfg, section, bundles[i], resolved[i], jobs[i], &logs[i])
 		}(i)
 	}
 	wg.Wait()
@@ -441,7 +441,7 @@ func auditPending(e *Env, cfg *Config, bundle string) bool {
 
 // auditGradeOne writes the prompt into the bundle, runs the grader there under the time
 // limit, and reads what it wrote.
-func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *auditBundle, absBundle string, job AuditJob, log *auditLog) AuditResult {
+func auditGradeOne(ctx context.Context, e *Env, cfg *Config, section auditSection, bundle *auditBundle, absBundle string, job AuditJob, log *auditLog) AuditResult {
 	// The grader's own paths are absolute, because the grader runs with the bundle as its
 	// working directory and a relative argument would be resolved against it twice, and the
 	// ledger records that same resolved directory, not the spelling the caller passed, so two
@@ -451,7 +451,7 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
 		Bundle: absBundle, BundleGiven: job.Bundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
 	}
-	if status := auditRunGrader(ctx, section, absBundle, auditPrompt(bundle), log); status != "" {
+	if status := auditRunGrader(ctx, cfg, section, absBundle, auditPrompt(bundle), log); status != "" {
 		result.Status = status
 		return result
 	}
@@ -481,8 +481,10 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 // whole process group killed on the limit, and keeps the first auditLogLimit bytes of its output
 // in log. It reports "" when the grader ran to its end inside the limit, so the caller reads the
 // grade file it left; auditStatusInvalid when the bundle could not be prepared; and
-// auditStatusTimeout when the limit ended the run.
-func auditRunGrader(ctx context.Context, section auditSection, absBundle, prompt string, log *auditLog) string {
+// auditStatusTimeout when the limit ended the run. The grader starts with the configuration and the
+// tool roots this tool was started with (coreChildEnv, CRW-958); a root that cannot be prepared
+// leaves the run invalid.
+func auditRunGrader(ctx context.Context, cfg *Config, section auditSection, absBundle, prompt string, log *auditLog) string {
 	grade := crwconfig.JoinRoot(absBundle, auditGradeFile)
 	// The grader is told to write this file, so a file an earlier run left is not this
 	// run's result and must not be read as one.
@@ -504,6 +506,10 @@ func auditRunGrader(ctx context.Context, section auditSection, absBundle, prompt
 	argv := auditGraderArgv(section.Grader, promptFile, absBundle)
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = absBundle
+	if err := coreChildEnv(cmd, cfg); err != nil {
+		fmt.Fprintf(log, "crw manage: the grader's tool roots: %v\n", err)
+		return auditStatusInvalid
+	}
 	cmd.Stdout = log
 	cmd.Stderr = log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

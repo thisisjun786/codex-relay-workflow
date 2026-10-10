@@ -205,18 +205,24 @@ func (e *Env) relayHelperDoctorState(ctx context.Context, cfg *Config) (string, 
 	return answer.StateSelection.Path, nil
 }
 
-// relayChildEnv gives a relay child the configuration this tool was started with (CRW-958). A
-// configuration file named with --config is handed on as CRW_CONFIG, so the child's own state
-// selection (paths.relay_state) and the roots it starts tools with read the file this tool read; a
-// file reached through CRW_CONFIG or the default location is reached the same way by the child. The
-// configured tool roots are put into its environment, and with nothing configured the child
-// inherits the environment untouched.
-func relayChildEnv(cmd *exec.Cmd, cfg *Config) error {
+// coreChildEnv gives a child this tool starts (the relay, the grader, the bridge, the commands of an
+// upgrade) the configuration this tool was started with (CRW-958). A configuration file named with
+// --config is handed on as CRW_CONFIG, so the child's own state selection (paths.relay_state), its
+// log_root and the roots it starts tools with read the file this tool read; a file reached through
+// CRW_CONFIG or the default location is reached the same way by the child. The configured tool roots
+// are put into its environment, and a configured build_work is made first. The child's environment
+// is cmd.Env when the caller set one and this process's otherwise, and with nothing configured an
+// inherited environment is left untouched.
+func coreChildEnv(cmd *exec.Cmd, cfg *Config) error {
 	if cfg == nil {
 		return nil
 	}
 	if cfg.source == crwconfig.SourceConfig && cfg.path != "" {
-		cmd.Env = append(os.Environ(), "CRW_CONFIG="+cfg.path)
+		base := cmd.Env
+		if base == nil {
+			base = os.Environ()
+		}
+		cmd.Env = crwconfig.SetEnv(base, "CRW_CONFIG", cfg.path)
 	}
 	return cfg.tools.ApplyTo(cmd)
 }
@@ -228,7 +234,7 @@ func (e *Env) relayHelperRun(ctx context.Context, cfg *Config, argv ...string) (
 	var stdout bytes.Buffer
 	stderr := &relayHelperStderr{}
 	cmd := exec.CommandContext(ctx, e.Executable, argv...)
-	if err := relayChildEnv(cmd, cfg); err != nil {
+	if err := coreChildEnv(cmd, cfg); err != nil {
 		return nil, 0, "", err
 	}
 	cmd.Stdout = &stdout

@@ -1254,7 +1254,7 @@ func PremergeEval(ctx context.Context, e *Env, cfg *Config, opts PremergeEvalOpt
 	}
 
 	log := &auditLog{}
-	switch auditRunGrader(ctx, audit, absBundle, premergePrompt, log) {
+	switch auditRunGrader(ctx, cfg, audit, absBundle, premergePrompt, log) {
 	case auditStatusTimeout:
 		return PremergeEvalResult{}, premergeFail(1, "grader_timeout", "the grader ran past %d seconds: %s", audit.GraderTimeoutSeconds, auditFirstLine(log.String()))
 	case auditStatusInvalid:
