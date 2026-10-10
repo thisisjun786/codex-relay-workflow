@@ -440,11 +440,15 @@ func implementVerbs(clause string) (session, delegated bool) {
 
 // nounUse reports an implement keyword that is a noun beside an agent noun and so no delegated verb (CRW-1166, "optimize the worker
 // build cache", "워커 개발 환경"): a singular English agent noun right before a bare keyword is its compound modifier (a
-// singular subject takes "builds", "will build"), and a Korean keyword 구현/수정/개발 that no 하/해/시 verb ending follows is a noun.
+// singular subject takes "builds", "will build") unless a causative (have, let, make, get, help) governs the noun, whose bare verb
+// it then is ("have the worker build its part", "let the subagent implement", an ambiguous "have the worker build cache rebuilt"
+// included: the pointer); a Korean keyword 구현/수정/개발 that no 하/해/시 verb ending follows is a noun.
 // The session decision is untouched; only the project signal delegatedImplement reads this.
 func nounUse(prefix, noun, verb, rest string) bool {
 	if detectorRE(`^(?:worker|sub-?agent|child\s+(?:task|issue|session|lane|thread|agent|goal|worker)|other\s+(?:agent|session|task|thread))$`).MatchString(noun) {
-		return strings.HasSuffix(strings.TrimRight(prefix, " \t"), noun)
+		before, ok := strings.CutSuffix(strings.TrimRight(prefix, " \t"), noun)
+		causative := detectorRE(`\b(?:have|has|had|having|let|lets|letting|make|makes|made|making|get|gets|got|getting|help|helps|helped|helping)\s+(?:(?:the|a|an|this|that|each|every|one|your|our|its|their|my|his|her|any)\s+)*$`)
+		return ok && !causative.MatchString(before)
 	}
 	switch verb {
 	case "구현", "수정", "개발":
@@ -533,7 +537,8 @@ func hangulConnective(noun, gap, suffix string) bool {
 // chainCausative reports a causative that governs the Korean implement verb whose folded clause rest is suffix: on the verb
 // itself ("구현하게 해", "구현하도록 해", "구현시켜") or on a later verb of its sentence that a chain of connectives (-고, -서, -며)
 // joins it to ("구현하고 수정하게 해", "구현하고 테스트하고 수정시켜", CRW-1166), also past an object or a bare noun of a chain verb
-// ("구현하고 테스트를 수정하게 해", "구현하고 테스트 수정하도록 해"). The chain ends at a finite verb that carries no causative
+// ("구현하고 테스트를 수정하게 해", "구현하고 테스트 수정하도록 해", "구현하고 개요 수정하도록 해"). The chain ends at a finite verb
+// (finiteKorean) that carries no causative
 // ("구현하고 수정해", "구현하고 테스트를 수정해", "구현하고 수정할게"), at the end of the sentence and at another agent noun
 // ("구현하고 워커에게 테스트하게 해": that agent's own verb), which leave the implement verb this session's own.
 func chainCausative(suffix string) bool {
@@ -541,7 +546,6 @@ func chainCausative(suffix string) bool {
 		return true
 	}
 	words := strings.FieldsFunc(suffix, func(r rune) bool { return r == ',' || unicode.IsSpace(r) || r == '\ufeff' })
-	finite := detectorRE(`(?:해|줘|요|다|라|래|게|죠)[.!?。]*$`)
 	for i, w := range words {
 		next := ""
 		if i+1 < len(words) {
@@ -557,9 +561,40 @@ func chainCausative(suffix string) bool {
 			return false
 		case connective:
 			continue
-		case strings.ContainsAny(w, ".!?。") || finite.MatchString(w):
+		case strings.ContainsAny(w, ".!?。") || finiteKorean(w):
 			return false
 		}
+	}
+	return false
+}
+
+// finiteKorean reports a Korean word that ends in a finite verb ending, for chainCausative (CRW-1166): 해, 줘 or 죠, or 요, 다, 라,
+// 래, 게 after a syllable that makes it a verb ending ("수정해요", "고쳐요", "수정합니다", "구현한다", "수정해라", "할래", "할게").
+// A noun or a postposition that merely ends in such a syllable ("개요", "필요", "바다", "카메라", "미래", "무게", "에 대해",
+// "위해", "이해") is no finite verb and does not end the chain; an unread ending keeps the search going, which errs to the pointer.
+func finiteKorean(w string) bool {
+	r := []rune(strings.TrimRight(w, ".!?。"))
+	if len(r) == 0 {
+		return false
+	}
+	last, prev := r[len(r)-1], rune(0)
+	if len(r) > 1 {
+		prev = r[len(r)-2]
+	}
+	finalRieul := prev >= 0xAC00 && prev <= 0xD7A3 && (prev-0xAC00)%28 == 8
+	switch last {
+	case '줘', '죠':
+		return true
+	case '해':
+		return !detectorRE(`^(?:위해|대해|통해|관해|의해|인해|이해|피해|방해|손해|오해|견해|재해|침해|저해|장해)$`).MatchString(string(r))
+	case '요':
+		return prev != 0 && strings.ContainsRune("해세줘봐돼게래네데까지죠어아워와여쳐려겨", prev)
+	case '다':
+		return prev != 0 && strings.ContainsRune("니한했된됐는었았였겠렸쳤갔왔졌냈봤", prev)
+	case '라':
+		return prev != 0 && strings.ContainsRune("해하어아여쳐려봐거", prev)
+	case '래', '게':
+		return finalRieul
 	}
 	return false
 }
