@@ -200,6 +200,30 @@ func TestRecallCLIRecordedOracle(t *testing.T) {
 	}
 }
 
+// recallCLIUsageWithVerify is the recorded usage text with the lines of --verify (CRW-1083), which the oracle does not
+// have: the synopsis of `chat index` lists it and a flag line follows --full. Text without the usage is returned as is.
+func recallCLIUsageWithVerify(text string) string {
+	text = strings.Replace(text, "chat index [--rebuild] [--status] [--json]", "chat index [--rebuild] [--status] [--verify] [--json]", 1)
+	const full = "  --full       with --json: emit unclipped text fields\n"
+	return strings.Replace(text, full, full+"  --verify     chat index: decide freshness from file content, not only size and mtime (with --status, report without writing)\n", 1)
+}
+
+func TestUsageListsChatIndexVerify(t *testing.T) {
+	u := Usage()
+	for _, want := range []string{"crw recall chat index [--rebuild] [--status] [--verify] [--json]", "  --verify     chat index: "} {
+		if !strings.Contains(u, want) {
+			t.Errorf("usage lacks %q", want)
+		}
+	}
+	skill, err := os.ReadFile(filepath.Join("..", "..", "plugins", "crw", "skills", "crw-recall", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(skill), "crw recall chat index [--rebuild] [--status] [--verify] [--json]") {
+		t.Error("the crw-recall skill does not list chat index --verify")
+	}
+}
+
 // recallCLILaneScoreFixes holds the scores of recorded fixtures that the eligibility-first lane ranking changes.
 var recallCLILaneScoreFixes = map[string][]float64{
 	"cli__chat__search_refresh_builds_index": {0.029749663773784223, 0.02901671452121108, 0.02885045852148274, 0.028563885540156295},
@@ -326,8 +350,9 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 					continue
 				}
 				if want.Stdout != nil {
-					if out != sub.Expected(*want.Stdout) {
-						t.Errorf("step%d stdout got %q want %q", i, out, sub.Expected(*want.Stdout))
+					wantOut := recallCLIUsageWithVerify(sub.Expected(*want.Stdout))
+					if out != wantOut {
+						t.Errorf("step%d stdout got %q want %q", i, out, wantOut)
 					}
 					continue
 				}

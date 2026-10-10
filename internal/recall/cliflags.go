@@ -19,7 +19,7 @@ func Usage() string {
 		`crw recall chat search "<query>" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]`,
 		"                           [--limit N] [--context N] [--any] [--all] [--no-tools]",
 		"                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]",
-		"crw recall chat index [--rebuild] [--status] [--json]",
+		"crw recall chat index [--rebuild] [--status] [--verify] [--json]",
 		`crw recall memory search "<query>" [--days N] [--limit N] [--any] [--no-synonyms]`,
 		"                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]",
 		"crw recall memory status [--json] [--home PATH]",
@@ -46,6 +46,7 @@ func Usage() string {
 		"  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)",
 		"  --json       machine-readable output (text fields clipped at 500 chars)",
 		"  --full       with --json: emit unclipped text fields",
+		"  --verify     chat index: decide freshness from file content, not only size and mtime (with --status, report without writing)",
 		"  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)",
 	}, "\n")
 }
