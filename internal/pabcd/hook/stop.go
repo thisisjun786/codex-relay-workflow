@@ -32,7 +32,8 @@
 // only against the earlier row of its own metric and work phase, the plateau of a bound goalplan is its
 // active work phase's, and one evaluation window gets the plateau block once. CRW-1091.md: the judgment
 // under the lock reads the metrics ledger and the bound goalplan once and shares them, and a Stop after
-// the turn's announced total cap reads and writes nothing.
+// the turn's announced total cap reads and writes nothing. CRW-1107.md: the goal-idle block's IDLE->P
+// command carries no attest.
 package hook
 
 import (
@@ -116,7 +117,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 			return StopAnswer{}
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
-			return stopGoalIdleBlock(fresh, snap.plan, p.SessionID, platform, env)
+			return stopGoalIdleBlock(fresh, snap.plan, p.SessionID, env)
 		})
 	}
 
@@ -553,12 +554,12 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 // stopGoalIdleBlock is buildGoalIdleBlock (hook.ts:1694-1738): the Stop block for a goal ACTIVE with a
 // bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: arm the next
 // work-phase, or close the goal for real.
-func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, sessionID, platform string, env host.LookupEnv) string {
-	// Inline JSON cannot survive PowerShell argument parsing, so win32 gets the write-then-attest pair.
-	startNext := "Either start the next work-phase now: `crw pabcd orchestrate P --session " + sessionID + " --attest '{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}'`"
-	if stopNodePlatform(platform) == "win32" {
-		startNext = "Either start the next work-phase now: write the JSON with `'{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}' | Set-Content -Encoding utf8 " + crwdir.DirName + "/attest.json` then run `crw pabcd orchestrate P --session " + sessionID + " --attest-file " + crwdir.DirName + "/attest.json`"
-	}
+//
+// CRW-1107: IDLE->P takes no attest (plugins/crw/skills/crw-pabcd/references/phase-control.md), but the
+// oracle's command carried one with a placeholder `did` (and win32 an attest file to write it to), which
+// agents copied into the ledger as evidence. The command is the plain entry on every platform.
+func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, sessionID string, env host.LookupEnv) string {
+	startNext := "Either start the next work-phase now: `crw pabcd orchestrate P --session " + sessionID + "`"
 	lines := []string{
 		"[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.",
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.",

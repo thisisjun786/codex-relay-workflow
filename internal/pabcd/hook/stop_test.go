@@ -344,7 +344,7 @@ func TestStopGoalIdleBlockNamesTheWork(t *testing.T) {
 	got := stopBlockReason(t, stopRun(cwd, env))
 	want := "[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.\n" +
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.\n" +
-		"Either start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1 --attest '{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}'`\n" +
+		"Either start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n" +
 		"or close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.\n" +
 		"LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.\n" +
 		"Ready work phases: wp1 (Exporter)\n" +
@@ -356,9 +356,9 @@ func TestStopGoalIdleBlockNamesTheWork(t *testing.T) {
 	if s := state.ReadState(cwd, stopSID); s.StopBlockPhase == nil || *s.StopBlockPhase != state.PhaseIdle || s.StopBlockCount != 1 || s.Phase != state.PhaseIdle || s.OrchestrationActive {
 		t.Errorf("the idle block is counted at IDLE and starts no cycle: %+v %v", s.StopBlockPhase, s.StopBlockCount)
 	}
-	// win32 writes the JSON first
+	// CRW-1107: IDLE->P takes no attest (phase-control.md), so neither platform's command carries one or an attest file
 	win := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "win32", env)
-	if r := stopBlockReason(t, win); !strings.Contains(r, "write the JSON with `'{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}' | Set-Content -Encoding utf8 .crw/attest.json` then run `CRW pabcd orchestrate P --session rec-s1 --attest-file .crw/attest.json`") {
+	if r := stopBlockReason(t, win); !strings.Contains(r, "\nEither start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n") || strings.Contains(r, "attest") {
 		t.Errorf("win32 goal-idle block: %q", r)
 	}
 }
