@@ -4,6 +4,7 @@ import (
 	"crypto/sha1" //nolint:gosec // names a retry marker, as the shell runner's sha1sum did
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -111,7 +112,9 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 // otherwise carry the new, unprocessed head out of pending. The file first goes to a private
 // name beside its destination; if it holds another head than the run worked on it is put back
 // as pending/<name> without replacing a file the coordinator wrote since (that newer file
-// wins), and only a file that held the processed head replaces the destination.
+// wins), and only a file that held the processed head replaces the destination. A file that can
+// be neither moved on nor put back stays under its private name (restoreClaim), and the next
+// pass puts it back first (recoverClaims).
 func (r *Runner) moveEntry(e Entry, to string) bool {
 	src := r.qpath(dirPending, e.Name)
 	if now, err := readHead(src); err != nil || now != e.Head {
@@ -125,29 +128,104 @@ func (r *Runner) moveEntry(e Entry, to string) bool {
 		r.logf("%s: %s: %v", e.Key, to, err)
 		return false
 	}
-	claim := r.qpath(to, ".moving-"+e.Name+"-"+strconv.Itoa(os.Getpid()))
+	claim := r.qpath(to, claimPrefix+e.Name+"-"+strconv.Itoa(os.Getpid()))
 	if err := os.Rename(src, claim); err != nil {
 		r.logf("%s: move to %s: %v", e.Key, to, err)
 		return false
 	}
 	if moved, err := readHead(claim); err != nil || moved != e.Head {
 		// The refresh slipped in between the check and the move: give it back.
-		if err := os.Link(claim, src); err != nil {
-			r.logf("%s: the refreshed file could not be put back (%v); a newer file in pending wins", e.Key, err)
-		}
-		_ = os.Remove(claim)
 		r.logf("%s %s changed or went away during the run: left in pending", e.Key, e.Head)
+		r.restoreClaim(claim, e.Name)
 		return false
 	}
 	if err := os.Rename(claim, r.qpath(to, e.Name)); err != nil {
 		r.logf("%s: move to %s: %v", e.Key, to, err)
-		if err := os.Link(claim, src); err != nil {
-			r.logf("%s: the file could not be put back (%v)", e.Key, err)
-		}
-		_ = os.Remove(claim)
+		r.restoreClaim(claim, e.Name)
 		return false
 	}
 	return true
+}
+
+// claimPrefix starts the private name a pending file has while moveEntry moves it; the name
+// goes on with the queue name and the mover's pid.
+const claimPrefix = ".moving-"
+
+var claimNameRE = regexp.MustCompile(`^\.moving-([0-9]{1,18})-[0-9]+$`)
+
+// claimDirs are the directories moveEntry moves into, where a claim can be left.
+var claimDirs = []string{dirDone, dirConflict, dirBlocked}
+
+func (r *Runner) linkFile(oldname, newname string) error {
+	if r.hookLink != nil {
+		return r.hookLink(oldname, newname)
+	}
+	return os.Link(oldname, newname)
+}
+
+// restoreClaim puts a claimed file back as pending/<name> without replacing a file there, and
+// removes the claim only once pending/ holds a file for the name: the one put back, or a
+// regular file the coordinator wrote after the claim was taken (that newer file wins). When the
+// file cannot be put back the claim is kept, so the queue entry is never lost, and the next
+// pass tries again. It reports whether the claim is gone.
+func (r *Runner) restoreClaim(claim, name string) bool {
+	src := r.qpath(dirPending, name)
+	err := r.linkFile(claim, src)
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrExist) && isRegularHead(src):
+		r.logf("%s: %s not put back, a newer file in pending wins", r.Cfg.key(name), filepath.Base(claim))
+	default:
+		r.logf("%s: could not be put back into pending (%v): kept as %s, the next pass puts it back", r.Cfg.key(name), err, claim)
+		return false
+	}
+	if err := os.Remove(claim); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		r.logf("%s: remove %s: %v", r.Cfg.key(name), claim, err)
+		return false
+	}
+	return true
+}
+
+// isRegularHead says path is a regular file a pass can read as a pending head.
+func isRegularHead(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	_, err = readHead(path)
+	return err == nil
+}
+
+// listClaims is the claims moveEntry left behind (a put-back that failed, or a run that ended
+// mid-move), as paths with the queue name each belongs to.
+func (r *Runner) listClaims() (claims []claimFile) {
+	for _, d := range claimDirs {
+		des, err := os.ReadDir(r.qpath(d))
+		if err != nil {
+			continue
+		}
+		for _, de := range des {
+			if m := claimNameRE.FindStringSubmatch(de.Name()); m != nil && de.Type().IsRegular() {
+				claims = append(claims, claimFile{Path: r.qpath(d, de.Name()), Name: m[1]})
+			}
+		}
+	}
+	return claims
+}
+
+type claimFile struct {
+	Path string
+	Name string
+}
+
+// recoverClaims puts every claim left behind back into pending (restoreClaim). It runs under
+// the queue lock, so no other run is moving a file meanwhile.
+func (r *Runner) recoverClaims() {
+	for _, c := range r.listClaims() {
+		if r.restoreClaim(c.Path, c.Name) {
+			r.logf("%s: %s put back into pending", r.Cfg.key(c.Name), c.Path)
+		}
+	}
 }
 
 // batchKey names a batch for its retry marker: the first 16 hex characters of the sha1 of the

@@ -40,7 +40,7 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	if err != nil {
 		return Report{Result: "error", Exit: ExitUsage, Error: err.Error()}
 	}
-	if len(entries) == 0 {
+	if len(entries) == 0 && len(r.listClaims()) == 0 {
 		return Report{Result: "idle", Exit: ExitPushed, Ignored: ignored}
 	}
 	unlock, err := acquireLock(r.Cfg.LockFile)
@@ -53,6 +53,8 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	defer unlock()
 
 	rep := Report{Ignored: ignored}
+	// A file an earlier pass could neither move on nor put back is pending again first.
+	r.recoverClaims()
 	// The queue is read again under the lock: another run may have emptied it meanwhile.
 	entries, _, err = r.listPending()
 	if err != nil || len(entries) == 0 {

@@ -24,15 +24,19 @@ ignored). A pass moves a file out of `pending/` only after acting on it:
 A file that changed while the run worked on it (the owner refreshed the head) stays in `pending/`: the file is moved to a private name in
 its destination directory, read there, and put back as `pending/<name>` (never over a file written since) when it holds another head than the
 run worked on. A coordinator should replace a pending file atomically (write a new file and rename it); a writer that changes the same file in
-place after the move can still be missed. A name that is not an issue number, a
+place after the move can still be missed. A file that can be neither moved on nor put back (the move to its destination and the link back
+into `pending/` both fail) is never removed: it stays under its private name `.moving-<name>-<pid>` in the destination directory, the log
+names it, `--dry-run` lists it as a claim, and the next pass puts it back into `pending/` under the lock before it reads the queue (a file
+written to `pending/<name>` since wins and the claim goes). A name that is not an issue number, a
 directory and a link are not entries; they are reported as ignored.
 
 ## One pass
 
-1. A `stop` file ends the pass. An empty queue is `idle` (the queue is listed once without the lock to decide this, as the shell runner's
+1. A `stop` file ends the pass. An empty queue (no pending file and no claim left behind) is `idle` (the queue is listed once without the lock to decide this, as the shell runner's
    `ls` did; nothing is changed by that listing).
 2. The lock (`lock_file`, a non-blocking `flock`, the lock every integration run takes) is taken as soon as the queue is not empty and held for
-   the rest of the pass; a held lock is refused with status 2 before any gate, merge or file move. The queue is read again under the lock.
+   the rest of the pass; a held lock is refused with status 2 before any gate, merge or file move. Claims an earlier pass left behind are
+   put back into `pending/`, and the queue is read again under the lock.
 3. The gate (`gate_command`, `{issue}` and `{head}` replaced, run in `checkout`) is re-checked for every pending head, in issue-number
    order: its last output line must start with `PASS` and its status must be 0. In solo mode the pass takes the first head that passes.
    A gate that ran and did not say `PASS` blocks the head. A gate that could not start or was killed is no verdict: the pass ends with
@@ -98,7 +102,7 @@ use up the run another member is owed. A new head under the same issue number st
 
 `--dry-run` makes nothing: no directory, no file move, no lock (it is only probed for `free`, `held` or `absent`), no fetch, no worktree.
 It reports the pending heads with whether each commit is in the checkout and already in the last-fetched branch, the retry markers, the
-solo state and the heads the next pass would hand to one run. The gate is run only with `--with-gate`, because a gate may fetch on its own.
+solo state, the claims an earlier pass left behind and the heads the next pass would hand to one run. The gate is run only with `--with-gate`, because a gate may fetch on its own.
 
 ## Configuration
 

@@ -23,6 +23,9 @@ type DryReport struct {
 	SoloHeads []string   `json:"solo_heads,omitempty"`
 	Entries   []DryEntry `json:"entries"`
 	Ignored   []string   `json:"ignored,omitempty"`
+	// Claims are files an earlier pass could neither move on nor put back into pending; the next
+	// pass puts them back before it reads the queue.
+	Claims []string `json:"claims,omitempty"`
 	// Plan is the specs the next pass would hand to one integration run, in order, when every
 	// gate passes (the gate is only consulted with withGate).
 	Plan []string `json:"plan"`
@@ -41,6 +44,9 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 		return rep, err
 	}
 	rep.Ignored = ignored
+	for _, c := range r.listClaims() {
+		rep.Claims = append(rep.Claims, c.Path)
+	}
 	// The heads still owed a run of their own: the state file read without pruning it.
 	pendingSpec := map[string]bool{}
 	for _, e := range entries {
