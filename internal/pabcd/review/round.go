@@ -68,6 +68,9 @@ type VerdictInput struct {
 	ArtifactSha256, ReviewerSession *string
 	SourceIdentity                  *goalplan.SourceIdentity
 	Now                             func() string
+	// Blockers and Findings are what a GO-WITH-FIXES sign-off said (CRW-1116); zero and nil record none.
+	Blockers int
+	Findings []string
 }
 
 func reviewTimestamp(now func() string) string {
@@ -308,6 +311,7 @@ func RecordVerdict(p *goalplan.Goalplan, in VerdictInput) ReviewRoundResult {
 		if in.SourceIdentity != nil {
 			r.Lane.SourceIdentity = in.SourceIdentity
 		}
+		r.Lane.Blockers, r.Lane.Findings = in.Blockers, in.Findings
 		switch in.Verdict {
 		case goalplan.VerdictPass, goalplan.VerdictNearPass:
 			r.Status = goalplan.ReviewApproved

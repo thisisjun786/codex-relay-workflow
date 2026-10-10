@@ -18,6 +18,16 @@ func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, er
 	return analyze(src, newState(cwd), lookup)
 }
 
+// AnalyzeEnvProvenDirectory retains the previous directory when a cd can fail
+// and execution can continue. Only a success condition such as && establishes
+// the requested directory for subsequent commands. The legacy AnalyzeEnv
+// reading is kept for consumers whose existing policy assumes literal cd succeeds.
+func AnalyzeEnvProvenDirectory(src, cwd string, lookup func(string) (string, bool)) (Result, error) {
+	st := newState(cwd)
+	st.proveCD = true
+	return analyze(src, st, lookup)
+}
+
 // AnalyzeScript reads the text of a script file that a shell runs from a program record that had Cdpath: with CDPATH possibly set
 // in the environment the script inherits, a cd to a bare name in it may land in a directory the text does not show.
 func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
@@ -26,13 +36,13 @@ func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
 	return analyze(src, st, nil)
 }
 
-// AnalyzeDeletionScript includes failed cd outcomes. Only a simple, non-negated
-// cd on the left of && proves its destination for the following command.
-// Other callers keep their existing directory reading.
-func AnalyzeDeletionScript(src, cwd string, cdpath bool) (Result, error) {
+// AnalyzeScriptProvenDirectory is AnalyzeScript with the same failed-cd
+// tracking as AnalyzeEnvProvenDirectory, for memory destinations in carried files.
+func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) {
 	st := newState(cwd)
 	st.cdpath = cdpath
-	return analyzeWithWalker(src, st, nil, &walker{cdFailures: true})
+	st.proveCD = true
+	return analyze(src, st, nil)
 }
 
 // textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
@@ -51,10 +61,7 @@ func AnalyzeNoDir(src string) (Result, error) {
 }
 
 func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
-	return analyzeWithWalker(src, st, lookup, &walker{})
-}
-
-func analyzeWithWalker(src string, st *state, lookup func(string) (string, bool), w *walker) (Result, error) {
+	w := &walker{}
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}

@@ -93,8 +93,9 @@ type Redir struct {
 
 // Context describes where an Exec sits in the text.
 type Context struct {
-	// cdSuccess is scoped to a simple command whose successful exit reaches &&.
-	cdSuccess   bool
+	// succeeds is an assumption about this statement's exit status, used only
+	// for the directory passed to the right side of &&. It never covers a body.
+	succeeds    bool
 	Conditional bool
 	Background  bool
 	Coprocess   bool
@@ -182,11 +183,14 @@ func parseText(src string) (*syntax.File, error) {
 // Analyze reads a command text run in the working directory cwd.
 // state is what the walk knows at one point.
 type state struct {
-	dir    Dir
-	vars   map[string]string
-	funcs  map[string]*syntax.Stmt
-	cdpath bool
-	lookup func(string) (string, bool)
+	dir Dir
+	// proveCD retains failed-cd possibilities for consumers that require a
+	// proven effective directory rather than the legacy literal-cd reading.
+	proveCD bool
+	vars    map[string]string
+	funcs   map[string]*syntax.Stmt
+	cdpath  bool
+	lookup  func(string) (string, bool)
 }
 
 func newState(cwd string) *state {
@@ -199,11 +203,12 @@ func newState(cwd string) *state {
 
 func (s *state) clone() *state {
 	c := &state{
-		dir:    s.dir,
-		vars:   make(map[string]string, len(s.vars)),
-		funcs:  make(map[string]*syntax.Stmt, len(s.funcs)),
-		cdpath: s.cdpath,
-		lookup: s.lookup,
+		dir:     s.dir,
+		proveCD: s.proveCD,
+		vars:    make(map[string]string, len(s.vars)),
+		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
+		cdpath:  s.cdpath,
+		lookup:  s.lookup,
 	}
 	for k, v := range s.vars {
 		c.vars[k] = v
@@ -246,6 +251,7 @@ func joinStates(states ...*state) *state {
 		funcs: map[string]*syntax.Stmt{},
 	}
 	out.lookup = first.lookup
+	out.proveCD = first.proveCD
 	for _, s := range states {
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false
@@ -286,9 +292,8 @@ func notProvenDir(d Dir) Dir { return Dir{Path: d.Path, Unset: d.Unset} }
 
 // walker collects Exec records in run order.
 type walker struct {
-	cdFailures bool
-	out        []Exec
-	calls      []string
+	out   []Exec
+	calls []string
 	// created is the set of files the records out[:createdUpTo] write (see createdByText); it grows as the walk appends records, so
 	// the check is linear in the text.
 	created      map[string]bool
@@ -299,7 +304,7 @@ type walker struct {
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
-	ctx.cdSuccess = false
+	ctx.succeeds = false
 	for _, s := range list {
 		if err := w.stmt(s, st, ctx); err != nil {
 			return err
@@ -322,8 +327,8 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	}
 	_, simple := s.Cmd.(*syntax.CallExpr)
 	_, binary := s.Cmd.(*syntax.BinaryCmd)
-	if (!simple && !binary) || s.Negated {
-		ctx.cdSuccess = false
+	if (!simple && !binary) || s.Negated || s.Background || s.Coprocess || ctx.Pipeline {
+		ctx.succeeds = false
 	}
 	// The records this statement adds that no inner statement already placed are on this statement's line.
 	start, line := len(w.out), int(s.Pos().Line())
@@ -623,28 +628,28 @@ func (e *effectScan) function(name string, body *syntax.Stmt) bool {
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 	switch c.Op {
 	case syntax.AndStmt, syntax.OrStmt:
-		beforeDir := st.dir
-		leftContext := ctx
-		leftContext.cdSuccess = w.cdFailures && c.Op == syntax.AndStmt
-		if err := w.stmt(c.X, st, leftContext); err != nil {
+		before := st.dir
+		lctx := ctx
+		lctx.succeeds = st.proveCD && c.Op == syntax.AndStmt
+		if err := w.stmt(c.X, st, lctx); err != nil {
 			return err
 		}
 		right := st.clone()
 		rctx := ctx
 		rctx.Conditional = true
-		rctx.cdSuccess = ctx.cdSuccess && c.Op == syntax.AndStmt
+		rctx.succeeds = ctx.succeeds && c.Op == syntax.AndStmt
 		if err := w.stmt(c.Y, right, rctx); err != nil {
 			return err
 		}
-		if w.cdFailures && ctx.cdSuccess && c.Op == syntax.AndStmt {
+		if ctx.succeeds && c.Op == syntax.AndStmt {
 			st.replace(right)
 		} else {
 			st.replace(joinStates(st, right))
-		}
-		if w.cdFailures && !(ctx.cdSuccess && c.Op == syntax.AndStmt) && st.dir != beforeDir {
-			// After the chain, its left command may have failed and skipped the
-			// right command; the successful destination is no longer proven.
-			st.dir = unknownDir(st.dir)
+			// The left side can fail and skip the right side. A directory
+			// established only on success cannot escape the && list.
+			if st.proveCD && c.Op == syntax.AndStmt && st.dir != before {
+				st.dir = unknownDir(st.dir)
+			}
 		}
 		return nil
 	case syntax.Pipe, syntax.PipeAll:
@@ -783,7 +788,7 @@ func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.FuncBody = true
-	ctx.cdSuccess = false
+	ctx.succeeds = false
 	w.calls = append(w.calls, name)
 	defer func() { w.calls = w.calls[:len(w.calls)-1] }()
 	return w.stmt(body, st, ctx)
@@ -1102,6 +1107,11 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 			return err
 		}
 	}
+	if isPythonName(name) {
+		if handled, err := w.pythonModule(prog, words[1:], assigns, redirs, st, ctx); handled {
+			return err
+		}
+	}
 	var inline *Inline
 	var script *Word
 	if isInterpreter(name) {
@@ -1148,8 +1158,11 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 			st.dir = unknownDir(st.dir)
 			return nil
 		}
+		before := st.dir
 		st.cd(words[1:])
-		if w.cdFailures && !ctx.cdSuccess {
+		if st.proveCD && !ctx.succeeds && st.dir != before {
+			// A failed cd keeps the previous directory. Without a success
+			// condition both possibilities remain, even for a literal target.
 			st.dir = unknownDir(st.dir)
 		}
 		return nil
@@ -1229,7 +1242,10 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	if !script.Known {
 		return unreadablef("%s reads a script file that is not known (%s)", name, script.Reason)
 	}
-	if !st.dir.Known {
+	if st.dir.Unset && !path.IsAbs(script.Value) {
+		return nil
+	} // directory-aware readings judge this file
+	if !st.dir.Known && !path.IsAbs(script.Value) {
 		return unreadablef("script file %s is resolved from an unknown directory", script.Value)
 	}
 	if fdAliasPath(script.Value, st.dir) {

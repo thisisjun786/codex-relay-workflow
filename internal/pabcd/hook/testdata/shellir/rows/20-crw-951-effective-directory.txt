@@ -1,0 +1,41 @@
+# CRW-951 fix6: effective directory is part of computed-create protection.
+
+=== CRW-951-fix6-touch-cd-relative | W
+--why A relative or computed touch destination uses the effective shell directory; only the known outside control passes.
+cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path("x").touch()'
+
+=== CRW-951-fix6-touch-cd-computed | W
+--why A relative or computed touch destination uses the effective shell directory; only the known outside control passes.
+cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(name).touch()'
+
+=== CRW-951-fix6-touch-cd-chain | W
+--why A relative or computed touch destination uses the effective shell directory; only the known outside control passes.
+cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(".").joinpath("x").touch()'
+
+=== CRW-951-fix6-touch-work-relative | B
+--why A relative or computed touch destination uses the effective shell directory; only the known outside control passes.
+python3 -c 'from pathlib import Path; name="x"; Path("x").touch()'
+
+=== CRW-951-fix6-touch-work-computed | B
+--why A relative or computed touch destination uses the effective shell directory; only the known outside control passes.
+python3 -c 'from pathlib import Path; name="x"; Path(name).touch()'
+
+=== CRW-951-fix6-mkdir-cd-relative | W
+--why A relative or computed mkdir destination uses the effective shell directory; only the known outside control passes.
+cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path("x").mkdir()'
+
+=== CRW-951-fix6-mkdir-cd-computed | W
+--why A relative or computed mkdir destination uses the effective shell directory; only the known outside control passes.
+cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'
+
+=== CRW-951-fix6-mkdir-cd-chain | W
+--why A relative or computed mkdir destination uses the effective shell directory; only the known outside control passes.
+cd "{MEMORY}"; python3 -c 'from pathlib import Path; name="x"; Path(".").joinpath("x").mkdir()'
+
+=== CRW-951-fix6-mkdir-work-relative | B
+--why A relative or computed mkdir destination uses the effective shell directory; only the known outside control passes.
+python3 -c 'from pathlib import Path; name="x"; Path("x").mkdir()'
+
+=== CRW-951-fix6-mkdir-work-computed | B
+--why A relative or computed mkdir destination uses the effective shell directory; only the known outside control passes.
+python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'

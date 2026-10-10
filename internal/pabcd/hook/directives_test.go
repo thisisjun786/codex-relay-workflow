@@ -132,7 +132,11 @@ func TestRecordedLoopArmPlatforms(t *testing.T) {
 		t.Fatal("platform recording incomplete")
 	}
 	for _, c := range golden.Platforms {
-		t.Run(c.Platform, func(t *testing.T) { directiveEqual(t, "loop arm", LoopArmDirective(c.Platform), c.Directive) })
+		// CRW-1084 (port: fixed): the recipe leads with the project-coordination branch; the recording is the oracle's text.
+		t.Run(c.Platform, func(t *testing.T) {
+			want := strings.Replace(c.Directive, "Load $crw:crw-loop", loopArmProjectBranch+"Load $crw:crw-loop", 1)
+			directiveEqual(t, "loop arm", LoopArmDirective(c.Platform), want)
+		})
 	}
 	platform := runtime.GOOS
 	if platform == "windows" {

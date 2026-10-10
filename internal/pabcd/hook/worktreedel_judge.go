@@ -36,7 +36,7 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 // worktreeDelRead is the guard's reading of a text: the shared reader with no environment, so a variable is unknown whatever the
 // session's environment holds. The differential fuzz counts the commands this reading refuses (WorktreeGuardCommandReadable).
 func worktreeDelRead(command, cwd string, cdpath bool) (shellir.Result, error) {
-	return shellir.AnalyzeDeletionScript(command, cwd, cdpath)
+	return shellir.AnalyzeScriptProvenDirectory(command, cwd, cdpath)
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
