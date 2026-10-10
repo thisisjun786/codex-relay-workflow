@@ -68,7 +68,7 @@ func TestSteeringEntryRecordsTheBatchAndItsEvents(t *testing.T) {
 	for _, ev := range entry.Events {
 		ids = append(ids, ev.ID+"="+string(ev.Event))
 	}
-	if got := strings.Join(ids, " "); got != "steer:k-deps=steered steer:k-deps:op1=dependency_registered steer:k-deps:op2=dependency_registered" {
+	if got := strings.Join(ids, " "); got != `steer:"k-deps"=steered steer:"k-deps":op1=dependency_registered steer:"k-deps":op2=dependency_registered` {
 		t.Errorf("events = %s", got)
 	}
 }
@@ -169,5 +169,54 @@ func TestSteeringLegacyEntryIsLeftAsItIs(t *testing.T) {
 	steeringApply(t, cwd, slug, steeringApplyBatch(nil), nil, SteerResultDuplicate)
 	if steeringApplyLedgerText(t, cwd, slug) != ledger {
 		t.Error("a legacy entry's retry wrote a row")
+	}
+}
+
+// Two batches with the same clock whose steered rows spell the same detail (the key and the rationale trade the text between
+// them) have different stable ids. The retry of the second, whose own append failed, records its row: the first batch's row is
+// not taken for it.
+func TestSteeringStableIDsActuallyDeduplicate(t *testing.T) {
+	cwd, slug := steeringApplyWorkspace(t)
+	now := func() string { return "2026-10-10T00:00:00.000Z" }
+	first := map[string]any{"idempotencyKey": "k", "rationale": "r: 1 op(s): annotate — x", "evidence": "e",
+		"ops": []any{map[string]any{"kind": "annotate", "note": "n"}}}
+	second := map[string]any{"idempotencyKey": "k: 1 op(s): annotate — r", "rationale": "x", "evidence": "e",
+		"ops": []any{map[string]any{"kind": "annotate", "note": "n"}}}
+	if r, err := ApplySteeringBatch(cwd, slug, first, &SteeringBatchOptions{Now: now}); err != nil || r.Kind != SteerResultApplied || r.Warning != "" {
+		t.Fatalf("first: %+v %v", r, err)
+	}
+	failing := func(string, string, GoalplanLedgerEntry) error { return errors.New("injected append failure") }
+	if r, err := ApplySteeringBatch(cwd, slug, second, &SteeringBatchOptions{Now: now, appendLedger: failing}); err != nil || r.Kind != SteerResultApplied || r.Warning == "" {
+		t.Fatalf("second: %+v %v", r, err)
+	}
+	if r, err := ApplySteeringBatch(cwd, slug, second, &SteeringBatchOptions{Now: now}); err != nil || r.Kind != SteerResultDuplicate || r.Warning != "" {
+		t.Fatalf("second retry: %+v %v", r, err)
+	}
+	rows := steeringApplyRows(t, cwd, slug)
+	steered := 0
+	for _, row := range rows {
+		if row.Event == EventSteered {
+			steered++
+			if row.EventID == nil {
+				t.Errorf("a steered row without its event id: %+v", row)
+			}
+		}
+	}
+	if steered != 2 {
+		t.Fatalf("steered rows = %d, want 2: %+v", steered, rows)
+	}
+	// The same retry again adds nothing.
+	steeringApply(t, cwd, slug, second, nil, SteerResultDuplicate)
+	if got := steeringApplyEventRows(t, cwd, slug, EventSteered); got != 2 {
+		t.Fatalf("steered rows after another retry = %d", got)
+	}
+}
+
+// A batch whose key is the id suffix of another batch's dependency row does not collide with it.
+func TestSteeringEventIDsOfDifferentKeysNeverCollide(t *testing.T) {
+	a := steeringEvents("k", "s", "r", []SteerOp{{Kind: SteerOpAddWorkPhase, ID: "wp", DependsOn: []string{"x"}}})
+	b := steeringEvents("k:op0", "s", "r", nil)
+	if a[1].ID == b[0].ID {
+		t.Fatalf("ids collide: %q", a[1].ID)
 	}
 }

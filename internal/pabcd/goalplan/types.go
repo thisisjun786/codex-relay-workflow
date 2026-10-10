@@ -356,4 +356,8 @@ type GoalplanLedgerEntry struct {
 	Detail   string              `json:"detail"`
 	RoundID  *string             `json:"roundId,omitempty"`
 	LaunchID *string             `json:"launchId,omitempty"`
+	// EventID (CRW-1111) is the stable id of the steering entry event the row records. A retry of a steering batch finds the rows
+	// the first attempt wrote by it, so a row of another batch that spells the same time and detail is never taken for them. It is
+	// absent on every other row.
+	EventID *string `json:"eventId,omitempty"`
 }

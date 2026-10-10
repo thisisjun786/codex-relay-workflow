@@ -131,69 +131,88 @@ func steeringSameBatch(entry SteeringEntry, batch SteerBatch) bool {
 // steeringEvents is the rows a batch owes, in the oracle's order, each with its stable id: the steered
 // row, then one dependency_registered row per add-work-phase that declared prerequisites (:292-306).
 func steeringEvents(key, summary, rationale string, ops []SteerOp) []SteeringEventRecord {
-	events := []SteeringEventRecord{{ID: "steer:" + key, Event: EventSteered, Detail: key + ": " + summary + " — " + rationale}}
+	// The key is quoted in the id, so the id of one batch's row is never the id of another batch's: "k:op1" under key "k" and the
+	// steered row of key "k:op1" are told apart by the closing quote.
+	id := "steer:" + strconv.Quote(key)
+	events := []SteeringEventRecord{{ID: id, Event: EventSteered, Detail: key + ": " + summary + " — " + rationale}}
 	for i, op := range ops {
 		if op.Kind != SteerOpAddWorkPhase || len(op.DependsOn) == 0 {
 			continue
 		}
 		events = append(events, SteeringEventRecord{
-			ID: "steer:" + key + ":op" + strconv.Itoa(i), Event: EventDependencyRegistered,
+			ID: id + ":op" + strconv.Itoa(i), Event: EventDependencyRegistered,
 			Detail: op.ID + " dependsOn=" + strings.Join(op.DependsOn, ","),
 		})
 	}
 	return events
 }
 
-// steeringRecordedRows is the set of rows of the plan's ledger written at ts, keyed by event and detail:
-// what a retry compares the entry's events against. The ledger is read one line at a time; a line that
-// is not an object matches nothing.
-func steeringRecordedRows(cwd, slug, ts string) (map[[2]string]bool, error) {
+// steeringRecorded is what a retry compares an entry's events against: the stable ids of the rows the plan's ledger holds, and, for a
+// row that carries no id (written before rows had one), the event and detail it spells at the entry's time.
+type steeringRecorded struct {
+	ids    map[string]bool
+	legacy map[[2]string]bool
+}
+
+func (r steeringRecorded) has(ev SteeringEventRecord) bool {
+	return r.ids[ev.ID] || r.legacy[[2]string{string(ev.Event), ev.Detail}]
+}
+
+// steeringRecordedRows reads the plan's ledger one line at a time for the rows of an entry applied at ts. A line that is not an
+// object matches nothing. A row is the entry's by its event id; only a row with no id is matched by what it spells at ts.
+func steeringRecordedRows(cwd, slug, ts string) (steeringRecorded, error) {
+	seen := steeringRecorded{ids: map[string]bool{}, legacy: map[[2]string]bool{}}
 	path, err := goalplanLedgerPath(cwd, slug)
 	if err != nil {
-		return nil, err
+		return seen, err
 	}
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return map[[2]string]bool{}, nil
+		return seen, nil
 	}
 	if err != nil {
-		return nil, err
+		return seen, err
 	}
 	defer f.Close()
-	seen := map[[2]string]bool{}
 	r := bufio.NewReader(f)
 	for {
 		line, readErr := r.ReadBytes('\n')
 		var row struct {
-			Ts     string `json:"ts"`
-			Slug   string `json:"slug"`
-			Event  string `json:"event"`
-			Detail string `json:"detail"`
+			Ts      string  `json:"ts"`
+			Slug    string  `json:"slug"`
+			Event   string  `json:"event"`
+			Detail  string  `json:"detail"`
+			EventID *string `json:"eventId"`
 		}
-		if json.Unmarshal(line, &row) == nil && row.Ts == ts && row.Slug == slug {
-			seen[[2]string{row.Event, row.Detail}] = true
+		if json.Unmarshal(line, &row) == nil && row.Slug == slug {
+			switch {
+			case row.EventID != nil:
+				seen.ids[*row.EventID] = true
+			case row.Ts == ts:
+				seen.legacy[[2]string{row.Event, row.Detail}] = true
+			}
 		}
 		if errors.Is(readErr, io.EOF) {
 			return seen, nil
 		}
 		if readErr != nil {
-			return nil, readErr
+			return seen, readErr
 		}
 	}
 }
 
-// steeringRecordEvents appends the entry's rows, in order, skipping those recorded already when
-// recorded is not nil (a retry; a fresh entry cannot have any). It answers the warning of the first row
-// that could not be written, "" when every row is in the ledger.
-func steeringRecordEvents(cwd, slug string, entry SteeringEntry, recorded map[[2]string]bool, appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error) string {
+// steeringRecordEvents appends the entry's rows, in order, each with its event id, skipping those recorded already (a retry; a
+// fresh entry has none). It answers the warning of the first row that could not be written, "" when every row is in the ledger.
+func steeringRecordEvents(cwd, slug string, entry SteeringEntry, recorded steeringRecorded, appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error) string {
 	if appendLedger == nil {
 		appendLedger = AppendGoalplanLedger
 	}
 	for _, ev := range entry.Events {
-		if recorded[[2]string{string(ev.Event), ev.Detail}] {
+		if recorded.has(ev) {
 			continue
 		}
-		if err := appendLedger(cwd, slug, GoalplanLedgerEntry{Ts: entry.AppliedAt, Slug: slug, Event: ev.Event, Detail: ev.Detail}); err != nil {
+		id := ev.ID
+		if err := appendLedger(cwd, slug, GoalplanLedgerEntry{Ts: entry.AppliedAt, Slug: slug, Event: ev.Event, Detail: ev.Detail, EventID: &id}); err != nil {
 			return steeringLedgerWarning(slug, err)
 		}
 	}
@@ -338,7 +357,7 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 	// actually declared prerequisites, so the batch that carried the edge is the row above it (:292-306).
 	// A fresh entry has no row recorded yet; a row that cannot be written leaves the batch applied with a
 	// warning, and the same batch sent again under the same key records it.
-	if rowWarning := steeringRecordEvents(cwd, slug, entry, nil, appendLedger); rowWarning != "" {
+	if rowWarning := steeringRecordEvents(cwd, slug, entry, steeringRecorded{}, appendLedger); rowWarning != "" {
 		return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: rowWarning}, nil
 	}
 	return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: warning}, nil
