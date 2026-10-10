@@ -171,3 +171,34 @@ func TestWithSessionLockStillUsesItsSleepSeam(t *testing.T) {
 		t.Fatal("the busy lock did not use the caller's sleep seam")
 	}
 }
+
+// TestSessionLockOutcomeReportsAcquiredAndBusyGiveUp pins the outcome seam the concurrent SubagentStop
+// test reads (CRW-1172): nil for an acquisition, an error that is fs.ErrExist for a give-up on a held lock,
+// reported once each and before fn runs or the failure returns; a nil seam changes nothing.
+func TestSessionLockOutcomeReportsAcquiredAndBusyGiveUp(t *testing.T) {
+	cwd := t.TempDir()
+	var outcomes []error
+	previous := sessionLockOutcome
+	sessionLockOutcome = func(err error) { outcomes = append(outcomes, err) }
+	defer func() { sessionLockOutcome = previous }()
+
+	if err := orchestrateInterruptLockContext(context.Background(), cwd, "s", func() error {
+		if len(outcomes) != 1 || outcomes[0] != nil {
+			t.Errorf("outcomes before fn = %v; want one nil", outcomes)
+		}
+		return nil
+	}, time.Sleep, []time.Duration{}); err != nil {
+		t.Fatal(err)
+	}
+	// CRW-1094 reclaims a dead owner's lock; hold the kernel lock to prove a busy give-up.
+	held, err := trySessionLock(SessionLockPath(cwd, "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.release()
+	outcomes = nil
+	err = orchestrateInterruptLockContext(context.Background(), cwd, "s", func() error { t.Error("fn ran on a busy lock"); return nil }, time.Sleep, []time.Duration{})
+	if !errors.Is(err, fs.ErrExist) || len(outcomes) != 1 || !errors.Is(outcomes[0], fs.ErrExist) {
+		t.Fatalf("busy give-up returned %v with outcomes %v; want one fs.ErrExist", err, outcomes)
+	}
+}

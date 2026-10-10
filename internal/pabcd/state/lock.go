@@ -45,6 +45,13 @@ func SessionLockPath(cwd, sessionID string) string { return StatePath(cwd, sessi
 // window without a sleep. Production leaves it nil.
 var sessionLockBeforeGiveUp func()
 
+// sessionLockOutcome is a test seam: it reports the outcome of every acquisition once it is known and before
+// the caller's fn runs or the failure is returned. err is nil when the lock was acquired and otherwise the
+// error that ended the acquisition (errors.Is(err, fs.ErrExist) for a busy lock whose wait ran out; any other
+// error is a failure that is not contention). A test that has to tell a busy-lock give-up from a failure
+// reads the order of these reports. Production leaves it nil (CRW-1172).
+var sessionLockOutcome func(err error)
+
 func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
 	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep, nil)
 }
@@ -82,6 +89,9 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		return ErrNonCanonicalSessionID
 	}
 	if err := makeSessionsDir(cwd); err != nil {
+		if sessionLockOutcome != nil {
+			sessionLockOutcome(err)
+		}
 		return err
 	}
 	lockPath := SessionLockPath(cwd, sessionID)
@@ -101,6 +111,9 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 			break
 		}
 		if !errors.Is(err, fs.ErrExist) || attempt >= len(schedule) {
+			if sessionLockOutcome != nil {
+				sessionLockOutcome(err)
+			}
 			if sessionLockBeforeGiveUp != nil {
 				sessionLockBeforeGiveUp()
 			}
@@ -129,6 +142,9 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 			return ctx.Err()
 		case <-timer.C:
 		}
+	}
+	if sessionLockOutcome != nil {
+		sessionLockOutcome(nil)
 	}
 	defer held.release()
 	// CRW-1097: an event an earlier writer of the session left pending is judged now, from the state that writer left, before this
