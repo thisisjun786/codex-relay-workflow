@@ -370,14 +370,15 @@ func updateSelfHealMarker(home string, requireLock bool, update func() (*SelfHea
 //
 // The deadline bounds how long the caller waits for the drop, not whether it retires what the
 // failed recording left behind (CRW-1169). The marker read, the lock wait and the write run in their
-// own goroutine and the call returns nil when ctx ends first, so a held lock or a stalled filesystem
-// cannot keep the explicit command past it. The goroutine does not look at ctx: a recording whose
-// time ran out (a slow codex used it up) still retires the oracle's mtime cache and the older record
-// when the lock is free, as the synchronous drop did, so a legacy-only allEnabled cache cannot vouch
-// again for flags the command just changed. A deadline that has already ended gives the drop one
-// short grace (selfHealDropGrace) to finish a free-lock write. A drop still waiting for a lock held
-// past that finishes on its own later, from the marker it reads under the lock (it never overwrites
-// an opt-out), if the process lives to see it. nil ctx means no deadline.
+// own goroutine and the call returns nil the moment ctx ends, with no further wait, so a held lock
+// or a stalled filesystem cannot keep the explicit command past it. The goroutine does not look at
+// ctx: a recording whose time ran out (a slow codex used it up) still retires the oracle's mtime
+// cache and the older record when the lock is free, as the synchronous drop did, so a legacy-only
+// allEnabled cache cannot vouch again for flags the command just changed, if the process lives to
+// see it finish. A drop still waiting for a lock held past the deadline finishes on its own later,
+// from the marker it reads under the lock (it never overwrites an opt-out), or ends without writing
+// when the separate marker-lock wait (selfHealMarkerLockWait) runs out or an I/O step fails; it is
+// not retried. nil ctx means no deadline.
 func dropSelfHealEvidence(ctx context.Context, home string) error {
 	drop := func() error {
 		if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
@@ -405,20 +406,9 @@ func dropSelfHealEvidence(ctx context.Context, home string) error {
 	case err := <-dropped:
 		return err
 	case <-ctx.Done():
-	}
-	grace := time.NewTimer(selfHealDropGrace)
-	defer grace.Stop()
-	select {
-	case err := <-dropped:
-		return err
-	case <-grace.C:
 		return nil
 	}
 }
-
-// selfHealDropGrace is how long a drop whose recording deadline has ended may still take to finish a
-// write that needs no waiting: a marker read and one publication on a healthy filesystem.
-const selfHealDropGrace = 250 * time.Millisecond
 
 // selfHealRetireLegacyCache turns the oracle's all-enabled cache off (allEnabled false is the
 // oracle's own spelling of a cache miss) once probe evidence has been recorded in, read from or

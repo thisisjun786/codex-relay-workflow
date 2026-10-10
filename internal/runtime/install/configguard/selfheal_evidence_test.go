@@ -1069,8 +1069,10 @@ func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheMarkerLockIs
 				if err != nil {
 					t.Fatalf("the abandoned drop changed the command's result: %v", err)
 				}
-				if elapsed := time.Since(start); elapsed > 2*time.Second {
-					t.Fatalf("the recording returned after %v, past its 200ms deadline", elapsed)
+				// The caller returns at the deadline: no grace is added after the context ends (a margin of
+				// 150ms covers scheduling, well under the 250ms an added wait would cost).
+				if elapsed := time.Since(start); elapsed > 350*time.Millisecond {
+					t.Fatalf("the recording returned after %v, past its 200ms deadline plus the scheduling margin", elapsed)
 				}
 			case <-time.After(10 * time.Second):
 				t.Fatal("the failed recording outlived its deadline while the marker lock was held")
@@ -1138,9 +1140,20 @@ func TestSelfHealEvidenceFailedRecordingPastTheDeadlineStillRetiresTheLegacyCach
 			if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx}); err != nil {
 				t.Fatal(err)
 			}
-			marker, err := ReadSelfHealMarkerFile(home)
-			if err != nil || marker == nil || marker.Probe != nil || (marker.AllEnabled != nil && *marker.AllEnabled) {
-				t.Fatalf("the failed recording left the legacy cache authoritative: %+v %v", marker, err)
+			// The caller no longer waits for the drop after the deadline, so the retirement lands in the
+			// background: wait for it here the way a process that outlives the call would see it.
+			var marker *SelfHealMarker
+			var err error
+			retired := time.Now().Add(5 * time.Second)
+			for {
+				marker, err = ReadSelfHealMarkerFile(home)
+				if err == nil && marker != nil && marker.Probe == nil && (marker.AllEnabled == nil || !*marker.AllEnabled) {
+					break
+				}
+				if time.Now().After(retired) {
+					t.Fatalf("the failed recording left the legacy cache authoritative: %+v %v", marker, err)
+				}
+				time.Sleep(20 * time.Millisecond)
 			}
 			// The project layer now turns a soft flag off while config.toml and its mtime are unchanged.
 			runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
