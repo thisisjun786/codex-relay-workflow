@@ -101,6 +101,8 @@ func restore(sessionID string, raw []byte, now time.Time) (State, bool) {
 	s.StopBlockTotal = count(m["stopBlockTotal"])
 	s.StopBlockTurnID = nonEmpty(m["stopBlockTurnId"])
 	s.StopBlockCapNotified = m["stopBlockCapNotified"] == true
+	s.StopTurnGeneration = count(m["stopTurnGeneration"])
+	s.StopDivergenceWindows = divergenceWindows(m["stopDivergenceWindows"])
 	s.LoopArmSeen = m["loopArmSeen"] == true
 	s.IdleEditNudges = count(m["idleEditNudges"])
 	s.MemoryWriteRequested = m["memoryWriteRequested"] == true
@@ -147,6 +149,29 @@ func nonEmpty(v any) *string {
 		return &s
 	}
 	return nil
+}
+
+// divergenceWindows is v as the per-series answered windows, keeping the entries that are a non-empty key and a positive row count;
+// nil when none. An entry that is a bare count (the lane's first form) is that window with update sequence 0, the oldest.
+func divergenceWindows(v any) map[string]DivergenceWindow {
+	raw, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var out map[string]DivergenceWindow
+	for k, w := range raw {
+		window := DivergenceWindow{Rows: count(w)}
+		if o, ok := w.(map[string]any); ok {
+			window = DivergenceWindow{Rows: count(o["rows"]), Seq: count(o["seq"])}
+		}
+		if k != "" && window.Rows > 0 {
+			if out == nil {
+				out = map[string]DivergenceWindow{}
+			}
+			out[k] = window
+		}
+	}
+	return out
 }
 
 // phaseOf is v as one of the phases, else null.

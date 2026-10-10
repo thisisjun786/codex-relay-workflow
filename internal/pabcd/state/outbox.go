@@ -155,6 +155,13 @@ func ledgerOutboxDir(cwd, sessionID string) string {
 	return StatePath(cwd, sessionID) + ledgerOutboxSuffix
 }
 
+// LedgerOutboxPresent is whether the session has an outbox directory: something an earlier writer may have left pending. A drain
+// removes the directory with its last event, so a session with nothing pending answers false without anything being read.
+func LedgerOutboxPresent(cwd, sessionID string) bool {
+	info, err := os.Stat(ledgerOutboxDir(cwd, sessionID))
+	return err == nil && info.IsDir()
+}
+
 // ledgerEventPath is the file of ev in its session's outbox.
 func ledgerEventPath(cwd string, ev LedgerEvent) string {
 	return filepath.Join(ledgerOutboxDir(cwd, ev.SessionID), fmt.Sprintf("%020d-%s%s", ev.Seq, ev.ID, ledgerEventSuffix))

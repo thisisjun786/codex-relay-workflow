@@ -132,7 +132,8 @@ func TestStopBlockPersistsTheCounter(t *testing.T) {
 	}
 }
 
-// Stall: three consecutive blocks at one phase, then a release that recharges the budget (stop_budget_three_per_phase).
+// Stall: three consecutive blocks at one phase, then a release (stop_budget_three_per_phase). Since CRW-1086 the release
+// latches: the phase and the count stay, so the next Stop at the same phase releases too (crw1086_test.go).
 func TestStopStallReleasesAfterThreeBlocksPerPhase(t *testing.T) {
 	cwd, env := stopRig(t, "active")
 	stopInFlight(t, cwd, state.PhaseA)
@@ -146,7 +147,7 @@ func TestStopStallReleasesAfterThreeBlocksPerPhase(t *testing.T) {
 		t.Fatalf("the fourth Stop must release, got %+v", a)
 	}
 	s := state.ReadState(cwd, stopSID)
-	if s.StopBlockPhase != nil || s.StopBlockCount != 0 || s.StopBlockTotal != 4 {
+	if s.StopBlockPhase == nil || *s.StopBlockPhase != state.PhaseA || s.StopBlockCount != StopMaxBlocks+1 || s.StopBlockTotal != 4 {
 		t.Errorf("after the release: phase %v count %v total %v", s.StopBlockPhase, s.StopBlockCount, s.StopBlockTotal)
 	}
 }
@@ -343,7 +344,7 @@ func TestStopGoalIdleBlockNamesTheWork(t *testing.T) {
 	got := stopBlockReason(t, stopRun(cwd, env))
 	want := "[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.\n" +
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.\n" +
-		"Either start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1 --attest '{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}'`\n" +
+		"Either start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n" +
 		"or close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.\n" +
 		"LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.\n" +
 		"Ready work phases: wp1 (Exporter)\n" +
@@ -355,9 +356,9 @@ func TestStopGoalIdleBlockNamesTheWork(t *testing.T) {
 	if s := state.ReadState(cwd, stopSID); s.StopBlockPhase == nil || *s.StopBlockPhase != state.PhaseIdle || s.StopBlockCount != 1 || s.Phase != state.PhaseIdle || s.OrchestrationActive {
 		t.Errorf("the idle block is counted at IDLE and starts no cycle: %+v %v", s.StopBlockPhase, s.StopBlockCount)
 	}
-	// win32 writes the JSON first
+	// CRW-1107: IDLE->P takes no attest (phase-control.md), so neither platform's command carries one or an attest file
 	win := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "win32", env)
-	if r := stopBlockReason(t, win); !strings.Contains(r, "write the JSON with `'{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}' | Set-Content -Encoding utf8 .crw/attest.json` then run `CRW pabcd orchestrate P --session rec-s1 --attest-file .crw/attest.json`") {
+	if r := stopBlockReason(t, win); !strings.Contains(r, "\nEither start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n") || strings.Contains(r, "attest") {
 		t.Errorf("win32 goal-idle block: %q", r)
 	}
 }
@@ -767,8 +768,8 @@ func TestStopNeverTransitionsTheCycle(t *testing.T) {
 			t.Fatalf("Stop %d moved the cycle: %+v", i, now)
 		}
 	}
-	// the same event again only spends the budget: three blocks, a release, and a fresh budget for the next turn's loop
-	if want := []bool{true, true, true, false, true, true, true, false, true, true}; !slices.Equal(answered, want) {
+	// the same event again only spends the budget: three blocks, then releases, latched until progress or a new turn (CRW-1086)
+	if want := []bool{true, true, true, false, false, false, false, false, false, false}; !slices.Equal(answered, want) {
 		t.Errorf("answers of a repeated event: %v, want %v", answered, want)
 	}
 	plan := goalplan.ReadGoalplan(cwd, "plan")

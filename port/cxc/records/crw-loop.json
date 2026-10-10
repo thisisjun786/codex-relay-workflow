@@ -324,7 +324,7 @@
     },
     {
       "file": "references/runtime-lifecycle.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1084: say that a loop request naming a project or a coordination gets a short scope pointer (crw-run for the project parent, crw-loop only for an explicit current-task implementation) instead of the arming recipe.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1084: say that a loop request naming a project or a coordination gets a short scope pointer (crw-run for the project parent, crw-loop only for an explicit current-task implementation) instead of the arming recipe. CRW-1086 and CRW-1088 (Stop judgment): the stagnation cap stays released at its phase and work-phase for the rest of the user turn and names what rearms it (a transition, an active work-phase switch, a comparable improving metric row, a new user turn); the plateau block judges a bound goalplan's active work-phase rows (and rows recorded without --work-phase) once per evaluation window. Oracle: loop/references/runtime-lifecycle.md Stagnation cap and Objective plateau block.",
       "hunks": [
         {
           "line": 34,
@@ -345,6 +345,30 @@
             "project or a coordination gets a short scope pointer instead (crw-run for the project parent,\n",
             "crw-loop only for an explicit implementation of a task in this session; the pointer arms\n",
             "nothing), and an active goal\n"
+          ]
+        },
+        {
+          "line": 85,
+          "old": [
+            "  never trap a session. A real transition (chat or CLI) resets the counter, so each\n"
+          ],
+          "new": [
+            "  never trap a session, and it stays released at that phase and work-phase for the rest\n",
+            "  of the user turn, even when another Stop hook keeps the turn going. A real transition\n",
+            "  (chat or CLI), a switch of the active work-phase, a metric row that beats the previous\n",
+            "  row of its own metric and work-phase, or a new user turn resets the counter, so each\n"
+          ]
+        },
+        {
+          "line": 91,
+          "old": [
+            "  to \"step back and re-plan with divergence.\" This still uses the same bounded\n"
+          ],
+          "new": [
+            "  to \"step back and re-plan with divergence.\" With a bound goalplan only the active\n",
+            "  work-phase's rows (and rows recorded without `--work-phase`) count, and one evaluation\n",
+            "  window asks once: the next Stop continues normally until a new metric row opens a new\n",
+            "  window. This still uses the same bounded\n"
           ]
         }
       ]

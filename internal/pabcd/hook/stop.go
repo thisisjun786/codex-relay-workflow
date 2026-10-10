@@ -15,8 +15,9 @@
 // phrases anywhere in the tail, which a quote also matched; the window ends at the next user prompt, and a
 // hook that sees the compaction records it so the window outlives the tail, compaction_recovery.go,
 // docs/port-cxc/known-defects/CRW-1090.md). Every block goes through one counter:
-// three consecutive blocks at the same phase and work phase release (progress recharges the budget),
-// and 24 per user turn release for good, the second of them with a systemMessage. The counter is
+// three consecutive blocks at the same phase and work phase release, and the release holds for them
+// until progress or a new user turn recharges the budget (CRW-1086); 24 per user turn release for good,
+// the second of them with a systemMessage. The counter is
 // written before the block is answered, so a block the counter could not record is never answered.
 //
 // Differences from the oracle, all recorded in docs/port-cxc/known-defects/CRW-192.md: the counter is
@@ -26,12 +27,20 @@
 // blocking on a stale phase, a pause of the goal or a decision opened in that window releases too (the
 // goal, the goalplan wait and the payload's turn_id are judged again inside the lock), a cycle in flight whose bound goalplan waits only on open decisions releases as the idle path
 // does, and the friction advisory line is not ported (its ledger writer is a deprecated, unregistered
-// hook of the oracle, so no CRW store feeds it).
+// hook of the oracle, so no CRW store feeds it). docs/port-cxc/known-defects/CRW-1086.md: a spent
+// per-phase budget latches instead of recharging on the next Stop. CRW-1088.md: a metric row is progress
+// only against the earlier row of its own metric and work phase, the plateau of a bound goalplan is its
+// active work phase's, and one evaluation window gets the plateau block once. CRW-1091.md: the judgment
+// under the lock reads the metrics ledger and the bound goalplan once and shares them, a Stop after
+// the turn's announced total cap reads and writes nothing, and a prompt without turn_id that lands before
+// the lock releases the earlier turn's Stop (the turn generation). CRW-1107.md: the goal-idle block's IDLE->P
+// command carries no attest.
 package hook
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"regexp"
@@ -102,6 +111,9 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if !goalActive {
 			return StopAnswer{}
 		}
+		if st.StopBlockCapNotified {
+			return stopCapped(p, lock)
+		}
 		plan := stopSafeReadBoundGoalplan(p.Cwd, st.Slug)
 		if plan == nil || goalplan.RemainingWorkAwaitsDecisions(plan) {
 			return StopAnswer{}
@@ -109,17 +121,20 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if stopContextPressure(p) {
 			return StopAnswer{}
 		}
-		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State) string {
-			return stopGoalIdleBlock(p.Cwd, fresh, p.SessionID, platform, env)
+		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
+			return stopGoalIdleBlock(fresh, snap.plan, p.SessionID, env)
 		})
 	}
 
-	// C-RENDER-GROUNDING-01 advisory: fail-open, for goal and interactive sessions alike, never a block.
-	renderAdvisory := stopRenderAdvisory(p.Cwd, st.Phase, p.SessionID, st.Slug)
-
-	// guard 2b: only an ACTIVE goal arms the autonomous loop (interactive sessions pause).
+	// guard 2b: only an ACTIVE goal arms the autonomous loop (interactive sessions pause). An interactive
+	// session gets the C-RENDER-GROUNDING-01 advisory: fail-open, never a block.
 	if !goalActive {
-		return StopAnswer{Context: renderAdvisory}
+		return StopAnswer{Context: stopRenderAdvisory(p.Cwd, st.Phase, p.SessionID, st.Slug)}
+	}
+	// CRW-1091: the turn's total cap was announced, so the turn's Stop loop is over; no plan or ledger is read for it and the
+	// counter is not written (only a pending ledger event is finished, stopCapped).
+	if st.StopBlockCapNotified {
+		return stopCapped(p, lock)
 	}
 	// A bound plan whose remaining work waits only on open decisions is waiting on the user: no block.
 	if plan := stopSafeReadBoundGoalplan(p.Cwd, st.Slug); plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan) {
@@ -128,16 +143,34 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if stopContextPressure(p) {
 		return StopAnswer{}
 	}
-	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State) string {
-		if plateau := stopObjectivePlateau(p.Cwd, p.SessionID); plateau.Flat {
+	// The goal session's render advisory follows its block.
+	renderAdvisory := stopRenderAdvisory(p.Cwd, st.Phase, p.SessionID, st.Slug)
+	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State, next *state.State, snap stopSnapshot) string {
+		// CRW-1088: one evaluation window of a series (metric and work phase) asks for divergence once; the window it was asked for is written with the counter.
+		if plateau, series, rows := stopObjectivePlateau(p.Cwd, fresh, snap); plateau.Flat && fresh.StopDivergenceWindows[series].Rows != rows {
+			next.StopDivergenceWindows = stopWithWindow(fresh.StopDivergenceWindows, series, rows)
 			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID, renderAdvisory)
 		}
-		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(p.Cwd, fresh), p.SessionID, platform, env)
+		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(fresh.Slug, snap.plan), p.SessionID, platform, env)
 		if renderAdvisory != "" {
 			reason += "\n\n" + renderAdvisory
 		}
 		return stopEnvelope(reason)
 	})
+}
+
+// stopCapped is a Stop of a turn whose total cap was announced: it answers nothing and writes no counter. A Stop is still a writer of the
+// session that finishes what an earlier one left pending (CRW-1097: a ledger row of a published transition, a plan-audit cleanup), so
+// when the session has an outbox the lock is taken and the drain runs, as it ran in every Stop before the cap fast path. A session
+// without one reads and locks nothing.
+func stopCapped(p StopPayload, lock func(cwd, sessionID string, fn func() error) error) StopAnswer {
+	if state.LedgerOutboxPresent(p.Cwd, p.SessionID) {
+		_ = lock(p.Cwd, p.SessionID, func() error {
+			DrainSessionLedger(p.Cwd, p.SessionID)
+			return nil
+		})
+	}
+	return StopAnswer{}
 }
 
 // stopWriteState is the counter write, a variable so that a test can fail it before and after the publication
@@ -147,8 +180,9 @@ var stopWriteState = state.WriteState
 // stopDue judges again, inside the lock, what the decision outside it stood on and that the user can
 // change meanwhile: the goal is still ACTIVE (a pause releases), the bound goalplan still reads and does
 // not wait on an open decision (idle: it must still read and not wait; in flight: it must not wait), and
-// the event still belongs to the user turn the state is stamped with.
-type stopDue func(p StopPayload, fresh state.State, env host.LookupEnv) bool
+// the event still belongs to the user turn the state is stamped with. It answers the bound goalplan it
+// judged (nil when none reads), which the rest of the Stop reuses (CRW-1091).
+type stopDue func(p StopPayload, fresh state.State, env host.LookupEnv) (*goalplan.Goalplan, bool)
 
 func stopHeld(p StopPayload, fresh state.State, env host.LookupEnv) (*goalplan.Goalplan, bool) {
 	if sessionHookGoalStatus(p.SessionID, env) != host.GoalActive {
@@ -160,36 +194,59 @@ func stopHeld(p StopPayload, fresh state.State, env host.LookupEnv) (*goalplan.G
 	return stopSafeReadBoundGoalplan(p.Cwd, fresh.Slug), true
 }
 
-func stopIdleDue(p StopPayload, fresh state.State, env host.LookupEnv) bool {
+func stopIdleDue(p StopPayload, fresh state.State, env host.LookupEnv) (*goalplan.Goalplan, bool) {
 	plan, ok := stopHeld(p, fresh, env)
-	return ok && plan != nil && !goalplan.RemainingWorkAwaitsDecisions(plan)
+	return plan, ok && plan != nil && !goalplan.RemainingWorkAwaitsDecisions(plan)
 }
 
-func stopInFlightDue(p StopPayload, fresh state.State, env host.LookupEnv) bool {
+func stopInFlightDue(p StopPayload, fresh state.State, env host.LookupEnv) (*goalplan.Goalplan, bool) {
 	plan, ok := stopHeld(p, fresh, env)
-	return ok && !(plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan))
+	return plan, ok && !(plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan))
+}
+
+// stopSnapshot is what one Stop judges under the lock, each read once there (CRW-1091): the bound goalplan
+// due validated (nil when none reads) and the session's metric rows. The oracle read the whole metrics
+// ledger up to four times per Stop (the cursor, the progress plateau, the kind inference, the emitted
+// plateau) and the goalplan once per question; the work phase, the progress judgment, the kind inference,
+// the plateau and the block text now share one reading. Nothing is kept between events, and nothing read
+// before the lock stands in for it.
+type stopSnapshot struct {
+	plan *goalplan.Goalplan
+	rows []metric.Record
 }
 
 // stopCounted bumps the stop counter under the session lock and, when the bump leaves a block, builds
-// it from the state the lock found. judged is the state the decision was made on; if the phase, the
-// cycle, the binding or the user turn changed since, or due no longer holds, the event is stale and
-// releases without writing.
-func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, due stopDue, build func(fresh state.State) string) StopAnswer {
+// it from the state the lock found before the counter is written, so the block can record what it
+// answered in the same write (build may change next). judged is the state the decision was made on; if
+// the phase, the cycle, the binding or the user turn changed since, or due no longer holds, the event is
+// stale and releases without writing. A total cap already announced for the turn returns before the
+// goal, the plan or the ledger is read, and writes nothing (CRW-1091; the oracle went on advancing the
+// total and the cursor of a turn whose loop was over).
+func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, due stopDue, build func(fresh state.State, next *state.State, snap stopSnapshot) string) StopAnswer {
 	var answer StopAnswer
 	err := lock(p.Cwd, p.SessionID, func() error {
 		// CRW-1097: a ledger row or plan-audit cleanup an earlier writer left pending is finished by this writer of the session too.
 		DrainSessionLedger(p.Cwd, p.SessionID)
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
-		if unreadable || !stopSameBinding(judged, fresh) || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) || !due(p, fresh, env) {
+		if unreadable || !stopSameBinding(judged, fresh) || fresh.StopBlockCapNotified || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
 			return nil
 		}
-		next, outcome := stopBump(p.Cwd, fresh)
+		plan, ok := due(p, fresh, env)
+		if !ok {
+			return nil
+		}
+		snap := stopSnapshot{plan: plan, rows: metric.ReadObjectiveMetrics(p.Cwd, p.SessionID)}
+		next, outcome := stopBump(fresh, snap)
+		var block string
+		if outcome == stopBumpBlock {
+			block = build(fresh, &next, snap)
+		}
 		if err := stopWriteState(p.Cwd, next); err != nil && !state.Published(err) {
 			return nil
 		}
 		switch outcome {
 		case stopBumpBlock:
-			answer = StopAnswer{Stdout: build(fresh)}
+			answer = StopAnswer{Stdout: block}
 		case stopBumpTotalCap:
 			answer = StopAnswer{Stdout: stopSystemMessage(stopTotalCapMessage)}
 		}
@@ -202,10 +259,13 @@ func stopCounted(p StopPayload, judged state.State, platform string, env host.Lo
 }
 
 // stopSameBinding is whether the state the lock found still has the phase, the cycle, the goalplan
-// binding and the user turn stamp the decision was made on.
+// binding and the user turn stamp the decision was made on. The stamp is the turn id and, for a prompt
+// without one, the turn generation it advanced (CRW-1091: a turn-id-less prompt between the first read
+// and the lock cleared the total and left the turn id as it was, so the earlier turn's Stop read the
+// cleared total as the first Stop of the new turn and blocked in it).
 func stopSameBinding(a, b state.State) bool {
 	return a.Phase == b.Phase && a.OrchestrationActive == b.OrchestrationActive && a.Slug == b.Slug &&
-		stopSameText(a.StopBlockTurnID, b.StopBlockTurnID)
+		stopSameText(a.StopBlockTurnID, b.StopBlockTurnID) && a.StopTurnGeneration == b.StopTurnGeneration
 }
 
 type stopBumpOutcome int
@@ -214,13 +274,21 @@ const (
 	stopBumpBlock       stopBumpOutcome = iota // the counter allows a block
 	stopBumpPhaseCap                           // consecutive blocks at one phase exceeded the budget: release
 	stopBumpTotalCap                           // the turn's total exceeded the budget, first time: release with a systemMessage
-	stopBumpTotalSilent                        // the turn's total exceeded the budget, already announced: release
+	stopBumpTotalSilent                        // the turn's total exceeded the budget, already announced: release (stopCounted returns before, CRW-1091)
 )
 
 // stopBump is bumpStopCounter (hook.ts:1497-1521) on a state read inside the lock: the state to write
 // and what the counter decided. The cursor and the total advance on every Stop, block or release.
-func stopBump(cwd string, st state.State) (state.State, stopBumpOutcome) {
-	obs := stopObserveProgress(cwd, st)
+//
+// CRW-1086: a spent per-phase budget latches. The oracle cleared the phase, the work phase and the count
+// on the release, so the next Stop of the same turn read the cleared phase as a phase change and blocked
+// again; another Stop evaluator (bg-wake, a completion gate) that keeps the host turn alive then drew up to
+// 18 PABCD blocks out of the first 24 Stops. The release keeps the phase and the work phase it was judged
+// on and holds the count one past the budget, so every further Stop at them releases until real progress
+// (stopObserveProgress: a phase or work-phase change, an improving metric row, a new user turn) recharges
+// it. The total cap still clears the counter as the oracle does; the turn stamp ends it.
+func stopBump(st state.State, snap stopSnapshot) (state.State, stopBumpOutcome) {
+	obs := stopObserveProgress(st, snap)
 	nextCount := st.StopBlockCount + 1
 	if obs.progressed {
 		nextCount = 1
@@ -228,23 +296,22 @@ func stopBump(cwd string, st state.State) (state.State, stopBumpOutcome) {
 	nextTotal := st.StopBlockTotal + 1
 	next := st
 	next.StopMetricCursor, next.StopBlockTotal = obs.metricCursor, nextTotal
-	if nextCount > StopMaxBlocks || nextTotal > StopMaxBlocksTotal {
-		totalCap := nextTotal > StopMaxBlocksTotal
+	if nextTotal > StopMaxBlocksTotal {
 		alreadyNotified := st.StopBlockCapNotified
 		next.StopBlockPhase, next.StopBlockWorkPhaseID, next.StopBlockCount = nil, nil, 0
-		if totalCap {
-			next.StopBlockCapNotified = true
-		}
-		switch {
-		case !totalCap:
-			return next, stopBumpPhaseCap
-		case alreadyNotified:
+		next.StopBlockCapNotified = true
+		if alreadyNotified {
 			return next, stopBumpTotalSilent
 		}
 		return next, stopBumpTotalCap
 	}
 	phase := st.Phase
-	next.StopBlockPhase, next.StopBlockWorkPhaseID, next.StopBlockCount = &phase, obs.workPhaseID, nextCount
+	next.StopBlockPhase, next.StopBlockWorkPhaseID = &phase, obs.workPhaseID
+	if nextCount > StopMaxBlocks {
+		next.StopBlockCount = StopMaxBlocks + 1 // spent: the latch the next Stop at this phase and work phase reads
+		return next, stopBumpPhaseCap
+	}
+	next.StopBlockCount = nextCount
 	return next, stopBumpBlock
 }
 
@@ -256,22 +323,60 @@ type stopProgress struct {
 
 // stopObserveProgress is observeProgress (hook.ts:1465-1490): did a phase transition, a work-phase
 // switch or a new, better metric row happen since the last Stop. Fail-open: an unreadable ledger or
-// goalplan is no progress.
-func stopObserveProgress(cwd string, st state.State) stopProgress {
+// goalplan is no progress. CRW-1088: a new row is better only against the earlier row of its own metric
+// and work phase (metric.JudgeNewRows); the oracle took every result that was not flat, the
+// insufficient-data result of a singleton included, so alternating metric names recharged the budget
+// on every Stop. A new user turn is progress too (CRW-1086): UserPromptSubmit's turn stamp
+// resets the turn's total to 0 (prompt_submit.go) and nothing else does, so a total of 0 is the first
+// Stop of a new turn, which starts with a fresh per-phase budget.
+func stopObserveProgress(st state.State, snap stopSnapshot) stopProgress {
 	improved := false
-	rows := metric.ReadObjectiveMetrics(cwd, st.SessionID)
+	rows := snap.rows
 	// High-water: a hand-truncated ledger must not let restored rows replay as new observations.
 	cursor := math.Max(st.StopMetricCursor, float64(len(rows)))
+	workPhaseID, bound := stopMetricScope(st, snap)
 	if float64(len(rows)) > st.StopMetricCursor {
-		improved = !metric.CheckObjectivePlateau(cwd, st.SessionID, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor}).Flat
-	}
-	var workPhaseID *string
-	if plan := stopSafeReadBoundGoalplan(cwd, st.Slug); plan != nil {
-		workPhaseID = goalplan.EffectiveActiveWorkPhaseID(plan)
+		// The cursor counts the whole ledger; only the rows of the active work phase (and the legacy default scope)
+		// are judged, so a finished work phase's rising row does not recharge the budget the active one spent.
+		scoped, from := rows, int(st.StopMetricCursor)
+		if bound {
+			scoped, from = stopScopeRows(rows, from, workPhaseID)
+		}
+		improved = metric.JudgeNewRows(scoped, from, stopPlateauNoiseFloor) == metric.JudgmentImproving
 	}
 	phaseChanged := st.StopBlockPhase == nil || *st.StopBlockPhase != st.Phase
 	workChanged := !stopSameText(st.StopBlockWorkPhaseID, workPhaseID)
-	return stopProgress{progressed: phaseChanged || workChanged || improved, metricCursor: cursor, workPhaseID: workPhaseID}
+	newTurn := st.StopBlockTotal == 0
+	return stopProgress{progressed: phaseChanged || workChanged || improved || newTurn, metricCursor: cursor, workPhaseID: workPhaseID}
+}
+
+// stopMetricScope is the active work phase of st and whether the metric judgment is scoped to it (a session bound to a goalplan).
+// A bound goalplan names it; one that cannot be read says nothing about the active work phase, so the one recorded for the
+// session stands, for the work phase and for the metric scope alike (CRW-1086 d2: read as no work phase it was a switch away and,
+// when the plan read again, a switch back, and each recharged a spent budget; judged unscoped, a finished work phase's rising row
+// recharged it and its flat rows were the plateau). A session bound to no goalplan judges every row, as the oracle does.
+func stopMetricScope(st state.State, snap stopSnapshot) (*string, bool) {
+	if snap.plan != nil {
+		return goalplan.EffectiveActiveWorkPhaseID(snap.plan), true
+	}
+	return st.StopBlockWorkPhaseID, st.Slug != ""
+}
+
+// stopScopeRows is the rows of a bound goalplan's judgment scope: the active work phase's and the legacy default
+// work phase's (what `metric record` writes without --work-phase). from is a position in rows; the second result is
+// the position in the scoped rows of the first row at or after it, so rows before the cursor stay old.
+func stopScopeRows(rows []metric.Record, from int, active *string) ([]metric.Record, int) {
+	scoped, scopedFrom := make([]metric.Record, 0, len(rows)), 0
+	for i, r := range rows {
+		if r.WorkPhaseID != metric.DefaultWorkPhaseID && (active == nil || r.WorkPhaseID != *active) {
+			continue
+		}
+		if i < from {
+			scopedFrom++
+		}
+		scoped = append(scoped, r)
+	}
+	return scoped, scopedFrom
 }
 
 func stopSameText(a, b *string) bool {
@@ -292,12 +397,65 @@ func stopSafeReadBoundGoalplan(cwd, slug string) *goalplan.Goalplan {
 
 var stopSlugPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// stopObjectivePlateau is objectivePlateau (hook.ts:1773-1782): flat only for a maximize objective.
-func stopObjectivePlateau(cwd, sessionID string) metric.PlateauCheck {
-	if metric.ReadObjectiveKind(cwd, sessionID) != metric.Maximize {
-		return metric.PlateauCheck{Values: []float64{}}
+// stopObjectivePlateau is objectivePlateau (hook.ts:1773-1782): flat only for a maximize objective. The
+// second and third results name the evaluation window judged: its series (the latest row's metric and work phase) and the
+// number of rows of that series, which a new row of the series changes.
+//
+// CRW-1088: with a bound goalplan the window is the active work phase's. The oracle judged the latest
+// ledger row's work phase, so two flat rows of a finished wp-old redirected wp-new to re-plan before wp-new
+// had any evaluation. Rows recorded for another work phase are left out; rows recorded without one (the
+// default work phase, what `metric record` writes without --work-phase) keep the legacy scope, as every
+// row does for a session without a bound goalplan.
+func stopObjectivePlateau(cwd string, st state.State, snap stopSnapshot) (metric.PlateauCheck, string, float64) {
+	rows := snap.rows
+	none := metric.PlateauCheck{Values: []float64{}}
+	if metric.InferObjectiveKind(cwd, st.SessionID, rows) != metric.Maximize {
+		return none, "", 0
 	}
-	return metric.CheckObjectivePlateau(cwd, sessionID, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
+	if active, bound := stopMetricScope(st, snap); bound {
+		rows, _ = stopScopeRows(rows, 0, active)
+	}
+	plateau := metric.PlateauOf(rows, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
+	if len(rows) == 0 {
+		return plateau, "", 0
+	}
+	latest, count := rows[len(rows)-1], 0
+	for _, r := range rows {
+		if r.MetricName == latest.MetricName && r.WorkPhaseID == latest.WorkPhaseID {
+			count++
+		}
+	}
+	return plateau, latest.MetricName + "@" + latest.WorkPhaseID, float64(count)
+}
+
+// stopMaxDivergenceWindows bounds the series a state remembers. A new series past it evicts the one updated longest ago, which
+// costs that series one repeated request for its window, never a missed one; an update of a remembered series evicts nothing.
+const stopMaxDivergenceWindows = 64
+
+// stopWithWindow is windows with series answered at rows, as a copy: the state the lock read is not changed. The answer takes
+// the next update sequence, so the series answered last is the newest.
+func stopWithWindow(windows map[string]state.DivergenceWindow, series string, rows float64) map[string]state.DivergenceWindow {
+	out := maps.Clone(windows)
+	if out == nil {
+		out = map[string]state.DivergenceWindow{}
+	}
+	seq := float64(0)
+	for _, w := range out {
+		seq = math.Max(seq, w.Seq)
+	}
+	if _, remembered := out[series]; !remembered {
+		for len(out) >= stopMaxDivergenceWindows {
+			oldest := ""
+			for k, w := range out {
+				if oldest == "" || w.Seq < out[oldest].Seq || (w.Seq == out[oldest].Seq && k < oldest) {
+					oldest = k
+				}
+			}
+			delete(out, oldest)
+		}
+	}
+	out[series] = state.DivergenceWindow{Rows: rows, Seq: seq + 1}
+	return out
 }
 
 // stopEnvelope is `${JSON.stringify({decision:"block",reason})}\n`.
@@ -384,14 +542,10 @@ type stopReadyTask struct{ workPhaseID, id, title string }
 
 // stopReadWorkContext is readStopWorkContext (hook.ts:1639-1692): pure and fail-safe, keyed strictly on
 // the session-bound slug; a missing slug or an absent or unreadable goalplan gives nil, so the block is
-// the phase-only one.
-func stopReadWorkContext(cwd string, st state.State) *stopWorkContext {
-	slug := st.Slug
-	if slug == "" {
-		return nil
-	}
-	plan := goalplan.ReadGoalplan(cwd, slug)
-	if plan == nil {
+// the phase-only one. plan is the bound goalplan the Stop judged under the lock (CRW-1091: the oracle
+// read it again here).
+func stopReadWorkContext(slug string, plan *goalplan.Goalplan) *stopWorkContext {
+	if slug == "" || plan == nil {
 		return nil
 	}
 	ledger := crwdir.DirName + "/goalplans/" + slug + "/ledger.jsonl"
@@ -484,12 +638,12 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 // stopGoalIdleBlock is buildGoalIdleBlock (hook.ts:1694-1738): the Stop block for a goal ACTIVE with a
 // bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: arm the next
 // work-phase, or close the goal for real.
-func stopGoalIdleBlock(cwd string, st state.State, sessionID, platform string, env host.LookupEnv) string {
-	// Inline JSON cannot survive PowerShell argument parsing, so win32 gets the write-then-attest pair.
-	startNext := "Either start the next work-phase now: `crw pabcd orchestrate P --session " + sessionID + " --attest '{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}'`"
-	if stopNodePlatform(platform) == "win32" {
-		startNext = "Either start the next work-phase now: write the JSON with `'{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}' | Set-Content -Encoding utf8 " + crwdir.DirName + "/attest.json` then run `crw pabcd orchestrate P --session " + sessionID + " --attest-file " + crwdir.DirName + "/attest.json`"
-	}
+//
+// CRW-1107: IDLE->P takes no attest (plugins/crw/skills/crw-pabcd/references/phase-control.md), but the
+// oracle's command carried one with a placeholder `did` (and win32 an attest file to write it to), which
+// agents copied into the ledger as evidence. The command is the plain entry on every platform.
+func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, sessionID string, env host.LookupEnv) string {
+	startNext := "Either start the next work-phase now: `crw pabcd orchestrate P --session " + sessionID + "`"
 	lines := []string{
 		"[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.",
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.",
@@ -497,11 +651,7 @@ func stopGoalIdleBlock(cwd string, st state.State, sessionID, platform string, e
 		"or close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.",
 		"LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.",
 	}
-	var plan *goalplan.Goalplan
-	if st.Slug != "" {
-		plan = goalplan.ReadGoalplan(cwd, st.Slug)
-	}
-	switch work := stopReadWorkContext(cwd, st); {
+	switch work := stopReadWorkContext(st.Slug, plan); {
 	case work != nil:
 		lines = append(lines, work.lines()...)
 	case plan != nil && len(plan.WorkPhases) == 0 && len(plan.Criteria) == 0:
