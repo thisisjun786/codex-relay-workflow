@@ -139,18 +139,26 @@ func (b *bundler) load(args api.OnLoadArgs) (api.OnLoadResult, error) {
 		return api.OnLoadResult{}, fmt.Errorf("helper %s was not resolved", args.Path)
 	}
 	src := string(data)
-	// esbuild resolves an import("literal") through the resolver above; a computed import(expr) is never resolved, so the
-	// source is read for it as well.
-	if toks, err := tokenize(src); err == nil {
-		for i, t := range toks {
-			if t.kind != tokIdent || t.text != "import" || i+1 >= len(toks) || toks[i+1].kind != tokPunct || toks[i+1].text != "(" {
-				continue
-			}
-			if i > 0 && toks[i-1].kind == tokPunct && toks[i-1].text == "." {
-				continue
-			}
-			return api.OnLoadResult{}, fmt.Errorf("%s:%d: %s", args.Path, lineOf(src, t.start), errDynamicImport)
+	// esbuild resolves an import("literal") through the resolver above; a computed import(expr) is never resolved (and
+	// one in code the bundle drops is never seen at all), so the source is read for it as well. A source the lexer cannot
+	// read is refused: the check fails closed.
+	toks, err := tokenize(src)
+	if err != nil {
+		off := 0
+		var le *lexError
+		if errors.As(err, &le) {
+			off = le.off
 		}
+		return api.OnLoadResult{}, fmt.Errorf("%s:%d: %v (the helper is read for dynamic import() before it is bundled)", args.Path, lineOf(src, off), err)
+	}
+	for i, t := range toks {
+		if t.kind != tokIdent || t.text != "import" || i+1 >= len(toks) || toks[i+1].kind != tokPunct || toks[i+1].text != "(" {
+			continue
+		}
+		if i > 0 && toks[i-1].kind == tokPunct && toks[i-1].text == "." {
+			continue
+		}
+		return api.OnLoadResult{}, fmt.Errorf("%s:%d: %s", args.Path, lineOf(src, t.start), errDynamicImport)
 	}
 	loader := api.LoaderJS
 	return api.OnLoadResult{Contents: &src, Loader: loader}, nil

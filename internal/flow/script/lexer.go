@@ -45,7 +45,7 @@ var regexPrecedingKeywords = map[string]bool{
 // regular expression literals, which is all the header and body checks need; it does not parse. A string,
 // template, comment or regular expression that does not end is an error.
 func tokenize(src string) ([]token, error) {
-	s := &scanner{src: src, closeRegex: map[int]bool{}}
+	s := &scanner{src: src, closeRegex: map[int]bool{}, fnExprParams: map[int]bool{}}
 	if err := s.run(0, 0, false); err != nil {
 		return nil, err
 	}
@@ -62,6 +62,18 @@ type scanner struct {
 	// expression (the end of a header or of a block) and not a division (the end of an operand).
 	parens, braces []bool
 	closeRegex     map[int]bool
+	// fnParams holds, for every parenthesis still open, whether it is the parameter list of a function expression;
+	// fnExprParams marks, by token index, the ) that closes one, so the { after it opens a body whose } ends an operand.
+	fnParams     []bool
+	fnExprParams map[int]bool
+	// classes are the class keywords whose body has not opened yet, with the bracket depth they stand at.
+	classes []pendingClass
+}
+
+// pendingClass is a class keyword waiting for its body: the { at its own bracket depth.
+type pendingClass struct {
+	expr           bool
+	parens, braces int
 }
 
 func isIdentStart(c byte) bool {
@@ -105,6 +117,69 @@ func (s *scanner) allowsRegexAfter(i, from int) bool {
 		return true
 	}
 	return false
+}
+
+// isExpression reports whether the function or class keyword at index i (after an optional async) begins an expression
+// and not a declaration. A declaration stands where a statement starts: at the start of the source, after ; { } or ),
+// after else, do, export or default, and after an operand on an earlier line (automatic semicolon insertion). Anything
+// else (an operator, an open bracket, a comma, return) expects an operand, so the keyword begins an expression.
+func (s *scanner) isExpression(i, from int, inSubst bool) bool {
+	k := i - 1
+	if k >= from && s.toks[k].kind == tokIdent && s.toks[k].text == "async" && !s.isProperty(k, from) {
+		k--
+	}
+	if k < from {
+		return inSubst
+	}
+	p := s.toks[k]
+	switch p.kind {
+	case tokPunct:
+		switch p.text {
+		case ";", "{", "}", ")":
+			return false
+		}
+		return true
+	case tokIdent:
+		if s.isProperty(k, from) {
+			return false
+		}
+		switch p.text {
+		case "else", "do", "export", "default":
+			return false
+		}
+		return regexPrecedingKeywords[p.text]
+	}
+	return false
+}
+
+// functionParams reports, for a ( at this point, whether it opens the parameter list of a function keyword ("function",
+// "function name", "function*", "function* name") and whether that function is an expression.
+func (s *scanner) functionParams(from int, inSubst bool) (isFn, expr bool) {
+	j := len(s.toks) - 1
+	if j >= from && s.toks[j].kind == tokIdent && s.toks[j].text != "function" {
+		j--
+	}
+	if j >= from && s.toks[j].kind == tokPunct && s.toks[j].text == "*" {
+		j--
+	}
+	if j < from || s.toks[j].kind != tokIdent || s.toks[j].text != "function" || s.isProperty(j, from) {
+		return false, false
+	}
+	return true, s.isExpression(j, from, inSubst)
+}
+
+// classKeyword reports whether the identifier class just scanned is the keyword (followed by a name, extends or its
+// body) and not an object key such as { class: 1 }.
+func (s *scanner) classKeyword(from int) bool {
+	n := len(s.toks) - 1
+	if s.isProperty(n, from) {
+		return false
+	}
+	i := s.pos
+	for i < len(s.src) && (s.src[i] == ' ' || s.src[i] == '\t' || s.src[i] == '\n' || s.src[i] == '\r') {
+		i++
+	}
+	return i < len(s.src) && (s.src[i] == '{' || isIdentStart(s.src[i]))
 }
 
 // prevAllowsRegex reports whether a slash at this point starts a regular expression.
@@ -215,6 +290,9 @@ func (s *scanner) run(from, startOff int, inSubst bool) error {
 				s.pos++
 			}
 			s.toks = append(s.toks, token{tokIdent, src[start:s.pos], start, s.pos})
+			if src[start:s.pos] == "class" && s.classKeyword(from) {
+				s.classes = append(s.classes, pendingClass{expr: s.isExpression(len(s.toks)-1, from, inSubst), parens: len(s.parens), braces: len(s.braces)})
+			}
 		case c >= '0' && c <= '9' || c == '.' && s.pos+1 < len(src) && src[s.pos+1] >= '0' && src[s.pos+1] <= '9':
 			start := s.pos
 			hex := c == '0' && s.pos+1 < len(src) && (src[s.pos+1] == 'x' || src[s.pos+1] == 'X')
@@ -237,14 +315,27 @@ func (s *scanner) run(from, startOff int, inSubst bool) error {
 				if n := len(s.toks); n-1 >= from && s.toks[n-1].kind == tokIdent && statementHeaders[s.toks[n-1].text] && !s.isProperty(n-1, from) {
 					header = true
 				}
+				isFn, expr := s.functionParams(from, inSubst)
 				s.parens = append(s.parens, header)
+				s.fnParams = append(s.fnParams, isFn && expr)
 			case ')':
 				if n := len(s.parens); n > 0 {
 					s.closeRegex[len(s.toks)] = s.parens[n-1]
+					s.fnExprParams[len(s.toks)] = s.fnParams[n-1]
 					s.parens = s.parens[:n-1]
+					s.fnParams = s.fnParams[:n-1]
 				}
 			case '{':
-				s.braces = append(s.braces, s.opensBlock(from, inSubst))
+				block := s.opensBlock(from, inSubst)
+				if n := len(s.toks); n-1 >= from && s.fnExprParams[n-1] {
+					// the body of a function expression: its } ends an operand
+					block = false
+				} else if k := len(s.classes); k > 0 && s.classes[k-1].parens == len(s.parens) && s.classes[k-1].braces == len(s.braces) {
+					// a class body: an expression's } ends an operand, a declaration's ends a statement
+					block = !s.classes[k-1].expr
+					s.classes = s.classes[:k-1]
+				}
+				s.braces = append(s.braces, block)
 			case '}':
 				if inSubst && len(s.braces) == base {
 					s.pos++
@@ -253,6 +344,10 @@ func (s *scanner) run(from, startOff int, inSubst bool) error {
 				if n := len(s.braces); n > 0 {
 					s.closeRegex[len(s.toks)] = s.braces[n-1]
 					s.braces = s.braces[:n-1]
+				}
+				// a class keyword that never reached its body (a stray word in a block that is now closed) is dropped
+				for k := len(s.classes); k > 0 && s.classes[k-1].braces > len(s.braces); k-- {
+					s.classes = s.classes[:k-1]
 				}
 			}
 			s.toks = append(s.toks, token{tokPunct, string(c), s.pos, s.pos + 1})
