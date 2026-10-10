@@ -3,6 +3,8 @@ package recall
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -281,6 +284,9 @@ func HandleSessionStart(status, cwd, src string, opts SessionStartOptions, deps 
 		switch result.Outcome {
 		case CwdContextHits:
 			parts = append(parts, result.Text)
+			if deps.Rendered != nil {
+				deps.Rendered(result.Refs)
+			}
 		case CwdContextUnavailable:
 			parts = append(parts, "Recall unavailable for this project — the index could not be read. Run `crw recall chat index --status` to inspect it.")
 		}
@@ -339,22 +345,23 @@ func RunHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	}
 }
 func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Writer, env host.LookupEnv, cwd string, sessionStart RecallHookSessionStart) (code int) {
+	deadline := recallHookDeadline(ctx, time.Now())
 	defer func() {
 		if recover() != nil {
 			code = 0
 		}
 	}()
-	data, err := io.ReadAll(in)
+	input := harness.ReadInput(in)
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
-	if err != nil {
+	if input.Failed() {
 		return 0
 	}
 	if env == nil {
 		env = os.LookupEnv
 	}
-	raw := source.DecodeUTF8(data)
+	raw := input.Raw
 	harness.RecordInvocation(raw, "recall", event, env)
 	if event != "user-prompt-submit" && text.Trim(raw) == "" {
 		raw = "{}"
@@ -365,6 +372,8 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 	}
 	p, _ := v.(map[string]any)
 	var answer string
+	var deps RecallContextDeps
+	var rendered []string
 	switch event {
 	case "user-prompt-submit":
 		inv, err := host.Invocation(env)
@@ -400,7 +409,11 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 			return 0
 		}
 		src, _ := p["source"].(string)
-		deps := DefaultRecallDeps(env)
+		deps = DefaultRecallDeps(env)
+		// Every wait of the history store, while the entries are chosen and when they are counted, ends
+		// with the hook's own time: a locked index cannot hold the hook past its timeout.
+		deps.OpenHitCounts = func() (HitCountStore, error) { return hookContextOpenSidecarHitCountsUntil(env, deadline), nil }
+		deps.Rendered = func(refs []string) { rendered = refs }
 		if invalidCwd {
 			// The oracle catches basename's type error before any context reader runs.
 			cwd = "invalid-cwd"
@@ -414,7 +427,74 @@ func recallHookRun(ctx context.Context, event string, in io.Reader, out io.Write
 		return harness.Interrupted
 	}
 	if answer != "" {
-		_, _ = io.WriteString(out, answer)
+		// The entries this answer carries are counted once it has been written. A write that failed
+		// shows nothing and counts nothing; one that succeeded is not proof the model read it, which
+		// the next start's ordinary repeat penalty already accepts.
+		if _, err := io.WriteString(out, answer); err == nil && len(rendered) > 0 {
+			recallHookCountHits(deps, rendered, deadline)
+		}
 	}
 	return 0
+}
+
+// recallHookCountHits raises the history of the rendered refs in one transaction, retrying a failed
+// attempt under the same event identity so that an attempt whose outcome is unknown cannot count twice.
+// A history that cannot be written changes nothing about the answer, which is already out.
+//
+// Counting is best effort inside two bounds: recallHookCountBudget from now, and hookDeadline, the end of
+// the hook's own time as the hook started it (zero: none). No attempt, the first included, starts once
+// the bound is passed, and a store that can limit its waits (hitCountLimiter) is held to the same bound,
+// so a write lock held by another process cannot carry the hook past its timeout.
+func recallHookCountHits(deps RecallContextDeps, refs []string, hookDeadline time.Time) {
+	if deps.OpenHitCounts == nil {
+		return
+	}
+	until := time.Now().Add(recallHookCountBudget)
+	if !hookDeadline.IsZero() && hookDeadline.Before(until) {
+		until = hookDeadline
+	}
+	if !time.Now().Before(until) {
+		return
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return
+	}
+	event := hex.EncodeToString(id[:])
+	store, err := deps.OpenHitCounts()
+	if err != nil || store == nil {
+		return
+	}
+	defer func() { _ = store.Close() }()
+	if limiter, ok := store.(hitCountLimiter); ok {
+		limiter.LimitTo(until)
+	}
+	for attempt := 0; attempt < 3 && time.Now().Before(until); attempt++ {
+		if store.Bump(event, refs) == nil {
+			return
+		}
+	}
+}
+
+// hitCountLimiter is implemented by a store whose waits can be held to a point in time.
+type hitCountLimiter interface{ LimitTo(until time.Time) }
+
+// recallHookCountBudget bounds the time the hook spends counting its rendered entries after the answer.
+var recallHookCountBudget = 2 * time.Second
+
+// recallHookTimeout is the timeout of the hook declarations in plugins/crw/wiring/hooks that run this
+// code (session-start and post-compact, 10 s); recallHookReserve is what is left to the process to exit.
+var (
+	recallHookTimeout = 10 * time.Second
+	recallHookReserve = 500 * time.Millisecond
+)
+
+// recallHookDeadline is the last moment the hook may still wait for anything: the host's timeout counted
+// from the start of the hook, or the context's own deadline when that is earlier, less the reserve.
+func recallHookDeadline(ctx context.Context, started time.Time) time.Time {
+	deadline := started.Add(recallHookTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	return deadline.Add(-recallHookReserve)
 }

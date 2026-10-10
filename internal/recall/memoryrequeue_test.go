@@ -72,6 +72,13 @@ func TestMemoryRequeueOracle(t *testing.T) {
 			home := memoryStatusHome(t, memoryStatusOracle{SQL: c.SQL, Newer: c.Newer, Mode: c.Mode})
 			before := memoryStatusFiles(t, home)
 			r := RequeueExhaustedMemoryJobs(home, requeueOracleOptions(t, c.Options))
+			if c.Mode == "directory" {
+				// port: fixed (docs/port-cxc/known-defects/CRW-1123.md): a directory named like the store is no store.
+				if r.State != MemoryStatusUnavailable || r.StorePath != nil || r.Applied || r.Detail != "no memories store found under "+home {
+					t.Fatalf("a directory is no memories store: %+v", r)
+				}
+				return
+			}
 			got, err := json.Marshal(r)
 			if err != nil {
 				t.Fatal(err)

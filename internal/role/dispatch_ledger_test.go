@@ -209,7 +209,8 @@ func TestDispatchLedgerStoredValidation(t *testing.T) {
 		{"candidates", "candidates", func(d, a map[string]any) { d["candidates"] = []any{} }},
 		{"attempts", "attempts", func(d, a map[string]any) { d["attempts"] = nil }},
 		{"dispatch status", "dispatch status", func(d, a map[string]any) { d["status"] = "bogus" }},
-		{"status coercion error", "Cannot convert object to primitive value", func(d, a map[string]any) { d["status"] = map[string]any{"toString": nil} }},
+		// CRW-1127: a status is a literal enum string; the oracle's String() coercion and its TypeError are gone.
+		{"status coercion error", "invalid dispatch status", func(d, a map[string]any) { d["status"] = map[string]any{"toString": nil} }},
 		{"attempt id", "attemptId", func(d, a map[string]any) { a["id"] = "../escape" }},
 		{"missing model", "stored model", func(d, a map[string]any) { delete(a["candidate"].(map[string]any), "model") }},
 		{"missing effort", "stored effort", func(d, a map[string]any) { delete(a["candidate"].(map[string]any), "effort") }},
@@ -293,8 +294,12 @@ func TestDispatchLedgerOracle(t *testing.T) {
 	if len(corpus.Cases) != 57 {
 		t.Fatalf("recorded cases = %d", len(corpus.Cases))
 	}
+	// Recorded cases CRW-1127 changed on purpose: the oracle validates String(status), so a singleton array passes; the port
+	// accepts only a literal enum string. From the edit on, every step is that refusal and the record is not rewritten.
+	changed := map[string]string{"coerced dispatch status": "invalid dispatch status", "coerced attempt status": "invalid attempt status"}
 	for _, c := range corpus.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			edited := false
 			env, dir := home(t)
 			ws := t.TempDir()
 			writeStore(t, dir, `{"roles":{"`+string(c.Role)+`":{"mode":"model","model":"xai/grok-4.6","effort":"high","fallback":{"model":"cursor/grok-4.6","effort":null}}}}`)
@@ -342,7 +347,11 @@ func TestDispatchLedgerOracle(t *testing.T) {
 						d["candidates"].([]any)[0].(map[string]any)["foreign"] = "root-candidate-extra"
 					}
 					check(t, os.WriteFile(file, must(Stringify(d, "")), 0o600))
+					edited = true
 					continue
+				}
+				if edited && changed[c.Name] != "" {
+					step.Error = changed[c.Name]
 				}
 				input := map[string]any{"sessionId": "session-test", "dispatchId": "task-test"}
 				for k, v := range step.Input {
@@ -376,6 +385,9 @@ func TestDispatchLedgerOracle(t *testing.T) {
 				if !reflect.DeepEqual(value, step.Want) {
 					t.Fatalf("step %d:\ngot %s\nwant %s", i, must(Stringify(value, "")), must(Stringify(step.Want, "")))
 				}
+			}
+			if changed[c.Name] != "" {
+				return
 			}
 			var ledger any
 			check(t, json.Unmarshal(must(os.ReadFile(file)), &ledger))

@@ -5,6 +5,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -20,6 +21,7 @@ import (
 // MemoryWriteAttempt says why a PreToolUse call counts as a memory write.
 type MemoryWriteAttempt struct {
 	Surface string // "tool", "edit" or "shell"; empty when the call is no memory write
+	Cause   string // empty: confirmed protected write; otherwise a bounded reason code
 	Target  string // the destination that triggered the judgement, as the deny reason names it
 }
 
@@ -47,7 +49,8 @@ func memoryGateHandle(raw string, env host.LookupEnv, write func(string, state.S
 	if attempt.Surface == "" {
 		return ""
 	}
-	reason := memoryGateReason(attempt, sid, cwd)
+	leaf := p["agent_id"] != nil || p["agent_type"] != nil
+	reason := memoryGateReasonFor(attempt, sid, cwd, leaf)
 	// With no cwd or no session id there is no state to consult, and a write nobody can prove was asked for is what the gate
 	// stops; this deny is not the fail-open exception, which covers a crash.
 	if cwd != "" && sid != "" {
@@ -55,31 +58,83 @@ func memoryGateHandle(raw string, env host.LookupEnv, write func(string, state.S
 		if allowed {
 			return ""
 		}
-		reason += note
+		if note != "" {
+			reason = memoryGateReasonFor(MemoryWriteAttempt{Cause: "authorization-state"}, sid, cwd, leaf)
+		}
 	}
 	return editAnswer("deny", reason, reason)
 }
 
 func memoryGateReason(a MemoryWriteAttempt, sid, cwd string) string {
-	what := "a file under the Codex memories directory (" + a.Target + ")"
-	if a.Surface == "tool" {
-		what = "a memory note (" + a.Target + ")"
+	return memoryGateReasonFor(a, sid, cwd, false)
+}
+
+func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) string {
+	prefix := "[crw MEMORY-WRITE-GATE] "
+	recovery := "Run a readable script file."
+	if leaf {
+		recovery = "Report the blocked command and cause code to your parent."
 	}
-	where := cwd
-	if where == "" {
-		where = "the session working directory"
+	switch a.Cause {
+	case "unknown-destination":
+		// A general command is not a request to write memory, so it gets no grant route. An edit tool call is a write
+		// request whose destination could not be resolved, so the parent keeps the one-write grant route (CRW-1157).
+		if a.Surface == "edit" && !leaf {
+			return memoryGateUnknownEditReason(prefix, sid, cwd)
+		}
+		return prefix + "Cannot verify the program's write destination (unknown-destination). " + recovery
+	case "unreadable-program":
+		return prefix + "Cannot read the command or its program (unreadable-program); a protected write has not been established. " + recovery
+	case "authorization-state":
+		return prefix + "Cannot spend the authorization (authorization-state): session state is locked, unwritable or cannot be preserved. " + "Report this state failure to the parent or session owner; retry after state repair."
+	}
+	what := "a file under the Codex memories directory (" + memoryGateLabelLimit(a.Target, 190) + ")"
+	if a.Surface == "tool" {
+		what = "a memory note (" + memoryGateLabelLimit(a.Target, 190) + ")"
+	}
+	reason := prefix + "Blocked a write of " + what + ": MEMORY-WRITE-GATE-01 requires an explicit user request. "
+	if leaf {
+		return reason + "Report the protected write to your parent; the parent must resolve authorization."
 	}
 	if sid == "" {
 		sid = "<id>"
 	}
-	return strings.Join([]string{
-		"[crw MEMORY-WRITE-GATE] Blocked a write of " + what + ": this session has no explicit user request to remember anything.",
-		"Memory notes outlive crw and reach every later session, so they are written only when the user asks.",
-		"Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write),",
-		"or record an explicit grant with `crw pabcd memory allow-write --session " + sid + "` from " + where + ".",
-		"The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook.",
-		"If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
-	}, " ")
+	if cwd == "" {
+		cwd = "the session working directory"
+	}
+	stem := reason + "Ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
+	suffix := ". The grant is stored per cwd and permits one write."
+	budget := min(190, 700-len(stem)-len(suffix)-3)
+	return stem + memoryGateLabelLimit(cwd, budget) + suffix
+}
+
+func memoryGateUnknownEditReason(prefix, sid, cwd string) string {
+	if sid == "" {
+		sid = "<id>"
+	}
+	if cwd == "" {
+		cwd = "the session working directory"
+	}
+	stem := prefix + "Cannot verify the write destination of this edit (unknown-destination); use an absolute path. If it is a memory note, ask the user to confirm (remember this), or use `crw pabcd memory allow-write --session " + memoryGateLabel(sid) + "` from "
+	suffix := ". The grant is stored per cwd and permits one write."
+	budget := min(190, 700-len(stem)-len(suffix)-3)
+	return stem + memoryGateLabelLimit(cwd, budget) + suffix
+}
+
+func memoryGateLabel(s string) string { return memoryGateLabelLimit(s, 100) }
+
+func memoryGateLabelLimit(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	head, tail := limit/2, len(s)-limit/2
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head--
+	}
+	for tail < len(s) && !utf8.RuneStart(s[tail]) {
+		tail++
+	}
+	return s[:head] + "..." + s[tail:]
 }
 
 // memoryGateSpend names the authorization the state holds for this turn: the CLI grant first, then the marker. A marker that
@@ -151,6 +206,10 @@ func memoryGateRewritable(file string, s state.State) bool {
 
 // memoryGateClassify is classifyMemoryWrite with the protected root worked out from env.
 func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) MemoryWriteAttempt {
+	return memoryGateClassifyUsing(tool, input, cwd, env, newMemoryShellAnalysis)
+}
+
+func memoryGateClassifyUsing(tool string, input any, cwd string, env host.LookupEnv, analyses func(string, string, host.LookupEnv) *memoryShellAnalysis) MemoryWriteAttempt {
 	g := newMemoryGateEnv(env)
 	root, ok := g.root()
 	if !ok {
@@ -176,7 +235,7 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		dir := shellirPayloadCwd(cwd)
 		for _, candidate := range candidates {
 			if dir == "" && !path.IsAbs(candidate) {
-				return MemoryWriteAttempt{Surface: "edit", Target: "(a destination the gate cannot read)"}
+				return MemoryWriteAttempt{Surface: "edit", Cause: "unknown-destination", Target: "(a destination the gate cannot read)"}
 			}
 			if target, ok := g.hit(candidate, dir, root); ok {
 				return MemoryWriteAttempt{Surface: "edit", Target: target}
@@ -187,10 +246,12 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		// perl and ruby -i operands are the write surface (ShellWriteDestinations).
 		command, _ := record["command"].(string)
 		dir := shellirPayloadCwd(cwd)
-		if dests, readable := shellIRWriteDestsResolved(command, dir, env); readable {
+		a := analyses(command, dir, env)
+		if res, err := a.withEnv(); err == nil {
+			dests := shellIRDestsResult(res, dir, env, true, 0, nil)
 			for _, token := range dests {
 				if token == shellIRUnknownDest {
-					return MemoryWriteAttempt{Surface: "shell", Target: "(a destination the gate cannot read)"}
+					return MemoryWriteAttempt{Surface: "shell", Cause: "unknown-destination", Target: "(a destination the gate cannot read)"}
 				}
 				if target, ok := g.hit(token, dir, root); ok {
 					return MemoryWriteAttempt{Surface: "shell", Target: target}
@@ -199,14 +260,20 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		}
 		// A Python program the reader cannot finish - an f-string replacement field it cannot walk - may hold a write
 		// it never sees, so it is a write attempt of its own and the gate fails closed (CRW-741).
-		if what, ok := shellIRFStringUnreadable(command); ok {
-			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		if _, ok := shellIRFStringResult(a.withEnv()); ok {
+			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
+		}
+		if _, ok := shellIRFStringResult(a.withoutEnv()); ok {
+			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
+		}
+		if _, ok := shellIRFStringResult(a.withoutDir()); ok {
+			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
 		}
 		// A shell program position the outer shell builds at run time - a -c program, an eval operand, a source
 		// operand, a shell reading a pipe, a here-string or a here-document - may hold a write the destination reader
 		// never sees, so it is a write attempt of its own and the gate fails closed (CRW-726, beside CRW-741's check).
-		if !memoryGateShellReadable(command, dir, env) {
-			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: the command reader refused it)"}
+		if !a.readable() {
+			return MemoryWriteAttempt{Surface: "shell", Cause: "unreadable-program", Target: "(a program the gate cannot read: unsupported-program)"}
 		}
 	}
 	return MemoryWriteAttempt{}

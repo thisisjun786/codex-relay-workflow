@@ -11,19 +11,34 @@ const MaxStdinBytes = 4 * 1024 * 1024
 
 const oversizedReason = "[crw] hook input exceeded 4194304 bytes; refusing to bypass policy enforcement"
 
+// Input distinguishes transport failure from successful empty or malformed input.
+// Failed reads discard even a valid prefix; no caller may dispatch it.
+type Input struct {
+	Raw      string
+	Overflow bool
+	Err      error
+}
+
+func ReadInput(in io.Reader) Input {
+	b, err := io.ReadAll(io.LimitReader(in, MaxStdinBytes+1))
+	if len(b) > MaxStdinBytes {
+		return Input{Overflow: true, Err: err}
+	}
+	if err != nil {
+		return Input{Err: err}
+	}
+	return Input{Raw: utf8Text(b)}
+}
+
+func (in Input) Failed() bool { return in.Overflow || in.Err != nil }
+
 // ReadStdin reads a hook's input, at most MaxStdinBytes of it: one byte more is an overflow and the
 // input is dropped, and a read that fails reads as empty input, whatever it had returned before
 // (cli.ts readStdin). The input is text as Buffer.toString("utf8") makes it (utf8Text), so a limit on
 // its byte length counts each U+FFFD as three bytes.
 func ReadStdin(in io.Reader) (raw string, overflow bool) {
-	b, err := io.ReadAll(io.LimitReader(in, MaxStdinBytes+1))
-	if err != nil {
-		return "", false
-	}
-	if len(b) > MaxStdinBytes {
-		return "", true
-	}
-	return utf8Text(b), false
+	input := ReadInput(in)
+	return input.Raw, input.Overflow
 }
 
 // utf8Text is Buffer.toString("utf8"): bytes that are not UTF-8 become U+FFFD, one for each maximal
@@ -82,16 +97,20 @@ func utf8Text(b []byte) string {
 	return out.String()
 }
 
-// OversizedHookOutput is what a leg of this slug answers to an input over MaxStdinBytes: a PreToolUse
-// deny for any slug that starts with pre-tool-use, a block for stop and subagent-stop, and nothing for
-// the rest (cli.ts:101-117). A slug that answers nothing leaves the process to exit 1, so the guard
-// whose slug does not start with pre-tool-use (worktree-guard-pretool) is not a deny.
-func OversizedHookOutput(slug string) string {
-	switch {
-	case strings.HasPrefix(slug, "pre-tool-use"):
-		return `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"` + oversizedReason + `","additionalContext":"` + oversizedReason + `"}}` + "\n"
-	case slug == "stop" || slug == "subagent-stop":
-		return `{"decision":"block","reason":"` + oversizedReason + `"}` + "\n"
+// InputFailureOutput uses registration policy, never a handler's recording slug.
+func (l Leg) InputFailureOutput(in Input) string {
+	reason := oversizedReason
+	if !in.Overflow {
+		reason = "[crw] hook input could not be read; refusing to bypass policy enforcement"
+	}
+	switch l.InputFailure {
+	case InputDeny:
+		return `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"` + reason + `","additionalContext":"` + reason + `"}}` + "\n"
+	case InputBlock:
+		if !in.Overflow {
+			return ""
+		}
+		return `{"decision":"block","reason":"` + reason + `"}` + "\n"
 	}
 	return ""
 }

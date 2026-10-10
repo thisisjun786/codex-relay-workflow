@@ -76,7 +76,7 @@ func componentHooks() []componentHook {
 				defer githubPostGuardReaderDone()
 				raw, over, ok := pabcdhook.GitHubPostInput(in)
 				if !ok {
-					done <- ""
+					done <- pabcdhook.GitHubPostCancelledAnswer()
 					return
 				}
 				// Input that arrives once the leg has been cancelled finds a leg that already answered the deny: nothing is recorded

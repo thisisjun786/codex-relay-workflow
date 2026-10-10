@@ -269,14 +269,27 @@ func TestHarnessRunDoctorRecorded(t *testing.T) {
 			if report.SchemaVersion != HarnessSchemaVersion {
 				t.Errorf("schemaVersion = %d, want %d", report.SchemaVersion, HarnessSchemaVersion)
 			}
-			if got := string(report.Overall); got != recorded.Overall {
-				t.Errorf("overall = %q, want %q", got, recorded.Overall)
+			// The one row the port changes (CRW-1152, port: fixed): the oracle passed a hooks member of the
+			// wrong type over, the port fails the hooks check and names the member, so the report fails.
+			// Every other row, the check count and order, the repairs and the metadata stay the oracle's.
+			wantOverall := recorded.Overall
+			if recorded.Name == "manifest_hooks_not_an_array" {
+				wantOverall = string(HarnessFail)
+			}
+			if got := string(report.Overall); got != wantOverall {
+				t.Errorf("overall = %q, want %q", got, wantOverall)
 			}
 			if len(report.Checks) != len(recorded.Checks) {
 				t.Fatalf("checks = %d, want %d: %+v", len(report.Checks), len(recorded.Checks), report.Checks)
 			}
 			for i, want := range recorded.Checks {
 				got := report.Checks[i]
+				if recorded.Name == "manifest_hooks_not_an_array" && want.Name == "hooks" {
+					if got.Name != "hooks" || got.Severity != HarnessFail || got.Evidence != "manifest hooks must be an array of hook file paths: nope" || got.Repair != nil {
+						t.Errorf("check %d = %+v, want the hooks type FAIL", i, got)
+					}
+					continue
+				}
 				if got.Name != want.Name || string(got.Severity) != want.Severity {
 					t.Errorf("check %d = %s/%s, want %s/%s", i, got.Name, got.Severity, want.Name, want.Severity)
 					continue
@@ -463,10 +476,10 @@ func TestHarnessRunExecTimeoutIsDriftKilled(t *testing.T) {
 	}
 }
 
-// TestHarnessRunDoctorRecoversCheckPanics is predecessor note 1: the CLI boundary turns the panic
-// HarnessPabcdCheck throws where the oracle throws outside every catch into the same failure
-// output and exit code cli.ts's catch gives.
-func TestHarnessRunDoctorRecoversCheckPanics(t *testing.T) {
+// TestHarnessRunDoctorKeepsTheReportOfAnUnreadableSessionsDirectory: the readdirSync failure the
+// oracle throws outside every catch (cli.ts catch: stderr, exit 1, nothing on stdout) is the
+// pabcd-state check's skipped WARN here, and the report holds the other checks (CRW-1152).
+func TestHarnessRunDoctorKeepsTheReportOfAnUnreadableSessionsDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	sessions := filepath.Join(tmp, ".crw", "sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {
@@ -486,13 +499,13 @@ func TestHarnessRunDoctorRecoversCheckPanics(t *testing.T) {
 	env := harnessRunEnv(map[string]string{"PLUGIN_ROOT": tmp})
 	code := RunHarnessDoctorCLI([]string{"--json"}, &stdout, &stderr, env, func() (string, error) { return tmp, nil }, harnessRunStub(nil, ""), time.Now())
 	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
+		t.Fatalf("exit = %d, want 1 (the empty payload fails its manifest)", code)
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("stdout = %q, want empty", stdout.String())
+	if !strings.Contains(stdout.String(), `"schemaVersion": 1`) || !strings.Contains(stdout.String(), `"name": "pabcd-state"`) || !strings.Contains(stdout.String(), "check skipped: EACCES") {
+		t.Errorf("stdout = %q, want the report with the skipped pabcd-state check", stdout.String())
 	}
-	if !strings.HasPrefix(stderr.String(), "crw-ops error: ") || !strings.HasSuffix(stderr.String(), "\n") {
-		t.Errorf("stderr = %q, want the cli.ts catch text", stderr.String())
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
 }
 

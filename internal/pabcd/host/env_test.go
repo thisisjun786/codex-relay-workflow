@@ -54,11 +54,11 @@ func TestCRWHome(t *testing.T) {
 }
 
 // CRW_BIN overrides, trimmed; otherwise the command is the runtime pointer's crw, an absolute path
-// in double quotes as the oracle quotes its dispatcher. The destination <home>/.local/share/crw-runtime
+// as one single-quoted shell word (CRW-1138; the oracle double-quoted it without escaping). The destination <home>/.local/share/crw-runtime
 // is also spelled in internal/runtime/install/cli.go:245 and internal/runtime/doctor/doctor.go:93.
 func TestInvocation(t *testing.T) {
 	command := func(home string) string {
-		return `"` + filepath.Join(pointer.Path(filepath.Join(home, ".local", "share", "crw-runtime")), "bin", "crw") + `"`
+		return ShellWord(filepath.Join(pointer.Path(filepath.Join(home, ".local", "share", "crw-runtime")), "bin", "crw"))
 	}
 	passwd := func() (string, error) { return "/home/account", nil }
 	for _, c := range []struct {
@@ -78,7 +78,12 @@ func TestInvocation(t *testing.T) {
 			t.Errorf("no absolute home, yet %q", got)
 		}
 	}
-	if got, err := Invocation(envOf(map[string]string{"HOME": "/home/u"})); err != nil || got != command("/home/u") {
+	if got, err := Invocation(envOf(map[string]string{"HOME": "/home/u"})); err != nil || got != command("/home/u") || got != "'/home/u/.local/share/crw-runtime/current/bin/crw'" {
 		t.Errorf("Invocation: %q, %v", got, err)
+	}
+	for in, want := range map[string]string{"/a": "'/a'", "/it's": `'/it'\''s'`, "/a`b": `'/a'"$(printf '\140')"'b'`, "`": `''"$(printf '\140')"''`, `/$x"\`: `'/$x"\'`} {
+		if got := ShellWord(in); got != want {
+			t.Errorf("ShellWord(%q) = %s, want %s", in, got, want)
+		}
 	}
 }

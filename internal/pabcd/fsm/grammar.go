@@ -12,7 +12,9 @@ import (
 type OrchestrateVerb string
 
 // The verbs of VERB_TOKENS. VerbConstructor is not a verb of the grammar: the oracle looks the lower-cased token up in a plain
-// object, so the inherited key "constructor" answers with Object, a function, where the other tokens answer with a string.
+// object, so the inherited key "constructor" answers with Object, a function, where the other tokens answer with a string. The
+// port's parser no longer answers it (CRW-1109): "constructor" is an unknown verb like any other. The value stays for a Go caller
+// that hands ApplyHumanTransition such a verb directly.
 const (
 	VerbI           OrchestrateVerb = "I"
 	VerbP           OrchestrateVerb = "P"
@@ -27,12 +29,19 @@ const (
 
 // OrchestrateCommand is one parsed chat command. RawAttest is the brace-balanced text after --attest, nil when there is none (or
 // no balanced object); Attest is its coercion, nil when absent or malformed; AttestError says why it is nil, and is empty otherwise.
+// FormError (CRW-1109) is set for a line that is a recognized command whose form is broken - its --attest text holds a CR, U+2028
+// or U+2029, which the one-line command grammar does not allow; the oracle reads such a line as ordinary chat. Verb is set then
+// too, and nothing else.
 type OrchestrateCommand struct {
 	Verb        OrchestrateVerb
 	RawAttest   *string
 	Attest      *attest.Attestation
 	AttestError string
+	FormError   string
 }
+
+// ErrCommandSeparator is the FormError of a command whose --attest text holds a line or paragraph separator.
+const ErrCommandSeparator = "the command's --attest text holds a carriage return, U+2028 or U+2029; a chat command is one line - write the JSON on one line, escaping any such character inside a string (\\r, \\u2028, \\u2029)"
 
 const (
 	word          = "orchestrate"
@@ -52,9 +61,11 @@ func verbToken(token string) (OrchestrateVerb, bool) {
 	switch lower := strings.ToLower(token); lower {
 	case "i", "p", "a", "b", "c", "d":
 		return OrchestrateVerb(strings.ToUpper(lower)), true
-	case "status", "reset", "constructor":
+	case "status", "reset":
 		return OrchestrateVerb(lower), true
 	}
+	// The oracle's plain-object lookup also answers "constructor" (with the function Object); the port answers only the
+	// documented verbs, so that token is no command, like any other unknown one (CRW-1109).
 	return "", false
 }
 
@@ -76,26 +87,27 @@ func stripPrefix(s string) string {
 
 // scanCommand is COMMAND = /^orchestrate\s+([A-Za-z]+)\s*(.*)$/i. The /i of a non-unicode expression folds ASCII only (U+017F
 // and U+212A stay apart from s and k), and the dot stops at CR, LF, U+2028 and U+2029, so a rest holding one of them after
-// the white space that follows the verb is no match. The rest it returns has no white space at either end: the line was trimmed.
-func scanCommand(s string) (token, rest string, ok bool) {
+// the white space that follows the verb is no match in the oracle; separator reports that case, which the caller judges
+// (CRW-1109). The rest it returns has no white space at either end: the line was trimmed.
+func scanCommand(s string) (token, rest string, separator, ok bool) {
 	for i := 0; i < len(word); i++ {
 		if i >= len(s) || s[i]|0x20 != word[i] {
-			return "", "", false
+			return "", "", false, false
 		}
 	}
 	body := strings.TrimLeftFunc(s[len(word):], isJSSpace)
 	if len(body) == len(s)-len(word) {
-		return "", "", false
+		return "", "", false, false
 	}
 	n := 0
 	for n < len(body) && isASCIILetter(body[n]) {
 		n++
 	}
 	rest = strings.TrimLeftFunc(body[n:], isJSSpace)
-	if n == 0 || strings.ContainsAny(rest, "\n\r\u2028\u2029") {
-		return "", "", false
+	if n == 0 {
+		return "", "", false, false
 	}
-	return body[:n], rest, true
+	return body[:n], rest, strings.ContainsAny(rest, "\n\r\u2028\u2029"), true
 }
 
 // startsAttest is /^--attest\s+\{/.
@@ -172,10 +184,21 @@ func parseAttestTail(rest string) (raw *string, att *attest.Attestation, errText
 // command is line-anchored: after trim and one optional prefix the line is "orchestrate <verb>", optionally followed by
 // "--attest {json}" and nothing else, so a verb buried in prose, or a line with anything after its JSON, is skipped and a later
 // line may still match. It never fails.
+//
+// One departure (CRW-1109): a line that would be a command but whose --attest text holds a CR, U+2028 or U+2029 - which the
+// oracle's expression does not match, so it reads the line as chat - is answered with the command and its FormError, so the
+// handler refuses it explicitly instead of letting a typed command pass silently as prose. A line that only mentions a command
+// in prose is still no command, and a separator written as a JSON escape is ordinary text.
 func ParseOrchestrateCommand(prompt string) *OrchestrateCommand {
 	for _, line := range text.SplitLines(prompt) {
-		token, rest, ok := scanCommand(stripPrefix(text.Trim(line)))
+		token, rest, separator, ok := scanCommand(stripPrefix(text.Trim(line)))
 		if !ok {
+			continue
+		}
+		if separator {
+			if verb, known := verbToken(token); known && startsAttest(rest) {
+				return &OrchestrateCommand{Verb: verb, FormError: ErrCommandSeparator}
+			}
 			continue
 		}
 		if verb, ok := verbToken(token); ok && (rest == "" || startsAttest(rest)) {

@@ -187,3 +187,61 @@ func TestSteeringBeforeWriteRunsOnceAsThePlanWriteBegins(t *testing.T) {
 		t.Fatalf("BeforeWrite ran for a duplicate: %d calls", calls)
 	}
 }
+
+// steeringRetryWithLostRows applies steeringPayloadDepsBatch with the plan's ledger unwritable and repairs the ledger, so a retry of
+// the same key owes the rows the first attempt lost. It answers the plan directory's state before the retry.
+func steeringRetryWithLostRows(t *testing.T) (cwd, slug string, before map[string]string) {
+	t.Helper()
+	cwd, slug = steeringApplyWorkspace(t)
+	dir := steeringApplyDir(t, cwd, slug)
+	ledger := filepath.Join(dir, GoalplanLedgerFile)
+	if err := os.Mkdir(ledger, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	steeringApply(t, cwd, slug, steeringPayloadDepsBatch(), nil, SteerResultApplied)
+	if err := os.Remove(ledger); err != nil {
+		t.Fatal(err)
+	}
+	return cwd, slug, steeringInterruptBytes(t, dir)
+}
+
+// Red on 3fceb240: a retry that owed rows checked the context before it scanned the ledger and never after, so an invocation ended
+// during the scan still wrote every missing row and then answered as an interrupted one.
+func TestSteeringRetryCancelledDuringTheScanWritesNothing(t *testing.T) {
+	cwd, slug, before := steeringRetryWithLostRows(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := ApplySteeringBatch(cwd, slug, steeringPayloadDepsBatch(), &SteeringBatchOptions{
+		Lock:      &GoalplanWriteLockOptions{Context: ctx},
+		afterScan: cancel,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled during the scan: %v, want context.Canceled", err)
+	}
+	steeringInterruptSame(t, before, steeringInterruptBytes(t, steeringApplyDir(t, cwd, slug)))
+}
+
+// Red on 3fceb240: the write-start callback never ran for a retry that records rows, so the caller took a retry that had written
+// for one that had not begun.
+func TestSteeringBeforeWriteRunsOnceForARetryThatRecordsRows(t *testing.T) {
+	cwd, slug, _ := steeringRetryWithLostRows(t)
+	calls, rowsAtCall := 0, -1
+	result, err := ApplySteeringBatch(cwd, slug, steeringPayloadDepsBatch(), &SteeringBatchOptions{BeforeWrite: func() {
+		calls++
+		rowsAtCall = len(steeringApplyRows(t, cwd, slug))
+	}})
+	if err != nil || result.Kind != SteerResultDuplicate || result.Warning != "" {
+		t.Fatalf("retry: %+v %v", result, err)
+	}
+	if calls != 1 || rowsAtCall != 0 {
+		t.Fatalf("BeforeWrite ran %d times with %d rows already written; want once, before the first row", calls, rowsAtCall)
+	}
+	if steered, deps := steeringPayloadCounts(t, cwd, slug); steered != 1 || deps != 2 {
+		t.Fatalf("rows after the retry: %d steered, %d dependency_registered", steered, deps)
+	}
+	// Everything is recorded now: a third call writes nothing and does not announce a write.
+	again := 0
+	if result, err = ApplySteeringBatch(cwd, slug, steeringPayloadDepsBatch(), &SteeringBatchOptions{BeforeWrite: func() { again++ }}); err != nil || result.Kind != SteerResultDuplicate || again != 0 {
+		t.Fatalf("third call: %+v %v (BeforeWrite %d times)", result, err, again)
+	}
+}

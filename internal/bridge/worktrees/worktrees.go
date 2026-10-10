@@ -11,7 +11,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
 var commitID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
@@ -33,19 +34,12 @@ type Inspection struct {
 	Clean              bool   `json:"clean"`
 }
 
+// git runs git in cwd under gitprobe's policy, which this package introduced and the session source binding
+// shares: every inherited GIT_* variable removed, no prompt, no hooks, no file system monitor, gitprobe.Timeout.
 func git(ctx context.Context, cwd string, args ...string) (string, error) {
-	bound, cancel := context.WithTimeout(ctx, 30*time.Second)
+	bound, cancel := context.WithTimeout(ctx, gitprobe.Timeout)
 	defer cancel()
-	prefix := []string{"--no-optional-locks", "--no-replace-objects", "-c", "core.hooksPath=" + os.DevNull, "-c", "submodule.recurse=false", "-c", "core.fsmonitor=false", "-C", cwd}
-	cmd := exec.CommandContext(bound, "git", append(prefix, args...)...)
-	cmd.WaitDelay = time.Second
-	env := []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1"}
-	for _, v := range os.Environ() {
-		if !strings.HasPrefix(v, "GIT_") {
-			env = append(env, v)
-		}
-	}
-	cmd.Env = env
+	cmd := gitprobe.Command(bound, cwd, nil, args...)
 	output, err := cmd.Output()
 	command := args
 	for len(command) >= 2 && command[0] == "-c" {

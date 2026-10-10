@@ -62,7 +62,7 @@ func TestCreatedArchivedNativeCreated(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, env, start, file := dispatchTestFixture(t)
 			env, db := createdArchivedHost(t, env, tc.parent, tc.source, tc.archived)
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			ledger, hostDB := must(os.ReadFile(file)), must(os.ReadFile(db))
 			input := createdCheckInput(start.AttemptID, "created")
 			input["agentId"] = tc.agent
@@ -94,7 +94,7 @@ func TestCreatedArchivedRecoveryThenClose(t *testing.T) {
 		t.Run(final, func(t *testing.T) {
 			ws, env, start, file := dispatchTestFixture(t)
 			env, _ = createdArchivedHost(t, env, "session-test", "", 1)
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
 			check(t, err)
 			input := createdCheckInput(start.AttemptID, final)
@@ -113,7 +113,7 @@ func TestCreatedArchivedRecoveryThenClose(t *testing.T) {
 	t.Run("created while live, closed after archive", func(t *testing.T) {
 		ws, env, start, file := dispatchTestFixture(t)
 		env, db := createdArchivedHost(t, env, "session-test", "", 0)
-		dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+		dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 		_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
 		check(t, err)
 		createdArchivedFlag(t, db, 1)
@@ -139,7 +139,7 @@ func TestCreatedArchivedAppServerParity(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			ws, env, start, file := dispatchTestFixture(t)
 			h := &createdCheckFake{reply: createdCheckReply("session-test", "subagent", tc.status)}
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, h)
 			check(t, err)
 			before := must(os.ReadFile(file))
@@ -167,7 +167,7 @@ func TestCreatedArchivedAppServerParity(t *testing.T) {
 func createdArchivedSession(t *testing.T, ws string, env host.LookupEnv, id string) string {
 	t.Helper()
 	start := dispatchTestCall(t, ws, env, map[string]any{"action": "start", "role": "executor", "dispatchId": id})
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "dispatchId": id, "attemptId": start.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "dispatchId": id, "attemptId": start.AttemptID})
 	return start.AttemptID
 }
 
@@ -231,7 +231,7 @@ func TestCreatedArchivedReplayAcrossAttempts(t *testing.T) {
 	if next.AttemptID == first || len(next.Attempts) != 2 {
 		t.Fatalf("no fallback attempt: %+v", next)
 	}
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "dispatchId": "task-one", "attemptId": next.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "dispatchId": "task-one", "attemptId": next.AttemptID})
 	before := must(os.ReadFile(createdArchivedRecord(ws, "task-one")))
 	_, err = CheckedDispatch(context.Background(), ws, createdArchivedReport("task-one", next.AttemptID, "child-a"), env, nil)
 	if err == nil || !strings.Contains(err.Error(), "agentId was already reported for dispatch task-one attempt "+first) {

@@ -193,7 +193,7 @@ bash -s arg <<< ':'
 --why Control for -s: -c wins over -s, the string is the program.
 bash -sc 'echo hi' safe.sh
 
-=== CRW-894-ev-39 | T
+=== CRW-894-ev-39 | B
 --why Control: without -s the operand is the script file and the pipe is data.
 --file safe.sh
 :
@@ -296,7 +296,7 @@ print(1)
 --cmd
 ./runner.py
 
-=== CRW-894-ev-52 | B | deviation=attempt/deny/deny
+=== CRW-894-ev-52 | B
 --why The issue's control: python3 -m json.tool in a pipe (d4).
 printf x | python3 -m json.tool
 
@@ -316,11 +316,11 @@ printf x | python3 -m json.tool --indent=2
 --why python3 -m json.tool with two flags reads JSON from the pipe.
 printf x | python3 -m json.tool --no-ensure-ascii --tab
 
-=== CRW-894-ev-57 | B | deviation=attempt/deny/deny
+=== CRW-894-ev-57 | B
 --why The module name attached to -m.
 printf x | python3 -mjson.tool
 
-=== CRW-894-ev-58 | B | deviation=attempt/deny/deny
+=== CRW-894-ev-58 | B
 --why Combined flags before -m.
 printf x | python3 -B -m json.tool
 
@@ -328,7 +328,7 @@ printf x | python3 -B -m json.tool
 --why A file operand of json.tool is a destination the reader does not model (it writes the second file): refused.
 printf x | python3 -m json.tool - {MEMORY}/a.md
 
-=== CRW-894-ev-60 | U
+=== CRW-894-ev-60 | B
 --why An input file operand of json.tool is refused with the same fail-closed rule.
 printf x | python3 -m json.tool in.json
 

@@ -93,7 +93,7 @@ func TestCacheThresholdRefreshAndZero(t *testing.T) {
 		refresh bool
 		ttl     *time.Duration
 		calls   int
-	}{{"within", time.Hour - time.Millisecond, false, nil, 0}, {"exact", time.Hour, false, nil, 1}, {"refresh", 0, true, nil, 1}, {"zero", 0, false, &zero, 1}, {"future", -time.Hour, false, nil, 0}} {
+	}{{"within", time.Hour - time.Millisecond, false, nil, 0}, {"exact", time.Hour, false, nil, 1}, {"refresh", 0, true, nil, 1}, {"zero", 0, false, &zero, 1}, {"future", -time.Hour, false, nil, 1}} {
 		t.Run(v.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeCache(t, dir, "old", now.Add(-v.age))
@@ -121,7 +121,7 @@ func TestCacheWriteFailureKeepsWholeFile(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("temp leftovers %v %v", entries, err)
 	}
-	if !strings.Contains(warning.String(), "network fetch failed for k") {
+	if !strings.Contains(warning.String(), "cache write failed for k") {
 		t.Fatal(warning.String())
 	}
 }

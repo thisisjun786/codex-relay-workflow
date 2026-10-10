@@ -632,7 +632,7 @@ func worktreeDelCorpusRows() []worktreeDelCorpusRow {
 		{"echo ${x:- #} ok", false},
 		{"echo \"$(true)\" '$(rm -rf ../repo)'", false},
 		{"echo \"$(true)\" \"$(rm -rf ../repo)\"", true},
-		{"cd /tmp; echo \"$(rm -rf ../repo)\"", false},
+		{"cd /tmp; echo \"$(rm -rf ../repo)\"", true}, // failed cd leaves an unproven directory
 		{"cd ..; echo \"$(rm -rf repo)\"", true},
 		{"bash -c 'echo large' 'rm -rf ../repo'", false},
 		{"bash -c 'echo OK; true' 'rm -rf ../repo'", false},

@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 )
 
 const (
@@ -44,7 +46,7 @@ const (
 
 // GitHubPostInput is the component row's whole input policy: the payload within the bound, read before the guard judges it
 // so the row can leave its invocation record first. over is a payload past the bound, which the guard refuses (see
-// GitHubPostJudge); ok is false when the read fails, which reads as empty input and is answered with silence.
+// GitHubPostJudge); ok is false when the read fails, which the guard refuses without observing or judging the partial input.
 func GitHubPostInput(in io.Reader) (raw string, over, ok bool) {
 	b, err := io.ReadAll(io.LimitReader(in, GitHubPostMaxStdinBytes+1))
 	if err != nil {
@@ -64,11 +66,11 @@ func GitHubPostJudge(raw string, over bool) string {
 	return HandleGitHubPostGuard(raw)
 }
 
-// GitHubPostAnswer is the guard's answer for the payload: the two steps above in one. A read that fails reads as empty input.
+// GitHubPostAnswer is the guard's answer for the payload: the two steps above in one. A read that fails is refused without judging partial input.
 func GitHubPostAnswer(in io.Reader) string {
 	raw, over, ok := GitHubPostInput(in)
 	if !ok {
-		return ""
+		return GitHubPostCancelledAnswer()
 	}
 	return GitHubPostJudge(raw, over)
 }
@@ -81,8 +83,30 @@ func GitHubPostCancelledAnswer() string {
 
 // githubPostDeny is the deny envelope: the rule, the place, and one way forward.
 func githubPostDeny(rule, place string) string {
-	reason := "GitHub post blocked (" + rule + ") at " + place +
-		": write the text to a file, check it, and pass it with --body-file, -F body=@file or --input"
+	reason := "GitHub post blocked (" + rule + ") at " + memoryGateLabel(place) +
+		": check the text in a regular file under TMPDIR, /tmp or /var/tmp, then use --body-file, -F body=@file or --input"
+	return editAnswer("deny", reason, reason)
+}
+
+// Diagnostics classify the refusal without changing the rule or decision.
+func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
+	if site.rule != githubPostRuleUnread {
+		return githubPostDeny(site.rule, site.place)
+	}
+	recovery := "Run a readable script file."
+	if p["agent_id"] != nil || p["agent_type"] != nil {
+		recovery = "Report the blocked command and cause code to your parent."
+	}
+	reason := "Cannot read the command or its program (unreadable-github-post); GitHub posting has not been established. " + recovery
+	if site.post {
+		reason = "GitHub post cannot be verified (unreadable-github-post) at " + memoryGateLabel(site.place) + ". " + recovery
+	}
+	if site.cause == "outside-temp-roots" {
+		reason = "GitHub body file is outside the allowed temp roots TMPDIR, /tmp or /var/tmp (unreadable-github-post). Move the checked text to a regular file under one of those roots."
+		if p["agent_id"] != nil || p["agent_type"] != nil {
+			reason = "GitHub body file is outside the allowed temp roots TMPDIR, /tmp or /var/tmp (unreadable-github-post). " + recovery
+		}
+	}
 	return editAnswer("deny", reason, reason)
 }
 
@@ -92,6 +116,8 @@ func githubPostDeny(rule, place string) string {
 type githubPostSite struct {
 	rule, place string
 	line        int
+	post        bool   // established by the execution that refused, including carried files
+	cause       string // bounded body-read cause; never reconstructed from the payload cwd
 }
 
 // githubPostArgv is tool_input's command or cmd as an already-split argv array.
@@ -135,7 +161,7 @@ func githubPostForm(words []string, cwd githubPostDir) (site githubPostSite, den
 	switch sub {
 	case "alias":
 		// An alias may expand to a post, so the guard never reads it.
-		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 	case "api":
 		return githubPostAPI(words[2:], cwd)
 	case "pr", "issue":
@@ -151,7 +177,7 @@ func githubPostForm(words []string, cwd githubPostDir) (site githubPostSite, den
 		default:
 			// Any other pr or issue subcommand may carry text (close --comment, merge --body or
 			// --subject, and the rest), so it is refused.
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 		}
 	case "release":
 		// The release read list, closed the way the pr and issue one is: only list, view and download
@@ -165,7 +191,7 @@ func githubPostForm(words []string, cwd githubPostDir) (site githubPostSite, den
 		case "list", "view", "download":
 			return githubPostSite{}, false, true
 		default:
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 		}
 	}
 	return githubPostSite{}, false, true // a known gh command that is not a post shape
@@ -180,32 +206,32 @@ func githubPostPost(args []string, cwd githubPostDir) (githubPostSite, bool, boo
 		case !strings.HasPrefix(w, "-"):
 			// a positional target: a number, a URL or a branch
 		case w == "--body" || w == "-b" || strings.HasPrefix(w, "--body="):
-			return githubPostSite{githubPostRuleInline, githubPostWhereCommand, 0}, true, true
+			return githubPostSite{rule: githubPostRuleInline, place: githubPostWhereCommand, line: 0}, true, true
 		case w == "--body-file" || w == "-F":
 			v, ok := githubPostNext(args, &i)
 			if !ok {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if v == "-" {
-				return githubPostSite{githubPostRuleInline, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleInline, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if fileSet {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			file, fileSet = v, true
 		case strings.HasPrefix(w, "--body-file="):
 			v := strings.TrimPrefix(w, "--body-file=")
 			if v == "-" {
-				return githubPostSite{githubPostRuleInline, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleInline, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if fileSet {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			file, fileSet = v, true
 		case githubPostValueName(w) != "":
 			name, value, attached := githubPostOptionValue(args, &i, w)
 			if !attached {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if name == "--title" || name == "-t" {
 				titles = append(titles, value)
@@ -218,24 +244,24 @@ func githubPostPost(args []string, cwd githubPostDir) (githubPostSite, bool, boo
 	}
 	for _, t := range titles {
 		if strings.Contains(t, githubPostUnknownMark) {
-			return githubPostSite{githubPostRuleExpand, githubPostWhereCommand, 0}, true, true
+			return githubPostSite{rule: githubPostRuleExpand, place: githubPostWhereCommand, line: 0}, true, true
 		}
 	}
 	for _, t := range titles {
 		if _, found := githubPostSecretLine(t); found {
-			return githubPostSite{githubPostRuleSecret, githubPostWhereTitle, 0}, true, true
+			return githubPostSite{rule: githubPostRuleSecret, place: githubPostWhereTitle, line: 0}, true, true
 		}
 	}
 	if fileSet {
 		if strings.Contains(file, githubPostUnknownMark) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 		}
 		content, ok := cwd.read(file)
 		if !ok {
-			return githubPostSite{githubPostRuleUnread, file, 0}, true, true
+			return cwd.unread(file), true, true
 		}
 		if line, found := githubPostRawSecretLine(content); found {
-			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line), 0}, true, true
+			return githubPostSite{rule: githubPostRuleSecret, place: file + ":" + strconv.Itoa(line), line: 0}, true, true
 		}
 	}
 	return githubPostSite{}, false, true
@@ -286,21 +312,7 @@ func githubPostJSONText(content string) (text string, ok bool) {
 // also has its strings split out at the quotes, brackets, commas and \n escapes, so a NAME=value shape inside a string is read as
 // it is in a line of its own. Nothing is decoded, and the line numbers are the raw ones.
 func githubPostRawSecretLine(content string) (int, bool) {
-	if line, found := githubPostSecretLine(content); found {
-		return line, true
-	}
-	if !json.Valid([]byte(content)) {
-		return 0, false
-	}
-	split := strings.NewReplacer("\"", "\n", "{", "\n", "}", "\n", "[", "\n", "]", "\n", ",", "\n", "\\n", "\n")
-	for i, line := range strings.Split(content, "\n") {
-		for _, part := range strings.Split(split.Replace(line), "\n") {
-			if name, ok := githubPostAssignment(part); ok && githubPostSecretName(name) {
-				return i + 1, true
-			}
-		}
-	}
-	return 0, false
+	return publishpolicy.RawSecretLine(content)
 }
 
 // githubPostAPI is form A2: gh api, with only the words the rule allows. At most one of -F body=@F,
@@ -340,10 +352,10 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 			}
 			// Standard input is not a file the guard can read: it is an inline body, as --body-file - is (A1).
 			if v == "-" {
-				return githubPostSite{githubPostRuleInline, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleInline, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if fileSet {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			file, fileSet = v, true
 			jsonBody = true
@@ -357,13 +369,13 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 				return githubPostSite{}, false, false
 			}
 			if strings.Contains(value, githubPostUnknownMark) {
-				return githubPostSite{githubPostRuleExpand, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleExpand, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if !strings.HasPrefix(value, "@") || value == "@-" {
-				return githubPostSite{githubPostRuleInline, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleInline, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			if fileSet {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			file, fileSet = strings.TrimPrefix(value, "@"), true
 		case w == "-f" || w == "--raw-field":
@@ -373,9 +385,9 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 			}
 			if name, _, found := strings.Cut(v, "="); found && name == "body" {
 				if strings.Contains(v, githubPostUnknownMark) {
-					return githubPostSite{githubPostRuleExpand, githubPostWhereCommand, 0}, true, true
+					return githubPostSite{rule: githubPostRuleExpand, place: githubPostWhereCommand, line: 0}, true, true
 				}
-				return githubPostSite{githubPostRuleInline, githubPostWhereCommand, 0}, true, true
+				return githubPostSite{rule: githubPostRuleInline, place: githubPostWhereCommand, line: 0}, true, true
 			}
 			return githubPostSite{}, false, false
 		case !strings.HasPrefix(w, "-"):
@@ -389,11 +401,11 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 	}
 	if fileSet {
 		if strings.Contains(file, githubPostUnknownMark) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 		}
 		content, ok := cwd.read(file)
 		if !ok {
-			return githubPostSite{githubPostRuleUnread, file, 0}, true, true
+			return cwd.unread(file), true, true
 		}
 		// --input is the request body and is JSON: a body that is not one JSON document is unreadable, and the scan reads its
 		// strings. A field file is posted as its raw text, so that text is scanned.
@@ -401,14 +413,14 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 		if jsonBody {
 			text, ok := githubPostJSONText(content)
 			if !ok {
-				return githubPostSite{githubPostRuleUnread, file, 0}, true, true
+				return cwd.unread(file), true, true
 			}
 			line, found = githubPostSecretLine(text)
 		} else {
 			line, found = githubPostRawSecretLine(content)
 		}
 		if found {
-			return githubPostSite{githubPostRuleSecret, file + ":" + strconv.Itoa(line), 0}, true, true
+			return githubPostSite{rule: githubPostRuleSecret, place: file + ":" + strconv.Itoa(line), line: 0}, true, true
 		}
 	}
 	return githubPostSite{}, false, true
@@ -475,7 +487,7 @@ func githubPostUnknownGh(words []string) (githubPostSite, bool) {
 	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || githubPostGhCommand(githubPostProgram(words[1])) {
 		return githubPostSite{}, false
 	}
-	return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+	return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
 }
 
 // githubPostGhCommand is the gh commands the guard knows, so a word outside the list is not a gh command
@@ -516,25 +528,38 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 }
 
 // githubPostReadFileAt is githubPostReadFile that also returns the path the file was opened by (links resolved).
-func githubPostReadFileAt(name, cwd string) (string, string, bool) {
+// githubPostBodyLocation owns both the containment decision and its diagnostic
+// cause. It resolves against the actual execution directory before reading.
+func githubPostBodyLocation(name, cwd string) (string, string) {
+	if name == "-" {
+		return "", "unreadable-body-file"
+	}
 	raw := name
 	if !filepath.IsAbs(raw) {
-		// A relative name needs a known directory; the hook's own process directory is never a stand-in for it.
-		if cwd == "" {
-			return "", "", false
+		if cwd == "" || cwd == githubPostNoDir {
+			return "", "unreadable-body-file"
 		}
 		raw = strings.TrimSuffix(cwd, "/") + "/" + raw
 	}
-	// The cleaned path is only a first filter. A .. after a link steps up from the link's target, not from the link's parent
-	// (failure class 5), so the path that is resolved and opened is the one as written.
-	path := filepath.Clean(raw)
-	// "-" is standard input, which the guard cannot read in the file it names.
-	if name == "-" || !githubPostUnderRoots(path) {
-		return "", "", false
+	if !githubPostUnderRoots(filepath.Clean(raw)) {
+		return "", "outside-temp-roots"
 	}
-	// The trusted root is judged on the file the path resolves to, so a link inside it cannot reach another file.
 	resolved, err := filepath.EvalSymlinks(raw)
-	if err != nil || !githubPostUnderRoots(resolved) {
+	if err != nil {
+		return "", "unreadable-body-file"
+	}
+	if !githubPostUnderRoots(resolved) {
+		return "", "outside-temp-roots"
+	}
+	return resolved, ""
+}
+func (d githubPostDir) unread(name string) githubPostSite {
+	_, cause := githubPostBodyLocation(name, d.path)
+	return githubPostSite{rule: githubPostRuleUnread, place: name, post: true, cause: cause}
+}
+func githubPostReadFileAt(name, cwd string) (string, string, bool) {
+	resolved, cause := githubPostBodyLocation(name, cwd)
+	if cause != "" {
 		return "", "", false
 	}
 	file, ok := githubPostRegularFile(resolved)

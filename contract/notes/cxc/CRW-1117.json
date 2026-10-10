@@ -1,0 +1,102 @@
+{
+  "issue": "CRW-1117",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli-help__subagents__dash_h",
+      "reason": "Claim handover from CRW-441, which renamed the help to crw's commands and the global-only store. The help now also names the dispatch command and its stdin form and says that a value starting with '-' is written --flag=value (CRW-1117).",
+      "set": {
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__dashdash_help",
+      "reason": "Claim handover from CRW-441, which renamed the help to crw's commands and the global-only store. The help now also names the dispatch command and its stdin form and says that a value starting with '-' is written --flag=value (CRW-1117).",
+      "set": {
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__dispatch_dashdash_help",
+      "reason": "Claim handover from CRW-530. dispatch --help now prints the dispatch usage (the stdin JSON form and one line per action) and exits 0 before stdin is read (CRW-1117); the oracle ignored argv and failed on the empty stdin.",
+      "set": {
+        "steps/0/stdout": "usage: crw role helper dispatch < request.json\nReads one JSON object (at most 64 KiB) on stdin and prints one JSON answer; a refusal prints {\"error\":...} and exits 1.\nIt records the managed fallback ledger of .crw/dispatches and never starts a model or a native call.\n\n  {\"action\":\"start\",\"sessionId\":\"<main-id>\",\"dispatchId\":\"<task-id>\",\"role\":\"<role>\"}\n  {\"action\":\"claim\",\"sessionId\":\"<main-id>\",\"dispatchId\":\"<task-id>\",\"attemptId\":\"<attempt-id>\"}\n  {\"action\":\"report\",\"outcome\":\"created\",\"sessionId\":\"<main-id>\",\"dispatchId\":\"<task-id>\",\"attemptId\":\"<attempt-id>\",\"agentId\":\"<child-id>\"}\n  {\"action\":\"report\",\"outcome\":\"complete|failed|task_failed|unavailable|stopped\", ...the ids, \"agentId\", \"executionState\", \"reconciliation\"...}\n  {\"action\":\"status\",\"sessionId\":\"<main-id>\",\"dispatchId\":\"<task-id>\"}\n\nThe protocol is the crw-pabcd skill's delegation reference (Configured first fallback).\n",
+        "exit": "0",
+        "steps/0/exit": "0",
+        "steps/0/form": "text"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__get_dashdash_help",
+      "reason": "Claim handover from CRW-441. --help after a verb is the helper's help, printed before the verb parses a role or flag and with nothing changed (CRW-1117); the oracle treated it as a role or registration argument and exited 1.",
+      "set": {
+        "exit": "0",
+        "steps/0/exit": "0",
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__list_dashdash_help",
+      "reason": "Claim handover from CRW-441. list --help is the helper's help (CRW-1117); the oracle ignored the trailing argument and listed the settings.",
+      "set": {
+        "steps/0/form": "text",
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": [
+        "calls/0"
+      ]
+    },
+    {
+      "id": "cli-help__subagents__register_dashdash_help",
+      "reason": "Claim handover from CRW-441. --help after a verb is the helper's help, printed before the verb parses a role or flag and with nothing changed (CRW-1117); the oracle treated it as a role or registration argument and exited 1.",
+      "set": {
+        "exit": "0",
+        "steps/0/exit": "0",
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__reset_dashdash_help",
+      "reason": "Claim handover from CRW-441. --help after a verb is the helper's help, printed before the verb parses a role or flag and with nothing changed (CRW-1117); the oracle treated it as a role or registration argument and exited 1.",
+      "set": {
+        "exit": "0",
+        "steps/0/exit": "0",
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__set_dashdash_help",
+      "reason": "Claim handover from CRW-441. --help after a verb is the helper's help, printed before the verb parses a role or flag and with nothing changed (CRW-1117); the oracle treated it as a role or registration argument and exited 1.",
+      "set": {
+        "exit": "0",
+        "steps/0/exit": "0",
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli-help__subagents__word_help",
+      "reason": "Claim handover from CRW-441, which renamed the help to crw's commands and the global-only store. The help now also names the dispatch command and its stdin form and says that a value starting with '-' is written --flag=value (CRW-1117).",
+      "set": {
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "cli__subagents__help",
+      "reason": "Claim handover from CRW-441, which renamed the help to crw's commands and the global-only store. The help now also names the dispatch command and its stdin form and says that a value starting with '-' is written --flag=value (CRW-1117).",
+      "set": {
+        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n",
+        "steps/1/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n",
+        "steps/2/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  crw role helper dispatch < request.json   managed fallback dispatch: one JSON request on stdin (crw role helper dispatch --help)\n  Settings use the global store; trailing --global is accepted for compatibility.\n  A flag value that starts with '-' is written --flag=value; --help or -h after any command shows this help.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
+      },
+      "remove": []
+    }
+  ]
+}

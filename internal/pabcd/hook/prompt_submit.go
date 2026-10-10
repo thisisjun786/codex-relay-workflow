@@ -29,6 +29,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 )
 
 // promptSubmitMaxInjectedTurns is MAX_INJECTED_TURNS (hook.ts:578): the cap on the session state's
@@ -85,6 +87,23 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	}
 	turn := p.TurnID
 
+	// CRW-1140 (port: fixed): a relay-managed thread whose PABCD work is in flight at its anchored
+	// root, prompted at another cwd, has no state of its own here: every write below (the memory
+	// marker, the Stop-budget stamp, the trigger bookkeeping) would publish an empty IDLE state
+	// beside the work, which SessionStart refused to create. Nothing is read or written at this cwd;
+	// the answer tells the agent where its state is. A prompt that may write (the memory marker,
+	// or any prompt with PABCD on) away from an anchored root holding nothing in flight moves the
+	// anchor here first, as SessionStart does, and writes nothing when the anchor cannot follow, so
+	// no state exists at a cwd the anchor does not track. A thread without an anchor is unaffected.
+	remember := DetectMemoryWriteRequest(p.Prompt)
+	judge := stateroot.Hold
+	if remember || p.PabcdEnabled {
+		judge = stateroot.Bootstrap
+	}
+	if refusal := judge(env, p.Cwd, p.SessionID); refusal != nil {
+		return sessionHookStateRootContext(refusal)
+	}
+
 	// MEMORY-WRITE-GATE-01 (260909 wp1-A): record the remember request BEFORE the turn guard and
 	// before every early return below. PreToolUse carries no prompt (codex-rs
 	// hooks/src/schema.rs:278-296), so this write is the only place the gate's evidence can come
@@ -98,16 +117,22 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// snapshot. A marker that cannot be persisted degrades to a deny the user can lift with
 	// `crw recall memory allow-write`; it must never break prompt handling, so a failed or
 	// refused write is dropped as the oracle's catch drops one.
-	if DetectMemoryWriteRequest(p.Prompt) {
+	if remember {
 		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			fresh.MemoryWriteRequested = true
 			fresh.MemoryWriteTurn = promptSubmitTurn(turn)
 			return true
 		})
 	}
+	// A user turn ends a compaction's recovery window (CRW-1090, compaction_recovery.go): the prompt this hook runs for is
+	// the boundary, whatever the transcript tail still shows.
+	compactionRecoveryEnd(p.Cwd, p.SessionID)
 	if !p.PabcdEnabled {
 		return ""
 	}
+	// The transcript is marked before the state is read: a compaction recorded after this point is a context
+	// generation the decision below was not made in (promptClaimInputs.holds).
+	mark := host.MarkTranscript(p.TranscriptPath)
 	current := state.ReadState(p.Cwd, p.SessionID)
 	if turn != "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTurnID == nil || *current.StopBlockTurnID != turn) {
 		// The turn is judged again on the state the lock found, so a participating writer that
@@ -193,13 +218,12 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	if !current.OrchestrationActive && loopArmRequested {
 		// 260714 wp3 (audit decision a): persist loopArmSeen OUTSIDE the turn guard - a turnless
 		// payload must not lose the flag; injectedTurns stays turn-guarded.
-		// The turn is appended only when the state the lock found does not already hold it: two
-		// concurrent invocations for one turn both pass the unlocked guard at hook.ts:691 and both
-		// answer the mandate, as the oracle's do, and the stored list then holds the turn once, as the
-		// oracle's does. A write that failed ends the hook in silence, as the oracle's own writeState
-		// throwing does (cli.ts's generic catch answers nothing); a write this port's rewrite guard
-		// skipped still answers the mandate, because the oracle has no such guard and would have
-		// written and answered there.
+		// The mandate is answered only when the lock that records it finds the turn unrecorded and the
+		// session still un-armed (CRW-1159): two concurrent invocations for one turn both pass the
+		// unlocked guard at hook.ts:691, and the oracle answered both. A write that failed ends the hook
+		// in silence, as the oracle's own writeState throwing does (cli.ts's generic catch answers
+		// nothing); a write this port's rewrite guard skipped still answers the mandate, because the
+		// oracle has no such guard and would have written and answered there.
 		//
 		// CRW-1084 (port: fixed): a loop request that names a project, or that a session registered as a project parent makes,
 		// is a scope choice before it is an implementation, and the answer is the short scope pointer, not the recipe. The
@@ -217,7 +241,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			role = promptSubmitRole(seams, p.Cwd, p.SessionID)
 		}
 		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role == PromptRoleParent || scope == LoopScopeProject)
-		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+		if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, promptClaimInputs{read: current}, func(fresh *state.State) bool {
 			if !pointer {
 				fresh.LoopArmSeen = true
 			}
@@ -226,7 +250,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 				fresh.InjectedTurns = promptSubmitAppendTurn(fresh.InjectedTurns, turn)
 			}
 			return !pointer || recorded
-		}) == promptSubmitFailed {
+		}) != promptClaimEmit {
 			return ""
 		}
 		parts := []string{ResolveCRWInDirective(LoopArmDirective(platform), env)}
@@ -241,7 +265,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 
 	// The oracle continues at hook.ts:755 with the trigger branch, the agbrowse-only branch and the
 	// passive pipeline, in prompt_trigger.go; it answers the context, which the harness wraps.
-	return promptTriggerHandle(p, env, lock, current, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
+	return promptTriggerHandle(p, env, lock, current, mark, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
 }
 
 // promptSubmitRole is the session's registry role, or unknown. The reader is a seam: PromptSubmitHandle holds none, and the
@@ -324,6 +348,8 @@ func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() er
 func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string, error) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
+		// CRW-1097: a ledger row an earlier writer of this session left pending is recorded first.
+		DrainSessionLedger(cwd, sessionID)
 		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
 		if unreadable || !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh) {
 			return nil
@@ -342,6 +368,120 @@ func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() err
 		return promptSubmitPublished, warning, nil
 	}
 	return promptSubmitFailed, "", err
+}
+
+// promptClaimOutcome is what an advisory answer's recording write found inside the session lock (CRW-1159).
+type promptClaimOutcome int
+
+const (
+	// promptClaimEmit: the decision held and the answer may go out. The change was written or published, or the
+	// port's rewrite guard skipped it (a state the reader cannot read or keep whole), where the oracle would have
+	// written and answered.
+	promptClaimEmit promptClaimOutcome = iota
+	// promptClaimDuplicate: the state the lock found already records the turn: another invocation answered it.
+	promptClaimDuplicate
+	// promptClaimStale: an input the answer was chosen from moved since the handler's unlocked read.
+	promptClaimStale
+	// promptClaimFailed: the session lock could not be taken, or the write failed before the rename.
+	promptClaimFailed
+)
+
+// promptClaimInputs is what an advisory answer was chosen from: the handler's unlocked read, whether the
+// injection cursor chose it (the passive modes), and the bound work phase a B directive names (work, when
+// checkWork is set: PhaseDirective names it only for B).
+type promptClaimInputs struct {
+	read      state.State
+	cursor    bool
+	checkWork bool
+	work      *DirectiveOptions
+	mark      host.TranscriptMark // the transcript before the read; with cursor, a compaction recorded since moves the context generation
+}
+
+// holds is whether fresh, the state the lock found, still chooses the same answer: the phase, the orchestration
+// flag and the binding, the injection cursor when it chose the answer (a PostCompact reset or another injection
+// moves it), and the bound goalplan's active work phase when the answer names it.
+func (in promptClaimInputs) holds(cwd string, fresh state.State) bool {
+	read := in.read
+	if fresh.Phase != read.Phase || fresh.OrchestrationActive != read.OrchestrationActive || fresh.Slug != read.Slug {
+		return false
+	}
+	if in.cursor && (!promptSamePhase(fresh.LastInjectedPhase, read.LastInjectedPhase) || in.mark.CompactedSince()) {
+		return false
+	}
+	return !in.checkWork || promptSameWork(ActiveWorkPhaseOpts(cwd, fresh.Slug), in.work)
+}
+
+func promptSamePhase(a, b *state.Phase) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func promptSameWork(a, b *DirectiveOptions) bool {
+	aw, bw := (*ActiveWorkPhase)(nil), (*ActiveWorkPhase)(nil)
+	if a != nil {
+		aw = a.ActiveWorkPhase
+	}
+	if b != nil {
+		bw = b.ActiveWorkPhase
+	}
+	return aw == nil && bw == nil || aw != nil && bw != nil && *aw == *bw
+}
+
+// promptSubmitClaim records an advisory answer and says whether it may go out. The oracle judged the turn and chose
+// the answer on a read before any lock (hook.ts:691), and its writes reported success whatever the state held, so two
+// invocations of one turn both answered, and a phase, binding or cursor that moved meanwhile got a stale directive and
+// an old cursor. Here the lock that records the answer reads the state again and the answer goes out only when that
+// read does not record the turn yet and still chooses the same answer (in.holds); change then lands on that read, under
+// promptSubmitWriteStateReason's rewrite guard. A turnless payload has no turn to find recorded; one that records nothing
+// is decided again by promptSubmitVerify instead.
+func promptSubmitClaim(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID, turn string, in promptClaimInputs, change func(*state.State) bool) promptClaimOutcome {
+	outcome := promptClaimEmit
+	err := lock(cwd, sessionID, func() error {
+		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
+		switch {
+		case unreadable:
+			return nil
+		case turn != "" && slices.Contains(fresh.InjectedTurns, turn):
+			outcome = promptClaimDuplicate
+			return nil
+		case !in.holds(cwd, fresh):
+			outcome = promptClaimStale
+			return nil
+		case !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh):
+			return nil
+		}
+		return state.WriteState(cwd, fresh)
+	})
+	if err != nil && !state.Published(err) {
+		return promptClaimFailed
+	}
+	return outcome
+}
+
+// promptSubmitVerify decides a turnless answer again without recording it (CRW-1159, fix round 2). A turnless payload has
+// no turn to record, and the oracle writes nothing for it, so neither does this; but its answer was chosen on the same
+// unlocked read as a turn's, so it goes out only when the state and the transcript as they stand still choose it
+// (in.holds). The check reads the state inside the session lock, after any locked transition (a phase move together with
+// its goalplan) has finished. A session that has no sessions directory has no state and no locked writer yet, so it is
+// read without the lock, and a turnless payload still leaves no file behind. A lock that cannot be taken answers nothing,
+// as for an answer that records; an unreadable state is not a moved one and answers, as promptSubmitClaim's.
+func promptSubmitVerify(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, in promptClaimInputs) promptClaimOutcome {
+	check := func() promptClaimOutcome {
+		if fresh, unreadable := state.ReadStateStrict(cwd, sessionID); !unreadable && !in.holds(cwd, fresh) {
+			return promptClaimStale
+		}
+		return promptClaimEmit
+	}
+	if _, err := os.Stat(filepath.Dir(state.StatePath(cwd, sessionID))); errors.Is(err, fs.ErrNotExist) {
+		return check()
+	}
+	outcome := promptClaimFailed
+	if err := lock(cwd, sessionID, func() error {
+		outcome = check()
+		return nil
+	}); err != nil {
+		return promptClaimFailed
+	}
+	return outcome
 }
 
 // promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores (the

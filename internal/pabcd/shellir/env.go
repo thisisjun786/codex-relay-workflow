@@ -36,6 +36,15 @@ func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
 	return analyze(src, st, nil)
 }
 
+// AnalyzeScriptProvenDirectory is AnalyzeScript with the same failed-cd
+// tracking as AnalyzeEnvProvenDirectory, for memory destinations in carried files.
+func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) {
+	st := newState(cwd)
+	st.cdpath = cdpath
+	st.proveCD = true
+	return analyze(src, st, nil)
+}
+
 // textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
 // a declaration may set it, and none of them is followed to its end, so the name in the text is enough.
 func textNamesCdpath(src string) bool {
@@ -52,6 +61,7 @@ func AnalyzeNoDir(src string) (Result, error) {
 }
 
 func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
+	w := &walker{}
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -67,7 +77,6 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	}
 	st.lookup = lookup
 	st.cdpath = st.cdpath || textNamesCdpath(src)
-	w := &walker{}
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err
 	}
