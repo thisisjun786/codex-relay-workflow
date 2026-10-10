@@ -113,7 +113,7 @@ func TestDispatchPinnedStoppedCloseRefusesSwap(t *testing.T) {
 	for _, swap := range []bool{true, false} {
 		t.Run(map[bool]string{true: "swap", false: "no swap"}[swap], func(t *testing.T) {
 			ws, env, start, file := dispatchTestFixture(t)
-			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+			dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			dispatchTestCall(t, ws, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"})
 			session, outside := filepath.Dir(file), dispatchPinnedOutside(t)
 			// The record the close would rewrite if it followed the link.

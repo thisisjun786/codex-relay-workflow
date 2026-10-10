@@ -1,0 +1,22 @@
+{
+  "issue": "CRW-1127",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__subagents__dispatch_created_complete",
+      "reason": "Claim handover from CRW-530. Created now requires the managed spawn issuance of the attempt before any host read (CRW-1127): the given attempt was claimed but never issued (spawnIssued false), so the report is refused with the issuance correction and nothing is written. Complete then refuses the unrecorded ID; status and claim remain reconcile, and the original compact given ledger is preserved. Refusal also preserves the given file mode instead of the oracle publication mode.",
+      "set": {
+        "steps/0/exit": "1",
+        "steps/0/stdout": "{\"error\":\"created requires this attempt's managed spawn issuance: spawn with the claimed marker so the spawn hook issues it; a child spawned without the hook is recorded only with reconciliation evidence, and it cannot satisfy independent review\"}",
+        "steps/1/exit": "1",
+        "steps/1/stdout": "{\"error\":\"complete requires the recorded agentId\"}",
+        "steps/2/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-1\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}]}",
+        "steps/3/stdout": "{\"action\":\"reconcile\",\"dispatchId\":\"one\",\"attemptId\":\"att-1\",\"independentReviewRequired\":false,\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"reason\":\"attempt already claimed; do not spawn again\"}",
+        "tree/ws/.crw/dispatches/rec-s1/one.json/content": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"status\":\"active\"}",
+        "tree/ws/.crw/dispatches/rec-s1/one.json/form": "json-line",
+        "tree/ws/.crw/dispatches/rec-s1/one.json/mode": "0644"
+      },
+      "remove": []
+    }
+  ]
+}
