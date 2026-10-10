@@ -137,8 +137,8 @@ func pyStatements(src string) []string {
 var importlibPlainAttrs = map[string]bool{"import_module": true, "reload": true, "invalidate_caches": true, "resources": true, "metadata": true, "__name__": true}
 
 var (
-	reLoaderPaths  = regexp.MustCompile(`\b(__path__|submodule_search_locations)\b`)
-	reSimpleCall   = regexp.MustCompile(`^\s*\(\s*(?:"[A-Za-z0-9_.]*"|'[A-Za-z0-9_.]*')\s*[,)]`)
+	reLoaderPaths = regexp.MustCompile(`\b(__path__|submodule_search_locations)\b`)
+	reSimpleCall  = regexp.MustCompile(`^\s*\(\s*(?:"[A-Za-z0-9_.]*"|'[A-Za-z0-9_.]*')\s*[,)]`)
 )
 
 // dynamicImportCall refuses __import__ and import_module (and the names the source gives them) with anything but one plain module name: a
