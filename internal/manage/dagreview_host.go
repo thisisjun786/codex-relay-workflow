@@ -73,9 +73,17 @@ type dagHostScope struct {
 // dagHostOffsetStore is where a caller-owned review keeps its refusal offsets. load returns the
 // offsets as the caller last saved them (none yet is an empty set, so a rollout is first seen and
 // its history is not replayed); save hands back the offsets the review ends with.
+//
+// pin is the first-sight boundary of a rollout the offsets do not hold yet: the size at which its
+// history ends. The caller's offsets become durable only after the review, so the boundary must
+// not be taken again by every review that finds no offsets: a refusal that arrived after the first
+// reading would then fall inside a later boundary and be taken for history. pin returns the boundary
+// already kept for path, or keeps size durably and returns it, before the reading classifies any
+// refusal against it. An error means no durable boundary, and the refusal reading is not taken.
 type dagHostOffsetStore interface {
 	load() (dagHostOffsets, error)
 	save(dagHostOffsets) error
+	pin(path string, size int64) (int64, error)
 }
 
 // The two context keys the host readings travel on.
@@ -251,7 +259,7 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 			})
 			continue
 		}
-		dagHostParentRollout(in, parent, read.Thread.Path, &offsets, offsetsRead, refusalsMeasured)
+		dagHostParentRollout(in, parent, read.Thread.Path, &offsets, offsetsRead, refusalsMeasured, scope.store)
 	}
 	if offsetsRead {
 		var err error
@@ -277,7 +285,10 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 // relay dag- refusals this check has not reported yet. The offsets map is updated with the offset
 // the next check resumes from and with the call ids that offset will read again, so a refusal is
 // reported once even while an earlier call of the same rollout still waits for its answer.
-func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string, offsets *dagHostOffsets, offsetsRead, refusalsMeasured bool) {
+//
+// store, when set, keeps the first-sight boundary (dagHostOffsetStore.pin); without it the boundary
+// is the size the rollout had when this reading began.
+func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string, offsets *dagHostOffsets, offsetsRead, refusalsMeasured bool, store dagHostOffsetStore) {
 	duplicates, err := dagHostDuplicateOutputs(path)
 	if err != nil {
 		in.review.Checks = append(in.review.Checks, Check{
@@ -301,6 +312,7 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 	}
 	start := int64(0)
 	firstSight := false
+	pinned := int64(-1)
 	if offsetsRead {
 		seen, ok := offsets.Offsets[path]
 		if !ok {
@@ -308,6 +320,19 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 			// answer has not arrived is then remembered, so a refusal that arrives after this check is
 			// still reported. The refusals already in its history are not.
 			firstSight = true
+			if store != nil {
+				info, err := os.Stat(path)
+				if err == nil {
+					pinned, err = store.pin(path, info.Size())
+				}
+				if err != nil {
+					in.review.Checks = append(in.review.Checks, Check{
+						Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured,
+						Detail: "the first-sight boundary of the rollout could not be kept, so the refusal reading was not taken: " + err.Error(),
+					})
+					return
+				}
+			}
 		} else {
 			start = seen
 		}
@@ -318,6 +343,12 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 			Name: "parent_refusals:" + parent.id, State: dagReviewUnmeasured, Detail: err.Error(),
 		})
 		return
+	}
+	if pinned >= 0 {
+		// The kept boundary, not this reading's own size, separates the history: it was fixed no later
+		// than this reading began, so a refusal appended after it is reported by every reading until
+		// the offsets that record it are saved.
+		reading.boundary = pinned
 	}
 	if reading.tooLong {
 		// A line over the limit is a reading this check could not take; the reading still continues

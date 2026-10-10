@@ -44,6 +44,10 @@ const (
 	pumpSignalCapacityName = "signal_capacity"
 	pumpSignalAuditName    = "signal_audit"
 
+	// pumpSignalDagPinFile, in the state directory, keeps each parent rollout's first-sight boundary
+	// (see pumpSignalDagOffsetStore.pin) until the pump state holds the rollout's offsets.
+	pumpSignalDagPinFile = "pump-dag-pins.json"
+
 	// The Cursors keys. The read times are Unix seconds; the DAG set is the sorted anomaly tuples as
 	// JSON; the change counter numbers each change of that set; the audit epoch counts the times the
 	// alert file shrank.
@@ -188,7 +192,20 @@ func pumpSignalDagLast(st *pumpState) []pumpSignalTuple {
 // reach disk in the same write as the pending events the review produced, so a pump that ends
 // before that write reads the same refusals again, and one that completes it never reads them
 // twice.
-type pumpSignalDagOffsetStore struct{ st *pumpState }
+//
+// A rollout the offsets do not hold yet is first seen, and its history (the refusals before a
+// boundary) is not reported. That boundary is kept apart from the offsets, in pumpSignalDagPinFile
+// under dir, and written durably before the first reading classifies a refusal against it: were it
+// the size at each reading that finds no offsets, a pump that ended or failed to save before its
+// offsets reached disk would take the next reading's larger size as the boundary, and a refusal
+// that arrived in between (one the first reading even collected) would read as history. A boundary
+// is written once and only ever dropped, once the saved pump state holds the rollout's offsets, so
+// writing it early can only make a reading report more, never less. A dry run writes none.
+type pumpSignalDagOffsetStore struct {
+	st  *pumpState
+	dir string
+	dry bool
+}
 
 type pumpSignalDagOffsets struct {
 	Offsets  map[string]int64    `json:"offsets"`
@@ -225,6 +242,114 @@ func (o pumpSignalDagOffsetStore) save(state dagHostOffsets) error {
 	return nil
 }
 
+// pin is the rollout's kept first-sight boundary, or size, kept now (see the type).
+func (o pumpSignalDagOffsetStore) pin(path string, size int64) (int64, error) {
+	pins, err := pumpSignalDagLoadPins(o.dir)
+	if err != nil {
+		return 0, err
+	}
+	if at, ok := pins[path]; ok {
+		return at, nil
+	}
+	if o.dry {
+		return size, nil
+	}
+	pins[path] = size
+	if err := pumpSignalDagSavePins(o.dir, pins); err != nil {
+		return 0, err
+	}
+	return size, nil
+}
+
+// pumpSignalDagPinPath is the boundary file of a state directory.
+func pumpSignalDagPinPath(dir string) (string, error) {
+	if dir == "" {
+		return "", errors.New("no state directory to keep the first-sight boundary in")
+	}
+	return crwconfig.JoinRoot(dir, pumpSignalDagPinFile), nil
+}
+
+// pumpSignalDagLoadPins reads the boundaries. An absent file is none; one that cannot be read or
+// decoded is an error rather than none, so a damaged file never moves a boundary later and lets a
+// refusal pass as history: the refusal reading of a first-seen rollout waits until it is repaired.
+func pumpSignalDagLoadPins(dir string) (map[string]int64, error) {
+	path, err := pumpSignalDagPinPath(dir)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]int64{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Pins map[string]int64 `json:"pins"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("the boundary file %s is not readable: %w", pumpSignalDagPinFile, err)
+	}
+	if doc.Pins == nil {
+		doc.Pins = map[string]int64{}
+	}
+	return doc.Pins, nil
+}
+
+// pumpSignalDagSavePins writes the boundaries atomically and durably (temporary file, fsync,
+// rename, directory sync), never through a symlink.
+func pumpSignalDagSavePins(dir string, pins map[string]int64) error {
+	path, err := pumpSignalDagPinPath(dir)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("the boundary file is a symlink; refusing to write through it")
+	}
+	data, err := json.Marshal(struct {
+		Pins map[string]int64 `json:"pins"`
+	}{pins})
+	if err != nil {
+		return err
+	}
+	return deliverWriteAtomic(path, append(data, 0x0a))
+}
+
+// pumpSignalDagDropPins drops the boundaries of the rollouts whose offsets the saved pump state
+// holds (raw is the offsets as loaded, before this round's review). A failure only leaves the
+// boundaries for a later round: a rollout with offsets never reads its boundary.
+func pumpSignalDagDropPins(cfg *Config, raw string) {
+	var held pumpSignalDagOffsets
+	if raw == "" || json.Unmarshal([]byte(raw), &held) != nil || len(held.Offsets) == 0 {
+		return
+	}
+	path, err := pumpSignalDagPinPath(cfg.StateDir)
+	if err != nil {
+		return
+	}
+	if _, err := os.Lstat(path); err != nil {
+		return
+	}
+	pins, err := pumpSignalDagLoadPins(cfg.StateDir)
+	if err != nil {
+		pumpLog(cfg, "source "+pumpSignalDagName+": "+err.Error())
+		return
+	}
+	dropped := false
+	for rollout := range pins {
+		if _, ok := held.Offsets[rollout]; ok {
+			delete(pins, rollout)
+			dropped = true
+		}
+	}
+	if !dropped {
+		return
+	}
+	if err := pumpSignalDagSavePins(cfg.StateDir, pins); err != nil {
+		pumpLog(cfg, "source "+pumpSignalDagName+": drop the first-sight boundaries: "+err.Error())
+	}
+}
+
 // pumpSignalDagRefusalsEvent is the one event of a round's new relay refusals. A refusal is an
 // occurrence, not a standing condition: each is reported once, by the offsets above, and is not
 // part of the anomaly set that a later round compares.
@@ -248,7 +373,12 @@ func (pumpSignalDagSource) Collect(ctx context.Context, e *Env, cfg *Config, st 
 	// saved before it returns, so a pump that ended before saving its pending events would lose the
 	// refusals. A review that fails after it moved the offsets gives them back.
 	offsetsBefore, hadOffsets := st.Cursors[pumpSignalDagOffsetsKey]
-	review, err := pumpSignalDagReview(dagHostWithOffsetStore(ctx, pumpSignalDagOffsetStore{st: st}), e, cfg)
+	if !st.dry {
+		// The offsets as loaded are the saved ones: no source but this one writes them.
+		pumpSignalDagDropPins(cfg, offsetsBefore)
+	}
+	store := pumpSignalDagOffsetStore{st: st, dir: cfg.StateDir, dry: st.dry}
+	review, err := pumpSignalDagReview(dagHostWithOffsetStore(ctx, store), e, cfg)
 	if err != nil {
 		if hadOffsets {
 			st.Cursors[pumpSignalDagOffsetsKey] = offsetsBefore
