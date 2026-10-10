@@ -210,8 +210,11 @@ tables (decision D-01):
   is OFF (the store's setting, unchanged). Each key of such a table (the primary key, each UNIQUE, each partial UNIQUE with its `WHERE`) has a
   `BEFORE INSERT` guard named `<table>_<key>_guard`, appended to the statements, that raises the text SQLite gives a plain INSERT of that key
   (`UNIQUE constraint failed: <table>.<column>, ...`); the extended result code of the refusal is the trigger's (1811) and not the index's.
-  `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING` on a stored key are refused as well, and no writer uses either on these tables. The key
-  `(plan_id, document, seq)` of `dag_summary_outbox` has no guard: `dag_summary_outbox_order` already refuses every entry whose `seq` is not the
+  `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING` on a stored key are refused as well, and no writer uses either on these tables.
+  Each table also has `<table>_rowid_guard` (an `INSERT OR REPLACE` that names a stored rowid is refused with `UNIQUE constraint failed: <table>.rowid`)
+  and `<table>_rowid_reserved_guard` (a row stored under rowid -1 is refused: a BEFORE INSERT trigger reads -1 for every rowid SQLite assigns).
+  A guard stands aside for an earlier trigger of its table under `NOT COALESCE((<that trigger's WHEN>), 0)`, so a NULL condition never lets a
+  row through. The key `(plan_id, document, seq)` of `dag_summary_outbox` has no guard: `dag_summary_outbox_order` already refuses every entry whose `seq` is not the
   next of its stream. `store.MissingZoneKeyGuards` is the read-only check, after an install, that a store holds every guard its build declares
   (empty once a write open of that build has run).
 

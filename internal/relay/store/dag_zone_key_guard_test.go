@@ -73,11 +73,50 @@ func zoneKeyGuardSQL(g keyGuard) string {
 		when = append(when, g.newWhere)
 	}
 	if g.earlier != "" {
-		when = append(when, "NOT ("+g.earlier+")")
+		when = append(when, "NOT COALESCE(("+g.earlier+"), 0)")
 	}
 	when = append(when, "EXISTS (SELECT 1 FROM "+g.table+" WHERE "+inner+")")
 	return "CREATE TRIGGER IF NOT EXISTS " + g.name() + " BEFORE INSERT ON " + g.table + "\nWHEN " + strings.Join(when, " AND ") +
 		"\nBEGIN SELECT RAISE(ABORT, '" + g.message() + "'); END"
+}
+
+// zoneRowidGuardSQL are the two statements a rowid table gets for its implicit key: the rowid. An INSERT OR REPLACE
+// that names the rowid of a stored row (rowid, _rowid_ or oid) replaces it whatever the declared keys say.
+// before refuses the row when a stored row holds NEW.rowid, with the text a plain INSERT of it gets; it is appended
+// after the table's key guards so it fires first, as SQLite checks the rowid before the declared keys, and it stands
+// aside under the same earlier-trigger condition as the key guards. A BEFORE INSERT trigger reads -1 as NEW.rowid
+// for every row whose rowid SQLite assigns afterwards, so before stands aside for -1 and after (AFTER INSERT)
+// refuses a row stored under -1: the statement is rolled back, an INSERT OR REPLACE's deletion included, so no row
+// holds the rowid the guard cannot tell from an assigned one.
+func zoneRowidGuardSQL(table, earlier string) (before, after string) {
+	when := "NEW.rowid <> -1"
+	if earlier != "" {
+		when += " AND NOT COALESCE((" + earlier + "), 0)"
+	}
+	before = "CREATE TRIGGER IF NOT EXISTS " + table + "_rowid_guard BEFORE INSERT ON " + table + "\nWHEN " + when +
+		" AND EXISTS (SELECT 1 FROM " + table + " WHERE rowid = NEW.rowid)\nBEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: " + table + ".rowid'); END"
+	after = "CREATE TRIGGER IF NOT EXISTS " + table + "_rowid_reserved_guard AFTER INSERT ON " + table + "\nWHEN NEW.rowid = -1\nBEGIN SELECT RAISE(ABORT, '" +
+		table + ".rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END"
+	return before, after
+}
+
+// zoneRowidEarlier is the earlier BEFORE INSERT trigger's condition of the tables that have one.
+func zoneRowidEarlier(table string) string {
+	for _, g := range zoneKeyGuardsOf(table) {
+		if g.earlier != "" {
+			return g.earlier
+		}
+	}
+	return ""
+}
+
+// zoneRowidGuardNames are the names of the rowid guards of every guarded table.
+func zoneRowidGuardNames() []string {
+	var names []string
+	for _, table := range zoneKeyGuardTables() {
+		names = append(names, table+"_rowid_guard", table+"_rowid_reserved_guard")
+	}
+	return names
 }
 
 const (
@@ -183,6 +222,9 @@ func zoneDropKeyGuards(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, g := range zoneKeyGuards {
 		zoneMustExec(t, db, "DROP TRIGGER IF EXISTS "+g.name())
+	}
+	for _, name := range zoneRowidGuardNames() {
+		zoneMustExec(t, db, "DROP TRIGGER IF EXISTS "+name)
 	}
 }
 
@@ -354,6 +396,17 @@ func TestDAGZoneKeyGuardsAreTheTemplateAndCoverEveryAppendOnlyKey(t *testing.T) 
 		}
 	}
 
+	for _, table := range zoneKeyGuardTables() {
+		before, after := zoneRowidGuardSQL(table, zoneRowidEarlier(table))
+		for name, text := range map[string]string{table + "_rowid_guard": before, table + "_rowid_reserved_guard": after} {
+			held, ok := catalog["trigger "+name]
+			want := normalizeSQL(strings.Replace(text, "IF NOT EXISTS ", "", 1))
+			if !ok || held != want {
+				t.Errorf("trigger %s\n got  %s\n want %s", name, held, want)
+			}
+		}
+	}
+
 	db := zoneRawDB(t, path)
 	rows, err := db.Query("SELECT tbl_name FROM sqlite_master WHERE type = 'trigger' AND name = tbl_name || '_no_delete' ORDER BY tbl_name")
 	if err != nil {
@@ -376,6 +429,14 @@ func TestDAGZoneKeyGuardsAreTheTemplateAndCoverEveryAppendOnlyKey(t *testing.T) 
 		t.Fatalf("append-only tables (a _no_delete trigger) = %v, guarded tables = %v", appendOnly, tables)
 	}
 	for _, table := range appendOnly {
+		// the rowid guards stand for the table's implicit key: the table is a rowid table and none of its columns is the rowid
+		var withoutRowid int
+		if err := db.QueryRow("SELECT wr FROM pragma_table_list WHERE name = ?", table).Scan(&withoutRowid); err != nil || withoutRowid != 0 {
+			t.Errorf("%s: WITHOUT ROWID = %d (%v); the rowid guards are for rowid tables", table, withoutRowid, err)
+		}
+		if got := zoneStringList(t, db, "SELECT name FROM pragma_table_info('"+table+"') WHERE pk = 1 AND upper(type) = 'INTEGER' AND (SELECT count(*) FROM pragma_table_info('"+table+"') WHERE pk > 0) = 1"); len(got) != 0 {
+			t.Errorf("%s: %v is an INTEGER PRIMARY KEY, an alias of the rowid: its message is the key's, not the rowid guard's", table, got)
+		}
 		var have []string
 		idx, err := db.Query("SELECT name, partial FROM pragma_index_list('" + table + "') WHERE \"unique\" = 1")
 		if err != nil {
@@ -729,8 +790,8 @@ func TestDAGZoneUpgradeAddsTheKeyGuardsAndKeepsTheRows(t *testing.T) {
 	if err := old.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if missing := zoneMissingGuards(t, path); len(missing) != len(zoneKeyGuards) {
-		t.Fatalf("the old zone lacks %d guards, want all %d", len(missing), len(zoneKeyGuards))
+	if missing := zoneMissingGuards(t, path); len(missing) != len(zoneKeyGuards)+len(zoneRowidGuardNames()) {
+		t.Fatalf("the old zone lacks %d guards, want all %d", len(missing), len(zoneKeyGuards)+len(zoneRowidGuardNames()))
 	}
 
 	zoneOpenClose(t, path)
@@ -780,6 +841,7 @@ func TestMissingZoneKeyGuardsIsReadOnly(t *testing.T) {
 	for _, g := range zoneKeyGuards {
 		want = append(want, g.name())
 	}
+	want = append(want, zoneRowidGuardNames()...)
 	sort.Strings(want)
 	if !slices.Equal(missing, want) {
 		t.Fatalf("missing = %v, want every guard %v", missing, want)
@@ -976,6 +1038,211 @@ func TestDAGZoneOutboxSequenceKeyIsRefusedByTheOrderTrigger(t *testing.T) {
 			if err := zoneExec(t, db, statement); err == nil || !strings.Contains(err.Error(), "an entry is appended pending, with the next sequence number") {
 				t.Errorf("%s: %s: %v; want the order trigger's refusal", name, verb, err)
 			}
+		}
+	}
+}
+
+// An INSERT OR REPLACE that writes a NULL into attempts is the bypass of the outbox guards' stand-aside condition:
+// the order trigger's WHEN is NULL there (NEW.attempts <> 0), so it does not fire, and a guard that stands aside under
+// NOT (that WHEN) would stand aside too; REPLACE then turns the NULL into the column's default and replaces the
+// stored entry. Both outbox keys are refused whatever the NULL does to the order trigger's condition.
+func TestDAGZoneKeyGuardsRefuseAnOutboxReplaceWithANullAttempts(t *testing.T) {
+	t.Parallel()
+	current, old := zoneKeyStores(t)
+	withNullAttempts := func(statement string) string {
+		statement = strings.Replace(statement, "INSERT INTO", "INSERT OR REPLACE INTO", 1)
+		statement = strings.Replace(statement, "(summary_id,", "(attempts, summary_id,", 1)
+		return strings.Replace(statement, "VALUES (", "VALUES (NULL,", 1)
+	}
+	cases := []struct {
+		name    string
+		seed    []string
+		replace string
+		want    string
+	}{
+		{"the stored summary_id with the next sequence number of a superseded stream", []string{zoneSummaryOutboxRow("s-1", "plan-1", "doc", 1), "UPDATE dag_summary_outbox SET state = 'superseded'"},
+			zoneSummaryOutboxRow("s-1", "plan-1", "doc", 2), ""},
+		{"another summary_id in the stream whose entry is open", []string{zoneSummaryOutboxRow("s-1", "plan-1", "doc", 1)},
+			zoneSummaryOutboxRow("s-2", "plan-1", "doc", 2), "UNIQUE constraint failed: dag_summary_outbox.plan_id, dag_summary_outbox.document"},
+		{"the stored summary_id with the next sequence number of an open stream", []string{zoneSummaryOutboxRow("s-1", "plan-1", "doc", 1)},
+			zoneSummaryOutboxRow("s-1", "plan-1", "doc", 2), "UNIQUE constraint failed: dag_summary_outbox."},
+		{"a sequence number that is not the next one keeps the order trigger's message", []string{zoneSummaryOutboxRow("s-1", "plan-1", "doc", 1)},
+			zoneSummaryOutboxRow("s-1", "plan-1", "doc", 5), "an entry is appended pending, with the next sequence number"},
+	}
+	cases[0].want = "UNIQUE constraint failed: dag_summary_outbox.summary_id"
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, which := range []struct {
+				name string
+				path string
+			}{{"old zone", old}, {"current", current}} {
+				db := zoneKeyDB(t, which.path)
+				clearTable(t, db, "dag_summary_outbox")
+				zoneMustExec(t, db, c.seed...)
+				before := zoneTableContents(t, db, "dag_summary_outbox")
+				tx, err := db.Begin()
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = tx.Exec(withNullAttempts(c.replace))
+				_ = tx.Rollback()
+				orderRefusal := strings.Contains(c.want, "next sequence number")
+				switch {
+				case which.name == "old zone" && !orderRefusal:
+					if err != nil {
+						t.Fatalf("old zone: %v; the red case is a REPLACE that succeeds", err)
+					}
+				default:
+					if err == nil || !strings.Contains(err.Error(), c.want) {
+						t.Fatalf("%s: %v; want %q", which.name, err, c.want)
+					}
+				}
+				if after := zoneTableContents(t, db, "dag_summary_outbox"); !slices.Equal(before, after) {
+					t.Fatalf("%s: the table changed:\n%q\n%q", which.name, before, after)
+				}
+			}
+		})
+	}
+}
+
+// zoneRowidStatement is the INSERT of a row that differs from the seeded one in every key and names a rowid.
+func zoneRowidStatement(verb, table, rowidName, rowid string, columns []zoneColumn, s keyScenario) string {
+	statement := zoneKeyRow(verb, table, columns, s, zoneRowidKeep(table))
+	statement = strings.Replace(statement, "INTO "+table+" (", "INTO "+table+" ("+rowidName+",", 1)
+	return strings.Replace(statement, "VALUES (", "VALUES ("+rowid+",", 1)
+}
+
+// zoneRowidKeep are the columns the new row shares with the seeded one so the table's earlier trigger lets it
+// through: the outbox entry joins the (settled) stream of the seeded one.
+func zoneRowidKeep(table string) []string {
+	if table == "dag_summary_outbox" {
+		return []string{"plan_id", "document"}
+	}
+	return nil
+}
+
+func zoneRowidScenario(table string) keyScenario {
+	if table == "dag_summary_outbox" {
+		return zoneScenarioFor(table, 1) // the stream has no open entry: the new entry is the next of it
+	}
+	return zoneScenarioFor(table, 0)
+}
+
+// An INSERT OR REPLACE that names the rowid of a stored row, by any of its three names, and shares no declared
+// key with it replaces the row on an old zone and is refused on the current one with the text a plain INSERT of
+// the rowid gets; a row that names a free rowid, or none, is written.
+func TestDAGZoneRefusesAnInsertOrReplaceOfAStoredRowid(t *testing.T) {
+	t.Parallel()
+	current, old := zoneKeyStores(t)
+	for _, table := range zoneKeyGuardTables() {
+		t.Run(table, func(t *testing.T) {
+			scenario := zoneRowidScenario(table)
+			for _, which := range []struct {
+				name string
+				path string
+				want bool
+			}{{"old zone", old, false}, {"current", current, true}} {
+				db := zoneKeyDB(t, which.path)
+				columns := zoneSeedKeyRow(t, db, table, scenario)
+				var stored int64
+				if err := db.QueryRow("SELECT rowid FROM " + table).Scan(&stored); err != nil {
+					t.Fatal(err)
+				}
+				before := zoneTableContents(t, db, table)
+				for _, name := range []string{"rowid", "_rowid_", "oid"} {
+					for _, verb := range []string{"INSERT OR REPLACE", "INSERT"} {
+						statement := zoneRowidStatement(verb, table, name, fmt.Sprint(stored), columns, scenario)
+						tx, err := db.Begin()
+						if err != nil {
+							t.Fatal(err)
+						}
+						_, err = tx.Exec(statement)
+						_ = tx.Rollback()
+						switch {
+						case verb == "INSERT OR REPLACE" && !which.want:
+							if err != nil {
+								t.Fatalf("%s: %s: %v; the red case is a REPLACE that succeeds", which.name, statement, err)
+							}
+						default:
+							if err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed: "+table+".rowid") {
+								t.Fatalf("%s: %s: %v; want the refusal of the rowid", which.name, statement, err)
+							}
+						}
+						if after := zoneTableContents(t, db, table); !slices.Equal(before, after) {
+							t.Fatalf("%s: %s: the table changed:\n%q\n%q", which.name, statement, before, after)
+						}
+					}
+				}
+				// a free rowid and an assigned one are written
+				for _, rowid := range []string{fmt.Sprint(stored + 100), "-2"} {
+					tx, err := db.Begin()
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = tx.Exec(zoneRowidStatement("INSERT OR REPLACE", table, "rowid", rowid, columns, scenario))
+					_ = tx.Rollback()
+					if err != nil {
+						t.Fatalf("%s: rowid %s is free: %v", which.name, rowid, err)
+					}
+				}
+				tx, err := db.Begin()
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = tx.Exec(zoneKeyRow("INSERT", table, columns, scenario, zoneRowidKeep(table)))
+				_ = tx.Rollback()
+				if err != nil {
+					t.Fatalf("%s: an insert that leaves the rowid to SQLite: %v", which.name, err)
+				}
+			}
+		})
+	}
+}
+
+// The guard cannot tell an explicit rowid of -1 from the -1 a BEFORE INSERT trigger reads for an assigned one, so a
+// row stored under -1 is refused after the write (rolled back with the statement), and a store that already
+// holds one (written before the guards) is not made unwritable by it.
+func TestDAGZoneRowidMinusOneIsReservedAndAssignedInsertsAreNotRefused(t *testing.T) {
+	t.Parallel()
+	current, old := zoneKeyStores(t)
+	oldDB := zoneKeyDB(t, old)
+	for _, table := range zoneKeyGuardTables() {
+		scenario := zoneRowidScenario(table)
+		clearTable(t, oldDB, table)
+		columns := zoneTableColumns(t, oldDB, table)
+		var all []string
+		for _, c := range columns {
+			all = append(all, c.name)
+		}
+		statement := strings.Replace(zoneKeyRow("INSERT", table, columns, scenario, all), "INTO "+table+" (", "INTO "+table+" (rowid,", 1)
+		zoneMustExec(t, oldDB, strings.Replace(statement, "VALUES (", "VALUES (-1,", 1))
+		zoneMustExec(t, oldDB, scenario.settle...)
+	}
+	if err := oldDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zoneOpenClose(t, old) // the guards are added to the store that holds the -1 rows
+	oldDB = zoneKeyDB(t, old)
+	for _, table := range zoneKeyGuardTables() {
+		scenario := zoneRowidScenario(table)
+		columns := zoneTableColumns(t, oldDB, table)
+		if err := zoneExec(t, oldDB, zoneKeyRow("INSERT", table, columns, scenario, zoneRowidKeep(table))); err != nil {
+			t.Errorf("%s: an assigned insert next to a stored rowid of -1: %v", table, err)
+		}
+	}
+	db := zoneKeyDB(t, current)
+	for _, table := range zoneKeyGuardTables() {
+		scenario := zoneRowidScenario(table)
+		columns := zoneSeedKeyRow(t, db, table, scenario)
+		before := zoneTableContents(t, db, table)
+		for _, verb := range []string{"INSERT", "INSERT OR REPLACE"} {
+			err := zoneExec(t, db, zoneRowidStatement(verb, table, "rowid", "-1", columns, scenario))
+			if err == nil || !strings.Contains(err.Error(), table+".rowid -1 is reserved") {
+				t.Errorf("%s: %s of rowid -1: %v; want the reserved refusal", table, verb, err)
+			}
+		}
+		if after := zoneTableContents(t, db, table); !slices.Equal(before, after) {
+			t.Errorf("%s: a refused row of rowid -1 changed the table:\n%q\n%q", table, before, after)
 		}
 	}
 }
