@@ -2,7 +2,6 @@
   "issue": "CRW-192",
   "identical": [
     "hook__stop-checking-pabcd-continuation__baseline_empty_workspace",
-    "hook__stop-checking-pabcd-continuation__context_pressure_tail_releases",
     "hook__stop-checking-pabcd-continuation__idle_goal_without_bound_plan_releases",
     "hook__stop-checking-pabcd-continuation__in_flight_with_active_goal_blocks",
     "hook__stop-checking-pabcd-continuation__in_flight_with_active_goal_each_phase",

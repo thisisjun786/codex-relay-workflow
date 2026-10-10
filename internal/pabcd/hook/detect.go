@@ -10,6 +10,7 @@ package hook
 import (
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -406,12 +407,12 @@ const (
 // "not to implement"), or a Korean negation after it ("구현하지 마"). A negation elsewhere in the clause ("no questions, please
 // implement ...") does not govern the verb. Nor does the verb count when another agent does it: a children, worker, subagent or
 // "child task/lane/..." up to three words before it ("while child tasks implement their issues", "while the children then
-// implement") makes the clause a coordination, unless a comma or a coordinating conjunction comes right after the noun and
-// only conjunctions follow ("consult the children and implement this task", "consult the children, then implement") or the
-// noun is a child process (delegatedVerb).
+// implement") makes the clause a coordination, even for a noun that is no coordination word on its own ("while the workers
+// meanwhile implement"), unless the noun is the object of an earlier verb whose subject goes on ("consult the children and
+// implement this task", "consult the children then implement", "자식 확인하고 구현해") or a child process (delegation, CRW-1166).
 //
 // A project is a Linear project link, a coordination word (the verb coordinate but not the noun - coordinateVerb -, supervise,
-// children or child tasks, 조정, 감독, 부모, 자식 but not a child process), or the word "project" - except where "project" only names the place of a single-task fix: "in this
+// children or child tasks, 감독, 부모, 자식 but not a child process, and 조정 unless it adjusts a value - coordinateKorean), or the word "project" - except where "project" only names the place of a single-task fix: "in this
 // project", "of the project", "이 프로젝트에서" in a clause that carries its own ungoverned implement verb. A named project ("the
 // migration project") stays a project. The current-task exception wins over a project mention.
 func ClassifyLoopArmScope(prompt string) LoopArmScope {
@@ -419,7 +420,7 @@ func ClassifyLoopArmScope(prompt string) LoopArmScope {
 	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
 	// "coordinate" and "coordinates" are also a plain noun (coordinate values, the coordinates in the parser); coordinateVerb
 	// reads the bare forms. "coordinating" and "coordination" always count.
-	coordination := detectorRE(`linear\.app/\S+/project/|\bcoordinat(?:ing|ion)\b|\bsupervis(?:e|es|ing|ion)\b|\bchildren\b|\bchild\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?)\b|조정|감독|부모|자식`)
+	coordination := detectorRE(`linear\.app/\S+/project/|\bcoordinat(?:ing|ion)\b|\bsupervis(?:e|es|ing|ion)\b|\bchildren\b|\bchild\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?)\b|감독|부모|자식`)
 	projectWord := detectorRE(`\bprojects?\b|프로젝트`)
 	location := detectorRE(`\b(?:in|inside|within|across|throughout|of|for)\s+(?:the\s+current|this|the|current|my|our)\s+(?:project|repo|repository|codebase)\b|(?:이|현재|우리|내)\s*프로젝트\s*(?:에서|안에서|안의|의|에)`)
 	clauses := requestLines(scopeText(prompt))
@@ -432,7 +433,7 @@ func ClassifyLoopArmScope(prompt string) LoopArmScope {
 		}
 	}
 	for _, clause := range clauses {
-		if rest := childProcess.ReplaceAllString(clause, " "); coordination.MatchString(rest) || coordinateVerb(rest) {
+		if rest := childProcess.ReplaceAllString(clause, " "); coordination.MatchString(rest) || coordinateVerb(rest) || coordinateKorean(rest) || delegatedImplement(clause) {
 			return LoopScopeProject
 		}
 		if ungovernedImplement(clause) {
@@ -463,30 +464,80 @@ func coordinateVerb(clause string) bool {
 	return false
 }
 
-// ungovernedImplement reports an implement verb in a folded clause that no negation governs (ClassifyLoopArmScope).
+// ungovernedImplement reports an implement verb in a folded clause that no negation governs and no other agent owns
+// (ClassifyLoopArmScope).
 func ungovernedImplement(clause string) bool {
+	session, _ := implementVerbs(clause)
+	return session
+}
+
+// delegatedImplement reports an ungoverned implement verb that a named agent (a worker, a subagent, a child task, 자식, ...) owns
+// as its subject or delegate: the clause then coordinates that agent even though no coordination word names it (CRW-1166, "while
+// the workers meanwhile implement their issues"). The pronouns they and others carry no such signal.
+func delegatedImplement(clause string) bool {
+	_, delegated := implementVerbs(clause)
+	return delegated
+}
+
+// implementVerbs scans the implement verbs of a folded clause that no negation governs: session when one is this session's own,
+// delegated when one belongs to a named agent (delegation).
+func implementVerbs(clause string) (session, delegated bool) {
 	implement := detectorRE(`\b(?:implement|build|fix|code|develop|work\s+on)\b|구현|고쳐|수정|개발|작업해`)
 	filler := `(?:(?:,|\s)+(?:actually|really|yet|ever|even|just|please|to|be|want|need|you|i|we|me|going|try|trying|start|starting|begin|bother|asking))*`
 	negatedBefore := detectorRE(`(?:\b(?:not|never|don't|dont|cannot|can't|won't|wont|shouldn't|mustn't|avoid|stop|without|instead\s+of|rather\s+than|no\s+need\s+to)\b` +
 		filler + `|\bno|말고)(?:,|\s)*$`)
 	negatedAfter := detectorRE(`^\S*\s*(?:(?:하|지|고)\s*)?(?:지\s*)?(?:마|말|않|못)`)
 	for _, at := range implement.FindAllStringIndex(clause, -1) {
-		if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) && !delegatedVerb(clause[:at[0]]) {
-			return true
+		if negatedBefore.MatchString(clause[:at[0]]) || negatedAfter.MatchString(clause[at[1]:]) {
+			continue
 		}
+		if noun, ok := delegation(clause[:at[0]], clause[at[1]:]); !ok {
+			session = true
+		} else if noun != "they" && noun != "others" && !nounUse(clause[:at[0]], noun, clause[at[0]:at[1]], clause[at[1]:]) {
+			delegated = true
+		}
+	}
+	return session, delegated
+}
+
+// nounUse reports an implement keyword that is a noun beside an agent noun and so no delegated verb (CRW-1166, "optimize the worker
+// build cache", "워커 개발 환경"): a singular English agent noun right before a bare keyword is its compound modifier (a
+// singular subject takes "builds", "will build") unless a causative (have, let, make, get, help) governs the noun, whose bare verb
+// it then is ("have the worker build its part", "let the subagent implement", an ambiguous "have the worker build cache rebuilt"
+// included: the pointer); a Korean keyword 구현/수정/개발 that no 하/해/시 verb ending follows is a noun.
+// The session decision is untouched; only the project signal delegatedImplement reads this.
+func nounUse(prefix, noun, verb, rest string) bool {
+	if detectorRE(`^(?:worker|sub-?agent|child\s+(?:task|issue|session|lane|thread|agent|goal|worker)|other\s+(?:agent|session|task|thread))$`).MatchString(noun) {
+		before, ok := strings.CutSuffix(strings.TrimRight(prefix, " \t"), noun)
+		causative := detectorRE(`\b(?:have|has|had|having|let|lets|letting|make|makes|made|making|get|gets|got|getting|help|helps|helped|helping)\s+(?:(?:the|a|an|this|that|each|every|one|your|our|its|their|my|his|her|any)\s+)*$`)
+		return ok && !causative.MatchString(before)
+	}
+	switch verb {
+	case "구현", "수정", "개발":
+		return !detectorRE(`^(?:(?:을|를)\s*)?(?:하|해|했|한|할|함|시)`).MatchString(rest)
 	}
 	return false
 }
 
-// delegatedVerb reports that the implement verb after the folded clause prefix is another agent's (ungovernedImplement). Another
-// agent as the subject or the delegate of the verb ("while child tasks implement", "ask the children to implement", "the
-// workers will then implement") is not this session implementing: the verb must not follow such a noun by up to three words of
-// the same clause. A child process or subprocess is no agent, and a noun right after which a comma or a coordinating conjunction
-// (and, but, or, plus) starts a gap of conjunctions only is the object of an earlier verb whose subject goes on ("consult the
-// children and implement this task", "consult the children, then implement this task"): the session implements. A sentence
-// adverb right after the noun ("the children then implement", "they also implement", "the children each implement") or set
-// off by commas ("the children, then, implement") leaves the noun the subject of the verb.
-func delegatedVerb(prefix string) bool {
+// delegation reports the agent noun whose verb the implement verb after the folded clause prefix is. Another agent as the
+// subject or the delegate of the verb ("while child tasks implement", "ask the children to implement", "the workers will then
+// implement") is not this session implementing: the verb must not follow such a noun by up to three words of the same clause.
+// A child process or subprocess is no agent, and a noun is the object of an earlier verb whose subject goes on, so the session
+// implements, in these structures:
+//   - a comma or a coordinating conjunction (and, but, or, plus) right after the noun starts a gap of conjunctions only
+//     ("consult the children and implement this task", "consult the children, then implement this task");
+//   - a transitive verb right before the noun (objectLead) and only sentence adverbs and commas after it ("consult the
+//     children then implement", "consult the children, then, implement") - CRW-1166; a subordinating conjunction or a
+//     causative before the noun ("while/as/when the children then implement", "let the children then implement") leaves the
+//     noun the subject;
+//   - a Korean noun that is no subject (no 이/가/은/는 on it or on a word before the connective) followed by a word ending in
+//     the connective -고 ("자식 작업을 확인하고 구현해", "워커에게 물어보고 구현해") and no explicit other subject after the
+//     connective and no causative on the verb (CRW-1166: "... 확인하고 워커가 구현해", "... 확인하고 구현하게 해" stay delegated).
+//
+// A sentence adverb right after the noun with none of these ("the children then implement", "they also implement", "the
+// children each implement") or set off by commas ("the children, then, implement") leaves the noun the subject of the verb.
+// Anything else ambiguous stays delegated, which is the pointer.
+func delegation(prefix, suffix string) (noun string, delegated bool) {
 	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
 	// detectorRE expands \s and \S into bracket classes, so the separator and word classes here spell jsSpaceChars out.
 	sep, word := `[`+jsSpaceChars+`,;]`, `[^`+jsSpaceChars+`,;]`
@@ -494,12 +545,136 @@ func delegatedVerb(prefix string) bool {
 	space := `[` + jsSpaceChars + `]*`
 	conjunction := detectorRE(`^` + space + `(?:[,;]|\b(?:and|but|or|plus)\b)(?:` + sep + `|\b(?:and|then|but|or|also|plus)\b)*$`)
 	parenthetical := detectorRE(`[,;]` + space + `\b(?:then|also)\b` + space + `,` + space + `$`)
-	m := agent.FindStringSubmatch(childProcess.ReplaceAllString(prefix, " "))
+	adverbs := detectorRE(`^(?:` + sep + `|\b(?:then|also|next|afterwards)\b)*$`)
+	objectLead := detectorRE(`\b(?:consult|ask|read|check|inspect|review|ping|query|poll|notify|tell|brief|summari[sz]e|gather|collect|(?:check|consult|confer|sync|talk|speak|coordinate)\s+with|wait\s+for|look\s+at|report\s+to|hear\s+from|talk\s+to|speak\s+to)\s+(?:(?:all|each|of|the|your|its|their|our|my|these|those|other)\s+)*$`)
+	folded := childProcess.ReplaceAllString(prefix, " ")
+	m := agent.FindStringSubmatchIndex(folded)
 	if m == nil {
+		return "", false
+	}
+	noun, gap := folded[m[0]:m[2]], folded[m[2]:m[3]]
+	noun = strings.TrimSpace(noun)
+	if hangulConnective(noun, gap, suffix) {
+		return noun, false
+	}
+	if objectLead.MatchString(folded[:m[0]]) && adverbs.MatchString(gap) {
+		return noun, false
+	}
+	return noun, !conjunction.MatchString(gap) || parenthetical.MatchString(gap)
+}
+
+// hangulConnective reports a Korean agent noun (자식, 하위, 워커 plus its particle) that is the object of an earlier verb joined to
+// the implement verb by the connective -고: a word of the gap ends in 고 and neither the noun nor a word before that word ends
+// in a subject particle (이, 가, 은, 는) after at least one other character. A subject ("자식이 확인하고 구현해") stays delegated.
+// The implement verb is then still this session's own only when nothing else takes it over: a later word of the gap that is
+// another agent noun or ends in a subject particle other than a first-person one ("확인하고 워커가 구현해") is the verb's explicit
+// subject, and a causative on the verb or on a later verb of its -고 chain (chainCausative) hands it to a delegate; both stay
+// delegated.
+func hangulConnective(noun, gap, suffix string) bool {
+	if !strings.HasPrefix(noun, "자식") && !strings.HasPrefix(noun, "하위") && !strings.HasPrefix(noun, "워커") {
 		return false
 	}
-	gap := m[1]
-	return !conjunction.MatchString(gap) || parenthetical.MatchString(gap)
+	if chainCausative(suffix) {
+		return false
+	}
+	subject := detectorRE(`.+[이가은는]$`)
+	firstPerson := detectorRE(`^(?:제가|내가|저는|나는|우리가|우리는|저희가|저희는)$`)
+	connective := false
+	for _, w := range strings.FieldsFunc(noun+" "+gap, func(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) || r == '\ufeff' }) {
+		if connective {
+			if (strings.HasPrefix(w, "자식") || strings.HasPrefix(w, "하위") || strings.HasPrefix(w, "워커") || subject.MatchString(w)) && !firstPerson.MatchString(w) {
+				return false
+			}
+			continue
+		}
+		if strings.HasSuffix(w, "고") {
+			connective = true
+		} else if subject.MatchString(w) {
+			return false
+		}
+	}
+	return connective
+}
+
+// chainCausative reports a causative that governs the Korean implement verb whose folded clause rest is suffix: on the verb
+// itself ("구현하게 해", "구현하도록 해", "구현시켜") or on a later verb of its sentence that a chain of connectives (-고, -서, -며)
+// joins it to ("구현하고 수정하게 해", "구현하고 테스트하고 수정시켜", CRW-1166), also past an object or a bare noun of a chain verb
+// ("구현하고 테스트를 수정하게 해", "구현하고 테스트 수정하도록 해", "구현하고 개요 수정하도록 해"). The chain ends at a finite verb
+// (finiteKorean) that carries no causative
+// ("구현하고 수정해", "구현하고 테스트를 수정해", "구현하고 수정할게"), at the end of the sentence and at another agent noun
+// ("구현하고 워커에게 테스트하게 해": that agent's own verb), which leave the implement verb this session's own.
+func chainCausative(suffix string) bool {
+	if detectorRE(`^(?:하게|하도록|하라고|토록|시켜|시키)`).MatchString(suffix) {
+		return true
+	}
+	words := strings.FieldsFunc(suffix, func(r rune) bool { return r == ',' || unicode.IsSpace(r) || r == '\ufeff' })
+	for i, w := range words {
+		next := ""
+		if i+1 < len(words) {
+			next = words[i+1]
+		}
+		connective := strings.HasSuffix(w, "고") || strings.HasSuffix(w, "서") || strings.HasSuffix(w, "며")
+		switch {
+		case strings.Contains(w, "시켜") || strings.Contains(w, "시키"),
+			strings.HasSuffix(w, "도록") || strings.HasSuffix(w, "토록") || strings.HasSuffix(w, "라고"),
+			strings.HasSuffix(w, "게") && (strings.HasPrefix(next, "해") || strings.HasPrefix(next, "하") || strings.HasPrefix(next, "만들")):
+			return true
+		case strings.HasPrefix(w, "자식") || strings.HasPrefix(w, "하위") || strings.HasPrefix(w, "워커"):
+			return false
+		case connective:
+			continue
+		case strings.ContainsAny(w, ".!?。") || finiteKorean(w):
+			return false
+		}
+	}
+	return false
+}
+
+// finiteKorean reports a Korean word that ends in a finite verb ending, for chainCausative (CRW-1166): 해, 줘 or 죠, or 요, 다, 라,
+// 래, 게 after a syllable that makes it a verb ending ("수정해요", "고쳐요", "수정합니다", "구현한다", "수정해라", "할래", "할게").
+// A noun or a postposition that merely ends in such a syllable ("개요", "필요", "바다", "카메라", "미래", "무게", "에 대해",
+// "위해", "이해") is no finite verb and does not end the chain; an unread ending keeps the search going, which errs to the pointer.
+func finiteKorean(w string) bool {
+	r := []rune(strings.TrimRight(w, ".!?。"))
+	if len(r) == 0 {
+		return false
+	}
+	last, prev := r[len(r)-1], rune(0)
+	if len(r) > 1 {
+		prev = r[len(r)-2]
+	}
+	finalRieul := prev >= 0xAC00 && prev <= 0xD7A3 && (prev-0xAC00)%28 == 8
+	switch last {
+	case '줘', '죠':
+		return true
+	case '해':
+		return !detectorRE(`^(?:위해|대해|통해|관해|의해|인해|이해|피해|방해|손해|오해|견해|재해|침해|저해|장해)$`).MatchString(string(r))
+	case '요':
+		return prev != 0 && strings.ContainsRune("해세줘봐돼게래네데까지죠어아워와여쳐려겨", prev)
+	case '다':
+		return prev != 0 && strings.ContainsRune("니한했된됐는었았였겠렸쳤갔왔졌냈봤", prev)
+	case '라':
+		return prev != 0 && strings.ContainsRune("해하어아여쳐려봐거", prev)
+	case '래', '게':
+		return finalRieul
+	}
+	return false
+}
+
+// coordinateKorean reports 조정 in a folded clause that is coordination and not the adjustment of a value (CRW-1166, port: deviation
+// from the oracle, which counted every 조정). The word is an adjustment when a setting-like noun comes right before it ("값 조정",
+// "간격을 조정", "크기 재조정") or 값, 폭, 량, 치 right after it ("조정값"); anywhere else ("레인들을 조정", "작업 순서 조정") it is
+// coordination, and an ambiguous structure keeps the pointer.
+func coordinateKorean(clause string) bool {
+	word := detectorRE(`조정`)
+	nounBefore := detectorRE(`(?:값|설정|옵션|파라미터|매개변수|타임아웃|임계값|임계치|간격|크기|색상|색|여백|레이아웃|폰트|글꼴|가중치|좌표|해상도|밝기|볼륨|정렬|속도|버퍼|폭|너비|높이|패딩|마진|스타일|포맷|정밀도|오프셋|한도|배율|비율|세기|강도|주기|길이|두께|개수|수치)(?:을|를|의|도|은|는|들을|들)?\s*재?$`)
+	nounAfter := detectorRE(`^(?:값|폭|량|치)`)
+	for _, at := range word.FindAllStringIndex(clause, -1) {
+		if !nounBefore.MatchString(clause[:at[0]]) && !nounAfter.MatchString(clause[at[1]:]) {
+			return true
+		}
+	}
+	return false
 }
 
 // scopeText is the prompt without its plainly introduced examples, for ClassifyLoopArmScope (CRW-1084): a parenthesis that

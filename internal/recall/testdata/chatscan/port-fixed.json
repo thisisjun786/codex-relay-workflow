@@ -1,0 +1,157 @@
+[
+ {
+  "index": 160,
+  "fn": "scan",
+  "query": "trigram",
+  "kind": "directory",
+  "oracleError": "io",
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/alpha",
+     "file": "$R/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+     "gitBranch": "main",
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "please deploy the trigram index for korean search",
+     "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+     "title": "deploy trigram index",
+     "ts": "2026-10-04T12:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/alpha",
+     "file": "$R/sessions/2026/10/04/rollout-2026-10-04T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl",
+     "gitBranch": "main",
+     "matchField": "content",
+     "role": "assistant",
+     "source": "main",
+     "text": "deployed the trigram index; korean 한글 검색 works now",
+     "threadId": "019f0000-0000-7000-8000-00000000aaaa",
+     "title": "deploy trigram index",
+     "ts": "2026-10-04T12:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/alpha",
+     "file": "$R/archived_sessions/rollout-2026-09-24T05-00-00-019f0000-0000-7000-8000-00000000eeee.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "archived aardwolf question about the trigram index",
+     "threadId": "019f0000-0000-7000-8000-00000000eeee",
+     "title": null,
+     "ts": "2026-09-24T12:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/beta",
+     "file": "$R/sessions/2026/08/25/rollout-2026-08-25T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "ancient question about the trigram index",
+     "threadId": "019f0000-0000-7000-8000-00000000cccc",
+     "title": null,
+     "ts": "2026-08-25T12:00:00.000Z"
+    }
+   ],
+   "matchedFiles": 3,
+   "mode": "scan",
+   "scannedFiles": 3,
+   "totalFiles": 4,
+   "warnings": []
+  }
+ },
+ {
+  "index": 169,
+  "fn": "scan",
+  "query": "CI",
+  "kind": "base",
+  "oracleError": "",
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/beta",
+     "file": "$R/sessions/2026/08/25/rollout-2026-08-25T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "ancient question about the trigram index",
+     "threadId": "019f0000-0000-7000-8000-00000000cccc",
+     "title": null,
+     "ts": "2026-08-25T12:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/beta",
+     "file": "$R/sessions/2026/08/25/rollout-2026-08-25T01-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "assistant",
+     "source": "main",
+     "text": "ancient answer",
+     "threadId": "019f0000-0000-7000-8000-00000000cccc",
+     "title": null,
+     "ts": "2026-08-25T12:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": null,
+     "file": "$R/sessions/2026/10/04/rollout-2026-10-04T99-edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "CI",
+     "threadId": null,
+     "title": null,
+     "ts": ""
+    }
+   ],
+   "matchedFiles": 2,
+   "mode": "scan",
+   "scannedFiles": 4,
+   "totalFiles": 5,
+   "warnings": []
+  }
+ },
+ {
+  "index": 170,
+  "fn": "scan",
+  "query": "bomb",
+  "kind": "base",
+  "oracleError": "Cannot convert object to primitive value",
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": null,
+     "file": "$R/sessions/2026/10/04/rollout-2026-10-04T99-edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "bomb",
+     "threadId": null,
+     "title": null,
+     "ts": ""
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "scan",
+   "scannedFiles": 4,
+   "totalFiles": 5,
+   "warnings": []
+  }
+ }
+]

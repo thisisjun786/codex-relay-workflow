@@ -1,10 +1,6 @@
 {
   "issue": "CRW-441",
   "identical": [
-    "cli-help__subagents__get_dashdash_help",
-    "cli-help__subagents__register_dashdash_help",
-    "cli-help__subagents__reset_dashdash_help",
-    "cli-help__subagents__set_dashdash_help",
     "cli__subagents__cxc_home_ignores_legacy_codex_store",
     "cli__subagents__fallback_set_and_refusals",
     "cli__subagents__list_global_defaults",
@@ -18,43 +14,6 @@
     "cli__subagents__set_get_roundtrip_global"
   ],
   "intentionally-changed": [
-    {
-      "id": "cli-help__subagents__dash_h",
-      "reason": "CRW command names and global-only help; project trust-token and not-yet-ported dispatch are omitted, reset inherits the session.",
-      "set": {
-        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  Settings use the global store; trailing --global is accepted for compatibility.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
-      }
-    },
-    {
-      "id": "cli-help__subagents__dashdash_help",
-      "reason": "CRW command names and global-only help; project trust-token and not-yet-ported dispatch are omitted, reset inherits the session.",
-      "set": {
-        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  Settings use the global store; trailing --global is accepted for compatibility.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
-      }
-    },
-    {
-      "id": "cli-help__subagents__list_dashdash_help",
-      "reason": "Decision 7: the global-only store performs no project trust git lookup; list still ignores --help.",
-      "remove": [
-        "calls/0"
-      ]
-    },
-    {
-      "id": "cli-help__subagents__word_help",
-      "reason": "CRW command names and global-only help; project trust-token and not-yet-ported dispatch are omitted, reset inherits the session.",
-      "set": {
-        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  Settings use the global store; trailing --global is accepted for compatibility.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
-      }
-    },
-    {
-      "id": "cli__subagents__help",
-      "reason": "CRW command names and global-only help; project trust-token and not-yet-ported dispatch are omitted, reset inherits the session.",
-      "set": {
-        "steps/0/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  Settings use the global store; trailing --global is accepted for compatibility.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n",
-        "steps/1/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  Settings use the global store; trailing --global is accepted for compatibility.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n",
-        "steps/2/stdout": "crw role helper — per-role subagent model/prompt config (.crw/subagents.json)\n\n  crw role helper               list all role configs\n  crw role helper get <role>    show one role config\n  crw role helper set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  crw role helper register executor|architect   register or update managed role; restart Codex afterward\n  crw role helper reset <role>  remove the role override and inherit the session\n  Settings use the global store; trailing --global is accepted for compatibility.\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n"
-      }
-    },
     {
       "id": "cli__subagents__legacy_store_without_cxc_home",
       "reason": "Existing global-store contract I3: the removed legacy CODEX_HOME store is neither read nor migrated; global settings begin at defaults.",

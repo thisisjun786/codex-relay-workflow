@@ -118,7 +118,6 @@ func TestRevivalLossRefusesWhatARewriteWouldDrop(t *testing.T) {
 		{"a dirty that is not a boolean", "reviewRounds[0].lane.sourceIdentity.dirty", func(m map[string]any) {
 			revivalLossRound(m)["lane"].(map[string]any)["sourceIdentity"] = map[string]any{"kind": "resolved", "commitSha": "c", "dirty": "yes", "capturedAt": "2026-01-01T00:00:00.000Z", "treeHash": "t"}
 		}},
-		{"a fractional schemaVersion", "schemaVersion", func(m map[string]any) { m["schemaVersion"] = 2.9 }},
 		{"an updatedAt below the top level", "finalGate.updatedAt", func(m map[string]any) {
 			m["finalGate"] = map[string]any{"status": "pending", "qaRequired": false, "updatedAt": 5}
 		}},

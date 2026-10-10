@@ -142,15 +142,15 @@ func TestSteeringApplyRecordsTheEntryAndOneLedgerLine(t *testing.T) {
 	}
 }
 
-// "re-running the same key is a no-op that writes nothing" (:74-82): the duplicate answers the
-// STORED entry, so a batch whose words differ under the same key changes nothing.
+// "re-running the same key is a no-op that writes nothing" (:74-82): the same batch under the same key
+// answers the STORED entry and writes nothing. The oracle answered the stored entry for a batch whose
+// words differ under the same key too; CRW-1111 refuses that one (TestSteeringSameKeyWithAnotherBatchIsRefused).
 func TestSteeringApplyDuplicateKeyIsANoOp(t *testing.T) {
 	cwd, slug := steeringApplyWorkspace(t)
 	steeringApply(t, cwd, slug, steeringApplyBatch(nil), nil, SteerResultApplied)
 	before := steeringApplyLedgerText(t, cwd, slug)
 
-	again := steeringApply(t, cwd, slug,
-		steeringApplyBatch(map[string]any{"rationale": "different words, same key"}), nil, SteerResultDuplicate)
+	again := steeringApply(t, cwd, slug, steeringApplyBatch(nil), nil, SteerResultDuplicate)
 	if again.Entry == nil {
 		t.Fatal("duplicate without an entry")
 	}
@@ -287,7 +287,7 @@ func TestSteeringApplyFailedLedgerAppendStillAppliesWithWarning(t *testing.T) {
 	if !strings.Contains(result.Warning, want) {
 		t.Errorf("warning = %q, want it to name %q", result.Warning, want)
 	}
-	if !strings.HasSuffix(result.Warning, "Re-running is a no-op because the key is recorded.") {
+	if !strings.HasSuffix(result.Warning, "Re-running the same batch with the same key records the missing rows without applying it again.") {
 		t.Errorf("warning = %q", result.Warning)
 	}
 	if stored := ReadGoalplan(cwd, slug); stored == nil || len(stored.SteeringLog) != 1 {

@@ -38,7 +38,7 @@ func (s *hookContextTestStore) Read(refs []string) (map[string]float64, error) {
 	}
 	return s.counts, nil
 }
-func (s *hookContextTestStore) Bump(refs []string) error {
+func (s *hookContextTestStore) Bump(_ string, refs []string) error {
 	s.calls.Bump = append(s.calls.Bump, refs)
 	if s.mode == "bumpError" {
 		return errors.New("bump failed")
@@ -156,55 +156,95 @@ func TestHookContextOracle(t *testing.T) {
 	if err = json.Unmarshal(data, &corpus); err != nil {
 		t.Fatal(err)
 	}
+	fixed := hookContextPortFixed(t)
 	for i, row := range corpus.Rows {
 		t.Run(fmt.Sprintf("%s-%03d", row.Kind, i), func(t *testing.T) {
-			in := hookContextRead[map[string]json.RawMessage](t, row.Input)
-			var got any
-			switch row.Kind {
-			case "quote":
-				if in["bytes"] != nil {
-					bytes := hookContextRead[[]byte](t, in["bytes"])
-					got = hookContextQuote(hookContextUnits(string(bytes), nil))
-				} else {
-					got = hookContextQuote(hookContextRead[[]uint16](t, in["units"]))
+			got := hookContextOracleRow(t, row.Kind, row.Input)
+			want := row.Out
+			if replaced, ok := fixed[i]; ok {
+				if replaced.Kind != row.Kind || !reflect.DeepEqual(hookContextRead[any](t, replaced.Input), hookContextRead[any](t, row.Input)) {
+					t.Fatal("the port-fixed record does not belong to this row")
 				}
-			case "clip":
-				got = hookContextQuote(hookContextClip(hookContextRead[[]uint16](t, in["units"]), hookContextRead[int](t, in["max"])))
-			case "penalty":
-				s := hookContextRead[string](t, in["count"])
-				n, _ := strconv.ParseFloat(s, 64)
-				if s == "NaN" {
-					n = math.NaN()
-				}
-				got = strconv.FormatFloat(HitCountPenalty(n), 'g', -1, 64)
-				if got == "+Inf" {
-					got = "Infinity"
-				}
-			case "render":
-				got = RenderCwdBlock(hookContextRead[string](t, in["name"]), hookContextRead[[][]string](t, in["entries"]), hookContextRead[int](t, in["budget"]), hookContextRead[string](t, in["date"]), "crw")
-			case "build":
-				got = hookContextTestBuild(t, row.Input)
-			case "longQuote":
-				seed := hookContextRead[uint32](t, in["seed"])
-				u := make([]uint16, hookContextRead[int](t, in["length"]))
-				for i := range u {
-					seed = seed*1664525 + 1013904223
-					u[i] = uint16(seed)
-				}
-				out := hookContextQuote(u)
-				sum := sha256.Sum256([]byte(out))
-				s := hex.EncodeToString(sum[:])
-				chunks := []string{}
-				for i := 0; i < len(s); i += 8 {
-					chunks = append(chunks, s[i:i+8])
-				}
-				got = map[string]any{"digest": chunks, "chars": len(hookContextUnits(out, nil))}
-			default:
-				t.Fatalf("unknown oracle case %q", row.Kind)
+				want = replaced.Port
 			}
-			hookContextCompare(t, got, row.Out)
+			hookContextCompare(t, got, want)
 		})
 	}
+}
+
+// hookContextFixedRow is a recorded row whose result is a kept defect that the port has fixed
+// (docs/port-cxc/known-defects/CRW-1089.md): the oracle's result and the port's, side by side.
+type hookContextFixedRow struct {
+	Row          int             `json:"row"`
+	Kind         string          `json:"kind"`
+	Input        json.RawMessage `json:"input"`
+	Oracle, Port json.RawMessage
+}
+
+func hookContextPortFixed(t *testing.T) map[int]hookContextFixedRow {
+	t.Helper()
+	data, err := os.ReadFile("testdata/hookcontext/port-fixed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []hookContextFixedRow
+	if err = json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	out := map[int]hookContextFixedRow{}
+	for _, r := range rows {
+		out[r.Row] = r
+	}
+	return out
+}
+
+func hookContextOracleRow(t *testing.T, kind string, input json.RawMessage) any {
+	t.Helper()
+	in := hookContextRead[map[string]json.RawMessage](t, input)
+	var got any
+	switch kind {
+	case "quote":
+		if in["bytes"] != nil {
+			bytes := hookContextRead[[]byte](t, in["bytes"])
+			got = hookContextQuote(hookContextUnits(string(bytes), nil))
+		} else {
+			got = hookContextQuote(hookContextRead[[]uint16](t, in["units"]))
+		}
+	case "clip":
+		got = hookContextQuote(hookContextClip(hookContextRead[[]uint16](t, in["units"]), hookContextRead[int](t, in["max"])))
+	case "penalty":
+		s := hookContextRead[string](t, in["count"])
+		n, _ := strconv.ParseFloat(s, 64)
+		if s == "NaN" {
+			n = math.NaN()
+		}
+		got = strconv.FormatFloat(HitCountPenalty(n), 'g', -1, 64)
+		if got == "+Inf" {
+			got = "Infinity"
+		}
+	case "render":
+		got = RenderCwdBlock(hookContextRead[string](t, in["name"]), hookContextRead[[][]string](t, in["entries"]), hookContextRead[int](t, in["budget"]), hookContextRead[string](t, in["date"]), "crw")
+	case "build":
+		got = hookContextTestBuild(t, input)
+	case "longQuote":
+		seed := hookContextRead[uint32](t, in["seed"])
+		u := make([]uint16, hookContextRead[int](t, in["length"]))
+		for i := range u {
+			seed = seed*1664525 + 1013904223
+			u[i] = uint16(seed)
+		}
+		out := hookContextQuote(u)
+		sum := sha256.Sum256([]byte(out))
+		s := hex.EncodeToString(sum[:])
+		chunks := []string{}
+		for i := 0; i < len(s); i += 8 {
+			chunks = append(chunks, s[i:i+8])
+		}
+		got = map[string]any{"digest": chunks, "chars": len(hookContextUnits(out, nil))}
+	default:
+		t.Fatalf("unknown oracle case %q", kind)
+	}
+	return got
 }
 func TestHookContextBudgetsAndFrame(t *testing.T) {
 	if FullBudget() != (RecallBudget{1400, 5, 100}) || CompactedBudget() != (RecallBudget{800, 2, 100}) {
@@ -256,7 +296,7 @@ func TestHookContextRepeatHistory(t *testing.T) {
 	deps := RecallContextDeps{OpenHitCounts: func() (HitCountStore, error) { calls.Opened++; return store, nil }}
 	candidates := []string{"a", "b", "c", "d", "e", "f"}
 	got := hookContextDemote(candidates, 5, func(s string) string { return s }, deps)
-	if !reflect.DeepEqual(got, []string{"b", "c", "a", "d", "e"}) || calls.Opened != 1 || len(calls.Read) != 1 || len(calls.Bump) != 1 || calls.Closed != 1 {
+	if !reflect.DeepEqual(got, []string{"b", "c", "a", "d", "e"}) || calls.Opened != 1 || len(calls.Read) != 1 || len(calls.Bump) != 0 || calls.Closed != 1 {
 		t.Fatalf("selection/store calls: %v %+v", got, calls)
 	}
 	store.counts["a"] = 4
@@ -308,6 +348,18 @@ func TestHookContextDefaultOwners(t *testing.T) {
 	if result.Outcome != CwdContextHits || !strings.Contains(result.Text, "supplied summary") || !strings.Contains(result.Text, "chosen-runtime recall chat search") {
 		t.Fatal(result)
 	}
+	store, err = deps.OpenHitCounts()
+	if err != nil || store == nil {
+		t.Fatal("temporary sidecar unavailable", err)
+	}
+	if counts, err := store.Read([]string{"thread:t"}); err != nil || counts["thread:t"] != 0 {
+		t.Fatal("choosing an entry counted it", counts, err)
+	}
+	_ = store.Close()
+	if !reflect.DeepEqual(result.Refs, []string{"thread:t"}) {
+		t.Fatal("rendered refs", result.Refs)
+	}
+	recallHookCountHits(deps, result.Refs, time.Time{}) // After the answer was written.
 	store, err = deps.OpenHitCounts()
 	if err != nil || store == nil {
 		t.Fatal("temporary sidecar unavailable", err)
@@ -371,7 +423,8 @@ func TestHookContextExplicitSearchHistoryIndependent(t *testing.T) {
 func TestHookContextSurrogateReclip(t *testing.T) {
 	s, meta := cwdExcerpt("😀abc def", 4)
 	units := hookContextUnits(s, meta)
-	if got := hookContextQuote(hookContextClip(units, 2)); got != `"\ud83d....."` {
+	// Two units leave no room for content: the bound is kept, as dots (the oracle sliced from the end).
+	if got := hookContextQuote(hookContextClip(units, 2)); got != `".."` {
 		t.Fatal(got)
 	}
 	// Invalid UTF-8 input has Node's maximal-subpart decoding, distinct from Go rune conversion.

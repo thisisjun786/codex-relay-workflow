@@ -195,7 +195,7 @@ func TestCRW895ShapesFromOtherDirectories(t *testing.T) {
 		"find ../.. -name x -delete":          true,  // the slot root
 		"find .. -delete":                     true,  // the checkout, which holds the directory the command runs in, no test
 		"find .. -name x -delete":             false, // the same with a test
-		"find . -delete":                      true,  // the directory itself, no test
+		"find . -delete":                      false, // CRW-1099: a safe checkout subdirectory is not a protected root
 		"find . -name x -delete":              false, // a test
 		"find sub -delete":                    false,
 		"echo .. | xargs rm":                  true,
@@ -257,7 +257,7 @@ func TestCRW895PlaceholderChangesTheShellContext(t *testing.T) {
 		`find ../repo -exec sh -c 'rm build/old.o' \;`:           false,
 		`find . -name '*.o' -exec sh -c 'rm -f {}' \;`:           false,
 		`find build -exec sh -c 'rm -rf {}' \;`:                  false,
-		`find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;`: false,
+		`find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;`: true, // failed cd leaves an unproven directory
 		`find . -name '*.o' -exec rm -f {}.tmp \;`:               false,
 		`find . -name '*.o' -exec rm -f ./{} \;`:                 false,
 	} {

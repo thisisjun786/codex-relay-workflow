@@ -222,13 +222,11 @@ func TestPromptTriggerCannotMoveAMidCyclePhase(t *testing.T) {
 
 // TestPromptTriggerLoopArmSeenSurvivesTheStageMarkerBranch is hook.test.ts "040: an armed session's
 // loop request records loopArmSeen through the stage-marker branch" (:1129-1137); the transcript
-// makes the R-11 branch the one that writes.
+// makes the R-11 branch the one that writes. Since CRW-1090 the marker counts only as a hook's developer
+// record, so the transcript holds one.
 func TestPromptTriggerLoopArmSeenSurvivesTheStageMarkerBranch(t *testing.T) {
 	cwd := t.TempDir()
-	transcript := filepath.Join(cwd, "transcript.jsonl")
-	if err := os.WriteFile(transcript, []byte("[crw — B: BUILD]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	transcript := writeTranscript(t, cwd, codexHookContext(t, "[crw — B: BUILD]"))
 	phase := state.PhaseB
 	promptSubmitStateFile(t, cwd, "ar1", func(s *state.State) {
 		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase
@@ -392,14 +390,12 @@ func TestPromptTriggerInjectedTurnsAreBoundedToFifty(t *testing.T) {
 }
 
 // TestPromptTriggerStageMarkerInTranscriptSuppressesReinjection is hook-continuation.test.ts "R-11:
-// passive re-fire with phase marker already in transcript -> no re-inject" (:339-358).
+// passive re-fire with phase marker already in transcript -> no re-inject" (:339-358). The oracle's case
+// wrote the hook's stdout envelope as the transcript line; a Codex rollout records the context as a
+// developer message, and since CRW-1090 only that record counts.
 func TestPromptTriggerStageMarkerInTranscriptSuppressesReinjection(t *testing.T) {
 	cwd := t.TempDir()
-	transcript := filepath.Join(cwd, "transcript.jsonl")
-	line := `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"[crw — B: BUILD]"}}` + "\n"
-	if err := os.WriteFile(transcript, []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	transcript := writeTranscript(t, cwd, codexHookContext(t, "[crw — B: BUILD]"))
 	phase := state.PhaseB
 	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
 		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase
@@ -416,20 +412,24 @@ func TestPromptTriggerStageMarkerInTranscriptSuppressesReinjection(t *testing.T)
 	}
 }
 
-// TestPromptTriggerContextPressureSuppressesReinjection is hook-continuation.test.ts "R-11:
-// context-pressure transcript suppresses passive injection" (:359-377).
-func TestPromptTriggerContextPressureSuppressesReinjection(t *testing.T) {
-	cwd := t.TempDir()
-	transcript := filepath.Join(cwd, "transcript.jsonl")
-	if err := os.WriteFile(transcript, []byte("# Compacted Session Handoff\nsummary...\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	phase := state.PhaseB
-	promptSubmitStateFile(t, cwd, "s2", func(s *state.State) {
-		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseC, true, &phase
-	})
-	if got := promptTriggerAnswer(t, cwd, "s2", "t-after-compact", "continue", transcript, true); got != "" {
-		t.Errorf("a context-pressure tail answered %q", got)
+// TestPromptTriggerContextPressureNoLongerSuppressesReinjection is hook-continuation.test.ts "R-11:
+// context-pressure transcript suppresses passive injection" (:359-377), changed by CRW-1090: the
+// pressure phrase in the tail is no compaction, and a prompt after a real compaction is the boundary of
+// its recovery window, so the phase change since the last injection gets its full directive (mode 2).
+func TestPromptTriggerContextPressureNoLongerSuppressesReinjection(t *testing.T) {
+	for name, content := range map[string]string{
+		"the oracle's phrase": "# Compacted Session Handoff\nsummary...\n",
+		"a compaction record": codexCompaction(t, "[crw — B: BUILD]"),
+	} {
+		cwd := t.TempDir()
+		transcript := writeTranscript(t, cwd, content)
+		phase := state.PhaseB
+		promptSubmitStateFile(t, cwd, "s2", func(s *state.State) {
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseC, true, &phase
+		})
+		if got := promptTriggerAnswer(t, cwd, "s2", "t-after-compact", "continue", transcript, true); got != WithFooter(PhaseDirective(state.PhaseC, nil), state.PhaseC) {
+			t.Errorf("%s: answered %q", name, got)
+		}
 	}
 }
 
@@ -437,10 +437,7 @@ func TestPromptTriggerContextPressureSuppressesReinjection(t *testing.T) {
 // explicit trigger still injects even if a marker is present" (:378-397).
 func TestPromptTriggerExplicitTriggerIgnoresTheTranscriptMarker(t *testing.T) {
 	cwd := t.TempDir()
-	transcript := filepath.Join(cwd, "transcript.jsonl")
-	if err := os.WriteFile(transcript, []byte("[crw — B: BUILD]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	transcript := writeTranscript(t, cwd, codexHookContext(t, "[crw — B: BUILD]"))
 	phase := state.PhaseB
 	promptSubmitStateFile(t, cwd, "s3", func(s *state.State) {
 		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase

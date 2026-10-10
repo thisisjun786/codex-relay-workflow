@@ -64,28 +64,30 @@ const (
 func RunHarnessDoctor(pluginRoot string, runner HarnessRunner, options HarnessOptions, projectRoot string, env host.LookupEnv, now time.Time) HarnessReport {
 	checks := make([]HarnessCheck, 0, 15)
 	manifestPath := filepath.Join(pluginRoot, harnessRunManifestRelative)
-	checks = append(checks, harnessRunManifestCheck(manifestPath))
+	checks = append(checks, harnessRunGuardOne("manifest", func() HarnessCheck { return harnessRunManifestCheck(manifestPath) }))
 	if harnessRunExists(manifestPath) {
-		checks = append(checks, HarnessManifestTargetChecks(pluginRoot)...)
+		checks = append(checks, harnessRunGuard("manifest-targets", func() []HarnessCheck { return HarnessManifestTargetChecks(pluginRoot) })...)
 	}
-	checks = append(checks, harnessRunSkillsCheck(pluginRoot))
-	checks = append(checks, harnessRunAgentsCheck(pluginRoot))
-	checks = append(checks, HarnessDriftChecks(pluginRoot)...)
-	checks = append(checks, HarnessHookTrustCheck(pluginRoot, options, env))
-	checks = append(checks, HarnessHookExecutionCheck(pluginRoot, options, env, now))
-	checks = append(checks, HarnessAstGrepCheck(pluginRoot, runner))
-	checks = append(checks, HarnessInstalledRootCheck(pluginRoot, options, env))
-	checks = append(checks, HarnessPabcdCheck(projectRoot))
-	checks = append(checks, HarnessFeaturesCheck(runner("codex", []string{"features", "list"}, harnessRunFeaturesTimeout)))
-	checks = append(checks, HarnessWslCheck())
+	checks = append(checks, harnessRunGuardOne("skills", func() HarnessCheck { return harnessRunSkillsCheck(pluginRoot) }))
+	checks = append(checks, harnessRunGuardOne("agents", func() HarnessCheck { return harnessRunAgentsCheck(pluginRoot) }))
+	checks = append(checks, harnessRunGuard("drift", func() []HarnessCheck { return HarnessDriftChecks(pluginRoot) })...)
+	checks = append(checks, harnessRunGuardOne("hook-trust", func() HarnessCheck { return HarnessHookTrustCheck(pluginRoot, options, env) }))
+	checks = append(checks, harnessRunGuardOne("hook-execution", func() HarnessCheck { return HarnessHookExecutionCheck(pluginRoot, options, env, now) }))
+	checks = append(checks, harnessRunGuardOne("ast-grep", func() HarnessCheck { return HarnessAstGrepCheck(pluginRoot, runner) }))
+	checks = append(checks, harnessRunGuardOne("install-root", func() HarnessCheck { return HarnessInstalledRootCheck(pluginRoot, options, env) }))
+	checks = append(checks, harnessRunGuardOne("pabcd-state", func() HarnessCheck { return HarnessPabcdCheck(projectRoot) }))
+	checks = append(checks, harnessRunGuardOne("features", func() HarnessCheck {
+		return HarnessFeaturesCheck(runner("codex", []string{"features", "list"}, harnessRunFeaturesTimeout))
+	}))
+	checks = append(checks, harnessRunGuardOne("wsl", HarnessWslCheck))
 
 	return HarnessReport{
 		SchemaVersion: HarnessSchemaVersion,
 		Overall:       HarnessRollup(checks),
 		Checks:        checks,
-		PluginVersion: harnessRunPluginVersion(manifestPath),
-		CodexVersion:  harnessReportDetectCodexVersion(runner),
-		ActiveSurface: harnessRunActiveSurface(env),
+		PluginVersion: harnessRunMetadata(func() *string { return harnessRunPluginVersion(manifestPath) }),
+		CodexVersion:  harnessRunMetadata(func() *string { return harnessReportDetectCodexVersion(runner) }),
+		ActiveSurface: harnessRunMetadata(func() *string { return harnessRunActiveSurface(env) }),
 	}
 }
 
@@ -99,7 +101,7 @@ func harnessRunExists(path string) bool {
 // parse and reference hooks. A missing file FAILs by name; an unreadable or unparseable one FAILs
 // with the engine's message, and a JSON null FAILs as the oracle's property read throws.
 func harnessRunManifestCheck(manifestPath string) HarnessCheck {
-	raw, err := os.ReadFile(manifestPath)
+	raw, err := harnessReadBounded(manifestPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return HarnessCheck{Name: "manifest", Severity: HarnessFail, Evidence: "missing " + manifestPath}
@@ -128,15 +130,20 @@ func harnessRunManifestCheck(manifestPath string) HarnessCheck {
 
 // harnessRunSkillsCheck is the inline skills check (doctor.ts:291-311): every directory under
 // skills/ needs SKILL.md and agents/openai.yaml. An unreadable skills/ throws outside every catch
-// in the oracle, so this panics with the same message for the CLI boundary to recover.
+// in the oracle and loses the report; here it is a WARN that names the failure and skips the
+// check (CRW-1152, port: fixed).
 func harnessRunSkillsCheck(pluginRoot string) HarnessCheck {
 	skillsDir := filepath.Join(pluginRoot, harnessRunSkillsDir)
-	if !harnessReportIsDir(skillsDir) {
+	isDir, statErr := harnessInstallStatDir(skillsDir)
+	if statErr != nil {
+		return HarnessCheck{Name: "skills", Severity: HarnessWarn, Evidence: "skills/ cannot be inspected, check skipped: " + harnessInstallErrorMessage(statErr, "stat")}
+	}
+	if !isDir {
 		return HarnessCheck{Name: "skills", Severity: HarnessWarn, Evidence: "no skills/ directory"}
 	}
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
-		panic(harnessInstallScandirError(err))
+		return HarnessCheck{Name: "skills", Severity: HarnessWarn, Evidence: "skills/ cannot be read, check skipped: " + harnessInstallScandirError(err).Error()}
 	}
 	dirs := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -158,15 +165,19 @@ func harnessRunSkillsCheck(pluginRoot string) HarnessCheck {
 }
 
 // harnessRunAgentsCheck is the inline agents check (doctor.ts:313-323): the role TOMLs of the
-// spawn configuration. An unreadable agents/ panics as the skills check does.
+// spawn configuration. An unreadable agents/ is a skipped WARN as the skills check's is.
 func harnessRunAgentsCheck(pluginRoot string) HarnessCheck {
 	agentsDir := filepath.Join(pluginRoot, harnessRunAgentsDir)
-	if !harnessReportIsDir(agentsDir) {
+	isDir, statErr := harnessInstallStatDir(agentsDir)
+	if statErr != nil {
+		return HarnessCheck{Name: "agents", Severity: HarnessWarn, Evidence: "agents/ cannot be inspected, check skipped: " + harnessInstallErrorMessage(statErr, "stat")}
+	}
+	if !isDir {
 		return HarnessCheck{Name: "agents", Severity: HarnessWarn, Evidence: "no agents/ directory"}
 	}
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
-		panic(harnessInstallScandirError(err))
+		return HarnessCheck{Name: "agents", Severity: HarnessWarn, Evidence: "agents/ cannot be read, check skipped: " + harnessInstallScandirError(err).Error()}
 	}
 	tomls := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -185,7 +196,7 @@ func harnessRunAgentsCheck(pluginRoot string) HarnessCheck {
 // when it is a string, nil when the manifest is unreadable, unparseable, not an object or has no
 // string version (the oracle's undefined).
 func harnessRunPluginVersion(manifestPath string) *string {
-	raw, err := os.ReadFile(manifestPath)
+	raw, err := harnessReadBounded(manifestPath)
 	if err != nil {
 		return nil
 	}

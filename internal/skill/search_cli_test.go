@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/skill/search"
 )
 
 func TestSearchShowDispatch(t *testing.T) {
@@ -16,7 +18,7 @@ func TestSearchShowDispatch(t *testing.T) {
 	if err := os.MkdirAll(cache, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cache, "jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache"), []byte(`{"skills":{"tdd":{"name":"TDD","description":"test driven development","superseded_by":"dev-testing"}}}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(cache, search.CacheKey("jaw", search.JAWRegistryURL)+".cache"), []byte(`{"skills":{"tdd":{"name":"TDD","description":"test driven development","superseded_by":"dev-testing"}}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {

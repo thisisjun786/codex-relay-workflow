@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -319,62 +320,121 @@ func TestPabcdLoopSteerBinaryEndsOnTheFirstInterruptOnAnOpenStdin(t *testing.T) 
 }
 
 // TestPabcdSessionLockRowsBinaryEndOnTheFirstInterrupt is the issue's lock reproduction on the built crw:
-// the test holds s.json.lock, starts the row, sends one SIGINT 40 ms after the process is up and drops the
-// lock 35 ms later. The row must end with 130, print nothing and leave every byte as it was.
+// the test holds s.json.lock, starts the row, waits until the process reports that it is blocked on that lock
+// and sends one SIGINT. The row must end with 130, print nothing, leave the test's lock and every other byte as
+// it was.
 //
-// Nothing shows from outside that the child has reached the lock wait, so a run that the signal reached
-// before the process installed its handler (killed by SIGINT, no exit code) or that gave its wait up
-// before the signal (the host was too busy to start it in time) is repeated, up to five times.
+// The report is the ready file of a crw built with -tags sigintprobe (state.lockWaitProbe): the wait runs in
+// the row, after serve has registered the handler, and the probe build lets it last 30 s, so the signal always
+// finds the process in the wait and the wait cannot end by itself first (CRW-1167). Nothing is retried: a run
+// that ends before it reports, dies of the signal or answers anything but 130 fails.
 func TestPabcdSessionLockRowsBinaryEndOnTheFirstInterrupt(t *testing.T) {
-	crw := testsupport.CRW(t)
+	probe := testsupport.BuildCRW(t, "-tags", "sigintprobe")
 	for _, name := range []string{"memory allow-write", "scan record"} {
-		t.Run(name, func(t *testing.T) {
-			for attempt := 1; ; attempt++ {
-				home := t.TempDir()
-				root := filepath.Join(home, "work")
-				if err := os.MkdirAll(root, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := state.WriteState(root, state.DefaultState("s", "")); err != nil {
-					t.Fatal(err)
-				}
-				lockPath := state.StatePath(root, "s") + ".lock"
-				if err := os.WriteFile(lockPath, []byte("held"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				before := pabcd1074Tree(t, home)
-				cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows("")[name])
-				if err := cmd.Start(); err != nil {
-					t.Fatal(err)
-				}
-				done := make(chan error, 1)
-				go func() { done <- cmd.Wait() }()
-				time.Sleep(40 * time.Millisecond)
-				_ = cmd.Process.Signal(syscall.SIGINT)
-				time.Sleep(35 * time.Millisecond)
-				_ = os.Remove(lockPath)
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-					<-done
-					t.Fatalf("the run was still alive 5 s after the SIGINT\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
-				}
-				code := cmd.ProcessState.ExitCode()
-				if attempt < 5 && (code == -1 || code == 1 && strings.Contains(stdout.String(), "lock")) {
-					continue
-				}
-				if code != Interrupted {
-					t.Fatalf("exit code %d, want %d\nstdout:\n%s\nstderr:\n%s", code, Interrupted, stdout.String(), stderr.String())
-				}
-				if stdout.Len() != 0 || stderr.Len() != 0 {
-					t.Fatalf("the interrupted run wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
-				}
-				orchestrateTestSameTree(t, before, pabcd1074Tree(t, home))
-				return
-			}
-		})
+		t.Run(name, func(t *testing.T) { pabcd1167LockWaitRun(t, probe, name, false) })
 	}
+}
+
+// pabcd1167Ended waits for the child's end, killing its process group when it outlives the budget.
+func pabcd1167Ended(t *testing.T, cmd *exec.Cmd, done <-chan struct{}, stdout, stderr *bytes.Buffer, what string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		t.Fatalf("%s\nstdout:\n%s\nstderr:\n%s", what, stdout.String(), stderr.String())
+	}
+}
+
+// pabcd1167WantInterrupted judges an ended child: it exited by itself with 130 (not killed by a signal) and wrote
+// nothing.
+func pabcd1167WantInterrupted(t *testing.T, cmd *exec.Cmd, stdout, stderr *bytes.Buffer) {
+	t.Helper()
+	if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); !ok || !status.Exited() || status.ExitStatus() != Interrupted {
+		t.Fatalf("the child ended with %v, want exit code %d (a child killed by the signal never ran its handler)\nstdout:\n%s\nstderr:\n%s", cmd.ProcessState, Interrupted, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("the interrupted run wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
+	}
+}
+
+// pabcd1167LockWaitRun is one SIGINT run of a lock-taking row (memory allow-write, scan record) on the probe
+// build: the test holds the session lock, the row waits for it, and the signal is sent only after the process has
+// said so through its ready file. With stateFIFO the session file is a FIFO whose writer stays open, as in the
+// d1 case; the held lock keeps the row from ever reading it.
+func pabcd1167LockWaitRun(t *testing.T, probe, name string, stateFIFO bool) {
+	t.Helper()
+	home := t.TempDir()
+	root := filepath.Join(home, "work")
+	if err := os.MkdirAll(filepath.Join(root, ".crw", "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := state.StatePath(root, "s")
+	if stateFIFO {
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		holder, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer holder.Close()
+	} else if err := state.WriteState(root, state.DefaultState("s", "")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".lock", []byte("held"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var before map[string]string
+	if !stateFIFO {
+		before = pabcd1074Tree(t, home)
+	}
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd, stdout, stderr := pabcd1074Run(t, probe, home, root, pabcd1074Rows("")[name])
+	cmd.Env = append(cmd.Env, "CRW_SIGINTPROBE_READY_FILE="+ready)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	reported := false
+	t.Cleanup(func() {
+		if !reported {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-done
+		}
+	})
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		select {
+		case <-done:
+			reported = true
+			t.Fatalf("the run ended before it reported waiting for the lock: %v\nstdout:\n%s\nstderr:\n%s", cmd.ProcessState, stdout.String(), stderr.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the run did not report waiting for the lock within 10 s")
+		}
+	}
+	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatalf("the SIGINT was not delivered: %v", err)
+	}
+	pabcd1167Ended(t, cmd, done, stdout, stderr, "the run was still alive 5 s after the SIGINT")
+	reported = true
+	pabcd1167WantInterrupted(t, cmd, stdout, stderr)
+	if held, err := os.ReadFile(path + ".lock"); err != nil || string(held) != "held" {
+		t.Fatalf("the test's lock was not left as it was: %q %v", held, err)
+	}
+	if stateFIFO {
+		if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+			t.Fatalf("the session state was replaced: %v %v", info, err)
+		}
+		return
+	}
+	orchestrateTestSameTree(t, before, pabcd1074Tree(t, home))
 }
 
 // TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent: a malformed inline batch is refused before any lock, and the
@@ -395,62 +455,192 @@ func TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent(t *testing.T) {
 // TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter is the post-evaluation d1 case on the built
 // crw: the session state is a FIFO whose writer stays open without EOF. The state reads that precede the first
 // write used to block in read for good, so the first SIGINT could not end the run (and memory and scan kept their
-// session lock). The reader now refuses a state file that is not a regular file without reading it: the run ends
-// by itself with its refusal (exit 1), and a SIGINT sent at the start ends it too (130, or the refusal when the
-// refusal came first), with the lock gone either way.
+// session lock). The reader now refuses a state file that is not a regular file without reading it.
+//
+// Without a signal the run ends by itself with that refusal (exit 1), the lock gone and the FIFO in place. Nothing
+// is blocked then, so a SIGINT cannot be placed against it: the refusal is over within milliseconds and nothing
+// shows from outside that the handler (installed at the top of main, after the runtime and every package
+// initialiser) exists, and a signal that beats it meets SIGINT's default disposition, by design (decision 42, cmd/crw
+// serve; CRW-1167 saw 94 of 600 such runs killed under CPU load). The SIGINT cases therefore wait for an observed
+// blocked state first, on the same FIFO session file, and then demand exit 130 with nothing printed:
+//   - memory allow-write and scan record: blocked on the session lock the test holds, reported by the probe build's
+//     ready file (pabcd1167LockWaitRun);
+//   - loop steer: blocked reading its batch from a FIFO, which the test's own open for writing proves, as it
+//     returns only once the child has opened the FIFO for reading (pabcd1167SteerRun).
 func TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter(t *testing.T) {
 	crw := testsupport.CRW(t)
+	probe := testsupport.BuildCRW(t, "-tags", "sigintprobe")
 	for _, name := range []string{"loop steer", "memory allow-write", "scan record"} {
-		for _, signalled := range []bool{false, true} {
-			t.Run(name+map[bool]string{false: "/no signal", true: "/SIGINT"}[signalled], func(t *testing.T) {
-				home := t.TempDir()
-				root := filepath.Join(home, "work")
-				if err := os.MkdirAll(filepath.Join(root, ".crw", "sessions"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				path := state.StatePath(root, "s")
-				if err := syscall.Mkfifo(path, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				holder, err := os.OpenFile(path, os.O_RDWR, 0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer holder.Close()
-				cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows(pabcd1074Batch)[name])
-				if err := cmd.Start(); err != nil {
-					t.Fatal(err)
-				}
-				done := make(chan error, 1)
-				go func() { done <- cmd.Wait() }()
-				if signalled {
-					time.Sleep(20 * time.Millisecond)
-					_ = cmd.Process.Signal(syscall.SIGINT)
-				}
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-					<-done
-					t.Fatalf("the run did not end on a FIFO session file (signalled %v)\nstdout:\n%s\nstderr:\n%s", signalled, stdout.String(), stderr.String())
-				}
-				code := cmd.ProcessState.ExitCode()
-				switch {
-				case !signalled && code != 1:
-					t.Fatalf("exit code %d, want the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
-				case signalled && code != Interrupted && code != 1:
-					t.Fatalf("exit code %d, want %d or the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, Interrupted, stdout.String(), stderr.String())
-				}
-				if code == Interrupted && (stdout.Len() != 0 || stderr.Len() != 0) {
-					t.Fatalf("the interrupted run wrote to its streams\nstdout:\n%q\nstderr:\n%q", stdout.String(), stderr.String())
-				}
-				if _, err := os.Lstat(path + ".lock"); !os.IsNotExist(err) {
-					t.Fatalf("the session lock was left behind: %v", err)
-				}
-				if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
-					t.Fatalf("the session state was replaced: %v %v", info, err)
-				}
-			})
+		t.Run(name+"/no signal", func(t *testing.T) { pabcd1167FIFORefusal(t, crw, name) })
+		t.Run(name+"/SIGINT", func(t *testing.T) {
+			if name == "loop steer" {
+				pabcd1167SteerRun(t, crw)
+				return
+			}
+			pabcd1167LockWaitRun(t, probe, name, true)
+		})
+	}
+}
+
+// pabcd1167FIFOHome is a workspace whose session file s is a FIFO with an open writer; the writer is closed with the
+// test.
+func pabcd1167FIFOHome(t *testing.T) (home, root, path string) {
+	t.Helper()
+	home = t.TempDir()
+	root = filepath.Join(home, "work")
+	if err := os.MkdirAll(filepath.Join(root, ".crw", "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path = state.StatePath(root, "s")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { holder.Close() })
+	return home, root, path
+}
+
+// pabcd1167FIFORefusal is the unsignalled run: the refusal's exit 1, no lock left, the FIFO still in place.
+func pabcd1167FIFORefusal(t *testing.T, crw, name string) {
+	t.Helper()
+	home, root, path := pabcd1167FIFOHome(t)
+	cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows(pabcd1074Batch)[name])
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	pabcd1167Ended(t, cmd, done, stdout, stderr, "the run did not end on a FIFO session file")
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Fatalf("exit code %d, want the refusal's 1\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Lstat(path + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("the session lock was left behind: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("the session state was replaced: %v %v", info, err)
+	}
+}
+
+// pabcd1167SteerRun is the SIGINT run of loop steer: its batch comes from a FIFO the test opens for writing and
+// never writes to. The open returns only when the child has opened the FIFO for reading, which it does inside the
+// row, after serve registered the handler, and the child then waits for the batch until the signal ends it.
+func pabcd1167SteerRun(t *testing.T, crw string) {
+	t.Helper()
+	home, root, path := pabcd1167FIFOHome(t)
+	batch := filepath.Join(t.TempDir(), "batch.fifo")
+	if err := syscall.Mkfifo(batch, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd, stdout, stderr := pabcd1074Run(t, crw, home, root, pabcd1074Rows(batch)["loop steer"])
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	writer := pabcd1167StartBatchWriter(func() (*os.File, error) { return os.OpenFile(batch, os.O_WRONLY, 0) })
+	ended := false
+	t.Cleanup(func() {
+		if !ended {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-done
 		}
+		writer.release(batch)
+	})
+	switch err := writer.await(done, 10*time.Second); err {
+	case nil:
+	case errBatchRunEnded:
+		ended = true
+		t.Fatalf("the run ended before it opened its batch: %v\nstdout:\n%s\nstderr:\n%s", cmd.ProcessState, stdout.String(), stderr.String())
+	default:
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatalf("the SIGINT was not delivered: %v", err)
+	}
+	pabcd1167Ended(t, cmd, done, stdout, stderr, "the run was still alive 5 s after the SIGINT")
+	ended = true
+	pabcd1167WantInterrupted(t, cmd, stdout, stderr)
+	if _, err := os.Lstat(path + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("the session lock was left behind: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("the session state was replaced: %v %v", info, err)
+	}
+}
+
+var (
+	errBatchRunEnded = errors.New("the run ended")
+	errBatchTimeout  = errors.New("the run did not open its batch FIFO within 10 s")
+)
+
+// pabcd1167BatchWriter is the test's O_WRONLY open of the batch FIFO, run in a goroutine because it blocks until the
+// child opens the FIFO for reading. The goroutine's single result is received once, by await or else by release.
+type pabcd1167BatchWriter struct {
+	result   chan pabcd1167BatchOpen
+	received bool
+	open     pabcd1167BatchOpen
+}
+
+type pabcd1167BatchOpen struct {
+	f   *os.File
+	err error
+}
+
+func pabcd1167StartBatchWriter(open func() (*os.File, error)) *pabcd1167BatchWriter {
+	w := &pabcd1167BatchWriter{result: make(chan pabcd1167BatchOpen, 1)}
+	go func() {
+		f, err := open()
+		w.result <- pabcd1167BatchOpen{f, err}
+	}()
+	return w
+}
+
+// await returns nil once the writer opened, the open's error, errBatchRunEnded when done closed first or
+// errBatchTimeout.
+func (w *pabcd1167BatchWriter) await(done <-chan struct{}, timeout time.Duration) error {
+	select {
+	case w.open = <-w.result:
+		w.received = true
+		return w.open.err
+	case <-done:
+		return errBatchRunEnded
+	case <-time.After(timeout):
+		return errBatchTimeout
+	}
+}
+
+// release frees a writer still blocked in its open (by opening the FIFO for reading), waits for the goroutine's
+// result unless await already took it, and closes the file.
+func (w *pabcd1167BatchWriter) release(batch string) {
+	if r, err := os.OpenFile(batch, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+		r.Close()
+	}
+	if !w.received {
+		w.open = <-w.result
+		w.received = true
+	}
+	if w.open.f != nil {
+		w.open.f.Close()
+	}
+}
+
+// TestPabcd1167BatchWriterReleasesAfterAFailedOpen: when the writer's open fails, the test's cleanup still gets
+// the goroutine's result out of release; a release that waited for a second result would hang the package.
+func TestPabcd1167BatchWriterReleasesAfterAFailedOpen(t *testing.T) {
+	openErr := errors.New("open failed")
+	w := pabcd1167StartBatchWriter(func() (*os.File, error) { return nil, openErr })
+	if err := w.await(make(chan struct{}), 5*time.Second); err != openErr {
+		t.Fatalf("await = %v, want the open's error", err)
+	}
+	released := make(chan struct{})
+	go func() { w.release(filepath.Join(t.TempDir(), "absent.fifo")); close(released) }()
+	select {
+	case <-released:
+	case <-time.After(3 * time.Second):
+		t.Fatal("release hung after the failed open: the only result was consumed by await")
 	}
 }

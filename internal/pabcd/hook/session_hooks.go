@@ -9,11 +9,13 @@
 package hook
 
 import (
+	"errors"
 	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
@@ -37,15 +39,65 @@ type SessionHookPostToolUsePayload struct {
 // SessionStart-bound FSM by creating the session's state file, before an agent can invoke the
 // explicit-session CLI, and answers nothing. ensureState leaves an existing file, valid or corrupt,
 // untouched; a failure leaves no state and is silent, as the oracle's dispatch catch is.
+//
+// CRW-1140 (port: fixed): the oracle bootstraps in whatever cwd the payload names, so a thread
+// resumed at another cwd gets an empty IDLE state beside the one it left in flight. A relay-managed
+// thread (one a CRW resume path anchored at its native root, stateroot.Guard) is judged with the
+// same resolution the resume paths use: when its root holds work in flight and the payload cwd is
+// another directory, nothing is created (a state already there, a legacy IDLE one included, is left
+// alone and does not exempt it) and the answer tells the agent where its state is. A thread
+// with no anchor, a standalone terminal session, bootstraps exactly as before; the anchor is a local
+// file, so no hook needs a running relay.
 func SessionHookSessionStart(p SessionHookSessionStartPayload) string {
+	return sessionHookSessionStart(p, os.LookupEnv)
+}
+
+func sessionHookSessionStart(p SessionHookSessionStartPayload, env host.LookupEnv) string {
+	if refusal := stateroot.Bootstrap(env, p.Cwd, p.SessionID); refusal != nil {
+		return sessionHookAnswer("SessionStart", sessionHookStateRootContext(refusal))
+	}
 	_, _ = state.EnsureState(p.Cwd, p.SessionID)
 	return ""
 }
 
+// sessionHookStateRootContext is what a hook tells an agent whose thread runs away from the root
+// that holds its work in flight, or whose root record cannot be trusted.
+func sessionHookStateRootContext(refusal error) string {
+	var anchorErr *stateroot.AnchorError
+	if errors.As(refusal, &anchorErr) {
+		return "[crw: PABCD state root]\n" + refusal.Error() + "\n" +
+			"No PABCD state was created or changed for this thread at this cwd. Nothing was moved."
+	}
+	c := conflictOf(refusal)
+	if c == nil {
+		return "[crw: PABCD state root]\n" + refusal.Error()
+	}
+	held := "is in flight at " + c.StatePath + " (phase " + c.Phase + ")"
+	if c.Unreadable {
+		held = "is at " + c.StatePath + " and cannot be read, so it may be in flight"
+	}
+	return "[crw: PABCD state root]\n" +
+		"This thread's PABCD state " + held + ", in its native cwd " + c.NativeCwd + ". This session started at " + c.TargetCwd +
+		", so no state was created here: an empty IDLE state would detach the work in flight. Nothing was moved.\n" +
+		"Run PABCD commands for this thread with `--cwd " + c.NativeCwd + "`, or resume the thread at that cwd. " +
+		"Moving the work is an explicit handover to a thread started at the new cwd; a bound source worktree is not a native cwd."
+}
+
+func conflictOf(err error) *stateroot.Conflict {
+	var c *stateroot.Conflict
+	if errors.As(err, &c) {
+		return c
+	}
+	return nil
+}
+
 // SessionHookPostCompact is handlePostCompact (hook.ts:2025-2033): a context compaction resets the
 // reinjection cursor of an in-flight cycle, so the first eligible same-phase prompt injects the full
-// phase directive (mode 2) instead of the short stage header (mode 3). Nothing else is touched — not
-// the phase, the flags, the stagnation counters, the goalplan or the goal database — and the handler
+// phase directive (mode 2) instead of the short stage header (mode 3). The turns the dedup list holds were
+// answered in the context the compaction removed, so they are dropped with the cursor (CRW-1090 evaluation d1: the dedup
+// holds within one context generation; docs/port-cxc/known-defects/CRW-1090.md). Beside the state, the
+// compaction's recovery boundary is recorded for the Stop (compaction_recovery.go, not in the oracle). Nothing else is
+// touched — not the phase, the flags, the stagnation counters, the goalplan or the goal database — and the handler
 // answers nothing.
 //
 // The oracle reads the state and writes it back with no lock, so an update a participating writer
@@ -61,11 +113,16 @@ func SessionHookPostCompact(p SessionHookPostCompactPayload) string {
 // sessionHookPostCompact takes the lock as an argument so that a test can land a participating
 // writer's update between the handler's read and its write.
 func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sessionID string, fn func() error) error) string {
+	// Every session with a state records the compaction's recovery boundary, so a Stop releases until the next user turn
+	// however much output follows (CRW-1090, compaction_recovery.go).
+	compactionRecoveryBegin(p.Cwd, p.SessionID)
 	// No-op unless an orchestrated cycle is in flight, and no write when the cursor is already reset.
 	if !sessionHookPostCompactEligible(state.ReadState(p.Cwd, p.SessionID)) {
 		return ""
 	}
 	_ = lock(p.Cwd, p.SessionID, func() error {
+		// CRW-1097: a ledger row or plan-audit cleanup an earlier writer left pending is finished by this writer of the session too.
+		DrainSessionLedger(p.Cwd, p.SessionID)
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable || !sessionHookPostCompactEligible(fresh) {
 			return nil
@@ -74,7 +131,7 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 		if err != nil {
 			return nil
 		}
-		fresh.LastInjectedPhase = nil
+		fresh.LastInjectedPhase, fresh.InjectedTurns = nil, []string{}
 		if !state.RewriteKeepsStored(raw, fresh) || state.DcloseRecoveryLegacy(fresh) {
 			return nil
 		}
@@ -83,10 +140,11 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 	return ""
 }
 
-// sessionHookPostCompactEligible is the oracle's guard: an orchestrated cycle is in flight and the
-// reinjection cursor still holds a phase, so there is something to reset.
+// sessionHookPostCompactEligible is the oracle's guard, widened by the turns (CRW-1090 evaluation d1): an orchestrated
+// cycle is in flight and the reinjection cursor still holds a phase, or the dedup list still holds turns, so there is
+// something to reset.
 func sessionHookPostCompactEligible(s state.State) bool {
-	return s.OrchestrationActive && s.Phase != state.PhaseIdle && s.LastInjectedPhase != nil
+	return s.OrchestrationActive && s.Phase != state.PhaseIdle && (s.LastInjectedPhase != nil || len(s.InjectedTurns) > 0)
 }
 
 // SessionHookPostToolUse is handlePostToolUse (hook.ts:1951-1992): a request_user_input round is
@@ -137,13 +195,18 @@ func sessionHookGoalStatus(sessionID string, env host.LookupEnv) host.GoalStatus
 // sessionHookPostToolUseAnswer is the answer handlePostToolUse builds inline (hook.ts:1978-1986):
 // JSON.stringify of one hookSpecificOutput object, then a newline.
 func sessionHookPostToolUseAnswer(context string) string {
+	return sessionHookAnswer("PostToolUse", context)
+}
+
+// sessionHookAnswer is one hookSpecificOutput object carrying context for event, then a newline.
+func sessionHookAnswer(event, context string) string {
 	type output struct {
 		Event   string `json:"hookEventName"`
 		Context string `json:"additionalContext"`
 	}
 	b, err := role.Stringify(struct {
 		Output output `json:"hookSpecificOutput"`
-	}{output{"PostToolUse", context}}, "")
+	}{output{event, context}}, "")
 	if err != nil {
 		return ""
 	}

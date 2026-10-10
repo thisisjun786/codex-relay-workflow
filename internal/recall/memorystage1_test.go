@@ -58,6 +58,10 @@ func TestMemoryStage1Oracle(t *testing.T) {
 		t.Fatalf("recorded %d cases, want 46", len(cases))
 	}
 	for _, c := range cases {
+		if c.Name == "scope-presence-blocks-relax" {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1087.md): TestMemoryStage1PresenceIsCountedInScope.
+			continue
+		}
 		t.Run(c.Name, func(t *testing.T) {
 			home := memoryStage1Home(t)
 			if err := os.MkdirAll(filepath.Join(home, "memories"), 0o700); err != nil {
@@ -198,4 +202,32 @@ func TestMemoryStage1NonfiniteFallback(t *testing.T) {
 	if len(r.Hits) != 0 {
 		t.Fatal("Array.slice(0, NaN) must backfill zero hits")
 	}
+}
+
+// CRW-1087 (A8-03): a boundary term that only an out-of-scope row holds is not present for the scoped search,
+// so the relaxed (substring) pass runs; a term an in-scope row holds still blocks it.
+func TestMemoryStage1PresenceIsCountedInScope(t *testing.T) {
+	now := float64(time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC).UnixMilli())
+	run := func(t *testing.T, rows [][]any, opts MemorySearchOptions) MemorySearchResult {
+		t.Helper()
+		home := memoryStage1Home(t)
+		recallFixtureDB(t, home, "memories_1.sqlite", "CREATE TABLE stage1_outputs(thread_id,raw_memory,rollout_summary,source_updated_at)", "INSERT INTO stage1_outputs VALUES(?,?,?,?)", rows...)
+		recallFixtureDB(t, home, "state_1.sqlite", "CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,git_branch TEXT,updated_at_ms INTEGER)", "INSERT INTO threads VALUES(?,?,?,?,?)",
+			[]any{"here", "", "/proj/here", nil, 0}, []any{"here2", "", "/proj/here", nil, 0}, []any{"other", "", "/proj/other", nil, 0})
+		opts.Home, opts.NowMs, opts.Cwd, opts.CwdOnly = &home, &now, memoryPtr("/proj/here"), true
+		return memoryStage1Result(t, "3956 LSP", opts)
+	}
+	sec := now / 1000
+	t.Run("out of scope", func(t *testing.T) {
+		got := run(t, [][]any{{"here", "LSP PR3956", "", sec}, {"other", "3956", "", sec}}, MemorySearchOptions{})
+		if len(got.Hits) != 1 || got.Hits[0].Relpath != "stage1_outputs/here" || !strings.Contains(strings.Join(got.Warnings, "|"), "no word-boundary matches") {
+			t.Fatalf("the out-of-scope row blocked the relaxed pass: %+v", got)
+		}
+	})
+	t.Run("in scope", func(t *testing.T) {
+		got := run(t, [][]any{{"here", "LSP PR3956", "", sec}, {"here2", "3956", "", sec}}, MemorySearchOptions{})
+		if len(got.Hits) != 0 {
+			t.Fatalf("an in-scope row holds the term and must block the relaxed pass: %+v", got)
+		}
+	})
 }

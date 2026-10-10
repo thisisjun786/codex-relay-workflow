@@ -108,9 +108,9 @@ func started(t *testing.T, env host.LookupEnv) string {
 	t.Helper()
 	start, err := command(t, env, map[string]any{"action": "start", "role": "executor"})
 	check(t, err)
-	if _, err := command(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID}); err != nil {
-		t.Fatal(err)
-	}
+	claim, err := command(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	check(t, err)
+	issue(t, claim.Marker)
 	if _, err := command(t, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +120,18 @@ func started(t *testing.T, env host.LookupEnv) string {
 func stopped(attempt string) map[string]any {
 	return map[string]any{"action": "report", "attemptId": attempt, "outcome": "stopped", "agentId": "child-a",
 		"executionState": "stopped", "reconciliation": "child stopped; partial work inspected"}
+}
+
+// issue is the spawn hook's issuance of the claimed attempt, which a created report requires; the CLI runs in the working
+// directory, and so does the issuance.
+func issue(t *testing.T, marker string) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	check(t, err)
+	tool := "call-1"
+	if _, err := role.IssueManagedSpawn(cwd, "session-test", marker+"\nTASK", &tool); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // install makes role.OpenDispatchHost the real opener for one test and restores it after.
@@ -182,9 +194,9 @@ func TestCreatedReportNeverDials(t *testing.T) {
 	env := tempEnv(t, codex)
 	start, err := command(t, env, map[string]any{"action": "start", "role": "executor"})
 	check(t, err)
-	if _, err := command(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID}); err != nil {
-		t.Fatal(err)
-	}
+	claim, err := command(t, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	check(t, err)
+	issue(t, claim.Marker)
 	out, err := command(t, env, map[string]any{"action": "report", "attemptId": start.AttemptID, "outcome": "created", "agentId": "child-a"})
 	check(t, err)
 	if out.Action != "wait" {

@@ -200,6 +200,35 @@ func TestRecallCLIRecordedOracle(t *testing.T) {
 	}
 }
 
+// recallCLIUsageWithVerify is the recorded usage text with the lines of --verify (CRW-1083), which the oracle does not
+// have: the synopsis of `chat index` lists it and a flag line follows --full. Text without the usage is returned as is.
+func recallCLIUsageWithVerify(text string) string {
+	text = strings.Replace(text, "chat index [--rebuild] [--status] [--json]", "chat index [--rebuild] [--status] [--verify] [--json]", 1)
+	const full = "  --full       with --json: emit unclipped text fields\n"
+	return strings.Replace(text, full, full+"  --verify     chat index: decide freshness from file content, not only size and mtime (with --status, report without writing)\n", 1)
+}
+
+func TestUsageListsChatIndexVerify(t *testing.T) {
+	u := Usage()
+	for _, want := range []string{"crw recall chat index [--rebuild] [--status] [--verify] [--json]", "  --verify     chat index: "} {
+		if !strings.Contains(u, want) {
+			t.Errorf("usage lacks %q", want)
+		}
+	}
+	skill, err := os.ReadFile(filepath.Join("..", "..", "plugins", "crw", "skills", "crw-recall", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(skill), "crw recall chat index [--rebuild] [--status] [--verify] [--json]") {
+		t.Error("the crw-recall skill does not list chat index --verify")
+	}
+}
+
+// recallCLILaneScoreFixes holds the scores of recorded fixtures that the eligibility-first lane ranking changes.
+var recallCLILaneScoreFixes = map[string][]float64{
+	"cli__chat__search_refresh_builds_index": {0.029749663773784223, 0.02901671452121108, 0.02885045852148274, 0.028563885540156295},
+}
+
 // The real binary replay has no frozen clock or bare-memory help mapping.
 // These cases use the unchanged recorded givens and expectations through Run.
 func TestRecallCLIRecordedCorpus(t *testing.T) {
@@ -321,8 +350,9 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 					continue
 				}
 				if want.Stdout != nil {
-					if out != sub.Expected(*want.Stdout) {
-						t.Errorf("step%d stdout got %q want %q", i, out, sub.Expected(*want.Stdout))
+					wantOut := recallCLIUsageWithVerify(sub.Expected(*want.Stdout))
+					if out != wantOut {
+						t.Errorf("step%d stdout got %q want %q", i, out, wantOut)
 					}
 					continue
 				}
@@ -332,6 +362,12 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				}
 				if err = json.Unmarshal([]byte(sub.Expected(string(want.StdoutJSON))), &expected); err != nil {
 					t.Fatal(err)
+				}
+				// port: fixed (docs/port-cxc/known-defects/CRW-1087.md): lane ranks are taken among eligible rows.
+				if scores, ok := recallCLILaneScoreFixes[id]; ok {
+					for i, hit := range expected.(map[string]any)["hits"].([]any) {
+						hit.(map[string]any)["score"] = scores[i]
+					}
 				}
 				if !recallCLICompareJSON(actual, expected) {
 					t.Errorf("step%d got %s want %s", i, out, sub.Expected(string(want.StdoutJSON)))
@@ -608,5 +644,57 @@ func TestRecallRebuildSuccessOutput(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, r.snapshot(t)) || !reflect.DeepEqual(search, r.search(t, now)) {
 		t.Fatal("rebuild did not re-create the same index")
+	}
+}
+
+// CRW-1083: --verify is the explicit strong path. Without it the status is metadata-only and its
+// output is the oracle's; with it a rewrite that kept size and mtime is found and replaced.
+func TestRecallChatIndexVerify(t *testing.T) {
+	r, now := recallRebuildNew(t), time.Now()
+	r.ok(t, now, "chat", "index")
+	files, err := ListRolloutFiles(r.home, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var target string
+	for _, f := range files {
+		if strings.HasSuffix(f.Path, "-main.jsonl") {
+			target = f.Path
+		}
+	}
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(target)
+	rewritten := append([]byte{}, body...)
+	// Same length, same mtime: the first bytes are changed so that the message text differs.
+	i := strings.Index(string(rewritten), "deployed")
+	if i < 0 {
+		t.Fatal("fixture has no 'deployed' message")
+	}
+	copy(rewritten[i:], "DEPLOYXX")
+	if err := os.WriteFile(target, rewritten, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(target, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	plain := r.ok(t, now, "chat", "index", "--status")
+	if !strings.Contains(plain, "stale: 0,") || strings.Contains(plain, "content-verified") {
+		t.Fatal("the metadata-only status changed its output:", plain)
+	}
+	if code, out, e := r.run(t, now, "chat", "index", "--status", "--verify", "--json"); code != 0 || e != "" || !strings.Contains(out, `"staleFiles": 1`) || !strings.Contains(out, `"freshness": "content-verified"`) {
+		t.Fatal("the strong status did not see the rewrite:", code, out, e)
+	}
+	if code, out, e := r.run(t, now, "chat", "index", "--status", "--json"); code != 0 || e != "" || !strings.Contains(out, `"staleFiles": 0`) || strings.Contains(out, "freshness") {
+		t.Fatal("the metadata-only JSON changed:", code, out, e)
+	}
+	text := r.ok(t, now, "chat", "index", "--verify")
+	if !strings.Contains(text, "ingested 1/4 files") || !strings.Contains(text, "stale: 0 (content-verified)") {
+		t.Fatal(text)
+	}
+	if again := r.ok(t, now, "chat", "index", "--verify"); !strings.Contains(again, "ingested 0/4 files, 0 appended") {
+		t.Fatal(again)
 	}
 }

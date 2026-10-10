@@ -2,7 +2,6 @@ package doctor
 
 import (
 	"errors"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -65,7 +64,7 @@ func doctorRootedRead(pluginRoot, path string) ([]byte, error) {
 	if _, err := rooted.Stat(within); err != nil {
 		return nil, doctorRootedClassify(path, err)
 	}
-	file, err := rooted.Open(within)
+	file, err := rooted.OpenFile(within, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		if doctorRootedOpenIsRead(err) {
 			return nil, err
@@ -73,14 +72,7 @@ func doctorRootedRead(pluginRoot, path string) ([]byte, error) {
 		return nil, doctorRootedClassify(path, err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if info.IsDir() {
-		return nil, &fs.PathError{Op: "read", Path: path, Err: syscall.EISDIR}
-	}
-	return io.ReadAll(file)
+	return harnessReadHandle(file, path)
 }
 
 // doctorRootedClassify turns the Root's answer into the sentinel the callers act on. A name the

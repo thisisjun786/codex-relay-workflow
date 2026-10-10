@@ -25,7 +25,11 @@
 // A write the oracle's own writeState would have thrown out of the handler - a lock that cannot be
 // taken, or a write that fails - ends this handler in silence, as cli.ts's catch answers nothing
 // there; a write this port's rewrite guard only skips still answers, because the oracle has no such
-// guard and would have written and answered.
+// guard and would have written and answered. A write that records an answer goes through
+// promptSubmitClaim (CRW-1159): the answer goes out only when the lock finds the turn unrecorded and
+// the phase, binding, cursor and bound work phase it was chosen from unmoved, so one turn is answered
+// once and a stale decision is dropped instead of answered and recorded. A turnless answer records
+// nothing but is decided again the same way before it goes out (promptSubmitVerify).
 //
 // The handler answers the context to hand the model, not the envelope: harness.ContextOutput wraps it
 // (hook.ts:583-597 buildContextOutput), which is where the CRLF normalisation, the trim and the
@@ -54,21 +58,26 @@ func RenderStatusLine(phase state.Phase, interview, auditPassed, checkPassed boo
 // phase hint the loose detector produced (empty for none), adviseInterview is the interview-entry
 // decision for it, and agbrowseRequested and loopArmRequested are the two prompt heuristics. It
 // returns the context to inject, or "" for every path that injects nothing.
-func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, current state.State, trigger state.Phase, adviseInterview, agbrowseRequested, loopArmRequested bool) string {
+func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, current state.State, mark host.TranscriptMark, trigger state.Phase, adviseInterview, agbrowseRequested, loopArmRequested bool) string {
 	turn := p.TurnID
 
 	// Natural-language triggers are advisory only. Explicit chat commands above or authorized agent CLI
 	// calls own phase entry and advancement through real gates. Keep phase, orchestrationActive and
 	// lastInjectedPhase unchanged, including from IDLE; only dedup and loop-arm bookkeeping is recorded.
 	if trigger != "" {
-		directive := PhaseDirective(trigger, ActiveWorkPhaseOpts(p.Cwd, current.Slug))
+		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
+		directive := PhaseDirective(trigger, opts)
+		inputs := promptClaimInputs{read: current, checkWork: trigger == state.PhaseB, work: opts} // only B names the work phase
 		if trigger == state.PhaseI || adviseInterview {
 			directive = InterviewDirective(env)
+			inputs.checkWork = false
 		}
 		if turn != "" || loopArmRequested {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerDedup(turn, loopArmRequested)) == promptSubmitFailed {
+			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, inputs, promptTriggerDedup(turn, loopArmRequested)) != promptClaimEmit {
 				return ""
 			}
+		} else if promptSubmitVerify(lock, p.Cwd, p.SessionID, inputs) != promptClaimEmit {
+			return ""
 		}
 		guided := directive + "\n\n" + ResolveCRWInDirective(TriggerAuthorityNote, env)
 		return WithFooter(guided, current.Phase)
@@ -77,7 +86,7 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 	// fail-closed: no trigger and orchestration never activated -> stay silent.
 	if !current.OrchestrationActive {
 		if agbrowseRequested {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerDedup(turn, false)) == promptSubmitFailed {
+			if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, promptClaimInputs{read: current}, promptTriggerDedup(turn, false)) != promptClaimEmit {
 				return ""
 			}
 			return AgbrowseSearchDirective
@@ -110,17 +119,22 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 
 	// R-11 transcript-grounded idempotency (passive modes only; the explicit trigger above already
 	// injected). The local injectedTurns flag dedups within a turn, but turn_id can churn or reset after
-	// compaction. Read the transcript tail and: suppress under context-pressure/compaction recovery
-	// (don't pile on), and skip when the current phase's stage marker is already present in the tail.
-	tail := host.ReadTranscriptTail(p.TranscriptPath, host.TailBytes)
-	if host.IsContextPressureTail(tail) && !agbrowseRequested {
-		return ""
-	}
-	if host.HasStageMarkerForPhase(tail, string(current.Phase)) {
-		if turn != "" {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerReinject(current.Phase, turn)) == promptSubmitFailed {
-				return ""
-			}
+	// compaction, so the stage marker a hook injected into the context the model still has (the records
+	// after the last compaction) also counts as this phase's injection. CRW-1090 departs from the oracle
+	// here (docs/port-cxc/known-defects/CRW-1090.md): the oracle matched marker and pressure text anywhere
+	// in the raw tail, so a quote suppressed the injection, and the compacted record's own history made the
+	// prompt after a compaction skip the directive the compaction had removed. A cursor PostCompact reset
+	// (nil) is never set again from the tail: the full directive goes in. A prompt is the boundary of a
+	// compaction's recovery window (host.TranscriptGeneration.ContextPressure), so the oracle's pressure
+	// suppression has no case left here; the Stop leg keeps it.
+	generation := host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes)
+	// Each passive answer below goes out only when the lock that records it finds the turn unrecorded and
+	// the phase, the binding, the cursor and the context generation it was chosen from unmoved (CRW-1159, promptSubmitClaim); a
+	// stale decision is dropped rather than answered or recorded. A turnless answer is decided again without a write.
+	passive := promptClaimInputs{read: current, cursor: true, mark: mark}
+	if current.LastInjectedPhase != nil && generation.HasStageMarkerForPhase(string(current.Phase)) {
+		if (turn != "" || agbrowseRequested) && !promptTriggerDecided(lock, p, passive, promptTriggerReinject(current.Phase, turn)) {
+			return ""
 		}
 		if agbrowseRequested {
 			return AgbrowseSearchDirective
@@ -130,7 +144,9 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 
 	// mode 2: the phase changed since the last injected phase -> the full directive.
 	if current.LastInjectedPhase == nil || *current.LastInjectedPhase != current.Phase {
-		directive := PhaseDirective(current.Phase, ActiveWorkPhaseOpts(p.Cwd, current.Slug))
+		opts := ActiveWorkPhaseOpts(p.Cwd, current.Slug)
+		directive := PhaseDirective(current.Phase, opts)
+		inputs := promptClaimInputs{read: current, cursor: true, checkWork: current.Phase == state.PhaseB, work: opts, mark: mark}
 		if current.Phase == state.PhaseI {
 			directive = InterviewDirective(env)
 		}
@@ -138,19 +154,15 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 		if agbrowseRequested {
 			context = directive + "\n\n" + AgbrowseSearchDirective
 		}
-		if turn != "" {
-			if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerReinject(current.Phase, turn)) == promptSubmitFailed {
-				return ""
-			}
+		if !promptTriggerDecided(lock, p, inputs, promptTriggerReinject(current.Phase, turn)) {
+			return ""
 		}
 		return WithFooter(context, current.Phase)
 	}
 
 	// mode 3: the same phase -> the short compaction-immune stage header every turn.
-	if turn != "" {
-		if promptTriggerWrite(lock, p.Cwd, p.SessionID, promptTriggerDedup(turn, false)) == promptSubmitFailed {
-			return ""
-		}
+	if !promptTriggerDecided(lock, p, passive, promptTriggerDedup(turn, false)) {
+		return ""
 	}
 	header := BuildStageHeader(current.Phase)
 	context := header
@@ -158,6 +170,16 @@ func promptTriggerHandle(p PromptSubmitPayload, env host.LookupEnv, lock func(cw
 		context = header + "\n\n" + AgbrowseSearchDirective
 	}
 	return WithFooter(context, current.Phase)
+}
+
+// promptTriggerDecided says whether a passive answer still holds where it goes out: a payload with a turn records it
+// (promptSubmitClaim: the turn, and the cursor or dedup change), and a turnless one, which records nothing, is decided
+// again without a write (promptSubmitVerify, CRW-1159 fix round 2).
+func promptTriggerDecided(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, in promptClaimInputs, change func(*state.State) bool) bool {
+	if p.TurnID == "" {
+		return promptSubmitVerify(lock, p.Cwd, p.SessionID, in) == promptClaimEmit
+	}
+	return promptSubmitClaim(lock, p.Cwd, p.SessionID, p.TurnID, in, change) == promptClaimEmit
 }
 
 // promptTriggerWrite applies one of this unit's state writes to the session state and reports what it

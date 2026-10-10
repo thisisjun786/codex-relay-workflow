@@ -66,7 +66,7 @@ func (h *createdRuntimeHost) Call(ctx context.Context, method string, args map[s
 func createdRuntimeStart(t *testing.T, native bool) (ws string, env host.LookupEnv, attempt, file string) {
 	t.Helper()
 	ws, env, start, file := dispatchTestFixture(t)
-	dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
+	dispatchTestClaimIssued(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 	var h DispatchHost = &createdRuntimeHost{}
 	if native {
 		dir, old := t.TempDir(), env

@@ -171,7 +171,15 @@ func observationPayload(pluginRoot string) (root, version, digest string, inside
 		return "", "", "", false, false
 	}
 	real, err := filepath.EvalSymlinks(path)
-	return root, version, observationDigest(data), err == nil && strings.HasPrefix(real, root+string(filepath.Separator)), true
+	return root, version, observationDigest(data), err == nil && observationContains(root, real), true
+}
+
+func observationContains(root, path string) bool {
+	if !filepath.IsAbs(root) || !filepath.IsAbs(path) {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // observationRecord is the body of the oracle's per-record try (:108-121): a record that does not match

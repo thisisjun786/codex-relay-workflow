@@ -23,7 +23,7 @@ func targetTestRoot(t *testing.T, command, windows, args string) string {
 	t.Helper()
 	root := t.TempDir()
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":["./hooks/a.json"],"mcpServers":"./.mcp.json"}`)
-	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"Start":[{"hooks":[{"command":`+command+`,"commandWindows":`+windows+`}]}]}}`)
+	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"SessionStart":[{"hooks":[{"command":`+command+`,"commandWindows":`+windows+`}]}]}}`)
 	targetTestWrite(t, root, ".mcp.json", `{"mcpServers":{"t":{"args":`+args+`}}}`)
 	return root
 }
@@ -124,8 +124,10 @@ func TestManifestTargetsExactEscapeAndShapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	targetTestWant(t, root, []TargetIssue{{TargetHook, "hook references missing dist: linked/missing.js"}})
+	// A hooks or mcpServers member of the wrong type declares nothing; the oracle passed it over
+	// silently, the port reports it (CRW-1152, port: fixed).
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":"ignored","mcpServers":[]}`)
-	targetTestWant(t, root, []TargetIssue{})
+	targetTestWant(t, root, []TargetIssue{{TargetHook, "manifest hooks must be an array of hook file paths: ignored"}, {TargetMCP, "manifest mcpServers must be a string file path: "}})
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":[null,7,true,{},["x","y"]]}`)
 	targetTestWant(t, root, []TargetIssue{{TargetHook, "manifest hook file must be a string: null"}, {TargetHook, "manifest hook file must be a string: 7"}, {TargetHook, "manifest hook file must be a string: true"}, {TargetHook, "manifest hook file must be a string: [object Object]"}, {TargetHook, "manifest hook file must be a string: x,y"}})
 	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"hooks":[],"mcpServers":"/outside.json"}`)
@@ -142,9 +144,17 @@ func TestManifestTargetsExactEscapeAndShapes(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "dir.js"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	targetTestWant(t, root, []TargetIssue{})
-	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"2":[{"hooks":[{"command":"${PLUGIN_ROOT}/two.js"}]}],"1":[{"hooks":[{"command":"${PLUGIN_ROOT}/one.js"}]}]}}`)
-	targetTestWant(t, root, []TargetIssue{{TargetHook, "hook references missing dist: one.js"}, {TargetHook, "hook references missing dist: two.js"}})
+	// A directory reports a nonzero size and passed as a target; it is not a file (CRW-1152, port: fixed).
+	targetTestWant(t, root, []TargetIssue{{TargetHook, "target is not a regular file: dir.js"}})
+	if err := os.Remove(filepath.Join(root, "dir.js")); err != nil {
+		t.Fatal(err)
+	}
+	targetTestWrite(t, root, "dir.js", "target")
+	// The walk visits integer keys first, ascending, as Object.entries does. An integer key is not one
+	// of the ten supported events, so each is a finding (CRW-1152, port: fixed) and the order shows
+	// in the findings ahead of the supported event's target.
+	targetTestWrite(t, root, "hooks/a.json", `{"hooks":{"SessionStart":[{"hooks":[{"command":"${PLUGIN_ROOT}/three.js"}]}],"2":[{"hooks":[{"command":"${PLUGIN_ROOT}/two.js"}]}],"1":[{"hooks":[{"command":"${PLUGIN_ROOT}/one.js"}]}]}}`)
+	targetTestWant(t, root, []TargetIssue{{TargetHook, "hook event is not supported: 1"}, {TargetHook, "hook event is not supported: 2"}, {TargetHook, "hook references missing dist: three.js"}})
 }
 
 func TestManifestTargetRelativeRootAndJSSpace(t *testing.T) {
