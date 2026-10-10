@@ -219,3 +219,60 @@ func TestAccountHomesSnapshot_stays_silent_until_a_fixture_changes(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+// CRW-1176: a watched directory can itself be a symlink to a directory (HOME/.codex, CODEX_HOME and CRW_HOME all
+// can). The walk follows the link at its root, so an in-place edit of a fixture behind it is reported, and a
+// retarget of the link is reported too.
+func TestAccountHomesSnapshot_follows_a_watched_directory_that_is_a_symlink(t *testing.T) {
+	home := t.TempDir()
+	real := t.TempDir()
+	other := t.TempDir()
+	codexLink := filepath.Join(t.TempDir(), "codex-link")
+	if err := os.Symlink(real, codexLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(home, ".codex")); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(real, "config.toml")
+	const original, edited = "model = \"a\"\n", "model = \"b\"\n"
+	if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := WatchAccountHomes(t, home, codexLink, "")
+	h.Snapshot()
+	h.Verify(func(msg string) { t.Errorf("an untouched fixture behind a link is reported: %s", msg) })
+
+	// Given: the run edits the fixture behind the link in place, same name and same size.
+	if err := os.WriteFile(fixture, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reported := ""
+	h.Verify(func(msg string) { reported = msg })
+	if !strings.Contains(reported, "config.toml") {
+		t.Errorf("an in-place edit behind a watched directory link is not reported: %q", reported)
+	}
+	if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.Verify(func(msg string) { t.Errorf("the restored fixture is reported: %s", msg) })
+
+	// Then: pointing the link elsewhere is reported.
+	if err := os.Remove(codexLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, codexLink); err != nil {
+		t.Fatal(err)
+	}
+	reported = ""
+	h.Verify(func(msg string) { reported = msg })
+	if reported == "" {
+		t.Errorf("a retargeted watched directory link is not reported")
+	}
+	if err := os.Remove(codexLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, codexLink); err != nil {
+		t.Fatal(err)
+	}
+}

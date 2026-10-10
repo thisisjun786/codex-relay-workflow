@@ -65,7 +65,8 @@ func (h *AccountHomes) Rebase() { h.before = h.state() }
 // Snapshot switches the homes to the content snapshot and takes it as the baseline. A home that holds fixtures
 // calls it once they are in place: an in-place edit of a fixture keeps its name, so the name-only listing does
 // not see it. The snapshot walks each directory the code could take for an account home, recursively, and records
-// every entry's relative path, mode and, for a regular file, its sha256 digest or, for a symlink, its target.
+// every entry's relative path, mode and, for a regular file, its sha256 digest or, for a symlink, its target. A watched
+// directory that is itself a symlink is recorded with its target and walked through the directory it resolves to.
 // HOME itself keeps its top-level names only: a home that a command rewrites on purpose may sit below it (the retrust
 // fixture keeps CODEX_HOME at HOME/codex), and a recursion into HOME would read that intended rewrite as a stray write.
 func (h *AccountHomes) Snapshot() {
@@ -112,12 +113,28 @@ func (h *AccountHomes) Contents() string {
 			parts = append(parts, label+": "+topLevelNames(dir))
 			continue
 		}
+		// A watched directory that is itself a symlink keeps its own line (mode and target) and the walk starts at
+		// the directory it resolves to: WalkDir does not follow a link at its root, and the fixtures behind it
+		// would go unread.
 		var entries []string
-		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		root := dir
+		if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(dir)
+			if err != nil {
+				parts = append(parts, label+": unreadable: "+err.Error())
+				continue
+			}
+			entries = append(entries, label+" "+info.Mode().String()+" -> "+target)
+			if root, err = filepath.EvalSymlinks(dir); err != nil {
+				parts = append(parts, strings.Join(entries, "\n")+"\n"+label+": unreadable: "+err.Error())
+				continue
+			}
+		}
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			rel, err := filepath.Rel(dir, path)
+			rel, err := filepath.Rel(root, path)
 			if err != nil {
 				return err
 			}
