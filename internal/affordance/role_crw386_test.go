@@ -88,11 +88,11 @@ func TestSessionStartLoopPointerFollowsTheRegistryRole(t *testing.T) {
 	}
 }
 
-// Malformed input and an invalid session id name no session, so there is nothing to look up: the oracle's pointers stay and the
-// registry is not read.
-func TestSessionStartReadsNoRoleWithoutAValidSession(t *testing.T) {
+// Malformed input and a missing or empty session id name no session, so there is nothing to look up: the oracle's pointers stay and
+// the registry is not read. (An id the pointer's print rule rejects is still a session: the registry decides its role.)
+func TestSessionStartReadsNoRoleWithoutASession(t *testing.T) {
 	ws := t.TempDir()
-	for _, raw := range []string{"", "{", `{"cwd":"` + ws + `"}`, `{"session_id":"<>&"}`, `{"session_id":""}`} {
+	for _, raw := range []string{"", "{", `{"cwd":"` + ws + `"}`, `{"session_id":""}`} {
 		spy := &roleSpy{role: pabcdhook.PromptRoleParent}
 		got := RunMapAffordanceSessionStartWithRole(raw, ws, testEnv, spy.read)
 		if len(spy.asked) != 0 {
@@ -139,6 +139,9 @@ func TestCompactRestoreLoopPointerFollowsTheRegistryRole(t *testing.T) {
 	}
 }
 
+// longParentID is a canonical session id (state.IsCanonicalSessionID) one character past the pointer's 128-character print limit.
+var longParentID = strings.Repeat("a", 129)
+
 // seededRegistry points the production reader at a registry holding one binding per role and returns the session ids.
 func seededRegistry(t *testing.T) {
 	t.Helper()
@@ -165,6 +168,10 @@ func seededRegistry(t *testing.T) {
 	bind("b3", "supervisor", "initiative", "I-1", "thread-supervisor")
 	bind("b4", "parent", "project", "P-2", "thread-both")
 	bind("b5", "child", "issue", "CRW-2", "thread-both")
+	// Session ids the registry holds as parents that the pointer's own id rule would not print (CRW-386 verification round 1).
+	bind("b6", "parent", "project", "P-3", "thread.parent")
+	bind("b7", "parent", "project", "P-4", "_parent")
+	bind("b8", "parent", "project", "P-5", longParentID)
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -188,9 +195,11 @@ func TestWiredHooksReadTheRegistryRole(t *testing.T) {
 	}{
 		{"thread-parent", true}, {"thread-supervisor", true},
 		{"thread-child", false}, {"thread-both", false}, {"thread-unbound", false},
+		// The role lookup does not use the pointer's id-print rule: Stop and UserPromptSubmit accept these ids as sessions.
+		{"thread.parent", true}, {"_parent", true}, {longParentID, true},
 	}
 	for _, c := range cases {
-		t.Run(c.session, func(t *testing.T) {
+		t.Run(c.session[:min(len(c.session), 20)], func(t *testing.T) {
 			ws := t.TempDir()
 			start := contextOf(t, run("session-start", payload(ws, "SessionStart", c.session, nil), ws), "SessionStart")
 			if has := strings.Contains(start, RenderLoopAffordance(testEnv)); has == c.withoutLoops {
