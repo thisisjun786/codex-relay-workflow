@@ -233,6 +233,72 @@ Nothing here manages `PATH`. The declared server and hook name the pointer by ab
 skill command that runs `codex-session-relay` finds whatever `PATH` finds
 ([how skill commands reach the relay](#how-skill-commands-reach-the-relay)).
 
+## Where crw keeps its files
+
+Every directory crw writes to has a name, a default and one way to move it. With no configuration
+file every root takes its XDG default (or, for the build roots, the tool's own), so a clean `HOME`
+on a single disk works without tuning. A host places a root on another disk only by naming it in
+the `paths` section of the configuration file (found by `--config`, then `CRW_CONFIG`, then
+`${XDG_CONFIG_HOME:-~/.config}/crw/config.json`); no host path
+and no device name is written into the product, its skills or its packet templates, and
+`crw config paths` prints every root with the source of its path.
+
+| `paths` key | Default | What it holds | What the product passes a tool |
+| --- | --- | --- | --- |
+| `tools_root` | `${XDG_DATA_HOME:-~/.local/share}/crw/tools` | pinned tools | - |
+| `cache_root` | `${XDG_CACHE_HOME:-~/.cache}/crw` | caches | - |
+| `scratch_root` | `<cache_root>/scratch` | scratch space; follows `cache_root` unless named | - |
+| `worktree_root` | `<data>/crw/worktrees` | worktrees | - |
+| `evidence_root` | `${XDG_STATE_HOME:-~/.local/state}/crw/evidence` | evidence | - |
+| `temp_root` | `${TMPDIR:-/tmp}/crw` | temporary files, test sockets | - |
+| `data_root` | `<data>/crw/data` | bulk data | - |
+| `manage_state` | `<state>/crw/manage` | the management tool's own state | - |
+| `build_cache` | unset: Go's own (`GOCACHE`) | the Go build cache | `GOCACHE=<path>` |
+| `module_cache` | unset: Go's own (`GOMODCACHE`) | the Go module cache | `GOMODCACHE=<path>` |
+| `build_work` | unset: Go's own (`GOTMPDIR`) | the Go build work directory | `GOTMPDIR=<path>` |
+| `log_root` | `<state>/crw/logs` | the product's own logs, once a host names it | - |
+| `relay_state` | `<state>/codex-session-relay` | the relay's durable state: one directory per scope, each holding the store, its WAL and its sidecars | - |
+
+A root that is unset passes the tool nothing: the product starts `go` with the caller's own
+environment, and only a configured `build_cache`, `module_cache` or `build_work` becomes an
+environment entry. Which commands start a tool with them: `crw-dev ci local` (the build cache and the
+build work directory, not the module cache: a sealed run keeps its own, see [CI](CI.md#sealed-runs)),
+`crw-dev ci validate` (`go mod tidy -diff`), the `merge-build-check` skill command (the build work
+directory holds the run's owned temporary directory, and is never removed itself) and the audit
+package expansion of `crw manage` (`go list`).
+
+`relay_state` is the relay's durable state as one bundle. Its precedence is `--state`, then
+`CODEX_SESSION_RELAY_STATE`, then `manage.relay.state`, then the scope directory below a configured
+`relay_state` (named by the socket's digest, as the relay names it), then the relay's own discovery
+below `XDG_STATE_HOME`. The store, its WAL and its sidecars are never placed apart: a
+`paths.relay_store`, `relay_db`, `relay_wal`, `relay_sidecar` or `relay_sidecars` key is refused, and
+`manage_state` does not move the relay. `log_root` moves the management tool's pump log once the file
+names it; the relay's own `daemon.log` stays in its store directory with the rest of that bundle.
+Neither root moves data that is already somewhere: the move is a separate, approved step.
+
+`crw config check [--config <path>]` prints every root, its path, whether it exists, its file system
+and free space, and the placement already in use when that holds data. It writes nothing and creates
+no directory. It reports two kinds of finding. An error exits 1 and is a structural fault, and any
+product command that uses a root the file names refuses to run against it:
+
+| Check | Error when |
+| --- | --- |
+| `not_directory` | the path exists and is not a directory |
+| `not_creatable` | no part of it can be made: the nearest existing part is not a writable directory |
+| `not_writable` | the directory exists and this process cannot write to it |
+| `socket_path_too_long` | `relay_state`: a store socket, `<root>/<16 hex scope>/control.sock`, would reach the Unix socket bind limit (108 bytes on Linux, 104 on macOS, the NUL included) |
+| `state_split` | a `paths` key places the relay's store, WAL or sidecars apart, or a store's WAL or sidecar lives in another directory than the store |
+
+A warning never stops anything, so a host short of space or sharing a directory keeps working:
+
+| Check | Warning when |
+| --- | --- |
+| `low_space` | the file system under a root has less free than the root is expected to need (8 GiB for worktrees, 4 GiB for the build cache, 2 GiB for caches and data, 1 GiB otherwise) |
+| `shared_path` | two uses name one directory (links resolved) |
+| `unknown_filesystem` | the file system under a root is not one the check can name |
+| `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
+| `drift` | a root the file names differs from the placement in use, which holds data, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
+
 ## Installing the runtime
 
 `crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and
