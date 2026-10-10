@@ -144,14 +144,16 @@ func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock fun
 			return StopAnswer{}
 		}
 		// CRW-145: the source-identity investigation (git status, hashing the dirty files) is slow, so it is made here, before the
-		// session lock is taken, and the block built under the lock uses its answer. A Stop whose total cap was announced
-		// releases before the lock and never needs it.
-		canArm := true
-		if !st.StopBlockCapNotified {
-			canArm = stopCanArm(p.Cwd, p.SessionID)
+		// session lock is taken, and the block built under the lock uses its answer. It is made only when the counter, judged on
+		// the state read above, leaves a block: a per-phase or total cap release answers without it. The lock judges the counter
+		// again; a block it finds that this judgment did not foresee (a writer changed the state in between) has no investigated
+		// answer and offers the oracle's arming command, as a timed-out investigation does.
+		arming := stopArming{ok: true}
+		if stopBlockAhead(p, st, plan) {
+			arming = stopCanArm(p.Cwd, p.SessionID)
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
-			return stopGoalIdleBlock(fresh, snap.plan, canArm, p.SessionID, env)
+			return stopGoalIdleBlock(fresh, snap.plan, arming, p.SessionID, env)
 		})
 	}
 
@@ -672,20 +674,53 @@ var stopCheckBound = sourcesession.CheckBound
 // Stop wiring has 15 seconds in all.
 var stopSourceBudget = 5 * time.Second
 
+// stopArming is the answer of stopCanArm: whether `orchestrate P` can run for the session and, when it cannot, why (the
+// CheckBound verdict).
+type stopArming struct {
+	ok     bool
+	reason string
+	cause  sourcesession.GateCause
+}
+
 // stopCanArm is whether `orchestrate P` can run for the session, judged by stopCheckBound within stopSourceBudget. An
 // investigation that does not finish in the budget is no evidence that arming is impossible, so the answer is then the oracle's
 // (the command is offered); the investigation's goroutine ends with the hook process.
-func stopCanArm(cwd, sessionID string) bool {
-	done := make(chan bool, 1)
-	go func() { done <- stopCheckBound(cwd, sessionID).OK }()
+func stopCanArm(cwd, sessionID string) stopArming {
+	done := make(chan sourcesession.GateResult, 1)
+	go func() { done <- stopCheckBound(cwd, sessionID) }()
 	timer := time.NewTimer(stopSourceBudget)
 	defer timer.Stop()
 	select {
-	case ok := <-done:
-		return ok
+	case got := <-done:
+		return stopArming{ok: got.OK, reason: got.Reason, cause: got.Cause}
 	case <-timer.C:
-		return true
+		return stopArming{ok: true}
 	}
+}
+
+// stopBlockAhead is whether the counter, judged on st (read before the lock) with the bound goalplan plan and the session's
+// metric rows, leaves a block; the lock judges it again on the state it finds.
+func stopBlockAhead(p StopPayload, st state.State, plan *goalplan.Goalplan) bool {
+	_, outcome := stopBump(st, stopSnapshot{plan: plan, rows: metric.ReadObjectiveMetrics(p.Cwd, p.SessionID)})
+	return outcome == stopBumpBlock
+}
+
+// stopArmingRefusal is the line of a goal-idle block whose next work-phase cannot be armed. Only a session without a source
+// binding whose working directory has no git source identity is cleared by binding a git source tree, so only it is offered the
+// command; any other refusal (a corrupt, foreign or moved binding, a bound worktree without an identity, a failed git probe) is
+// named as CheckBound gave it, because a binding is immutable and the bind command would be refused the same way.
+func stopArmingRefusal(a stopArming) string {
+	if a.cause == sourcesession.CauseUnavailable {
+		return "The next work-phase cannot be armed from this workspace: it has no resolvable git source identity, and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. To make arming possible, bind a git source tree: `crw relay session source <absolute-path> --json`."
+	}
+	reason := strings.Join(strings.Fields(a.reason), " ")
+	switch {
+	case a.cause == sourcesession.CauseBoundUnavailable: // CheckBound's own text would offer the bind command
+		reason = "its bound source worktree has no resolvable git source identity"
+	case reason == "":
+		reason = "the source check gave no reason"
+	}
+	return "The next work-phase cannot be armed from this workspace: the session's source identity cannot be resolved (" + reason + "), and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. Binding a different source tree does not clear this (a session's source binding is immutable); resolve what the reason names first."
 }
 
 // stopGoalIdleBlock is buildGoalIdleBlock (hook.ts:1694-1738): the Stop block for a goal ACTIVE with a
@@ -700,19 +735,20 @@ func stopCanArm(cwd, sessionID string) bool {
 // where it cannot run: `orchestrate P` of a goalplan-bound session is refused while the session has no resolvable source
 // identity (session.CheckBound, the same predicate the command applies, so a non-git working directory whose session is bound to a
 // git source worktree keeps the option). The block now names the honest exits first and, when the identity cannot be resolved,
-// says why the next work-phase cannot be armed in place of the command (and does not end the unit-chain line with it). The block
-// is still a block: the counter, the caps and every other line are the oracle's.
-func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, canArm bool, sessionID string, env host.LookupEnv) string {
+// says why the next work-phase cannot be armed in place of the command (and does not end the unit-chain line with it): the bind
+// command where binding clears the refusal, CheckBound's reason otherwise (stopArmingRefusal). The block is still a block: the
+// counter, the caps and every other line are the oracle's.
+func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, arming stopArming, sessionID string, env host.LookupEnv) string {
 	lines := []string{
 		"[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.",
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.",
 		"Close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.",
 	}
 	chain := " (append it to the goalplan, then orchestrate P)"
-	if canArm {
+	if arming.ok {
 		lines = append(lines, "Or start the next work-phase now: `crw pabcd orchestrate P --session "+sessionID+"`")
 	} else {
-		lines = append(lines, "The next work-phase cannot be armed from this workspace: it has no resolvable git source identity, and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. To make arming possible, bind a git source tree: `crw relay session source <absolute-path> --json`.")
+		lines = append(lines, stopArmingRefusal(arming))
 		chain = " (append it to the goalplan)"
 	}
 	lines = append(lines, "LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase"+chain+". \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.")
