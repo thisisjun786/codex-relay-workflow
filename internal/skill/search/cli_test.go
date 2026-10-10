@@ -2,6 +2,7 @@ package search
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -40,7 +42,7 @@ func cliRun(args []string, fetch FetchText) (int, string, string) {
 
 func TestCLIFlags(t *testing.T) {
 	f := ParseFlags([]string{"telegram", "bot", "--source", "all", "--limit", "3", "--json", "--refresh"})
-	want := Flags{"all", 3, true, true, []string{"telegram", "bot"}}
+	want := Flags{Source: "all", Limit: 3, JSON: true, Refresh: true, Rest: []string{"telegram", "bot"}}
 	if !reflect.DeepEqual(f, want) {
 		t.Fatalf("%+v != %+v", f, want)
 	}
@@ -48,7 +50,7 @@ func TestCLIFlags(t *testing.T) {
 		input string
 		limit float64
 	}{
-		{"0", 10}, {"-9", 1}, {"0.5", 1}, {"2.9", 2.9}, {"Infinity", math.Inf(1)}, {"-Infinity", 1}, {"NaN", 10}, {"1e999", math.Inf(1)}, {"0x10", 16}, {"0b11", 3}, {"0o17", 15}, {"2x", 10}, {"+0x10", 10}, {"  ", 10}, {"inf", 10}, {"infinity", 10}, {"0x_10", 10}, {"--json", 10}, {"\uFEFF2.5", 2.5}, {"1e20", 1e20}, {"1e21", 1e21},
+		{"0", 10}, {"-9", 1}, {"0.5", 1}, {"2.9", 2.9}, {"Infinity", math.Inf(1)}, {"-Infinity", 1}, {"NaN", 10}, {"1e999", math.Inf(1)}, {"0x10", 16}, {"0b11", 3}, {"0o17", 15}, {"2x", 10}, {"+0x10", 10}, {"  ", 10}, {"inf", 10}, {"infinity", 10}, {"0x_10", 10}, {"\uFEFF2.5", 2.5}, {"1e20", 1e20}, {"1e21", 1e21},
 	} {
 		t.Run(c.input, func(t *testing.T) {
 			if got := ParseFlags([]string{"--limit", c.input}); got.Limit != c.limit || got.JSON {
@@ -56,10 +58,25 @@ func TestCLIFlags(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range [][]string{{"--source"}, {"--limit"}, {"--source", ""}, {"--wat", "--limit="}} {
-		if got := ParseFlags(args); !reflect.DeepEqual(got.Rest, args) {
-			t.Fatalf("%q => %+v", args, got)
+	for _, c := range []struct {
+		args []string
+		err  string
+		rest []string
+	}{
+		{[]string{"--source"}, "option --source needs a value", []string{}},
+		{[]string{"--limit"}, "option --limit needs a value", []string{}},
+		{[]string{"--source", ""}, "option --source needs a value", []string{}},
+		{[]string{"--wat", "--limit="}, `unknown option "--wat"`, []string{}},
+		{[]string{"-x", "word"}, `unknown option "-x"`, []string{"word"}},
+		{[]string{"--", "--wat", "--json", "-h"}, "", []string{"--wat", "--json", "-h"}},
+		{[]string{"a", "-", "b"}, "", []string{"a", "-", "b"}},
+	} {
+		if got := ParseFlags(c.args); got.Err != c.err || !reflect.DeepEqual(got.Rest, c.rest) || got.JSON || got.Help {
+			t.Fatalf("%q => %+v", c.args, got)
 		}
+	}
+	if f := ParseFlags([]string{"x", "--help"}); !f.Help || !reflect.DeepEqual(f.Rest, []string{"x"}) {
+		t.Fatalf("%+v", f)
 	}
 }
 
@@ -88,6 +105,15 @@ func TestCLIPortedCases(t *testing.T) {
 	if code != 0 || out != Usage+"\n" {
 		t.Fatalf("%d %q", code, out)
 	}
+}
+
+// recordedOracleChanges are the recorded cases whose answer the port changed on purpose (known-defects/CRW-1137.md).
+var recordedOracleChanges = map[string]struct {
+	Exit           int
+	Stdout, Stderr string
+}{
+	// `show --source gh` read jaw, hermes and clawhub; gh has no catalog to look an id up in.
+	"show x --source gh": {1, "", "skill-search: show does not support source \"gh\" (use jaw, hermes, clawhub or all)\n"},
 }
 
 // Recorded by Node v24 from v0.2.40 cli.ts, with only the declared name substitutions.
@@ -120,6 +146,9 @@ func TestCLIRecordedOracle(t *testing.T) {
 				}
 			}
 			code, out, errOut := cliRun(c.Args, fetch)
+			if changed, ok := recordedOracleChanges[strings.Join(c.Args, " ")]; ok {
+				c.Exit, c.Stdout, c.Stderr = changed.Exit, changed.Stdout, changed.Stderr
+			}
 			if code != c.Exit || out != c.Stdout || errOut != c.Stderr {
 				t.Fatalf("args=%q\nexit=%d want%d\nstdout=%q want%q\nstderr=%q want%q", c.Args, code, c.Exit, out, c.Stdout, errOut, c.Stderr)
 			}
@@ -151,7 +180,7 @@ func TestCLICacheAndFreshBody(t *testing.T) {
 		t.Fatal(catalogs)
 	}
 	dir, _ := CacheDir(os.LookupEnv)
-	file := filepath.Join(dir, "jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache")
+	file := filepath.Join(dir, CacheKey("jaw", JAWRegistryURL)+".cache")
 	old := time.Now().Add(-2 * time.Hour)
 	if err := os.Chtimes(file, old, old); err != nil {
 		t.Fatal(err)
@@ -173,8 +202,11 @@ func TestCLICacheAndFreshBody(t *testing.T) {
 func TestCLISourceBranches(t *testing.T) {
 	cliHome(t)
 	requests := []string{}
+	var mu sync.Mutex
 	fetch := func(url string) (string, error) {
+		mu.Lock()
 		requests = append(requests, url)
+		mu.Unlock()
 		switch {
 		case url == JAWRegistryURL:
 			return cliRegistry, nil
@@ -191,21 +223,21 @@ func TestCLISourceBranches(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if code != 0 || errOut != "" || len(requests) != 3 || len(rows) != 2 || rows[0].Source != SourceHermes || rows[1].Source != SourceJaw {
+	if code != 0 || errOut != "" || len(requests) != 3 || len(rows) != 2 || rows[0].Source != SourceJaw || rows[1].Source != SourceHermes {
 		t.Fatalf("%d %q %+v %q", code, errOut, rows, requests)
 	}
 	code, out, _ = cliRun([]string{"search", "tdd", "--source", "clawhub", "--limit", "1", "--json"}, fetch)
 	if json.Unmarshal([]byte(out), &rows) != nil || code != 0 || len(rows) != 1 || rows[0].Score != 3 {
 		t.Fatal(out)
 	}
-	for _, source := range []string{"all", "gh", "clawhub"} {
+	for _, source := range []string{"all", "clawhub"} {
 		if code, out, errOut := cliRun([]string{"show", "remote", "--source", source}, fetch); code != 0 || !strings.Contains(out, "fresh") || errOut != "" {
 			t.Fatalf("%s %d %q %q", source, code, out, errOut)
 		}
 	}
 	cliHome(t)
 	code, out, errOut = cliRun([]string{"search", "x", "--source", "hermes", "--json"}, func(string) (string, error) { return "", errors.New("down") })
-	if code != 0 || out != "[]\n" || errOut != "skill-search: source hermes failed (down)\n" {
+	if code != 3 || out != "" || errOut != "skill-search: source hermes failed (down)\n" {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	code, out, errOut = cliRun([]string{"search", "missing"}, cliFetch)
@@ -308,15 +340,15 @@ func TestHTTPFetch(t *testing.T) {
 		_, _ = w.Write([]byte("\uFEFFa\xff\xff<>&\u2028"))
 	}))
 	defer server.Close()
-	body, err := fetchHTTP(server.URL)
+	body, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes)
 	if err != nil || body != "a��<>&\u2028" {
 		t.Fatalf("%q %v", body, err)
 	}
-	if _, err := fetchHTTP(server.URL + "/status"); err == nil || err.Error() != "HTTP 503 for "+server.URL+"/status" {
+	if _, err := fetchHTTP(context.Background(), server.URL+"/status", MaxBodyBytes); err == nil || err.Error() != "HTTP 503 for "+server.URL+"/status" {
 		t.Fatal(err)
 	}
 	server.Close()
-	if _, err := fetchHTTP(server.URL); err == nil || err.Error() != "fetch failed" {
+	if _, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes); err == nil || err.Error() != "fetch failed" {
 		t.Fatal(err)
 	}
 }
@@ -332,7 +364,7 @@ func TestCLIReviewRegressions(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0xe2, 0x82, 0x41}) }))
 	defer server.Close()
-	if body, err := fetchHTTP(server.URL); err != nil || body != "�A" {
+	if body, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes); err != nil || body != "�A" {
 		t.Errorf("body=%q err=%v, want �A", body, err)
 	}
 }
@@ -349,7 +381,7 @@ func TestHTTPTruncatedUTF8(t *testing.T) {
 		t.Run(fmt.Sprintf("%x", c.bytes), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(c.bytes) }))
 			defer server.Close()
-			if body, err := fetchHTTP(server.URL); err != nil || body != c.want {
+			if body, err := fetchHTTP(context.Background(), server.URL, MaxBodyBytes); err != nil || body != c.want {
 				t.Fatalf("%q %v want %q", body, err, c.want)
 			}
 		})
