@@ -3,6 +3,8 @@
 package ci
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -18,7 +20,18 @@ func TestAnchorSlug(t *testing.T) {
 		{"Subagent Skill Attachment (SEARCH-ATTACH-01)", "subagent-skill-attachment-search-attach-01"},
 		{"한글 제목 (설명)", "한글-제목-설명"},
 		{"<b>Tag</b> text", "tag-text"},
-		{"under_score_ end", "under_score-end"},
+		{"under_score_ end", "under_score_-end"},
+		{"__init__ method", "init-method"},
+		{"Fish &amp; Chips", "fish--chips"},
+		{"Fish &#38; Chips &copy; &unknown; x", "fish--chips--unknown-x"},
+		{"*a **b** c* and ***d***", "a-b-c-and-d"},
+		{"a * b * c and 2*3*4", "a--b--c-and-234"},
+		{"snake_case_name and _x_", "snake_case_name-and-x"},
+		{"\\*not emphasis\\* here", "not-emphasis-here"},
+		{"`code with *star*` and **bold `code`**", "code-with-star-and-bold-code"},
+		{"![alt *text*](img.png) after", "alt-text-after"},
+		{"[**linked** text](a_b.md#c) and <http://x.example/a_b> end", "linked-text-and-httpxexamplea_b-end"},
+		{"Ünïcode Straße", "ünïcode-straße"},
 	} {
 		expectEqual(t, row.heading, anchorSlug(row.heading), row.slug)
 	}
@@ -37,6 +50,41 @@ func TestAnchorSlug(t *testing.T) {
 			t.Errorf("anchor %q must not exist: %v", unwanted, anchors)
 		}
 	}
+}
+
+// A setext heading is the whole paragraph above its underline; HTML that is not an element with an
+// id or name attribute, or that sits in code, names no anchor.
+func TestMarkdownAnchorsBlocks(t *testing.T) {
+	has := func(text string, want []string, unwanted []string) {
+		t.Helper()
+		anchors := markdownAnchors(text)
+		for _, name := range want {
+			if !anchors[name] {
+				t.Errorf("%q: anchor %q missing from %v", text, name, anchors)
+			}
+		}
+		for _, name := range unwanted {
+			if anchors[name] {
+				t.Errorf("%q: anchor %q must not exist: %v", text, name, anchors)
+			}
+		}
+	}
+	has("Foo\nBar\n---\n", []string{"foo-bar"}, []string{"bar", "foo"})
+	has("  Foo *bar\n  baz*\n===\n", []string{"foo-bar-baz"}, []string{"baz"})
+	has("Before\n\nFoo\nBar\n===\n", []string{"foo-bar"}, []string{"bar", "before"})
+	has("Text\n\n* * *\n\nAfter\n---\n", []string{"after"}, []string{"text", "text-after"})
+	has("- item\n---\n", nil, []string{"item"})
+	has("- item\nlazy\n---\n", nil, []string{"lazy", "item-lazy"})
+	has("| a |\n---\n", nil, []string{"a", "-a"})
+	has("<div data-id=\"ghost\"></div>\n", nil, []string{"ghost"})
+	has("<div id=\"real\" data-id=\"ghost\"></div> <a name='old'></a> <span\tID = plain>\n", []string{"real", "old", "plain"}, []string{"ghost"})
+	has("The text `<a id=\"ghost\"></a>` and ``<a id=\"spans`\"></a>``, but <a id=\"live\"></a>\n", []string{"live"}, []string{"ghost", "spans"})
+	has("Paragraph\n\n    <a id=\"ghost\"></a>\n    # Not a heading\n", nil, []string{"ghost", "not-a-heading"})
+	has("Paragraph\n    <a id=\"continued\"></a>\n", []string{"continued"}, nil)
+	has("\t<a id=\"ghost\"></a>\n", nil, []string{"ghost"})
+	has("- item\n\n      <a id=\"ghost\"></a>\n\n  <a id=\"inside\"></a>\n\n1. one\n\n   <a id=\"numbered\"></a>\n", []string{"inside", "numbered"}, []string{"ghost"})
+	has("    ```\n# After the indented marker\n", []string{"after-the-indented-marker"}, nil)
+	has("## Title <a id=\"in-heading\"></a>\n", []string{"in-heading", "title"}, nil)
 }
 
 // anchorFixture is a repository with the documents in files; the first of a failing pair is the
@@ -78,6 +126,29 @@ func TestSkillAnchorsResolve(t *testing.T) {
 			"docs/dup.md": "# Same\n\n## Same\n\n[first](#same) [second](#same-1) [third](#same-2)\n\n# Alone\n\n[none](#alone-1)\n",
 		})
 		expectEqual(t, "errors", errs, []string{"docs/dup.md:5: invalid anchor #same-2", "docs/dup.md:9: invalid anchor #alone-1"})
+	})
+	t.Run("fixture: a target that cannot be read fails instead of passing", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads every file")
+		}
+		r := newRepo(t)
+		r.write("docs/source.md", "[a](target.md#missing)\n[b](dir.md#x)\n[c](gone.md#x)\n")
+		r.write("docs/target.md", "# Target\n")
+		if err := os.MkdirAll(filepath.Join(r.root, "docs", "dir.md"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(r.root, "docs", "target.md"), 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(r.root, "docs", "target.md"), 0o644) })
+		errs, err := anchorErrors(r.root, []string{"docs/source.md"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectEqual(t, "errors", errs, []string{
+			"docs/source.md:1: unreadable anchor target target.md#missing",
+			"docs/source.md:2: unreadable anchor target dir.md#x",
+		})
 	})
 	t.Run("fixture: outside the scope, in fences and in generator inputs nothing is read", func(t *testing.T) {
 		errs := anchorFixture(t, map[string]string{

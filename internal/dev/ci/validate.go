@@ -167,8 +167,10 @@ func linkErrors(root, name string, cache map[string]map[string]bool) ([]string, 
 			if local == "" {
 				if checkAnchors && hasFragment && strings.HasPrefix(target, "#") {
 					anchors, err := anchorsOf(cache, path)
-					if err == nil && !anchors[fragment] {
-						errs = append(errs, fmt.Sprintf("%s:%d: invalid anchor %s", name, number+1, target))
+					if err != nil {
+						errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, unreadableAnchorMessage, target))
+					} else if !anchors[fragment] {
+						errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, invalidAnchorMessage, target))
 					}
 				}
 				continue
@@ -183,11 +185,12 @@ func linkErrors(root, name string, cache map[string]map[string]bool) ([]string, 
 				continue
 			}
 			if checkAnchors && hasFragment && filepath.Ext(destination) == ".md" {
-				if info, err := os.Stat(destination); err == nil && info.Mode().IsRegular() {
-					anchors, err := anchorsOf(cache, destination)
-					if err == nil && !anchors[fragment] {
-						errs = append(errs, fmt.Sprintf("%s:%d: invalid anchor %s", name, number+1, target))
-					}
+				if info, err := os.Stat(destination); err != nil || !info.Mode().IsRegular() {
+					errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, unreadableAnchorMessage, target))
+				} else if anchors, err := anchorsOf(cache, destination); err != nil {
+					errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, unreadableAnchorMessage, target))
+				} else if !anchors[fragment] {
+					errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, invalidAnchorMessage, target))
 				}
 			}
 		}

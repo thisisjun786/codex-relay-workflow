@@ -44,8 +44,15 @@ func descriptionLengthErrors(root string, m inventoryMap) []string {
 	}
 	if m.Rows["triggerAmbiguity[13]"].Status == "done" {
 		for _, path := range m.Rows["triggerAmbiguity[13]"].Paths {
-			name := strings.Trim(strings.TrimPrefix(path, descriptionSkillsRoot), "/")
-			if entry, ok := m.Descriptions[name]; ok && entry.Status != "done" {
+			name, ok := descriptionSkillOf(path)
+			if !ok {
+				errs = append(errs, "triggerAmbiguity[13] path "+path+": is not a path below "+descriptionSkillsRoot)
+				continue
+			}
+			entry, listed := m.Descriptions[name]
+			if _, exists := descriptions[name]; !listed && !exists {
+				errs = append(errs, "triggerAmbiguity[13] path "+path+": names no skill, neither a SKILL.md under "+descriptionSkillsRoot+" nor a descriptions entry")
+			} else if listed && entry.Status != "done" {
 				errs = append(errs, "triggerAmbiguity[13] is done but the descriptions entry "+name+" is open")
 			}
 		}
@@ -58,6 +65,17 @@ func descriptionLengthErrors(root string, m inventoryMap) []string {
 		}
 	}
 	return errs
+}
+
+// descriptionSkillOf is the skill a path below the skills directory belongs to, whether the path
+// names the skill's directory, a file or a directory in it.
+func descriptionSkillOf(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(filepath.ToSlash(filepath.Clean(path)), descriptionSkillsRoot)
+	if !ok {
+		return "", false
+	}
+	name, _, _ := strings.Cut(rest, "/")
+	return name, name != "" && name != ".."
 }
 
 func TestSkillDescriptionLength(t *testing.T) {
@@ -115,7 +133,18 @@ func TestSkillDescriptionLength(t *testing.T) {
 		m := table()
 		m.Rows["triggerAmbiguity[13]"] = inventoryRow{Status: "done", Paths: []string{"plugins/crw/skills/s-long/", "plugins/crw/skills/s-short/", "plugins/crw/skills/s-no-entry/"}}
 		errs := descriptionLengthErrors(root, m)
-		expectEqual(t, "errors", errs[len(errs)-1:], []string{"triggerAmbiguity[13] is done but the descriptions entry s-long is open"})
+		expectEqual(t, "errors", errs[len(errs)-2:], []string{
+			"triggerAmbiguity[13] is done but the descriptions entry s-long is open",
+			"triggerAmbiguity[13] path plugins/crw/skills/s-no-entry/: names no skill, neither a SKILL.md under plugins/crw/skills/ nor a descriptions entry"})
+		// A path to a file or a deeper directory belongs to its skill; a path outside the skills fails.
+		m.Rows["triggerAmbiguity[13]"] = inventoryRow{Status: "done", Paths: []string{"plugins/crw/skills/s-long/SKILL.md"}}
+		expectEqual(t, "file path", descriptionLengthErrors(root, m)[1:], []string{"triggerAmbiguity[13] is done but the descriptions entry s-long is open"})
+		m.Rows["triggerAmbiguity[13]"] = inventoryRow{Status: "done", Paths: []string{"plugins/crw/skills/s-long/references/x.md"}}
+		expectEqual(t, "deeper path", descriptionLengthErrors(root, m)[1:], []string{"triggerAmbiguity[13] is done but the descriptions entry s-long is open"})
+		m.Rows["triggerAmbiguity[13]"] = inventoryRow{Status: "done", Paths: []string{"docs/skills/", "plugins/crw/skills/", "plugins/crw/skills/s-short/"}}
+		expectEqual(t, "outside", descriptionLengthErrors(root, m)[1:], []string{
+			"triggerAmbiguity[13] path docs/skills/: is not a path below plugins/crw/skills/",
+			"triggerAmbiguity[13] path plugins/crw/skills/: is not a path below plugins/crw/skills/"})
 		m.Rows["triggerAmbiguity[13]"] = inventoryRow{Status: "open", Paths: []string{"plugins/crw/skills/s-long/"}}
 		if got := descriptionLengthErrors(root, m); len(got) != 1 {
 			t.Errorf("an open row reads nothing: %q", got)

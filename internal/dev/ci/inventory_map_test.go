@@ -159,6 +159,11 @@ func registryErrors(root string, registry []rowTestRead) []string {
 				errs = append(errs, label+": the read path "+strconv.Quote(read)+" is not a Go string literal of "+filepath.Base(declared.file))
 			}
 		}
+		for _, row := range entry.Rows {
+			if !declared.literals[row] {
+				errs = append(errs, label+": the row "+strconv.Quote(row)+" is not a Go string literal of "+filepath.Base(declared.file))
+			}
+		}
 	}
 	return errs
 }
@@ -305,6 +310,12 @@ func inventoryMapErrors(root string, m inventoryMap, ids []string, registry []ro
 			if !slices.Contains(row.Check, entry.Test) || slices.Contains(notEvidenceTests, entry.Test) {
 				continue
 			}
+			if len(entry.Rows) > 0 && !slices.Contains(entry.Rows, key) {
+				continue // the test proves other rows, not this one
+			}
+			if len(entry.Rows) > 0 && len(row.Paths) == 0 {
+				registered = true
+			}
 			for _, read := range entry.Reads {
 				for _, path := range row.Paths {
 					registered = registered || covers(read, path)
@@ -365,7 +376,7 @@ func inventoryFixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	write("internal/dev/ci/known_test.go", "package ci\n\nimport \"testing\"\n\n// TestCommentOnly is named in a comment.\n\nfunc TestKnown(t *testing.T) { _ = \"plugins/crw/skills/\" }\n\n"+
+	write("internal/dev/ci/known_test.go", "package ci\n\nimport \"testing\"\n\n// TestCommentOnly is named in a comment.\n\nfunc TestKnown(t *testing.T) { _ = \"plugins/crw/skills/\"; _ = \"collisions[1]\" }\n\n"+
 		"func TestNotATest(t *testing.T, extra int) {}\n\nfunc (x X) TestMethod(t *testing.T) {}\n\nfunc TestKnownOther(t *testing.T) {}\n")
 	write("plugins/crw/skills/a/SKILL.md", "# A\n\nnew text\n")
 	return root
@@ -443,7 +454,7 @@ func TestSkillInventoryMapComplete(t *testing.T) {
 			t.Errorf("%s: want errors containing %q, got none", label, want)
 		}
 	}
-	registry := []rowTestRead{{"TestKnown", defaultTestPackage, []string{"plugins/crw/skills/"}}}
+	registry := []rowTestRead{{"TestKnown", defaultTestPackage, []string{"plugins/crw/skills/"}, nil}}
 	open := func(mutate func(*inventoryRow)) inventoryRow { return fixtureRow("open", mutate) }
 
 	t.Run("fixture: the identifier sets must be equal", func(t *testing.T) {
@@ -483,7 +494,7 @@ func TestSkillInventoryMapComplete(t *testing.T) {
 			r.Paths = []string{"plugins/crw/skills/a/"}
 		})
 		check("excluded test", map[string]inventoryRow{"collisions[0]": pathOnly, "collisions[1]": open(nil)}, ids,
-			[]rowTestRead{{"TestSkillInventoryMapComplete", defaultTestPackage, []string{"plugins/crw/skills/"}}}, false, "needs evidence", "reads the whole tree")
+			[]rowTestRead{{"TestSkillInventoryMapComplete", defaultTestPackage, []string{"plugins/crw/skills/"}, nil}}, false, "needs evidence", "reads the whole tree")
 	})
 	t.Run("fixture: each kind of evidence is enough", func(t *testing.T) {
 		registered := fixtureRow("done", func(r *inventoryRow) { r.Paths = []string{"plugins/crw/skills/a/SKILL.md"} })
@@ -522,12 +533,25 @@ func TestSkillInventoryMapComplete(t *testing.T) {
 		})
 		check("exists", map[string]inventoryRow{"collisions[0]": exists, "collisions[1]": open(nil)}, ids, registry, false)
 	})
+	t.Run("fixture: a registration narrowed to rows proves those rows alone", func(t *testing.T) {
+		narrowed := []rowTestRead{{"TestKnown", defaultTestPackage, []string{"plugins/crw/skills/"}, []string{"collisions[1]"}}}
+		withPath := fixtureRow("done", func(r *inventoryRow) { r.Paths = []string{"plugins/crw/skills/a/SKILL.md"} })
+		check("a row the test does not prove", map[string]inventoryRow{"collisions[0]": withPath, "collisions[1]": open(nil)}, ids, narrowed, false,
+			"collisions[0]: a done fix row needs evidence")
+		check("a row it proves", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": withPath}, ids, narrowed, false)
+		noPaths := fixtureRow("done", nil)
+		check("a proven row without paths", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": noPaths}, ids, narrowed, false)
+		check("an unproven row without paths", map[string]inventoryRow{"collisions[0]": noPaths, "collisions[1]": open(nil)}, ids, narrowed, false, "needs evidence")
+		unknown := []rowTestRead{{"TestKnown", defaultTestPackage, []string{"plugins/crw/skills/"}, []string{"collisions[7]"}}}
+		check("a row that is not a literal", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": open(nil)}, ids, unknown, false,
+			`the row "collisions[7]" is not a Go string literal of known_test.go`)
+	})
 	t.Run("fixture: a registered path must be a string literal of the test's file", func(t *testing.T) {
-		notRead := []rowTestRead{{"TestKnown", defaultTestPackage, []string{"plugins/crw/skills/", "docs/never-read/"}}}
+		notRead := []rowTestRead{{"TestKnown", defaultTestPackage, []string{"plugins/crw/skills/", "docs/never-read/"}, nil}}
 		row := fixtureRow("done", func(r *inventoryRow) { r.Paths = []string{"docs/never-read/x.md"} })
 		check("literal missing", map[string]inventoryRow{"collisions[0]": row, "collisions[1]": open(nil)}, ids, notRead, false,
 			`the read path "docs/never-read/" is not a Go string literal of known_test.go`)
-		missingTest := []rowTestRead{{"TestNoSuchTest", defaultTestPackage, []string{"plugins/crw/skills/"}}}
+		missingTest := []rowTestRead{{"TestNoSuchTest", defaultTestPackage, []string{"plugins/crw/skills/"}, nil}}
 		check("registered test missing", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": open(nil)}, ids, missingTest, false,
 			"rowTestReads TestNoSuchTest: no top-level func")
 		check("registered twice", map[string]inventoryRow{"collisions[0]": open(nil), "collisions[1]": open(nil)}, ids, append(slicesClone(registry), registry...), false, "registered twice")
