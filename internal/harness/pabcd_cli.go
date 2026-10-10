@@ -11,7 +11,24 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
+
+// nativeSessionRefused writes the refusal of a terminal command that would change session while it runs inside another
+// native Codex session, and reports whether it did (CRW-1108, cli.NativeSessionRefusal). Every row whose command changes a
+// session's state, evidence, ledger or bound records calls it after its parse and before the library takes a lock or
+// writes anything: memory allow-write, scan record, review-round open and abort, receipt test, evidence resolve, the
+// writing metric, divergence and loop verbs, and orchestrate through RunOrchestrateRead. The reading verbs and reset, the
+// approved maintenance command, never call it, and the hooks never reach these rows. The refusal goes to the stream of the
+// row's other refusals with exit 1.
+func nativeSessionRefused(command, session, cwd string, w io.Writer) bool {
+	refusal := cli.NativeSessionRefusal(command, session, cwd, host.LookupEnv(os.LookupEnv))
+	if refusal == "" {
+		return false
+	}
+	fmt.Fprintln(w, refusal)
+	return true
+}
 
 // The adapters preserve cli.ts's stream choice, trailing newline and exit code.
 func planVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
@@ -41,6 +58,9 @@ func receiptVerb(ctx context.Context, args []string, in io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "receipt: "+err.Error())
 		return 1
 	}
+	if parsed.Verb == "test" && nativeSessionRefused("receipt test", text.Trim(parsed.Session), parsed.Cwd, stdout) {
+		return 1
+	}
 	result, err := cli.RunReceiptCLI(parsed, cli.ReceiptRunOptions{Context: ctx, Stdin: in, Stdout: stdout, Stderr: stderr})
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
@@ -59,6 +79,9 @@ func evidenceVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	parsed, err := cli.ParseEvidenceCLIArgs(args, cwd)
 	if err != nil {
 		fmt.Fprintln(stderr, "evidence: "+err.Error())
+		return 1
+	}
+	if nativeSessionRefused("evidence "+parsed.Verb, parsed.SessionID, parsed.Cwd, stdout) {
 		return 1
 	}
 	output, code := cli.RunEvidenceCLI(parsed)
@@ -89,6 +112,9 @@ func memoryVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr 
 	if parsed.Error != "" {
 		fmt.Fprintln(stderr, "memory: "+parsed.Error+"\n"+cli.MemoryUsage)
 		return 2
+	}
+	if nativeSessionRefused("memory "+parsed.Args.Verb, parsed.Args.SessionID, parsed.Args.Cwd, stderr) {
+		return 1
 	}
 	output, code, err := cli.RunMemoryCLIContext(ctx, *parsed.Args)
 	if err != nil {
@@ -174,6 +200,9 @@ func scanVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "scan: "+parsed.Error)
 		return 1
 	}
+	if parsed.Args.Action == cli.ScanActionRecord && nativeSessionRefused("scan record", parsed.Args.SessionID, parsed.Args.Cwd, stdout) {
+		return 1
+	}
 	result, err := cli.RunScanCliContext(ctx, *parsed.Args)
 	if err != nil {
 		return Interrupted
@@ -195,6 +224,10 @@ func reviewRoundVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	parsed := cli.ParseReviewRoundCliArgs(args, cwd)
 	if parsed.Error != "" {
 		fmt.Fprintln(stderr, "review-round: "+parsed.Error)
+		return 1
+	}
+	if a := parsed.Args; (a.Verb == cli.ReviewRoundVerbOpen || a.Verb == cli.ReviewRoundVerbAbort) && a.Session != nil &&
+		nativeSessionRefused("review-round "+string(a.Verb), text.Trim(*a.Session), a.Cwd, stdout) {
 		return 1
 	}
 	result, err := cli.RunReviewRoundCli(*parsed.Args, nil)
@@ -229,6 +262,14 @@ func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr
 	raw := ""
 	ingest := len(args) > 0 && args[0] == "ingest"
 	writer := metricWrites(args)
+	if writer {
+		// Judged before the ingest reads stdin, so a refused ingest consumes nothing (CRW-1108); the directory only
+		// lets the native thread database confirm the subject.
+		wd, _ := syscall.Getwd()
+		if nativeSessionRefused("metric "+args[0], cli.MetricCliSession(args), wd, stdout) {
+			return 1
+		}
+	}
 	if ingest {
 		type stdinRead struct {
 			raw      string
@@ -306,6 +347,9 @@ func loopVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "loop: "+err.Error())
 		return 1
 	}
+	if nativeSessionRefused("loop "+string(parsed.Verb), cli.LoopMutationSession(parsed), parsed.Cwd, stdout) {
+		return 1
+	}
 	result, err := cli.RunLoopCliContext(ctx, parsed)
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return Interrupted
@@ -329,6 +373,9 @@ func divergenceVerb(ctx context.Context, args []string, _ io.Reader, stdout, std
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	if divergenceWrites(args) && nativeSessionRefused("divergence "+args[0]+" "+args[1], cli.DivergenceCliSession(args), cwd, stdout) {
 		return 1
 	}
 	result, err := cli.RunDivergenceCliContext(ctx, args, cwd)

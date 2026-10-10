@@ -154,6 +154,16 @@ func divergenceCliParseKilledAtPhase(raw *string) *metric.CandidateKilledAtPhase
 	return nil
 }
 
+// DivergenceCliSession is the session id the divergence command reads from argv (without the divergence token),
+// "" when none is named. The terminal row judges it against the native session before a writing verb runs
+// (CRW-1108).
+func DivergenceCliSession(argv []string) string {
+	if session := divergenceCliSession(argv); session != nil {
+		return *session
+	}
+	return ""
+}
+
 // divergenceCliSession ports readSession (:68-70): --session, else -s. The oracle's nullish coalescing
 // falls through only on null, so an empty --session is returned rather than replaced.
 func divergenceCliSession(argv []string) *string {

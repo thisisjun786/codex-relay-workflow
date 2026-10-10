@@ -234,28 +234,40 @@ func readAnswer(code int, output string) OrchestrateReadResult {
 	return OrchestrateReadResult{Result: &CliResult{Code: code, Output: output}}
 }
 
-// nativeSessionMismatch is the refusal of a mutation whose explicit --session is not the native
-// session the command runs in, or "" when the mutation may proceed (CRW-1108). The oracle checks
-// native identity for implicit status only, so a native session could change a parent's, a sibling's
-// or an earlier session's FSM with exit 0 (orchestrate-cli.ts:489; port: fixed).
-//
-// The subject is CODEX_THREAD_ID, set and nonempty; without it (a standalone terminal) the explicit
-// id, the reserved terminal key included, keeps working. The absorbed resolver confirms the subject
-// against the native thread database where it can, but a lookup that fails (no database, another
-// working directory, a worktree) is not widened into a refusal: the alias guard is the id comparison
-// alone, so an independent terminal flow that cannot reach the database is not broken. Only the
-// terminal row supplies Native; hooks never do, because a subagent's CODEX_THREAD_ID is not the root
-// session id its hook payload carries.
+// nativeSessionMismatch is the refusal of an orchestrate mutation whose explicit --session is not the
+// native session the command runs in, or "" when the mutation may proceed (CRW-1108; NativeSessionRefusal).
 func nativeSessionMismatch(a OrchestrateCliArgs, native host.LookupEnv) string {
+	return NativeSessionRefusal("orchestrate "+VerbText(a.Verb), *a.Session, a.Cwd, native)
+}
+
+// NativeSessionRefusal is the refusal of a terminal command that would change session, when that is not the
+// native session the command runs in, or "" when the command may proceed (CRW-1108). command names the command
+// in the refusal ("memory allow-write"), session is the id the command would change, as the command itself
+// reads it, and cwd is the directory the native thread database is asked about. The oracle checks native
+// identity for an implicit orchestrate status only, so a command run inside one native session could change a
+// parent's, a sibling's or an earlier session's records with exit 0 (orchestrate-cli.ts:489; port: fixed).
+//
+// The subject is CODEX_THREAD_ID, set and nonempty; without it (a standalone terminal) the explicit id, the
+// reserved terminal key included, keeps working, and an empty session is left to the command's own refusal.
+// The absorbed resolver confirms the subject against the native thread database where it can, but a lookup
+// that fails (no database, another working directory, a worktree) is not widened into a refusal: the alias
+// guard is the id comparison alone, so an independent terminal flow that cannot reach the database is not
+// broken. Only the terminal rows supply native; hooks never do, because a subagent's CODEX_THREAD_ID is not
+// the root session id its hook payload carries, and the reading verbs and the maintenance commands (reset)
+// never call it.
+func NativeSessionRefusal(command, session, cwd string, native host.LookupEnv) string {
+	if native == nil || session == "" {
+		return ""
+	}
 	threadID, set := native("CODEX_THREAD_ID")
-	if !set || threadID == "" || *a.Session == threadID {
+	if !set || threadID == "" || session == threadID {
 		return ""
 	}
 	confirmed := ""
-	if resolved, err := host.ResolveNativeSession(a.Cwd, native); err == nil && resolved.SessionID == threadID {
+	if resolved, err := host.ResolveNativeSession(cwd, native); err == nil && resolved.SessionID == threadID {
 		confirmed = ", confirmed by the native thread database"
 	}
-	return fmt.Sprintf("orchestrate %s: --session '%s' is not the native Codex session this command runs in (CODEX_THREAD_ID %s%s). SESSION-IDENTITY-01: a mutation may change only your own session, never a parent, sibling or earlier session id or the terminal key 'cli'; pass your own id (crw relay session current shows it). Nothing was written.", VerbText(a.Verb), *a.Session, threadID, confirmed)
+	return fmt.Sprintf("%s: --session '%s' is not the native Codex session this command runs in (CODEX_THREAD_ID %s%s). SESSION-IDENTITY-01: a mutation may change only your own session, never a parent, sibling or earlier session id or the terminal key 'cli'; pass your own id (crw relay session current shows it). Nothing was written.", command, session, threadID, confirmed)
 }
 
 func readStatus(a OrchestrateCliArgs, sessionID *string, hasNative bool, process host.LookupEnv) (OrchestrateReadResult, error) {
