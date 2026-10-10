@@ -201,28 +201,6 @@ func TestCRW1090CompactionPressureLastsUntilTheNextUserTurn(t *testing.T) {
 	}
 }
 
-// TestCRW1090CompactionPressureOutlivesTheTailWindow is evaluation d2: the recovery window is the time until the next user
-// prompt, not the time until the compaction scrolls out of the 64 KiB tail. A Stop with an ACTIVE goal after a compaction
-// and more than 64 KiB of tool output, with no prompt in between, still releases without spending the budget.
-func TestCRW1090CompactionPressureOutlivesTheTailWindow(t *testing.T) {
-	compaction := codexUserTurn(t, "build it") + codexHookContext(t, "[crw — B: BUILD]") + codexCompaction(t, "[crw — B: BUILD]")
-	output := strings.Repeat(codexLine(t, "response_item", map[string]any{"type": "function_call_output", "call_id": "c", "output": strings.Repeat("w", 900)}), 300)
-	cwd, env := stopRig(t, "active")
-	stopInFlight(t, cwd, state.PhaseB)
-	transcript := writeTranscript(t, cwd, compaction+output)
-	before := stopStateBytes(t, cwd)
-	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript}, "linux", env); a != (StopAnswer{}) {
-		t.Errorf("the Stop after a compaction and %d bytes of output did not release: %+v", len(output), a)
-	}
-	if stopStateBytes(t, cwd) != before {
-		t.Error("the release spent the budget")
-	}
-	transcript = writeTranscript(t, cwd, compaction+codexUserTurn(t, "continue")+output)
-	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
-		t.Errorf("a prompt recorded after the compaction, with %d bytes after it, did not end the pressure: %+v", len(output), a)
-	}
-}
-
 // TestCRW1090ATurnIdReusedAfterACompactionIsAnsweredAgain is evaluation d1: the turn dedup holds within one context
 // generation. PostCompact, which resets the injection cursor because the compaction removed the directive, drops the turns
 // recorded before it, so a turn id the host reuses after the compaction gets the full directive; a repeat of that turn in
@@ -248,5 +226,62 @@ func TestCRW1090ATurnIdReusedAfterACompactionIsAnsweredAgain(t *testing.T) {
 	}
 	if got := promptTriggerAnswer(t, cwd, "s1", "t1", "keep going", transcript, true); got != "" {
 		t.Errorf("a repeat of the turn in the new generation answered %q", got)
+	}
+}
+
+// appendTranscript appends content to the transcript at path.
+func appendTranscript(t *testing.T, path, content string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCRW1090RecoveryLastsUntilTheNextUserTurnWhateverTheOutput is verification round 3, P1 (evaluation d2 again): the
+// recovery window ends at the next user turn, never because tool output pushed the compaction out of a scan, so a Stop
+// after a compaction and more than 16 MiB of ordinary tool records, with no prompt in between, still releases and keeps
+// the budget. The boundary is recorded when a hook sees it (PostCompact, which Codex runs for the compaction itself, or a
+// Stop whose tail shows it), so the Stop reads only the 64 KiB tail (CRW-1160). The next UserPromptSubmit ends the
+// recovery even when the new turn's own output pushes its prompt out of the tail.
+func TestCRW1090RecoveryLastsUntilTheNextUserTurnWhateverTheOutput(t *testing.T) {
+	compaction := codexUserTurn(t, "build it") + codexHookContext(t, "[crw — B: BUILD]") + codexCompaction(t, "[crw — B: BUILD]")
+	record := codexLine(t, "response_item", map[string]any{"type": "function_call_output", "call_id": "c", "output": strings.Repeat("w", 900)})
+	output := func(n int) string { return strings.Repeat(record, n/len(record)+1) }
+	far := output(16<<20 + 256<<10)
+	for _, seen := range []string{"PostCompact", "Stop"} {
+		t.Run("recorded by "+seen, func(t *testing.T) {
+			cwd, env := stopRig(t, "active")
+			stopInFlight(t, cwd, state.PhaseB)
+			transcript := writeTranscript(t, cwd, compaction)
+			stop := func(turn string) StopAnswer {
+				return StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript, TurnID: turn}, "linux", env)
+			}
+			before := stopStateBytes(t, cwd)
+			switch seen {
+			case "PostCompact":
+				SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: stopSID})
+			case "Stop":
+				if a := stop("t1"); a != (StopAnswer{}) {
+					t.Fatalf("the Stop right after the compaction did not release: %+v", a)
+				}
+			}
+			appendTranscript(t, transcript, far)
+			if a := stop("t1"); a != (StopAnswer{}) {
+				t.Errorf("the Stop after a compaction and %d bytes of tool output did not release: %+v", len(far), a)
+			}
+			if stopStateBytes(t, cwd) != before {
+				t.Error("the release spent the budget")
+			}
+			promptTriggerAnswer(t, cwd, stopSID, "t2", "continue", transcript, true)
+			appendTranscript(t, transcript, codexUserTurn(t, "continue")+output(200<<10))
+			if a := stop("t2"); !strings.Contains(a.Stdout, `"decision":"block"`) {
+				t.Errorf("the recovery did not end at the next user turn: %+v", a)
+			}
+		})
 	}
 }

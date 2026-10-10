@@ -27,8 +27,9 @@ type TranscriptGeneration struct {
 	injected  []string // the texts of the hook developer records after the last compaction
 }
 
-// ReadTranscriptGeneration reads the last maxBytes of the transcript at path as whole JSONL records. Nothing readable is
-// an empty generation: no marker, no pressure (fail open, as ReadTranscriptTail).
+// ReadTranscriptGeneration reads the whole JSONL records in the last maxBytes of the transcript at path, touching at most
+// maxBytes bytes (readTranscriptBytes). Nothing readable is an empty generation: no marker, no pressure, no user turn (fail
+// open, as ReadTranscriptTail).
 func ReadTranscriptGeneration(path string, maxBytes int) TranscriptGeneration {
 	w := readTranscriptBytes(path, maxBytes, nil)
 	return parseTranscriptGeneration(w.data, w.whole)
@@ -71,33 +72,6 @@ func parseTranscriptGeneration(tail []byte, whole bool) TranscriptGeneration {
 	return g
 }
 
-// ContextPressureScanBytes is how far back TranscriptContextPressure looks for the compaction or the user prompt that
-// decides it. Tool output between them is not bounded, so the tail alone ends the recovery window by scrolling the
-// compaction out of reach (CRW-1090 evaluation d2); a transcript with neither in this reach reads as no pressure, as
-// an unreadable one does.
-const ContextPressureScanBytes = 16 << 20
-
-// TranscriptContextPressure is whether the transcript at path shows a compaction that no user prompt has followed
-// (TranscriptGeneration.ContextPressure), read from a window of the transcript's end that widens, four times each round
-// from TailBytes up to ContextPressureScanBytes, until it holds a compaction or a user prompt. A user prompt in the
-// window with no compaction after it ends any pressure, and a compaction with no prompt after it is pressure, whatever
-// the window holds before them, so the first window that holds either decides; one that holds neither widens, and a
-// window that starts the file or reaches the limit without either is no pressure. The Stop leg asks this; the passive
-// prompt reads only the injected markers, which a compaction before the window cannot make stale.
-func TranscriptContextPressure(path string) bool {
-	for window := TailBytes; ; window *= 4 {
-		window = min(window, ContextPressureScanBytes)
-		w := readTranscriptBytes(path, window, nil)
-		g := parseTranscriptGeneration(w.data, w.whole)
-		if g.compacted || g.userTurn {
-			return g.ContextPressure()
-		}
-		if w.covered || window >= ContextPressureScanBytes {
-			return false
-		}
-	}
-}
-
 // HasStageMarkerForPhase is whether a hook injected the stage marker for phase in this generation, in either emitted
 // form: the directive head `[crw: PLAN]` or the compaction-immune header `[crw — P: PLAN]` (the oracle's `[codexclaw...`
 // markers after name-substitution rule R23). The marker has to open the injected text, as the leg emits it; another
@@ -119,6 +93,14 @@ func (g TranscriptGeneration) HasStageMarkerForPhase(phase string) bool {
 // past it.
 func (g TranscriptGeneration) ContextPressure() bool {
 	return g.compacted && !g.userTurn
+}
+
+// UserTurnRecorded is whether the tail shows a user prompt after the last compaction it shows (any prompt, when it shows
+// none). Any compaction before the tail is older than every record in it, so such a prompt ends a recovery window whose
+// compaction has scrolled out of the tail; a tail that shows neither a compaction nor a prompt cannot say where the
+// window stands, and the Stop asks the boundary a hook recorded (hook/compaction_recovery.go).
+func (g TranscriptGeneration) UserTurnRecorded() bool {
+	return g.userTurn
 }
 
 // stageMarkerLabel is STAGE_LABELS for a work phase, or "" for one that has no stage marker.

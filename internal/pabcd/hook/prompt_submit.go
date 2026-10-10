@@ -96,6 +96,9 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			return true
 		})
 	}
+	// A user turn ends a compaction's recovery window (CRW-1090, compaction_recovery.go): the prompt this hook runs for is
+	// the boundary, whatever the transcript tail still shows.
+	compactionRecoveryEnd(p.Cwd, p.SessionID)
 	if !p.PabcdEnabled {
 		return ""
 	}

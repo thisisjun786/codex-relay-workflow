@@ -46,8 +46,9 @@ func SessionHookSessionStart(p SessionHookSessionStartPayload) string {
 // reinjection cursor of an in-flight cycle, so the first eligible same-phase prompt injects the full
 // phase directive (mode 2) instead of the short stage header (mode 3). The turns the dedup list holds were
 // answered in the context the compaction removed, so they are dropped with the cursor (CRW-1090 evaluation d1: the dedup
-// holds within one context generation; docs/port-cxc/known-defects/CRW-1090.md). Nothing else is touched — not
-// the phase, the flags, the stagnation counters, the goalplan or the goal database — and the handler
+// holds within one context generation; docs/port-cxc/known-defects/CRW-1090.md). Beside the state, the
+// compaction's recovery boundary is recorded for the Stop (compaction_recovery.go, not in the oracle). Nothing else is
+// touched — not the phase, the flags, the stagnation counters, the goalplan or the goal database — and the handler
 // answers nothing.
 //
 // The oracle reads the state and writes it back with no lock, so an update a participating writer
@@ -63,6 +64,9 @@ func SessionHookPostCompact(p SessionHookPostCompactPayload) string {
 // sessionHookPostCompact takes the lock as an argument so that a test can land a participating
 // writer's update between the handler's read and its write.
 func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sessionID string, fn func() error) error) string {
+	// Every session with a state records the compaction's recovery boundary, so a Stop releases until the next user turn
+	// however much output follows (CRW-1090, compaction_recovery.go).
+	compactionRecoveryBegin(p.Cwd, p.SessionID)
 	// No-op unless an orchestrated cycle is in flight, and no write when the cursor is already reset.
 	if !sessionHookPostCompactEligible(state.ReadState(p.Cwd, p.SessionID)) {
 		return ""

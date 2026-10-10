@@ -227,10 +227,11 @@ func TestReadTranscriptGenerationKeepsTheFirstRecordOfAnAlignedWindow(t *testing
 	}
 }
 
-// TestContextPressureOutlivesTheTailWindow is CRW-1090 evaluation d2: a compaction no user prompt has followed is pressure
-// however much is appended after it, until a prompt is recorded; the scan widens past the 64 KiB tail to find the
-// boundary and stops at ContextPressureScanBytes (a transcript with neither in that reach reads as no pressure).
-func TestContextPressureOutlivesTheTailWindow(t *testing.T) {
+// TestTranscriptGenerationBoundaryInTheTail is CRW-1090 evaluation d2 as the tail sees it: the 64 KiB tail decides the
+// recovery window only when it shows a boundary. A compaction no prompt has followed is pressure, a prompt after the last
+// compaction ends it, and a tail that shows neither (the compaction scrolled out under tool output) is neither pressure nor a
+// user turn: the Stop then asks the boundary a hook recorded (hook/compaction_recovery.go). Nothing is read past the tail.
+func TestTranscriptGenerationBoundaryInTheTail(t *testing.T) {
 	compaction := `{"type":"compacted","payload":{"message":"","replacement_history":[]}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction"}}}` + "\n"
 	user := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}` + "\n"
@@ -238,41 +239,25 @@ func TestContextPressureOutlivesTheTailWindow(t *testing.T) {
 		return strings.Repeat(`{"type":"response_item","payload":{"type":"function_call_output","output":"`+strings.Repeat("w", 900)+`"}}`+"\n", n)
 	}
 	for _, c := range []struct {
-		name, content string
-		want          bool
+		name               string
+		content            string
+		pressure, userTurn bool
 	}{
-		{"compaction at the end", compaction, true},
-		{"compaction, then 200 KiB of tool output", compaction + filler(220), true},
-		{"compaction, 3 MiB of tool output", compaction + filler(3300), true},
-		{"compaction, a prompt, then 200 KiB", compaction + user + filler(220), false},
-		{"a prompt, then 200 KiB, no compaction", user + filler(220), false},
-		{"no compaction at all", filler(220), false},
-		{"a prompt, a compaction, then 200 KiB", user + compaction + filler(220), true},
+		{"compaction at the end", compaction, true, false},
+		{"compaction, then 32 KiB of tool output", compaction + filler(35), true, false},
+		{"compaction, then 200 KiB of tool output", compaction + filler(220), false, false},
+		{"compaction, a prompt, then 32 KiB", compaction + user + filler(35), false, true},
+		{"compaction, a prompt, then 200 KiB", compaction + user + filler(220), false, false},
+		{"a prompt, then 32 KiB, no compaction", user + filler(35), false, true},
+		{"no boundary at all", filler(220), false, false},
+		{"a prompt, a compaction, then 32 KiB", user + compaction + filler(35), true, false},
 	} {
-		if got := TranscriptContextPressure(writeTail(t, c.content)); got != c.want {
-			t.Errorf("%s: pressure %v, want %v", c.name, got, c.want)
+		g := ReadTranscriptGeneration(writeTail(t, c.content), TailBytes)
+		if g.ContextPressure() != c.pressure || g.UserTurnRecorded() != c.userTurn {
+			t.Errorf("%s: pressure %v user turn %v, want %v %v", c.name, g.ContextPressure(), g.UserTurnRecorded(), c.pressure, c.userTurn)
 		}
 	}
-	// Beyond the scan reach the boundary is not looked for.
-	if TranscriptContextPressure(bigTranscript(t, "\n")) {
-		t.Error("a 64 MiB transcript with no boundary read as pressure")
-	}
-	if !TranscriptContextPressure(bigTranscript(t, "\n"+compaction)) {
+	if g := ReadTranscriptGeneration(bigTranscript(t, "\n"+compaction), TailBytes); !g.ContextPressure() {
 		t.Error("a compaction at the end of a 64 MiB transcript did not read as pressure")
-	}
-	path := filepath.Join(t.TempDir(), "far.jsonl")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(compaction); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Truncate(ContextPressureScanBytes + 4<<20); err != nil {
-		t.Fatal(err)
-	}
-	if TranscriptContextPressure(path) {
-		t.Error("a compaction beyond the scan reach read as pressure")
 	}
 }

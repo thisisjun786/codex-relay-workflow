@@ -3,21 +3,48 @@
   "intentionally-changed": [
     {
       "id": "hook__stop-checking-pabcd-continuation__context_pressure_tail_releases",
-      "reason": "CRW-1090: context pressure is read only from a compaction record Codex writes and lasts until the next user prompt; the oracle's phrase in an agent_message event is a quote and no longer releases, so the given carries the compacted record a real compaction leaves and the release is unchanged",
+      "reason": "CRW-1090: context pressure is read only from a compaction record Codex writes and lasts until the next user prompt; the oracle's phrase in an agent_message event is a quote and no longer releases, so the given carries the compacted record a real compaction leaves and the release is unchanged; the Stop records the recovery boundary it saw beside the session state (.crw/sessions/<session>.compacted), so the window outlives the 64 KiB tail until the next user prompt",
       "given": {
         "files": {
           "ws/transcript.jsonl": "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}\n"
         }
       },
       "set": {
-        "tree/ws/transcript.jsonl/content": "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}"
+        "tree/ws/transcript.jsonl/content": "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}",
+        "tree/ws/.crw/sessions/rec-s1.compacted/type": "file",
+        "tree/ws/.crw/sessions/rec-s1.compacted/mode": "0644",
+        "tree/ws/.crw/sessions/rec-s1.compacted/target": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/form": "text",
+        "tree/ws/.crw/sessions/rec-s1.compacted/sha256": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/size": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/content": "compacted\n"
       }
     },
     {
       "id": "hook__post-compact-resetting-reinject-cursor__active_cycle_resets_cursor",
-      "reason": "CRW-1090: the turn dedup holds within one context generation, so PostCompact drops injectedTurns with the injection cursor (the oracle keeps them, and a turn id reused after the compaction was then skipped before any marker was read); the lock and re-read of the CRW-378 claim are unchanged and the cursor reset is the oracle's",
+      "reason": "CRW-1090: the turn dedup holds within one context generation, so PostCompact drops injectedTurns with the injection cursor (the oracle keeps them, and a turn id reused after the compaction was then skipped before any marker was read); the lock and re-read of the CRW-378 claim are unchanged and the cursor reset is the oracle's; PostCompact also records the compaction's recovery boundary beside the session state (.crw/sessions/<session>.compacted) for the Stop, which the next user prompt removes",
       "set": {
-        "tree/ws/.crw/sessions/rec-s1.json/content": "{\"phase\":\"B\",\"sessionId\":\"rec-s1\",\"slug\":\"\",\"updatedAt\":\"<TS>\",\"flags\":{\"interview\":false,\"auditPassed\":false,\"checkPassed\":false},\"supersededBy\":null,\"injectedTurns\":[],\"lastInjectedPhase\":null,\"orchestrationActive\":true,\"interview\":null,\"stopBlockPhase\":null,\"stopBlockCount\":0,\"stopBlockWorkPhaseId\":null,\"stopMetricCursor\":0,\"stopBlockTotal\":0,\"stopBlockTurnId\":null,\"stopBlockCapNotified\":false,\"loopArmSeen\":false,\"idleEditNudges\":0,\"memoryWriteRequested\":false,\"memoryWriteTurn\":null,\"memoryWriteGrant\":false,\"unverifiedSubagents\":[],\"unverifiedCorrupt\":false,\"phaseEntrySource\":null,\"planUnit\":null,\"planEpoch\":null,\"checkEpoch\":null,\"dcloseRecovery\":null}"
+        "tree/ws/.crw/sessions/rec-s1.json/content": "{\"phase\":\"B\",\"sessionId\":\"rec-s1\",\"slug\":\"\",\"updatedAt\":\"<TS>\",\"flags\":{\"interview\":false,\"auditPassed\":false,\"checkPassed\":false},\"supersededBy\":null,\"injectedTurns\":[],\"lastInjectedPhase\":null,\"orchestrationActive\":true,\"interview\":null,\"stopBlockPhase\":null,\"stopBlockCount\":0,\"stopBlockWorkPhaseId\":null,\"stopMetricCursor\":0,\"stopBlockTotal\":0,\"stopBlockTurnId\":null,\"stopBlockCapNotified\":false,\"loopArmSeen\":false,\"idleEditNudges\":0,\"memoryWriteRequested\":false,\"memoryWriteTurn\":null,\"memoryWriteGrant\":false,\"unverifiedSubagents\":[],\"unverifiedCorrupt\":false,\"phaseEntrySource\":null,\"planUnit\":null,\"planEpoch\":null,\"checkEpoch\":null,\"dcloseRecovery\":null}",
+        "tree/ws/.crw/sessions/rec-s1.compacted/type": "file",
+        "tree/ws/.crw/sessions/rec-s1.compacted/mode": "0644",
+        "tree/ws/.crw/sessions/rec-s1.compacted/target": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/form": "text",
+        "tree/ws/.crw/sessions/rec-s1.compacted/sha256": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/size": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/content": "compacted\n"
+      }
+    },
+    {
+      "id": "hook__post-compact-resetting-reinject-cursor__idle_is_a_noop",
+      "reason": "CRW-1090: PostCompact records the compaction's recovery boundary beside any session state (.crw/sessions/<session>.compacted), so a goal Stop releases until the next user prompt however much output follows the compaction while every transcript read stays within the 64 KiB tail (CRW-1160); the session state itself is untouched, as in the oracle's no-op",
+      "set": {
+        "tree/ws/.crw/sessions/rec-s1.compacted/type": "file",
+        "tree/ws/.crw/sessions/rec-s1.compacted/mode": "0644",
+        "tree/ws/.crw/sessions/rec-s1.compacted/target": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/form": "text",
+        "tree/ws/.crw/sessions/rec-s1.compacted/sha256": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/size": "",
+        "tree/ws/.crw/sessions/rec-s1.compacted/content": "compacted\n"
       }
     }
   ]

@@ -11,9 +11,10 @@
 // session releases, and only an ACTIVE host goal with a bound goalplan whose remaining work is not
 // waiting on an open decision gets the goal-idle arming block; with a cycle in flight only an ACTIVE
 // goal blocks (an interactive session may get the render advisory as additionalContext). A transcript
-// whose tail shows a compaction no user prompt has followed yet releases (CRW-1090: a compaction record,
-// not the oracle's pressure phrases anywhere in the tail, which a quote also matched; the recovery window
-// ends at the next user prompt, docs/port-cxc/known-defects/CRW-1090.md). Every block goes through one counter:
+// inside a compaction's recovery window releases (CRW-1090: a compaction record, not the oracle's pressure
+// phrases anywhere in the tail, which a quote also matched; the window ends at the next user prompt, and a
+// hook that sees the compaction records it so the window outlives the tail, compaction_recovery.go,
+// docs/port-cxc/known-defects/CRW-1090.md). Every block goes through one counter:
 // three consecutive blocks at the same phase and work phase release (progress recharges the budget),
 // and 24 per user turn release for good, the second of them with a systemMessage. The counter is
 // written before the block is answered, so a block the counter could not record is never answered.
@@ -105,7 +106,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if plan == nil || goalplan.RemainingWorkAwaitsDecisions(plan) {
 			return StopAnswer{}
 		}
-		if host.TranscriptContextPressure(p.TranscriptPath) {
+		if stopContextPressure(p) {
 			return StopAnswer{}
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State) string {
@@ -124,7 +125,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if plan := stopSafeReadBoundGoalplan(p.Cwd, st.Slug); plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan) {
 		return StopAnswer{}
 	}
-	if host.TranscriptContextPressure(p.TranscriptPath) {
+	if stopContextPressure(p) {
 		return StopAnswer{}
 	}
 	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State) string {

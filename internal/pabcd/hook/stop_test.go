@@ -312,6 +312,10 @@ func TestStopContextPressureTailReleasesWithoutSpendingTheBudget(t *testing.T) {
 		if err := os.WriteFile(transcript, []byte(line+"\n"), 0o666); err != nil {
 			t.Fatal(err)
 		}
+		// the same Stop on a transcript that is gone or unreadable, with no recovery recorded, is not a recovery: it blocks
+		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: filepath.Join(cwd, "gone.jsonl")}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
+			t.Errorf("%q: a missing transcript must not release: %+v", marker, a)
+		}
 		before := stopStateBytes(t, cwd)
 		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript}, "linux", env); a != (StopAnswer{}) {
 			t.Errorf("%q: %+v", marker, a)
@@ -319,9 +323,10 @@ func TestStopContextPressureTailReleasesWithoutSpendingTheBudget(t *testing.T) {
 		if stopStateBytes(t, cwd) != before {
 			t.Errorf("%q: the release spent the budget", marker)
 		}
-		// the same Stop on a transcript that is gone or unreadable is not a recovery: it blocks
-		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: filepath.Join(cwd, "gone.jsonl")}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
-			t.Errorf("%q: a missing transcript must not release: %+v", marker, a)
+		// once the Stop has seen the compaction, the recovery is recorded and outlives what the transcript shows
+		// (compaction_recovery.go) until the next user turn
+		if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: filepath.Join(cwd, "gone.jsonl")}, "linux", env); a != (StopAnswer{}) {
+			t.Errorf("%q: the recorded recovery did not release: %+v", marker, a)
 		}
 	}
 }
