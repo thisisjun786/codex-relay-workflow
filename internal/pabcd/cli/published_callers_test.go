@@ -12,54 +12,27 @@ package cli
 // is true while errors.Is(err, syscall.EIO) still reaches the cause.
 //
 // HOME, CODEX_HOME and CRW_HOME point into temporary directories in every case (the review-round
-// open packet probes CODEX_HOME), and the real ~/.codex and ~/.crw listings are compared before
-// and after, so a run that reaches them is reported instead of cleaned up.
+// open packet probes CODEX_HOME), and those directories are checked afterwards, so a run that writes
+// into them is reported instead of cleaned up (the real ~/.codex and ~/.crw are not observed, CRW-1170).
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// cliPublishedIsolatedHome captures the real ~/.codex and ~/.crw listings, repoints HOME, CODEX_HOME
-// and CRW_HOME into temporary directories for this test, and fails it if the run created or removed
-// anything under the real ones. It must be called before any helper that reads a home.
+// cliPublishedIsolatedHome repoints HOME, CODEX_HOME and CRW_HOME into temporary directories for this test and
+// fails it if the run created or removed anything at the top level of them. The real ~/.codex and ~/.crw are
+// not observed: the host's Codex sessions write there at any moment (CRW-1170). It must be called before any
+// helper that reads a home.
 func cliPublishedIsolatedHome(t *testing.T) {
 	t.Helper()
-	home, _ := os.UserHomeDir()
-	before := cliPublishedListing(t, filepath.Join(home, ".codex"), filepath.Join(home, ".crw"))
-	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
-		t.Setenv(name, t.TempDir())
-	}
-	t.Cleanup(func() {
-		if after := cliPublishedListing(t, filepath.Join(home, ".codex"), filepath.Join(home, ".crw")); before != after {
-			t.Errorf("the run changed real state:\nbefore %s\nafter  %s", before, after)
-		}
-	})
-}
-
-func cliPublishedListing(t *testing.T, dirs ...string) string {
-	t.Helper()
-	out := make([]string, 0, len(dirs))
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			out = append(out, dir+"=<unreadable>")
-			continue
-		}
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		out = append(out, dir+"=["+strings.Join(names, ",")+"]")
-	}
-	return strings.Join(out, " ")
+	testsupport.SandboxAccountHomes(t)
 }
 
 // cliPublishedStateWrite is the state seam: it publishes through the real writer and then reports
