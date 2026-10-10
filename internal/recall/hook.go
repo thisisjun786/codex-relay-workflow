@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -139,6 +140,37 @@ func recallHookTargetStop(key string) bool {
 	}
 	return false
 }
+
+var (
+	recallHookDateYMD = regexp.MustCompile(`^(?:19|20)\d\d\.(?:0?[1-9]|1[0-2])\.(?:0?[1-9]|[12]\d|3[01])$`)
+	recallHookDateDMY = regexp.MustCompile(`^(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d\d$`)
+	recallHookCue     = regexp.MustCompile(`(?i)(?:\b(?:v(?:er(?:sion)?)?|release|tag)|버전|릴리스|릴리즈|@)[ :=]*$`)
+)
+
+// recallHookIsVersion judges a dotted-number match of the prompt, the span [start, end), as a version: a date (2026.10.04, 04.10.2026) and
+// a piece of a longer dotted number (the 1.2.3 of 1.2.3.4, an address) are not, unless a version word stands right before it
+// (known-defects.md :913).
+func recallHookIsVersion(prompt string, start, end int) bool {
+	from := max(start-32, 0)
+	for from < start && !utf8.RuneStart(prompt[from]) {
+		from++
+	}
+	if recallHookCue.MatchString(prompt[from:start]) { // a window before the match, so a long prompt costs a long prompt once
+		return true
+	}
+	match := prompt[start:end]
+	if recallHookDateYMD.MatchString(match) || recallHookDateDMY.MatchString(match) {
+		return false
+	}
+	if start >= 2 && prompt[start-1] == '.' && prompt[start-2] >= '0' && prompt[start-2] <= '9' {
+		return false
+	}
+	if end+1 < len(prompt) && prompt[end] == '.' && prompt[end+1] >= '0' && prompt[end+1] <= '9' {
+		return false
+	}
+	return true
+}
+
 func ExtractRecallTargets(prompt string, caps ...int) []string {
 	out, seen := []string{}, map[string]bool{}
 	push := func(raw string) {
@@ -151,9 +183,12 @@ func ExtractRecallTargets(prompt string, caps ...int) []string {
 		seen[key] = true
 		out = append(out, term)
 	}
-	for _, p := range []string{`\b\d+\.\d+(?:\.\d+)?\b`, `\b[\w.-]+\.(?:ts|tsx|js|mjs|cjs|json|md|toml|py|rs)\b`, `\b(?:[A-Z]{2,}(?:-[A-Z0-9]+)+|ERR_[A-Z0-9_]+)\b`, `\b[A-Z][a-zA-Z]*[A-Z][A-Za-z0-9]*\b`} {
-		for _, match := range recallHookRE(p).FindAllString(prompt, -1) {
-			push(match)
+	for n, p := range []string{`\b\d+\.\d+(?:\.\d+)?\b`, `\b[\w.-]+\.(?:ts|tsx|js|mjs|cjs|json|md|toml|py|rs)\b`, `\b(?:[A-Z]{2,}(?:-[A-Z0-9]+)+|ERR_[A-Z0-9_]+)\b`, `\b[A-Z][a-zA-Z]*[A-Z][A-Za-z0-9]*\b`} {
+		for _, at := range recallHookRE(p).FindAllStringIndex(prompt, -1) {
+			if n == 0 && !recallHookIsVersion(prompt, at[0], at[1]) {
+				continue
+			}
+			push(prompt[at[0]:at[1]])
 		}
 	}
 	// Replay the greedy quoted regex on code units, including its mixed delimiters.
@@ -249,13 +284,23 @@ func DedicatedToolsEnabled(home string) bool {
 	body = strings.NewReplacer("\r", "\n", "\u2028", "\n", "\u2029", "\n").Replace(body)
 	return ok && recallHookRE(`(?m)^[ \t]*dedicated_tools[ \t]*=[ \t]*true[ \t]*(?:#.*)?$`).MatchString(body)
 }
+
+// recallHookRecoveryLine is the one-line pointer to recall. The commands it names are the part that is run, so they are never cut: when the
+// whole line is over the budget the description around them is dropped, a step at a time, and a command that alone is over the budget is
+// still given whole (known-defects.md :912).
 func recallHookRecoveryLine(inv string, dedicated bool) string {
-	line := "Recall: " + inv + ` recall chat search "<terms>" --days 0  |  ` + inv + ` recall memory search "<topic>"`
+	chat := inv + ` recall chat search "<terms>" --days 0`
+	memory := inv + ` recall memory search "<topic>"`
+	candidates := []string{"Recall: " + chat + "  |  " + memory, "Recall: " + chat + " | " + memory, chat + " | " + memory, memory}
 	if dedicated {
-		line = `Recall: memories.search "<topic>" (native tool). Also: ` + inv + ` recall memory search "<topic>"`
+		candidates = []string{`Recall: memories.search "<topic>" (native tool). Also: ` + memory, `memories.search "<topic>" (native tool) | ` + memory, `memories.search "<topic>" | ` + memory, memory}
 	}
-	u := recallHookUnits(line)
-	return recallHookString(u[:min(len(u), recallHookRecoveryBudget)])
+	for _, line := range candidates {
+		if len(recallHookUnits(line)) <= recallHookRecoveryBudget {
+			return line
+		}
+	}
+	return memory
 }
 func recallHookSessionNotice(src, inv, status string, dedicated bool) string {
 	rows := []string{"[crw-recall] Past-session recall is available (read-only). Before asking the user", `about prior work — unfamiliar terms, lost context, "그때/지난번/last time" — recover it.`}
@@ -275,6 +320,10 @@ func recallHookSessionNotice(src, inv, status string, dedicated bool) string {
 }
 func HandleSessionStart(status, cwd, src string, opts SessionStartOptions, deps RecallContextDeps) string {
 	parts := []string{}
+	inv := deps.Invocation
+	if inv == "" {
+		inv = "crw"
+	}
 	if cwd != "" {
 		budget := FullBudget()
 		if src == "compact" {
@@ -288,7 +337,8 @@ func HandleSessionStart(status, cwd, src string, opts SessionStartOptions, deps 
 				deps.Rendered(result.Refs)
 			}
 		case CwdContextUnavailable:
-			parts = append(parts, "Recall unavailable for this project — the index could not be read. Run `crw recall chat index --status` to inspect it.")
+			// The command is the invocation this hook resolved, which may be a path the bare name does not reach (known-defects.md :914).
+			parts = append(parts, "Recall unavailable for this project — the index could not be read. Run `"+inv+" recall chat index --status` to inspect it.")
 		}
 	}
 	if opts.MemoryNotice != "" {
@@ -299,10 +349,6 @@ func HandleSessionStart(status, cwd, src string, opts SessionStartOptions, deps 
 		dedicated = DedicatedToolsEnabled(opts.Home)
 	} else {
 		dedicated = *opts.DedicatedTools
-	}
-	inv := deps.Invocation
-	if inv == "" {
-		inv = "crw"
 	}
 	parts = append(parts, recallHookSessionNotice(src, inv, status, dedicated))
 	return recallHookContextOutput("SessionStart", strings.Join(parts, "\n\n"))

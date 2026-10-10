@@ -2,8 +2,6 @@
   "issue": "CRW-391",
   "identical": [
     "cli__chat__search_help_word_is_a_query",
-    "cli__memory__requeue_apply_on_seeded_db",
-    "cli__memory__requeue_dry_run",
     "cli__memory__status_unavailable_and_unsupported"
   ],
   "pending": [

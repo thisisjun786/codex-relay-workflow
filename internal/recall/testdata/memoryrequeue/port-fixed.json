@@ -1,0 +1,214 @@
+{
+ "consolidation-default": {
+  "result": {
+   "state": "ok",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {
+    "consolidation": 1
+   },
+   "changed": 0,
+   "retries": 3
+  },
+  "rows": [
+   {
+    "input_watermark": 10,
+    "job_key": "a",
+    "kind": "memory_consolidate_global",
+    "last_error": "capacity",
+    "last_success_watermark": 5,
+    "retry_at": 999,
+    "retry_remaining": 0,
+    "retry_type": "integer",
+    "status": "error"
+   }
+  ],
+  "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 0\n  left alone: consolidation=1\n    consolidation jobs are left alone unless --kind names their kind\n  dry run — nothing written (pass --apply)\n"
+ },
+ "unsupported": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): job_key, retry_remaining, retry_at, last_error",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): job_key, retry_remaining, retry_at, last_error\n"
+ },
+ "coercion": {
+  "result": {
+   "state": "ok",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {
+    "untyped-key": 3
+   },
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 0\n  left alone: untyped-key=3\n    rows whose kind or key is not text cannot be addressed and are never written\n  dry run — nothing written (pass --apply)\n"
+ },
+ "null-kind": {
+  "result": {
+   "state": "ok",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {
+    "untyped-key": 1
+   },
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: <HOME>/memories_1.sqlite\n  selected: 0\n  left alone: untyped-key=1\n    rows whose kind or key is not text cannot be addressed and are never written\n  dry run — nothing written (pass --apply)\n"
+ },
+ "missing-backoff": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): retry_at",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): retry_at\n"
+ },
+ "duplicate-zero-retry": {
+  "result": {
+   "state": "unavailable",
+   "detail": "--retries 0.5 must be a whole number of at least 1",
+   "storePath": null,
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "rows": [
+   {
+    "input_watermark": 10,
+    "job_key": "a",
+    "kind": "memory_stage1",
+    "last_error": "capacity",
+    "last_success_watermark": 5,
+    "retry_at": 999,
+    "retry_remaining": 0,
+    "retry_type": "integer",
+    "status": "error"
+   },
+   {
+    "input_watermark": 10,
+    "job_key": "a",
+    "kind": "memory_stage1",
+    "last_error": "capacity",
+    "last_success_watermark": 5,
+    "retry_at": 999,
+    "retry_remaining": 0,
+    "retry_type": "integer",
+    "status": "error"
+   }
+  ],
+  "text": "memory requeue: unavailable — --retries 0.5 must be a whole number of at least 1\n"
+ },
+ "retries-0.5": {
+  "result": {
+   "state": "unavailable",
+   "detail": "--retries 0.5 must be a whole number of at least 1",
+   "storePath": null,
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "rows": [
+   {
+    "input_watermark": 10,
+    "job_key": "a",
+    "kind": "memory_stage1",
+    "last_error": "capacity",
+    "last_success_watermark": 5,
+    "retry_at": 999,
+    "retry_remaining": 0,
+    "retry_type": "integer",
+    "status": "error"
+   }
+  ],
+  "text": "memory requeue: unavailable — --retries 0.5 must be a whole number of at least 1\n"
+ },
+ "missing-kind": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): kind, retry_at",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): kind, retry_at\n"
+ },
+ "missing-job_key": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): job_key, retry_at",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): job_key, retry_at\n"
+ },
+ "missing-status": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): status, retry_at",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): status, retry_at\n"
+ },
+ "missing-retry_remaining": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): retry_remaining, retry_at",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): retry_remaining, retry_at\n"
+ },
+ "missing-last_error": {
+  "result": {
+   "state": "unsupported",
+   "detail": "jobs table is missing column(s): retry_at, last_error",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "applied": false,
+   "selected": [],
+   "skippedByCause": {},
+   "changed": 0,
+   "retries": 3
+  },
+  "text": "memory requeue: unsupported — jobs table is missing column(s): retry_at, last_error\n"
+ }
+}

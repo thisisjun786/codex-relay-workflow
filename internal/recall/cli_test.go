@@ -154,6 +154,17 @@ func TestRecallCLIHygiene(t *testing.T) {
 	})
 }
 
+// recallCLIOraclePortFixed are the rows of testdata/cli/oracle.json by index whose answer the port changed on purpose (CRW-1131): the exit
+// code and the standard error the port answers with, and no standard output.
+var recallCLIOraclePortFixed = map[int]struct {
+	code   int
+	stderr string
+}{
+	20: {1, "Option '--json' does not take an argument\n"},
+	21: {1, "--limit must be a whole number of at least 1: got \"2tail\"\n"},
+	24: {1, "unknown recall command: nonsense (the commands are chat search, chat index, memory search, memory status and memory requeue; --help prints the usage)\n"},
+}
+
 func TestRecallCLIRecordedOracle(t *testing.T) {
 	data, err := os.ReadFile("testdata/cli/oracle.json")
 	if err != nil {
@@ -179,6 +190,13 @@ func TestRecallCLIRecordedOracle(t *testing.T) {
 			code, out, e := recallCLIInvoke(t, args, time.Now())
 			norm := strings.NewReplacer(home, "<HOME>", idx, "<INDEX>")
 			out, e = norm.Replace(out), norm.Replace(e)
+			if fix, ok := recallCLIOraclePortFixed[i]; ok {
+				// port: fixed (CRW-1131, docs/port-cxc/known-defects/CRW-1131.md): the strict parser and the unknown verb.
+				if code != fix.code || out != "" || e != fix.stderr {
+					t.Fatalf("exit %d stdout %q stderr %q, want exit %d stderr %q", code, out, e, fix.code, fix.stderr)
+				}
+				return
+			}
 			if slices.Equal(row.Argv, []string{"chat", "search", "--", "--help"}) {
 				// port: fixed (CRW-1125, known-defects.md :667): the oracle printed usage; the port searches for the word --help.
 				if code != 0 || e != "" && !strings.HasPrefix(e, "recall: building the sidecar index") || strings.Contains(out, `crw recall chat search "<query>"`) || !strings.HasPrefix(out, "# 0 hits (") {
@@ -348,6 +366,13 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				code, out, e := recallCLIInvoke(t, args, now)
 				out, e = session.Text(out), session.Stderr(e)
 				want := fixture.Expect.Steps[i]
+				if override, ok := recallCLIPortFixedOutputs[id][i]; ok {
+					// port: fixed (CRW-1131): the requeue leaves consolidation jobs alone unless the kind names them.
+					if code != want.Exit || e != sub.Expected(want.Stderr) || !recallCLIPortOutputEqual(out, override) {
+						t.Errorf("step%d got %q want %q", i, out, override)
+					}
+					continue
+				}
 				if code != want.Exit || e != sub.Expected(want.Stderr) {
 					t.Errorf("step%d code%d/%d stderr %q/%q", i, code, want.Exit, e, sub.Expected(want.Stderr))
 				}
@@ -389,6 +414,24 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recallCLIPortFixedOutputs are the standard outputs, by fixture and step, that the port prints in place of the recorded ones (CRW-1131,
+// known-defects.md :620): the same requeue, with the consolidation job left alone. A text that starts with `{` is JSON.
+var recallCLIPortFixedOutputs = map[string]map[int]string{
+	"cli__memory__requeue_dry_run": {0: "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 2 [capacity=1, incomplete-response=1]\n  left alone: consolidation=1, context-window=1\n    consolidation jobs are left alone unless --kind names their kind\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n"},
+	"cli__memory__requeue_apply_on_seeded_db": {
+		0: `{"state":"ok","detail":"","storePath":"${CODEX_HOME}/memories_1.sqlite","applied":true,"selected":[{"kind":"stage1","jobKey":"t-cap","cause":"capacity"},{"kind":"stage1","jobKey":"t-inc","cause":"incomplete-response"}],"skippedByCause":{"consolidation":1,"context-window":1},"changed":2,"retries":5}`,
+		1: "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 0\n  left alone: consolidation=1, context-window=1\n    consolidation jobs are left alone unless --kind names their kind\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+	},
+}
+
+func recallCLIPortOutputEqual(out, want string) bool {
+	if !strings.HasPrefix(want, "{") {
+		return out == want
+	}
+	var a, b any
+	return json.Unmarshal([]byte(out), &a) == nil && json.Unmarshal([]byte(want), &b) == nil && reflect.DeepEqual(a, b)
 }
 
 // recallCLIPortFixedFixtures are the recorded fixtures whose answer the port changed on purpose (CRW-1128, docs/port-cxc/known-defects/CRW-1128.md):
@@ -513,22 +556,22 @@ func TestRecallCLINotices(t *testing.T) {
 }
 
 func TestRecallCLIManagementAndSearchEdges(t *testing.T) {
-	t.Run("lax-flags-do-not-accidentally-apply", func(t *testing.T) {
+	t.Run("odd-flags-do-not-accidentally-apply", func(t *testing.T) {
 		home := recallCLIHome(t)
 		recallFixtureDB(t, home, "memories_1.sqlite", requeueTestSchema, "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?)", []any{"stage1", "job", "error", 0, 999, "capacity", 10, 5})
 		before := requeueTestRows(t, home)
-		for _, flags := range [][]string{{"--apply=false"}, {"--limit", "--apply"}, {"--retries"}} {
+		// The strict parser (CRW-1131, known-defects.md :883, :886) refuses what the lax one read as a dry run, or as an apply of a prefix.
+		for _, flags := range [][]string{{"--apply=false"}, {"--limit", "--apply"}, {"--retries"}, {"--apply", "--retries=5tail"}} {
 			args := append([]string{"memory", "requeue", "--json"}, flags...)
 			code, out, e := recallCLIInvoke(t, args, time.Now())
-			var r RequeueResult
-			if json.Unmarshal([]byte(out), &r) != nil || code != 0 || e != "" || r.Applied || r.Changed != 0 || len(r.Selected) != 1 {
-				t.Fatal(code, out, e)
+			if code != 1 || out != "" || e == "" {
+				t.Fatal(flags, code, out, e)
 			}
 			if !reflect.DeepEqual(before, requeueTestRows(t, home)) {
-				t.Fatal("dry-run changed jobs")
+				t.Fatal("a refused command changed jobs")
 			}
 		}
-		code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--apply", "--retries=5tail", "--json"}, time.Now())
+		code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--apply", "--retries=5", "--json"}, time.Now())
 		var r RequeueResult
 		json.Unmarshal([]byte(out), &r)
 		if code != 0 || e != "" || !r.Applied || r.Changed != 1 || r.Retries != 5 {
@@ -569,9 +612,9 @@ func TestRecallCLIManagementAndSearchEdges(t *testing.T) {
 func TestRecallCLIReviewerRegressions(t *testing.T) {
 	home := recallCLIHome(t)
 	a, b := filepath.Join(home, "a"), filepath.Join(home, "b-<&>")
-	code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--home", a, "--limit retries", "--home", b, "--json"}, time.Now())
+	code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--home", a, "--home", b, "--json"}, time.Now())
 	if code != 1 || e != "" || !strings.Contains(out, b) || strings.Contains(out, a) {
-		t.Fatal("unknown option consumed home", code, out, e)
+		t.Fatal("the last home wins", code, out, e)
 	}
 	code, out, e = recallCLIInvoke(t, []string{"memory", "status", "--home", b, "--json"}, time.Now())
 	if code != 1 || e != "" || !strings.Contains(out, b) || strings.Contains(out, `\u003c`) {

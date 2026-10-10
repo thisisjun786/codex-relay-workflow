@@ -195,9 +195,9 @@ func TestRecallHookSessionStartPhysicalCwd(t *testing.T) {
 	}
 	payloadCwd, _ := json.Marshal(map[string]any{"hook_event_name": "SessionStart", "source": "startup", "cwd": physical})
 	for _, c := range []struct{ name, dir, raw, header, opener string }{
-		{"symlinked directory without payload cwd", alias, `{"hook_event_name":"SessionStart","source":"startup"}`, "Recent work — phys (this project)", "physical opener"},
-		{"directory without a symlink", plain, `{"hook_event_name":"SessionStart","source":"startup"}`, "Recent work — plain (this project)", "plain opener"},
-		{"payload cwd wins", plain, string(payloadCwd), "Recent work — phys (this project)", "physical opener"},
+		{"symlinked directory without payload cwd", alias, `{"hook_event_name":"SessionStart","source":"startup"}`, `Project: \"phys\"`, "physical opener"},
+		{"directory without a symlink", plain, `{"hook_event_name":"SessionStart","source":"startup"}`, `Project: \"plain\"`, "plain opener"},
+		{"payload cwd wins", plain, string(payloadCwd), `Project: \"phys\"`, "physical opener"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Chdir(c.dir)

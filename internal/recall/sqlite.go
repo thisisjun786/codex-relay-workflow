@@ -107,6 +107,12 @@ func openDbReadWrite(path string) (*RwDb, error) {
 	return openDb(path, sqlite.SQLITE_OPEN_READWRITE|sqlite.SQLITE_OPEN_CREATE)
 }
 
+// openDbReadWriteExisting opens a database that is already there for writing and never creates one: a file removed since it was
+// chosen is an error, not a new empty store (known-defects.md :623).
+func openDbReadWriteExisting(path string) (*RwDb, error) {
+	return openDb(path, sqlite.SQLITE_OPEN_READWRITE)
+}
+
 func openDb(path string, flags int32) (*RwDb, error) {
 	if strings.ContainsRune(path, 0) {
 		//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
