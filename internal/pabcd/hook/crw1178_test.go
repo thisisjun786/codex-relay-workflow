@@ -5,16 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
 // crw1178Cache lays out a two-file project with a __pycache__ holding stale timestamp entries of both sources (recorded time and
-// size zero), the way an earlier run leaves it once the sources were edited: the interpreter discards them and runs the sources.
+// size zero), the way an earlier run leaves it once the sources were edited.
 func crw1178Cache(t *testing.T, cwd string) {
 	t.Helper()
 	header := make([]byte, 16)
@@ -33,9 +31,13 @@ func crw1178Cache(t *testing.T, cwd string) {
 	}
 }
 
-// CRW-1178 (S2R2-F1): a routine test run is not refused by either guard because an earlier run left a stale __pycache__. A cache
-// that still agrees with its source is refused (TestCRW1178MatchingCacheRunsUnreadCode).
-func TestCRW1178RepeatedTestRunIsNotRefused(t *testing.T) {
+// crw1178Route is the way past a cache refusal both guards name.
+const crw1178Route = "remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
+
+// CRW-1178 (S2R2-F1) as decided after verification round 8: a test run beside the __pycache__ an earlier run left is refused by both
+// guards, as at the base, because code inside the run can make any entry current; but the refusal is the reader's, names the cache
+// file and gives the route, and the run the route leads to (no cache, -B) is allowed on every repetition.
+func TestCRW1178RepeatedTestRunNamesTheCacheAndTheRoute(t *testing.T) {
 	cwd, _, env := gateScene(t)
 	crw1178Cache(t, cwd)
 	for _, cmd := range []string{
@@ -45,11 +47,30 @@ func TestCRW1178RepeatedTestRunIsNotRefused(t *testing.T) {
 		"env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
 		"python3 -m pytest",
 	} {
-		if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
-			t.Errorf("memory gate refused %q beside a cache of readable sources: %s", cmd, out)
+		mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+		for _, r := range []string{mem, gh} {
+			if !strings.Contains(r, "[crw command-reader]") || !strings.Contains(r, "__pycache__/") || !strings.Contains(r, crw1178Route) || strings.Contains(r, "...") {
+				t.Errorf("%q: the reason lacks the reader wording, the file or the route, or is cut: %s", cmd, r)
+			}
+			for _, bad := range []string{"MEMORY-WRITE-GATE", "GitHub posting has not been established"} {
+				if strings.Contains(r, bad) {
+					t.Errorf("%q: a cache refusal reads as a policy refusal (%q): %s", cmd, bad, r)
+				}
+			}
 		}
-		if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out != "" {
-			t.Errorf("GitHub guard refused %q beside a cache of readable sources: %s", cmd, out)
+	}
+	if err := os.RemoveAll(filepath.Join(cwd, "__pycache__")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		for _, cmd := range []string{"python3 -B -m unittest", "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest", "python3 -B -m unittest > out.log 2>&1"} {
+			if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
+				t.Errorf("memory gate refused %q with no cache: %s", cmd, out)
+			}
+			if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out != "" {
+				t.Errorf("GitHub guard refused %q with no cache: %s", cmd, out)
+			}
 		}
 	}
 }
@@ -310,7 +331,7 @@ cache.write_bytes(header+marshal.dumps(code))
 				mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
 				gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
 				for _, r := range []string{mem, gh} {
-					if !strings.Contains(r, "__pycache__/test_calc.") || !strings.Contains(r, "remove __pycache__ in a separate command first; python -B") || strings.Contains(r, "...") {
+					if !strings.Contains(r, "__pycache__/test_calc.") || !strings.Contains(r, crw1178Route) || strings.Contains(r, "...") {
 						t.Errorf("%s: the reason lacks the file or the route, or is cut: %s", cmd, r)
 					}
 				}
@@ -382,11 +403,16 @@ func TestCRW1178GhInAFileNameIsNoGithubPost(t *testing.T) {
 	}
 }
 
-// CRW-1178 evaluation d1 and d2 through both guards: an untagged __pycache__/calc.pyc (importable as the sourceless module
-// __pycache__.calc) and a touch through a hard link beside a stale entry are refused by the memory gate and the GitHub guard.
+// CRW-1178 evaluation d1 through both guards: an untagged __pycache__/calc.pyc (importable as the sourceless module __pycache__.calc)
+// is refused by the memory gate and the GitHub guard, with the file it names.
 func TestCRW1178CacheBypassShapesStayRefused(t *testing.T) {
 	cwd, _, env := gateScene(t)
-	crw1178Cache(t, cwd)
+	if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "calc.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	untagged := filepath.Join(cwd, "__pycache__", "calc.pyc")
 	if err := os.WriteFile(untagged, append(make([]byte, 16), "code"...), 0o644); err != nil {
 		t.Fatal(err)
@@ -401,288 +427,213 @@ func TestCRW1178CacheBypassShapesStayRefused(t *testing.T) {
 			t.Errorf("untagged cache, GitHub guard, %q: %s", cmd, gh)
 		}
 	}
-	if err := os.Remove(untagged); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-	for _, cmd := range []string{"touch -d @1 stamp && python3 -B -m unittest", "truncate -s 6 stamp; python3 -m unittest"} {
-		reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
-		if !strings.Contains(reason, "stale only until") {
-			t.Errorf("touch through a link, memory gate, %q: %s", cmd, reason)
-		}
-		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
-		if !strings.Contains(gh, "stale only until") {
-			t.Errorf("touch through a link, GitHub guard, %q: %s", cmd, gh)
-		}
-	}
 }
 
-// CRW-1178 verification round 3: cp -p (and any command not known to change no file) through a hard link of the source can make a
-// stale entry current before the run. Both guards refuse it with the cause; the same run alone stays allowed.
-func TestCRW1178PreservedTimeCopyBesideStaleCacheIsRefused(t *testing.T) {
-	cwd, _, env := gateScene(t)
-	crw1178Cache(t, cwd)
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cwd, "donor"), []byte("x = 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, cmd := range []string{
-		"cp -p donor stamp && python3 -B -m unittest",
-		"cat donor > stamp; python3 -m unittest",
-		"python3 -B -m unittest | cp -p donor stamp",
-	} {
-		reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
-		if !strings.Contains(reason, "stale only until") {
-			t.Errorf("memory gate, %q: %s", cmd, reason)
-		}
-		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
-		if !strings.Contains(gh, "stale only until") {
-			t.Errorf("GitHub guard, %q: %s", cmd, gh)
-		}
-	}
-	if out := HandleMemoryWriteGate(gateBash(t, cwd, "cd . && python3 -B -m unittest 2>&1 | tail -n 5"), env); out != "" {
-		t.Errorf("a run beside a stale cache with read-only commands was refused: %s", out)
-	}
-}
-
-// CRW-1178 verification round 4 through both guards with a real interpreter: pytest's assertion-rewrite cache
-// (__pycache__/test_calc.<tag>-pytest-<version>.pyc) that is stale is discarded by pytest and allowed again, while the same entry
-// agreeing with its source runs unread code and is refused; and an entry recording the second Python reads for a source time just
-// below a whole second (1700000000.999999999 reads as 1700000001.0) runs, so it is refused.
-func TestCRW1178RealCacheShapesInBothGuards(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 is not installed")
-	}
-	setup := `import importlib.util,marshal,os,pathlib,struct,sys
-cwd=pathlib.Path(sys.argv[1]);marker=sys.argv[2];mode=sys.argv[3]
-p=cwd/'test_calc.py';p.write_bytes(b'def test_ok():\n    pass\n')
-if mode=='rounded':
- os.utime(p,ns=(1700000000999999999,1700000000999999999))
- if p.stat().st_mtime_ns!=1700000000999999999: print('no-ns');sys.exit(0)
- cache=pathlib.Path(importlib.util.cache_from_source(str(p)))
-else:
- from _pytest.assertion.rewrite import PYTEST_TAG
- cache=p.parent/'__pycache__'/('test_calc.'+PYTEST_TAG+'.pyc')
-cache.parent.mkdir(exist_ok=True)
-code=compile('open('+repr(marker)+', "w").write("cache executed")\nimport unittest\nclass TestCache(unittest.TestCase):\n def test_ok(self): pass\ndef test_ok(): pass\n',str(p),'exec')
-s=p.stat();t=int(s.st_mtime)
-if mode=='stale': t+=7
-cache.write_bytes(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,t&0xffffffff,s.st_size&0xffffffff)+marshal.dumps(code))
-print(cache.name)
-`
-	for _, c := range []struct {
-		mode, run, real string
-		refused         bool
-	}{
-		{"current", "python3 -B -m pytest", "-B -m pytest -q -p no:cacheprovider", true},
-		{"stale", "python3 -B -m pytest", "-B -m pytest -q -p no:cacheprovider", false},
-		{"rounded", "python3 -B -m unittest", "-B -m unittest", true},
-	} {
-		t.Run(c.mode, func(t *testing.T) {
-			cwd, root, env := gateScene(t)
-			marker := filepath.Join(root, "n.md")
-			if err := os.MkdirAll(root, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, c.mode).CombinedOutput()
-			if err != nil {
-				t.Skipf("setup (pytest missing?): %v %s", err, out)
-			}
-			name := strings.TrimSpace(string(out))
-			if name == "no-ns" {
-				t.Skip("no nanosecond times here")
-			}
-			mem := HandleMemoryWriteGate(gateBash(t, cwd, c.run), env)
-			gh := HandleGitHubPostGuard(gateBash(t, cwd, c.run))
-			if c.refused {
-				for _, r := range []string{gateDeny(t, mem), githubPostAnswerReason(t, gh)} {
-					if !strings.Contains(r, "__pycache__/"+name) || !strings.Contains(r, "remove __pycache__ in a separate command first; python -B") {
-						t.Errorf("%s: the reason lacks the file or the route: %s", c.run, r)
-					}
-				}
-			} else if mem != "" || gh != "" {
-				t.Errorf("%s: a stale pytest cache was refused: %s %s", c.run, mem, gh)
-			}
-			// The premise: the interpreter runs the cache exactly when it is refused.
-			run := exec.Command(python, strings.Fields(c.real)...)
-			run.Dir = cwd
-			run.Env = []string{"HOME=" + filepath.Dir(root), "PATH=/usr/bin:/bin", "TZ=UTC"}
-			if out, err := run.CombinedOutput(); err != nil {
-				t.Logf("%s: %v %s", c.run, err, out)
-			}
-			_, err = os.Stat(marker)
-			if ran := err == nil; ran != c.refused {
-				t.Fatalf("%s: the cache ran %v, expected %v, so this test proves nothing", c.run, ran, c.refused)
-			}
-		})
-	}
-}
-
-// crw1178OutsideLinks lays out, beside the project directory and outside its walk, lnk -> ext/deep, ext/sl -> calc.py and ext/hard (a
-// hard link of calc.py): from the project, ../lnk/../sl and ../lnk/../hard reach the source for the kernel, which resolves '..'
-// after the link, while a text clean of the path names <parent>/sl, which does not exist.
-func crw1178OutsideLinks(t *testing.T, cwd string) {
+// crw1178Python is the interpreter of the end-to-end tests, and the environment a command they run gets: the scene's temporary home,
+// nothing of the host's.
+func crw1178Python(t *testing.T) (python, bash string) {
 	t.Helper()
-	parent := filepath.Dir(cwd)
-	if err := os.MkdirAll(filepath.Join(parent, "ext", "deep"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(parent, "ext", "deep"), filepath.Join(parent, "lnk")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(cwd, "calc.py"), filepath.Join(parent, "ext", "sl")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(parent, "ext", "hard")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-}
-
-// CRW-1178 verification rounds 5 and 6 (P0) through both guards: a write redirection of the module run itself to a name of a source
-// (a hard link, or a symlink or hard link reached through a directory link and '..') can make a stale entry current. Beside a stale
-// entry the run may write only to /dev/null and descriptor copies or closes; both guards refuse any file target, a new log file
-// included, with the cause and the route. With no stale entry the same log redirections stay allowed.
-func TestCRW1178RunRedirectThroughLinkIsRefusedByBothGuards(t *testing.T) {
-	cwd, _, env := gateScene(t)
-	crw1178Cache(t, cwd)
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-	crw1178OutsideLinks(t, cwd)
-	for _, c := range []struct{ cmd, target string }{
-		{"python3 -B -m unittest > stamp", "stamp"},
-		{"python3 -B -m unittest 2> stamp", "stamp"},
-		{"sleep 3; python3 -B -m unittest > stamp", "stamp"},
-		{"sleep 3; python3 -B -m unittest 2> stamp", "stamp"},
-		{"python3 -B -m unittest > ../lnk/../sl", "../lnk/../sl"},
-		{"python3 -B -m unittest 2> ../lnk/../sl", "../lnk/../sl"},
-		{"python3 -B -m unittest >> ../lnk/../sl", "../lnk/../sl"},
-		{"sleep 3; python3 -B -m unittest > ../lnk/../sl", "../lnk/../sl"},
-		{"python3 -B -m unittest > ../lnk/../hard", "../lnk/../hard"},
-		{"python3 -B -m unittest 2> ../lnk/../hard", "../lnk/../hard"},
-		{"python3 -B -m unittest >> ../lnk/../hard", "../lnk/../hard"},
-		{"sleep 3; python3 -B -m unittest 2> ../lnk/../hard", "../lnk/../hard"},
-		{"python3 -B -m unittest > out.log 2>&1", "out.log"},
-		{"sleep 1; python3 -B -m unittest 2> out.log", "out.log"},
-		{"python3 -B -m unittest >> notes.log", "notes.log"},
-	} {
-		mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, c.cmd), env))
-		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, c.cmd)))
-		for _, r := range []string{mem, gh} {
-			if !strings.Contains(r, "stale only until") || !strings.Contains(r, c.target) || !strings.Contains(r, "separate command") || strings.Contains(r, "MEMORY-WRITE-GATE") {
-				t.Errorf("%q: the reason lacks the cause or the route: %s", c.cmd, r)
-			}
-		}
-	}
-	for _, cmd := range []string{"python3 -B -m unittest > /dev/null 2>&1", "sleep 1; python3 -B -m unittest 2>&1 | tail -n 5"} {
-		if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
-			t.Errorf("memory gate refused %q: %s", cmd, out)
-		}
-		if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out != "" {
-			t.Errorf("GitHub guard refused %q: %s", cmd, out)
-		}
-	}
-	// No stale entry skipped: a run that writes its log is allowed as before.
-	fresh, _, freshEnv := gateScene(t)
-	for _, m := range []string{"calc", "test_calc"} {
-		if err := os.WriteFile(filepath.Join(fresh, m+".py"), []byte("x = 1\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, cmd := range []string{"python3 -B -m unittest > out.log 2>&1", "sleep 1; python3 -B -m unittest 2> out.log"} {
-		if out := HandleMemoryWriteGate(gateBash(t, fresh, cmd), freshEnv); out != "" {
-			t.Errorf("memory gate refused %q with no cache: %s", cmd, out)
-		}
-		if out := HandleGitHubPostGuard(gateBash(t, fresh, cmd)); out != "" {
-			t.Errorf("GitHub guard refused %q with no cache: %s", cmd, out)
-		}
-	}
-}
-
-// CRW-1178 verification rounds 5 and 6 (P0) end to end with a real interpreter: a stale entry recording size 0 and a second just
-// ahead, and a name of its source the run writes to: a hard link stamp in the project, or a plain symlink reached through a
-// directory link and '..' (../lnk/../sl). The command run in that second truncates the source, the entry agrees, and its code (which
-// writes a memory note) runs instead of the source the guards read. Both guards refuse the command beforehand.
-func TestCRW1178RunRedirectThroughLinkRunsUnreadCacheEndToEnd(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 is not installed")
 	}
-	bash, err := exec.LookPath("bash")
+	bash, err = exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is not installed")
 	}
-	for _, c := range []struct {
-		cmd  string
-		link func(t *testing.T, cwd string)
-	}{
-		{"python3 -B -m unittest > stamp", func(t *testing.T, cwd string) {
-			if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-				t.Skipf("no hard links here: %v", err)
+	return python, bash
+}
+
+func crw1178Run(t *testing.T, bash, python, cwd, home, cmd string) string {
+	t.Helper()
+	run := exec.Command(bash, "-c", cmd)
+	run.Dir = cwd
+	run.Env = []string{"HOME=" + home, "PATH=" + filepath.Dir(python) + ":/usr/bin:/bin", "TZ=UTC"}
+	out, _ := run.CombinedOutput()
+	return string(out)
+}
+
+// CRW-1178 verification round 8 (P0) end to end with a real interpreter: a stale entry of calc.py (its recorded time is
+// 1700000000) and a test module that sets calc.py's time to that second with os.utime before it imports calc. The entry is current
+// by the time it is compared, and its code (which writes a memory note) runs instead of the source the guards read. Both guards
+// refuse the run beforehand, with the file and the route; the route (remove the cache in a separate command, then -B) is allowed,
+// and the run it leads to runs the source.
+func TestCRW1178TestModuleThatRefreshesAStaleCacheEndToEnd(t *testing.T) {
+	python, bash := crw1178Python(t)
+	for _, utime := range []string{"'calc.py'", "os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calc.py')"} {
+		t.Run(utime, func(t *testing.T) {
+			cwd, root, env := gateScene(t)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
 			}
-		}},
-		{"python3 -B -m unittest > ../lnk/../sl", crw1178OutsideLinks},
-	} {
-		t.Run(c.cmd, func(t *testing.T) {
-			// The premise needs the run to start in the second the entry records; a loaded host may miss it, so it is retried.
-			for attempt := 1; ; attempt++ {
-				cwd, root, env := gateScene(t)
-				if err := os.MkdirAll(root, 0o755); err != nil {
+			marker := filepath.Join(root, "injected.md")
+			for name, body := range map[string]string{
+				"calc.py":      "def add(a, b):\n    return a + b\n",
+				"test_calc.py": "import os\nos.utime(" + utime + ", (1700000000, 1700000000))\nimport unittest\nimport calc\nclass T(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(calc.add(1, 2), 3)\n",
+			} {
+				if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				marker := filepath.Join(root, "injected.md")
-				for name, body := range map[string]string{
-					"calc.py":      "def add(a, b):\n    return a + b\n",
-					"test_calc.py": "import unittest\nimport calc\nclass T(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(calc.add(1, 2), 3)\n",
-				} {
-					if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o644); err != nil {
-						t.Fatal(err)
-					}
-				}
-				c.link(t, cwd)
-				second := time.Now().Unix() + 2
-				setup := `import importlib.util,marshal,struct,sys
-src=sys.argv[1]+'/calc.py';marker=sys.argv[2];t=int(sys.argv[3])
+			}
+			setup := `import importlib.util,marshal,os,struct,sys
+src=os.path.join(sys.argv[1],'calc.py');marker=sys.argv[2]
 code=compile('open('+repr(marker)+', "w").write("unread bytecode ran")\ndef add(a, b):\n    return a + b\n',src,'exec')
-cache=importlib.util.cache_from_source(src)
-import os;os.makedirs(os.path.dirname(cache))
-open(cache,'wb').write(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,t&0xffffffff,0)+marshal.dumps(code))
+cache=importlib.util.cache_from_source(src);os.makedirs(os.path.dirname(cache))
+open(cache,'wb').write(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,1700000000,os.stat(src).st_size)+marshal.dumps(code))
+print(os.path.basename(cache))
 `
-				if out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, strconv.FormatInt(second, 10)).CombinedOutput(); err != nil {
-					t.Fatalf("setup: %v %s", err, out)
-				}
-				mem := HandleMemoryWriteGate(gateBash(t, cwd, c.cmd), env)
-				gh := HandleGitHubPostGuard(gateBash(t, cwd, c.cmd))
+			out, err := exec.Command(python, "-I", "-c", setup, cwd, marker).CombinedOutput()
+			if err != nil {
+				t.Fatalf("setup: %v %s", err, out)
+			}
+			name := "__pycache__/" + strings.TrimSpace(string(out))
+			for _, cmd := range []string{"python3 -B -m unittest", "python3 -B -m unittest -q", "python3 -B -m unittest test_calc"} {
+				mem := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env)
+				gh := HandleGitHubPostGuard(gateBash(t, cwd, cmd))
 				if mem == "" || gh == "" {
-					t.Errorf("a run that truncates its source through a link beside a stale entry was allowed: memory gate %q, GitHub guard %q", mem, gh)
-				} else {
-					for _, r := range []string{gateDeny(t, mem), githubPostAnswerReason(t, gh)} {
-						if !strings.Contains(r, "stale only until") || !strings.Contains(r, "separate command") {
-							t.Errorf("the reason lacks the cause or the route: %s", r)
-						}
+					t.Errorf("%s: a stale entry the test module makes current was allowed: memory gate %q, GitHub guard %q", cmd, mem, gh)
+					continue
+				}
+				for _, r := range []string{gateDeny(t, mem), githubPostAnswerReason(t, gh)} {
+					if !strings.Contains(r, name) || !strings.Contains(r, crw1178Route) {
+						t.Errorf("%s: the reason lacks the file or the route: %s", cmd, r)
 					}
 				}
-				// The premise: run in the recorded second, the entry's code runs and writes the memory note.
-				for time.Now().Unix() < second {
-					time.Sleep(10 * time.Millisecond)
+			}
+			// The premise: run as the guards were asked, the entry's code runs and writes the memory note.
+			home := filepath.Dir(root)
+			got := crw1178Run(t, bash, python, cwd, home, "python3 -B -m unittest")
+			if b, err := os.ReadFile(marker); err != nil || string(b) != "unread bytecode ran" {
+				t.Fatalf("the cache never ran, so this test proves nothing: %v %s", err, got)
+			}
+			// The route: the removal alone is allowed; after it the -B run is allowed and runs the source.
+			for _, out := range []string{HandleMemoryWriteGate(gateBash(t, cwd, "rm -rf __pycache__"), env), HandleGitHubPostGuard(gateBash(t, cwd, "rm -rf __pycache__"))} {
+				if out != "" {
+					t.Errorf("the route's removal was refused: %s", out)
 				}
-				run := exec.Command(bash, "-c", c.cmd)
-				run.Dir = cwd
-				run.Env = []string{"HOME=" + filepath.Dir(root), "PATH=" + filepath.Dir(python) + ":/usr/bin:/bin", "TZ=UTC"}
-				out, _ := run.CombinedOutput()
-				if b, err := os.ReadFile(marker); err == nil && string(b) == "unread bytecode ran" {
-					return
+			}
+			crw1178Run(t, bash, python, cwd, home, "rm -rf __pycache__")
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				cmd := "python3 -B -m unittest"
+				if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
+					t.Fatalf("run %d after the removal, memory gate: %s", i, out)
 				}
-				if attempt == 3 {
-					t.Fatalf("the cache never ran, so this test proves nothing: %s", out)
+				if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out != "" {
+					t.Fatalf("run %d after the removal, GitHub guard: %s", i, out)
 				}
-				t.Logf("attempt %d missed the second: %s", attempt, out)
+				got := crw1178Run(t, bash, python, cwd, home, cmd)
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatalf("run %d after the removal ran unread code: %v %s", i, err, got)
+				}
+				if _, err := os.Stat(filepath.Join(cwd, "__pycache__")); !os.IsNotExist(err) {
+					t.Fatalf("run %d wrote a cache: %v", i, err)
+				}
 			}
 		})
+	}
+}
+
+// CRW-1178 verification round 8 (P1, already at the base) through both guards: PYTHONPYCACHEPREFIX makes the interpreter load
+// cache entries from <prefix>/<physical source directory>/, which the inventory never walks, even with -B. With no __pycache__ in
+// the project, a current entry there runs code neither guard read. The run is refused when the text assigns or exports the variable
+// and when the hook's own environment sets it, with the route; -E (the interpreter ignores PYTHON* variables) stays allowed.
+func TestCRW1178PycachePrefixIsRefusedByBothGuards(t *testing.T) {
+	python, bash := crw1178Python(t)
+	cwd, root, env := gateScene(t)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "injected.md")
+	for name, body := range map[string]string{
+		"calc.py":      "def add(a, b):\n    return a + b\n",
+		"test_calc.py": "import unittest\nimport calc\nclass T(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(calc.add(1, 2), 3)\n",
+	} {
+		if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pfx := filepath.Join(t.TempDir(), "pfx")
+	setup := `import importlib.util,marshal,os,struct,sys
+src=os.path.join(os.path.realpath(sys.argv[1]),'calc.py');marker=sys.argv[2];sys.pycache_prefix=sys.argv[3]
+code=compile('open('+repr(marker)+', "w").write("unread bytecode ran")\ndef add(a, b):\n    return a + b\n',src,'exec')
+cache=importlib.util.cache_from_source(src);os.makedirs(os.path.dirname(cache))
+s=os.stat(src)
+open(cache,'wb').write(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,int(s.st_mtime)&0xffffffff,s.st_size&0xffffffff)+marshal.dumps(code))
+`
+	if out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, pfx).CombinedOutput(); err != nil {
+		t.Fatalf("setup: %v %s", err, out)
+	}
+	deny := func(t *testing.T, what, out string, github bool) {
+		t.Helper()
+		var r string
+		if github {
+			r = githubPostAnswerReason(t, out)
+		} else {
+			r = gateDeny(t, out)
+		}
+		if !strings.Contains(r, "[crw command-reader]") || !strings.Contains(r, "unset PYTHONPYCACHEPREFIX") {
+			t.Errorf("%s: the reason lacks the reader wording or the route: %s", what, r)
+		}
+	}
+	for _, cmd := range []string{
+		"PYTHONPYCACHEPREFIX=" + pfx + " python3 -B -m unittest",
+		"export PYTHONPYCACHEPREFIX=" + pfx + "; python3 -B -m unittest",
+	} {
+		if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out == "" {
+			t.Errorf("memory gate allowed %q", cmd)
+		} else {
+			deny(t, "memory gate "+cmd, out, false)
+		}
+		if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out == "" {
+			t.Errorf("GitHub guard allowed %q", cmd)
+		} else {
+			deny(t, "GitHub guard "+cmd, out, true)
+		}
+	}
+	// The plain run is allowed while the hook's environment does not set the variable.
+	plain := "python3 -B -m unittest"
+	if out := HandleMemoryWriteGate(gateBash(t, cwd, plain), env); out != "" {
+		t.Errorf("memory gate refused the plain run: %s", out)
+	}
+	if out := HandleGitHubPostGuard(gateBash(t, cwd, plain)); out != "" {
+		t.Errorf("GitHub guard refused the plain run: %s", out)
+	}
+	// Set in the hook's environment, it reaches the command the hook judges: refused, except with -E.
+	t.Setenv("PYTHONPYCACHEPREFIX", pfx)
+	withPrefix := func(k string) (string, bool) {
+		if k == "PYTHONPYCACHEPREFIX" {
+			return pfx, true
+		}
+		return env(k)
+	}
+	if out := HandleMemoryWriteGate(gateBash(t, cwd, plain), withPrefix); out == "" {
+		t.Error("memory gate allowed the plain run with PYTHONPYCACHEPREFIX in its environment")
+	} else {
+		deny(t, "memory gate, environment", out, false)
+	}
+	if out := HandleGitHubPostGuard(gateBash(t, cwd, plain)); out == "" {
+		t.Error("GitHub guard allowed the plain run with PYTHONPYCACHEPREFIX in its environment")
+	} else {
+		deny(t, "GitHub guard, environment", out, true)
+	}
+	ignored := "python3 -E -B -m unittest"
+	if out := HandleMemoryWriteGate(gateBash(t, cwd, ignored), withPrefix); out != "" {
+		t.Errorf("memory gate refused %q: %s", ignored, out)
+	}
+	if out := HandleGitHubPostGuard(gateBash(t, cwd, ignored)); out != "" {
+		t.Errorf("GitHub guard refused %q: %s", ignored, out)
+	}
+	// The premise: the prefixed run loads the entry under the prefix and runs its code; the -E run does not.
+	home := filepath.Dir(root)
+	got := crw1178Run(t, bash, python, cwd, home, "PYTHONPYCACHEPREFIX="+pfx+" python3 -E -B -m unittest")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the -E run loaded the prefixed cache: %v %s", err, got)
+	}
+	got = crw1178Run(t, bash, python, cwd, home, "PYTHONPYCACHEPREFIX="+pfx+" python3 -B -m unittest")
+	if b, err := os.ReadFile(marker); err != nil || string(b) != "unread bytecode ran" {
+		t.Fatalf("the prefixed cache never ran, so this test proves nothing: %v %s", err, got)
 	}
 }

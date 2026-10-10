@@ -301,8 +301,9 @@ type walker struct {
 	createdUpTo  int
 	// pipeOut is what the last pipeline the walk finished prints (see stageSource).
 	pipeOut *pipeSource
-	// staleBeside are module runs that skipped a stale cache entry and run alongside records read after them (CRW-1178).
-	staleBeside []staleWatch
+	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command of it may set a
+	// variable whose name the reader does not know: either may give a later module run a cache prefix (CRW-1178).
+	prefixNamed, prefixUnknown bool
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
@@ -812,6 +813,11 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			}
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
 				st.clearVars()
+				// A name built at run time, or a name reference, may be or reach PYTHONPYCACHEPREFIX (CRW-1178).
+				w.prefixUnknown = true
+			}
+			if mayNamePycachePrefix([]Word{v}) {
+				w.prefixUnknown = true
 			}
 			// A word that names a variable by a value built at run time (export "${n}PATH=/x") may name CDPATH.
 			if mentionsCdpath([]Word{v}) {
@@ -830,6 +836,9 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 				return err
 			}
 			asg.Value = v
+			if v.Known && textNamesPycachePrefix(v.Value) {
+				w.prefixUnknown = true // a name reference to it, built from parts (declare -n r=${N}PREFIX)
+			}
 		default:
 			asg.Value = Word{Reason: "declared without a value"}
 		}
@@ -978,6 +987,33 @@ func mentionsCdpath(args []Word) bool {
 		}
 	}
 	return false
+}
+
+// mayNamePycachePrefix is whether the words of a builtin that assigns variables may set PYTHONPYCACHEPREFIX, or make a name refer to
+// it: one is not known, or holds the name, which a text can build from parts (export ${N}PREFIX=...) the text itself never spells.
+func mayNamePycachePrefix(args []Word) bool {
+	for _, a := range args {
+		if !a.Known || textNamesPycachePrefix(a.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+// assignedNames are the words of a builtin that assigns variables that may name what it assigns: all of them, except for printf,
+// which assigns only through -v, an option that must come first: a printf whose first word is known and is not an option assigns
+// nothing (printf '%s\n' "$X"), and one with -v first assigns the name after it.
+func assignedNames(name string, args []Word) []Word {
+	if name != "printf" || len(args) == 0 || !args[0].Known {
+		return args
+	}
+	switch {
+	case args[0].Value == "-v" && len(args) > 1:
+		return args[1:2]
+	case strings.HasPrefix(args[0].Value, "-"):
+		return args
+	}
+	return nil
 }
 
 // checkAssigns refuses the assignments that change what a program means
@@ -1183,6 +1219,9 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
 		st.clearVars()
+		if mayNamePycachePrefix(assignedNames(name, words[1:])) {
+			w.prefixUnknown = true
+		}
 		if mentionsCdpath(words[1:]) {
 			st.cdpath = true
 		}
@@ -1293,6 +1332,7 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 	if textNamesCdpath(text) {
 		st.cdpath = true
 	}
+	w.prefixNamed = w.prefixNamed || textNamesPycachePrefix(text)
 	return w.stmts(file.Stmts, st, ctx)
 }
 

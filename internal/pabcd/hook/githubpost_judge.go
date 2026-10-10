@@ -89,8 +89,18 @@ func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostW
 	return site, denied
 }
 
+// githubPostEnv is the part of the hook's own environment, which the command it judges inherits, that the guard reads:
+// PYTHONPYCACHEPREFIX, which makes a Python module run load compiled code from outside the module inventory (CRW-1178). Every other
+// variable is unset for the guard, as before.
+func githubPostEnv(name string) (string, bool) {
+	if name != "PYTHONPYCACHEPREFIX" {
+		return "", false
+	}
+	return os.LookupEnv(name)
+}
+
 func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
-	res, err := shellir.AnalyzeScript(command, cwd, cdpath)
+	res, err := shellir.AnalyzeScriptEnv(command, cwd, cdpath, githubPostEnv)
 	if err != nil {
 		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: unreadableCause(err), analysis: true}, true
 	}

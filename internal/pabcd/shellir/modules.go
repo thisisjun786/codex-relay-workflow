@@ -1,7 +1,6 @@
 package shellir
 
 import (
-	"encoding/binary"
 	"errors"
 	"io"
 	"io/fs"
@@ -67,6 +66,9 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if ctx.Loop || ctx.Background || ctx.Unsequenced {
 		return true, unreadablef("module imports run in an unordered context")
 	}
+	if why := w.pycachePrefixSet(args[:at], assigns, st); why != "" {
+		return true, unreadablef("PYTHONPYCACHEPREFIX is %s; the interpreter loads compiled code from that cache, which is not read%s", why, pycachePrefixRoute)
+	}
 	var files []string
 	for i := at; i < len(args); i++ {
 		a := args[i]
@@ -87,7 +89,6 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		}
 		files = append(files, v)
 	}
-	before := len(w.out)
 	w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Args: args, Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx})
 	if module == "json.tool" && len(files) > 1 {
 		return true, unreadablef("json.tool output operand is not modelled")
@@ -123,7 +124,6 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if err != nil {
 		return true, unreadablef("module directory cannot be resolved")
 	}
-	staleSkipped := false
 	if module == "unittest" || module == "pytest" {
 		// Imports, package initializers and collection hooks can execute even
 		// with explicit operands. Inspect the bounded local source inventory;
@@ -144,14 +144,10 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			}
 			n := d.Name()
 			if strings.HasSuffix(n, ".pyc") {
-				// Python writes a cache entry beside the source it compiled and loads it instead of the source while the
-				// two agree. Only a stale entry of a source this walk reads is skipped; any other compiled code is code
-				// the reader does not see (CRW-1178).
-				if why := pycacheEntryRefusal(p); why != "" {
-					return unreadablef("module imports compiled code that is not read (%s: %s)", rel, why)
-				}
-				staleSkipped = true
-				return nil
+				// Python loads a cache entry instead of its source whenever the entry's header agrees with the source, and code
+				// inside the run (a test module calling os.utime, or rewriting a source) can make any entry agree before it is
+				// imported. So no entry is trusted, stale or not; the reason names it and the way past it (CRW-1178).
+				return pycacheRefusal(rel)
 			}
 			if strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
 				return unreadablef("module imports compiled code that is not read (%s)", rel)
@@ -170,24 +166,6 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 				return true, u
 			}
 			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err, physical))
-		}
-		// A stale entry is skipped on the modification time and size the sources have now. Any command of this text that runs
-		// before the module, or beside it in a pipeline or a coprocess, could give a source (through any name of it, such as a
-		// hard link) the time and size the entry records, and so make it current: cp -p, a redirection, an archive, a program
-		// the reader does not know. Only commands known to change no file may (CRW-1178).
-		// The run's own write redirections are opened, and their targets truncated, by the shell before the interpreter compares an
-		// entry with its source, so they are judged the same way: no path check of the reader can tell that a file target is no name
-		// of a source (a hard link, a symlink reached through a directory link and '..'), so only /dev/null and descriptors may be.
-		if staleSkipped {
-			if why := staleCacheMutator(w.out[:before]); why != "" {
-				return true, staleCacheRefusal(why)
-			}
-			if why := staleCacheWrite(redirs); why != "" {
-				return true, staleCacheRefusal(why)
-			}
-			if ctx.Pipeline || ctx.Coprocess {
-				defer func() { w.staleBeside = append(w.staleBeside, staleWatch{from: len(w.out), coproc: ctx.Coprocess}) }()
-			}
 		}
 		// Pytest also loads ancestor conftest files and configuration. Config
 		// can name plugins whose execution set this reader cannot establish.
@@ -261,238 +239,70 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	return true, nil
 }
 
-// pycacheEntryRefusal says why a .pyc file is compiled code the reader does not cover, or "" when the interpreter will not run it. An
-// entry lives in a __pycache__ directory, is named <module>.<tag>[.opt-N].pyc, and belongs to <module>.py in the directory above.
-// Python loads an entry instead of that source whenever the entry's header agrees with the source, and then runs code the reader
-// never read: the header is no proof the code was compiled from the source. So only a stale timestamp entry (its recorded
-// modification time or size differs from the source's), which the interpreter discards and recompiles from the source the inventory
-// reads, is skipped. A hash-based entry is refused whatever its hash, as is an entry that agrees with its source (CRW-1178).
-func pycacheEntryRefusal(p string) string {
-	dir, name := filepath.Split(strings.TrimSuffix(p, "/"))
-	dir = strings.TrimSuffix(dir, "/")
-	if filepath.Base(dir) != "__pycache__" {
-		return "compiled module without a source"
+// pycacheRoute and pycachePrefixRoute are the ways past a cache refusal. The cache is removed by a command of its own (in the same
+// command the entry is still there when the text is read), and the run then writes no new one; a prefix is not set for the run, or
+// the interpreter is told to ignore PYTHON* variables. Both fit the reason bound of the hooks with the file named (see shortRel).
+const (
+	pycacheRoute       = "; remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
+	pycachePrefixRoute = "; unset PYTHONPYCACHEPREFIX in the environment and do not set it in the command, or run python -E -B"
+)
+
+// pycacheRefusal is the refusal of compiled code in the module inventory, which names the file (rel, below the project) and the way past
+// it: an entry of a __pycache__ directory is removed with that directory; any other .pyc is a module of its own, removed by name.
+func pycacheRefusal(rel string) error {
+	if filepath.Base(filepath.Dir(rel)) == "__pycache__" {
+		return unreadablef("module imports compiled code that is not read (%s)%s", shortRel(rel), pycacheRoute)
 	}
-	stem, ok := pycacheEntryStem(name)
-	if !ok {
-		return "not a cache entry name (<module>.<tag>.pyc)"
+	return unreadablef("module imports compiled code that is not read (%s); remove it in a separate command first", shortRel(rel))
+}
+
+// shortRel bounds a project-relative name for a reason, keeping its start and its file name.
+func shortRel(rel string) string {
+	const limit = 96
+	if len(rel) <= limit {
+		return rel
 	}
-	source, err := os.Lstat(filepath.Join(filepath.Dir(dir), stem+".py"))
-	if err != nil || !source.Mode().IsRegular() {
-		return "no source " + stem + ".py"
-	}
-	fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		return "header cannot be read"
-	}
-	f := os.NewFile(uintptr(fd), p)
-	defer f.Close()
-	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
-		return "not a regular file"
-	}
-	var header [16]byte
-	if _, err := io.ReadFull(f, header[:]); err != nil {
-		return "header is too short"
-	}
-	// Little endian after the magic number: flags, then for flags 0 the source's modification time in whole seconds and its size,
-	// each truncated to 32 bits. Any other flags is a hash-based entry (or one Python rejects), which this reader does not check.
-	route := pycacheRoute
-	if binary.LittleEndian.Uint32(header[4:8]) != 0 {
-		return "hash-based cache may run instead of " + stem + ".py" + route
-	}
-	if pycacheStale(header[8:16], source) {
+	return rel[:limit/2-2] + "..." + rel[len(rel)-limit/2+1:]
+}
+
+// pycachePrefixSet says how a module run may be given PYTHONPYCACHEPREFIX, or "" when it is not: the interpreter then reads and writes
+// every cache entry under <prefix>/<source directory>, even with -B, where the inventory never looks. The variable is set when the run
+// assigns it, when the text names it anywhere (an assignment, export, declare, eval, env: every literal way to set it spells the name),
+// when a command of the text may set a variable whose name the reader does not know, and when the environment the reader is given sets
+// it (empty is unset for the interpreter). -E and -I make the interpreter ignore it (CRW-1178).
+func (w *walker) pycachePrefixSet(args []Word, assigns []Assign, st *state) string {
+	if moduleIgnoresEnv(args) {
 		return ""
 	}
-	return "cache runs instead of " + stem + ".py" + route
-}
-
-// pycacheEntryStem is the module of a cache entry name, one of the two shapes written to and loaded from __pycache__ for the source
-// <module>.py in the directory above: <module>.<tag>[.opt-N].pyc (the interpreter) and <module>.<tag>-pytest-<version>.pyc (pytest's
-// assertion rewriting of a test module or conftest, test_calc.cpython-312-pytest-8.3.2.pyc). Any other .pyc there (calc.pyc,
-// calc.cpython-312.extra.pyc) is no cache of calc.py: calc.pyc imports as the sourceless module __pycache__.calc, which is never
-// compared with a source. Neither shape is importable as a sourceless module (its name has a dot or a dash past the module).
-func pycacheEntryStem(name string) (string, bool) {
-	stem, rest, ok := strings.Cut(name, ".")
-	if !ok || stem == "" || !strings.HasSuffix(rest, ".pyc") {
-		return "", false
+	switch {
+	case moduleAssigned("PYTHONPYCACHEPREFIX", assigns):
+		return "assigned for the run"
+	case w.prefixNamed:
+		return "named by the command text"
+	case w.prefixUnknown:
+		return "possibly set by a command whose variable names are not known"
 	}
-	rest = strings.TrimSuffix(rest, ".pyc")
-	if tag, version, ok := strings.Cut(rest, "-pytest-"); ok {
-		return stem, pycacheTag(tag) && pytestVersion(version)
-	}
-	tag, opt, hasOpt := strings.Cut(rest, ".")
-	if !pycacheTag(tag) {
-		return "", false
-	}
-	if hasOpt {
-		if !strings.HasPrefix(opt, "opt-") || len(opt) == 4 {
-			return "", false
-		}
-		for _, c := range opt[4:] {
-			if c < '0' || c > '9' {
-				return "", false
-			}
-		}
-	}
-	return stem, true
-}
-
-// pycacheTag is whether tag is an implementation cache tag: letters, an optional dash, digits, then optional letters (cpython-312,
-// pypy310, cpython-313t for free-threaded and debug builds).
-func pycacheTag(tag string) bool {
-	i := 0
-	for i < len(tag) && (tag[i] >= 'a' && tag[i] <= 'z') {
-		i++
-	}
-	if i == 0 || i == len(tag) {
-		return false
-	}
-	if tag[i] == '-' {
-		i++
-	}
-	j := i
-	for j < len(tag) && tag[j] >= '0' && tag[j] <= '9' {
-		j++
-	}
-	if j == i {
-		return false
-	}
-	for ; j < len(tag); j++ {
-		if tag[j] < 'a' || tag[j] > 'z' {
-			return false
-		}
-	}
-	return true
-}
-
-// pytestVersion is whether v is a pytest version as its cache tag spells it: dot-separated non-empty parts of letters, digits, plus
-// and underscore, starting with a digit (8.3.2, 8.4.0.dev45+g1234abc).
-func pytestVersion(v string) bool {
-	if v == "" || v[0] < '0' || v[0] > '9' {
-		return false
-	}
-	for _, part := range strings.Split(v, ".") {
-		if part == "" {
-			return false
-		}
-		for _, c := range part {
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '+' || c == '_') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// staleWatch is a module run that skipped a stale cache entry and runs alongside the records the walk appends from from on: the
-// rest of its pipeline, or everything after a coprocess.
-type staleWatch struct {
-	from   int
-	coproc bool
-}
-
-// staleCacheConcurrent is the refusal of a command that runs alongside a module run which skipped a stale cache entry, read after
-// that run (the right side of its pipeline, or a command after its coprocess), or nil.
-func (w *walker) staleCacheConcurrent() error {
-	for _, s := range w.staleBeside {
-		var beside []Exec
-		for _, e := range w.out[s.from:] {
-			if s.coproc || e.Ctx.Pipeline {
-				beside = append(beside, e)
-			}
-		}
-		if why := staleCacheMutator(beside); why != "" {
-			return staleCacheRefusal(why)
-		}
-	}
-	return nil
-}
-
-// pycacheRoute is the way past a cache refusal: remove the cache in a command of its own, then run with -B so that none is written
-// again. Removing it in the same command is refused, as the entry is still there when the command is read. Short: the hook bounds
-// the reason to 200 bytes.
-const pycacheRoute = "; remove __pycache__ in a separate command first; python -B"
-
-func staleCacheRefusal(why string) error {
-	if len(why) > 32 { // the hook bounds the reason to 200 bytes
-		why = why[:32]
-	}
-	return unreadablef("module cache entry is stale only until the command runs %s%s", why, pycacheRoute)
-}
-
-// writingRedir is whether a redirection may write to a file: anything but an input, a here-document, a descriptor copy or close,
-// and a write to /dev/null.
-func writingRedir(r Redir) bool {
-	switch r.Op {
-	case "<", "<<", "<<-", "<<<":
-		return false
-	case ">&", "<&":
-		return !(r.Target.Known && isDescriptorDup(r.Target.Value))
-	}
-	return !(r.Target.Known && r.Target.Value == "/dev/null")
-}
-
-// staleCacheWrite names the first redirection that may write to a file (anything but /dev/null and a descriptor copy or close), or
-// "". Beside a skipped stale entry every such target is refused, whatever it names now: a new or unrelated file by its spelling can
-// still be a source by another name once the shell resolves links and '..', or by the time the shell opens it.
-func staleCacheWrite(redirs []Redir) string {
-	for _, r := range redirs {
-		if !writingRedir(r) {
-			continue
-		}
-		if !r.Target.Known || r.Target.Value == "" {
-			return r.Fd + r.Op + " a file not known"
-		}
-		return r.Fd + r.Op + " " + r.Target.Value
-	}
-	return ""
-}
-
-// fileInert are programs that change no file's content or time (an access time aside, which Python does not compare) except through
-// a redirection, which staleCacheMutator judges on its own. A wrapper among them runs a program that has a record of its own.
-var fileInert = map[string]bool{
-	"cd": true, "pushd": true, "popd": true, "pwd": true, "echo": true, "printf": true, "true": true, "false": true, ":": true,
-	"test": true, "[": true, "set": true, "unset": true, "export": true, "ls": true, "cat": true, "head": true, "tail": true,
-	"wc": true, "grep": true, "sleep": true, "which": true, "type": true, "basename": true, "dirname": true, "realpath": true,
-	"readlink": true, "stat": true, "env": true, "command": true, "nice": true, "timeout": true,
-}
-
-// staleCacheMutator names the first record that could change the time or size of a file through any name of it, or "": a program
-// outside fileInert (cp -p, touch, tar, an interpreter, a shell, a script), a program the reader cannot name, or a redirection
-// that writes to anything but /dev/null or another descriptor.
-func staleCacheMutator(execs []Exec) string {
-	for _, e := range execs {
-		if why := staleCacheWrite(e.Redirs); why != "" {
-			return why
-		}
-		if e.Kind != KindCommand || e.Inline != nil || !e.Program.Known {
-			return "a program the reader cannot judge"
-		}
-		if e.Name == "" && e.Program.Value == "" {
-			continue // assignments or redirections only
-		}
-		if !fileInert[e.Name] || e.Program.Value != e.Name { // a path or another spelling may be a local program of that name
-			return e.Name
+	if st.lookup != nil {
+		if v, ok := st.lookup("PYTHONPYCACHEPREFIX"); ok && v != "" {
+			return "set in the environment"
 		}
 	}
 	return ""
 }
 
-// pycacheStale is whether a timestamp header (modification time and size, 32 bits each) disagrees with the source, so that the
-// interpreter (or pytest) discards the entry. Both compare int(st_mtime) and st_size, and st_mtime is a double: the whole second
-// below the time (its floor), the one toward zero, and the next one (a time just below a whole second rounds up to it as a double,
-// 1700000000.999999999 reads 1700000001.0) all count as agreeing, so no rounding of the platform's can make a stale entry current.
-func pycacheStale(stamp []byte, source os.FileInfo) bool {
-	mtime, size := binary.LittleEndian.Uint32(stamp[0:4]), binary.LittleEndian.Uint32(stamp[4:8])
-	if size != uint32(source.Size()) {
-		return true
+// moduleIgnoresEnv is whether the interpreter's startup flags include -E or -I, with which it ignores every PYTHON* variable.
+func moduleIgnoresEnv(args []Word) bool {
+	for _, a := range args {
+		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.ContainsAny(a.Value[1:], "EI") {
+			return true
+		}
 	}
-	t := source.ModTime()
-	floor := t.Unix()
-	if mtime == uint32(floor) {
-		return false
-	}
-	return t.Nanosecond() == 0 || mtime != uint32(floor+1)
+	return false
+}
+
+// textNamesPycachePrefix is whether a text spells PYTHONPYCACHEPREFIX anywhere, as textNamesCdpath is for CDPATH.
+func textNamesPycachePrefix(src string) bool {
+	return strings.Contains(src, "PYTHONPYCACHEPREFIX")
 }
 
 // walkErrorWhat names what failed in a directory walk: the operation, the cause and the file or directory it failed on, relative to the
@@ -529,10 +339,8 @@ func moduleAssigned(name string, assigns []Assign) bool {
 	return false
 }
 func moduleStartupEnv(name string, args []Word, assigns []Assign, st *state) (string, bool) {
-	for _, a := range args {
-		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.ContainsAny(a.Value[1:], "EI") {
-			return "", true // Python -E and -I ignore PYTHON* environment variables.
-		}
+	if moduleIgnoresEnv(args) {
+		return "", true // Python -E and -I ignore PYTHON* environment variables.
 	}
 	return moduleEnv(name, assigns, st)
 }

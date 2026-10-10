@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // pycHeader is the 16-byte header Python writes: magic, flags, then either mtime and source size (flags 0) or the source hash.
@@ -36,40 +35,6 @@ func crw1178Project(t *testing.T, pyc map[string][]byte) string {
 		}
 	}
 	return cwd
-}
-
-// CRW-1178 (S2R2-F1): the first python -m unittest creates __pycache__, and every later run was refused. A stale timestamp entry
-// (its recorded time and size disagree with the source, as here) is discarded: the interpreter runs the .py beside it, which the
-// reader already reads, so it is no reason to refuse. An entry that agrees with its source is refused (see
-// TestCRW1178CacheThatMatchesItsSourceIsRefused).
-func TestCRW1178StaleCacheOfReadableSourceIsNotRefused(t *testing.T) {
-	cache := map[string][]byte{
-		"__pycache__/calc.cpython-312.pyc":       append(pycHeader(0), "code"...),
-		"__pycache__/test_calc.cpython-312.pyc":  append(pycHeader(0), "code"...),
-		"__pycache__/calc.cpython-312.opt-1.pyc": append(pycHeader(0), "code"...),
-	}
-	for _, cmd := range []string{
-		"python3 -m unittest",
-		"python3 -B -m unittest",
-		"PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
-		"env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
-		"python3 -m pytest",
-		"python3 -m unittest test_calc.py",
-	} {
-		t.Run(cmd, func(t *testing.T) {
-			if _, err := Analyze(cmd, crw1178Project(t, cache)); err != nil {
-				t.Fatalf("a cache of readable sources was refused: %v", err)
-			}
-		})
-	}
-	// A package keeps its cache below the package directory, beside its own source.
-	cwd := crw1178Project(t, map[string][]byte{"pkg/__pycache__/__init__.cpython-312.pyc": append(pycHeader(0), "x"...)})
-	if err := os.WriteFile(filepath.Join(cwd, "pkg", "__init__.py"), []byte(""), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Analyze("python3 -m unittest", cwd); err != nil {
-		t.Fatalf("a package cache was refused: %v", err)
-	}
 }
 
 // Compiled code the interpreter could run without the source the reader read stays refused, and the reason names the file.
@@ -165,8 +130,7 @@ func matchingPycHeader(t *testing.T, source string) []byte {
 }
 
 // A cache entry whose header still agrees with its source is what the interpreter runs, not the source: its code is not read, so
-// it is refused, with the file and a route that leaves no cache to load. Only a stale entry, which the interpreter discards and
-// recompiles from the source the reader read, is skipped. A hash-based entry is refused whatever its hash.
+// it is refused, with the file and a route that leaves no cache to load. A hash-based entry is refused whatever its hash.
 func TestCRW1178CacheThatMatchesItsSourceIsRefused(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -189,29 +153,15 @@ func TestCRW1178CacheThatMatchesItsSourceIsRefused(t *testing.T) {
 				if !errors.As(err, &u) {
 					t.Fatalf("%s: a cache the interpreter runs instead of the source was allowed: %v", cmd, err)
 				}
-				if !strings.Contains(u.Reason, "__pycache__/calc.cpython-312.pyc") || !strings.Contains(u.Reason, "-B") {
+				if !strings.Contains(u.Reason, "__pycache__/calc.cpython-312.pyc") || !strings.Contains(u.Reason, crw1178Route) {
 					t.Errorf("%s: the reason lacks the file or the route: %q", cmd, u.Reason)
 				}
 			}
 		})
 	}
-	// A stale entry (the source changed after it was written) is discarded by the interpreter and is skipped.
-	cwd := crw1178Project(t, nil)
-	src := filepath.Join(cwd, "calc.py")
-	h := matchingPycHeader(t, src)
-	binary.LittleEndian.PutUint32(h[12:], binary.LittleEndian.Uint32(h[12:])+1)
-	if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cwd, "__pycache__", "calc.cpython-312.pyc"), append(h, "code"...), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Analyze("python3 -m unittest", cwd); err != nil {
-		t.Errorf("a stale cache entry (size differs) was refused: %v", err)
-	}
 }
 
-// A command that changes a source's time or brings in a cache before the run could make a stale entry current after it was judged.
+// A command that changes a source's time or brings in a cache before the run is refused as a rewrite of module imports.
 func TestCRW1178SameCommandCannotRefreshACache(t *testing.T) {
 	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
 	for _, cmd := range []string{
@@ -229,7 +179,7 @@ func TestCRW1178SameCommandCannotRefreshACache(t *testing.T) {
 }
 
 // CRW-1178 evaluation d1: the interpreter imports __pycache__/calc.pyc (no tag) as the sourceless module __pycache__.calc and
-// never compares it with a source, so a stale header is no proof it is skipped. Only <module>.<tag>[.opt-N].pyc is a cache entry.
+// never compares it with a source. Such a name, and every other .pyc, is refused with the file it names.
 func TestCRW1178UntaggedOrMalformedCacheNameIsRefused(t *testing.T) {
 	for _, name := range []string{
 		"__pycache__/calc.pyc",
@@ -256,301 +206,191 @@ func TestCRW1178UntaggedOrMalformedCacheNameIsRefused(t *testing.T) {
 	}
 }
 
-// CRW-1178 evaluation d2: a command that can change a source's modification time (through any name of it, such as a hard link)
-// before the run could turn a stale entry judged now into one that agrees with its source. With a stale entry skipped, such a
-// command in the same text is refused; the same command with no cache, and unrelated commands, stay allowed.
-func TestCRW1178TimestampMutationBesideStaleCacheIsRefused(t *testing.T) {
-	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-	for _, cmd := range []string{
-		"touch -d @1 stamp && python3 -B -m unittest",
-		"touch stamp; python3 -m unittest",
-		"env touch -d @1 stamp && python3 -m unittest",
-		"command touch stamp && python3 -m unittest",
-		"truncate -s 33 stamp && python3 -m unittest",
-		"echo stamp | xargs touch -d @1 && python3 -m unittest",
-		"find . -name stamp -exec touch -d @1 {} + && python3 -m unittest",
-		"cd . && touch stamp && python3 -m unittest",
-	} {
-		_, err := Analyze(cmd, cwd)
-		var u *Unreadable
-		if !errors.As(err, &u) {
-			t.Errorf("%s: a source time change beside a stale cache was allowed: %v", cmd, err)
-		}
-	}
-	// No cache entry is relied on: nothing to refresh, so the command is as before.
-	clean := crw1178Project(t, nil)
-	if err := os.WriteFile(filepath.Join(clean, "notes.txt"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, cmd := range []string{"touch notes.txt && python3 -B -m unittest", "truncate -s 0 notes.txt; python3 -m unittest"} {
-		if _, err := Analyze(cmd, clean); err != nil {
-			t.Errorf("%s: refused with no cache present: %v", cmd, err)
-		}
-	}
-	// A command after the run cannot affect what was judged.
-	if _, err := Analyze("python3 -B -m unittest && touch notes.txt", cwd); err != nil {
-		t.Errorf("a touch after the run was refused: %v", err)
-	}
-}
+// crw1178Route is the way past a cache refusal the reason names: the cache is removed by a command of its own, and the run then writes
+// no new one.
+const crw1178Route = "remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
 
-// CRW-1178 verification round 3: touch and truncate are not the only commands that set a file's time. cp -p (or -a, --preserve),
-// install -p, rsync -t, an archive extractor, a write redirection or any program the reader does not know can give the source (by a
-// hard link) the time and size a stale entry records, and so make the entry current before the run. With a stale entry skipped, only
-// commands known to change no file may run before the module, or beside it in a pipeline or a coprocess.
-func TestCRW1178MetadataChangeBesideStaleCacheIsRefused(t *testing.T) {
-	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-	for name, body := range map[string]string{"donor": "def add(a, b):\n    return a + b\n", "run.sh": "cp -p donor stamp\n"} {
-		if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, cmd := range []string{
-		"cp -p donor stamp && python3 -B -m unittest",
-		"cp -a donor stamp; python3 -m unittest",
-		"cp --preserve=timestamps donor stamp && python3 -m pytest",
-		"install -p donor stamp && python3 -m unittest",
-		"rsync -t donor stamp && python3 -m unittest",
-		"tar -xf calc.tar && python3 -m unittest",
-		"cat donor > stamp && python3 -m unittest",
-		"printf 'x' >> stamp; python3 -m unittest",
-		"echo x >& stamp; python3 -m unittest",
-		"python3 -c 'import os; os.utime(\"stamp\", (1, 1))' && python3 -m unittest",
-		"bash run.sh && python3 -m unittest",
-		"sh -c 'cp -p donor stamp' && python3 -m unittest",
-		"python3 -B -m unittest | touch -d @1 stamp",
-		"python3 -B -m unittest 2>&1 | cp -p donor stamp",
-		"coproc python3 -B -m unittest; cp -p donor stamp",
-		"./ls && python3 -m unittest",
-		"LS && python3 -m unittest",
-		"cat() { cp -p donor stamp; }; cat donor && python3 -m unittest",
-		"echo stamp | xargs cp -p donor; python3 -m unittest",
-		"find . -name stamp -exec cp -p donor {} \\; ; python3 -m unittest",
-	} {
-		_, err := Analyze(cmd, cwd)
-		var u *Unreadable
-		if !errors.As(err, &u) {
-			t.Errorf("%s: a possible source time change beside a stale cache was allowed: %v", cmd, err)
-		} else if !strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "rewrite") {
-			t.Errorf("%s: refused for another reason: %q", cmd, u.Reason)
-		}
-	}
-	// Commands that change no file stay allowed beside a stale entry, as does any command once the run is over.
-	for _, cmd := range []string{
-		"cd . && python3 -m unittest",
-		"true; pwd; echo start; python3 -B -m unittest",
-		"ls > /dev/null 2>&1 && python3 -m unittest",
-		"python3 -B -m unittest 2>&1 | tail -n 20",
-		"python3 -B -m unittest && cp -p donor other",
-		"env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
-	} {
-		if _, err := Analyze(cmd, cwd); err != nil {
-			t.Errorf("%s: refused beside a stale cache: %v", cmd, err)
-		}
-	}
-}
-
-// CRW-1178 verification round 4 (P1): pytest's assertion rewriting writes and loads __pycache__/<module>.<tag>-pytest-<version>.pyc
-// beside the test module it rewrote (the version has dots: test_calc.cpython-312-pytest-8.3.2.pyc). Such an entry belongs to
-// <module>.py in the directory above exactly as an interpreter entry does, so a stale one (pytest discards it and rewrites the source
-// the reader reads) is skipped again, while one that agrees with its source or carries other flags, and any other shape, stays refused.
-func TestCRW1178PytestRewriteCacheFollowsItsSource(t *testing.T) {
-	names := []string{
-		"__pycache__/test_calc.cpython-312-pytest-8.3.2.pyc",
-		"__pycache__/test_calc.cpython-314-pytest-9.0.2.pyc",
-		"__pycache__/calc.cpython-313t-pytest-8.4.0.dev45+g1234abc.pyc",
-		"__pycache__/test_calc.pypy310-pytest-7.4.4.pyc",
-	}
-	for _, name := range names {
-		t.Run("stale "+name, func(t *testing.T) {
-			cwd := crw1178Project(t, map[string][]byte{name: append(pycHeader(0), "code"...)})
-			for _, cmd := range []string{"python3 -m pytest", "python3 -B -m pytest", "python3 -m unittest"} {
-				if _, err := Analyze(cmd, cwd); err != nil {
-					t.Errorf("%s: a stale pytest cache of a readable source was refused: %v", cmd, err)
-				}
-			}
-		})
-		t.Run("current "+name, func(t *testing.T) {
-			cwd := crw1178Project(t, nil)
-			stem := strings.SplitN(filepath.Base(name), ".", 2)[0]
-			for _, header := range [][]byte{matchingPycHeader(t, filepath.Join(cwd, stem+".py")), pycHeader(3)} {
-				p := filepath.Join(cwd, name)
-				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(p, append(header, "code"...), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				_, err := Analyze("python3 -B -m pytest", cwd)
-				var u *Unreadable
-				if !errors.As(err, &u) || !strings.Contains(u.Reason, filepath.Base(name)) || !strings.Contains(u.Reason, "-B") {
-					t.Errorf("a pytest cache that agrees with its source or is not a timestamp entry was allowed or lacks the file: %v", err)
-				}
-			}
-		})
-	}
+// CRW-1178 (S2R2-F1) as decided after verification round 8: the first python -m unittest creates __pycache__, and a later run beside
+// it is refused, as at the base. No header property of an entry the reader judges before the run survives the run itself: a test
+// module or conftest can set a source's time (os.utime) or rewrite it before it is imported, and so make a stale entry current. So
+// every .pyc of the inventory is refused, and the reason names the file and the route: remove __pycache__ in a separate command, then
+// run with -B so no new cache is written.
+func TestCRW1178EveryCacheEntryBesideAModuleRunIsRefusedWithTheRoute(t *testing.T) {
 	for _, name := range []string{
-		"__pycache__/test_calc.cpython-312-pytest-.pyc",
-		"__pycache__/test_calc.cpython-312-pytest-8..3.pyc",
-		"__pycache__/test_calc.cpython-312-pytest-x.pyc",
-		"__pycache__/test_calc.cpython-312-pytest-8.3.2-1.pyc",
-		"__pycache__/test_calc.cpython-312-pytest-8.3.2..pyc",
-		"__pycache__/test_calc.cpython-312-pytest-8.3.2.opt-1.pyc",
-		"__pycache__/test_calc.pytest-8.3.2.pyc",
-		"__pycache__/test_calc.x.cpython-312-pytest-8.3.2.pyc",
-		"__pycache__/nosource.cpython-312-pytest-8.3.2.pyc",
+		"__pycache__/calc.cpython-312.pyc",
+		"__pycache__/test_calc.cpython-312.pyc",
+		"__pycache__/calc.cpython-312.opt-1.pyc",
+		"__pycache__/test_calc.cpython-312-pytest-8.3.2.pyc",
+		"pkg/__pycache__/__init__.cpython-312.pyc",
 	} {
-		t.Run("refused "+name, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
+			// A stale timestamp entry: its recorded time and size (zero) disagree with the source.
 			cwd := crw1178Project(t, map[string][]byte{name: append(pycHeader(0), "code"...)})
-			_, err := Analyze("python3 -m pytest", cwd)
-			var u *Unreadable
-			if !errors.As(err, &u) || !strings.Contains(u.Reason, filepath.Base(name)) {
-				t.Errorf("a malformed pytest cache name or one without a source was skipped: %v", err)
+			if strings.HasPrefix(name, "pkg/") {
+				if err := os.WriteFile(filepath.Join(cwd, "pkg", "__init__.py"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, cmd := range []string{
+				"python3 -m unittest",
+				"python3 -B -m unittest",
+				"PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
+				"env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
+				"python3 -m pytest",
+				"python3 -B -m unittest test_calc.py",
+				"python3 -B -m unittest > /dev/null 2>&1",
+				"rm -rf __pycache__ && python3 -B -m unittest",
+			} {
+				_, err := Analyze(cmd, cwd)
+				var u *Unreadable
+				if !errors.As(err, &u) {
+					t.Fatalf("%s: a cache entry beside a module run was allowed: %v", cmd, err)
+				}
+				if !strings.Contains(u.Reason, name) || !strings.Contains(u.Reason, crw1178Route) {
+					t.Errorf("%s: the reason lacks the file or the route: %q", cmd, u.Reason)
+				}
 			}
 		})
 	}
 }
 
-// CRW-1178 verification round 4 (P2): Python compares int(st_mtime), and st_mtime is a double that rounds a time just below a whole
-// second up to it (1700000000.999999999 s reads 1700000001.0). An entry recording the next second then agrees with the source and
-// runs, so it is refused; a time two seconds off stays stale.
-func TestCRW1178CacheTimeRoundedUpBySecondsAsDoubleIsRefused(t *testing.T) {
-	cwd := crw1178Project(t, nil)
-	src := filepath.Join(cwd, "calc.py")
-	mtime := time.Unix(1700000000, 999999999)
-	if err := os.Chtimes(src, mtime, mtime); err != nil {
-		t.Fatal(err)
-	}
-	if fi, err := os.Stat(src); err != nil || fi.ModTime().Nanosecond() != 999999999 {
-		t.Skipf("no nanosecond times here: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	entry := filepath.Join(cwd, "__pycache__", "calc.cpython-312.pyc")
-	for _, c := range []struct {
-		sec     uint32
-		refused bool
-	}{{1700000000, true}, {1700000001, true}, {1700000002, false}, {1699999999, false}} {
+// CRW-1178 verification round 8 (P0): a test module that sets its source's time with os.utime before it imports it makes a stale entry
+// current, and the interpreter then runs the entry's code instead of the source the reader read. Nothing in the command text shows
+// it, so a stale entry is no reason to allow the run.
+func TestCRW1178TestModuleThatSetsASourceTimeCannotRevealACache(t *testing.T) {
+	for _, body := range []string{
+		"import os\nos.utime('calc.py', (1700000000, 1700000000))\nimport unittest\nimport calc\n",
+		"import os\nos.utime(os.path.join(os.path.dirname(__file__), 'calc.py'), (1700000000, 1700000000))\nimport calc\n",
+	} {
+		cwd := crw1178Project(t, nil)
+		src := filepath.Join(cwd, "calc.py")
 		h := matchingPycHeader(t, src)
-		binary.LittleEndian.PutUint32(h[8:], c.sec)
-		if err := os.WriteFile(entry, append(h, "code"...), 0o600); err != nil {
+		binary.LittleEndian.PutUint32(h[8:], 1700000000) // stale now, current once the test module ran
+		if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		_, err := Analyze("python3 -B -m unittest", cwd)
-		if refused := err != nil; refused != c.refused {
-			t.Errorf("entry time %d: refused %v, want %v (%v)", c.sec, refused, c.refused, err)
+		if err := os.WriteFile(filepath.Join(cwd, "__pycache__", "calc.cpython-312.pyc"), append(h, "code"...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cwd, "test_calc.py"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, cmd := range []string{"python3 -B -m unittest", "python3 -B -m unittest -q", "python3 -B -m unittest test_calc", "python3 -B -m pytest"} {
+			_, err := Analyze(cmd, cwd)
+			var u *Unreadable
+			if !errors.As(err, &u) || !strings.Contains(u.Reason, "__pycache__/calc.cpython-312.pyc") || !strings.Contains(u.Reason, crw1178Route) {
+				t.Errorf("%s: a stale entry a test module can make current was allowed or lacks the file and route: %v", cmd, err)
+			}
 		}
 	}
 }
 
-// CRW-1178 verification rounds 5 and 6 (P0): the shell opens the module run's own write redirections before the interpreter starts,
-// so "python3 -B -m unittest > stamp" truncates the source through its hard link stamp (size 0, time now) and can make a stale entry
-// recording that size and second current. A target reached through a directory link and '..' (../lnk/../sl, which the kernel
-// resolves after the link and a text clean does not) names the source by a symlink or a hard link that no path check of the reader
-// sees. Beside a stale entry, the run itself may write only to /dev/null and descriptor copies or closes; any file target is refused
-// with the route, a new log file included. With no stale entry skipped the same redirections stay allowed.
-func TestCRW1178RunRedirectThroughLinkBesideStaleCacheIsRefused(t *testing.T) {
-	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
-		t.Skipf("no hard links here: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cwd, "notes.log"), []byte("old\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	other := t.TempDir()
-	alias := filepath.Join(other, "alias")
-	if err := os.Symlink(filepath.Join(cwd, "calc.py"), alias); err != nil {
-		t.Fatal(err)
-	}
-	// Outside the project, so the inventory never walks them: lnk -> ext/deep, ext/sl -> calc.py and ext/hard, a hard link of
-	// calc.py. From cwd, ../lnk/../sl is ext/sl for the kernel and <parent>/sl (missing) for a text clean.
-	parent := filepath.Dir(cwd)
-	if err := os.MkdirAll(filepath.Join(parent, "ext", "deep"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(parent, "ext", "deep"), filepath.Join(parent, "lnk")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(cwd, "calc.py"), filepath.Join(parent, "ext", "sl")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(parent, "ext", "hard")); err != nil {
-		t.Fatal(err)
-	}
+// The route stays open: a plain run with no __pycache__ is allowed, with a log redirection too, and so is a -B run once an earlier,
+// separate command removed the cache. Removing it in the same command is refused (the entry is there when the text is read).
+func TestCRW1178RunWithoutCacheStaysAllowed(t *testing.T) {
+	clean := crw1178Project(t, nil)
 	for _, cmd := range []string{
-		"python3 -B -m unittest > stamp",
-		"python3 -B -m unittest 2> stamp",
-		"sleep 3; python3 -B -m unittest > stamp",
-		"sleep 3; python3 -B -m unittest 2> stamp",
-		"python3 -m unittest >> stamp",
-		"python3 -B -m unittest &> stamp",
-		"python3 -B -m unittest >& stamp",
-		"python3 -B -m unittest >| stamp",
-		"python3 -B -m unittest <> stamp",
-		"python3 -B -m unittest 1>stamp 2>&1",
-		"python3 -B -m unittest 2>&1 > stamp",
-		"python3 -B -m unittest > " + alias,
-		"python3 -B -m pytest > stamp",
-		"cd . && python3 -B -m unittest 2> stamp | tail -n 5",
-		"timeout 60 python3 -B -m unittest > stamp",
-		"env python3 -B -m unittest 2> stamp",
-		"python3 -B -m unittest > \"$CRW1178_UNSET_TARGET\"",
-		// A symlink and a hard link of the source reached through a directory link and '..'.
-		"python3 -B -m unittest > ../lnk/../sl",
-		"python3 -B -m unittest 2> ../lnk/../sl",
-		"python3 -B -m unittest >> ../lnk/../sl",
-		"sleep 3; python3 -B -m unittest > ../lnk/../sl",
-		"sleep 3; python3 -B -m unittest 2> ../lnk/../sl",
-		"python3 -B -m unittest > ../lnk/../hard",
-		"python3 -B -m unittest 2> ../lnk/../hard",
-		"python3 -B -m unittest >> ../lnk/../hard",
-		"sleep 3; python3 -B -m unittest > ../lnk/../hard",
-		// Any other file: new or existing, in the project or not.
+		"python3 -m unittest",
+		"python3 -B -m unittest",
+		"PYTHONDONTWRITEBYTECODE=1 python3 -m unittest",
+		"python3 -B -m pytest",
 		"python3 -B -m unittest > out.log 2>&1",
-		"python3 -B -m unittest >> notes.log",
-		"sleep 1; python3 -B -m unittest > out.log",
-		"python3 -B -m unittest 2> " + filepath.Join(other, "new.log"),
-		"{ python3 -B -m unittest; } > out.log",
+		"python3 -B -m unittest 2>&1 | tail -n 20",
 	} {
-		_, err := Analyze(cmd, cwd)
+		if _, err := Analyze(cmd, clean); err != nil {
+			t.Errorf("%s: refused with no cache: %v", cmd, err)
+		}
+	}
+	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
+	if _, err := Analyze("python3 -B -m unittest", cwd); err == nil {
+		t.Fatal("a run beside a cache was allowed")
+	}
+	if _, err := Analyze("rm -rf __pycache__", cwd); err != nil {
+		t.Fatalf("the route's removal was refused: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(cwd, "__pycache__")); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"python3 -B -m unittest", "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest"} {
+		if _, err := Analyze(cmd, cwd); err != nil {
+			t.Errorf("%s: refused after a separate command removed the cache: %v", cmd, err)
+		}
+	}
+}
+
+// CRW-1178 verification round 8 (P1, already at the base): PYTHONPYCACHEPREFIX makes the interpreter read cache entries from
+// <prefix>/<source directory>/, even with -B, and the inventory never walks there. A module run is refused when the variable is
+// assigned for the run, set, exported or otherwise named by the text before it, set by a command whose names the reader does not
+// know, or set in the environment the reader is given; the reason names the variable and the route. -E and -I make the interpreter
+// ignore it.
+func TestCRW1178PycachePrefixRefusesTheModuleRun(t *testing.T) {
+	cwd := crw1178Project(t, nil)
+	pfx := filepath.Join(t.TempDir(), "pfx")
+	refused := func(t *testing.T, cmd string, lookup func(string) (string, bool)) {
+		t.Helper()
+		_, err := AnalyzeEnv(cmd, cwd, lookup)
 		var u *Unreadable
 		if !errors.As(err, &u) {
-			t.Errorf("%s: a write to a file beside a stale cache was allowed: %v", cmd, err)
-		} else if !strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "rewrite") && !strings.Contains(u.Reason, "rewritten") {
-			t.Errorf("%s: refused for another reason: %q", cmd, u.Reason)
-		} else if strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "separate command first; python -B") {
-			t.Errorf("%s: the reason lacks the route: %q", cmd, u.Reason)
+			t.Errorf("%s: a module run that may read caches under PYTHONPYCACHEPREFIX was allowed: %v", cmd, err)
+		} else if !strings.Contains(u.Reason, "PYTHONPYCACHEPREFIX") || !strings.Contains(u.Reason, "unset PYTHONPYCACHEPREFIX") {
+			t.Errorf("%s: the reason lacks the variable or the route: %q", cmd, u.Reason)
 		}
 	}
 	for _, cmd := range []string{
-		"python3 -B -m unittest > /dev/null 2>&1",
-		"python3 -B -m unittest 2>&1 >/dev/null",
-		"python3 -B -m unittest 2>/dev/null",
-		"python3 -B -m unittest 2>&1 | tail -n 20",
-		"python3 -B -m unittest 1>&2",
-		"python3 -B -m unittest 2>&-",
-		"python3 -B -m unittest >&-",
-		"python3 -B -m unittest < notes.log",
+		"PYTHONPYCACHEPREFIX=" + pfx + " python3 -B -m unittest",
+		"PYTHONPYCACHEPREFIX=" + pfx + " python3 -m unittest",
+		"PYTHONPYCACHEPREFIX=\"$CRW1178_UNSET\" python3 -B -m unittest",
+		"PYTHONPYCACHEPREFIX= python3 -B -m unittest",
+		"export PYTHONPYCACHEPREFIX=" + pfx + "; python3 -B -m unittest",
+		"export PYTHONPYCACHEPREFIX=/tmp/zz; python3 -B -m unittest",
+		"PYTHONPYCACHEPREFIX=" + pfx + "; export PYTHONPYCACHEPREFIX; python3 -B -m unittest",
+		"declare -x PYTHONPYCACHEPREFIX=" + pfx + "; python3 -B -m unittest",
+		"set -a; PYTHONPYCACHEPREFIX=" + pfx + "; python3 -B -m unittest",
+		"env PYTHONPYCACHEPREFIX=" + pfx + " python3 -B -m unittest",
+		"eval 'export PYTHONPYCACHEPREFIX=" + pfx + "'; python3 -B -m unittest",
+		"N=PYTHONPYCACHE; export ${N}PREFIX=" + pfx + "; python3 -B -m unittest",
+		"export \"$CRW1178_UNSET\"; python3 -B -m unittest",
+		"declare -x \"$CRW1178_UNSET\"=" + pfx + "; python3 -B -m unittest",
+		"N=PYTHONPYCACHE; declare -n r=${N}PREFIX; r=" + pfx + "; export r; python3 -B -m unittest",
+		"printf -v \"$CRW1178_UNSET\" %s " + pfx + "; python3 -B -m unittest",
+		"read -r \"$CRW1178_UNSET\" < /dev/null; python3 -B -m unittest",
+		"bash -c 'export PYTHONPYCACHEPREFIX=" + pfx + "; python3 -B -m unittest'",
+		"PYTHONPYCACHEPREFIX=" + pfx + " python3 -B -m pytest",
+		"PYTHONPYCACHEPREFIX=" + pfx + " python3 -B -m json.tool data.json",
+		"PYTHONPYCACHEPREFIX=" + pfx + " python3 -m py_compile calc.py",
 	} {
-		if _, err := Analyze(cmd, cwd); err != nil {
-			t.Errorf("%s: refused beside a stale cache: %v", cmd, err)
-		}
+		refused(t, cmd, nil)
 	}
-	// No stale entry skipped: a log file of the run is as before.
-	fresh := crw1178Project(t, nil)
-	for _, cmd := range []string{
-		"python3 -B -m unittest > out.log 2>&1",
-		"sleep 1; python3 -B -m unittest 2> out.log",
-		"python3 -m unittest >> notes.log",
+	// Set in the environment the reader is given (the hook's): refused, whatever the command says.
+	env := func(k string) (string, bool) {
+		if k == "PYTHONPYCACHEPREFIX" {
+			return pfx, true
+		}
+		return "", false
+	}
+	for _, cmd := range []string{"python3 -B -m unittest", "python3 -m pytest", "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest"} {
+		refused(t, cmd, env)
+	}
+	// Not set, set empty (Python ignores an empty value), or ignored with -E or -I: as before.
+	empty := func(k string) (string, bool) { return "", k == "PYTHONPYCACHEPREFIX" }
+	gateLike := func(k string) (string, bool) {
+		return map[string]string{"HOME": "/home/u", "PATH": "/usr/bin"}[k], k == "HOME" || k == "PATH"
+	}
+	for _, c := range []struct {
+		cmd    string
+		lookup func(string) (string, bool)
+	}{
+		{"python3 -B -m unittest", nil},
+		{"export FOO=1; python3 -B -m unittest", nil},
+		{"printf '%s\\n' \"$CRW1178_UNSET\"; python3 -B -m unittest", nil},
+		{"python3 -B -m unittest", gateLike},
+		{"python3 -B -m unittest", empty},
+		{"python3 -E -B -m unittest", env},
+		{"python3 -I -B -m unittest", env},
+		{"PYTHONPYCACHEPREFIX=" + pfx + " python3 -E -B -m unittest", nil},
 	} {
-		if _, err := Analyze(cmd, fresh); err != nil {
-			t.Errorf("%s: refused with no cache: %v", cmd, err)
+		if _, err := AnalyzeEnv(c.cmd, cwd, c.lookup); err != nil {
+			t.Errorf("%s: refused: %v", c.cmd, err)
 		}
 	}
 }

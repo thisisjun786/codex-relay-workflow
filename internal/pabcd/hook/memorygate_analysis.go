@@ -83,7 +83,7 @@ func unreadableLabel(s string) string {
 		}
 		return r
 	}, s)
-	return memoryGateLabelLimit(strings.TrimSpace(s), 200)
+	return memoryGateLabelLimit(strings.TrimSpace(s), 320) // room for a file and the reader's route (CRW-1178)
 }
 
 // commandUnreadableReason is the refusal of a command the reader cannot read, shared by the memory and GitHub guards so that the
