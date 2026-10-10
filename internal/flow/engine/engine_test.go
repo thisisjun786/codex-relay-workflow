@@ -537,6 +537,8 @@ func TestForeignHandleRefused(t *testing.T) {
 	handleA := value[string](t, ra)
 	b := newHarness(t)
 	b.cfg.RunID = "run-b"
+	// run B reads the journal run A wrote, so the call the handle names is found: only the lineage check refuses it
+	b.journal, b.cfg.Journal = a.journal, a.journal
 	got := execRun(b, fmt.Sprintf(`const r = await agent.call('c', { resume: %q }); return [{ status: r.status, reason: r.reason }]`, handleA))
 	if got[0]["status"] != "refused" || got[0]["reason"] != "foreign_handle" {
 		t.Errorf("other lineage: %v", got)
