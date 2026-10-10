@@ -305,9 +305,10 @@ func repositoryRoot() (string, error) {
 
 // goModTidyCheck is the go.mod and go.sum part of validate: `go mod tidy -diff` must print nothing, so a
 // checkout whose module files differ from what go mod tidy writes fails here. It runs offline (GOPROXY=off,
-// GOSUMDB=off, GOTOOLCHAIN=local, GOWORK=off): GOSUMDB=off keeps go from asking the checksum database for a
-// go.sum line it lacks, so a missing line is reported as the difference it is (go mod tidy would add it)
-// and the hashes are taken from the cached module files. When the module cache lacks a module the import graph needs, it returns
+// GONOPROXY=none, GOSUMDB=off, GOTOOLCHAIN=local, GOWORK=off): GONOPROXY=none overrides an inherited GOPRIVATE
+// or GONOPROXY, whose patterns name modules go would otherwise fetch directly past GOPROXY=off, and GOSUMDB=off
+// keeps go from asking the checksum database for a go.sum line it lacks, so a missing line is reported as the
+// difference it is (go mod tidy would add it) and the hashes are taken from the cached module files. When the module cache lacks a module the import graph needs, it returns
 // a note that the check was skipped instead of an error; with no go command on PATH it does the same.
 func goModTidyCheck(root string) (errs []string, note string) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
@@ -318,7 +319,8 @@ func goModTidyCheck(root string) (errs []string, note string) {
 	}
 	cmd := exec.Command("go", "mod", "tidy", "-diff")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOWORK=off")
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",
+		"GOTOOLCHAIN=local", "GOWORK=off")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

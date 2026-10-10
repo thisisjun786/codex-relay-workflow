@@ -364,3 +364,19 @@ func Test1188_GoModTidyCheckNeverAsksTheChecksumDatabase(t *testing.T) {
 		t.Errorf("tidy fixture: %+v", got)
 	}
 }
+
+// Test1188_GoModTidyCheckIgnoresPrivateModulePatterns: GOPRIVATE and GONOPROXY inherited from the
+// caller name modules go fetches directly, past GOPROXY=off; the check must not follow them to the
+// network (here a refused local HTTPS proxy). With an empty module cache it skips with the cache note.
+func Test1188_GoModTidyCheckIgnoresPrivateModulePatterns(t *testing.T) {
+	r := validateRepo(t)
+	r.write("go.mod", "module example.com/x\n\ngo 1.27\n\nrequire example.com/dep v1.0.0\n")
+	r.write("x.go", "package x\n\nimport _ \"example.com/dep\"\n")
+	env := []string{"GITHUB_EVENT_NAME=", "BLOB_RANGE_BASE=", "GOMODCACHE=" + t.TempDir(), "GOPRIVATE=example.com",
+		"GONOPROXY=example.com", "GONOSUMDB=example.com", "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1"}
+	got := goCheck(t, r.root, env, "validate")
+	if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, validated) ||
+		!strings.Contains(got.stdout, "go mod tidy check skipped: the module cache lacks a module") {
+		t.Errorf("private module patterns: %+v", got)
+	}
+}
