@@ -7,7 +7,7 @@ import (
 )
 
 // CRW-965 (parent decisions D1 and D2): the record judge compares the tool values with the record's own pins and the
-// platform, and leaves goFlags and goEnv to the writer. These tests pin both sides of that boundary.
+// platform, and leaves goFlags and goEnv to the writer. The kit's tree declares no tool (CRW-1026 judges the declared ones). These tests pin both sides of that boundary.
 func TestVerificationJudgeLeavesGoFlagsAndGoEnvToTheWriter(t *testing.T) {
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	head := k.heads["a"]
@@ -15,7 +15,7 @@ func TestVerificationJudgeLeavesGoFlagsAndGoEnvToTheWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := VerificationKeys{Tree: k.treeOf(head), Base: k.base, CiDigest: keys.CiDigest, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH}
+	want := VerificationKeys{Tree: k.treeOf(head), Base: k.base, CiDigest: keys.CiDigest, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Pins: keys.Pins}
 	seal := func(tools, pins map[string]string) []byte {
 		raw, err := SealVerificationRecord(VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: k.base, HeadCommit: head,
 			TreeHash: want.Tree, CiDigest: keys.CiDigest, Tools: tools, Pins: pins, GoFlags: "-p=99", GoEnv: "GOFOO=bar",

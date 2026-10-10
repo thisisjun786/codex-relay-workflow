@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,31 @@ func upgradeSealedRecord(t *testing.T, tree, result string) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+// upgradeResealed is the good record with some members changed and its digest fixed, as a writer that produced that shape would have sealed it.
+func upgradeResealed(t *testing.T, edit func(members map[string]any)) []byte {
+	t.Helper()
+	var members map[string]any
+	if err := json.Unmarshal(upgradeSealedRecord(t, upgradeGoodTree, dagsched.VerificationRecordResultPass), &members); err != nil {
+		t.Fatal(err)
+	}
+	edit(members)
+	delete(members, "digest")
+	body, err := json.Marshal(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := dagsched.VerificationRecordDigest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members["digest"] = digest
+	out, err := json.Marshal(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // upgradeRecordFor is the record file a harness gives its run: the explicit bytes when the test set
@@ -103,6 +129,13 @@ func TestUpgradeRefusesVerificationRecordThatIsNotPass(t *testing.T) {
 		"a fail result":     {recordResult: "fail"},
 		"a malformed file":  {recordRaw: []byte("{not json")},
 		"a digest mismatch": {recordRaw: []byte(tampered)},
+		// CRW-1026: the upgrade cannot read the declaration of the commit, but a record without its pins, or whose pins
+		// contradict its tools, is still not reusable
+		"no pins member": {recordRaw: upgradeResealed(t, func(m map[string]any) { delete(m, "pins") })},
+		"pins null":      {recordRaw: upgradeResealed(t, func(m map[string]any) { m["pins"] = nil })},
+		"pin against tool": {recordRaw: upgradeResealed(t, func(m map[string]any) {
+			m["tools"], m["pins"] = map[string]any{"go": "1.27.1"}, map[string]any{"go": "1.26.0"}
+		})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			opts.gh = upgradeGhPaths(upgradeGoodCommit)

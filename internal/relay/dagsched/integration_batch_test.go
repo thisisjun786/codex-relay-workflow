@@ -86,7 +86,7 @@ func writeSealedRecord(t *testing.T, checkout, head, base, tree, result string) 
 		t.Fatal(err)
 	}
 	raw, err := SealVerificationRecord(VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: base, HeadCommit: head,
-		TreeHash: tree, CiDigest: keys.CiDigest, Tools: map[string]string{"go": "go1.27.1"}, Pins: map[string]string{}, GoFlags: "", GoEnv: "",
+		TreeHash: tree, CiDigest: keys.CiDigest, Tools: copyPins(keys.Pins), Pins: copyPins(keys.Pins), GoFlags: "", GoEnv: "",
 		PinMismatch: []string{}, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Result: result, Jobs: []json.RawMessage{}})
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestVerifyRecordHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, err := SealVerificationRecord(VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: base, HeadCommit: head,
-		TreeHash: strings.TrimSpace(tree), CiDigest: keys.CiDigest, Tools: map[string]string{"go": "go1.27.1"}, Pins: map[string]string{},
+		TreeHash: strings.TrimSpace(tree), CiDigest: keys.CiDigest, Tools: copyPins(keys.Pins), Pins: copyPins(keys.Pins),
 		PinMismatch: []string{}, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Result: "pass", Jobs: nil})
 	if err != nil {
 		t.Fatal(err)

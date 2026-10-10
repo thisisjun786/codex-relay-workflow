@@ -17,7 +17,7 @@ func (k *commitAcceptKit) freshRecord(tree, job string) string {
 		k.t.Fatal(err)
 	}
 	record := VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: k.base, HeadCommit: k.head, TreeHash: tree,
-		CiDigest: keys.CiDigest, Tools: map[string]string{"go": "go1.27.1"}, Pins: map[string]string{}, GoFlags: "", GoEnv: "",
+		CiDigest: keys.CiDigest, Tools: copyPins(keys.Pins), Pins: copyPins(keys.Pins), GoFlags: "", GoEnv: "",
 		PinMismatch: []string{}, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Result: "pass",
 		Jobs: []json.RawMessage{json.RawMessage(job)}}
 	raw, err := SealVerificationRecord(record)

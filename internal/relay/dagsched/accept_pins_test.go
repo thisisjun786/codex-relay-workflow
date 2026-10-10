@@ -8,7 +8,8 @@ import (
 )
 
 // CRW-965 (parent decision, D1 refined): a record whose tool values contradict its own pins is internally inconsistent and
-// is refused. A tool without a pin is not judged, and goFlags and goEnv stay the writer's.
+// is refused. A tool the verified commit does not declare and the record does not pin is not judged (the kit's tree declares
+// none; CRW-1026 covers the declared ones in verification_pins_test.go), and goFlags and goEnv stay the writer's.
 func TestVerificationRecordPinsMustMatchTheirTools(t *testing.T) {
 	k := newCommitAcceptKit(t)
 	ctx := context.Background()
@@ -16,7 +17,7 @@ func TestVerificationRecordPinsMustMatchTheirTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := VerificationKeys{Tree: k.treeOf(k.head), Base: k.base, CiDigest: keys.CiDigest, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH}
+	want := VerificationKeys{Tree: k.treeOf(k.head), Base: k.base, CiDigest: keys.CiDigest, Dependencies: keys.Dependencies, OS: runtime.GOOS, Arch: runtime.GOARCH, Pins: keys.Pins}
 	seal := func(tools, pins map[string]string) []byte {
 		t.Helper()
 		record := VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: k.base, HeadCommit: k.head, TreeHash: want.Tree,

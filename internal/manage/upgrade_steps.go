@@ -293,6 +293,9 @@ func (r *upgradeRunState) checkVerificationRecord() (int, string) {
 		Dependencies: record.Dependencies,
 		OS:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
+		// the upgrade holds the release's tree id and no checkout, so the commit's declared pins are not readable here: the
+		// record's pins are judged for shape and for agreement with its tools (CRW-1026)
+		PinsUnread: true,
 	}
 	if _, err := dagsched.JudgeVerificationRecord(raw, keys); err != nil {
 		var refused *store.RefusedError
