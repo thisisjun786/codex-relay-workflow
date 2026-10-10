@@ -286,7 +286,8 @@ func Test1188_GoModTidyCheckSkipsAnIncompleteModuleCache(t *testing.T) {
 
 // cachedModule builds a module cache holding example.com/dep v1.0.0 without any network: the module
 // is served from a file:// proxy once into a fresh GOMODCACHE, so the cache has the module files but
-// no go.sum and no checksum database entry. It returns the cache directory.
+// no go.sum and no checksum database entry. GOPRIVATE, GONOPROXY and GONOSUMDB are neutralised so a
+// caller's private-module routing cannot send the seed past the file:// proxy. It returns the cache directory.
 func cachedModule(t *testing.T) string {
 	t.Helper()
 	proxy := filepath.Join(t.TempDir(), "proxy", "example.com", "dep", "@v")
@@ -330,7 +331,8 @@ func cachedModule(t *testing.T) string {
 	cmd := exec.Command("go", "mod", "download", "example.com/dep")
 	cmd.Dir = seed
 	cmd.Env = append(os.Environ(), "GOMODCACHE="+cache, "GOPROXY=file://"+filepath.Dir(filepath.Dir(filepath.Dir(proxy))),
-		"GOSUMDB=off", "GOFLAGS=-mod=mod -modcacherw", "GOTOOLCHAIN=local", "GOWORK=off")
+		"GOSUMDB=off", "GOFLAGS=-mod=mod -modcacherw", "GOTOOLCHAIN=local", "GOWORK=off",
+		"GOPRIVATE=", "GONOPROXY=none", "GONOSUMDB=none", "GOINSECURE=")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("seeding the module cache: %v\n%s", err, out)
 	}
@@ -355,7 +357,8 @@ func Test1188_GoModTidyCheckNeverAsksTheChecksumDatabase(t *testing.T) {
 	}
 	tidy := exec.Command("go", "mod", "tidy")
 	tidy.Dir = r.root
-	tidy.Env = append(os.Environ(), "GOMODCACHE="+cache, "GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local", "GOWORK=off")
+	tidy.Env = append(os.Environ(), "GOMODCACHE="+cache, "GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local", "GOWORK=off",
+		"GOPRIVATE=", "GONOPROXY=none", "GONOSUMDB=none", "GOINSECURE=")
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy: %v\n%s", err, out)
 	}
