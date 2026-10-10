@@ -147,7 +147,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	renderAdvisory := stopRenderAdvisory(p.Cwd, st.Phase, p.SessionID, st.Slug)
 	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State, next *state.State, snap stopSnapshot) string {
 		// CRW-1088: one evaluation window of a series (metric and work phase) asks for divergence once; the window it was asked for is written with the counter.
-		if plateau, series, rows := stopObjectivePlateau(p.Cwd, fresh, snap); plateau.Flat && fresh.StopDivergenceWindows[series] != rows {
+		if plateau, series, rows := stopObjectivePlateau(p.Cwd, fresh, snap); plateau.Flat && fresh.StopDivergenceWindows[series].Rows != rows {
 			next.StopDivergenceWindows = stopWithWindow(fresh.StopDivergenceWindows, series, rows)
 			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID, renderAdvisory)
 		}
@@ -421,17 +421,33 @@ func stopObjectivePlateau(cwd string, st state.State, snap stopSnapshot) (metric
 	return plateau, latest.MetricName + "@" + latest.WorkPhaseID, float64(count)
 }
 
-// stopMaxDivergenceWindows bounds the series a state remembers; past it the oldest knowledge is dropped as a whole, which costs one
-// repeated request for a window, never a missed one.
+// stopMaxDivergenceWindows bounds the series a state remembers. A new series past it evicts the one updated longest ago, which
+// costs that series one repeated request for its window, never a missed one; an update of a remembered series evicts nothing.
 const stopMaxDivergenceWindows = 64
 
-// stopWithWindow is windows with series answered at rows, as a copy: the state the lock read is not changed.
-func stopWithWindow(windows map[string]float64, series string, rows float64) map[string]float64 {
-	out := make(map[string]float64, len(windows)+1)
-	if len(windows) < stopMaxDivergenceWindows {
-		maps.Copy(out, windows)
+// stopWithWindow is windows with series answered at rows, as a copy: the state the lock read is not changed. The answer takes
+// the next update sequence, so the series answered last is the newest.
+func stopWithWindow(windows map[string]state.DivergenceWindow, series string, rows float64) map[string]state.DivergenceWindow {
+	out := maps.Clone(windows)
+	if out == nil {
+		out = map[string]state.DivergenceWindow{}
 	}
-	out[series] = rows
+	seq := float64(0)
+	for _, w := range out {
+		seq = math.Max(seq, w.Seq)
+	}
+	if _, remembered := out[series]; !remembered {
+		for len(out) >= stopMaxDivergenceWindows {
+			oldest := ""
+			for k, w := range out {
+				if oldest == "" || w.Seq < out[oldest].Seq || (w.Seq == out[oldest].Seq && k < oldest) {
+					oldest = k
+				}
+			}
+			delete(out, oldest)
+		}
+	}
+	out[series] = state.DivergenceWindow{Rows: rows, Seq: seq + 1}
 	return out
 }
 

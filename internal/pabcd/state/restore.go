@@ -151,19 +151,24 @@ func nonEmpty(v any) *string {
 	return nil
 }
 
-// divergenceWindows is v as the per-series window counts, keeping the entries that are a non-empty key and a positive count; nil when none.
-func divergenceWindows(v any) map[string]float64 {
+// divergenceWindows is v as the per-series answered windows, keeping the entries that are a non-empty key and a positive row count;
+// nil when none. An entry that is a bare count (the lane's first form) is that window with update sequence 0, the oldest.
+func divergenceWindows(v any) map[string]DivergenceWindow {
 	raw, ok := v.(map[string]any)
 	if !ok {
 		return nil
 	}
-	var out map[string]float64
+	var out map[string]DivergenceWindow
 	for k, w := range raw {
-		if n := count(w); k != "" && n > 0 {
+		window := DivergenceWindow{Rows: count(w)}
+		if o, ok := w.(map[string]any); ok {
+			window = DivergenceWindow{Rows: count(o["rows"]), Seq: count(o["seq"])}
+		}
+		if k != "" && window.Rows > 0 {
 			if out == nil {
-				out = map[string]float64{}
+				out = map[string]DivergenceWindow{}
 			}
-			out[k] = n
+			out[k] = window
 		}
 	}
 	return out

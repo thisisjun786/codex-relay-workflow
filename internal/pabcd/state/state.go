@@ -114,6 +114,14 @@ func (s SourceIdentity) Identity() source.Identity {
 	return id
 }
 
+// DivergenceWindow is one evaluation series' answered window (State.StopDivergenceWindows): the series' row count when the plateau
+// block was answered, and the update sequence of that answer (one above every other the state holds), by which the bound on the
+// series a state remembers evicts the series updated longest ago.
+type DivergenceWindow struct {
+	Rows float64 `json:"rows"`
+	Seq  float64 `json:"seq"`
+}
+
 // State is one session's persisted PABCD state, its fields in the key order of the oracle's rebuilt object. Nullable
 // fields are pointers (SupersededBy may point to the empty string, the other ids are never empty) and the counters are
 // JavaScript numbers. Slices are never nil.
@@ -142,10 +150,10 @@ type State struct {
 	// prompt has no turn id to stamp, so this is the stamp a Stop holds against the state its lock finds, as it holds the turn id;
 	// absent until the first such prompt.
 	StopTurnGeneration float64 `json:"stopTurnGeneration,omitempty"`
-	// StopDivergenceWindows is, per evaluation series (metric and work phase), the row count of the window the Stop plateau block
-	// was last answered for, so one window asks for divergence once even when the active work phase leaves it and comes back
-	// (CRW-1088, not in the oracle); absent until a plateau block is answered.
-	StopDivergenceWindows map[string]float64 `json:"stopDivergenceWindows,omitempty"`
+	// StopDivergenceWindows is, per evaluation series (metric and work phase), the window the Stop plateau block was last answered
+	// for, so one window asks for divergence once even when the active work phase leaves it and comes back (CRW-1088, not in the
+	// oracle); absent until a plateau block is answered.
+	StopDivergenceWindows map[string]DivergenceWindow `json:"stopDivergenceWindows,omitempty"`
 
 	// IDLE-edit advisory and the memory-write gate (a remember request, its turn, an operator grant).
 	LoopArmSeen          bool    `json:"loopArmSeen"`
