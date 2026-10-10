@@ -438,12 +438,6 @@ func implementVerbs(clause string) (session, delegated bool) {
 	return session, delegated
 }
 
-// delegatedVerb reports that the implement verb after the folded clause prefix is another agent's (ungovernedImplement).
-func delegatedVerb(prefix string) bool {
-	_, ok := delegation(prefix)
-	return ok
-}
-
 // delegation reports the agent noun whose verb the implement verb after the folded clause prefix is. Another agent as the
 // subject or the delegate of the verb ("while child tasks implement", "ask the children to implement", "the workers will then
 // implement") is not this session implementing: the verb must not follow such a noun by up to three words of the same clause.
