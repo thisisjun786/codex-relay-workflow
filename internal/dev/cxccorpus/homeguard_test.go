@@ -188,6 +188,26 @@ func TestRunScenario_aGitDirectoryInTheAccountHomeIsRefused(t *testing.T) {
 		"a .git file": func(home string) Given {
 			return Given{Files: map[string]string{"ws/.git": "gitdir: " + filepath.Join(home, ".codex", "repo.git") + "\n"}, Git: &Git{Dir: "ws"}}
 		},
+		// verify-post d2: a repository git cannot read yet (rev-parse fails) still has its common
+		// directory read by git init from the git directory's commondir file.
+		"an uninitialized repository whose commondir is in the account home": func(home string) Given {
+			return Given{Files: map[string]string{"ws/.git/commondir": filepath.Join(home, ".codex", "repo.git") + "\n"}, Git: &Git{Dir: "ws"}}
+		},
+		// A relative commondir is taken from the git directory (ws/.git), not from ws: ../acct is ws/acct.
+		"a relative commondir taken from the git directory": func(home string) Given {
+			return Given{
+				Files:    map[string]string{"ws/.git/commondir": "../acct\n"},
+				Symlinks: map[string]string{"ws/acct": filepath.Join(home, ".codex", "repo.git")},
+				Git:      &Git{Dir: "ws"},
+			}
+		},
+		// The git directory a .git file names (tmp/gd, safe) holds the commondir that leads into the account home.
+		"a commondir in the git directory a .git file names": func(home string) Given {
+			return Given{
+				Files: map[string]string{"ws/.git": "gitdir: ../tmp/gd\n", "tmp/gd/commondir": filepath.Join(home, ".codex", "repo.git") + "\n"},
+				Git:   &Git{Dir: "ws"},
+			}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()

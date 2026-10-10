@@ -632,22 +632,31 @@ func setUp(c *Case, g Given, rt Runtime) error {
 // working directory is guarded on its own, but git writes where its metadata is: ws/.git may be a
 // link or a file ("gitdir: ...") that leads there, and the common directory of a worktree can name
 // another place. The places are read the way git reads them and each is guarded before the command
-// runs (CRW-1186). A directory that holds no repository yet is judged by the name ws/.git alone.
+// runs (CRW-1186). The git directory (ws/.git, or the place a .git file names) is read for its
+// commondir file whether or not git can read the repository yet: git init in a directory that is
+// not a repository still writes into the common directory that file names.
 func refuseGitDirs(c *Case, rt Runtime, ws string) error {
 	dotGit := filepath.Join(ws, ".git")
 	if err := homeguard.Refuse(dotGit); err != nil {
 		return err
 	}
+	gitDir := dotGit
 	if raw, err := os.ReadFile(dotGit); err == nil {
 		if line, _, _ := strings.Cut(string(raw), "\n"); strings.HasPrefix(line, "gitdir:") {
-			dir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
-			if !filepath.IsAbs(dir) {
-				dir = filepath.Join(ws, dir)
-			}
-			if err := homeguard.Refuse(dir); err != nil {
+			gitDir = joinUnder(ws, strings.TrimSpace(strings.TrimPrefix(line, "gitdir:")))
+			if err := homeguard.Refuse(gitDir); err != nil {
 				return err
 			}
 		}
+	}
+	if raw, err := os.ReadFile(gitDir + string(filepath.Separator) + "commondir"); err == nil {
+		if common := strings.TrimRight(string(raw), "\r\n"); common != "" {
+			if err := homeguard.Refuse(joinUnder(gitDir, common)); err != nil {
+				return err
+			}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+		return fmt.Errorf("cannot read the commondir of %s, so git does not run: %w", gitDir, err)
 	}
 	cmd := exec.Command("/bin/sh", "-c", umask022, rt.GitPath(), "rev-parse", "--absolute-git-dir", "--git-common-dir")
 	cmd.Dir = ws
@@ -657,14 +666,21 @@ func refuseGitDirs(c *Case, rt Runtime, ws string) error {
 		return nil // no repository yet, or none git can read: nothing to resolve
 	}
 	for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(ws, dir)
-		}
-		if err := homeguard.Refuse(dir); err != nil {
+		if err := homeguard.Refuse(joinUnder(ws, dir)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// joinUnder is path taken from base the way git and the kernel take it: an absolute path as it
+// stands, a relative one appended to base without lexical cleaning, so a ".." after a link leaves
+// the link's target, not base.
+func joinUnder(base, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return base + string(filepath.Separator) + path
 }
 
 // freezeTimes gives every entry under root, symlinks apart, the time when through set (os.Chtimes
