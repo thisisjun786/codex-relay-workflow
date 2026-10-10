@@ -44,7 +44,9 @@ func SessionHookSessionStart(p SessionHookSessionStartPayload) string {
 
 // SessionHookPostCompact is handlePostCompact (hook.ts:2025-2033): a context compaction resets the
 // reinjection cursor of an in-flight cycle, so the first eligible same-phase prompt injects the full
-// phase directive (mode 2) instead of the short stage header (mode 3). Nothing else is touched — not
+// phase directive (mode 2) instead of the short stage header (mode 3). The turns the dedup list holds were
+// answered in the context the compaction removed, so they are dropped with the cursor (CRW-1090 evaluation d1: the dedup
+// holds within one context generation; docs/port-cxc/known-defects/CRW-1090.md). Nothing else is touched — not
 // the phase, the flags, the stagnation counters, the goalplan or the goal database — and the handler
 // answers nothing.
 //
@@ -74,7 +76,7 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 		if err != nil {
 			return nil
 		}
-		fresh.LastInjectedPhase = nil
+		fresh.LastInjectedPhase, fresh.InjectedTurns = nil, []string{}
 		if !state.RewriteKeepsStored(raw, fresh) || state.DcloseRecoveryLegacy(fresh) {
 			return nil
 		}
@@ -83,10 +85,11 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 	return ""
 }
 
-// sessionHookPostCompactEligible is the oracle's guard: an orchestrated cycle is in flight and the
-// reinjection cursor still holds a phase, so there is something to reset.
+// sessionHookPostCompactEligible is the oracle's guard, widened by the turns (CRW-1090 evaluation d1): an orchestrated
+// cycle is in flight and the reinjection cursor still holds a phase, or the dedup list still holds turns, so there is
+// something to reset.
 func sessionHookPostCompactEligible(s state.State) bool {
-	return s.OrchestrationActive && s.Phase != state.PhaseIdle && s.LastInjectedPhase != nil
+	return s.OrchestrationActive && s.Phase != state.PhaseIdle && (s.LastInjectedPhase != nil || len(s.InjectedTurns) > 0)
 }
 
 // SessionHookPostToolUse is handlePostToolUse (hook.ts:1951-1992): a request_user_input round is

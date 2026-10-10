@@ -1,7 +1,7 @@
 // prompt_trigger_crw1090_test.go holds CRW-1090: the R-11 guards read the transcript tail as Codex rollout records. A
 // stage marker counts only in a developer record a hook injected after the last compaction, and context pressure only
 // in a compaction record that no user turn has followed yet. The records below are the shapes a Codex 0.13x rollout
-// writes (the S4-resilience rollout of the 10-10 isolated trial, testdata/crw1090).
+// writes (the S4-resilience rollout of the 10-10 isolated trial; the wired reproduction is in prompt_submit_legs_crw1090_test.go).
 package hook
 
 import (
@@ -198,5 +198,55 @@ func TestCRW1090CompactionPressureLastsUntilTheNextUserTurn(t *testing.T) {
 	})
 	if got := promptTriggerAnswer(t, pcwd, "s1", "t3", "go on", ptranscript, true); got != WithFooter(PhaseDirective(state.PhaseB, nil), state.PhaseB) {
 		t.Errorf("the prompt after a compaction answered %q", got)
+	}
+}
+
+// TestCRW1090CompactionPressureOutlivesTheTailWindow is evaluation d2: the recovery window is the time until the next user
+// prompt, not the time until the compaction scrolls out of the 64 KiB tail. A Stop with an ACTIVE goal after a compaction
+// and more than 64 KiB of tool output, with no prompt in between, still releases without spending the budget.
+func TestCRW1090CompactionPressureOutlivesTheTailWindow(t *testing.T) {
+	compaction := codexUserTurn(t, "build it") + codexHookContext(t, "[crw — B: BUILD]") + codexCompaction(t, "[crw — B: BUILD]")
+	output := strings.Repeat(codexLine(t, "response_item", map[string]any{"type": "function_call_output", "call_id": "c", "output": strings.Repeat("w", 900)}), 300)
+	cwd, env := stopRig(t, "active")
+	stopInFlight(t, cwd, state.PhaseB)
+	transcript := writeTranscript(t, cwd, compaction+output)
+	before := stopStateBytes(t, cwd)
+	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript}, "linux", env); a != (StopAnswer{}) {
+		t.Errorf("the Stop after a compaction and %d bytes of output did not release: %+v", len(output), a)
+	}
+	if stopStateBytes(t, cwd) != before {
+		t.Error("the release spent the budget")
+	}
+	transcript = writeTranscript(t, cwd, compaction+codexUserTurn(t, "continue")+output)
+	if a := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID, TranscriptPath: transcript}, "linux", env); !strings.Contains(a.Stdout, `"decision":"block"`) {
+		t.Errorf("a prompt recorded after the compaction, with %d bytes after it, did not end the pressure: %+v", len(output), a)
+	}
+}
+
+// TestCRW1090ATurnIdReusedAfterACompactionIsAnsweredAgain is evaluation d1: the turn dedup holds within one context
+// generation. PostCompact, which resets the injection cursor because the compaction removed the directive, drops the turns
+// recorded before it, so a turn id the host reuses after the compaction gets the full directive; a repeat of that turn in
+// the same generation is still answered once.
+func TestCRW1090ATurnIdReusedAfterACompactionIsAnsweredAgain(t *testing.T) {
+	cwd := t.TempDir()
+	cursor := state.PhaseP
+	transcript := writeTranscript(t, cwd, codexUserTurn(t, "plan it")+codexHookContext(t, "[crw: PLAN]\nWrite a plan"))
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+		s.Phase, s.OrchestrationActive, s.LastInjectedPhase, s.InjectedTurns = state.PhaseP, true, &cursor, []string{"t1", "t2"}
+	})
+	if got := promptTriggerAnswer(t, cwd, "s1", "t1", "keep going", transcript, true); got != "" {
+		t.Fatalf("a recorded turn answered %q", got)
+	}
+	transcript = writeTranscript(t, cwd, codexUserTurn(t, "plan it")+codexHookContext(t, "[crw: PLAN]\nWrite a plan")+codexCompaction(t, "[crw: PLAN]"))
+	SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "s1"})
+	if s := state.ReadState(cwd, "s1"); len(s.InjectedTurns) != 0 || s.LastInjectedPhase != nil {
+		t.Errorf("PostCompact left turns %v, cursor %v", s.InjectedTurns, s.LastInjectedPhase)
+	}
+	want := WithFooter(PhaseDirective(state.PhaseP, nil), state.PhaseP)
+	if got := promptTriggerAnswer(t, cwd, "s1", "t1", "keep going", transcript, true); got != want {
+		t.Errorf("a turn id reused after the compaction answered %q, want the full directive", got)
+	}
+	if got := promptTriggerAnswer(t, cwd, "s1", "t1", "keep going", transcript, true); got != "" {
+		t.Errorf("a repeat of the turn in the new generation answered %q", got)
 	}
 }

@@ -105,7 +105,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if plan == nil || goalplan.RemainingWorkAwaitsDecisions(plan) {
 			return StopAnswer{}
 		}
-		if host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes).ContextPressure() {
+		if host.TranscriptContextPressure(p.TranscriptPath) {
 			return StopAnswer{}
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State) string {
@@ -124,7 +124,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if plan := stopSafeReadBoundGoalplan(p.Cwd, st.Slug); plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan) {
 		return StopAnswer{}
 	}
-	if host.ReadTranscriptGeneration(p.TranscriptPath, host.TailBytes).ContextPressure() {
+	if host.TranscriptContextPressure(p.TranscriptPath) {
 		return StopAnswer{}
 	}
 	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State) string {
