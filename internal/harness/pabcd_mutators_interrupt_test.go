@@ -323,8 +323,11 @@ func TestPabcdLoopSteerBinaryEndsOnTheFirstInterruptOnAnOpenStdin(t *testing.T) 
 // lock 35 ms later. The row must end with 130, print nothing and leave every byte as it was.
 //
 // Nothing shows from outside that the child has reached the lock wait, so a run that the signal reached
-// before the process installed its handler (killed by SIGINT, no exit code) or that gave its wait up
-// before the signal (the host was too busy to start it in time) is repeated, up to five times.
+// before the process installed its handler (killed by SIGINT, no exit code), that gave its wait up before the
+// signal (the host was too busy to start it in time) or that only reached the lock after the test had dropped
+// it (the host started it later than signal and release together: it publishes and exits 0, CRW-1167) is
+// repeated, up to five times, with the signal (and the release after it) 40 ms later than the last time, up to 120 ms. The
+// base's own answer is the same exit 0 on every attempt, so a regression still fails the fifth.
 func TestPabcdSessionLockRowsBinaryEndOnTheFirstInterrupt(t *testing.T) {
 	crw := testsupport.CRW(t)
 	for _, name := range []string{"memory allow-write", "scan record"} {
@@ -349,7 +352,7 @@ func TestPabcdSessionLockRowsBinaryEndOnTheFirstInterrupt(t *testing.T) {
 				}
 				done := make(chan error, 1)
 				go func() { done <- cmd.Wait() }()
-				time.Sleep(40 * time.Millisecond)
+				time.Sleep(min(time.Duration(attempt)*40*time.Millisecond, 120*time.Millisecond)) // later while the host proves slower, inside the 250 ms wait
 				_ = cmd.Process.Signal(syscall.SIGINT)
 				time.Sleep(35 * time.Millisecond)
 				_ = os.Remove(lockPath)
@@ -361,7 +364,7 @@ func TestPabcdSessionLockRowsBinaryEndOnTheFirstInterrupt(t *testing.T) {
 					t.Fatalf("the run was still alive 5 s after the SIGINT\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 				}
 				code := cmd.ProcessState.ExitCode()
-				if attempt < 5 && (code == -1 || code == 1 && strings.Contains(stdout.String(), "lock")) {
+				if attempt < 5 && (code == -1 || code == 0 || code == 1 && strings.Contains(stdout.String(), "lock")) {
 					continue
 				}
 				if code != Interrupted {
@@ -404,9 +407,11 @@ func TestPabcdLoopSteerRefusalOnAnEndedContextIsSilent(t *testing.T) {
 // (serve installs it at the top of main, after the Go runtime and every package initialiser; /proc shows the
 // runtime's own handler from the first instruction). A signal that lands in that start-up window meets SIGINT's
 // default disposition, which is by design (decision 42, cmd/crw serve): the child is killed by the signal and has
-// no exit code (CRW-1167: 94 of 600 SIGINT subtests under a 24-process CPU load). That outcome says nothing
-// about the row, so the case reads it from the wait status (killed by SIGINT, not exit code -1 by accident) and
-// runs the case again on a fresh home, up to pabcd1167Attempts times; every other answer is judged as before.
+// no exit code (CRW-1167: 94 of 600 SIGINT subtests under a 24-process CPU load, where a fixed 20 ms delay is
+// shorter than the process start). That outcome says nothing about the row, so the case reads it from the wait
+// status (killed by SIGINT, not exit code -1 by accident) and runs again on a fresh home with the signal twice as
+// late, up to pabcd1167Attempts times, so the delay follows the host's start-up time; every other answer
+// (130 or the refusal's 1, no output on 130, no lock left, the FIFO still in place) is judged as before.
 func TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter(t *testing.T) {
 	crw := testsupport.CRW(t)
 	for _, name := range []string{"loop steer", "memory allow-write", "scan record"} {
@@ -422,8 +427,12 @@ func TestPabcdMutatorRowsBinaryEndOnASessionFileThatIsAFIFOWithAnOpenWriter(t *t
 	}
 }
 
-// pabcd1167Attempts bounds the runs of one SIGINT case whose signal beat the child's handler.
-const pabcd1167Attempts = 40
+// pabcd1167Attempts bounds the runs of one SIGINT case whose signal beat the child's handler; the signal's delay
+// starts at 20 ms and doubles per attempt up to pabcd1167MaxDelay.
+const (
+	pabcd1167Attempts = 12
+	pabcd1167MaxDelay = 640 * time.Millisecond
+)
 
 // pabcd1167FIFORun is one run of the FIFO case on a fresh home. It reports false, having judged nothing, when the
 // SIGINT killed the child before its handler existed and another attempt is left.
@@ -450,7 +459,7 @@ func pabcd1167FIFORun(t *testing.T, crw, name string, signalled bool, attempt in
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	if signalled {
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(min(20*time.Millisecond<<(attempt-1), pabcd1167MaxDelay))
 		_ = cmd.Process.Signal(syscall.SIGINT)
 	}
 	select {
