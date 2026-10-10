@@ -43,6 +43,10 @@ func TestOrchestrateArgsStrictOptions(t *testing.T) {
 		{"P", "--session", "s1", "--cwd"},
 		{"P", "--session", "--cwd", "/elsewhere"},
 		{"P", "--session", "s1", "--json=true"},
+		// CRW-1109 fix round: --attest swallows no option either.
+		{"reset", "--session", "s1", "--attest", "--cwd=/elsewhere"},
+		{"status", "--session", "s1", "--attest", "--cwd", "/elsewhere"},
+		{"P", "--session", "s1", "--attest", "--session=s2"},
 	} {
 		if p := ParseOrchestrateCliArgs(argv, "/ws"); p.Error == nil {
 			t.Errorf("%q was accepted: %+v", argv, p.Args)

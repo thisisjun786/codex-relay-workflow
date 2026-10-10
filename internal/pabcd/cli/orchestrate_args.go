@@ -204,7 +204,7 @@ func scanOrchestrateCliFlags(args []string, cwd string) orchestrateCliFlags {
 		if !inline && i+1 < len(args) {
 			i++
 			value, present = args[i], true
-			if strings.HasPrefix(value, "--") && name != "--attest" {
+			if strings.HasPrefix(value, "--") {
 				fail(name + " needs a value, but the next argument is the option " + value + " (use " + name + "=<value> for a value that starts with --)")
 				continue
 			}
