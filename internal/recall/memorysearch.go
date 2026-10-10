@@ -141,9 +141,18 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 			}
 		}
 		if tally {
-			// Presence is evidence the scoped search could return: a file the scope rejects adds none.
-			if keep, _ := memorySearchScopeAdjust(s.scope, fileCwd, lowerFile, repoKey); keep {
+			// Presence is evidence the scoped search could return, so it is judged the way the hits
+			// are: paragraph by paragraph. A term in a paragraph the scope rejects adds none, even
+			// when another paragraph of the same file mentions the cwd.
+			if s.scope == nil {
 				markGroupPresence(lowerFile, s.groups, s.present)
+			} else {
+				for _, chunk := range ParagraphChunks(content) {
+					lower := Lower(chunk.Text)
+					if keep, _ := memorySearchScopeAdjust(s.scope, fileCwd, lower, repoKey); keep {
+						markGroupPresence(lower, s.groups, s.present)
+					}
+				}
 			}
 		}
 		if !PlanMatches(lowerFile, plan) {
