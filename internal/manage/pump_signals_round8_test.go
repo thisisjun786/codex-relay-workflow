@@ -125,7 +125,8 @@ func TestPumpSignalCapacityRefusedCommitThenEntryMadeAndRemovedEndsTheProposal(t
 		t.Run(base.name, func(t *testing.T) {
 			f, cf, _ := pumpSignalTestNewPlan(t, base.write)
 			pumpSignalTestReplan(t, f, cf, []map[string]any{})
-			held, err := capacityEvaluate(context.Background(), cf.env, cf.cfg)
+			heldCfg := cf.cfg
+			held, err := capacityEvaluate(context.Background(), cf.env, heldCfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +142,14 @@ func TestPumpSignalCapacityRefusedCommitThenEntryMadeAndRemovedEndsTheProposal(t
 				}
 				interleaved = true
 				return report, func() error {
-					if err := held.Commit(); err != nil {
+					// The pump's read gives a state without a lineage one before it judges (round 9),
+					// which refuses a judgement made before it; the command line then judges again
+					// and commits, as Capacity does, still between the pump's evaluation and commit.
+					err := held.Commit()
+					if errors.Is(err, errCapacityStateMoved) {
+						_, err = Capacity(context.Background(), cf.env, heldCfg, false)
+					}
+					if err != nil {
 						t.Fatalf("the command line's commit: %v", err)
 					}
 					pumpCommit = commit()

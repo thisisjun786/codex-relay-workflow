@@ -233,6 +233,13 @@ var errCapacityStateMoved = errors.New("capacity: the state changed since it was
 // than capacityLockWait. Nothing is written and the caller's next evaluation repeats the commit.
 var errCapacityStateBusy = errors.New("capacity: the state is locked by another writer")
 
+// errCapacityStateUnsynced is a write that renamed the new state into place but whose directory
+// sync failed: the state now reads as written, but a power loss can still take it back. A caller that
+// reports the judgement (the command line) still reports it, since the state it wrote already
+// records the alert; one that builds on the commit (the pump) treats it as not made and syncs the
+// directory before it builds on the next read (capacityStateDurable).
+var errCapacityStateUnsynced = errors.New("capacity: the state was written but its directory sync failed")
+
 // capacityLockWait bounds how long a commit waits for the state's lock. A writer holds it for one
 // small file write, so a longer hold is a writer that stopped, and the commit gives up rather than
 // holding up its caller (the pump's round, whose other sources and deliveries come after it).
@@ -267,7 +274,9 @@ func capacityFamilyOf(ref capacityPlanRef) string {
 // Capacity judges whether there is room to add a parent, and why not. It emits the judgement and
 // its evidence and changes nothing outside its own state file; creating projects and starting
 // parents is the management session's work. dry judges without writing that state, and a relay read
-// failure is an error the command reports as exit 3.
+// failure is an error the command reports as exit 3. A commit whose write landed but whose directory
+// sync failed returns the report together with errCapacityStateUnsynced: the state already records
+// the alerts the report carries, so dropping the report would leave them reported to nobody.
 func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, error) {
 	for attempt := 1; ; attempt++ {
 		ev, err := capacityEvaluate(ctx, e, cfg)
@@ -281,6 +290,8 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 		// newer state rather than overwritten, and so is one whose lock another writer held.
 		if err := ev.Commit(); err == nil {
 			return ev.Report, nil
+		} else if errors.Is(err, errCapacityStateUnsynced) {
+			return ev.Report, err
 		} else if !(errors.Is(err, errCapacityStateMoved) || errors.Is(err, errCapacityStateBusy)) || attempt == capacityCommitAttempts {
 			return CapacityReport{}, err
 		}
@@ -580,6 +591,25 @@ func capacityCommitState(path string, base string, next capacityState) error {
 	return capacityWriteState(path, next)
 }
 
+// capacityStateEstablishLineage writes the capacity state at path again as it reads, when it carries
+// no lineage (no file, one that cannot be decoded, or one written before files carried a lineage),
+// so that it carries one: the write changes no entry, no persistence clock and no alerted set, and
+// only names the generation (capacityCommitState starts the lineage). A state another writer replaced
+// first is left to that writer, and a state that cannot be read is left for the caller's read to
+// report. A lifecycle proposal made on a state with a lineage is told from one made on a file that
+// was lost, or lost and written again with the same bytes, which a stamp of no file or of a file's
+// content cannot tell (capacityLifecycleProposal.holds).
+func capacityStateEstablishLineage(path string) error {
+	state, stamp := capacityLoadState(path)
+	if stamp == capacityStampUnreadable || state.Lineage != "" {
+		return nil
+	}
+	if err := capacityCommitState(path, stamp, state); err != nil && !errors.Is(err, errCapacityStateMoved) {
+		return fmt.Errorf("capacity: give the state a lineage: %w", err)
+	}
+	return nil
+}
+
 // capacityStateDurable makes the capacity state at path durable as it now reads, by syncing its
 // directory: a write that renamed a state into place but whose directory sync failed can otherwise
 // still be taken back by a power loss, after a caller built on it as made. No directory holds no
@@ -644,7 +674,10 @@ func capacityWriteState(path string, state capacityState) error {
 		os.Remove(name)
 		return writeErr
 	}
-	return capacityStateIO.syncDir(dir)
+	if err := capacityStateIO.syncDir(dir); err != nil {
+		return fmt.Errorf("%w: %w", errCapacityStateUnsynced, err)
+	}
+	return nil
 }
 
 // capacityTempFile is the part of a temporary file the state write uses.
@@ -712,9 +745,15 @@ func capacityRun(ctx context.Context, e *Env, args []string) int {
 		}
 	}
 	report, err := Capacity(ctx, e, capacityConfig(e), dry)
-	if err != nil {
+	if err != nil && !errors.Is(err, errCapacityStateUnsynced) {
 		fmt.Fprintf(e.Stderr, "crw manage capacity: error: %v\n", err)
 		return capacityReadFailureExit
+	}
+	if err != nil {
+		// The state was renamed into place and records the alerts of this report; only its
+		// directory sync failed. The report is the judgement made, so it is printed, and a power
+		// loss that takes the write back makes the next run judge the alert again.
+		fmt.Fprintf(e.Stderr, "crw manage capacity: warning: %v\n", err)
 	}
 	if asText {
 		for _, line := range capacityLines(report) {

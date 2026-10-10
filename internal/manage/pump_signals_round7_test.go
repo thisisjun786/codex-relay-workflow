@@ -114,6 +114,12 @@ func TestPumpSignalCapacityNewPlanKeepsItsAlertIdAcrossANoopCommandLineCommit(t 
 	if err := os.WriteFile(filepath.Join(cf.stateDir, capacityStateFile), []byte(`{"plans":{}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The state carries a lineage, as every state the pump has read once does (round 9): the
+	// pump's read then writes nothing before its evaluation, and the command line's judgement made
+	// before it can still be committed in between.
+	if err := capacityStateEstablishLineage(filepath.Join(cf.stateDir, capacityStateFile)); err != nil {
+		t.Fatal(err)
+	}
 	pumpSignalTestReplan(t, f, cf, []map[string]any{})
 	held, err := capacityEvaluate(context.Background(), cf.env, cf.cfg)
 	if err != nil {

@@ -135,50 +135,77 @@ func pumpSignalTestHoldCapacityLock(t *testing.T, stateDir string) func() {
 
 // A capacity lock another process holds fails the commit within a bound: the round goes on to the
 // other sources' events and the rest of the round, the alert stays pending, and the next round,
-// with the lock free, converges on the same id and commits.
+// with the lock free, converges on the same id and commits. A state without a lineage (round 9)
+// cannot be given one behind the lock, so that read is unmeasured instead: the round still goes on,
+// and the alert is judged, under one id, once the lock is free.
 func TestPumpSignalBusyCapacityLockDoesNotHoldUpTheRound(t *testing.T) {
-	f, cf, _ := pumpSignalRealCapacity(t)
-	pumpTestSwapSources(t, pumpSignalCapacitySource{}, pumpSignalAuditSource{})
-	pumpSignalTestWriteAlerts(t, f, pumpSignalTestAlertA+"\n")
-	release := pumpSignalTestHoldCapacityLock(t, cf.stateDir)
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := pumpRound(context.Background(), f.e, f.cfg, pumpSettingsFrom(f.cfg), false)
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("round: %v", err)
+	for _, lineage := range []bool{true, false} {
+		name := "state_with_a_lineage"
+		if !lineage {
+			name = "state_without_a_lineage"
 		}
-	case <-time.After(5 * time.Second):
-		release()
-		<-done
-		t.Fatal("the round waited on the busy capacity lock")
-	}
-	st := pumpTestReadState(t, f.cfg)
-	if len(st.Pending) != 2 {
-		t.Fatalf("pending = %v, want the capacity alert and the audit line", pumpSignalIDs(st.Pending))
-	}
-	first := st.Pending[0].ID
-	if !strings.HasPrefix(first, pumpSignalCapacityName) {
-		t.Fatalf("pending = %v, want the capacity alert first", pumpSignalIDs(st.Pending))
-	}
-	if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 0 {
-		t.Fatalf("stored = %+v, want nothing committed behind the busy lock", got)
-	}
-	if logged, err := os.ReadFile(filepath.Join(f.cfg.StateDir, pumpLogFile)); err != nil || !strings.Contains(string(logged), "commit") {
-		t.Fatalf("pump.log = %q, %v; want the failed commit logged", logged, err)
-	}
+		t.Run(name, func(t *testing.T) {
+			f, cf, _ := pumpSignalRealCapacity(t)
+			if lineage {
+				if err := capacityStateEstablishLineage(filepath.Join(cf.stateDir, capacityStateFile)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pumpTestSwapSources(t, pumpSignalCapacitySource{}, pumpSignalAuditSource{})
+			pumpSignalTestWriteAlerts(t, f, pumpSignalTestAlertA+"\n")
+			release := pumpSignalTestHoldCapacityLock(t, cf.stateDir)
 
-	release()
-	f.advance(31 * time.Minute)
-	st = f.round()
-	if len(st.Pending) != 2 || st.Pending[0].ID != first {
-		t.Fatalf("pending = %v, want the same capacity id %s after the lock was freed", pumpSignalIDs(st.Pending), first)
-	}
-	if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 2 {
-		t.Fatalf("stored = %+v, want the alert committed once the lock is free", got)
+			done := make(chan error, 1)
+			go func() {
+				_, err := pumpRound(context.Background(), f.e, f.cfg, pumpSettingsFrom(f.cfg), false)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("round: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				release()
+				<-done
+				t.Fatal("the round waited on the busy capacity lock")
+			}
+			st := pumpTestReadState(t, f.cfg)
+			first := ""
+			if lineage {
+				if len(st.Pending) != 2 {
+					t.Fatalf("pending = %v, want the capacity alert and the audit line", pumpSignalIDs(st.Pending))
+				}
+				first = st.Pending[0].ID
+				if !strings.HasPrefix(first, pumpSignalCapacityName) {
+					t.Fatalf("pending = %v, want the capacity alert first", pumpSignalIDs(st.Pending))
+				}
+			} else if len(st.Pending) != 1 || !strings.HasPrefix(st.Pending[0].ID, pumpSignalAuditName) || st.Sources[pumpSignalCapacityName] != pumpSourceUnmeasured {
+				t.Fatalf("pending = %v sources = %v, want the audit line and the capacity read unmeasured", pumpSignalIDs(st.Pending), st.Sources)
+			}
+			if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 0 {
+				t.Fatalf("stored = %+v, want nothing committed behind the busy lock", got)
+			}
+			want := "commit"
+			if !lineage {
+				want = "lineage"
+			}
+			if logged, err := os.ReadFile(filepath.Join(f.cfg.StateDir, pumpLogFile)); err != nil || !strings.Contains(string(logged), want) {
+				t.Fatalf("pump.log = %q, %v; want the failed write logged", logged, err)
+			}
+
+			release()
+			f.advance(31 * time.Minute)
+			st = f.round()
+			if lineage && (len(st.Pending) != 2 || st.Pending[0].ID != first) {
+				t.Fatalf("pending = %v, want the same capacity id %s after the lock was freed", pumpSignalIDs(st.Pending), first)
+			}
+			if !lineage && (len(st.Pending) != 2 || !strings.HasPrefix(st.Pending[1].ID, pumpSignalCapacityName)) {
+				t.Fatalf("pending = %v, want the capacity alert once the lock was freed", pumpSignalIDs(st.Pending))
+			}
+			if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 2 {
+				t.Fatalf("stored = %+v, want the alert committed once the lock is free", got)
+			}
+		})
 	}
 }

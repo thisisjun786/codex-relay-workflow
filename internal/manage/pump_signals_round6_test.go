@@ -208,6 +208,12 @@ func TestPumpSignalCapacityNoopCommandLineCommitKeepsTheAlertId(t *testing.T) {
 	f, cf, _ := pumpSignalRealCapacity(t)
 	capacityTestState(t, cf, "p-crw-129", capacityTestNow.Add(-29*time.Minute), []string{"CRW-1", "CRW-2"}, nil, time.Time{})
 	capacityTestStoreLifecycle(t, cf, "p-crw-129", "stored-lifecycle")
+	// The state carries a lineage, as every state the pump has read once does (round 9): the
+	// pump's read then writes nothing before its evaluation, and the command line's judgement made
+	// before it can still be committed in between.
+	if err := capacityStateEstablishLineage(filepath.Join(cf.stateDir, capacityStateFile)); err != nil {
+		t.Fatal(err)
+	}
 	held, err := capacityEvaluate(context.Background(), cf.env, cf.cfg)
 	if err != nil {
 		t.Fatal(err)

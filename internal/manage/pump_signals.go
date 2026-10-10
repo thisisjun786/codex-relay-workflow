@@ -97,20 +97,54 @@ func pumpSignalDagReviewRead(ctx context.Context, e *Env, cfg *Config) (Review, 
 // commit of the alerted state; a dry read returns no commit and writes nothing.
 var pumpSignalCapacity = pumpSignalCapacityRead
 
-// pumpSignalCapacityRead is the real read: a dry read is Capacity(dry=true); otherwise the pure
-// evaluation, whose Commit the pump calls once the alert events are durable. The pump settles its
-// alert records and drops its lifecycle proposals on what the evaluation read, so that state is
-// made durable first (capacityStateDurable): a commit renamed into place whose directory sync failed
-// is not taken for made while a power loss can still take it back. A sync that fails is a failed
-// read, which the source reports unmeasured.
+// pumpSignalCapacityRead is the real read: the pure evaluation, whose Commit the pump calls once the
+// alert events are durable (a dry read returns no commit and writes nothing).
+//
+// A capacity state nobody can read is a failed read, which the source reports unmeasured: the
+// judgement would be made against an empty state it cannot commit over, and judged again on every
+// read (under the default persist_minutes such a judgement never alerts at all, since the state
+// cannot keep the persistence clock).
+//
+// The pump judges a plan whose entry carries no lifecycle only on a capacity state with a lineage.
+// A proposal made on no file, or on a file told only by its content, cannot be told from the same
+// file lost and written again (capacityLifecycleProposal.holds); one made on a lineage can. So when
+// plans are configured, the read first writes a state without a lineage again as it reads
+// (capacityStateEstablishLineage), and a write that fails (another writer holds the lock, the
+// directory cannot be written) is a failed read: the commit could not be made either, and the
+// alert is judged once the state can be written instead of under a new lifecycle on every read. An
+// evaluation that still read no lineage (the state was replaced while it was read) is a failed read
+// too.
+//
+// The pump settles its alert records and drops its lifecycle proposals on what the evaluation read,
+// so that state is made durable first (capacityStateDurable): a commit renamed into place whose
+// directory sync failed is not taken for made while a power loss can still take it back. A sync that
+// fails is a failed read.
 func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, func() error, error) {
-	if dry {
-		report, err := Capacity(ctx, e, cfg, true)
-		return report, nil, err
+	statePath := crwconfig.JoinRoot(cfg.StateDir, capacityStateFile)
+	settings := capacitySettings{}
+	if !dry && cfg.Section("capacity", &settings) == nil && len(settings.Plans) > 0 {
+		if err := capacityStateEstablishLineage(statePath); err != nil {
+			return CapacityReport{}, nil, err
+		}
 	}
 	ev, err := capacityEvaluate(ctx, e, cfg)
 	if err != nil {
 		return CapacityReport{}, nil, err
+	}
+	if ev.base == capacityStampUnreadable {
+		reason := "it changed while it was read"
+		if _, err := os.ReadFile(ev.statePath); err != nil {
+			reason = err.Error()
+		}
+		return CapacityReport{}, nil, fmt.Errorf("the capacity state cannot be read: %s", reason)
+	}
+	if dry {
+		return ev.Report, nil, nil
+	}
+	for _, plan := range ev.Report.Plans {
+		if plan.proposal != nil && plan.proposal.Lineage == "" {
+			return CapacityReport{}, nil, errors.New("the capacity state was replaced by one without a lineage while it was read")
+		}
 	}
 	if err := capacityStateDurable(ev.statePath); err != nil {
 		return CapacityReport{}, nil, err
@@ -591,10 +625,12 @@ func pumpSignalCapacityStore(st *pumpState, plan string, rec pumpSignalCapacityR
 	}
 }
 
+// pumpSignalWaitingHash is the digest of a waiting set, whole: it decides whether a record and an
+// id are the same alert, so two different sets must never share it (a prefix of it can).
 func pumpSignalWaitingHash(waiting []string) string {
 	data, _ := json.Marshal(waiting)
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])[:8]
+	return hex.EncodeToString(sum[:])
 }
 
 // pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep.

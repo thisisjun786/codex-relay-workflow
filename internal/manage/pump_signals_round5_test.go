@@ -119,6 +119,11 @@ func pumpSignalExpiringHTTP(t *testing.T) {
 func TestPumpSignalTimedOutCapacityEvaluationIsUnmeasured(t *testing.T) {
 	f, cf, _ := pumpSignalRealCapacity(t)
 	statePath := filepath.Join(cf.stateDir, capacityStateFile)
+	// The state carries a lineage, as every state the pump has read once does (round 9), so the
+	// read writes nothing before its evaluation and the file must be byte for byte as it was.
+	if err := capacityStateEstablishLineage(statePath); err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatal(err)
