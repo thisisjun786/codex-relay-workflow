@@ -3,7 +3,9 @@
 package ci
 
 import (
+	"archive/zip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -279,5 +281,86 @@ func Test1188_GoModTidyCheckSkipsAnIncompleteModuleCache(t *testing.T) {
 	if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, validated) ||
 		!strings.Contains(got.stdout, "go mod tidy check skipped: the module cache lacks a module") {
 		t.Errorf("incomplete cache: %+v", got)
+	}
+}
+
+// cachedModule builds a module cache holding example.com/dep v1.0.0 without any network: the module
+// is served from a file:// proxy once into a fresh GOMODCACHE, so the cache has the module files but
+// no go.sum and no checksum database entry. It returns the cache directory.
+func cachedModule(t *testing.T) string {
+	t.Helper()
+	proxy := filepath.Join(t.TempDir(), "proxy", "example.com", "dep", "@v")
+	if err := os.MkdirAll(proxy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gomod := "module example.com/dep\n\ngo 1.27\n"
+	archive, err := os.Create(filepath.Join(proxy, "v1.0.0.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := zip.NewWriter(archive)
+	for name, body := range map[string]string{"go.mod": gomod, "dep.go": "package dep\n"} {
+		f, err := w.Create("example.com/dep@v1.0.0/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"v1.0.0.mod": gomod, "v1.0.0.info": `{"Version":"v1.0.0","Time":"2024-01-01T00:00:00Z"}`, "list": "v1.0.0\n"} {
+		if err := os.WriteFile(filepath.Join(proxy, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache := t.TempDir()
+	seed := t.TempDir()
+	for name, body := range map[string]string{"go.mod": "module example.com/seed\n\ngo 1.27\n\nrequire example.com/dep v1.0.0\n",
+		"seed.go": "package seed\n\nimport _ \"example.com/dep\"\n"} {
+		if err := os.WriteFile(filepath.Join(seed, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("go", "mod", "download", "example.com/dep")
+	cmd.Dir = seed
+	cmd.Env = append(os.Environ(), "GOMODCACHE="+cache, "GOPROXY=file://"+filepath.Dir(filepath.Dir(filepath.Dir(proxy))),
+		"GOSUMDB=off", "GOFLAGS=-mod=mod -modcacherw", "GOTOOLCHAIN=local", "GOWORK=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("seeding the module cache: %v\n%s", err, out)
+	}
+	return cache
+}
+
+// Test1188_GoModTidyCheckNeverAsksTheChecksumDatabase: a module whose files are cached but whose go.sum
+// lines are missing must not make validate reach for the checksum database (here a refused local port).
+// The missing go.sum lines are what go mod tidy would add, so validate reports that difference, not a
+// network error; with the lines written the same fixture passes.
+func Test1188_GoModTidyCheckNeverAsksTheChecksumDatabase(t *testing.T) {
+	cache := cachedModule(t)
+	r := validateRepo(t)
+	r.write("go.mod", "module example.com/x\n\ngo 1.27\n\nrequire example.com/dep v1.0.0\n")
+	r.write("x.go", "package x\n\nimport _ \"example.com/dep\"\n")
+	env := []string{"GITHUB_EVENT_NAME=", "BLOB_RANGE_BASE=", "GOMODCACHE=" + cache, "GOSUMDB=sum.golang.org http://127.0.0.1:1", "GOPROXY=http://127.0.0.1:1"}
+	got := goCheck(t, r.root, env, "validate")
+	if got.code != 1 || strings.Contains(got.stderr, "127.0.0.1") ||
+		!strings.Contains(got.stderr, "go.mod or go.sum is not what go mod tidy writes") ||
+		!strings.Contains(got.stderr, "+example.com/dep v1.0.0 h1:") {
+		t.Errorf("missing go.sum lines: %+v", got)
+	}
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = r.root
+	tidy.Env = append(os.Environ(), "GOMODCACHE="+cache, "GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local", "GOWORK=off")
+	if out, err := tidy.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy: %v\n%s", err, out)
+	}
+	got = goCheck(t, r.root, env, "validate")
+	if got.code != 0 || got.stderr != "" || !strings.HasSuffix(got.stdout, tidyOK) {
+		t.Errorf("tidy fixture: %+v", got)
 	}
 }
