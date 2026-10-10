@@ -103,5 +103,8 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		}
 	}
 	defer func() { _ = removeFile(lockPath) }()
+	// CRW-1097: an event an earlier writer of the session left pending is judged now, from the state that writer left, before this
+	// holder changes anything, so no later drain mistakes this holder's write for the event's transition.
+	JudgeLedgerOutbox(cwd, sessionID)
 	return fn()
 }

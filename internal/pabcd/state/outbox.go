@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,12 @@ type LedgerEvent struct {
 	LedgerOffset int64  `json:"ledgerOffset"`
 	Published    bool   `json:"published,omitempty"`
 	RowRecorded  bool   `json:"rowRecorded,omitempty"`
+	// RowAppended says the row was appended to a ledger this process may write but not read (a write-only file): its presence
+	// cannot be looked up, so a retry that finds the event still pending only makes the append durable and does not append again.
+	RowAppended bool `json:"rowAppended,omitempty"`
+	// NeedsReadableLedger marks an event prepared while the ledger could not be read, so whether it already holds the row was not
+	// known: its row is appended only once the ledger can be searched, never blind.
+	NeedsReadableLedger bool `json:"needsReadableLedger,omitempty"`
 	// RowEnd is the ledger offset just after the row once it is recorded, so the events after it never take that row (or an
 	// identical one of an earlier event) for their own.
 	RowEnd   int64           `json:"rowEnd,omitempty"`
@@ -83,7 +90,7 @@ func NewLedgerEvent(cwd string, pre, post State, row *LedgerEntry, followup json
 		return LedgerEvent{}, err
 	}
 	ev := LedgerEvent{
-		ID: "ev-" + hex.EncodeToString(raw[:]), SessionID: pre.SessionID, Seq: time.Now().UnixNano(),
+		ID: "ev-" + hex.EncodeToString(raw[:]), SessionID: pre.SessionID, Seq: nextLedgerSeq(cwd, pre.SessionID),
 		PrePhase: pre.Phase, PostPhase: post.Phase, PreDigest: stateDigest(pre), PostDigest: stateDigest(post),
 		PreUpdatedAt: pre.UpdatedAt, Followup: followup,
 	}
@@ -102,6 +109,27 @@ func NewLedgerEvent(cwd string, pre, post State, row *LedgerEntry, followup json
 		return LedgerEvent{}, err
 	}
 	return ev, nil
+}
+
+// nextLedgerSeq is the sequence of an event prepared now: the clock's nanoseconds, but always above every sequence still pending in the
+// session's outbox. The caller holds the session lock, which serialises every preparation, so the sequence follows the order the
+// states were published even when the clock steps backwards between two events that are both still pending.
+func nextLedgerSeq(cwd, sessionID string) int64 {
+	seq := time.Now().UnixNano()
+	entries, err := os.ReadDir(ledgerOutboxDir(cwd, sessionID))
+	if err != nil {
+		return seq
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ledgerEventSuffix) || len(name) < 20 {
+			continue
+		}
+		if n, err := strconv.ParseInt(name[:20], 10, 64); err == nil && n >= seq {
+			seq = n + 1
+		}
+	}
+	return seq
 }
 
 // stateDigest is a digest of s as WriteState would publish it, without updatedAt, which the write stamps from its clock. "" when s
@@ -314,13 +342,24 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 			}
 			from := ev.LedgerOffset
 			end, present, err := ledgerFindLine(cwd, from, floor, ev.Line)
+			// A ledger the process may append to but not read (mode 0200) has always taken rows; it keeps taking them. Its
+			// content cannot be searched, so the event itself says whether its row was appended already.
+			blind := errors.Is(err, fs.ErrPermission) && !ev.NeedsReadableLedger
+			if blind {
+				end, present, err = 0, ev.RowAppended, nil
+			}
 			if err == nil && !present {
 				if err = AppendLedgerLine(cwd, ev.Line); err == nil {
 					report.Appended++
-					if end, present, err = ledgerFindLine(cwd, from, floor, ev.Line); err == nil && !present {
+					if blind {
+						ev.RowAppended = true
+					} else if end, present, err = ledgerFindLine(cwd, from, floor, ev.Line); err == nil && !present {
 						err = errors.New("the appended ledger row cannot be found again")
 					}
 				}
+			}
+			if err == nil && blind {
+				end = ledgerSize(cwd)
 			}
 			if err == nil {
 				err = syncLedger(cwd)
@@ -415,8 +454,11 @@ func cmpErr(first, next error) error {
 }
 
 // ledgerEventPublished judges, from the state found now, whether ev's transition was published. The digest of the whole state
-// decides when it matches either side; the phase decides next, for a transition that moves it; and a state whose updatedAt is still
-// the one it carried before was not written since.
+// decides when it matches either side; the phase decides next, for a transition that moves it. A transition that keeps its phase
+// and whose state matches neither side cannot be shown to have been published (another writer changed the state, and a changed
+// updatedAt proves only that), and a row must never describe a transition that did not happen, so it counts as not published; the
+// lock-time judgement (JudgeLedgerOutbox) makes that case unreachable for the writers of the session. A state whose updatedAt is
+// still the one it carried before was not written since, which decides a transition whose two sides are the same digest.
 func ledgerEventPublished(ev LedgerEvent, current State, currentDigest string) bool {
 	if ev.PostDigest != ev.PreDigest && currentDigest != "" {
 		switch currentDigest {
@@ -433,8 +475,42 @@ func ledgerEventPublished(ev LedgerEvent, current State, currentDigest string) b
 		case ev.PrePhase:
 			return false
 		}
+	} else if ev.PostDigest != ev.PreDigest && currentDigest != "" {
+		return false
 	}
 	return current.UpdatedAt != ev.PreUpdatedAt
+}
+
+// JudgeLedgerOutbox settles, for every pending event of the session that no judgement has reached, whether its transition was
+// published: a published one is recorded as such in its file, one that was not is dropped. It writes no ledger row and runs no
+// followup. WithSessionLock calls it as soon as the lock is held, before the caller changes anything, so the state it judges from is
+// the one the event's writer left; any writer of the session, drained or not (memory grants, scans, evidence, Stop, PostCompact),
+// therefore leaves a verdict behind it and never a state that a later drain would mistake for the transition's. A state that cannot
+// be read leaves the events for a later drain. Best effort: a verdict that cannot be written is judged again.
+func JudgeLedgerOutbox(cwd, sessionID string) {
+	if _, err := os.Stat(ledgerOutboxDir(cwd, sessionID)); err != nil {
+		return
+	}
+	events, _, err := PendingLedgerEvents(cwd, sessionID)
+	if err != nil || len(events) == 0 {
+		return
+	}
+	current, unreadable := ReadStateStrict(cwd, sessionID)
+	if unreadable {
+		return
+	}
+	digest := stateDigest(current)
+	for _, ev := range events {
+		if ev.Published || ev.RowRecorded {
+			continue
+		}
+		if ledgerEventPublished(ev, current, digest) {
+			ev.Published = true
+			_ = writeLedgerEvent(cwd, ev)
+			continue
+		}
+		_ = AbortLedgerEvent(cwd, ev)
+	}
 }
 
 // ledgerFindLine reports whether the exact line stands in the transition ledger at or after offset, and the offset just after the
@@ -478,9 +554,22 @@ func ledgerFindLine(cwd string, offset, floor int64, line []byte) (end int64, fo
 	}
 }
 
-// syncLedgerFile is the fsync of a path; a variable so a test can fail it.
+// ledgerSize is the ledger's size in bytes, 0 when it cannot be learned.
+func ledgerSize(cwd string) int64 {
+	info, err := os.Stat(filepath.Join(cwd, crwdir.DirName, LedgerFile))
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// syncLedgerFile is the fsync of a path; a variable so a test can fail it. A file that may not be read is opened for writing, which
+// fsync accepts as well.
 var syncLedgerFile = func(path string) error {
 	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrPermission) {
+		f, err = os.OpenFile(path, os.O_WRONLY, 0)
+	}
 	if err != nil {
 		return err
 	}

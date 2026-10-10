@@ -12,7 +12,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -92,18 +91,28 @@ func RenderPhaseContext(s state.State, sessionID string) string {
 
 // RenderStatus ports :389-412, including the optional split-tree warning.
 func RenderStatus(s state.State, asJSON bool, elsewhere []string, selection string) (string, error) {
+	return renderStatusPending(s, asJSON, elsewhere, selection, 0)
+}
+
+// renderStatusPending is RenderStatus with the number of transition-ledger events the session still has pending (CRW-1097). Status
+// only reports them; it records nothing, and a count of 0 leaves the oracle's answer as it was.
+func renderStatusPending(s state.State, asJSON bool, elsewhere []string, selection string, pending int) (string, error) {
 	if asJSON {
 		return statusJSON(struct {
-			Phase       state.Phase `json:"phase"`
-			Flags       state.Flags `json:"flags"`
-			SessionID   string      `json:"sessionId"`
-			Selection   string      `json:"selection"`
-			AlsoFoundAt []string    `json:"alsoFoundAt,omitempty"`
-		}{s.Phase, s.Flags, s.SessionID, selection, elsewhere})
+			Phase               state.Phase `json:"phase"`
+			Flags               state.Flags `json:"flags"`
+			SessionID           string      `json:"sessionId"`
+			Selection           string      `json:"selection"`
+			AlsoFoundAt         []string    `json:"alsoFoundAt,omitempty"`
+			PendingLedgerEvents int         `json:"pendingLedgerEvents,omitempty"`
+		}{s.Phase, s.Flags, s.SessionID, selection, elsewhere, pending})
 	}
 	line := fmt.Sprintf("session=%s phase=%s interview=%t auditPassed=%t checkPassed=%t", s.SessionID, s.Phase, s.Flags.Interview, s.Flags.AuditPassed, s.Flags.CheckPassed)
 	if selection == "latest-file" {
 		line += " selection=latest-file (unverified terminal fallback)"
+	}
+	if pending > 0 {
+		line += fmt.Sprintf("\npending ledger rows: %d (status records nothing; the next orchestrate command or hook of this session does)", pending)
 	}
 	if len(elsewhere) == 0 {
 		return line, nil
@@ -249,26 +258,23 @@ func readStatus(a OrchestrateCliArgs, sessionID *string, hasNative bool, process
 	} else if hasNative {
 		selection = "native"
 	}
-	drainPendingLedgerForStatus(a.Cwd, *sessionID)
 	elsewhere := state.FindForeignSessionCopies(a.Cwd, *sessionID, SiblingRoots(a.Cwd, process))
-	output, err := RenderStatus(state.ReadState(a.Cwd, *sessionID), a.JSON, elsewhere, selection)
+	output, err := renderStatusPending(state.ReadState(a.Cwd, *sessionID), a.JSON, elsewhere, selection, pendingLedgerEventCount(a.Cwd, *sessionID))
 	return readAnswer(0, output), err
 }
 
-// drainPendingLedgerForStatus (CRW-1097) lets the status call of a session record the transition rows an earlier writer left pending, so
-// "the next CLI call of the session recovers them" holds for the read verb too. Only a session with a pending event takes its lock; a
-// lock that is busy or a drain that cannot finish leaves the rows pending and never changes the status answer.
-func drainPendingLedgerForStatus(cwd, sessionID string) {
+// pendingLedgerEventCount is the number of transition-ledger events the session has pending (CRW-1097). Status is a read
+// (phase-control.md: "status is read-only"; its latest-file selection is an unverified fallback), so it counts the outbox and
+// writes nothing: the rows are recorded, and the cleanups finished, by the next hook or orchestrate command of the session.
+func pendingLedgerEventCount(cwd, sessionID string) int {
 	if !state.IsCanonicalSessionID(sessionID) {
-		return
+		return 0
 	}
-	if events, _, err := state.PendingLedgerEvents(cwd, sessionID); err != nil || len(events) == 0 {
-		return
+	events, damaged, err := state.PendingLedgerEvents(cwd, sessionID)
+	if err != nil {
+		return 0
 	}
-	_ = state.WithSessionLock(cwd, sessionID, func() error {
-		hook.DrainSessionLedger(cwd, sessionID)
-		return nil
-	})
+	return len(events) + len(damaged)
 }
 
 // Same compact JSON.stringify string rules as state.stringify, kept local because

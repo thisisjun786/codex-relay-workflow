@@ -161,9 +161,11 @@ func TestOrchestrateDcloseAllDoneStoppedAfterPublishIsRecorded(t *testing.T) {
 	}
 }
 
-// The status call of a session is a call of the session too: it records a row an earlier writer left pending, through the same
-// read entry the terminal uses (parse, then RunOrchestrateRead), and its answer is the session's status as before.
-func TestOrchestrateStatusRecordsAPendingRow(t *testing.T) {
+// Status is a read (phase-control.md): it reports the pending ledger rows of the session it selects and records nothing - not the
+// rows, not a cleanup - whichever way the session was selected, and a call that records them (any orchestrate command) still does.
+// Red on 3fceb240, where status drained the selected session's outbox: through the unverified latest-file fallback it recorded the
+// rows, and finished the plan-audit cleanup, of a session nobody had selected.
+func TestOrchestrateStatusOnlyReportsAPendingRow(t *testing.T) {
 	cwd, id := orchestrateTransitionRoot(t), "outbox-status"
 	orchestrateTransitionSession(t, cwd, id, `{"phase":"IDLE"}`)
 	stop := &orchestrateCommitSeams{writeState: func(cwd string, next state.State) error {
@@ -176,18 +178,46 @@ func TestOrchestrateStatusRecordsAPendingRow(t *testing.T) {
 		defer func() { _ = recover() }()
 		_, _ = orchestrateCommitTry(t, cwd, stop, "P", "--session", id)
 	}()
-	if edges := orchestrateOutboxEdges(t, cwd); len(edges) != 0 {
-		t.Fatalf("a stopped writer appended %v", edges)
+	outboxBytes := func() string {
+		dir := state.StatePath(cwd, id) + ".ledger-outbox"
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := ""
+		for _, entry := range entries {
+			raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out += entry.Name() + "\n" + string(raw)
+		}
+		return out
 	}
-	read, err := RunOrchestrateRead(ParseOrchestrateCliArgs([]string{"status", "--session", id}, cwd), ReadEnv{})
-	if err != nil || read.Result == nil || read.Result.Code != 0 || !strings.Contains(read.Result.Output, "P") {
-		t.Fatalf("status: %+v %v", read, err)
+	before := outboxBytes()
+	for _, argv := range [][]string{{"status", "--session", id}, {"status"}, {"status", "--json"}} {
+		read, err := RunOrchestrateRead(ParseOrchestrateCliArgs(argv, cwd), ReadEnv{})
+		if err != nil || read.Result == nil || read.Result.Code != 0 || !strings.Contains(read.Result.Output, "phase=P") && !strings.Contains(read.Result.Output, `"phase":"P"`) {
+			t.Fatalf("%v: %+v %v", argv, read, err)
+		}
+		if !strings.Contains(read.Result.Output, "pending") {
+			t.Fatalf("%v: the answer does not report the pending row: %q", argv, read.Result.Output)
+		}
+		if edges := orchestrateOutboxEdges(t, cwd); len(edges) != 0 {
+			t.Fatalf("%v: status recorded %v", argv, edges)
+		}
+		if got := outboxBytes(); got != before {
+			t.Fatalf("%v: status changed the outbox", argv)
+		}
 	}
-	if edges := orchestrateOutboxEdges(t, cwd); strings.Join(edges, " ") != "IDLE>P" {
-		t.Fatalf("the ledger after the status call: %v, want [IDLE>P]", edges)
+	// The next orchestrate command of the session records it.
+	orchestrateCommitRunOK(t, cwd, nil, "status", "--session", id)
+	orchestrateCommitRunOK(t, cwd, nil, "reset", "--session", id)
+	if edges := orchestrateOutboxEdges(t, cwd); strings.Join(edges, " ") != "IDLE>P P>IDLE" {
+		t.Fatalf("the ledger after the next command: %v", edges)
 	}
 	if pending, _, _ := state.PendingLedgerEvents(cwd, id); len(pending) != 0 {
-		t.Fatalf("pending after status: %+v", pending)
+		t.Fatalf("pending after the next command: %+v", pending)
 	}
 }
 
@@ -225,14 +255,13 @@ func TestOrchestrateRoundTripsDuringALedgerFailureAreAllRecorded(t *testing.T) {
 		}
 	}
 	orchestrateOutboxUnblock(t, cwd)
-	if _, err := RunOrchestrateRead(ParseOrchestrateCliArgs([]string{"status", "--session", id}, cwd), ReadEnv{}); err != nil {
-		t.Fatal(err)
-	}
+	// The next orchestrate command (refused: A>C is no edge) records the rows first; status would only report them.
+	orchestrateCommitRunOK(t, cwd, nil, "C", "--session", id)
 	if edges := strings.Join(orchestrateOutboxEdges(t, cwd), " "); edges != "P>A A>P P>A" {
 		t.Fatalf("the ledger: %q, want P>A A>P P>A", edges)
 	}
 	if pending, _, _ := state.PendingLedgerEvents(cwd, id); len(pending) != 0 {
-		t.Fatalf("pending after status: %+v", pending)
+		t.Fatalf("pending after the next command: %+v", pending)
 	}
 }
 

@@ -515,6 +515,7 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		if readErr != nil || !present {
 			row := promptDcloseCloseRow(*result.Ledger, held.CheckEpoch, "")
 			ev, err := state.NewLedgerEvent(p.Cwd, held, next, &row, nil)
+			ev.NeedsReadableLedger = readErr != nil
 			if err == nil {
 				err = state.PrepareLedgerEvent(p.Cwd, ev)
 			}

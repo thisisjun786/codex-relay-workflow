@@ -216,3 +216,31 @@ func TestPromptDcloseAllDoneLedgerReadErrorKeepsARecoverableRow(t *testing.T) {
 		t.Fatalf("pending events after the recovery: %+v", pending)
 	}
 }
+
+// A row left pending is recorded by the PostCompact hook too, which writes the session under its lock (1100 evaluation: it used to
+// clear the injection cursor and leave the event, and a cleanup behind it, pending).
+func TestPostCompactRecordsAPendingRow(t *testing.T) {
+	cwd := t.TempDir()
+	promptOrchestrateSeed(t, cwd, "s1", func(s *state.State) { s.Phase = state.PhaseP; s.OrchestrationActive = true })
+	seams := &promptDcloseSeams{afterOrchestratePublish: func() bool { return true }}
+	promptSubmitHandleWith(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "orchestrate A", TurnID: "t1", PabcdEnabled: true},
+		"", promptSubmitHost(cwd), state.WithSessionLock, seams)
+	if edges := promptOutboxEdges(t, cwd); len(edges) != 0 {
+		t.Fatalf("a stopped writer appended %v", edges)
+	}
+	s := state.ReadState(cwd, "s1")
+	if !sessionHookPostCompactEligible(s) {
+		phase := state.PhaseA
+		s.LastInjectedPhase = &phase
+		if err := state.WriteState(cwd, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "s1"})
+	if edges := promptOutboxEdges(t, cwd); len(edges) != 1 || edges[0] != "P>A" {
+		t.Fatalf("the ledger after PostCompact: %v, want exactly [P>A]", edges)
+	}
+	if pending, _, _ := state.PendingLedgerEvents(cwd, "s1"); len(pending) != 0 {
+		t.Fatalf("pending after PostCompact: %+v", pending)
+	}
+}
