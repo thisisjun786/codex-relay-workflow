@@ -1056,4 +1056,97 @@ BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge.revalidation_id is NULL: a 
 BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_no_delete BEFORE DELETE ON dag_revalidation_premerge
 BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge rows are append-only: never deleted'); END`,
+	// CRW-835: the identity column of each zone table is refused when it is NULL. A TEXT PRIMARY KEY of a SQLite rowid table admits NULL,
+	// and the shipped CHECK (<key> <> '') does not refuse it (NULL makes a CHECK true), so a NULL-keyed row was addressable by no id and could
+	// sit in the table unread (the merge_trains finding of CRW-767, the same class). The guards are appended, never edited into a shipped
+	// statement: a BEFORE INSERT guard cannot touch a row that already exists, so a store that holds a NULL-keyed row keeps it, and a BEFORE
+	// UPDATE OF guard is added only where no shipped trigger already refuses every UPDATE of the row (dag_plans, dag_summary_outbox,
+	// dag_base_refreshes, dag_acceptance_refreshes and dag_verified_heads are refused by theirs). An empty key is unchanged: the shipped CHECK refuses it where it has one.
+	`CREATE TRIGGER IF NOT EXISTS dag_plans_plan_id_not_null BEFORE INSERT ON dag_plans
+WHEN NEW.plan_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_plans.plan_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_input_manifests_manifest_digest_not_null BEFORE INSERT ON dag_input_manifests
+WHEN NEW.manifest_digest IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_input_manifests.manifest_digest is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_input_manifests_manifest_digest_not_null_update BEFORE UPDATE OF manifest_digest ON dag_input_manifests
+WHEN NEW.manifest_digest IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_input_manifests.manifest_digest is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptances_acceptance_id_not_null BEFORE INSERT ON dag_acceptances
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptances.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptances_acceptance_id_not_null_update BEFORE UPDATE OF acceptance_id ON dag_acceptances
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptances.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_observations_observation_id_not_null BEFORE INSERT ON dag_integration_observations
+WHEN NEW.observation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_integration_observations.observation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_observations_observation_id_not_null_update BEFORE UPDATE OF observation_id ON dag_integration_observations
+WHEN NEW.observation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_integration_observations.observation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_decisions_decision_id_not_null BEFORE INSERT ON dag_decisions
+WHEN NEW.decision_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_decisions.decision_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_decisions_decision_id_not_null_update BEFORE UPDATE OF decision_id ON dag_decisions
+WHEN NEW.decision_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_decisions.decision_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_merge_checks_check_id_not_null BEFORE INSERT ON dag_merge_checks
+WHEN NEW.check_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_merge_checks.check_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_merge_checks_check_id_not_null_update BEFORE UPDATE OF check_id ON dag_merge_checks
+WHEN NEW.check_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_merge_checks.check_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_revalidations_revalidation_id_not_null BEFORE INSERT ON dag_acceptance_revalidations
+WHEN NEW.revalidation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_revalidations.revalidation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_revalidations_revalidation_id_not_null_update BEFORE UPDATE OF revalidation_id ON dag_acceptance_revalidations
+WHEN NEW.revalidation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_revalidations.revalidation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_forge_acceptance_id_not_null BEFORE INSERT ON dag_acceptance_forge
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_forge.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_forge_acceptance_id_not_null_update BEFORE UPDATE OF acceptance_id ON dag_acceptance_forge
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_forge.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_conflict_observations_observation_id_not_null BEFORE INSERT ON dag_conflict_observations
+WHEN NEW.observation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_conflict_observations.observation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_conflict_observations_observation_id_not_null_update BEFORE UPDATE OF observation_id ON dag_conflict_observations
+WHEN NEW.observation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_conflict_observations.observation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_summary_id_not_null BEFORE INSERT ON dag_summary_outbox
+WHEN NEW.summary_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox.summary_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_tip_conflict_observations_observation_id_not_null BEFORE INSERT ON dag_tip_conflict_observations
+WHEN NEW.observation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_tip_conflict_observations.observation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_tip_conflict_observations_observation_id_not_null_update BEFORE UPDATE OF observation_id ON dag_tip_conflict_observations
+WHEN NEW.observation_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_tip_conflict_observations.observation_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_refresh_id_not_null BEFORE INSERT ON dag_base_refreshes
+WHEN NEW.refresh_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes.refresh_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_landing_results_result_id_not_null BEFORE INSERT ON dag_landing_results
+WHEN NEW.result_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_landing_results.result_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_landing_results_result_id_not_null_update BEFORE UPDATE OF result_id ON dag_landing_results
+WHEN NEW.result_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_landing_results.result_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_refresh_id_not_null BEFORE INSERT ON dag_acceptance_refreshes
+WHEN NEW.refresh_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes.refresh_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_event_id_not_null BEFORE INSERT ON dag_verified_heads
+WHEN NEW.event_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_verified_heads.event_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_user_decisions_decision_id_not_null BEFORE INSERT ON dag_user_decisions
+WHEN NEW.decision_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_user_decisions.decision_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_user_decisions_decision_id_not_null_update BEFORE UPDATE OF decision_id ON dag_user_decisions
+WHEN NEW.decision_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_user_decisions.decision_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS delivery_wakes_event_id_not_null BEFORE INSERT ON delivery_wakes
+WHEN NEW.event_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'delivery_wakes.event_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS delivery_wakes_event_id_not_null_update BEFORE UPDATE OF event_id ON delivery_wakes
+WHEN NEW.event_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'delivery_wakes.event_id is NULL: a row is addressed by a non-empty id'); END`,
 }

@@ -956,6 +956,8 @@ func RecordAcceptanceRefresh(ctx context.Context, s *Store, r AcceptanceRefreshR
 
 // AcceptanceRefresh reads one refresh of an acceptance by its sequence number. A row whose id is not
 // the digest of its own content is not read, and a store without the table answers ErrRefreshNotRecorded.
+// A row whose id is NULL (a store written before the zone's NULL guard, CRW-835) is skipped in the query: it
+// cannot be scanned into the string id, and it is not a refresh the relay wrote.
 func AcceptanceRefresh(ctx context.Context, s *Store, acceptanceID string, refreshSeq int64) (AcceptanceRefreshRow, error) {
 	present, err := dagZoneTable(ctx, s, "dag_acceptance_refreshes")
 	if err != nil {
@@ -964,7 +966,7 @@ func AcceptanceRefresh(ctx context.Context, s *Store, acceptanceID string, refre
 	if !present {
 		return AcceptanceRefreshRow{}, ErrRefreshNotRecorded
 	}
-	row, err := queryRow(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? AND refresh_seq = ?", acceptanceID, refreshSeq)
+	row, err := queryRow(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? AND refresh_seq = ? AND refresh_id IS NOT NULL", acceptanceID, refreshSeq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AcceptanceRefreshRow{}, ErrRefreshNotRecorded
 	}
@@ -984,7 +986,7 @@ func AcceptanceRefreshes(ctx context.Context, s *Store, acceptanceID string) ([]
 	if err != nil || !present {
 		return nil, err
 	}
-	rows, err := queryRows(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? ORDER BY refresh_seq", acceptanceID)
+	rows, err := queryRows(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? AND refresh_id IS NOT NULL ORDER BY refresh_seq", acceptanceID)
 	if err != nil {
 		return nil, err
 	}
