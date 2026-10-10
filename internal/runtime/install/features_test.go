@@ -389,7 +389,11 @@ func TestFeaturesRunnerBoundaries(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			h := newFeatureHome(t, "")
 			h.env = h.env.With("CRW499_FAKE_MODE", mode)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// The context ends a hung run only. It runs from before the fake codex starts, and the fake
+			// is a shell script that re-executes this large test binary, which took 21 s to start on a
+			// loaded host; five seconds over that start-up made the utf8 case exit 1 (CRW-1181). The
+			// cancelled mode needs no clock: it cancels the context itself.
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
 			if mode == "missing" {
 				h.env = h.env.With("PATH", t.TempDir())
