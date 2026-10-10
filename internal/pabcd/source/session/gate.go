@@ -44,18 +44,18 @@ const (
 // git source worktree clears it without this function knowing anything about split working directories. A thrown binding or
 // source-root error is also "cannot resolve". Call it only for a bound session; an unbound one closes D on its check output
 // and exit code alone. A dirty tree is a resolved identity.
-func CheckBound(cwd, sessionID string) GateResult { return checkBound(nil, cwd, sessionID) }
+func CheckBound(cwd, sessionID string) GateResult { return checkBound(prober{}, cwd, sessionID) }
 
 // CheckBoundContext is CheckBound for a caller that must not leave work running behind it (see CaptureContext): the git it
 // runs is owned by ctx, and it returns only once that git has ended. A git that could not answer is CauseProbeFailed (with the
 // failure in Probe), as it is for CheckBound; OK and Reason are CheckBound's.
 func CheckBoundContext(ctx context.Context, cwd, sessionID string) GateResult {
-	return checkBound(ctx, cwd, sessionID)
+	return checkBound(prober{ctx}, cwd, sessionID)
 }
 
-func checkBound(ctx context.Context, cwd, sessionID string) GateResult {
+func checkBound(p prober, cwd, sessionID string) GateResult {
 	exclude := true
-	id, probe, err := capture(ctx, cwd, sessionID, CaptureOptions{ExcludeStateArtifacts: &exclude})
+	id, probe, err := capture(p, cwd, sessionID, CaptureOptions{ExcludeStateArtifacts: &exclude})
 	if err != nil {
 		return GateResult{Reason: err.Error(), Cause: CauseBindingError}
 	}

@@ -19,7 +19,7 @@ type CaptureOptions struct {
 // and by default without the state directory, or the identity of cwd itself when the session has no binding (session state and
 // evidence stay native; only the capture follows the worktree). A broken binding is an error, never a capture of cwd.
 func Capture(cwd, sessionID string, o CaptureOptions) (source.Identity, error) {
-	id, _, err := capture(nil, cwd, sessionID, o)
+	id, _, err := capture(prober{}, cwd, sessionID, o)
 	return id, err
 }
 
@@ -29,11 +29,11 @@ func Capture(cwd, sessionID string, o CaptureOptions) (source.Identity, error) {
 // answer (source.CaptureContext's error; nil for a resolved identity): source.NotARepository(probe) is a directory in no
 // repository, any other value a probe that failed. err is a binding or source-root error, as in Capture.
 func CaptureContext(ctx context.Context, cwd, sessionID string, o CaptureOptions) (id source.Identity, probe, err error) {
-	return capture(ctx, cwd, sessionID, o)
+	return capture(prober{ctx}, cwd, sessionID, o)
 }
 
-func capture(ctx context.Context, cwd, sessionID string, o CaptureOptions) (source.Identity, error, error) {
-	sourceCwd, err := resolve(ctx, cwd, sessionID)
+func capture(p prober, cwd, sessionID string, o CaptureOptions) (source.Identity, error, error) {
+	sourceCwd, err := resolve(p, cwd, sessionID)
 	if err != nil {
 		return source.Identity{}, nil, err
 	}
@@ -44,8 +44,8 @@ func capture(ctx context.Context, cwd, sessionID string, o CaptureOptions) (sour
 	}
 	var id source.Identity
 	var probe error
-	if ctx != nil {
-		id, probe = source.CaptureContext(ctx, sourceCwd, opts)
+	if p.ctx != nil {
+		id, probe = source.CaptureContext(p.ctx, sourceCwd, opts)
 	} else {
 		id, probe = source.CaptureProbed(sourceCwd, opts)
 	}
