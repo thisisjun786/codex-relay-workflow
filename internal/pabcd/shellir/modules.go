@@ -1,6 +1,7 @@
 package shellir
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -134,12 +135,22 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 				}
 				return nil
 			}
+			rel := strings.TrimPrefix(p, physical+"/")
 			if d.Type()&os.ModeSymlink != 0 {
-				return unreadablef("module import inventory contains a link")
+				return unreadablef("module import inventory contains a link (%s)", rel)
 			}
 			n := d.Name()
-			if strings.HasSuffix(n, ".pyc") || strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
-				return unreadablef("module imports compiled code that is not read")
+			if strings.HasSuffix(n, ".pyc") {
+				// Python writes a cache entry beside the source it compiled and runs the source when the entry is stale.
+				// Only an entry of a source this walk reads is skipped; compiled code with no such source, at the
+				// sourceless import path or in a cache of nothing, is code the reader does not see (CRW-1178).
+				if why := pycacheEntryRefusal(p); why != "" {
+					return unreadablef("module imports compiled code that is not read (%s: %s)", rel, why)
+				}
+				return nil
+			}
+			if strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
+				return unreadablef("module imports compiled code that is not read (%s)", rel)
 			}
 			if strings.HasSuffix(n, ".py") {
 				files = append(files, p)
@@ -150,7 +161,11 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			return nil
 		})
 		if err != nil {
-			return true, unreadablef("module import inventory refused")
+			var u *Unreadable
+			if errors.As(err, &u) {
+				return true, u
+			}
+			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err))
 		}
 		// Pytest also loads ancestor conftest files and configuration. Config
 		// can name plugins whose execution set this reader cannot establish.
@@ -222,6 +237,54 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Dir: st.dir, Ctx: ctx, Inline: &Inline{Language: "python", Source: Word{Known: true, Value: body}}})
 	}
 	return true, nil
+}
+
+// pycacheEntryRefusal says why a .pyc file is compiled code the reader does not cover, or "" when it is the cache entry of a source
+// the inventory reads. An entry lives in a __pycache__ directory, is named <module>.<tag>[.opt-N].pyc, and belongs to
+// <module>.py in the directory above; the interpreter runs that source whenever the entry is stale, and a hash-based entry marked
+// unchecked is run without the source being consulted, so it is refused with the rest.
+func pycacheEntryRefusal(p string) string {
+	dir, name := filepath.Split(strings.TrimSuffix(p, "/"))
+	dir = strings.TrimSuffix(dir, "/")
+	if filepath.Base(dir) != "__pycache__" {
+		return "compiled module without a source"
+	}
+	stem, _, _ := strings.Cut(name, ".")
+	if stem == "" {
+		return "no source module"
+	}
+	source, err := os.Lstat(filepath.Join(filepath.Dir(dir), stem+".py"))
+	if err != nil || !source.Mode().IsRegular() {
+		return "no source " + stem + ".py"
+	}
+	fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return "header cannot be read"
+	}
+	f := os.NewFile(uintptr(fd), p)
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return "not a regular file"
+	}
+	var header [16]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil {
+		return "header is too short"
+	}
+	// Flags (little endian, after the magic number): 0 is checked by modification time and size, 3 by the hash of the
+	// source. 1 is a hash that is never checked against the source.
+	if flags := uint32(header[4]) | uint32(header[5])<<8 | uint32(header[6])<<16 | uint32(header[7])<<24; flags != 0 && flags != 3 {
+		return "not validated against its source"
+	}
+	return ""
+}
+
+// walkErrorWhat names what failed in a directory walk without the operating system's path, which the reason already carries.
+func walkErrorWhat(err error) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Op + ": " + pe.Err.Error()
+	}
+	return "walk failed"
 }
 
 func moduleEnv(name string, assigns []Assign, st *state) (string, bool) {
