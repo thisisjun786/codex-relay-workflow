@@ -321,7 +321,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		// oracle issued and then printed nothing).
 		return DenyEnvelope("managed dispatch: " + spawnHookDeepReason)
 	}
-	routed, err := role.ReadSettingsSnapshot(env).Role(a.role)
+	routed, err := a.settings.Role(a.role) // the event's snapshot, as the role resolution read it (CRW-1124)
 	if err != nil {
 		if deny := spawnHookSettingsDeny(err); deny != "" {
 			return deny
@@ -384,7 +384,8 @@ func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 		return DenyEnvelope(RecurseDenyReason) // another call took the grant first
 	}
 	if a.managed != nil {
-		if _, err := role.IssueManagedSpawnEnv(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID, env); err != nil {
+		// The issuance works on the preview's root and attempt and re-reads the record under its lock only (CRW-1124).
+		if _, err := role.IssueManagedSpawnSelection(a.managed, a.toolUseID, env); err != nil {
 			if a.grant != nil {
 				a.grant.release()
 			}

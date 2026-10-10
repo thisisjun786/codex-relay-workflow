@@ -56,6 +56,7 @@ type spawnHookAssembly struct {
 	grant              *spawnGrantClaim                  // a subagent's checked grant, spent by finish
 	inputDigest        string                            // the digest of tool_input, for the event's replay record
 	replay             func(outputDigest, answer string) // records the answer of an event that minted a grant, or nil
+	settings           role.SettingsSnapshot             // the event's one read of the helper role settings
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -187,7 +188,18 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 			dispatchText = a.textItems[0].Get("text").(string)
 		}
 	}
-	sources, err := spawnDispatchSources(dispatchText, env)
+	// One settings snapshot serves the whole event: the dispatch sources, the role resolution, the prompt and the notice (CRW-1124;
+	// the oracle read the store up to three times, so a concurrent edit could reach one step and not another). The next event reads
+	// the store again.
+	var snapshot *role.SettingsSnapshot
+	settings := func() role.SettingsSnapshot {
+		if snapshot == nil {
+			s := spawnHookSettings(env)
+			snapshot = &s
+		}
+		return *snapshot
+	}
+	sources, err := spawnDispatchSourcesWith(dispatchText, settings)
 	if err != nil {
 		return stop(spawnHookSettingsDeny(err)) // the oracle's readSettings throw, caught by its outer catch
 	}
@@ -241,7 +253,8 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	} else {
 		a.role = InferRole(toolInput.Get("agent_type"), roleSource)
 	}
-	resolution, err := role.ResolveSpawnConfig(env, a.role)
+	a.settings = settings()
+	resolution, err := a.settings.Resolve(a.role)
 	if err != nil {
 		return stop(spawnHookSettingsDeny(err)) // the oracle's throw, caught by its outer catch
 	}

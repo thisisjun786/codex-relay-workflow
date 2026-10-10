@@ -38,10 +38,18 @@ func spawnDispatchLine(s string) string { return text.SplitLines(s)[0] }
 // has no source. The settings read is the global store (decision 7); a failure is the oracle's readSettings throw, which the
 // caller turns into empty output.
 func spawnDispatchSources(message string, env host.LookupEnv) ([]spawnDispatchSource, error) {
+	return spawnDispatchSourcesWith(message, func() role.SettingsSnapshot { return spawnHookSettings(env) })
+}
+
+// spawnHookSettings reads the helper role settings; a hook event calls it at most once (CRW-1124), and a test counts the calls.
+var spawnHookSettings = role.ReadSettingsSnapshot
+
+// spawnDispatchSourcesWith is spawnDispatchSources over the event's settings snapshot, read only when a source needs it.
+func spawnDispatchSourcesWith(message string, snapshot func() role.SettingsSnapshot) ([]spawnDispatchSource, error) {
 	if strings.HasPrefix(message, "[CRW-DISPATCH:") {
 		return []spawnDispatchSource{{Source: spawnDispatchLine(message)}}, nil
 	}
-	settings := role.ReadSettingsSnapshot(env)
+	settings := snapshot()
 	if _, err := settings.Role(role.Explorer); err != nil && !errors.As(err, new(*role.UnusableSettingsError)) {
 		return nil, err // a store that cannot be found, as the oracle's readSettings throw
 	}
