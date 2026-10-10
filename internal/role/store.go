@@ -8,22 +8,64 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
-// StorePath is <CRW_HOME>/subagents.json. An explicit CRW_HOME is trimmed, as the oracle trims CODEXCLAW_HOME (cxcHome); a blank
-// one falls back to host.CRWHome, whose default home is not trimmed.
+// UnusableSettingsError is a helper role store that exists but cannot be used: a file that cannot be read or is not the store's
+// JSON document (Role is empty, and every role is unusable), or one role whose routing fields are not valid (Role names it, and only
+// that role is unusable). The oracle read both as no override, so a spawn silently inherited the main model (CRW-1119). Nothing that
+// reports it writes the store: its bytes stay as they are until the operator repairs them.
+type UnusableSettingsError struct {
+	Path   string
+	Role   RoleName // empty for the whole store
+	Reason string
+}
+
+func (e *UnusableSettingsError) Error() string {
+	if e.Role == "" {
+		return fmt.Sprintf("unusable helper role settings in %s: %s; correct the file, or move it away to inherit the defaults (it is left as it is)", e.Path, e.Reason)
+	}
+	return fmt.Sprintf("unusable helper role settings for role \"%s\" in %s: %s; run crw role helper reset %s to inherit, or correct the role in the file (it is left as it is)", e.Role, e.Path, e.Reason, e.Role)
+}
+
+// StorePath is <CRW_HOME>/subagents.json under the root rule of internal/crwconfig (CRW-1119, the common boundary of CRW-1136):
+// a CRW_HOME that is set and not empty is used as written, white space included, and must be absolute; an empty one counts as
+// unset, and the store is then .crw below the host's home (host.HostHome: an empty HOME is the account home, never the working
+// directory). The path is joined as raw text (crwconfig.JoinRoot), so a spelling that climbs through a link names the directory the
+// kernel resolves it to.
 func StorePath(env host.LookupEnv) (string, error) {
+	if dir, _ := env("CRW_HOME"); dir != "" {
+		if !filepath.IsAbs(dir) {
+			return "", errors.New("CRW_HOME is not an absolute path; set it to the absolute directory of the helper role store, as written with no surrounding white space")
+		}
+		return crwconfig.JoinRoot(dir, StoreFile), nil
+	}
+	home, err := host.HostHome(env)
+	if err != nil {
+		return "", err
+	}
+	return home.Join(".crw", StoreFile), nil
+}
+
+// storeEarlierPath is where the oracle's reading put the store: a trimmed CRW_HOME, or .crw below os.homedir(), which is the
+// working directory for an empty HOME, joined with lexical cleaning. A store found there while the current place has none is
+// reported, never read or moved (CRW-1119).
+func storeEarlierPath(env host.LookupEnv) string {
 	dir, _ := env("CRW_HOME")
 	if dir = text.Trim(dir); dir == "" {
 		var err error
 		if dir, err = host.CRWHome(env); err != nil {
-			return "", err
+			return ""
 		}
 	}
-	return filepath.Join(dir, StoreFile), nil
+	path, err := filepath.Abs(filepath.Join(dir, StoreFile))
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // rawConfig is the oracle's RawConfig: the document, whose "roles" member is the parsed roles object.
@@ -46,9 +88,11 @@ func parseConfig(data []byte) (rawConfig, error) {
 	return rawConfig{&doc, roles}, nil
 }
 
-// readRaw reads the store. A read gets an empty config for a missing or unusable file; a write (forWrite) only for a missing one,
-// and an error for anything else, so a store it cannot understand is never overwritten.
-func readRaw(path string, forWrite bool) (rawConfig, error) {
+// readRaw reads the store. Only a missing store is the empty config. Anything else that cannot be read or parsed is an error: for a
+// read an UnusableSettingsError (CRW-1119; the oracle read it as the empty config), for a write (forWrite) the refusal "cannot update
+// subagent config", so a store nobody can understand is never overwritten. A missing store while the place an earlier reading used
+// holds one is unusable too: the operator's settings would otherwise vanish without a word.
+func readRaw(env host.LookupEnv, path string, forWrite bool) (rawConfig, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
 		var raw rawConfig
@@ -56,29 +100,85 @@ func readRaw(path string, forWrite bool) (rawConfig, error) {
 			return raw, nil
 		}
 	}
-	if forWrite && !errors.Is(err, fs.ErrNotExist) {
-		return rawConfig{}, fmt.Errorf("cannot update subagent config: %w", err)
+	if !errors.Is(err, fs.ErrNotExist) {
+		if forWrite {
+			return rawConfig{}, fmt.Errorf("cannot update subagent config: %w", err)
+		}
+		return rawConfig{}, &UnusableSettingsError{Path: path, Reason: err.Error()}
+	}
+	if earlier := storeEarlierPath(env); !forWrite && earlier != "" && earlier != path {
+		if _, statErr := os.Stat(earlier); statErr == nil {
+			return rawConfig{}, &UnusableSettingsError{Path: path, Reason: "the store is missing here, but " + earlier +
+				" holds one from an earlier reading of CRW_HOME or HOME; move it to " + path + " or set CRW_HOME to its directory (nothing reads or moves it automatically)"}
+		}
 	}
 	empty, _ := parseConfig([]byte("{}"))
 	return empty, nil
 }
 
-// ReadSettings is the effective settings: a role the file holds is read field by field, every other role is at its default and comes
-// from the session. It never changes the store and never fails on its content.
-func ReadSettings(env host.LookupEnv) (Settings, error) {
+// readSettings is the effective settings of every usable role, the reason each unusable role cannot be used, and the error of a
+// store that cannot be used at all. A role the file holds is read field by field (parseRole); every other role is at its default
+// and comes from the session. It never changes the store.
+func readSettings(env host.LookupEnv) (Settings, map[RoleName]error, error) {
 	path, err := StorePath(env)
 	if err != nil {
-		return Settings{}, err
+		return Settings{}, nil, err
 	}
-	raw, _ := readRaw(path, false)
+	raw, err := readRaw(env, path, false)
+	if err != nil {
+		return Settings{}, nil, err
+	}
 	s := Settings{Roles: RoleMap[RoleConfig]{}, Scope: ScopeGlobal, Sources: RoleMap[ConfigSource]{}, Overrides: RoleMap[bool]{}}
+	unusable := map[RoleName]error{}
 	for _, role := range Roles() {
 		s.Roles[role], s.Sources[role], s.Overrides[role] = DefaultRole(), SourceSession, false
 		if value, ok := raw.roles.raw(string(role)); ok {
-			s.Roles[role], s.Sources[role], s.Overrides[role] = reconstructRole(value), SourceGlobal, true
+			cfg, reason := parseRole(value)
+			if reason != "" {
+				unusable[role] = &UnusableSettingsError{Path: path, Role: role, Reason: reason}
+				continue
+			}
+			s.Roles[role], s.Sources[role], s.Overrides[role] = cfg, SourceGlobal, true
 		}
 	}
+	return s, unusable, nil
+}
+
+// ReadSettings is the effective settings. A store that cannot be used, or one role whose routing fields are not valid, is an
+// UnusableSettingsError (for several roles, one per role in Roles order, joined), so a caller that shows the settings shows why they
+// cannot be used. It never changes the store.
+func ReadSettings(env host.LookupEnv) (Settings, error) {
+	s, unusable, err := readSettings(env)
+	if err != nil {
+		return Settings{}, err
+	}
+	if err := joinUnusable(unusable); err != nil {
+		return Settings{}, err
+	}
 	return s, nil
+}
+
+func joinUnusable(unusable map[RoleName]error) error {
+	var errs []error
+	for _, role := range Roles() {
+		if err := unusable[role]; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// readRole is one role's settings: the store's error, that role's error, or the role. Another role's error does not stop it, so an
+// unusable role only stops its own routing (CRW-1119).
+func readRole(env host.LookupEnv, role RoleName) (RoleConfig, error) {
+	s, unusable, err := readSettings(env)
+	if err != nil {
+		return RoleConfig{}, err
+	}
+	if err := unusable[role]; err != nil {
+		return RoleConfig{}, err
+	}
+	return s.Roles[role], nil
 }
 
 func ReadConfig(env host.LookupEnv) (Config, error) {
@@ -127,7 +227,7 @@ func open(env host.LookupEnv, role RoleName, sleep func(time.Duration)) (string,
 	if err != nil {
 		return "", rawConfig{}, nil, err
 	}
-	raw, err := readRaw(path, true)
+	raw, err := readRaw(env, path, true)
 	if err != nil {
 		release()
 		return "", rawConfig{}, nil, err
@@ -148,10 +248,20 @@ func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp
 		return Config{}, err
 	}
 	defer release()
+	// A set merges into what the file holds, so a role whose stored routing is not usable would be merged into a normalised copy
+	// and lose what the operator wrote; it is refused, and so is a set while another role is unusable, since the answer is the
+	// settings after the write. A reset is the repair (CRW-1119).
+	for _, r := range Roles() {
+		if value, ok := raw.roles.raw(string(r)); ok {
+			if _, reason := parseRole(value); reason != "" {
+				return Config{}, fmt.Errorf("cannot update subagent config: %w", &UnusableSettingsError{Path: path, Role: r, Reason: reason})
+			}
+		}
+	}
 	current, existing := DefaultRole(), object(nil)
 	if value, ok := raw.roles.raw(string(role)); ok {
-		current = reconstructRole(value)
-		existing, _ = parseObject(value) // a stored value that is not an object is replaced (I6)
+		current, _ = parseRole(value)
+		existing, _ = parseObject(value)
 	}
 	if err := Validate(RolePatch{Fallback: patch.Fallback}); err != nil {
 		return Config{}, err
@@ -195,4 +305,50 @@ func resetRole(env host.LookupEnv, role RoleName, rename func(tmp, finalPath str
 		}
 	}
 	return ReadConfig(env)
+}
+
+// SettingsSnapshot is one read of the store: the settings of every usable role, the error of each unusable role, and the error of a
+// store that cannot be used at all. A spawn hook reads one per event and asks it about the roles it routes, so an unusable role
+// stops only its own routing (CRW-1119).
+type SettingsSnapshot struct {
+	settings Settings
+	unusable map[RoleName]error
+	err      error
+}
+
+// ReadSettingsSnapshot reads the store once.
+func ReadSettingsSnapshot(env host.LookupEnv) SettingsSnapshot {
+	s, unusable, err := readSettings(env)
+	return SettingsSnapshot{settings: s, unusable: unusable, err: err}
+}
+
+// Err is the store's error, or the joined errors of its unusable roles, or nil.
+func (s SettingsSnapshot) Err() error {
+	if s.err != nil {
+		return s.err
+	}
+	return joinUnusable(s.unusable)
+}
+
+// Role is one role's settings, or the store's error, or that role's error.
+func (s SettingsSnapshot) Role(role RoleName) (RoleConfig, error) {
+	if !validRole(role) {
+		return RoleConfig{}, fmt.Errorf("unknown role \"%s\"", role)
+	}
+	if s.err != nil {
+		return RoleConfig{}, s.err
+	}
+	if err := s.unusable[role]; err != nil {
+		return RoleConfig{}, err
+	}
+	return s.settings.Roles[role], nil
+}
+
+// Resolve is ResolveSpawnConfig over the snapshot.
+func (s SettingsSnapshot) Resolve(role RoleName) (SpawnResolution, error) {
+	cfg, err := s.Role(role)
+	if err != nil {
+		return SpawnResolution{}, err
+	}
+	return spawnResolution(role, cfg), nil
 }

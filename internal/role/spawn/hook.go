@@ -1,6 +1,7 @@
 package spawn
 
 import (
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -22,7 +23,8 @@ import (
 // RunSpawnAttachHook (hook_route.go) finishes the answer (promptOverride, trust prefix, ciphertext restore, item re-assembly, the
 // output envelope) from the assembly. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
 //   - the skills directory: CRW_SKILLS_DIR, then <PLUGIN_ROOT>/skills where the oracle has the module-relative plugin directory;
-//   - an unusable store, a missing home and an unknown role stop with empty output, as the oracle's throw does;
+//   - an unusable store or role denies the spawn with the store's error (CRW-1119); a missing home and an unknown role stop with
+//     empty output, as the oracle's throw does;
 //   - a subagent spawn whose grant scope cannot be resolved is denied, where the oracle's throw allows it (a security fix);
 //   - the working directory is read with the kernel call (syscall.Getwd), like process.cwd().
 
@@ -152,7 +154,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	}
 	sources, err := spawnDispatchSources(dispatchText, env)
 	if err != nil {
-		return stop("") // the oracle's readSettings throw, caught by its outer catch
+		return stop(spawnHookSettingsDeny(err)) // the oracle's readSettings throw, caught by its outer catch
 	}
 	if deny, stopped := spawnHookManaged(&a, sources); stopped {
 		return stop(deny)
@@ -201,7 +203,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	}
 	resolution, err := role.ResolveSpawnConfig(env, a.role)
 	if err != nil {
-		return stop("") // the oracle's throw, caught by its outer catch
+		return stop(spawnHookSettingsDeny(err)) // the oracle's throw, caught by its outer catch
 	}
 	a.resolution = resolution
 
@@ -245,6 +247,16 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 		a.updatedMessage = a.guard + "\n\n" + affordance
 	}
 	return a, "", false
+}
+
+// spawnHookSettingsDeny is the answer for a settings read that failed: an unusable store or role denies the recognized spawn with
+// the store's error, whose text names the repair (CRW-1119; the oracle's catch printed nothing, so the spawn ran on the main
+// model without its configured routing). Any other failure (no home to find the store in) keeps the oracle's empty output.
+func spawnHookSettingsDeny(err error) string {
+	if errors.As(err, new(*role.UnusableSettingsError)) {
+		return DenyEnvelope("crw: " + err.Error())
+	}
+	return ""
 }
 
 // spawnHookRecord is isRecord over a decoded value: an ordered object, or a plain map with its keys sorted.

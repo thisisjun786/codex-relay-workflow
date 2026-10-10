@@ -100,7 +100,7 @@ func Validate(p RolePatch) error {
 		return fmt.Errorf("invalid mode \"%s\" (must be \"default\" or \"model\")", mode)
 	}
 	model, modelMode := p.Model.Value, p.Mode.Value != nil && *p.Mode.Value == ModeModel
-	if modelMode && (model == nil || *model == "") {
+	if modelMode && (model == nil || text.Trim(*model) == "") { // trimmed as a fallback model is (CRW-1119; the oracle tests length only)
 		return errors.New("mode \"model\" requires a non-empty model id")
 	}
 	if e := p.Effort; e.bad != nil || (e.Value != nil && !validEffort(*e.Value)) {

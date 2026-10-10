@@ -150,12 +150,13 @@ func TestSetRoleSemantics(t *testing.T) { // default-mode invariant, merged vali
 	}
 }
 
-func TestMalformedStoreReadsAsDefaultsAndRefusesWrites(t *testing.T) { // "malformed file -> defaults, never throws"
+// A malformed store is refused by reads (CRW-1119; the oracle read it as defaults) and by writes, and is never changed.
+func TestMalformedStoreIsRefusedByReadsAndWrites(t *testing.T) {
 	for _, text := range []string{"{ not json ]", "", `{"roles":[]}`, `{"roles":null}`, "[]", "null", `{"roles":{}} x`, "\ufeff{}"} {
 		env, dir := home(t)
 		path := writeStore(t, dir, text)
-		if cfg := must(ReadConfig(env)); !reflect.DeepEqual(cfg, DefaultConfig()) {
-			t.Errorf("%q: config = %+v", text, cfg)
+		if _, err := ReadConfig(env); !errors.As(err, new(*UnusableSettingsError)) {
+			t.Errorf("%q: read err = %v", text, err)
 		}
 		if _, err := SetRole(env, Explorer, RolePatch{Effort: Some(EffortLow)}); err == nil || !strings.HasPrefix(err.Error(), "cannot update subagent config: ") {
 			t.Errorf("%q: set err = %v", text, err)
@@ -166,22 +167,27 @@ func TestMalformedStoreReadsAsDefaultsAndRefusesWrites(t *testing.T) { // "malfo
 	}
 }
 
-func TestPersistedValuesAreNormalisedPerField(t *testing.T) { // "partial/invalid role values normalized per-field", "unknown persisted effort"
+// Each persisted role is judged on its own (CRW-1119): a role with an unusable routing field is refused and named, a valid one is
+// read as written, and the refusal of one role does not stop another.
+func TestPersistedRolesAreJudgedPerRole(t *testing.T) {
 	env, dir := home(t)
 	writeStore(t, dir, `{"roles":{"reviewer":{"mode":"model","model":123,"promptOverride":7},
 		"executor":{"mode":"default","model":null,"effort":"ultra","promptOverride":null},
-		"explorer":{"mode":"model","model":"m","effort":"low","promptOverride":"","fallback":{"model":" f ","effort":"nope"}},
+		"explorer":{"mode":"model","model":"m","effort":"low","promptOverride":"","fallback":{"model":" f "}},
 		"architect":{"mode":"model","model":"m","fallback":{"model":"  "}}}}`)
-	roles := must(ReadConfig(env)).Roles
-	for role, want := range map[RoleName]RoleConfig{
-		Reviewer:  DefaultRole(), // model 123 is invalid: fail safe to default; the prompt 7 is not a string
-		Executor:  DefaultRole(), // an unknown effort inherits
-		Explorer:  {Mode: ModeModel, Model: str("m"), Effort: eff(EffortLow), PromptOverride: str(""), Fallback: &RoleFallback{Model: " f "}},
-		Architect: {Mode: ModeModel, Model: str("m")},
-	} {
-		if !reflect.DeepEqual(roles[role], want) {
-			t.Errorf("%s = %+v, want %+v", role, roles[role], want)
+	snapshot := ReadSettingsSnapshot(env)
+	for _, role := range []RoleName{Reviewer, Executor, Architect} {
+		if _, err := snapshot.Role(role); !errors.As(err, new(*UnusableSettingsError)) || !strings.Contains(err.Error(), string(role)) {
+			t.Errorf("%s: err = %v", role, err)
 		}
+	}
+	got, err := snapshot.Role(Explorer)
+	check(t, err)
+	if want := (RoleConfig{Mode: ModeModel, Model: str("m"), Effort: eff(EffortLow), PromptOverride: str(""), Fallback: &RoleFallback{Model: " f "}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("explorer = %+v, want %+v", got, want)
+	}
+	if _, err := ReadConfig(env); err == nil || strings.Count(err.Error(), "unusable helper role settings for role") != 3 {
+		t.Errorf("ReadConfig err = %v, want the three unusable roles", err)
 	}
 }
 
@@ -202,20 +208,29 @@ func TestPublishFailureKeepsStore(t *testing.T) {
 	}
 }
 
+// The store's home follows the root rule of internal/crwconfig (CRW-1119): a set CRW_HOME is used as written and must be
+// absolute, an empty one is unset, a relative HOME is refused, and nothing is cleaned.
 func TestStorePath(t *testing.T) {
 	for _, c := range []struct {
 		vars map[string]string
-		want string
+		want string // "" for a refusal
 	}{
 		{map[string]string{"CRW_HOME": "/x/crw", "HOME": "/h"}, "/x/crw/subagents.json"},
-		{map[string]string{"CRW_HOME": "  /x/y \t", "HOME": "/h"}, "/x/y/subagents.json"},
-		{map[string]string{"CRW_HOME": " \n", "HOME": "/h"}, "/h/.crw/subagents.json"},
+		{map[string]string{"CRW_HOME": "/x/y/", "HOME": "/h"}, "/x/y/subagents.json"},
+		{map[string]string{"CRW_HOME": "/x/y \t", "HOME": "/h"}, "/x/y \t/subagents.json"},
+		{map[string]string{"CRW_HOME": "  /x/y \t", "HOME": "/h"}, ""},
+		{map[string]string{"CRW_HOME": " \n", "HOME": "/h"}, ""},
+		{map[string]string{"CRW_HOME": "", "HOME": "/h"}, "/h/.crw/subagents.json"},
 		{map[string]string{"HOME": "/h"}, "/h/.crw/subagents.json"},
-		{map[string]string{"HOME": " h b "}, " h b /.crw/subagents.json"}, // only an explicit CRW_HOME is trimmed
+		{map[string]string{"HOME": "/h/a/../b"}, "/h/a/../b/.crw/subagents.json"},
+		{map[string]string{"HOME": " h b "}, ""},
 	} {
 		env := func(key string) (string, bool) { v, ok := c.vars[key]; return v, ok }
-		if got := must(StorePath(env)); got != c.want {
-			t.Errorf("%v: %q, want %q", c.vars, got, c.want)
+		got, err := StorePath(env)
+		if c.want == "" && err == nil {
+			t.Errorf("%v: %q, want a refusal", c.vars, got)
+		} else if c.want != "" && (err != nil || got != c.want) {
+			t.Errorf("%v: %q %v, want %q", c.vars, got, err, c.want)
 		}
 	}
 }
@@ -235,8 +250,8 @@ func TestDeepNestingIsRefused(t *testing.T) { // I9: encoding/json stops at 10,0
 	env, dir := home(t)
 	text := `{"deep":` + strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + `,"roles":{"explorer":{"mode":"model","model":"m"}}}`
 	path := writeStore(t, dir, text)
-	if cfg := must(ReadConfig(env)); !reflect.DeepEqual(cfg, DefaultConfig()) {
-		t.Fatalf("a store nested past the limit read as %+v", cfg)
+	if cfg, err := ReadConfig(env); !errors.As(err, new(*UnusableSettingsError)) { // CRW-1119: unusable, not the defaults
+		t.Fatalf("a store nested past the limit read as %+v (%v)", cfg, err)
 	}
 	if _, err := SetRole(env, Explorer, RolePatch{Effort: Some(EffortLow)}); err == nil || readText(t, path) != text {
 		t.Fatalf("set: %v", err)

@@ -12,7 +12,9 @@
 // be an object or null", and String() of the value in the mode and effort messages, which throws for an object that has a toString
 // member), and the settings API reads its members by exact name, as JavaScript does. I6 Members this package does not own are carried
 // as the file wrote them (a number keeps its form, an escape its spelling, integer-like keys are not moved first; U+2028 and U+2029
-// print literally, as JSON.stringify prints them), and a stored role value that is not an object is replaced. I7 The text of a JSON
+// print literally, as JSON.stringify prints them). I13 A store that exists but cannot be read or parsed, and a role whose routing fields are not valid (a role that is not an
+// object included), are an UnusableSettingsError where the oracle read them as no override (CRW-1119); an unusable role stops only
+// its own routing, a set is refused while any role is unusable, and a reset is the repair. I7 The text of a JSON
 // syntax or IO error is Go's, not V8's or libuv's. I8 A lone surrogate in a role's string reads as U+FFFD, and so does each byte of an
 // ill-formed UTF-8 sequence (Node writes one per maximal sequence); a key holding U+FFFD is identified by its literal text, so keys
 // that differ only by lone surrogates stay apart, and "\ufffd", a literal U+FFFD key and two spellings of one lone surrogate (one key
@@ -30,6 +32,7 @@
 package role
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -157,35 +160,67 @@ func DefaultConfig() Config {
 	return Config{Roles: roles}
 }
 
-// reconstructRole normalises one persisted role field by field, never failing: a value that is not an object is the default role,
-// and a model mode without a usable model is the default mode (the effort, prompt and fallback survive).
-func reconstructRole(raw json.RawMessage) RoleConfig {
-	fields, ok := members(raw)
-	if !ok {
-		return DefaultRole()
+// parseRole reads one persisted role. A value that is not an object, or a routing field the role cannot be spawned with, is a
+// reason (the role is then unusable, CRW-1119), where the oracle normalised it to the default role and so to the main model: a
+// mode that is not "default" or "model" (an absent mode is "default"), a model mode whose model is not a string that is non-empty
+// after a JavaScript trim, an effort that is not one of the four, a prompt override that is not a string, and a fallback that is not
+// an object whose model is a non-blank string and whose effort is one of the four. A member that is absent or null is unset. A
+// default-mode role's model is not read (a write stores it as null). Any model id is accepted: the catalog is not consulted.
+func parseRole(raw json.RawMessage) (RoleConfig, string) {
+	trimmed := bytes.TrimSpace(raw)
+	fields, ok := members(trimmed)
+	if !ok || len(trimmed) == 0 || trimmed[0] != '{' {
+		return RoleConfig{}, "the role is not an object"
 	}
-	role := RoleConfig{Mode: ModeDefault, Effort: effortOf(fields["effort"]), Fallback: reconstructFallback(fields["fallback"])}
-	if prompt, ok := stringOf(fields["promptOverride"]); ok {
-		role.PromptOverride = &prompt
+	set := func(key string) (json.RawMessage, bool) {
+		value, present := fields[key]
+		return value, present && string(bytes.TrimSpace(value)) != "null"
 	}
-	if mode, _ := stringOf(fields["mode"]); mode == string(ModeModel) {
-		if model, ok := stringOf(fields["model"]); ok && model != "" {
-			role.Mode, role.Model = ModeModel, &model
+	role := RoleConfig{Mode: ModeDefault}
+	if value, ok := set("mode"); ok {
+		mode, isString := stringOf(value)
+		if !isString || (mode != string(ModeDefault) && mode != string(ModeModel)) {
+			return RoleConfig{}, "invalid mode " + string(value) + " (must be \"default\" or \"model\")"
+		}
+		role.Mode = RoleMode(mode)
+	}
+	if role.Mode == ModeModel {
+		value, _ := set("model")
+		model, isString := stringOf(value)
+		if !isString || text.Trim(model) == "" {
+			return RoleConfig{}, "mode \"model\" requires a non-empty model id"
+		}
+		role.Model = &model
+	}
+	if value, ok := set("effort"); ok {
+		if role.Effort = effortOf(value); role.Effort == nil {
+			return RoleConfig{}, "invalid effort " + string(value) + " " + effortHint
 		}
 	}
-	return role
-}
-
-// reconstructFallback keeps a fallback whose model is not blank after a JavaScript trim (and stays untrimmed).
-func reconstructFallback(raw json.RawMessage) *RoleFallback {
-	fields, ok := members(raw)
-	if !ok {
-		return nil
+	if value, ok := set("promptOverride"); ok {
+		prompt, isString := stringOf(value)
+		if !isString {
+			return RoleConfig{}, "promptOverride must be a string or null"
+		}
+		role.PromptOverride = &prompt
 	}
-	if model, ok := stringOf(fields["model"]); ok && text.Trim(model) != "" {
-		return &RoleFallback{Model: model, Effort: effortOf(fields["effort"])}
+	if value, ok := set("fallback"); ok {
+		fallback, okFields := members(value)
+		if !okFields || bytes.TrimSpace(value)[0] != '{' {
+			return RoleConfig{}, "fallback must be an object or null"
+		}
+		model, isString := stringOf(fallback["model"])
+		if !isString || text.Trim(model) == "" {
+			return RoleConfig{}, "fallback requires a non-empty model id"
+		}
+		role.Fallback = &RoleFallback{Model: model}
+		if effort, present := fallback["effort"]; present && string(bytes.TrimSpace(effort)) != "null" {
+			if role.Fallback.Effort = effortOf(effort); role.Fallback.Effort == nil {
+				return RoleConfig{}, "invalid fallback effort " + string(effort) + " " + effortHint
+			}
+		}
 	}
-	return nil
+	return role, ""
 }
 
 // members is a JSON object's members by key, the last of a repeated key winning; ok is false for anything but an object or null.

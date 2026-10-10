@@ -305,12 +305,15 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if tooDeep {
 		return "" // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
 	}
-	config, err := role.ReadConfig(env)
+	routed, err := role.ReadSettingsSnapshot(env).Role(a.role)
 	if err != nil {
+		if deny := spawnHookSettingsDeny(err); deny != "" {
+			return deny
+		}
 		return "" // the oracle's throw, caught by its outer catch
 	}
 	var notices []string
-	if a.managed == nil && config.Roles[a.role].Fallback != nil {
+	if a.managed == nil && routed.Fallback != nil {
 		notices = append(notices, "[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: "+role.DispatchGuidance)
 	}
 	if a.encryptedV2Message {

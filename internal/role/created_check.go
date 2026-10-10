@@ -581,11 +581,13 @@ var errCreatedNoDatabase = errors.New("host thread database is missing")
 
 // createdCheckWithDB opens the newest native thread database read-only, without networking, and runs fn on one connection.
 func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Conn, map[string]bool) error) error {
-	home, err := host.CodexSQLiteHome(env)
+	// The root is resolved once and every path below it is joined as raw text (host.Root.Join), so the directory listed and the
+	// file opened are one, as the native session reader does (CRW-1136; moved here by CRW-1119). A relative root is refused.
+	root, err := host.CodexSQLiteRoot(env)
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(home)
+	entries, err := os.ReadDir(root.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return errCreatedNoDatabase
 	}
@@ -608,17 +610,13 @@ func createdCheckWithDB(ctx context.Context, env host.LookupEnv, fn func(*sql.Co
 	if name == "" {
 		return errCreatedNoDatabase
 	}
-	path := filepath.Join(home, name)
+	path := root.Join(name)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
 	if !info.Mode().IsRegular() {
 		return errors.New("host thread database must be a regular file")
-	}
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return err
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String())
 	if err != nil {

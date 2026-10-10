@@ -733,11 +733,10 @@ func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check disp
 		if !ok || !validRole(RoleName(role)) {
 			return out, errors.New("invalid role")
 		}
-		cfg, err := ReadConfig(env)
+		r, err := readRole(env, RoleName(role)) // an unusable role refuses its start (CRW-1119)
 		if err != nil {
 			return out, err
 		}
-		r := cfg.Roles[RoleName(role)]
 		c := DispatchCandidate{Effort: r.Effort}
 		if r.Mode == ModeModel {
 			c.Model = r.Model

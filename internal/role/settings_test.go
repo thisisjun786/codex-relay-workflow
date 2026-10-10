@@ -2,6 +2,7 @@ package role
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,7 @@ func TestSettingsOracleReplay(t *testing.T) {
 				writeStore(t, dir, *c.Given.Store)
 			}
 			path := filepath.Join(dir, StoreFile)
+			lastFile := c.Given.Store
 			for i, op := range c.Ops {
 				var scope json.RawMessage
 				if op.Scope != nil {
@@ -67,7 +69,20 @@ func TestSettingsOracleReplay(t *testing.T) {
 					t.Fatalf("op %d: unknown op %q", i, op.Op)
 				}
 				at := op.Op + " " + op.Body + string(op.Role)
+				intent := settingsIntent(c.ID, i)
+				if intent.keepFile {
+					op.File = lastFile
+				}
+				lastFile = op.File
 				switch {
+				case intent.unusable:
+					if !errors.As(err, new(*UnusableSettingsError)) {
+						t.Fatalf("%s: %v, want an UnusableSettingsError (CRW-1119)", at, err)
+					}
+				case intent.status400:
+					if r, _ := got.(Response); r.Status != 400 || !strings.Contains(r.Body.(ErrorBody).Error, "unusable helper role settings") {
+						t.Fatalf("%s: %+v, want the store's refusal as a 400 (CRW-1119)", at, got)
+					}
 				case op.Error != nil && err == nil:
 					t.Fatalf("%s: no error, want %q", at, *op.Error)
 				case op.Error != nil && !sameSettingsError(c.ID, *op.Error, err.Error()):
@@ -89,6 +104,25 @@ func TestSettingsOracleReplay(t *testing.T) {
 			}
 		})
 	}
+}
+
+// settingsIntent is how CRW-1119 changes a recorded op on purpose. The full store of get_global_full, response_get, resolve_full and
+// update_inherit_resets holds an executor in model mode with the model "  ", which the oracle stores and spawns with and the port
+// reads as an unusable role; resolve_malformed resolves a store that is not JSON. A read that meets either is an
+// UnusableSettingsError (a 400 through the response); a reset is still written (it is the repair), and a set while the executor
+// is unusable is refused, so the store keeps its bytes from the op before.
+type settingsOpIntent struct{ unusable, status400, keepFile bool }
+
+func settingsIntent(id string, i int) settingsOpIntent {
+	switch {
+	case id == "get_global_full" && i == 0, id == "resolve_full" && i == 2, id == "resolve_malformed" && i == 0:
+		return settingsOpIntent{unusable: true}
+	case id == "response_get" && i == 0:
+		return settingsOpIntent{status400: true}
+	case id == "update_inherit_resets":
+		return settingsOpIntent{unusable: true, keepFile: i >= 2}
+	}
+	return settingsOpIntent{}
 }
 
 func sameSettingsError(id, want, got string) bool {
