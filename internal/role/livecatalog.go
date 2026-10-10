@@ -95,7 +95,8 @@ func catalogEnv(environ []string) host.LookupEnv {
 // CODEX_HOME is unset or a configured path starts with "~/". The OCX side is the executable PATH finds
 // and the OPENCODEX_HOME it runs with, or, while that is blank, the HOME it falls back to. The raw
 // variables stay in the key, so anything that changed before still changes it. The project directory
-// is not part of the key.
+// is not part of the key. A path is keyed as the file the reader opens: a relative one is read from the
+// process directory, so the same relative text in another directory is another source.
 func sourceKey(env host.LookupEnv) string {
 	p, ok := env("PATH")
 	if !ok {
@@ -116,9 +117,21 @@ func sourceKey(env host.LookupEnv) string {
 		ocxHome = userHome
 	}
 	ocxExe, _ := ocxExecutable(env)
-	b, _ := Stringify([]string{h, cache, p, ocx, nativeHome, NativeCatalogPath(env), ocxExe, ocxHome}, "")
+	b, _ := Stringify([]string{h, cache, p, ocx, absolute(nativeHome), absolute(NativeCatalogPath(env)), ocxExe, absolute(ocxHome)}, "")
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// absolute is a path resolved against the process directory, as the readers resolve it; an empty path
+// stays empty, and a path that cannot be resolved stays as written.
+func absolute(p string) string {
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }
 
 // ReadCatalog ports ts:83-119. Only failure to resolve the user's home escapes
@@ -282,7 +295,7 @@ func ParseOcxModels(stdout string) ([]CatalogEntry, error) {
 		if display, ok := stringOf(m["displayName"]); ok && text.Trim(display) != "" {
 			label = display + " (" + id + ")"
 		}
-		entries = append(entries, CatalogEntry{id, source, label, reasoningEfforts(m["reasoningEfforts"])})
+		entries = append(entries, newCatalogEntry(id, source, label, m["reasoningEfforts"]))
 	}
 	return entries, nil
 }

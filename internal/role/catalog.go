@@ -250,15 +250,11 @@ func ReadNativeCatalog(env host.LookupEnv) []CatalogEntry {
 			continue
 		}
 		seen[id] = true
-		source := ModelNative
-		if isRoutedSlug(id) {
-			source = ModelOcx
-		}
 		efforts := m["reasoningEfforts"]
 		if len(efforts) == 0 || string(efforts) == "null" {
 			efforts = m["supported_reasoning_levels"]
 		}
-		entries = append(entries, CatalogEntry{id, source, id, reasoningEfforts(efforts)})
+		entries = append(entries, nativeEntry(id, efforts))
 	}
 	return entries
 }

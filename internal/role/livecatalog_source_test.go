@@ -110,7 +110,8 @@ func TestLiveCatalogKeyKeepsTheCacheWhenHomeSelectsNothing(t *testing.T) {
 	}
 }
 
-// The OCX the reader runs is part of its identity: another executable found on PATH is another source.
+// The OCX the reader runs is part of its identity: with PATH text unchanged, another executable found on
+// it is another source.
 func TestLiveCatalogKeyFollowsTheResolvedOcx(t *testing.T) {
 	root := t.TempDir()
 	first, second := filepath.Join(root, "a"), filepath.Join(root, "b")
@@ -118,9 +119,64 @@ func TestLiveCatalogKeyFollowsTheResolvedOcx(t *testing.T) {
 		check(t, os.MkdirAll(dir, 0700))
 		check(t, os.WriteFile(filepath.Join(dir, "ocx"), []byte("#!/bin/sh\n"), 0700))
 	}
-	base := []string{"HOME=" + root, "CODEX_HOME=" + filepath.Join(root, "codex"), "OPENCODEX_HOME=" + filepath.Join(root, "ocx-home")}
-	if sourceKey(catalogEnv(append([]string{"PATH=" + first + ":" + second}, base...))) == sourceKey(catalogEnv(append([]string{"PATH=" + second + ":" + first}, base...))) {
-		t.Fatal("two PATH orders that find different ocx executables share a key")
+	env := catalogEnv([]string{"PATH=" + first + ":" + second, "HOME=" + root, "CODEX_HOME=" + filepath.Join(root, "codex"), "OPENCODEX_HOME=" + filepath.Join(root, "ocx-home")})
+	before := sourceKey(env)
+	check(t, os.Remove(filepath.Join(first, "ocx")))
+	if sourceKey(env) == before {
+		t.Fatal("the same PATH text now finds another ocx executable but keeps its key")
+	}
+}
+
+// A relative native catalog path or Codex home is read relative to the process directory, so the key
+// names the file the reader opens, not the relative text: the same text in two directories is two sources.
+func TestLiveCatalogKeyFollowsTheAbsoluteNativeSource(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		env  func(root string) []string
+		file func(dir string) string
+	}{
+		{"catalog-path", func(root string) []string {
+			return []string{"CODEX_MODELS_CACHE_PATH=models.json", "CODEX_HOME=" + filepath.Join(root, "codex"), "OPENCODEX_HOME=" + filepath.Join(root, "ocx-home")}
+		}, func(dir string) string { return filepath.Join(dir, "models.json") }},
+		{"codex-home", func(root string) []string {
+			return []string{"CODEX_HOME=codex", "OPENCODEX_HOME=" + filepath.Join(root, "ocx-home")}
+		}, func(dir string) string { return filepath.Join(dir, "codex", "models_cache.json") }},
+		{"opencodex-home", func(root string) []string {
+			return []string{"OPENCODEX_HOME=ocx", "CODEX_HOME=" + filepath.Join(root, "codex")}
+		}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			crw := filepath.Join(root, "crw")
+			dirs := []string{filepath.Join(root, "one"), filepath.Join(root, "two")}
+			for i, dir := range dirs {
+				check(t, os.MkdirAll(dir, 0700))
+				if c.file != nil {
+					check(t, os.MkdirAll(filepath.Dir(c.file(dir)), 0700))
+					check(t, os.WriteFile(c.file(dir), must(json.Marshal(map[string]any{"models": []any{map[string]any{"id": []string{"home-one", "home-two"}[i]}}})), 0600))
+				}
+			}
+			environ := append([]string{"HOME=" + root, "CRW_HOME=" + crw, "PATH=" + filepath.Join(crw, "bin"), "TMPDIR=" + crw}, c.env(root)...)
+			keys := make([]string, 2)
+			for i, dir := range dirs {
+				t.Chdir(dir)
+				keys[i] = sourceKey(catalogEnv(environ))
+			}
+			if keys[0] == keys[1] {
+				t.Fatal("the same relative text in two directories shares a key")
+			}
+			if c.file == nil {
+				return
+			}
+			var r CatalogReader
+			o := CatalogOptions{Environ: environ, Now: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }}
+			for i, dir := range dirs {
+				t.Chdir(dir)
+				if got := liveRead(t, &r, o); got.Status != "fresh" || len(got.Entries) != 1 || got.Entries[0].ID != []string{"home-one", "home-two"}[i] {
+					t.Fatalf("directory %d answered %+v", i, got)
+				}
+			}
+		})
 	}
 }
 
