@@ -106,10 +106,11 @@ func reviveReviewRounds(raw any) []ReviewRoundState {
 		workPhase, _ := text(r, "workPhaseId")
 		unit, _ := text(r, "planUnit")
 		epochID, _ := text(r, "planEpoch")
+		supersededBy, _ := text(r, "supersededBy")
 		out = append(out, ReviewRoundState{
 			RoundID: id, Purpose: ReviewPurpose(purpose), PlanPath: planPath, PlanSha256: planSha, Status: ReviewRoundStatus(status), Lane: *lane,
 			OpenedAt: timestamp(r, "openedAt"), ClosedAt: textPtr(r, "closedAt"), OwnerSessionID: owner, WorkPhaseID: workPhase,
-			PlanUnit: unit, PlanEpoch: epochID, PlanFiles: revivePlanFiles(r["planFiles"]),
+			PlanUnit: unit, PlanEpoch: epochID, PlanFiles: revivePlanFiles(r["planFiles"]), SupersededBy: supersededBy,
 		})
 	}
 	return out

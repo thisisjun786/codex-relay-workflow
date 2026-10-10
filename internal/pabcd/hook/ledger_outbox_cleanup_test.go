@@ -49,7 +49,7 @@ func cleanupSupersededRows(t *testing.T, cwd, slug string) []string {
 }
 
 // Red on 3fceb240: the rows owed were inferred from "inconclusive, no verdict", which an abort produces as well, so a round that was
-// aborted on its own while the cleanup was pending got a superseded row it was never given. The cleanup's stamp tells them apart.
+// aborted on its own while the cleanup was pending got a superseded row it was never given. The cleanup's id tells them apart.
 func TestSupersedePlanAuditRoundsGivesNoRowToARoundAbortedOnItsOwn(t *testing.T) {
 	cwd := t.TempDir()
 	plan := cleanupPlan(t, cwd, "demo")
@@ -57,7 +57,7 @@ func TestSupersedePlanAuditRoundsGivesNoRowToARoundAbortedOnItsOwn(t *testing.T)
 	aborted := "2026-10-10T00:00:05.000Z"
 	reviewer := "aborted: by the agent"
 	plan.ReviewRounds[1].Status, plan.ReviewRounds[1].ClosedAt, plan.ReviewRounds[1].Lane.ReviewerSession = goalplan.ReviewInconclusive, &aborted, &reviewer
-	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
+	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, ID: "pac-test", Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
 	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestSupersedePlanAuditRoundsRecordsTheRowsOfARoundItClosedOnTheReplay(t *te
 	if err := os.Mkdir(ledger, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
+	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, ID: "pac-test", Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
 	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err == nil {
 		t.Fatal("a blocked ledger finished the cleanup")
 	}
@@ -117,7 +117,7 @@ func TestSupersedePlanAuditRoundsSyncsWhatItFindsBeforeItIsFinished(t *testing.T
 		}
 		return real(cwd, slug)
 	}
-	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
+	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, ID: "pac-test", Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
 	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err == nil || !strings.Contains(err.Error(), "injected sync failure") {
 		t.Fatalf("a failed sync finished the cleanup: %v", err)
 	}
@@ -131,5 +131,29 @@ func TestSupersedePlanAuditRoundsSyncsWhatItFindsBeforeItIsFinished(t *testing.T
 	}
 	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 2 {
 		t.Fatalf("superseded rows: %v", rows)
+	}
+}
+
+// Red on 63b65d5b: the rounds owed a row were told apart by the cleanup's millisecond stamp, so an abort that closed a round in the
+// same millisecond (or under a clock that stepped back onto the stamp) carried the same closedAt and got a superseded row it was never
+// given. The cleanup's own id, recorded on every round it closes, tells them apart.
+func TestSupersedePlanAuditRoundsGivesNoRowToAnAbortWithTheCleanupsStamp(t *testing.T) {
+	cwd := t.TempDir()
+	plan := cleanupPlan(t, cwd, "demo")
+	c := NewPlanAuditCleanup("demo", "e-new", []string{"r1", "r2"})
+	stamp := c.ClosedAt
+	reviewer := "aborted: independent manual abort"
+	plan.ReviewRounds[1].Status, plan.ReviewRounds[1].ClosedAt, plan.ReviewRounds[1].Lane.ReviewerSession = goalplan.ReviewInconclusive, &stamp, &reviewer
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err != nil {
+		t.Fatal(err)
+	}
+	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 1 || rows[0] != "r1" {
+		t.Fatalf("superseded rows: %v, want r1 only", rows)
+	}
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, goalplan.ReadGoalplan(cwd, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 1 || rows[0] != "r1" {
+		t.Fatalf("superseded rows after the replay: %v, want r1 only", rows)
 	}
 }

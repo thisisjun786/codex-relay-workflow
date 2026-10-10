@@ -149,7 +149,7 @@ func TestOrchestrateReplanCleanupFailureIsFinishedByTheNextCall(t *testing.T) {
 	}{
 		{"nothing-closed", func(string, string, hookCleanup, *goalplan.Goalplan) error { return syscall.EIO }},
 		{"closed-without-rows", func(cwd, sessionID string, c hookCleanup, plan *goalplan.Goalplan) error {
-			swept, _ := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds, c.ClosedAt)
+			swept, _ := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds, c.ClosedAt, c.ID)
 			if err := goalplan.WriteGoalplan(cwd, swept); err != nil {
 				return err
 			}

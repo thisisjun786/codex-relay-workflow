@@ -29,18 +29,23 @@ func TestSupersedeRoundsClosesTheListedObsoleteRoundsOnly(t *testing.T) {
 	if strings.Join(ids, ",") != "r1,r2" {
 		t.Fatalf("obsolete rounds = %v, want [r1 r2]", ids)
 	}
-	out, closed := SupersedeRounds(p, goalplan.PurposePlanAudit, "s", "new", ids, "")
+	out, closed := SupersedeRounds(p, goalplan.PurposePlanAudit, "s", "new", ids, "", "pac-1")
 	if strings.Join(closed, ",") != "r1,r2" {
 		t.Fatalf("closed = %v", closed)
+	}
+	for _, r := range out.ReviewRounds {
+		if want := map[bool]string{true: "pac-1"}[r.RoundID == "r1" || r.RoundID == "r2"]; r.SupersededBy != want {
+			t.Errorf("round %s supersededBy = %q, want %q", r.RoundID, r.SupersededBy, want)
+		}
 	}
 	if out.ActivePlanAuditRoundID == nil || *out.ActivePlanAuditRoundID != "r3" {
 		t.Errorf("the cursor on a round this call did not close was cleared: %v", out.ActivePlanAuditRoundID)
 	}
-	if again, closedAgain := SupersedeRounds(out, goalplan.PurposePlanAudit, "s", "new", ids, ""); len(closedAgain) != 0 || again != out {
+	if again, closedAgain := SupersedeRounds(out, goalplan.PurposePlanAudit, "s", "new", ids, "", "pac-2"); len(closedAgain) != 0 || again != out {
 		t.Errorf("a replay closed %v again", closedAgain)
 	}
 	p.ActivePlanAuditRoundID = new("r2")
-	if out, _ := SupersedeRounds(p, goalplan.PurposePlanAudit, "s", "new", ids, ""); out.ActivePlanAuditRoundID != nil {
+	if out, _ := SupersedeRounds(p, goalplan.PurposePlanAudit, "s", "new", ids, "", ""); out.ActivePlanAuditRoundID != nil {
 		t.Errorf("the cursor on a closed round was kept: %v", *out.ActivePlanAuditRoundID)
 	}
 }

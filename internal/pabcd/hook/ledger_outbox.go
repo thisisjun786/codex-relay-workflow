@@ -11,6 +11,8 @@ package hook
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -85,35 +87,40 @@ const PlanAuditCleanupKind = "plan-audit-supersede"
 
 // PlanAuditCleanup is the followup a P>A event of a bound session carries (CRW-1100): the plan it minted the
 // epoch in, the epoch itself and the exact plan_audit rounds of this session that the new epoch strands,
-// listed under the plan's write lock before the state was published, and the stamp the cleanup gives every
-// round it closes. Recording them keeps one epoch and one round list across every retry: a reconcile never
-// mints an epoch and never widens the list, and the stamp tells a round this cleanup closed from one that
-// was aborted on its own afterwards, which is closed the same way (inconclusive, no verdict).
+// listed under the plan's write lock before the state was published, the stamp the cleanup gives every
+// round it closes, and the cleanup's own id, which every round it closes records as supersededBy. Recording
+// them keeps one epoch and one round list across every retry: a reconcile never mints an epoch and never
+// widens the list, and the id tells a round this cleanup closed from one that was aborted on its own, which
+// is closed the same way (inconclusive, no verdict) and may carry the same millisecond stamp.
 type PlanAuditCleanup struct {
 	Kind     string   `json:"kind"`
+	ID       string   `json:"id,omitempty"`
 	Slug     string   `json:"slug"`
 	Epoch    string   `json:"epoch"`
 	Rounds   []string `json:"rounds"`
 	ClosedAt string   `json:"closedAt,omitempty"`
 }
 
-// NewPlanAuditCleanup is the cleanup of rounds under epoch on slug, with its closing stamp fixed now.
+// NewPlanAuditCleanup is the cleanup of rounds under epoch on slug, with its id minted and its closing stamp fixed now.
 func NewPlanAuditCleanup(slug, epoch string, rounds []string) PlanAuditCleanup {
-	return PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: slug, Epoch: epoch, Rounds: rounds, ClosedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z")}
+	var raw [8]byte
+	_, _ = rand.Read(raw[:]) // crypto/rand.Read does not fail (Go 1.24 and later)
+	return PlanAuditCleanup{Kind: PlanAuditCleanupKind, ID: "pac-" + hex.EncodeToString(raw[:]), Slug: slug, Epoch: epoch, Rounds: rounds,
+		ClosedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z")}
 }
 
 // planAuditSync is the durability step that ends a cleanup; a variable so a test can fail it.
 var planAuditSync = goalplan.SyncGoalplanArtifacts
 
 // SupersedePlanAuditRounds closes the rounds of c on plan, which the caller's write lock of c.Slug read, and
-// records one review_round_superseded row per round this cleanup closed, now or in an earlier attempt: a row
-// the plan's ledger already holds is not written again, and a round that closed some other way (an abort) is
-// never given a row. A plan write that published and then failed its directory sync, and a row that is
+// records one review_round_superseded row per round this cleanup closed, now or in an earlier attempt (the
+// round records the cleanup's id): a row the plan's ledger already holds is not written again, and a round
+// that closed some other way (an abort, whatever its stamp) is never given a row. A plan write that published and then failed its directory sync, and a row that is
 // visible but was never fsynced, are not taken for done: the plan's ledger and directory are made durable
 // before the cleanup counts as finished, and the first failure is returned, so the caller keeps the work
 // pending.
 func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *goalplan.Goalplan) error {
-	swept, closed := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds, c.ClosedAt)
+	swept, closed := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds, c.ClosedAt, c.ID)
 	var first error
 	if len(closed) > 0 {
 		// A publication whose directory sync failed is visible; the sync is made again below and its failure is reported there.
@@ -124,7 +131,7 @@ func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *g
 	owed := []string{}
 	for _, r := range swept.ReviewRounds {
 		if r.Purpose == goalplan.PurposePlanAudit && r.Status == goalplan.ReviewInconclusive && slices.Contains(c.Rounds, r.RoundID) &&
-			!slices.Contains(owed, r.RoundID) && (slices.Contains(closed, r.RoundID) || c.ClosedAt != "" && r.ClosedAt != nil && *r.ClosedAt == c.ClosedAt) {
+			!slices.Contains(owed, r.RoundID) && (slices.Contains(closed, r.RoundID) || c.ID != "" && r.SupersededBy == c.ID) {
 			owed = append(owed, r.RoundID)
 		}
 	}

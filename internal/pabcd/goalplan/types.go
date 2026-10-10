@@ -242,6 +242,10 @@ type ReviewRoundState struct {
 	PlanUnit       string            `json:"planUnit,omitempty"`
 	PlanEpoch      string            `json:"planEpoch,omitempty"`
 	PlanFiles      []PlanFileHash    `json:"planFiles,omitzero"`
+	// SupersededBy is the id of the re-plan cleanup that closed the round (CRW-1100, CRW-1111): an abort closes a round the same way
+	// (inconclusive, no verdict) and may carry the same closing stamp, so the cleanup recognises its own closures by this id alone.
+	// A port addition; the oracle has no such field and a round without it reads as before.
+	SupersededBy string `json:"supersededBy,omitempty"`
 }
 
 // FinalGateStatus is where the final gate stands.
