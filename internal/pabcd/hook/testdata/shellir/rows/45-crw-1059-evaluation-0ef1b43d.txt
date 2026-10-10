@@ -87,7 +87,7 @@ echo refreshed > lint.sh
 --cmd
 X=$(bash refresh.sh) bash lint.sh
 
-=== CRW-1059-20 | T
+=== CRW-1059-20 | B
 --why Control: the substitution runs lint.sh before the command rewrites it, so the sequence is allowed.
 --file lint.sh
 echo lint

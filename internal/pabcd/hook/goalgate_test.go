@@ -101,41 +101,27 @@ func goalGateTestString(value any) string {
 	return s
 }
 
-// goal-gate.test.ts:41-83 — the budget guard.
-func TestGoalGateBudgetGuard(t *testing.T) {
+// CRW-1133 replaces goal-gate.test.ts:41-83 (the budget guard): a create_goal is passed to the host whatever its
+// tool_input holds, so a user's token_budget reaches it. The host validates the fields and their values.
+func TestGoalGateLetsCreateGoalReachTheHost(t *testing.T) {
+	_, env := goalGateTestEnv(t)
 	cwd := t.TempDir()
-	guard := func(tool string, input any) string {
-		return goalGateApplyGoalBudgetGuard(goalGatePreToolUse{Cwd: cwd, SessionID: "s1", ToolName: tool, ToolInput: input})
-	}
-	if out := guard("create_goal", map[string]any{"objective": "do x"}); out != "" {
-		t.Errorf("an objective-only create_goal is denied: %q", out)
-	}
-	if out := guard("shell", map[string]any{"command": "ls", "token_budget": 5}); out != "" {
-		t.Errorf("another tool is denied: %q", out)
-	}
-	if out := guard("create_goal", map[string]any{}); out != "" {
-		t.Errorf("an empty input is denied: %q", out)
-	}
-	if out := guard("create_goal", nil); out != "" {
-		t.Errorf("a null input is denied: %q", out)
-	}
-	if out := guard("create_goal", "objective"); out != "" {
-		t.Errorf("a string input is denied: %q", out)
-	}
-	budget := guard("create_goal", map[string]any{"objective": "do x", "token_budget": 1000})
-	extra := guard("create_goal", map[string]any{"objective": "do x", "foo": 1})
-	if budget == "" || extra == "" {
-		t.Fatalf("a create_goal with an extra key passes: %q, %q", budget, extra)
-	}
-	if budget != extra {
-		t.Errorf("the extra-key envelope differs from the token_budget one:\n%s\n%s", budget, extra)
-	}
-	reason, context := goalGateTestDeny(t, budget)
-	if reason != goalGateCreateGoalWarning || context != reason {
-		t.Errorf("the budget envelope: reason %q, context %q", reason, context)
-	}
-	if !strings.Contains(reason, "token_budget") {
-		t.Errorf("the reason does not name token_budget: %q", reason)
+	deps := goalGateRealDeps(env)
+	for name, input := range map[string]any{
+		"objective only":           map[string]any{"objective": "do x"},
+		"a positive budget":        map[string]any{"objective": "do x", "token_budget": 1000},
+		"a value the host rejects": map[string]any{"objective": "do x", "token_budget": -1},
+		"an unknown field":         map[string]any{"objective": "do x", "foo": 1},
+		"an empty input":           map[string]any{},
+		"a null input":             nil,
+		"a string input":           "objective",
+	} {
+		raw := goalGateTestPayload(t, cwd, "s1", "create_goal", input)
+		for _, pabcd := range []bool{true, false} {
+			if out := goalGateHandle(raw, pabcd, deps); out != "" {
+				t.Errorf("%s (PABCD %v): the create_goal leg answered %q", name, pabcd, out)
+			}
+		}
 	}
 }
 
@@ -146,8 +132,8 @@ func TestGoalGateParsePreToolUse(t *testing.T) {
 	if !ok || p.ToolName != "create_goal" || p.SessionID != "s1" || p.Cwd != "/tmp/x" {
 		t.Fatalf("a valid payload: %+v, %v", p, ok)
 	}
-	if out := goalGateApplyGoalBudgetGuard(p); out == "" {
-		t.Error("a budgeted create_goal is not denied after the parse")
+	if p.ToolInput == nil {
+		t.Error("the parse dropped tool_input")
 	}
 	object := func(fields map[string]any) string {
 		raw, err := json.Marshal(fields)
@@ -252,8 +238,8 @@ func TestGoalGateHandlePreToolUseFailClosed(t *testing.T) {
 		t.Errorf("another tool through the dispatcher: %q", out)
 	}
 	budgeted := goalGateTestPayload(t, cwd, "s1", "create_goal", map[string]any{"objective": "x", "token_budget": 5})
-	if _, reason := goalGateTestDeny(t, goalGateHandle(budgeted, true, deps)); !strings.Contains(reason, "token_budget") {
-		t.Errorf("the budget guard through the dispatcher: %q", reason)
+	if out := goalGateHandle(budgeted, true, deps); out != "" {
+		t.Errorf("a budgeted create_goal through the dispatcher: %q", out)
 	}
 	// A payload that does not parse is not a throw: it passes through (goal-gate.ts:316-317).
 	for _, raw := range []string{"not json", "", "[]"} {
@@ -261,12 +247,12 @@ func TestGoalGateHandlePreToolUseFailClosed(t *testing.T) {
 			t.Errorf("%q: %q", raw, out)
 		}
 	}
-	// With PABCD off the interview guard is skipped, and the budget guard still fires.
+	// With PABCD off the interview guard is skipped.
 	if out := goalGateHandle(interview, false, deps); out != "" {
 		t.Errorf("request_user_input with PABCD off: %q", out)
 	}
-	if _, reason := goalGateTestDeny(t, goalGateHandle(budgeted, false, deps)); !strings.Contains(reason, "token_budget") {
-		t.Errorf("a budgeted create_goal with PABCD off: %q", reason)
+	if out := goalGateHandle(budgeted, false, deps); out != "" {
+		t.Errorf("a budgeted create_goal with PABCD off: %q", out)
 	}
 
 	// The fail-closed recover: the goal-state lookup cannot answer, so a request_user_input call is denied as

@@ -43,6 +43,7 @@ func TestCRW1159OneTurnIsAnsweredOnce(t *testing.T) {
 		setup        func(*state.State)
 	}{
 		{"loop-arm mandate", "Run crw-loop for this task", nil},
+		{"project scope pointer", "Run crw-loop for the migration project", nil},
 		{"trigger advice", "Use crw-pabcd to start Plan phase", nil},
 		{"agbrowse fail-closed", "agbrowse search for the release notes", nil},
 		{"mode 2 directive", "keep going", func(s *state.State) { s.Phase, s.OrchestrationActive = state.PhaseP, true }},

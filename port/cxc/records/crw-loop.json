@@ -32,7 +32,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer. CRW-1130 (post-evaluation): DISPATCH-MANAGED-01 added before DISPATCH-SURFACE-01 (a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane; an unresolved binding is not permission to go unmanaged), DISPATCH-SURFACE-01 and its parallel-lane request sentence scoped to unmanaged work, and the router row points to the binding check first. Oracle: loop/SKILL.md DISPATCH-SURFACE-01.",
       "hunks": [
         {
           "line": 4,
@@ -103,7 +103,7 @@
             "| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../pabcd/references/dispatch-surfaces.md) |\n"
           ],
           "new": [
-            "| Choosing between a thread and a subagent, or planning parallel lanes | [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md) |\n"
+            "| Choosing between a thread and a subagent, or planning parallel lanes (binding check first: DISPATCH-MANAGED-01) | [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md) |\n"
           ]
         },
         {
@@ -113,6 +113,33 @@
           ],
           "new": [
             "| Dispatch is authorized and needed | [Delegation](../crw-pabcd/references/delegation.md) |\n"
+          ]
+        },
+        {
+          "line": 89,
+          "old": [
+            "- DISPATCH-SURFACE-01 (STRICT): name the surface before fanning work out, because\n"
+          ],
+          "new": [
+            "- DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A\n",
+            "  Linear issue or DAG node (also one the relay holds no assignment for yet) is an\n",
+            "  independent relay child started and resumed through `crw-run`, never a\n",
+            "  `create_thread` lane; the relay refuses a second active or paused assignment of\n",
+            "  the same issue and a release past capacity, and those answers are followed, not\n",
+            "  routed around by creating a thread by hand. An unresolved binding is not\n",
+            "  permission to take the unmanaged route. Only standalone PABCD with no Linear issue\n",
+            "  and no CRW execution binding, and bounded helper delegation, use the rule below.\n",
+            "  Details: [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
+            "- DISPATCH-SURFACE-01 (STRICT): for unmanaged work, name the surface before fanning work out, because\n"
+          ]
+        },
+        {
+          "line": 100,
+          "old": [
+            "  and must never run branch-level git operations at the same time. A request for\n"
+          ],
+          "new": [
+            "  and must never run branch-level git operations at the same time. For unmanaged work, a request for\n"
           ]
         },
         {
@@ -157,27 +184,58 @@
     },
     {
       "file": "references/durable-goalplan.md",
-      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table.",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit.",
       "hunks": [
+        {
+          "line": 22,
+          "old": [
+            "HOTL mode. After `create_goal`, run `crw pabcd loop init --objective \"<same text>\"\n"
+          ],
+          "new": [
+            "HOTL mode.\n",
+            "\n",
+            "Token limit: pass `token_budget` to `create_goal` only when the user named a token\n",
+            "limit, with exactly that value; never choose one yourself. With no limit named the\n",
+            "goal is unlimited. The host validates the field and its value. A host whose\n",
+            "`create_goal` does not accept `token_budget` is a reported capability conflict;\n",
+            "do not create the goal without the limit the user asked for. The `create_goal`\n",
+            "hook does not refuse the field, and `update_goal` is not a budget API.\n",
+            "\n",
+            "After `create_goal`, run `crw pabcd loop init --objective \"<same text>\"\n"
+          ]
+        },
         {
           "line": 105,
           "old": [
             "- `crw goalplan *` — deprecated alias for the same behavior during migration.\n"
+          ]
+        },
+        {
+          "line": 130,
+          "new": [
+            "A token limit the user named is the host goal's `token_budget` (see the HOTL Goal-Setting Rule),\n",
+            "and a goal the host moves to `budgetLimited` stays limited at that number; a resume\n",
+            "or a raised limit is the user's decision, never the loop's.\n"
           ]
         }
       ]
     },
     {
       "file": "references/lane-dispatch.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Colocate the recorded host-bound data with the moved skill helper. Point the host-bound helper at its owning skill and disclose the omitted personal locator without claiming live bound verification. Relocate the packet validation command into the loop skill scripts directory. Quote the resolved helper path so a skill directory containing spaces is usable.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Colocate the recorded host-bound data with the moved skill helper. Point the host-bound helper at its owning skill and disclose the omitted personal locator without claiming live bound verification. Relocate the packet validation command into the loop skill scripts directory. Quote the resolved helper path so a skill directory containing spaces is usable. CRW-1130 (post-evaluation): the lane packet reference is for unmanaged lanes (a Linear issue or DAG node is a managed relay child through crw-run), the own-wake instruction is scoped to unmanaged coordinators, and a managed goal-free parent is resumed by relay delivery with the existing wake readiness (OPS-8.1, OPS-8.5) and arms no wake of its own. Oracle: loop/references/lane-dispatch.md Nothing wakes the coordinator.",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "Read when a request fans work out across parallel tasks, or when watching more lanes than\n",
             "one wait can hold. [Dispatch surfaces](../../pabcd/references/dispatch-surfaces.md) owns\n"
           ],
           "new": [
-            "one wait can hold. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns\n"
+            "Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes\n",
+            "than one wait can hold. A Linear issue or DAG node is a managed relay child started through\n",
+            "`crw-run` and is not handed to a `create_thread` lane by this file; apply\n",
+            "[DISPATCH-MANAGED-01](../../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)\n",
+            "first. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns\n"
           ]
         },
         {
@@ -203,12 +261,57 @@
           "new": [
             "Validate with `node \"<crw-loop skill directory>/scripts/check-lane-packet.mjs\" <packet.json>\n"
           ]
+        },
+        {
+          "line": 120,
+          "old": [
+            "Fan-out **across branches** belongs to lanes, not to subagents; concurrency *inside* one\n"
+          ],
+          "new": [
+            "For unmanaged work, fan-out **across branches** belongs to lanes, not to subagents; concurrency *inside* one\n"
+          ]
+        },
+        {
+          "line": 131,
+          "old": [
+            "## Nothing wakes the coordinator\n"
+          ],
+          "new": [
+            "## Nothing wakes the coordinator of unmanaged lanes\n"
+          ]
+        },
+        {
+          "line": 133,
+          "old": [
+            "A finished lane notifies its own task. No cross-task wake was found. A coordinator that\n",
+            "dispatches lanes and ends its turn has arranged nothing: keep the work inside the turn,\n",
+            "or arm a wake that targets the coordinator itself and verify it is active\n"
+          ],
+          "new": [
+            "A finished lane notifies its own task. No cross-task wake was found. An unmanaged\n",
+            "coordinator that dispatches lanes and ends its turn has arranged nothing: keep the work\n",
+            "inside the turn, or arm a wake that targets the coordinator itself and verify it is active\n"
+          ]
+        },
+        {
+          "line": 137,
+          "old": [
+            "thread, so a second monitor is not a second safety net.\n"
+          ],
+          "new": [
+            "thread, so a second monitor is not a second safety net. A managed run's goal-free parent is\n",
+            "resumed by relay delivery\n",
+            "([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it\n",
+            "checks the existing wake readiness\n",
+            "([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path)),\n",
+            "yields only after that readiness is established, and arms no wake of its own.\n"
+          ]
         }
       ]
     },
     {
       "file": "references/runtime-lifecycle.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1084: say that a loop request naming a project or a coordination gets a short scope pointer (crw-run for the project parent, crw-loop only for an explicit current-task implementation) instead of the arming recipe.",
       "hunks": [
         {
           "line": 34,
@@ -217,6 +320,18 @@
           ],
           "new": [
             "   copy-paste objects: [Phase control](../../crw-pabcd/references/phase-control.md) (ATTEST-SHAPE-01).\n"
+          ]
+        },
+        {
+          "line": 46,
+          "old": [
+            "at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), and an active goal\n"
+          ],
+          "new": [
+            "at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), except that a request naming a\n",
+            "project or a coordination gets a short scope pointer instead (crw-run for the project parent,\n",
+            "crw-loop only for an explicit implementation of a task in this session; the pointer arms\n",
+            "nothing), and an active goal\n"
           ]
         }
       ]

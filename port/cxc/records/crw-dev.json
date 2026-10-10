@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88.",
       "hunks": [
         {
           "line": 4,
@@ -108,6 +108,24 @@
           ],
           "new": [
             "`crw-qa`, or the matching `dev-*` owner for their named domains.\n"
+          ]
+        },
+        {
+          "line": 443,
+          "old": [
+            "- **Push requires explicit user approval (DEV-GIT-PUSH-01, ESCALATE)** — never `git push` without the user's explicit approval in the current session. Committing locally is autonomous; pushing to a remote is an external state change that the user must authorize. If the user has not approved a push, do not push — even at D/completion. This applies equally to force-push, branch creation on remote, and tag push.\n"
+          ],
+          "new": [
+            "- **Delivery authority: push only under an applicable grant (DEV-GIT-PUSH-01, ESCALATE)** — this is the one definition of when a push is allowed; `crw-pabcd`, `crw-run` and `crw-plan` point here and do not restate it. Committing locally is autonomous; pushing to a remote is an external state change that needs a grant that applies to this repository and this branch: the user's explicit approval for it in the current session, a standing grant of the repository (CRW's `AGENTS.md` and `POLICY.md` grant the push of a verified CRW task branch), or a scope packet that carries one of the two in its delivery line. A packet is evidence that a grant applies, never a new consent: it cannot widen a grant, and a packet that excludes publication, or a user's no-push instruction, outranks every grant. A branch push grant covers the verified task branch only; force-push, a tag, a push to an integration branch (`dev`, `main`), a release and a deployment keep their own authorization, and a grant given for one repository is no grant for another. Where no grant applies, do not push, even at D/completion, and report what was not published.\n"
+          ]
+        },
+        {
+          "line": 445,
+          "old": [
+            "- **Stack dependent work instead of one oversized PR (DEV-STACK-01, DEFAULT)** — when a change splits into 2+ dependency-ordered parts and one PR would be too large to review, publish a bottom-up stack: each branch based on the one below, each PR's base pointing at its parent. Editing a lower layer means cascading the rebase to every layer above before pushing (`DEV-STACK-02`, STRICT). Merging a stack is bottom-up and stays user-authorized (`DEV-STACK-04`, ESCALATE). Canonical rules, depth guidance, anti-patterns, review scope, and tooling: `references/stacked-prs.md`.\n"
+          ],
+          "new": [
+            "- **Choose the repository's delivery path first, then stack only where it uses pull requests (DEV-STACK-01, DEFAULT)** — CRW internal work is a verified task branch that the integrator fast-forwards onto `dev` (`AGENTS.md`, `POLICY.md`): it opens no pull request, so it is never stacked; a large dependent change is sequenced as ordered commits or task branches for the integrator. An external contribution or an in-flight pull request keeps the pull-request path: when a change there splits into 2+ dependency-ordered parts and one PR would be too large to review, publish a bottom-up stack: each branch based on the one below, each PR's base pointing at its parent. Editing a lower layer means cascading the rebase to every layer above before pushing (`DEV-STACK-02`, STRICT). Merging a stack is bottom-up and stays user-authorized (`DEV-STACK-04`, ESCALATE). Canonical rules, depth guidance, anti-patterns, review scope, and tooling: `references/stacked-prs.md`.\n"
           ]
         }
       ]

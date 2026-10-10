@@ -304,7 +304,10 @@ func TestReviewRoundArgsV2ProbeAndPacketOracle(t *testing.T) {
 			round := goalplan.ReviewRoundState{RoundID: c.RoundID, Lane: goalplan.ReviewLane{LaunchID: c.LaunchID}}
 			got, err := reviewRoundArgsRenderOpenPacket(round, c.FileCount, env(t, c.Config, "codex-home"))
 			// Rule R9 renames the role header the reviewer's reply is matched against.
-			if want := strings.ReplaceAll(c.Want, "CXC-ROLE:", "CRW-ROLE:"); err != nil || got != want {
+			// CRW-1116 (port: fixed): the packet names the GO-WITH-FIXES (blockers=N) line the sign-off parser reads.
+			want := strings.ReplaceAll(strings.ReplaceAll(c.Want, "CXC-ROLE:", "CRW-ROLE:"),
+				"VERDICT: PASS | NEAR-PASS | FAIL", "VERDICT: PASS | NEAR-PASS | FAIL | GO-WITH-FIXES (blockers=N)")
+			if err != nil || got != want {
 				t.Errorf("packet:\n%s\nwant:\n%s", got, want)
 			}
 		})

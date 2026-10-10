@@ -85,7 +85,6 @@ func TestGateVerdictsDoNotDependOnTheDepthOfAFieldTheyNeverRead(t *testing.T) {
 		name, leg, session, tool, input string // input holds %s where the ignored field goes
 		want                            string // a substring of the shallow answer ("" is silence)
 	}{
-		{"create_goal with a token budget", "pre-tool-use-guarding-goal-budget", "gate-1", "create_goal", `{"objective":"x","token_budget":1%s}`, "Use create_goal with objective only"},
 		{"request_user_input while the goals database is unreadable", "pre-tool-use-guarding-interview-in-goal", "gate-2", "request_user_input", `{"questions":[]%s}`, "goal-active=unreadable"},
 		{"update_goal complete over an unreadable session state", "pre-tool-use-guarding-goal-complete", "gate-bad", "update_goal", `{"status":"complete"%s}`, "state is unreadable"},
 		{"automation_update view", "pre-tool-use-guarding-automation-ownership", "gate-4", "automation_update", `{"mode":"view"%s}`, ""},
@@ -120,7 +119,7 @@ func TestGateDepthDoesNotChangeHowBrokenJSONIsHandled(t *testing.T) {
 		// The reader accepts only the escapes JSON has: \x0065 is not \u0065, so this payload is as broken as it is for
 		// JSON.parse and for the json.Valid check this reader replaced.
 		{"automation gate: an unknown escape followed by four hex digits is broken JSON", "pre-tool-use-guarding-automation-ownership", `{"hook_event_name":"PreToolUse","tool_name":"automation_update","tool_input":{"mode":"vi\x0065w"}}`, "Cannot verify automation ownership"},
-		{"goal gate: an unknown escape followed by four hex digits is not a payload", "pre-tool-use-guarding-goal-budget", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/","tool_name":"create_goal","tool_input":{"objective":"x","token_budget":1,"note":"a\x0065"}}`, ""},
+		{"goal gate: an unknown escape followed by four hex digits is not a payload", "pre-tool-use-guarding-interview-in-goal", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/","tool_name":"request_user_input","tool_input":{"questions":[],"note":"a\x0065"}}`, ""},
 		{"automation gate: a deep array is not a payload", "pre-tool-use-guarding-automation-ownership", deep, "Malformed native hook payload."},
 	}
 	for _, c := range cases {
@@ -184,14 +183,14 @@ func TestGateBoundsNestingByTheInputItReads(t *testing.T) {
 		t.Skip("reads megabytes of nesting")
 	}
 	h := gateEnv(t)
-	const leg = "pre-tool-use-guarding-goal-budget"
+	const leg = "pre-tool-use-guarding-interview-in-goal"
 	valid := func(depth int) string {
-		return gatePayload(t, h.cwd, "gate-1", "create_goal", `{"objective":"x","token_budget":1,"ignored":`+gateNested(depth)+`}`)
+		return gatePayload(t, h.cwd, "gate-1", "request_user_input", `{"questions":[],"ignored":`+gateNested(depth)+`}`)
 	}
-	unclosed := gatePayload(t, h.cwd, "gate-1", "create_goal", `{"objective":"x","token_budget":1,"ignored":`)
+	unclosed := gatePayload(t, h.cwd, "gate-1", "request_user_input", `{"questions":[],"ignored":`)
 	unclosed = unclosed[:len(unclosed)-1] + strings.Repeat("[", 2_500_000)
 	shallow, code := gateRun(t, leg, valid(1))
-	if code != 0 || !strings.Contains(shallow, "Use create_goal with objective only") {
+	if code != 0 || !strings.Contains(shallow, "goal-active=unreadable") {
 		t.Fatalf("the shallow call answered %q (exit %d)", shallow, code)
 	}
 	cases := []struct {
@@ -232,7 +231,7 @@ func TestGateEntryReadsTheSubagentStampAndCwdAtAnyDepth(t *testing.T) {
 	}
 	t.Chdir(t.TempDir()) // the process cwd has no crw.json: PABCD is on there
 	child := func(depth int) string {
-		raw := gatePayload(t, h.cwd, "gate-1", "create_goal", `{"objective":"x","token_budget":1,"ignored":`+gateNested(depth)+`}`)
+		raw := gatePayload(t, h.cwd, "gate-1", "request_user_input", `{"questions":[],"ignored":`+gateNested(depth)+`}`)
 		return raw[:len(raw)-1] + `,"agent_id":"child-1","agent_type":"worker"}`
 	}
 	disabled := func(depth int) string {
@@ -242,7 +241,7 @@ func TestGateEntryReadsTheSubagentStampAndCwdAtAnyDepth(t *testing.T) {
 		name, leg string
 		raw       func(int) string
 	}{
-		{"a child's create_goal with a token budget is exempt", "pre-tool-use-guarding-goal-budget", child},
+		{"a child's request_user_input in goal mode is exempt", "pre-tool-use-guarding-interview-in-goal", child},
 		{"request_user_input in a project with PABCD off is silent", "pre-tool-use-guarding-interview-in-goal", disabled},
 	}
 	for _, c := range cases {

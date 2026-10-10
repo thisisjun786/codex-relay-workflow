@@ -9,22 +9,27 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// GOAL-GATE (pabcd-state/src/goal-gate.ts, CXC v0.2.40, 3c1459ac): the PreToolUse guard that keeps a native goal
-// unlimited and the Interview out of goal mode. Three registrations share one handler there, so they share one
-// entry point here: the budget guard denies a create_goal whose tool_input carries any key but objective, the
-// interview guard denies request_user_input while the host's goal owns the thread (active, or unreadable, which
-// fails closed), and the goal-complete guard checks update_goal against the session's own durable state.
+// GOAL-GATE (pabcd-state/src/goal-gate.ts, CXC v0.2.40, 3c1459ac): the PreToolUse guard that keeps the Interview out
+// of goal mode and checks a goal's completion. Three registrations share one handler there, so they share one entry
+// point here: the create_goal registration, the interview guard that denies request_user_input while the host's goal
+// owns the thread (active, or unreadable, which fails closed), and the goal-complete guard that checks update_goal
+// against the session's own durable state.
+//
+// The oracle's create_goal guard denied every key but objective, so a token_budget the user named could not reach
+// the host and the deny text told the agent to drop it (goal-gate.ts:105-125). CRW-1133 removes it, a deviation
+// recorded in docs/port-cxc/known-defects/CRW-1133.md: the fields and their values belong to the host's create_goal
+// contract, the user's limit is passed as the user gave it, and the registration stays so that its declaration (and
+// the trust hash of it) does not move; it answers nothing.
 //
 // Each guard is tool-name-scoped, so at most one fires (goal-gate.ts:320), and the harness registers all three
 // rows against the same leg (pre-tool-use), as the oracle's declarations do.
 
-// The tool names and the two deny texts, fixed as the oracle writes them (goal-gate.ts:32-34, :62-66). They carry
-// no name the port renames, so contract/schema/cxc/name-substitution.json leaves them as they are.
+// The tool names and the interview deny text, fixed as the oracle writes them (goal-gate.ts:32-34, :62-66). They
+// carry no name the port renames, so contract/schema/cxc/name-substitution.json leaves them as they are.
 const (
 	goalGateCreateGoalToolName   = "create_goal"
 	goalGateRequestUserInputTool = "request_user_input"
 	goalGateUpdateGoalToolName   = "update_goal"
-	goalGateCreateGoalWarning    = "Use create_goal with objective only. Omit token_budget so the goal stays unlimited, and put lifecycle status changes on update_goal."
 	goalGateModeDenyReason       = "Goal mode denies blocking Interview / request_user_input, also when goal state is unreadable. For useful mid-work questions, use exposed and host-allowed request_user_input_async without expecting a reply; keep working with verified facts and authorized assumptions. Silence grants no approval."
 )
 
@@ -73,30 +78,6 @@ func goalGateParsePreToolUse(raw string) (goalGatePreToolUse, bool) {
 		return goalGatePreToolUse{}, false
 	}
 	return goalGatePreToolUse{SessionID: sessionID, Cwd: cwd, ToolName: toolName, ToolInput: object["tool_input"]}, true
-}
-
-// goalGateHasInvalidCreateGoalInput is hasInvalidCreateGoalInput (goal-gate.ts:105-107): an object carrying any
-// key but objective is invalid, and a value that is not an object is not invalid at all.
-func goalGateHasInvalidCreateGoalInput(value any) bool {
-	object, isObject := value.(map[string]any)
-	if !isObject {
-		return false
-	}
-	for key := range object {
-		if key != "objective" {
-			return true
-		}
-	}
-	return false
-}
-
-// goalGateApplyGoalBudgetGuard is applyGoalBudgetGuard (goal-gate.ts:113-125): the deny envelope for a create_goal
-// that names anything beside objective, else nothing. It never throws.
-func goalGateApplyGoalBudgetGuard(p goalGatePreToolUse) string {
-	if p.ToolName != goalGateCreateGoalToolName || !goalGateHasInvalidCreateGoalInput(p.ToolInput) {
-		return ""
-	}
-	return editAnswer("deny", goalGateCreateGoalWarning, goalGateCreateGoalWarning)
 }
 
 // goalGateApplyGoalModeInterviewGuard is applyGoalModeInterviewGuard (goal-gate.ts:136-142): the deny envelope for
@@ -161,8 +142,9 @@ func goalGateRealDeps(env host.LookupEnv) goalGateDeps {
 // three pre-tool-use goal rows of internal/harness/legs.go register. pabcdEnabled is the read the harness already
 // made for this payload's cwd (the same file the oracle reads at :318), so the normal path does not read it again.
 //
-// The budget guard runs first, then the interview guard while PABCD is on, then the goal-complete guard; each is
-// tool-name-scoped, so at most one fires and the first non-empty answer stands.
+// The interview guard runs first while PABCD is on, then the goal-complete guard; each is tool-name-scoped, so at
+// most one fires and the first non-empty answer stands. A create_goal reaches neither, so it is passed to the host
+// whatever its tool_input holds (CRW-1133).
 func GoalGateHandlePreToolUseFailClosed(raw string, env host.LookupEnv, pabcdEnabled bool) string {
 	return goalGateHandle(raw, pabcdEnabled, goalGateRealDeps(env))
 }
@@ -193,9 +175,6 @@ func goalGateHandle(raw string, pabcdEnabled bool, deps goalGateDeps) (out strin
 	payload, ok := goalGateParsePreToolUse(raw)
 	if !ok {
 		return ""
-	}
-	if answer := goalGateApplyGoalBudgetGuard(payload); answer != "" {
-		return answer
 	}
 	if pabcdEnabled {
 		if answer := goalGateApplyGoalModeInterviewGuard(payload, func() host.GoalStatus { return deps.GoalStatus(payload.SessionID) }); answer != "" {

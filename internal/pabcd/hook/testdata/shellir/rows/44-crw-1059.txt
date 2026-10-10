@@ -2,7 +2,7 @@
 # writes reach only the executions after it. The controls keep the unordered contexts (loop, pipe, background job, function body)
 # and the real rewrite (the writer runs before the rewritten script). Format: see shellwrite_repro_test.go.
 
-=== CRW-1059-01 | T
+=== CRW-1059-01 | B
 --why Sequential: inside bash -c with &&, the later script rewrites the earlier one only after it ran, as at the top level.
 --file lint.sh
 echo lint
@@ -11,7 +11,7 @@ echo refreshed > lint.sh
 --cmd
 bash -c 'bash lint.sh && bash refresh.sh'
 
-=== CRW-1059-02 | T
+=== CRW-1059-02 | B
 --why Sequential: inside bash -c with ||, the same order as CRW-1059-01.
 --file lint.sh
 echo lint
@@ -20,7 +20,7 @@ echo refreshed > lint.sh
 --cmd
 bash -c 'bash lint.sh || bash refresh.sh'
 
-=== CRW-1059-03 | T
+=== CRW-1059-03 | B
 --why Sequential: inside bash -c, the two commands on two lines of the text run in line order.
 --file lint.sh
 echo lint
@@ -30,7 +30,7 @@ echo refreshed > lint.sh
 bash -c 'bash lint.sh
 bash refresh.sh'
 
-=== CRW-1059-04 | T
+=== CRW-1059-04 | B
 --why Sequential: in a command substitution, the script run first is not rewritten by the script run after it.
 --file lint.sh
 echo lint

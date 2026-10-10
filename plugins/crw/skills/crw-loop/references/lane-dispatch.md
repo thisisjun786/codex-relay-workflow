@@ -1,7 +1,10 @@
 # Lane dispatch — tasks that run their own loop
 
-Read when a request fans work out across parallel tasks, or when watching more lanes than
-one wait can hold. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns
+Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes
+than one wait can hold. A Linear issue or DAG node is a managed relay child started through
+`crw-run` and is not handed to a `create_thread` lane by this file; apply
+[DISPATCH-MANAGED-01](../../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
+first. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns
 the choice between a thread and a subagent; this file owns what a lane is handed and what
 it is allowed to do with it.
 
@@ -121,7 +124,7 @@ a failure. More than eight lanes means deliberate batching: watch the batch whos
 changes your next decision, carry each target's `afterCursor`, and do not read an
 unwatched lane as idle.
 
-Fan-out **across branches** belongs to lanes, not to subagents; concurrency *inside* one
+For unmanaged work, fan-out **across branches** belongs to lanes, not to subagents; concurrency *inside* one
 lane's tree is still subagent work. No host-wide cap on concurrently running tasks was
 found in the searched paths, and per-thread turns queue instead. Subagents are the capped
 resource:
@@ -132,13 +135,18 @@ itself). So "unlimited parallel subagents" is not a shape the host offers — ru
 state the wave size, and close finished agents, because a completed agent holds its slot
 until it is closed.
 
-## Nothing wakes the coordinator
+## Nothing wakes the coordinator of unmanaged lanes
 
-A finished lane notifies its own task. No cross-task wake was found. A coordinator that
-dispatches lanes and ends its turn has arranged nothing: keep the work inside the turn,
-or arm a wake that targets the coordinator itself and verify it is active
+A finished lane notifies its own task. No cross-task wake was found. An unmanaged
+coordinator that dispatches lanes and ends its turn has arranged nothing: keep the work
+inside the turn, or arm a wake that targets the coordinator itself and verify it is active
 (DISPATCH-WAKE-01 in [waiting](waiting.md)). Only one active heartbeat may attach to a
-thread, so a second monitor is not a second safety net.
+thread, so a second monitor is not a second safety net. A managed run's goal-free parent is
+resumed by relay delivery
+([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
+checks the existing wake readiness
+([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path)),
+yields only after that readiness is established, and arms no wake of its own.
 
 Managed worktrees are retained to the latest 15 by default and archive cleanup can delete
 or transfer one, so a lane's checkout is not permanent storage. Land or push work; do not
