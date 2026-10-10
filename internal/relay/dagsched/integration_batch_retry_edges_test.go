@@ -65,4 +65,10 @@ func TestRetryCandidatesNeedsEveryRemovedPrerequisite(t *testing.T) {
 	if got := ids(retryCandidates(nodes("a", "b", "c", "d"), nodes("a", "c"), removed, edges)); got != "b" {
 		t.Fatalf("survivor prerequisite: retried %q; want b", got)
 	}
+	// a conflict-deferred candidate that a cascade excluded is among the removed and is retried with its prerequisite
+	edges = map[string][]string{"b": {"e"}}
+	removed = []removedCandidate{cand("b", "not_proven_failing"), {Candidate: Candidate{NodeID: "e"}, reason: "depends_on_b", deferred: true}}
+	if got := ids(retryCandidates(nodes("a", "b", "d", "e"), nodes("a"), removed, edges)); got != "b,e" {
+		t.Fatalf("deferred dependant: retried %q; want b,e", got)
+	}
 }

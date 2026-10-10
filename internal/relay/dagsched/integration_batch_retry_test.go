@@ -412,3 +412,89 @@ func TestIntegrationBatchRetryKeepsOutANotProvenCandidateWhosePrerequisiteFails(
 		t.Fatalf("split %v; want d verification_failed and b left out", got)
 	}
 }
+
+// deferredDependantKit is five candidates in node-id order, a to e, with the edge b -> e. d adds bad.txt and shared.txt, e adds
+// shared.txt: e conflicts with d, so the first pass defers e; the bisection then removes b (not proven failing, it fails only
+// beside a without repair.txt) and cascades e out as depends_on_b, and d fails alone. eFile is what e commits besides shared.txt.
+func deferredDependantKit(t *testing.T, eFile string) *batchKit {
+	t.Helper()
+	return retryKitOf(t, []batchNode{
+		{name: "a", files: map[string]string{"a.txt": "a\n"}},
+		{name: "b", files: map[string]string{"b.txt": "b\n"}},
+		{name: "c", files: map[string]string{"repair.txt": "c\n"}},
+		{name: "d", files: map[string]string{"bad.txt": "d\n", "shared.txt": "d\n"}},
+		{name: "e", files: map[string]string{eFile: "e\n", "shared.txt": "e\n"}},
+	}, [][2]string{{"b", "e"}})
+}
+
+// An eligible conflict-deferred dependant of a retried candidate joins the same retry (CRW-1026, d3 evaluation d1): e conflicted
+// only with d, which fails alone, so once b recovers e merges on the survivors and b and e pass as one set.
+func TestIntegrationBatchRetryIncludesAConflictDeferredDependant(t *testing.T) {
+	k := deferredDependantKit(t, "e.txt")
+	var off, on int
+	if _, err := deferredDependantKit(t, "e.txt").runRetryBatch(t, false, &off); err != nil {
+		t.Fatalf("flag off: %v", err)
+	}
+	res, err := k.runRetryBatch(t, true, &on)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,b,c,e" {
+		t.Fatalf("merged %v (split %v); want a, b, c and e", got, splitReasons(res))
+	}
+	if got := splitReasons(res); len(got) != 1 || got["d"] != "verification_failed" {
+		t.Fatalf("split %v; want only d with verification_failed", got)
+	}
+	if on-off != 1 {
+		t.Fatalf("the retry started %d verifications more than the batch without it; want exactly 1", on-off)
+	}
+	tree := k.repo.git("ls-tree", "-r", "--name-only", res.NewHead)
+	if !strings.Contains(tree, "e.txt") || !strings.Contains(tree, "b.txt") || strings.Contains(tree, "bad.txt") {
+		t.Fatalf("the branch holds %q; want b.txt and e.txt without bad.txt", tree)
+	}
+	if res.Verification.HeadCommit != res.NewHead || res.Verification.Result != "pass" {
+		t.Fatalf("the issued record names %s with %q; want a pass of %s", res.Verification.HeadCommit, res.Verification.Result, res.NewHead)
+	}
+}
+
+// The deferred dependant can be the repair itself: b fails beside a until e brings repair.txt, so only the pair b and e passes.
+func TestIntegrationBatchRetryMergesADeferredDependantThatRepairsTheRetriedCandidate(t *testing.T) {
+	k := retryKitOf(t, []batchNode{
+		{name: "a", files: map[string]string{"a.txt": "a\n"}},
+		{name: "b", files: map[string]string{"b.txt": "b\n"}},
+		{name: "c", files: map[string]string{"c.txt": "c\n"}},
+		{name: "d", files: map[string]string{"bad.txt": "d\n", "shared.txt": "d\n"}},
+		{name: "e", files: map[string]string{"repair.txt": "e\n", "shared.txt": "e\n"}},
+	}, [][2]string{{"b", "e"}})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,b,c,e" {
+		t.Fatalf("merged %v (split %v); want a, b, c and e", got, splitReasons(res))
+	}
+}
+
+// A deferred dependant whose conflict stays does not sink the retry: e conflicts with the survivor a, so it is left out and b
+// is still retried and merged; e is reported with the reason it carried.
+func TestIntegrationBatchRetryLeavesOutADeferredDependantThatStillConflicts(t *testing.T) {
+	k := retryKitOf(t, []batchNode{
+		{name: "a", files: map[string]string{"a.txt": "a\n", "shared.txt": "a\n"}},
+		{name: "b", files: map[string]string{"b.txt": "b\n"}},
+		{name: "c", files: map[string]string{"repair.txt": "c\n"}},
+		{name: "d", files: map[string]string{"bad.txt": "d\n"}},
+		{name: "e", files: map[string]string{"e.txt": "e\n", "shared.txt": "e\n"}},
+	}, [][2]string{{"b", "e"}})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,b,c" {
+		t.Fatalf("merged %v (split %v); want a, b and c", got, splitReasons(res))
+	}
+	if got := splitReasons(res); got["e"] == "" || got["d"] != "verification_failed" {
+		t.Fatalf("split %v; want e left out and d verification_failed", got)
+	}
+}
