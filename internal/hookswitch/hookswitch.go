@@ -7,8 +7,9 @@
 // The hook side (Read) is lenient: a switch that is there but cannot be read or parsed, in any way,
 // is on with a warning, because a protective guard is never silenced by a damaged file, and a field
 // it does not know is ignored. The installer side (Parse, Load, Marshal, Write, WriteRaw, KeepAside)
-// is strict: it refuses a document with an unknown field or content after the document, and a state
-// without its provenance, and crw install switch (CRW-201) repairs a switch.json it cannot use by
+// is strict: its reader refuses a document with an unknown field or content after the document and
+// an active value that is neither state, its writer refuses a state without its provenance (changedAt
+// and by), and crw install switch (CRW-201) repairs a switch.json it cannot use by
 // setting that entry aside (KeepAside) and publishing a whole document with a temporary file renamed
 // into place. The command a declaration names does not change with the switch, so the hooks' trust
 // hashes stay stable across it.
@@ -98,6 +99,12 @@ func Read(env host.LookupEnv) Reading {
 	if err != nil {
 		return Reading{On: true, Problem: "codex home unresolved: " + err.Error()}
 	}
+	return ReadAt(codexHome)
+}
+
+// ReadAt is Read for a Codex home already resolved: what the hooks make of the switch under it.
+// The installer's status uses it, so what it reports as selected is what the hooks do.
+func ReadAt(codexHome string) Reading {
 	r := Reading{CodexHome: codexHome}
 	state, err := readState(Path(codexHome))
 	switch {

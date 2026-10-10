@@ -160,11 +160,13 @@ type Aside struct {
 
 // KeepAside keeps the entry at the switch path, whatever it is (a file the hook cannot parse, a
 // file over MaxBytes, a link whose target is gone, a FIFO, a directory), as
-// switch.json.crw-<stamp>.bak beside it, so the publication that follows loses nothing. An entry
-// that is not a directory is hard linked, which keeps it to the byte and leaves the switch path in
-// place until the rename replaces it, so a hook never sees the switch absent; a directory cannot be
-// replaced by a file and is moved, and the path is absent until the publication. It returns nil
-// when nothing is at the path.
+// switch.json.crw-<stamp>.bak beside it, so the publication that follows loses nothing. A symbolic
+// link is kept as the link itself, a new link to the same target made with Symlink (a platform's
+// link(2) may follow a link and then fail on a dangling one or keep the target instead of the
+// link); any other entry that is not a directory is hard linked, which keeps it to the byte. Both
+// leave the switch path in place until the rename replaces it, so a hook never sees the switch
+// absent. A directory cannot be replaced by a file and is moved, and the path is absent until the
+// publication. It returns nil when nothing is at the path.
 func KeepAside(codexHome, stamp string) (*Aside, error) {
 	path := Path(codexHome)
 	info, err := os.Lstat(path)
@@ -178,9 +180,15 @@ func KeepAside(codexHome, stamp string) (*Aside, error) {
 	if _, err := os.Lstat(a.Path); err == nil {
 		return nil, fmt.Errorf("%s exists already", a.Path)
 	}
-	if a.dir {
+	switch {
+	case a.dir:
 		err = os.Rename(path, a.Path)
-	} else {
+	case info.Mode()&fs.ModeSymlink != 0:
+		var target string
+		if target, err = os.Readlink(path); err == nil {
+			err = os.Symlink(target, a.Path)
+		}
+	default:
 		err = os.Link(path, a.Path)
 	}
 	if err != nil {

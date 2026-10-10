@@ -110,12 +110,15 @@ writer of `config.toml` takes:
    gives a directory no sync at all (EINVAL, ENOTSUP, ENOSYS) is not an error). The path, the
    document, the validity rule and the writer are `internal/hookswitch`, the package the hooks read
    the file with, so the file has one definition. The installer reads the file strictly (a field it
-   does not know, content after the document, an `active` that is neither state, and a state without
-   `changedAt` or `by` are refused), where the hook is lenient and reads such a document as it can
-   (unreadable or invalid is on with a warning). The installer owns this file, so one it cannot use
+   does not know, content after the document and an `active` that is neither state are refused) and
+   writes only a state with `changedAt` and `by`, where the hook is lenient and reads such a document
+   as it can (unreadable or invalid is on with a warning). `switch status` reports the side the hooks
+   act on, so a document the installer refuses but the hook reads (an unknown field) still shows
+   CRW on, or a conflict with the CXC plugin, and the refusal is reported beside it. The installer owns this file, so one it cannot use
    (a link whose target is gone, a FIFO, a directory, a file over 64 KiB, a document it refuses) does
-   not stop the command: it is kept as `switch.json.crw-<ts>.bak` beside it (a hard link, so a hook
-   never sees the switch absent; a directory is moved), the reason and the backup are reported in the
+   not stop the command: it is kept as `switch.json.crw-<ts>.bak` beside it (a symbolic link is copied as the link
+   itself and any other entry is hard linked, so a hook never sees the switch absent; a directory is
+   moved), the reason and the backup are reported in the
    notes, and a failed later step puts the entry back;
 3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
