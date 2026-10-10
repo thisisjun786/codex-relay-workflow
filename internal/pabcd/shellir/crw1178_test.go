@@ -226,3 +226,71 @@ func TestCRW1178SameCommandCannotRefreshACache(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1178 evaluation d1: the interpreter imports __pycache__/calc.pyc (no tag) as the sourceless module __pycache__.calc and
+// never compares it with a source, so a stale header is no proof it is skipped. Only <module>.<tag>[.opt-N].pyc is a cache entry.
+func TestCRW1178UntaggedOrMalformedCacheNameIsRefused(t *testing.T) {
+	for _, name := range []string{
+		"__pycache__/calc.pyc",
+		"__pycache__/calc..pyc",
+		"__pycache__/calc.cpython-312.extra.pyc",
+		"__pycache__/calc.cpython-312.opt-x.pyc",
+		"__pycache__/calc.cpython-312.opt-1.more.pyc",
+		"__pycache__/calc.in valid.pyc",
+		"__pycache__/.cpython-312.pyc",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cwd := crw1178Project(t, map[string][]byte{name: append(pycHeader(0), "code"...)})
+			for _, cmd := range []string{"python3 -m unittest", "python3 -B -m unittest", "python3 -m pytest"} {
+				_, err := Analyze(cmd, cwd)
+				var u *Unreadable
+				if !errors.As(err, &u) {
+					t.Fatalf("%s: an unimportable-as-cache name with a stale header was skipped: %v", cmd, err)
+				}
+				if !strings.Contains(u.Reason, filepath.Base(name)) {
+					t.Errorf("%s: the reason lacks the file: %q", cmd, u.Reason)
+				}
+			}
+		})
+	}
+}
+
+// CRW-1178 evaluation d2: a command that can change a source's modification time (through any name of it, such as a hard link)
+// before the run could turn a stale entry judged now into one that agrees with its source. With a stale entry skipped, such a
+// command in the same text is refused; the same command with no cache, and unrelated commands, stay allowed.
+func TestCRW1178TimestampMutationBesideStaleCacheIsRefused(t *testing.T) {
+	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	for _, cmd := range []string{
+		"touch -d @1 stamp && python3 -B -m unittest",
+		"touch stamp; python3 -m unittest",
+		"env touch -d @1 stamp && python3 -m unittest",
+		"command touch stamp && python3 -m unittest",
+		"truncate -s 33 stamp && python3 -m unittest",
+		"echo stamp | xargs touch -d @1 && python3 -m unittest",
+		"find . -name stamp -exec touch -d @1 {} + && python3 -m unittest",
+		"cd . && touch stamp && python3 -m unittest",
+	} {
+		_, err := Analyze(cmd, cwd)
+		var u *Unreadable
+		if !errors.As(err, &u) {
+			t.Errorf("%s: a source time change beside a stale cache was allowed: %v", cmd, err)
+		}
+	}
+	// No cache entry is relied on: nothing to refresh, so the command is as before.
+	clean := crw1178Project(t, nil)
+	if err := os.WriteFile(filepath.Join(clean, "notes.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"touch notes.txt && python3 -B -m unittest", "truncate -s 0 notes.txt; python3 -m unittest"} {
+		if _, err := Analyze(cmd, clean); err != nil {
+			t.Errorf("%s: refused with no cache present: %v", cmd, err)
+		}
+	}
+	// A command after the run cannot affect what was judged.
+	if _, err := Analyze("python3 -B -m unittest && touch notes.txt", cwd); err != nil {
+		t.Errorf("a touch after the run was refused: %v", err)
+	}
+}

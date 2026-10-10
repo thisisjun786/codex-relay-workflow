@@ -379,3 +379,40 @@ func TestCRW1178GhInAFileNameIsNoGithubPost(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1178 evaluation d1 and d2 through both guards: an untagged __pycache__/calc.pyc (importable as the sourceless module
+// __pycache__.calc) and a touch through a hard link beside a stale entry are refused by the memory gate and the GitHub guard.
+func TestCRW1178CacheBypassShapesStayRefused(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	crw1178Cache(t, cwd)
+	untagged := filepath.Join(cwd, "__pycache__", "calc.pyc")
+	if err := os.WriteFile(untagged, append(make([]byte, 16), "code"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"python3 -m unittest", "python3 -B -m unittest"} {
+		reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+		if !strings.Contains(reason, "__pycache__/calc.pyc") || strings.Contains(reason, "MEMORY-WRITE-GATE") {
+			t.Errorf("untagged cache, memory gate, %q: %s", cmd, reason)
+		}
+		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+		if !strings.Contains(gh, "__pycache__/calc.pyc") {
+			t.Errorf("untagged cache, GitHub guard, %q: %s", cmd, gh)
+		}
+	}
+	if err := os.Remove(untagged); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	for _, cmd := range []string{"touch -d @1 stamp && python3 -B -m unittest", "truncate -s 6 stamp; python3 -m unittest"} {
+		reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+		if !strings.Contains(reason, "stale only until") {
+			t.Errorf("touch through a link, memory gate, %q: %s", cmd, reason)
+		}
+		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+		if !strings.Contains(gh, "stale only until") {
+			t.Errorf("touch through a link, GitHub guard, %q: %s", cmd, gh)
+		}
+	}
+}

@@ -122,6 +122,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if err != nil {
 		return true, unreadablef("module directory cannot be resolved")
 	}
+	staleSkipped := false
 	if module == "unittest" || module == "pytest" {
 		// Imports, package initializers and collection hooks can execute even
 		// with explicit operands. Inspect the bounded local source inventory;
@@ -148,6 +149,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 				if why := pycacheEntryRefusal(p); why != "" {
 					return unreadablef("module imports compiled code that is not read (%s: %s)", rel, why)
 				}
+				staleSkipped = true
 				return nil
 			}
 			if strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
@@ -167,6 +169,13 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 				return true, u
 			}
 			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err, physical))
+		}
+		// A stale entry is skipped on the modification time the sources have now. A command of this text that can change a time,
+		// through any name of the source (a hard link), could make the entry agree with its source before the run (CRW-1178).
+		if staleSkipped {
+			if name := w.timestampMutator(); name != "" {
+				return true, unreadablef("module cache entry is stale only until the command runs %s; remove __pycache__, use python -B", name)
+			}
 		}
 		// Pytest also loads ancestor conftest files and configuration. Config
 		// can name plugins whose execution set this reader cannot establish.
@@ -252,9 +261,9 @@ func pycacheEntryRefusal(p string) string {
 	if filepath.Base(dir) != "__pycache__" {
 		return "compiled module without a source"
 	}
-	stem, _, _ := strings.Cut(name, ".")
-	if stem == "" {
-		return "no source module"
+	stem, ok := pycacheEntryStem(name)
+	if !ok {
+		return "not a cache entry name (<module>.<tag>.pyc)"
 	}
 	source, err := os.Lstat(filepath.Join(filepath.Dir(dir), stem+".py"))
 	if err != nil || !source.Mode().IsRegular() {
@@ -283,6 +292,75 @@ func pycacheEntryRefusal(p string) string {
 		return ""
 	}
 	return "cache runs instead of " + stem + ".py" + route
+}
+
+// pycacheEntryStem is the module of a cache entry name <module>.<tag>[.opt-N].pyc, the only shape the interpreter writes and loads
+// from __pycache__. Any other .pyc there (calc.pyc, calc.cpython-312.extra.pyc) is no cache of calc.py: calc.pyc imports as the
+// sourceless module __pycache__.calc, which is never compared with a source.
+func pycacheEntryStem(name string) (string, bool) {
+	parts := strings.Split(name, ".")
+	if len(parts) != 3 && len(parts) != 4 || parts[len(parts)-1] != "pyc" || parts[0] == "" {
+		return "", false
+	}
+	tag := parts[1]
+	i := 0
+	for i < len(tag) && (tag[i] >= 'a' && tag[i] <= 'z') {
+		i++
+	}
+	if i == 0 || i == len(tag) {
+		return "", false
+	}
+	if tag[i] == '-' {
+		i++
+	}
+	j := i
+	for j < len(tag) && tag[j] >= '0' && tag[j] <= '9' {
+		j++
+	}
+	if j == i {
+		return "", false
+	}
+	for ; j < len(tag); j++ { // free-threaded and debug builds append letters (313t)
+		if tag[j] < 'a' || tag[j] > 'z' {
+			return "", false
+		}
+	}
+	if len(parts) == 4 {
+		opt := parts[2]
+		if !strings.HasPrefix(opt, "opt-") || len(opt) == 4 {
+			return "", false
+		}
+		for _, c := range opt[4:] {
+			if c < '0' || c > '9' {
+				return "", false
+			}
+		}
+	}
+	return parts[0], true
+}
+
+// timestampMutator names a command already read in this text that can change the modification time of a file through any name of
+// it: touch and truncate, or a command that runs one (xargs, find -exec) or whose words the reader cannot evaluate.
+func (w *walker) timestampMutator() string {
+	set := map[string]bool{"touch": true, "truncate": true}
+	runs := map[string]bool{"xargs": true, "find": true, "parallel": true}
+	for _, e := range w.out {
+		if set[e.Name] {
+			return e.Name
+		}
+		if !runs[e.Name] {
+			continue
+		}
+		for _, a := range e.Args {
+			if !a.Known {
+				return e.Name
+			}
+			if set[filepath.Base(a.Value)] {
+				return filepath.Base(a.Value)
+			}
+		}
+	}
+	return ""
 }
 
 // pycacheStale is whether a timestamp header (modification time and size, 32 bits each) disagrees with the source, so that the
