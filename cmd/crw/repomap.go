@@ -224,10 +224,38 @@ func repoMapBootstrapLock(ctx context.Context, venvs string, stderr io.Writer) (
 	}
 }
 
+// markerFile and markerOps are the file operations of the marker write, injectable so a test can observe their order.
+type markerFile interface {
+	Name() string
+	WriteString(s string) (int, error)
+	Sync() error
+	Close() error
+}
+
+type markerOps struct {
+	createTemp func(dir, pattern string) (markerFile, error)
+	rename     func(oldpath, newpath string) error
+	remove     func(path string) error
+}
+
+var osMarkerOps = markerOps{
+	createTemp: func(dir, pattern string) (markerFile, error) {
+		f, err := os.CreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		return f, nil
+	},
+	rename: os.Rename,
+	remove: os.Remove,
+}
+
 // writeRepoMapMarker writes the completion marker atomically: the content goes to a temporary file in the venv directory, is
 // synced, and is renamed onto the marker, so the marker either does not exist or is whole, whatever kills the process (CRW-1162).
-func writeRepoMapMarker(path string) error {
-	f, err := os.CreateTemp(filepath.Dir(path), repoMapVenvMarker+".tmp-*")
+func writeRepoMapMarker(path string) error { return writeRepoMapMarkerWith(path, osMarkerOps) }
+
+func writeRepoMapMarkerWith(path string, ops markerOps) error {
+	f, err := ops.createTemp(filepath.Dir(path), repoMapVenvMarker+".tmp-*")
 	if err != nil {
 		return err
 	}
@@ -240,10 +268,10 @@ func writeRepoMapMarker(path string) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = ops.rename(tmp, path)
 	}
 	if err != nil {
-		_ = os.Remove(tmp)
+		_ = ops.remove(tmp)
 	}
 	return err
 }
@@ -325,7 +353,8 @@ func launchRepoMap(args []string, env host.LookupEnv, stderr io.Writer, d mapDep
 // second finds the first's venv. A venv is ready when its completion marker exists, which is written only after pip succeeded: an
 // interpreter without the marker (a bootstrap that was killed, or a venv from before the marker) is built again, once (CRW-1162).
 // A failed venv or pip removes the directory only when this attempt made it: a tree that was there before (another run's, or an
-// earlier partial one) is never deleted, only the interpreter this attempt put in it (CRW-1147). It returns whether the venv is
+// earlier partial one) is never deleted, and neither is an interpreter that was there before; only an interpreter this attempt
+// put in it goes (CRW-1147, CRW-1162). It returns whether the venv is
 // usable, or a nonzero exit when the cleanup itself failed.
 func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exit int) {
 	dir := filepath.Dir(filepath.Dir(p.python))
@@ -348,31 +377,35 @@ func bootstrapRepoMapVenv(p mapPaths, stderr io.Writer, d mapDeps) (ok bool, exi
 			return false, 1
 		}
 	}
-	existed := d.exists(dir)
+	existed, hadPython := d.exists(dir), d.exists(p.python)
 	fmt.Fprintf(stderr, "crw map: bootstrapping venv at %s (one-time)...\n", dir)
 	if code, _ := d.run("python3", []string{"-m", "venv", dir}, false); code != 0 {
-		return false, cleanupRepoMapVenv(p, dir, existed, stderr, d)
+		return false, cleanupRepoMapVenv(p, dir, existed, hadPython, stderr, d)
 	}
 	if code, _ := d.run(p.python, []string{"-m", "pip", "install", "-q", "-r", p.requirements}, false); code != 0 {
 		fmt.Fprintln(stderr, "crw map: venv bootstrap failed; falling back.")
-		return false, cleanupRepoMapVenv(p, dir, existed, stderr, d)
+		return false, cleanupRepoMapVenv(p, dir, existed, hadPython, stderr, d)
 	}
 	if d.mark != nil {
 		if err := d.mark(p.marker); err != nil {
 			fmt.Fprintln(stderr, "crw map: venv bootstrap failed:", err)
 			fmt.Fprintln(stderr, "crw map: falling back.")
-			return false, cleanupRepoMapVenv(p, dir, existed, stderr, d)
+			return false, cleanupRepoMapVenv(p, dir, existed, hadPython, stderr, d)
 		}
 	}
 	return true, 0
 }
 
-// cleanupRepoMapVenv removes what a failed attempt made. A directory that was there before keeps its tree, but loses the
-// interpreter this attempt made: an interpreter without the marker is not a ready venv, and removing it leaves the next opted-in
-// run a clean place to build in. It returns the exit code of the run: nonzero only when the removal itself failed.
-func cleanupRepoMapVenv(p mapPaths, dir string, existed bool, stderr io.Writer, d mapDeps) int {
+// cleanupRepoMapVenv removes what a failed attempt made. A directory that was there before keeps its tree, and so does an
+// interpreter that was there before: an earlier venv (or a legacy one) is not this attempt's to delete, and without the marker it
+// is not taken for ready anyway, so keeping it blocks no retry. Only an interpreter this attempt made goes, which leaves the next
+// opted-in run a clean place to build in. It returns the exit code of the run: nonzero only when the removal itself failed.
+func cleanupRepoMapVenv(p mapPaths, dir string, existed, hadPython bool, stderr io.Writer, d mapDeps) int {
 	gone := dir
 	if existed {
+		if hadPython {
+			return 0
+		}
 		gone = p.python
 	}
 	if err := d.remove(gone); err != nil {

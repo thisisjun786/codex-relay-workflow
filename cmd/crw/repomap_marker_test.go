@@ -39,10 +39,11 @@ echo "venv ran $*"
 `
 
 // fakePython3 is the python3 on PATH: `-m venv DIR` creates DIR/bin/python3 as FAKE_VENV says (hang after creating it, exit 3
-// after creating it, or succeed); any other call is the fallback map run.
+// after creating it, exit 3 before touching anything, or succeed); any other call is the fallback map run.
 const fakePython3 = `#!/bin/sh
 echo "python3 $*" >> "$FAKE_LOG"
 if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+  [ "$FAKE_VENV" = failearly ] && exit 3
   /bin/mkdir -p "$3/bin" || exit 1
   /bin/cp "$FAKE_VENV_PY" "$3/bin/python3" && /bin/chmod 755 "$3/bin/python3" || exit 1
   case "$FAKE_VENV" in
@@ -241,6 +242,49 @@ func TestRepoMapVenvFailureCleansUpWhatItMade(t *testing.T) {
 	}
 }
 
+// An interpreter that was there before the attempt is not the attempt's to delete: a working venv from before the marker keeps
+// its interpreter when the rebuild fails before it touched anything (python3 -m venv exits nonzero having made nothing) and when
+// pip fails after python3 -m venv succeeded. The next opted-in run, with the failure gone, still builds the venv and marks it
+// ready (CRW-1162).
+func TestRepoMapFailedRebuildKeepsAnInterpreterThatWasThereBefore(t *testing.T) {
+	for _, c := range []struct{ name, venv, pip string }{
+		{"venv-fails-before-making-anything", "failearly", ""},
+		{"pip-fails-after-venv", "", "fail"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newFakeMapHost(t)
+			if err := os.MkdirAll(filepath.Join(h.venv, "bin"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			legacy := filepath.Join(h.venv, "bin", "python3")
+			kept := filepath.Join(h.venv, "kept-from-before")
+			for _, f := range []string{legacy, kept} {
+				if err := os.WriteFile(f, []byte(fakeVenvPython), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h.set(c.venv, c.pip, true)
+			code, stdout, stderr, calls := h.run()
+			if code != 0 || !strings.Contains(stdout, "ran -B") || strings.Contains(stdout, "venv ran") {
+				t.Fatalf("the failed rebuild was not left to the fallback: exit %d stdout %q stderr %q calls %v", code, stdout, stderr, calls)
+			}
+			for _, f := range []string{legacy, kept} {
+				if _, err := os.Stat(f); err != nil {
+					t.Fatalf("the failed rebuild deleted %s, which was there before it: %v", f, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(h.venv, repoMapVenvMarker)); !os.IsNotExist(err) {
+				t.Fatalf("a failed rebuild left the completion marker: %v", err)
+			}
+			h.set("", "", true)
+			code, stdout, stderr, calls = h.run()
+			if code != 0 || !strings.Contains(stdout, "venv ran") || countCalls(calls, "-m pip install") != 1 {
+				t.Fatalf("the next run did not build the venv: exit %d stdout %q stderr %q calls %v", code, stdout, stderr, calls)
+			}
+		})
+	}
+}
+
 // A venv from before the marker has an interpreter and no marker. It is built again once, by the next opted-in run, which then
 // marks it ready; a run that did not opt in does not take it for ready (CRW-1162).
 func TestRepoMapRebuildsAnUnmarkedExistingVenvOnce(t *testing.T) {
@@ -296,6 +340,49 @@ func TestRepoMapMarkerIsWrittenAtomicallyAndAFailedWriteIsNotReady(t *testing.T)
 	}
 	if err := writeRepoMapMarker(filepath.Join(dir, "missing", repoMapVenvMarker)); err == nil {
 		t.Fatal("a marker in a directory that is not there was written")
+	}
+
+	// The order of the file operations is what makes the write atomic: the content is written and synced to a temporary file,
+	// the file is closed, and only then renamed onto the marker. The marker does not exist before the rename, and a failed
+	// rename leaves no marker and no temporary file.
+	for _, failRename := range []bool{false, true} {
+		var trace []string
+		odir := t.TempDir()
+		omarker := filepath.Join(odir, repoMapVenvMarker)
+		ops := markerOps{
+			createTemp: func(d, pattern string) (markerFile, error) {
+				f, err := osMarkerOps.createTemp(d, pattern)
+				if err != nil {
+					return nil, err
+				}
+				trace = append(trace, "create")
+				return &tracedMarkerFile{markerFile: f, trace: &trace, final: omarker}, nil
+			},
+			rename: func(oldpath, newpath string) error {
+				trace = append(trace, "rename")
+				if _, err := os.Stat(newpath); err == nil {
+					t.Error("the marker existed before the rename")
+				}
+				if failRename {
+					return os.ErrPermission
+				}
+				return os.Rename(oldpath, newpath)
+			},
+			remove: func(path string) error { trace = append(trace, "remove"); return os.Remove(path) },
+		}
+		err := writeRepoMapMarkerWith(omarker, ops)
+		got := strings.Join(trace, ",")
+		entries, rerr := os.ReadDir(odir)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if failRename {
+			if err == nil || got != "create,write,sync,close,rename,remove" || len(entries) != 0 {
+				t.Fatalf("failed rename: err %v trace %s entries %v: want an error, no marker and no temporary file", err, got, entries)
+			}
+		} else if err != nil || got != "create,write,sync,close,rename" || len(entries) != 1 || entries[0].Name() != repoMapVenvMarker {
+			t.Fatalf("err %v trace %s entries %v: want create,write,sync,close,rename and the marker alone", err, got, entries)
+		}
 	}
 
 	h := newFakeMapHost(t)
@@ -355,3 +442,24 @@ func TestRepoMapStaleMarkerIsRemovedBeforeTheRebuild(t *testing.T) {
 		t.Fatalf("order %s", got)
 	}
 }
+
+// tracedMarkerFile records the order of the writes to the temporary file and checks the final marker is absent meanwhile.
+type tracedMarkerFile struct {
+	markerFile
+	trace *[]string
+	final string
+}
+
+func (f *tracedMarkerFile) note(op string) {
+	*f.trace = append(*f.trace, op)
+	if _, err := os.Stat(f.final); err == nil {
+		panic("the marker existed while it was being written: " + op) // the write is not atomic
+	}
+}
+
+func (f *tracedMarkerFile) WriteString(s string) (int, error) {
+	f.note("write")
+	return f.markerFile.WriteString(s)
+}
+func (f *tracedMarkerFile) Sync() error  { f.note("sync"); return f.markerFile.Sync() }
+func (f *tracedMarkerFile) Close() error { f.note("close"); return f.markerFile.Close() }
