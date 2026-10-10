@@ -10,6 +10,8 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 const (
@@ -330,7 +332,7 @@ func candidateFilterFor(opts resolvedQuery, withWords, fold bool) (string, []any
 		prefix := cwd
 		if fold {
 			eq, like = "lower("+column+") = lower(?)", "lower("+column+`) LIKE ? ESCAPE '\'`
-			prefix = Lower(cwd)
+			prefix = jsnode.Lower(cwd)
 		}
 		parts := []string{eq, like}
 		params = append(params, cwd, escapeLike(prefix)+"/%")
@@ -366,7 +368,7 @@ func candidateFilterFor(opts resolvedQuery, withWords, fold bool) (string, []any
 }
 
 func textMatches(text string, plan MatchPlan) bool {
-	return PlanMatches(Lower(text), plan)
+	return PlanMatches(jsnode.Lower(text), plan)
 }
 
 // planHasNUL reports whether a query term holds a NUL character: FTS5 quoting cannot carry one (MATCH raises "unterminated string"),

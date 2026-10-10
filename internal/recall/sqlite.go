@@ -12,9 +12,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"modernc.org/libc"
 	sqlite "modernc.org/sqlite/lib"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // RwDb owns statements and serializes TLS/bind/step/copy/reset and Close.
@@ -119,7 +120,7 @@ func openDb(path string, flags int32) (*RwDb, error) {
 		return nil, errors.New(`The "path" argument must be a string, Uint8Array, or URL without null bytes.`)
 	}
 	d := &RwDb{tls: libc.NewTLS()}
-	name, err := libc.CString(source.DecodeUTF8([]byte(path)))
+	name, err := libc.CString(jsnode.DecodeUTF8([]byte(path)))
 	if err != nil {
 		d.tls.Close()
 		return nil, err
@@ -179,7 +180,7 @@ func (d *RwDb) Prepare(query string) (*Stmt, error) {
 	if d.handle == 0 {
 		return nil, errors.New("database is not open")
 	}
-	sql, err := libc.CString(source.DecodeUTF8([]byte(query)))
+	sql, err := libc.CString(jsnode.DecodeUTF8([]byte(query)))
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +205,7 @@ func (d *RwDb) Exec(query string) error {
 	if d.handle == 0 {
 		return errors.New("database is not open")
 	}
-	sql, err := libc.CString(source.DecodeUTF8([]byte(query)))
+	sql, err := libc.CString(jsnode.DecodeUTF8([]byte(query)))
 	if err != nil {
 		return err
 	}
@@ -314,12 +315,12 @@ func (s *Stmt) row() (map[string]any, error) {
 			value = sqlite.Xsqlite3_column_double(s.db.tls, s.handle, i)
 		case sqlite.SQLITE_TEXT:
 			p := sqlite.Xsqlite3_column_text(s.db.tls, s.handle, i)
-			value = source.DecodeUTF8(libc.GoBytes(p, int(sqlite.Xsqlite3_column_bytes(s.db.tls, s.handle, i))))
+			value = jsnode.DecodeUTF8(libc.GoBytes(p, int(sqlite.Xsqlite3_column_bytes(s.db.tls, s.handle, i))))
 		case sqlite.SQLITE_BLOB:
 			p := sqlite.Xsqlite3_column_blob(s.db.tls, s.handle, i)
 			value = append([]byte{}, libc.GoBytes(p, int(sqlite.Xsqlite3_column_bytes(s.db.tls, s.handle, i)))...)
 		}
-		name := source.DecodeUTF8([]byte(libc.GoString(sqlite.Xsqlite3_column_name(s.db.tls, s.handle, i))))
+		name := jsnode.DecodeUTF8([]byte(libc.GoString(sqlite.Xsqlite3_column_name(s.db.tls, s.handle, i))))
 		row[name] = value
 	}
 	return row, nil
@@ -423,7 +424,7 @@ func (s *Stmt) bindValue(index int32, value any) error {
 	case string, []byte:
 		var data string
 		if str, ok := v.(string); ok {
-			data = source.DecodeUTF8([]byte(str))
+			data = jsnode.DecodeUTF8([]byte(str))
 		} else {
 			data = string(v.([]byte))
 		}

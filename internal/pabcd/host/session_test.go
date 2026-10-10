@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 const (
@@ -513,7 +515,7 @@ func TestResolveNativeSessionFollowsAtMostFortyLinks(t *testing.T) {
 // directories). The database root keeps its bytes (CRW-1136).
 func TestResolveNativeSessionSeesPathsAsNodeDoes(t *testing.T) {
 	for _, raw := range [][]byte{{0x80}, {0xe2, 0x82}} {
-		replacement := decodeUTF8(raw)
+		replacement := jsnode.DecodeUTF8(raw)
 		mkdir := func(path string) {
 			t.Helper()
 			if err := os.Mkdir(path, 0o755); err != nil {

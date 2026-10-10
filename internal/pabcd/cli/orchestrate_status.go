@@ -10,10 +10,10 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -60,7 +60,7 @@ func ResolveSession(cwd string, explicit *string) (*string, error) {
 	var best *string
 	var bestMtime float64
 	for _, entry := range entries {
-		name := source.DecodeUTF8([]byte(entry.Name()))
+		name := jsnode.DecodeUTF8([]byte(entry.Name()))
 		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".tmp") {
 			continue
 		}
@@ -148,7 +148,7 @@ func SiblingRoots(cwd string, process host.LookupEnv) []string {
 			if !entry.IsDir() || entry.Name() == "node_modules" || entry.Name() == "AppData" {
 				continue
 			}
-			roots = append(roots, filepath.Join(home, source.DecodeUTF8([]byte(entry.Name()))))
+			roots = append(roots, filepath.Join(home, jsnode.DecodeUTF8([]byte(entry.Name()))))
 		}
 	}
 	abs, err := filepath.Abs(cwd)

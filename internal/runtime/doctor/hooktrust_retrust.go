@@ -51,9 +51,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -511,7 +511,7 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 	// The diagnosis runs on the bytes read back above rather than reading the path a second time: the
 	// report has already grounded what config.toml holds on that read, and a second read could only see
 	// different content or fail, making the report contradict itself (CRW-936).
-	verification, err := hookTrustRetrustDiagnoseContent(pluginRoot, pluginKey, hookTrustEntriesUTF8(after))
+	verification, err := hookTrustRetrustDiagnoseContent(pluginRoot, pluginKey, jsnode.DecodeUTF8(after))
 	if err != nil {
 		return result, nil, err
 	}
@@ -580,7 +580,7 @@ func hookTrustRetrustExec(file string, args []string, env []string) HookTrustRet
 	// surrogate. Decode here, at the seam, so every consumer -- the verify detail chain and the CLI
 	// failure text a person reads -- sees the text the oracle saw (the same place and rule as
 	// harnessRunExec, harness_run.go).
-	run := HookTrustRetrustRun{Stdout: source.DecodeUTF8(stdout.Bytes()), Stderr: source.DecodeUTF8(stderr.Bytes())}
+	run := HookTrustRetrustRun{Stdout: jsnode.DecodeUTF8(stdout.Bytes()), Stderr: jsnode.DecodeUTF8(stderr.Bytes())}
 	switch {
 	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, exec.ErrWaitDelay):
 		run.Status = harnessRunInt(harnessDriftKilled)

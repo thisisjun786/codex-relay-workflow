@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -88,7 +89,7 @@ func inspectState(cwd, sessionID string) (stateCheck, string) {
 		return stateCheck{}, unreadableState
 	}
 	var parsed any
-	decoder := json.NewDecoder(strings.NewReader(source.DecodeUTF8(body)))
+	decoder := json.NewDecoder(strings.NewReader(jsnode.DecodeUTF8(body)))
 	decoder.UseNumber() // unrelated large numbers must not change the identity checks
 	if err := decoder.Decode(&parsed); err != nil {
 		return stateCheck{}, unreadableState

@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // maxText is V8's longest string, as bytes: the most the oracle's readFileSync(path, "utf8") returns. A longer file is refused.
@@ -40,7 +40,7 @@ func readFile(path string, limit int64) ([]byte, error) {
 
 // decodeJSON is JSON.parse of utf8 bytes: one value and nothing after it, and a number keeps its text so 1e999 reads as Infinity.
 func decodeJSON(data []byte) (any, error) {
-	dec := json.NewDecoder(strings.NewReader(source.DecodeUTF8(data)))
+	dec := json.NewDecoder(strings.NewReader(jsnode.DecodeUTF8(data)))
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {

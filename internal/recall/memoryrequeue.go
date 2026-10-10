@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 type RequeueCandidate struct {
@@ -262,7 +264,9 @@ func presentFold(present map[string]bool, name string) bool {
 }
 
 // requeueIsConsolidation is a job kind of the memory consolidation pass, which is not an extraction that can be retried unchanged.
-func requeueIsConsolidation(kind string) bool { return strings.Contains(Lower(kind), "consolidat") }
+func requeueIsConsolidation(kind string) bool {
+	return strings.Contains(jsnode.Lower(kind), "consolidat")
+}
 
 // applyMemoryRequeue writes through a connection that selects the rows itself: the store is opened for writing without CREATE, BEGIN
 // IMMEDIATE takes the write lock, and the rows are selected again on that connection and written in that transaction. The rows that are

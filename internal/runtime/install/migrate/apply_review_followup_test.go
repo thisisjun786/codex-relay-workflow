@@ -640,7 +640,7 @@ func TestMigrateApplyReviewFollowupWalksAsTheDecoderWould(t *testing.T) {
 
 // R1j: a manifest path is read the way the receipt reader reads it, through the reader's own UTF-8 normalisation, so a
 // path that holds an invalid run names the plan file the reader's text holds. The reader normalises a maximal invalid
-// subpart to one U+FFFD (source.DecodeUTF8, gate/js.go:43), so the two bytes of a truncated three-byte sequence are one
+// subpart to one U+FFFD (jsnode.DecodeUTF8, gate/js.go:43), so the two bytes of a truncated three-byte sequence are one
 // U+FFFD there; decoding the record's own bytes with encoding/json's rule gives two, which names no plan file, drops the
 // reference, and leaves the referenced record in plan order behind the receipt that refers to it — the dangling
 // reference this issue exists to remove. The plan file here is named with the single U+FFFD the reader resolves.

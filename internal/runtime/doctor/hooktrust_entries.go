@@ -45,6 +45,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -195,7 +196,7 @@ func hookTrustEntriesFromDocument(document any, pluginKey, relative, fileSha256 
 
 // hookTrustEntriesParse is JSON.parse(buffer.toString("utf8")).
 func hookTrustEntriesParse(data []byte) (any, error) {
-	return pyjson.Loads(hookTrustEntriesUTF8(data), pyjson.LoadOptions{Surrogates: true})
+	return pyjson.Loads(jsnode.DecodeUTF8(data), pyjson.LoadOptions{Surrogates: true})
 }
 
 // hookTrustEntriesMember is the read of the "hooks" member of a parsed document: a JSON null
@@ -372,60 +373,6 @@ func hookTrustEntriesFSPath(path string) string {
 		i += size
 	}
 	return builder.String()
-}
-
-// hookTrustEntriesUTF8 is Buffer.toString("utf8"): one U+FFFD for each maximal invalid subpart
-// (the WHATWG rule), where strings.ToValidUTF8 merges a run into one. A byte order mark stays.
-func hookTrustEntriesUTF8(data []byte) string {
-	if utf8.Valid(data) {
-		return string(data)
-	}
-	var builder strings.Builder
-	for len(data) > 0 {
-		r, size := utf8.DecodeRune(data)
-		if r == utf8.RuneError && size == 1 {
-			size = hookTrustEntriesSubpart(data)
-		}
-		if r == utf8.RuneError {
-			builder.WriteRune(utf8.RuneError)
-		} else {
-			builder.Write(data[:size])
-		}
-		data = data[size:]
-	}
-	return builder.String()
-}
-
-// hookTrustEntriesSubpart is the length of the maximal subpart of a well-formed UTF-8 sequence
-// that starts data, which does not start a well-formed one.
-func hookTrustEntriesSubpart(data []byte) int {
-	lower, upper, need := byte(0x80), byte(0xbf), 0
-	switch lead := data[0]; {
-	case lead >= 0xc2 && lead <= 0xdf:
-		need = 1
-	case lead == 0xe0:
-		lower, need = 0xa0, 2
-	case lead >= 0xe1 && lead <= 0xec, lead == 0xee, lead == 0xef:
-		need = 2
-	case lead == 0xed:
-		upper, need = 0x9f, 2
-	case lead == 0xf0:
-		lower, need = 0x90, 3
-	case lead >= 0xf1 && lead <= 0xf3:
-		need = 3
-	case lead == 0xf4:
-		upper, need = 0x8f, 3
-	default:
-		return 1
-	}
-	length := 1
-	for ; length <= need && length < len(data); length++ {
-		if data[length] < lower || data[length] > upper {
-			break
-		}
-		lower, upper = 0x80, 0xbf
-	}
-	return length
 }
 
 // hookTrustEntriesMatcherValid answers new RegExp(matcher) (hook-trust.ts:191-197) with Go's

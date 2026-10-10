@@ -28,6 +28,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -235,7 +236,7 @@ func RecordExists(ws, id string) bool {
 // is none (processStartToken).
 func ProcessStartToken(pid int) (string, bool) {
 	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
-	token := text.Trim(decodeUTF8(out))
+	token := text.Trim(jsnode.DecodeUTF8(out))
 	if err != nil || token == "" {
 		return "", false
 	}

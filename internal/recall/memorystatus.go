@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -145,7 +146,7 @@ func emptyMemoryStatus(state MemoryStatusState, path *string, detail string) Mem
 func ClassifyMemoryError(raw any) string {
 	s := ""
 	if raw != nil {
-		s = Lower(memoryStatusString(raw))
+		s = jsnode.Lower(memoryStatusString(raw))
 	}
 	if s == "" {
 		return "unknown"
@@ -199,7 +200,7 @@ func CollectMemoryStatus(home string) MemoryStatus {
 
 // memoryStatusSchemaError is an error that says the store lacks a table, a column or a function the reader needs.
 func memoryStatusSchemaError(err error) bool {
-	msg := Lower(err.Error())
+	msg := jsnode.Lower(err.Error())
 	return strings.Contains(msg, "no such table") || strings.Contains(msg, "no such column") || strings.Contains(msg, "has no column")
 }
 

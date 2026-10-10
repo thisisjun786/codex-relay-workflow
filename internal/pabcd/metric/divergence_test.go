@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
@@ -394,7 +395,7 @@ func divFiles(t *testing.T, cwd string) map[string]string {
 		}
 		raw, err := os.ReadFile(path)
 		rel, _ := filepath.Rel(root, path)
-		files[filepath.ToSlash(rel)] = ledgerUTF8(raw)
+		files[filepath.ToSlash(rel)] = jsnode.DecodeUTF8(raw)
 		return err
 	}))
 	return files

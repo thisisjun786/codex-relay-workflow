@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -68,50 +68,6 @@ func ParseFreezeArgs(argv []string) (FreezeCliArgs, error) {
 	return args, nil
 }
 
-// decodeUTF8 is Buffer.toString("utf8"): one U+FFFD for each maximal invalid subpart, as the WHATWG decoder defines it.
-func decodeUTF8(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	var out []byte
-	for i := 0; i < len(b); {
-		r, size := utf8.DecodeRune(b[i:])
-		if r == utf8.RuneError && size == 1 {
-			out, size = utf8.AppendRune(out, utf8.RuneError), subpart(b[i:])
-		} else {
-			out = append(out, b[i:i+size]...)
-		}
-		i += size
-	}
-	return string(out)
-}
-
-// subpart is the length of the longest prefix of b that starts a well-formed UTF-8 sequence.
-func subpart(b []byte) int {
-	lo, hi, need := byte(0x80), byte(0xBF), 0
-	switch c := b[0]; {
-	case c >= 0xC2 && c <= 0xDF:
-		need = 1
-	case c == 0xE0:
-		need, lo = 2, 0xA0
-	case c == 0xED:
-		need, hi = 2, 0x9F
-	case c >= 0xE1 && c <= 0xEF:
-		need = 2
-	case c == 0xF0:
-		need, lo = 3, 0x90
-	case c == 0xF4:
-		need, hi = 3, 0x8F
-	case c >= 0xF1 && c <= 0xF3:
-		need = 3
-	}
-	n := 1
-	for ; n <= need && n < len(b) && b[n] >= lo && b[n] <= hi; n++ {
-		lo, hi = 0x80, 0xBF
-	}
-	return n
-}
-
 // ListPlanFiles hashes every file below planDir except the dot-names, with paths relative to planDir. It is existsSync, statSync and
 // readdirSync: a directory that cannot be stat'ed is no files, one that can and cannot be read is an error, links are followed, and a
 // name is decoded as Node decodes it (invalid bytes become U+FFFD) before it is joined, stat'ed, read and reported. A file is hashed
@@ -132,7 +88,7 @@ func ListPlanFiles(cwd, planDir string) ([]PlanFileHash, error) {
 			return err
 		}
 		for _, entry := range entries {
-			name := decodeUTF8([]byte(entry.Name()))
+			name := jsnode.DecodeUTF8([]byte(entry.Name()))
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
@@ -149,7 +105,7 @@ func ListPlanFiles(cwd, planDir string) ([]PlanFileHash, error) {
 			} else if data, readErr := os.ReadFile(full); readErr != nil {
 				err = readErr
 			} else {
-				files = append(files, PlanFileHash{Path: shown, Sha256: Sha256(decodeUTF8(data))})
+				files = append(files, PlanFileHash{Path: shown, Sha256: Sha256(jsnode.DecodeUTF8(data))})
 			}
 			if err != nil {
 				return err
@@ -247,14 +203,14 @@ func throwsToString(v any) bool {
 // it, through the repository's lossless reader: a lone surrogate escape stays the WTF-8 bytes a Go string holds it in (Surrogates), so
 // a manifest naming the escape of U+D800 is a different path than the file U+FFFD.md the plan really holds, as it is in JavaScript.
 // Numbers stay as spelled, so a number past float64's range still reads as an infinity, and an object or array reads as the map and
-// slice jsOf takes. decodeUTF8 comes first, as readFileSync does: it replaces each ill-formed subpart with one U+FFFD, where the
+// slice jsOf takes. jsnode.DecodeUTF8 comes first, as readFileSync does: it replaces each ill-formed subpart with one U+FFFD, where the
 // reader would replace each byte.
 func readPrior(file string) (frozen []frozenEntry, planHash jsVal, ok bool) {
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil, jsVal{}, false
 	}
-	doc, err := pyjson.Loads(decodeUTF8(raw), pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Surrogates: true})
+	doc, err := pyjson.Loads(jsnode.DecodeUTF8(raw), pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Surrogates: true})
 	if err != nil {
 		return nil, jsVal{}, false
 	}

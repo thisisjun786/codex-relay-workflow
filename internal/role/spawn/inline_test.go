@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 type spawnInlineFixture struct {
@@ -293,7 +295,7 @@ func TestSpawnInlineCatalogQuirks(t *testing.T) {
 
 func TestSpawnInlineDecodeUTF8(t *testing.T) {
 	for i, c := range spawnInlineTestFixture(t).Decoder {
-		if got := spawnInlineDecodeUTF8(c.Bytes); got != c.Expected {
+		if got := jsnode.DecodeUTF8(c.Bytes); got != c.Expected {
 			t.Errorf("Node decoder case %d got %q want %q", i, got, c.Expected)
 		}
 	}

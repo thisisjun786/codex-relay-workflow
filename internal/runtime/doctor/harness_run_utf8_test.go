@@ -5,7 +5,7 @@ package doctor
 // The oracle reads a probe's output through spawnSync with encoding utf8
 // (plugins/codexclaw/components/cxc-ops/src/doctor.ts, runProbe), so an invalid byte sequence
 // another program wrote is one U+FFFD per maximal invalid subpart and can never become a lone
-// surrogate. harnessRunExec hands the report that same text (source.DecodeUTF8, the port's Node
+// surrogate. harnessRunExec hands the report that same text (jsnode.DecodeUTF8, the port's Node
 // decoder), so harnessReportJSONString cannot spell a probe's invalid byte as the \udXXX escape it
 // keeps for the WTF-8 lone surrogate harnessReportCut makes.
 //

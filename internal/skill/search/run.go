@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
@@ -106,7 +106,7 @@ func fetchHTTP(ctx context.Context, url string, limit int) (string, error) {
 		return "", exceedsError(limit)
 	}
 	// Response.text strips a UTF-8 BOM and replaces invalid UTF-8.
-	return strings.TrimPrefix(source.DecodeUTF8(body), "\uFEFF"), nil
+	return strings.TrimPrefix(jsnode.DecodeUTF8(body), "\uFEFF"), nil
 }
 
 // Run is the CLI boundary without a caller context.

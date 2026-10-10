@@ -1,9 +1,13 @@
 package attest
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
+)
 
 // A lone surrogate reaches a Go string as the three WTF-8 bytes pyjson keeps for it (the bytes the
-// JSON escape \ud800 decodes to). lowerJS is String.prototype.toLowerCase, which leaves a lone
+// JSON escape \ud800 decodes to). jsnode.Lower is String.prototype.toLowerCase, which leaves a lone
 // surrogate as it is; Go's []rune over those bytes decodes each one as U+FFFD, so the oracle's rule
 // is the original bytes, not a replacement. ASCII, U+0130 and the final-sigma rules are unchanged.
 func TestLowerJSKeepsALoneSurrogate(t *testing.T) {
@@ -20,8 +24,8 @@ func TestLowerJSKeepsALoneSurrogate(t *testing.T) {
 		{"non_final_sigma", "\u03a3\u0391", "\u03c3\u03b1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := lowerJS(tc.in); got != tc.want {
-				t.Errorf("lowerJS(%q) = %q, want %q", tc.in, got, tc.want)
+			if got := jsnode.Lower(tc.in); got != tc.want {
+				t.Errorf("jsnode.Lower(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

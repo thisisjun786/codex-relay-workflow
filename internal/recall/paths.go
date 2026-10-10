@@ -8,8 +8,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -35,7 +35,7 @@ func codexHome(env ...host.LookupEnv) (string, error) {
 		lookup = env[0]
 	}
 	if value, _ := lookup("CODEX_HOME"); text.Trim(value) != "" {
-		return RecallPhysicalAbs(source.DecodeUTF8([]byte(value)))
+		return RecallPhysicalAbs(jsnode.DecodeUTF8([]byte(value)))
 	}
 	home, err := recallHome(lookup)
 	if err != nil {
@@ -97,7 +97,7 @@ func latestVersionedDb(home, prefix string) (string, error) {
 	}
 	best, bestNumber := "", float64(0)
 	for _, entry := range entries {
-		name := source.DecodeUTF8([]byte(entry.Name()))
+		name := jsnode.DecodeUTF8([]byte(entry.Name()))
 		digits, found := strings.CutPrefix(name, prefix+"_")
 		digits, suffix := strings.CutSuffix(digits, ".sqlite")
 		if !found || !suffix || digits == "" || strings.Trim(digits, "0123456789") != "" {

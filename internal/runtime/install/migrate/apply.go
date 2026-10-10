@@ -22,7 +22,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"golang.org/x/sys/unix"
 )
 
@@ -567,7 +567,7 @@ const migrateReviewFollowupManifestKey = "artifactManifest"
 // can be an object at all, every member other than the manifest key is skipped token by token, and the manifest array is
 // held only when the record really names one: the memory this costs is the size of that array, which is the memory the
 // receipt reader spends on the same record. The record is the receipt reader's own text. A string is read as its raw bytes and
-// normalised by source.DecodeUTF8, the normalisation the reader applies to its whole input, so an invalid UTF-8 path keeps the
+// normalised by jsnode.DecodeUTF8, the normalisation the reader applies to its whole input, so an invalid UTF-8 path keeps the
 // text the reader sees, and the order matches it against the plan's file names.
 func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
@@ -794,7 +794,7 @@ func migrateReviewFollowupReadEntry(dec *json.Decoder, feed *migrateFollowupFeed
 
 // migrateReviewFollowupReadField returns the string a path or kind value holds, or "" when it holds anything else. A container
 // is skipped token by token, so it is never held whole. A string or a scalar is read as its own bytes through the reader's
-// UTF-8 normalisation (source.DecodeUTF8, gate/js.go:36-53), so a path holding invalid bytes names the plan file the
+// UTF-8 normalisation (jsnode.DecodeUTF8, gate/js.go:36-53), so a path holding invalid bytes names the plan file the
 // reader's text holds; a string is bounded by its one token, which is the residual the issue's answer records. depth is the
 // containers open around the value.
 func migrateReviewFollowupReadField(dec *json.Decoder, feed *migrateFollowupFeed, depth int) (string, error) {
@@ -814,7 +814,7 @@ func migrateReviewFollowupReadField(dec *json.Decoder, feed *migrateFollowupFeed
 		return "", err
 	}
 	var text string
-	if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &text) != nil {
+	if json.Unmarshal([]byte(jsnode.DecodeUTF8(raw)), &text) != nil {
 		return "", nil
 	}
 	return text, nil

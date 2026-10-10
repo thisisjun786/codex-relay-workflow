@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -313,7 +314,7 @@ func ReadDivergenceMode(cwd, sessionID string) (DivergenceMode, bool) {
 	if err != nil {
 		return DivergenceMode{}, false
 	}
-	m := ledgerDoc(ledgerUTF8(raw))
+	m := ledgerDoc(jsnode.DecodeUTF8(raw))
 	owner, _ := m["sessionId"].(string)
 	active, isBool := m["active"].(bool)
 	collapse, _ := m["collapsePoint"].(string)
@@ -423,7 +424,7 @@ func ReadDivergenceCandidates(cwd, sessionID string) []DivergenceCandidate {
 	if err != nil {
 		return out
 	}
-	for _, line := range text.SplitLines(ledgerUTF8(raw)) {
+	for _, line := range text.SplitLines(jsnode.DecodeUTF8(raw)) {
 		if c, ok := candidateRow(line); ok && (sessionID == "" || c.SessionID == sessionID) {
 			out = append(out, c)
 		}

@@ -1,6 +1,10 @@
 package recall
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
+)
 
 // The plan assertions of CXC v0.2.40 recall/test/nl-query.test.ts (the wp5 natural-language golden set); its chat, index, memory and
 // CLI assertions need the engines of later ports. The helpers mirror the plan compilation in chat-search.ts:145 (boundary gating off
@@ -17,7 +21,7 @@ func chatMatchPlan(query string, anyMode, synonyms bool) MatchPlan {
 	raw := DropStopwords(rawAll)
 	groups := []QueryGroup{}
 	for _, w := range raw {
-		groups = append(groups, QueryGroup{{Text: Lower(w)}})
+		groups = append(groups, QueryGroup{{Text: jsnode.Lower(w)}})
 	}
 	if synonyms {
 		groups = RelaxQueryGroups(ExpandQueryWords(raw))

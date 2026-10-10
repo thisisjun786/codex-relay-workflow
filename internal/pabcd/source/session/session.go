@@ -23,6 +23,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -72,7 +73,7 @@ func canonical(path string) (string, error) {
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(path)
-	return source.DecodeUTF8([]byte(resolved)), err
+	return jsnode.DecodeUTF8([]byte(resolved)), err
 }
 
 // probeOutputLimit is the default maxBuffer of execFileSync: a probe whose stdout and stderr together pass it fails.
@@ -85,7 +86,7 @@ const probeOutputLimit = 1 << 20
 // them. A failure to start, a non-zero exit, a signal, the time limit and too much output are all errors.
 func git(cwd string, args ...string) (string, error) {
 	out, err := source.Probe(cwd, source.ProbeOptions{Limit: probeOutputLimit, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}}, args...)
-	return text.Trim(source.DecodeUTF8(out)), err
+	return text.Trim(jsnode.DecodeUTF8(out)), err
 }
 
 // gitIdentity is the worktree identity of cwd, or an error: a repository is mandatory on the source side.

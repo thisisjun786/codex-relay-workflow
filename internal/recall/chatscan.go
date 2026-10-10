@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 const (
@@ -126,7 +126,7 @@ func groupsForChat(raw []string, synonyms bool) []QueryGroup {
 	}
 	groups := make([]QueryGroup, len(raw))
 	for i, word := range raw {
-		groups[i] = QueryGroup{{Text: Lower(word)}}
+		groups[i] = QueryGroup{{Text: jsnode.Lower(word)}}
 	}
 	return groups
 }
@@ -208,7 +208,7 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 		}
 		// The prefilter judges the content with its JSON escapes decoded: any escape (\u, \\, \", ...) in
 		// the raw text could otherwise hide a match the index, which stores decoded text, finds.
-		if !MatchesFilePrefilter(Lower(prefilterText(content)), shared.Plan) {
+		if !MatchesFilePrefilter(jsnode.Lower(prefilterText(content)), shared.Plan) {
 			continue
 		}
 		entries, err := ParseRollout(content, includeTools)
@@ -229,7 +229,7 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 			if cutoff != "" && entry.TS != "" && rolloutCompare(entry.TS, cutoff) < 0 {
 				continue
 			}
-			if !PlanMatches(Lower(entry.Text), shared.Plan) {
+			if !PlanMatches(jsnode.Lower(entry.Text), shared.Plan) {
 				continue
 			}
 			fileMatched = true
@@ -335,7 +335,7 @@ func readChatScanFile(path string) (string, error) {
 	if len(data) > maxBytes {
 		return "", errors.New("file size is greater than 2 GiB")
 	}
-	decoded := source.DecodeUTF8(data)
+	decoded := jsnode.DecodeUTF8(data)
 	units := 0
 	for _, r := range decoded {
 		units++

@@ -39,6 +39,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
@@ -199,7 +200,7 @@ func readText(path string) (string, error) {
 		}
 		return "", err
 	}
-	return decodeUTF8(b), nil
+	return jsnode.DecodeUTF8(b), nil
 }
 
 // ReadJSON is the text of a file that holds one JSON object or array, or false (readJsonOrNull; its typeof test lets an array through).
@@ -212,50 +213,6 @@ func ReadJSON(path string) (json.RawMessage, bool) {
 		return nil, false
 	}
 	return json.RawMessage(text), true
-}
-
-// decodeUTF8 is Buffer.toString("utf8"): one U+FFFD for each maximal invalid subpart, as the WHATWG decoder defines it.
-func decodeUTF8(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	var out []byte
-	for i := 0; i < len(b); {
-		r, size := utf8.DecodeRune(b[i:])
-		if r == utf8.RuneError && size == 1 {
-			out, size = utf8.AppendRune(out, utf8.RuneError), subpart(b[i:])
-		} else {
-			out = append(out, b[i:i+size]...)
-		}
-		i += size
-	}
-	return string(out)
-}
-
-// subpart is the length of the longest prefix of b that starts a well-formed UTF-8 sequence.
-func subpart(b []byte) int {
-	lo, hi, need := byte(0x80), byte(0xBF), 0
-	switch c := b[0]; {
-	case c >= 0xC2 && c <= 0xDF:
-		need = 1
-	case c == 0xE0:
-		need, lo = 2, 0xA0
-	case c == 0xED:
-		need, hi = 2, 0x9F
-	case c >= 0xE1 && c <= 0xEF:
-		need = 2
-	case c == 0xF0:
-		need, lo = 3, 0x90
-	case c == 0xF4:
-		need, hi = 3, 0x8F
-	case c >= 0xF1 && c <= 0xF3:
-		need = 3
-	}
-	n := 1
-	for ; n <= need && n < len(b) && b[n] >= lo && b[n] <= hi; n++ {
-		lo, hi = 0x80, 0xBF
-	}
-	return n
 }
 
 // Member is one key of a ledger row, and Event lists them in print order. A value is nil, a string, bool, int, int64, float64 (NaN and
@@ -395,7 +352,7 @@ func array(items []any, depth int) ([]byte, error) {
 // included, as it is. A string that is not UTF-8 is decoded as Node decodes its arguments.
 func quote(s string) string {
 	if !utf8.ValidString(s) {
-		s = decodeUTF8([]byte(s))
+		s = jsnode.DecodeUTF8([]byte(s))
 	}
 	const hex, controls, letters = "0123456789abcdef", "\b\f\n\r\t", "bfnrt"
 	var b strings.Builder
@@ -429,7 +386,7 @@ func ListRecordIDs(cwd string) []string {
 		return ids
 	}
 	for _, e := range entries {
-		if name := decodeUTF8([]byte(e.Name())); strings.HasSuffix(name, ".json") {
+		if name := jsnode.DecodeUTF8([]byte(e.Name())); strings.HasSuffix(name, ".json") {
 			ids = append(ids, strings.TrimSuffix(name, ".json"))
 		}
 	}

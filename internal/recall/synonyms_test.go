@@ -3,6 +3,8 @@ package recall
 import (
 	"slices"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // Ports of the B-class tests of CXC v0.2.40 recall/test/synonyms.test.ts whose subject is synonyms.ts (the eight that call
@@ -76,7 +78,7 @@ func TestSynonymGroupsSuitTheLinearLookup(t *testing.T) {
 	groups := SynonymGroups()
 	for _, g := range groups {
 		for _, m := range g {
-			holds(t, Lower(m) == m && !seen[m], "member %q is repeated or not lowercase", m)
+			holds(t, jsnode.Lower(m) == m && !seen[m], "member %q is repeated or not lowercase", m)
 			seen[m] = true
 		}
 	}

@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/attest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -95,7 +95,7 @@ func cliVerb(token string) fsm.OrchestrateVerb {
 
 // Read exactly one complete JSON value, retaining number text for Coerce (1e999 is accepted
 // by JSON.parse but dropped by Coerce) and keeping a lone surrogate escape, which JSON.parse
-// preserves and pyjson.Loads reads back as the WTF-8 bytes lowerJS keeps. The syntax check stays
+// preserves and pyjson.Loads reads back as the WTF-8 bytes jsnode.Lower keeps. The syntax check stays
 // encoding/json's, so its error text is unchanged; the value reading is pyjson's, because
 // encoding/json would turn the surrogate into U+FFFD before Coerce ever sees it.
 func decodeCliAttest(s string) (*attest.Attestation, error) {
@@ -130,7 +130,7 @@ func readCliAttest(file, cwd string) (*attest.Attestation, string) {
 	b, err := os.ReadFile(path)
 	var att *attest.Attestation
 	if err == nil {
-		att, err = decodeCliAttest(strings.TrimPrefix(source.DecodeUTF8(b), "\uFEFF"))
+		att, err = decodeCliAttest(strings.TrimPrefix(jsnode.DecodeUTF8(b), "\uFEFF"))
 	}
 	if err != nil {
 		// The prefix/path are the oracle's; the OS/JSON cause is Go's native diagnostic, as in

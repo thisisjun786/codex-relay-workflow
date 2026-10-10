@@ -17,6 +17,8 @@ package recall
 import (
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // MaxWords is a relaxation threshold, not a truncation cap (see CompileMatchPlan); MaxQueryTerms is the hard tokenizer cap.
@@ -52,7 +54,7 @@ func SplitQueryWordsRaw(query string) []string {
 func SplitQueryWords(query string) []string {
 	words := SplitQueryWordsRaw(query)
 	for i, w := range words {
-		words[i] = Lower(w)
+		words[i] = jsnode.Lower(w)
 	}
 	return words
 }
@@ -105,7 +107,7 @@ func isVersionCore(s string) bool {
 
 // IsVersionWord is VERSION: a dotted version with an optional leading v (2.49, 2.49.0, v2.49.0-rc.1).
 func IsVersionWord(rawWord string) bool {
-	return isVersionCore(strings.TrimPrefix(Lower(rawWord), "v"))
+	return isVersionCore(strings.TrimPrefix(jsnode.Lower(rawWord), "v"))
 }
 
 // isCommitShaWord: a commit SHA is 7 to 40 characters of a to f and digits that hold a digit, or an abbreviation of twelve or more
@@ -121,7 +123,7 @@ func IsSymbolWord(rawWord string) bool {
 	if sized(rawWord, 2, 6, isUpper) { // UPPER_ACRONYM
 		return true
 	}
-	lower := Lower(rawWord)
+	lower := jsnode.Lower(rawWord)
 	ext := lower[strings.LastIndexByte(lower, '.')+1:]
 	return isVersionCore(strings.TrimPrefix(lower, "v")) ||
 		sized(lower, 1, 3, isLower) || // SHORT_ASCII
@@ -244,7 +246,7 @@ func QueryStopwords() []string { return slices.Clone(queryStopwords[:]) }
 func DropStopwords(rawWords []string) []string {
 	kept := make([]string, 0, len(rawWords))
 	for _, w := range rawWords {
-		if !slices.Contains(queryStopwords[:], Lower(w)) || IsRequiredTerm(w) {
+		if !slices.Contains(queryStopwords[:], jsnode.Lower(w)) || IsRequiredTerm(w) {
 			kept = append(kept, w)
 		}
 	}

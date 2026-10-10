@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 const TOOL_TEXT_CAP = 8192
@@ -541,7 +541,7 @@ func ingestFile(s ingestStatements, file RolloutFile, prev *KnownFile, head, tai
 	} else {
 		head, tail = prefixWindows(buf[:boundary])
 	}
-	entries, err := ParseRollout(source.DecodeUTF8(buf[:boundary]), true)
+	entries, err := ParseRollout(jsnode.DecodeUTF8(buf[:boundary]), true)
 	if err != nil {
 		return ingestFileError{err}
 	}

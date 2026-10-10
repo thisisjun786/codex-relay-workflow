@@ -4,9 +4,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 func Tokenize(query string) []string {
-	return strings.FieldsFunc(recall.Lower(query), func(r rune) bool { return r == ',' || r == '/' || text.Trim(string(r)) == "" })
+	return strings.FieldsFunc(jsnode.Lower(query), func(r rune) bool { return r == ',' || r == '/' || text.Trim(string(r)) == "" })
 }
 func optional(p *string) string {
 	if p == nil {
@@ -27,8 +27,8 @@ func optional(p *string) string {
 	return *p
 }
 func ScoreRow(row SkillRow, terms []string) float64 {
-	id, name := recall.Lower(row.ID), recall.Lower(row.Name)
-	desc, ko, category := recall.Lower(row.Description), recall.Lower(optional(row.DescriptionKo)), recall.Lower(optional(row.Category))
+	id, name := jsnode.Lower(row.ID), jsnode.Lower(row.Name)
+	desc, ko, category := jsnode.Lower(row.Description), jsnode.Lower(optional(row.DescriptionKo)), jsnode.Lower(optional(row.Category))
 	score := float64(0)
 	for _, term := range terms {
 		if id == term {

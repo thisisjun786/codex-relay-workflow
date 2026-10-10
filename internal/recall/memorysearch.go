@@ -9,7 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -70,7 +70,7 @@ func memorySearchBuildCwdScope(home string, opts MemorySearchOptions, warnings *
 	if meta.Warning != "" {
 		*warnings = append(*warnings, meta.Warning)
 	}
-	lower := Lower(prefix)
+	lower := jsnode.Lower(prefix)
 	return &CwdScope{prefix, [2]string{lower, strings.ReplaceAll(lower, "/", "\\")}, opts.CwdOnly, meta.ByID, repoKeyForCwd(prefix, opts.ReadOriginUrl)}, nil
 }
 
@@ -195,8 +195,8 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 			continue
 		}
 		s.scannedFiles++
-		content := source.DecodeUTF8(data)
-		lowerFile := Lower(content)
+		content := jsnode.DecodeUTF8(data)
+		lowerFile := jsnode.Lower(content)
 		threadID, fileCwd := frontmatterThreadID(content), frontmatterCwd(content)
 		repoKey := ""
 		if threadID != nil && s.scope != nil {
@@ -217,7 +217,7 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 				markGroupPresence(lowerFile, s.groups, s.present)
 			} else {
 				for _, chunk := range ParagraphChunks(content) {
-					lower := Lower(chunk.Text)
+					lower := jsnode.Lower(chunk.Text)
 					if keep, _ := memorySearchScopeAdjust(s.scope, fileCwd, lower, repoKey); keep {
 						markGroupPresence(lower, s.groups, s.present)
 					}
@@ -236,7 +236,7 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 		base := MemoryHit{Origin: "file", Kind: kind, Relpath: filepath.ToSlash(relpath), ThreadID: threadID, UpdatedAt: &updatedAt, Cwd: fileCwd}
 		keptBefore, paragraphMatches := len(candidates), 0
 		for _, chunk := range ParagraphChunks(content) {
-			lower := Lower(chunk.Text)
+			lower := jsnode.Lower(chunk.Text)
 			if !PlanMatches(lower, plan) {
 				continue
 			}
@@ -308,7 +308,7 @@ func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, e
 			groups[i] = group[:1]
 		}
 	}
-	s := memorySearchState{root: memoriesDir(home), words: words, groups: groups, present: make([]bool, len(groups)), anyMode: opts.Any, relax: len(raw) > MaxWords, nowMs: nowMs, lowerPhrase: flatten(Lower(query)), warnings: []string{}}
+	s := memorySearchState{root: memoriesDir(home), words: words, groups: groups, present: make([]bool, len(groups)), anyMode: opts.Any, relax: len(raw) > MaxWords, nowMs: nowMs, lowerPhrase: flatten(jsnode.Lower(query)), warnings: []string{}}
 	if days > 0 {
 		cutoff := nowMs - days*86_400_000
 		s.cutoffMs = &cutoff

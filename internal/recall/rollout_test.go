@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // CXC recall/test/crlf-recall.test.ts:37-54, with fixed expected entries as well as LF/CRLF equality.
@@ -303,7 +305,7 @@ func TestRolloutParserJudgesDecodedLines(t *testing.T) {
 	raw := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"\u0043I"}]}}`
 	plan := CompileMatchPlan([]QueryGroup{{{Text: "ci"}}}, []string{"ci"}, false, false)
 	got, err := ParseRollout(raw, false)
-	if err != nil || len(got) != 1 || got[0].Text != "CI" || MatchesFilePrefilter(Lower(raw), plan) || !PlanMatches(Lower(got[0].Text), plan) {
+	if err != nil || len(got) != 1 || got[0].Text != "CI" || MatchesFilePrefilter(jsnode.Lower(raw), plan) || !PlanMatches(jsnode.Lower(got[0].Text), plan) {
 		t.Fatal(got, err)
 	}
 	if got, err := ParseRollout(strings.Replace(raw, "response_item", `response_\u0069tem`, 1), false); err != nil || len(got) != 1 || got[0].Text != "CI" {

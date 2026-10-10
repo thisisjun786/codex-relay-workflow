@@ -4,7 +4,7 @@ package recall
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"io"
 	"os"
@@ -278,7 +278,7 @@ func LoadSummaryIndex(homes ...string) map[string]SummaryEntry {
 		if err != nil && err != io.EOF {
 			continue
 		}
-		head := lines.Replace(source.DecodeUTF8(buf[:n]))
+		head := lines.Replace(jsnode.DecodeUTF8(buf[:n]))
 		id, heading := threadID.FindStringSubmatch(head), title.FindStringSubmatch(head)
 		if id == nil || heading == nil {
 			continue

@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -214,7 +215,7 @@ func harnessDriftReadJSON(path string) (any, error) {
 }
 
 func harnessDriftParse(raw []byte) (any, error) {
-	return harnessParseBounded(hookTrustEntriesUTF8(raw), pyjson.LoadOptions{Surrogates: true})
+	return harnessParseBounded(jsnode.DecodeUTF8(raw), pyjson.LoadOptions{Surrogates: true})
 }
 
 // harnessDriftRunKilled reads a run the timeout or a signal ended, as against one that never

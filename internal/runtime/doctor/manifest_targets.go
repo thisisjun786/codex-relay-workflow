@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -91,7 +91,7 @@ func targetReadFailure(kind TargetKind, path string, err error) error {
 }
 
 func targetParseJSON(kind TargetKind, path string, b []byte) (any, error) {
-	v, err := harnessParseBounded(source.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
+	v, err := harnessParseBounded(jsnode.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
 		return nil, &TargetParseError{kind, path, err}
 	}

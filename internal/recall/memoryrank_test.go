@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 func memoryPtr[T any](v T) *T { return &v }
@@ -65,7 +67,7 @@ func TestMemoryKindsAndRecency(t *testing.T) {
 
 func TestMemoryChunkScoresAndPresence(t *testing.T) {
 	lsp := ExpandQueryWords([]string{"LSP"})
-	memoryFloatEqual(t, ScoreChunk(Lower("NaiControlsPanel and NaiControlsPanel again"), lsp, "lsp"), 0)
+	memoryFloatEqual(t, ScoreChunk(jsnode.Lower("NaiControlsPanel and NaiControlsPanel again"), lsp, "lsp"), 0)
 	holds(t, ScoreChunk("the lsp server restarted", lsp, "lsp") > 0, "standalone boundary score")
 	groups := ExpandQueryWords([]string{"결정", "세션"})
 	memoryFloatEqual(t, ScoreChunk("# decision session", groups, "결정 세션"), 5)

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	jstext "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"golang.org/x/sys/unix"
 )
@@ -308,7 +308,7 @@ func readGoalplanLockOwnerText(lock *os.File, dir string) string {
 	if err != nil {
 		return "(owner.json unavailable)"
 	}
-	s := jstext.Trim(source.DecodeUTF8(b))
+	s := jstext.Trim(jsnode.DecodeUTF8(b))
 	if s == "" {
 		return "(empty owner.json)"
 	}

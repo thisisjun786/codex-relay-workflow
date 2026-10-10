@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // This file reads and writes JSON the way JavaScript does, because the oracle round-trips crw.json
@@ -86,7 +88,7 @@ func (p *parser) next() (json.Token, []byte) {
 // parse is JSON.parse of one document read from a file; ok is false, and value nil, for anything
 // JSON.parse rejects.
 func parse(data []byte) (value any, ok bool) {
-	data = decodeUTF8(data)
+	data = []byte(jsnode.DecodeUTF8(data))
 	p := &parser{data: data, decoder: json.NewDecoder(bytes.NewReader(data))}
 	p.decoder.UseNumber()
 	value = p.value()
@@ -94,49 +96,6 @@ func parse(data []byte) (value any, ok bool) {
 		return nil, false
 	}
 	return value, true
-}
-
-// decodeUTF8 reads the bytes as Node's utf8 decoder does: each maximal subpart of an ill-formed
-// sequence becomes one U+FFFD. What is left is valid UTF-8, so a raw byte can never pass for the
-// WTF-8 bytes of an escaped lone surrogate.
-func decodeUTF8(data []byte) []byte {
-	var out []byte
-	for i := 0; i < len(data); {
-		r, size := utf8.DecodeRune(data[i:])
-		if r == utf8.RuneError && size == 1 {
-			size, out = subpart(data[i:]), utf8.AppendRune(out, utf8.RuneError)
-		} else {
-			out = append(out, data[i:i+size]...)
-		}
-		i += size
-	}
-	return out
-}
-
-// subpart is the length of the longest prefix of b that starts a well-formed UTF-8 sequence.
-func subpart(b []byte) int {
-	lo, hi, need := byte(0x80), byte(0xBF), 0
-	switch c := b[0]; {
-	case c >= 0xC2 && c <= 0xDF:
-		need = 1
-	case c == 0xE0:
-		need, lo = 2, 0xA0
-	case c == 0xED:
-		need, hi = 2, 0x9F
-	case c >= 0xE1 && c <= 0xEF:
-		need = 2
-	case c == 0xF0:
-		need, lo = 3, 0x90
-	case c == 0xF4:
-		need, hi = 3, 0x8F
-	case c >= 0xF1 && c <= 0xF3:
-		need = 3
-	}
-	n := 1
-	for ; n <= need && n < len(b) && b[n] >= lo && b[n] <= hi; n++ {
-		lo, hi = 0x80, 0xBF
-	}
-	return n
 }
 
 func (p *parser) value() any {

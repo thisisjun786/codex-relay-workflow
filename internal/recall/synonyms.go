@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // synonymGroups is the oracle's SYNONYM_GROUPS (synonyms.ts:31-66): one concept per group. A word's group is found by scanning, the
@@ -121,7 +123,7 @@ func ExpandQueryWords(words []string) []QueryGroup { return expand(words, synony
 func expand(words []string, table [][]string) []QueryGroup {
 	groups := make([]QueryGroup, len(words))
 	for i, word := range words {
-		lower := Lower(word)
+		lower := jsnode.Lower(word)
 		texts, keys := []string{lower}, []string{lower}
 		if stem, ok := KoreanStem(lower); ok {
 			texts, keys = append(texts, stem), append(keys, stem)

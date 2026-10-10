@@ -8,7 +8,7 @@ import (
 
 // TestDecodeCliAttestKeepsALoneSurrogate: decodeCliAttest checks the syntax with encoding/json and
 // then reads the value with pyjson.Loads, so a lone-surrogate escape reaches Coerce as the three
-// WTF-8 bytes the attest lowerJS keeps, where encoding/json alone would turn it into U+FFFD first.
+// WTF-8 bytes the attest jsnode.Lower keeps, where encoding/json alone would turn it into U+FFFD first.
 func TestDecodeCliAttestKeepsALoneSurrogate(t *testing.T) {
 	wtf8 := "\xed\xa0\x80" // U+D800 as WTF-8, the spelling pyjson.CodePoint reads back
 	for _, tc := range []struct {

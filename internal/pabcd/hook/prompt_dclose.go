@@ -48,12 +48,12 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -1201,7 +1201,7 @@ func promptDcloseScanRows(path string, open func(string) (*os.File, error), visi
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return readErr
 		}
-		line := source.DecodeUTF8(raw)
+		line := jsnode.DecodeUTF8(raw)
 		if strings.HasSuffix(line, "\n") {
 			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		}

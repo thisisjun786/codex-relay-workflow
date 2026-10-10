@@ -23,8 +23,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -335,7 +335,7 @@ func harnessInstallPasswdHome() (string, error) {
 // sorted os.ReadDir order and the evidence text match what the oracle would print for the same
 // directory.
 func harnessInstallNodeName(name string) string {
-	return source.DecodeUTF8([]byte(name))
+	return jsnode.DecodeUTF8([]byte(name))
 }
 
 // harnessInstallParseJSON is JSON.parse over Node's UTF-8 decode. It keeps an object's key order
@@ -344,7 +344,7 @@ func harnessInstallNodeName(name string) string {
 // pyjson.MaxDepth: a document nested deeper is an explicit diagnostic (errHarnessTooDeep), not a
 // PASS (CRW-1152, port: fixed).
 func harnessInstallParseJSON(data []byte) (any, error) {
-	return harnessParseBounded(source.DecodeUTF8(data), pyjson.LoadOptions{Surrogates: true})
+	return harnessParseBounded(jsnode.DecodeUTF8(data), pyjson.LoadOptions{Surrogates: true})
 }
 
 // harnessInstallString is String(err) for the generic manifest-target check: the error's name and

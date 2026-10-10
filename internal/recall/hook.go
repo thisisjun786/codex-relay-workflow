@@ -18,8 +18,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -124,13 +124,13 @@ func recallHookLower(s string) string {
 	for i := 0; i < len(s); {
 		r, n := pyjson.CodePoint(s, i)
 		if pyjson.IsSurrogate(r) {
-			b.WriteString(Lower(s[start:i]))
+			b.WriteString(jsnode.Lower(s[start:i]))
 			b.WriteString(s[i : i+n])
 			start = i + n
 		}
 		i += n
 	}
-	b.WriteString(Lower(s[start:]))
+	b.WriteString(jsnode.Lower(s[start:]))
 	return b.String()
 }
 func recallHookTargetStop(key string) bool {
@@ -298,7 +298,7 @@ func DedicatedToolsEnabled(home string) bool {
 	if err != nil {
 		return false
 	}
-	body, ok := recallHookMemoriesTableBody(source.DecodeUTF8(data))
+	body, ok := recallHookMemoriesTableBody(jsnode.DecodeUTF8(data))
 	// JS multiline anchors recognize CR and Unicode line separators as well as LF.
 	body = strings.NewReplacer("\r", "\n", "\u2028", "\n", "\u2029", "\n").Replace(body)
 	return ok && recallHookRE(`(?m)^[ \t]*dedicated_tools[ \t]*=[ \t]*true[ \t]*(?:#.*)?$`).MatchString(body)

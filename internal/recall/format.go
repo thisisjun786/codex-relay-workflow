@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -81,7 +82,7 @@ func topicTokensWith(h MemoryHit, re *regexp.Regexp) []string {
 	out := []string{}
 	seen := map[string]bool{}
 	for _, s := range re.FindAllString(h.Relpath+" "+h.Excerpt, -1) {
-		s = Lower(s)
+		s = jsnode.Lower(s)
 		if !seen[s] {
 			seen[s] = true
 			out = append(out, s)

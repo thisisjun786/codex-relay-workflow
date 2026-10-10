@@ -135,7 +135,7 @@ func orchestrateDcloseSurrogateRun(t *testing.T, cwd, id, phaseID string, recove
 }
 
 // TestOrchestrateDcloseSurrogateReaderKeepsALoneSurrogateDistinct is the reader contract the issue
-// states: the file bytes go through source.DecodeUTF8 first and each non-empty line through
+// states: the file bytes go through jsnode.DecodeUTF8 first and each non-empty line through
 // pyjson.Loads with Surrogates/Map/SpelledNumbers, so a lone surrogate escape stays three WTF-8
 // bytes and never equals U+FFFD, while a paired surrogate is its one character. The other reading
 // rules stay: a blank line is skipped, a non-object value is skipped, a repeated key keeps its last
@@ -359,7 +359,7 @@ func TestOrchestrateDcloseSurrogateWritesItsOwnCloseRow(t *testing.T) {
 // it, so the row does match a close whose id carries the real U+FFFD. The bytes are written raw,
 // never as an escape, which is the shape a hand edit or a byte-level copy leaves behind.
 //
-// The raw sequence is the incomplete multi-byte prefix E0 A0, not a lone 0xFF: source.DecodeUTF8
+// The raw sequence is the incomplete multi-byte prefix E0 A0, not a lone 0xFF: jsnode.DecodeUTF8
 // follows the WHATWG maximal-subpart rule and folds that whole prefix into ONE U+FFFD, where a
 // per-byte replacement (what a reader without DecodeUTF8 would do) folds it into TWO. So this case
 // fails if the DecodeUTF8 step is dropped, while a lone 0xFF would not tell the two apart.

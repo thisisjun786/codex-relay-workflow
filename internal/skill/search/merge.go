@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // The merge policy of a search over several sources. The sources' scores do not share a scale: jaw and hermes add up
@@ -31,7 +31,7 @@ const (
 
 var mergeSourceWeight = map[Source]float64{SourceJaw: 1, SourceHermes: 1, SourceClawhub: 0.8, SourceGH: 0.6}
 
-func normalizeQuery(s string) string { return strings.Join(strings.Fields(recall.Lower(s)), " ") }
+func normalizeQuery(s string) string { return strings.Join(strings.Fields(jsnode.Lower(s)), " ") }
 
 func mergeBoost(row SkillRow, query string) float64 {
 	switch {

@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
@@ -98,7 +99,7 @@ func InferRole(agentType any, message string) role.RoleName {
 	if s, ok := agentType.(string); ok && s == "explorer" {
 		return role.Explorer
 	}
-	lower := spawnInlineLowerJS(message)
+	lower := jsnode.Lower(message)
 	for _, keyword := range spawnClassifyReviewKeywords {
 		if spawnClassifyWordStart(lower, keyword) {
 			return role.Reviewer
@@ -229,7 +230,7 @@ func IsFullHistoryFork(toolInput map[string]any) bool {
 	if value == "" {
 		return true
 	}
-	return spawnInlineLowerJS(value) == "all"
+	return jsnode.Lower(value) == "all"
 }
 
 // IsFernetTokenShape is the oracle's isFernetTokenShape: a structural shape check of a native

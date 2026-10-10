@@ -8,10 +8,10 @@ import (
 	"slices"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -134,7 +134,7 @@ func reviewRoundRunRoundsIntact(cwd, slug string, plan *goalplan.Goalplan) bool 
 	}
 	var stored map[string]json.RawMessage
 	var rounds []json.RawMessage
-	if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &stored) != nil {
+	if json.Unmarshal([]byte(jsnode.DecodeUTF8(raw)), &stored) != nil {
 		return false
 	}
 	if value, present := stored["reviewRounds"]; present && string(value) != "null" && json.Unmarshal(value, &rounds) != nil {

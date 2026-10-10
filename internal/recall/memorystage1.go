@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 const memoryStage1ChatExcerpt = 400
@@ -105,7 +107,7 @@ func (s *memorySearchState) memoryStage1FillPresence(home string) error {
 		if s.memoryStage1Old(ms) {
 			continue
 		}
-		lower := Lower(body)
+		lower := jsnode.Lower(body)
 		// Presence is evidence the scoped search could return: a row the scope rejects holds no
 		// term for it, so an out-of-scope symbol cannot stop the relaxed pass.
 		id, _ := row["thread_id"].(string)
@@ -198,7 +200,7 @@ func (s *memorySearchState) memoryStage1Search(home string, plan MatchPlan, grou
 			continue
 		}
 		body, ms := memoryStage1Row(row)
-		lower := Lower(body)
+		lower := jsnode.Lower(body)
 		if s.memoryStage1Old(ms) || !PlanMatches(lower, plan) {
 			continue
 		}
