@@ -65,8 +65,8 @@ const Interrupted = 130
 // made); a Permission leg answers before the record; then the record is made, under the verb the
 // oracle dispatched on (cli.ts:364), and the Guard legs run, for a subagent's turn too; a subagent's
 // turn then ends; the PABCD check is read and ends the Gated legs when PABCD is off; and the
-// FailClosed or Generic leg answers. The exit status is 0 unless an oversize input has no answer, or
-// an error no stage swallows (exit 1, "crw cli failed", as the oracle's generic handler).
+// FailClosed or Generic leg answers. Transport failures follow explicit registration policy before
+// any observation or handler (CRW-1101). An error no stage swallows exits 1 ("crw cli failed").
 //
 // The first interrupt of a crw process only cancels its run (cmd/crw serve), where Node's default
 // action ends the oracle at once, even while it waits for its input: so Hook answers Interrupted as
@@ -108,18 +108,15 @@ func dispatch(ctx context.Context, leg Leg, in io.Reader, stdout, stderr io.Writ
 			code = 1
 		}
 	}()
-	raw, overflow := ReadStdin(in)
+	input := ReadInput(in)
 	if ctx.Err() != nil {
 		return Interrupted
 	}
-	if overflow {
-		if out := OversizedHookOutput(leg.Slug); out != "" {
-			io.WriteString(stdout, out)
-		} else if leg.Stage != Permission {
-			return 1
-		}
+	if input.Failed() {
+		io.WriteString(stdout, leg.InputFailureOutput(input))
 		return 0
 	}
+	raw := input.Raw
 	call := Call{Raw: raw}
 	if leg.Stage == Permission {
 		io.WriteString(stdout, leg.answer(call, true))

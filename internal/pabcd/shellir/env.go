@@ -61,6 +61,7 @@ func AnalyzeNoDir(src string) (Result, error) {
 }
 
 func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
+	w := &walker{}
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -76,7 +77,6 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	}
 	st.lookup = lookup
 	st.cdpath = st.cdpath || textNamesCdpath(src)
-	w := &walker{}
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err
 	}

@@ -25,9 +25,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// harnessHooksCodexHome is options.codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")
-// (doctor.ts:469). A nil CodexHome is absent and falls through; a non-nil one, the empty string
-// included, is the value the oracle keeps and uses verbatim.
+// An explicit CodexHome option, including empty, is used verbatim. The trust
+// check retains the oracle's environment semantics.
 func harnessHooksCodexHome(options HarnessOptions, env host.LookupEnv) (string, error) {
 	if options.CodexHome != nil {
 		return *options.CodexHome, nil
@@ -40,6 +39,19 @@ func harnessHooksCodexHome(options HarnessOptions, env host.LookupEnv) (string, 
 		return "", err
 	}
 	return filepath.Join(home, ".codex"), nil
+}
+
+// Observation queries share the writer's empty-environment fallback without
+// changing explicit Go options or installation/trust diagnostics.
+func harnessObservationCodexHome(options HarnessOptions, env host.LookupEnv) (string, error) {
+	if value, set := env("CODEX_HOME"); options.CodexHome == nil && set && value == "" {
+		home, err := host.Home(env)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".codex"), nil
+	}
+	return harnessHooksCodexHome(options, env)
 }
 
 // HarnessHookExecutionCheck is runHookExecutionCheck (doctor.ts:448-467): an invocation is a diagnostic
@@ -61,7 +73,7 @@ func HarnessHookExecutionCheck(pluginRoot string, options HarnessOptions, env ho
 		query.MaxAgeMS = *options.ObservationMaxAgeMS
 	}
 	result := harness.HookObservations{Reason: "invocation store unreadable"}
-	if home, err := harnessHooksCodexHome(options, env); err == nil {
+	if home, err := harnessObservationCodexHome(options, env); err == nil {
 		query.CodexHome = home
 		result = harness.ReadHookObservations(query)
 	}

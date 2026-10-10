@@ -12,6 +12,8 @@ import (
 // points and the tests that stand before the action; xargs names what its standard input carries, or says the reader cannot
 // read it.
 type Feed struct {
+	// FollowLinks permits traversal through nested symlinks, beyond Starts.
+	FollowLinks bool
 	// Wrapper is "find" or "xargs".
 	Wrapper string
 	// Starts are the start points of the find that runs the program; a start that is not Known is read at run time
@@ -98,9 +100,10 @@ func (p *pipeSource) named() bool { return p != nil && (p.unknown != "" || len(p
 
 // FindAction is one action of a find expression: -delete, or -exec, -execdir, -ok, -okdir with the command it runs.
 type FindAction struct {
-	Name    string
-	Command []Word
-	chains  []findChain
+	FollowLinks bool
+	Name        string
+	Command     []Word
+	chains      []findChain
 }
 
 // GuardedFor says whether a test stands before the action on every path that reaches it and leaves the start point out.
@@ -171,10 +174,12 @@ func FindScan(args []Word) (starts []Word, actions []FindAction, err error) {
 	}
 	n := len(args)
 	i := 0
+	followLinks := false
 head:
 	for i < n {
 		switch v := args[i].Value; {
 		case v == "-H" || v == "-L" || v == "-P":
+			followLinks = v == "-L"
 			i++
 		case v == "-D":
 			i += 2
@@ -234,7 +239,7 @@ head:
 			neg = false
 			i++
 		case v == "-delete":
-			actions = append(actions, FindAction{Name: v, chains: cloneChains(top.paths)})
+			actions = append(actions, FindAction{Name: v, FollowLinks: followLinks, chains: cloneChains(top.paths)})
 			neg = false
 			i++
 		case v == "-exec" || v == "-execdir" || v == "-ok" || v == "-okdir":
@@ -248,7 +253,7 @@ head:
 			if j == i+1 {
 				return nil, nil, unreadablef("find %s without a program", v)
 			}
-			actions = append(actions, FindAction{Name: v, Command: args[i+1 : j], chains: cloneChains(top.paths)})
+			actions = append(actions, FindAction{Name: v, FollowLinks: followLinks, Command: args[i+1 : j], chains: cloneChains(top.paths)})
 			neg = false
 			i = j + 1
 		default:

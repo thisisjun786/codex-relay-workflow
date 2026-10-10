@@ -325,13 +325,10 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	if s == nil {
 		return nil
 	}
-	if s.Negated || s.Background || s.Coprocess || ctx.Pipeline {
+	_, simple := s.Cmd.(*syntax.CallExpr)
+	_, binary := s.Cmd.(*syntax.BinaryCmd)
+	if (!simple && !binary) || s.Negated || s.Background || s.Coprocess || ctx.Pipeline {
 		ctx.succeeds = false
-	}
-	if isCompound(s.Cmd) {
-		if _, binary := s.Cmd.(*syntax.BinaryCmd); !binary {
-			ctx.succeeds = false
-		}
 	}
 	// The records this statement adds that no inner statement already placed are on this statement's line.
 	start, line := len(w.out), int(s.Pos().Line())
@@ -791,6 +788,7 @@ func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context
 		return unreadablef("nesting is deeper than %d", MaxNestingDepth)
 	}
 	ctx.FuncBody = true
+	ctx.succeeds = false
 	w.calls = append(w.calls, name)
 	defer func() { w.calls = w.calls[:len(w.calls)-1] }()
 	return w.stmt(body, st, ctx)

@@ -34,7 +34,7 @@ find .. -name x -exec sh -c 'cd /tmp/a/b; rm -rf {}' \;
 --why The body holds no {} and ignores its parameters: a fixed cleanup inside the checkout (d7 stays allowed).
 find ../repo -exec sh -c 'rm build/old.o' \;
 
-=== CRW-895-r9 | B
+=== CRW-895-r9 | B | deviation=none/allow/deny
 --why {} in the body after a cd inside the checkout, with a test that leaves the checkout out.
 find . -name '*.o' -exec sh -c 'cd build; rm -f {}' \;
 
