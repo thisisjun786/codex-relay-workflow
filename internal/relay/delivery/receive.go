@@ -40,10 +40,10 @@ type ReceiveRequest struct {
 // The proof it is given is AckProof(event, ackTurn), computed by Receive.
 type AckStep func(ctx context.Context, event, ackTurn, proof string) (Obj, error)
 
-// Receive runs claim, ack and verdict in turn and answers {"claim", "ack", "verdict"}, each the
-// answer of its command. A step that refuses ends the receive with its refusal.
-func Receive(ctx context.Context, ack *Ack, req ReceiveRequest, doAck AckStep) (Obj, error) {
-	// the proof's inputs are checked as ack-proof checks them, before any step writes
+// PrepareReceive is everything receive judges before any step writes, and before the store is opened:
+// the proof's inputs are checked as ack-proof checks them, then the verdict line is read as far as it can
+// be without the store. It reads no store and writes nothing.
+func PrepareReceive(req ReceiveRequest) (*PreparedVerdict, error) {
 	if !eventIDPattern.MatchString(req.Event) {
 		return nil, dispatch.Host("event id must be 32 lowercase hex characters")
 	}
@@ -52,12 +52,21 @@ func Receive(ctx context.Context, ack *Ack, req ReceiveRequest, doAck AckStep) (
 	}
 	verdict := req.Verdict
 	verdict.Event, verdict.VerdictTurn = req.Event, req.AckTurn
-	// and so is the verdict line, as far as it can be read without the store
 	prepared, err := PrepareVerdict(verdict)
 	if err != nil {
 		return nil, err
 	}
 	if err := prepared.checkHead(); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+// Receive runs claim, ack and verdict in turn and answers {"claim", "ack", "verdict"}, each the
+// answer of its command. A step that refuses ends the receive with its refusal.
+func Receive(ctx context.Context, ack *Ack, req ReceiveRequest, doAck AckStep) (Obj, error) {
+	prepared, err := PrepareReceive(req)
+	if err != nil {
 		return nil, err
 	}
 	claim, err := ack.ClaimVerification(ctx, req.Event, req.AckTurn)
@@ -197,12 +206,25 @@ func fileList(field F) ([]string, error) {
 
 // receiveCommands is the relay command of this package that composes the three above.
 var receiveCommands = []commandSpec{
-	{dispatch.Command{Name: "receive"}, cmdReceive},
+	{dispatch.Command{Name: "receive", Validate: validateReceive}, cmdReceive},
+}
+
+// validateReceive is receive's whole line judged before dispatch admits the store: admission creates a
+// store, installs its schema and binds an unbound one to the line's socket, so a line that is refused
+// (a verdict file that cannot be read, a malformed event id, turn or head) must be refused first.
+func validateReceive(_ dispatch.Services, args dispatch.Args) error {
+	event, turn := args.Text("event"), args.Text("ack-turn")
+	req, err := ReadVerdictFile(args.Text("verdict-file"), event, turn)
+	if err != nil {
+		return err
+	}
+	_, err = PrepareReceive(ReceiveRequest{Event: event, AckTurn: turn, Verdict: req})
+	return err
 }
 
 func cmdReceive(c *cliRun) (any, error) {
 	event, turn := c.s("--event"), c.s("--ack-turn")
-	// the verdict file is read before the store is opened or any step writes
+	// the verdict file was read by validateReceive before dispatch admitted the store; it is read again for its request
 	req, err := ReadVerdictFile(c.s("--verdict-file"), event, turn)
 	if err != nil {
 		return nil, err

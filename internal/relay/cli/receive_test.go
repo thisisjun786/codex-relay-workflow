@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -94,5 +95,50 @@ func TestReceiveCommandLine(t *testing.T) {
 	// a malformed event id is refused as ack-proof refuses it
 	if bad := line("--event", "nope", "--ack-turn", "t1", "--verdict-file", file); bad.code != 3 || !strings.Contains(bad.stdout, "event id must be 32 lowercase hex characters") {
 		t.Errorf("a malformed event id: exit %d %s", bad.code, bad.stdout)
+	}
+}
+
+// receive judges its whole line before the store is admitted: a line that is refused as usage (or as a
+// malformed id) leaves the state directory as it was, creates no store and binds none to the socket
+// the line named. A store the same socket-less state later gets is the caller's own.
+func TestReceiveRefusedLineTouchesNoStore(t *testing.T) {
+	home := tempHome(t)
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.json")
+	if err := os.WriteFile(good, []byte(`{"verdict":"verified"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	malformed := filepath.Join(dir, "malformed.json")
+	if err := os.WriteFile(malformed, []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	badHead := filepath.Join(dir, "head.json")
+	if err := os.WriteFile(badHead, []byte(`{"verdict":"verified","verified-head":"XYZ"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	event := strings.Repeat("ab", 16)
+	wrong := filepath.Join(home, "wrong.sock")
+	for i, c := range []struct {
+		file, event, turn string
+		code              int
+	}{
+		{malformed, event, "t1", 4},
+		{filepath.Join(dir, "absent.json"), event, "t1", 4},
+		{badHead, event, "t1", 4},
+		{good, "nope", "t1", 3},
+		{good, event, "  ", 3},
+	} {
+		state := ownerOnlyState(t, home, "refused-"+strconv.Itoa(i))
+		got := goCLI(t, "--state", state, "--socket", wrong, "receive", "--event", c.event, "--ack-turn", c.turn, "--verdict-file", c.file)
+		if got.code != c.code {
+			t.Errorf("case %d: exit %d %s, wanted %d", i, got.code, got.stdout, c.code)
+		}
+		if entries, _ := os.ReadDir(state); len(entries) != 0 {
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Errorf("case %d: the refused line left %v in the state directory", i, names)
+		}
 	}
 }

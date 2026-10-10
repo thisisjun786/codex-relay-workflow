@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"time"
 
@@ -91,8 +90,9 @@ func init() { dispatch.Register(nil, journalTailCommand) }
 // query_only), never the writable one a read-only command would otherwise be handed for a store
 // this runtime may write. It creates nothing: a state with no store is store_absent.
 func openJournalTailStore(ctx context.Context, path string) (*store.Store, error) {
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return nil, &store.RefusedError{Reason: store.ReasonStoreAbsent, Detail: "no relay store exists at " + path + "; a read-only command never creates one"}
+	// the absent and the partial store are judged on the resolved database as every read-only command judges them
+	if err := store.CheckReadable(path); err != nil {
+		return nil, err
 	}
 	return store.OpenReadOnlyStore(ctx, path)
 }

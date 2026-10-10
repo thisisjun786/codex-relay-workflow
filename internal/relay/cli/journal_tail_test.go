@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -267,5 +269,58 @@ func TestJournalTailNoLongReadTx(t *testing.T) {
 	wanted := s.add("tail_wanted", "", "")
 	if answer := <-done; answer == nil || !reflect.DeepEqual(seqs(t, answer), []int64{wanted}) {
 		t.Fatalf("the wait did not return the row written while it ran: %v", answer)
+	}
+}
+
+// journal-tail judges a state with no readable store as every read-only command does (the fence's
+// classification of D, its ownership mirror and its write gate): a D link naming no file beside
+// nothing else is an absent store, and a gate or a mirror beside no database is the partial store the
+// fence refuses. Nothing is created or changed.
+func TestJournalTailClassifiesAbsentAndPartialStores(t *testing.T) {
+	home := tempHome(t)
+	for _, c := range []struct {
+		name     string
+		files    []string
+		dangling bool
+		fifoGate bool
+		reason   string
+		detail   string
+	}{
+		{name: "dangling link", dangling: true, reason: "store_absent"},
+		{name: "gate only", files: []string{"write-gate.lock"}, reason: "store_owned_by_other", detail: "partial store: write-gate.lock without a database"},
+		{name: "gate beside a dangling link", files: []string{"write-gate.lock"}, dangling: true, reason: "store_owned_by_other", detail: "partial store: write-gate.lock without a database"},
+		{name: "fifo gate", fifoGate: true, reason: "store_owned_by_other", detail: "partial store: write-gate.lock without a database"},
+		{name: "mirror only", files: []string{"takeover.json"}, reason: "store_owned_by_other"},
+	} {
+		state := ownerOnlyState(t, home, "tail-"+strings.ReplaceAll(c.name, " ", "-"))
+		for _, name := range c.files {
+			if err := os.WriteFile(filepath.Join(state, name), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if c.fifoGate {
+			if err := syscall.Mkfifo(filepath.Join(state, "write-gate.lock"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if c.dangling {
+			if err := os.Symlink(filepath.Join(state, "nowhere.sqlite3"), filepath.Join(state, "relay.sqlite3")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before, _ := os.ReadDir(state)
+		got := goCLI(t, "--state", state, "journal-tail", "--after", "0")
+		answer := object(t, got.stdout)
+		if got.code != 2 || answer["reason"] != c.reason || c.detail != "" && answer["detail"] != c.detail {
+			t.Errorf("%s: exit %d %s, wanted the refusal %s", c.name, got.code, got.stdout, c.reason)
+		}
+		// the fence reads every other read-only command's answer for this state alike
+		status := goCLI(t, "--state", state, "status")
+		if status.code != got.code || object(t, status.stdout)["reason"] != answer["reason"] {
+			t.Errorf("%s: status answers exit %d %s, journal-tail exit %d %s", c.name, status.code, status.stdout, got.code, got.stdout)
+		}
+		if after, _ := os.ReadDir(state); len(after) != len(before) {
+			t.Errorf("%s: journal-tail changed the state directory: %d names before, %d after", c.name, len(before), len(after))
+		}
 	}
 }

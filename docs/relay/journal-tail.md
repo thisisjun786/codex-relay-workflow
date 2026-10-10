@@ -24,7 +24,9 @@ was away.
 | `--limit M` | at most this many rows (1 to 1000; 100 by default) |
 
 A value outside those ranges is a usage error (exit 4). A state directory with no store is the
-refusal `store_absent` (exit 2); the command never creates one.
+refusal `store_absent` (exit 2), and a write gate or an ownership mirror beside no database is the partial-store
+refusal (`store_owned_by_other`, exit 2), each judged on the database path the state resolves to (a link naming no
+file is an absent store) as the other read-only commands judge them; the command never creates a store.
 
 ### The answer
 
@@ -88,12 +90,16 @@ anything after the JSON document are usage errors.
   `ack-proof` command's function), computed from the turn id the caller gave and nothing else. The
   command has no option that brings a proof, and the relay never makes one for another actor: a turn
   the host does not show on the recipient's thread leaves the acknowledgement unverified and the
-  verdict is refused `not_acknowledged`, as it is when the steps are run by hand.
+  verdict is refused `not_acknowledged`, as it is when the steps are run by hand. An event whose
+  acknowledgement is already verified keeps it: `ack` returns the settled record before it looks at the
+  turn or the host, so `receive` over such an event answers from the record, with or without a socket.
 * **With a socket** the acknowledgement is verified against the host exactly as `ack --socket` does
   it (the delivery is confirmed through the acknowledging turn first). Without one the
-  acknowledgement is recorded as the parent's intent and the verdict that follows is refused.
-* **Before anything is written**, `receive` reads what the three commands would read before they open
-  the store: the event id and the turn (refused as `ack-proof` refuses them), the verdict file, the
+  first acknowledgement of an event is recorded as the parent's intent (unverified) and the verdict
+  that follows is refused `not_acknowledged`. A settled acknowledgement, and a verdict already on
+  record, are returned as they are, so a repeated `receive` of a finished event succeeds offline.
+* **Before the store is opened or anything is written**, `receive` reads what the three commands would read
+  before they open the store, and a refused line creates no store and binds none to its socket: the event id and the turn (refused as `ack-proof` refuses them), the verdict file, the
   findings, `--criteria` and `--restoration`, and the shape of `verified-head`. A line the verdict
   command would refuse for those reasons writes no claim and no acknowledgement.
 * **A refusal ends the receive** with the refusal of the step that made it, unchanged. What the steps
