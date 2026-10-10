@@ -398,3 +398,61 @@ func TestContentsSeesAModeChangeOfALinkedTarget(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1182 evaluation d1: the entry budget also bounds how many names of one directory are read, so a link to a directory with
+// a great many children costs the budget plus a sentinel, not the whole listing, and the walk stops at the overflow.
+func TestContentsReadsOnlyTheRemainingBudgetOfALinkedDirectory(t *testing.T) {
+	h, codex := linkHomes(t)
+	outside := t.TempDir()
+	const children = snapshotMaxEntries * 3
+	for i := 0; i < children; i++ {
+		writeFixture(t, filepath.Join(outside, fmt.Sprintf("e%05d", i)), "")
+	}
+	if err := os.Symlink(outside, filepath.Join(codex, "many")); err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read int
+	snapshotListed = func(path string, n int) {
+		if path == real {
+			read = n
+		}
+	}
+	t.Cleanup(func() { snapshotListed = nil })
+	out, err := h.Contents()
+	if err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Fatalf("a walk past the entry budget must error, got %v", err)
+	}
+	if read == 0 || read > snapshotMaxEntries+1 {
+		t.Fatalf("the linked directory's read returned %d names; the budget plus a sentinel is at most %d", read, snapshotMaxEntries+1)
+	}
+	if n := strings.Count(out, "\n") + 1; n > snapshotMaxEntries {
+		t.Fatalf("the snapshot holds %d lines, past the %d budget", n, snapshotMaxEntries)
+	}
+}
+
+// A directory read at the budget's edge: the entries that fit are recorded, one more is the overflow.
+func TestContentsEntryBudgetEdgeOfALinkedDirectory(t *testing.T) {
+	for _, extra := range []int{0, 1} {
+		h, codex := linkHomes(t)
+		outside := t.TempDir()
+		// The budget counts the lines of one watched directory: its own line and the link's come before the children.
+		if err := os.Symlink(outside, filepath.Join(codex, "probe")); err != nil {
+			t.Fatal(err)
+		}
+		room := snapshotMaxEntries - 2
+		for i := 0; i < room+extra; i++ {
+			writeFixture(t, filepath.Join(outside, fmt.Sprintf("e%05d", i)), "")
+		}
+		out, err := h.Contents()
+		if extra == 0 && err != nil {
+			t.Fatalf("children that fit the budget exactly must not error: %v (%d lines)", err, strings.Count(out, "\n")+1)
+		}
+		if extra == 1 && (err == nil || !strings.Contains(err.Error(), "entries")) {
+			t.Fatalf("one child past the budget must error, got %v", err)
+		}
+	}
+}

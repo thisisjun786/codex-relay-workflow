@@ -206,6 +206,10 @@ type snapshotWalk struct {
 	stopped bool
 }
 
+// snapshotListed is a test seam: it is told how many entries one directory read returned, so a test can show that the read
+// of a directory is bounded by the remaining entry budget. Production leaves it nil.
+var snapshotListed func(path string, n int)
+
 func (w *snapshotWalk) add(line string) { w.lines = append(w.lines, line) }
 
 // fail marks an entry the walk could not read and records the error.
@@ -318,14 +322,54 @@ func (w *snapshotWalk) children(name, path string, ancestors []string, depth int
 		w.stop(name, fmt.Sprintf("past the depth limit of %d directories", snapshotMaxDepth))
 		return
 	}
-	list, err := os.ReadDir(path)
+	list, over, err := readDirBounded(path, snapshotMaxEntries-len(w.lines))
+	if snapshotListed != nil {
+		snapshotListed(path, len(list))
+	}
 	if err != nil {
 		w.fail(name, err)
 		return
 	}
+	if over {
+		w.stop(name, fmt.Sprintf("more than %d entries", snapshotMaxEntries))
+		return
+	}
 	for _, e := range list {
+		if w.stopped {
+			return
+		}
 		w.entry(name+"/"+e.Name(), filepath.Join(path, e.Name()), ancestors, depth+1)
 	}
+}
+
+// readDirBounded lists the directory path in name order, reading at most room entries and one more as the overflow
+// sentinel, so a directory with a great many children costs the budget and not its whole listing. Each child records at least
+// one line, so more children than room is past the entry budget whatever they are; over then reports it and the list is
+// not walked.
+func readDirBounded(path string, room int) (list []os.DirEntry, over bool, err error) {
+	if room < 0 {
+		return nil, true, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	for len(list) <= room {
+		batch, e := f.ReadDir(room + 1 - len(list))
+		list = append(list, batch...)
+		if errors.Is(e, io.EOF) {
+			break
+		}
+		if e != nil {
+			return nil, false, e
+		}
+	}
+	if len(list) > room {
+		return list, true, nil
+	}
+	slices.SortFunc(list, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return list, false, nil
 }
 
 // digest is the sha256 of the regular file at path, read within the byte budget.
