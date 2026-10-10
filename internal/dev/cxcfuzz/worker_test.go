@@ -14,10 +14,14 @@ import (
 
 // A worker's start-up is charged to the startup deadline, not to the per-request timeout: a worker
 // that takes far longer than the per-request timeout to boot still answers its first request. This
-// is the pool-level form of the defect the issue reports.
+// is the pool-level form of the defect the issue reports. The per-request timeout is long enough for a
+// ready worker to answer on a loaded host and the boot delay is three times it, so the boot outlasts the
+// timeout by construction and the answer depends on nothing but where the pool charges the boot
+// (CRW-1172).
 func TestPoolStartupWaitsForAReadyWorker(t *testing.T) {
+	const perRequest = 400 * time.Millisecond
 	target := helperTarget(t, func(rng *rand.Rand, size int) any { return nil })
-	pool, err := NewPool(target.Oracle, 1, 50*time.Millisecond, 5*time.Second, helperEnvForBoot(750*time.Millisecond))
+	pool, err := NewPool(target.Oracle, 1, perRequest, 20*time.Second, helperEnvForBoot(3*perRequest))
 	if err != nil {
 		t.Fatal(err)
 	}

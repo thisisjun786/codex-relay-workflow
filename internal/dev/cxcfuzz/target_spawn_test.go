@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -392,16 +391,29 @@ func spawnDecoyEnvAt(t *testing.T, decoy, tmpdir string, create bool) []string {
 	}
 }
 
-// writeSlowSpawnOracle writes a fake oracle tree whose module takes delay to initialize, so a test can
-// tell a load charged to the worker's start-up budget from one charged to a case's timeout.
-func writeSlowSpawnOracle(t *testing.T, delay time.Duration) string {
+// writeSlowSpawnOracle writes a fake oracle tree whose module does not finish initializing until the
+// test releases it, so a test can tell a load charged to the worker's start-up budget from one charged
+// to a case's timeout. The module writes loading when its initialization begins and waits for gate to
+// exist; it polls the gate rather than sleeping a fixed time, so the length of the load is the test's
+// to decide and no host load can shorten or lengthen it relative to the per-request timeout.
+func writeSlowSpawnOracle(t *testing.T, loading, gate string) string {
 	t.Helper()
 	root := t.TempDir()
 	dir := filepath.Join(root, "subagent-config", "dist")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "await new Promise((resolve) => setTimeout(resolve, " + strconv.FormatInt(delay.Milliseconds(), 10) + "));\n" +
+	loadingJS, err := json.Marshal(loading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateJS, err := json.Marshal(gate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "import { existsSync, writeFileSync } from \"node:fs\";\n" +
+		"writeFileSync(" + string(loadingJS) + ", \"loading\");\n" +
+		"while (!existsSync(" + string(gateJS) + ")) { await new Promise((resolve) => setTimeout(resolve, 5)); }\n" +
 		"export function mentionedFolders() { return new Set([process.env.HOME, process.env.CODEX_HOME, process.env.CRW_HOME, process.env.CODEXCLAW_HOME, process.env.TMPDIR]); }\n" +
 		"export function inferRole() { return \"\"; }\n" +
 		"export function isV2SpawnInput() { return false; }\n" +
@@ -564,18 +576,48 @@ func spawnStrippedDepth(t *testing.T, document pyjson.Object) int {
 // case would instead be charged to that case's timeout and a slow import would kill a worker that had
 // already answered its handshake. The pre-merge evaluation of head a9f956c3 found exactly that
 // regression in a per-request import, so this pins the timing rather than only the answers.
+//
+// The load is held open by a gate the test releases, not by a fixed sleep (CRW-1172): the oracle says
+// when its initialization began, and the test opens the gate one and a half per-request timeouts after
+// that. A load that began inside the first case is therefore still running when that case's timeout
+// ends, whatever the host load, and a load that began before the listener existed is paid by startup.
+// The per-request timeout is long enough for a ready worker to answer a trivial case on a loaded host.
 func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
 	requireNode(t)
+	const perRequest = 500 * time.Millisecond
 	root := t.TempDir()
 	if err := PrepareRoot(root); err != nil {
 		t.Fatal(err)
 	}
 	decoy := t.TempDir()
+	signals := t.TempDir()
+	loading, gate := filepath.Join(signals, "loading"), filepath.Join(signals, "gate")
+	stop := make(chan struct{})
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		defer func() { _ = os.WriteFile(gate, nil, 0o644) }()
+		for {
+			if _, err := os.Stat(loading); err == nil {
+				break
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		select {
+		case <-stop:
+		case <-time.After(perRequest * 3 / 2):
+		}
+	}()
+	defer func() { close(stop); <-released }()
 	// A per-request timeout far below the load time, and a startup budget far above it: the worker
 	// answers only if the load is paid by startup.
 	pool, err := NewPool(
-		Oracle{Command: "node", Shim: shimPath("spawn"), Root: writeSlowSpawnOracle(t, 750*time.Millisecond)},
-		1, 50*time.Millisecond, 20*time.Second, append(os.Environ(), spawnDecoyEnv(t, decoy)...))
+		Oracle{Command: "node", Shim: shimPath("spawn"), Root: writeSlowSpawnOracle(t, loading, gate)},
+		1, perRequest, 60*time.Second, append(os.Environ(), spawnDecoyEnv(t, decoy)...))
 	if err != nil {
 		t.Fatal(err)
 	}
