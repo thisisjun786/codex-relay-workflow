@@ -147,6 +147,10 @@ type hostCellSpec struct {
 	manyTurns bool
 	// events are the host events the script causes, for the exact set of hooks the host must start.
 	events []hostEvent
+	// optional are events the host may or may not raise for the script (a permission request, which
+	// a host that cannot ask never raises): a hook the declarations list for one starts every time
+	// the event is raised or not at all.
+	optional []hostEvent
 	// check adds the cell's own judgement.
 	check func(*HostCell, *hostRun)
 }
@@ -201,6 +205,14 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 	}
 	rep.Args = hostArgs("<work>")
 	h := &hostEnv{opts: o, codex: codex, scratch: scratch, manifest: manifest, registered: registered}
+	if h.version, err = manifestVersion(o.Plugin); err != nil {
+		return rep, err
+	}
+	// the plugin cache entry is named by the manifest: refuse a name that would place it elsewhere
+	// before any cell is prepared
+	if _, err := pluginCacheDir(scratch, manifest.Name, h.version); err != nil {
+		return rep, err
+	}
 	for _, spec := range hostCellSpecs() {
 		if o.Only != nil && !o.Only.MatchString(spec.name) {
 			continue
@@ -271,6 +283,7 @@ type hostEnv struct {
 	codex      string
 	scratch    string
 	manifest   Manifest
+	version    string // the manifest's version: the last directory of the plugin cache entry
 	registered []Registered
 	n          int
 	ctl        *hostControl
@@ -375,11 +388,11 @@ func (h *hostEnv) run(spec hostCellSpec) (HostCell, error) {
 		return cell, err
 	}
 	// The plugin as the host's plugin cache holds it: <cache>/<marketplace>/<plugin>/<version>.
-	version, err := manifestVersion(h.opts.Plugin)
+	cacheDir, err := pluginCacheDir(r.codexHome, h.manifest.Name, h.version)
 	if err != nil {
 		return cell, err
 	}
-	if err := copyPlugin(h.opts.Plugin, filepath.Join(r.codexHome, "plugins", "cache", hostMarket, h.manifest.Name, version)); err != nil {
+	if err := copyPlugin(h.opts.Plugin, cacheDir); err != nil {
 		return cell, err
 	}
 	script := &hostScript{image: filepath.Join(work, "image.png")}
@@ -600,6 +613,27 @@ func manifestVersion(root string) (string, error) {
 	return m.Version, nil
 }
 
+// pluginCacheDir is where a Codex home's plugin cache holds the package: <home>/plugins/cache/
+// <marketplace>/<name>/<version>, the name and the version being the manifest's. Each must be one
+// plain path component, and the directory, with every link on the way followed, must stay below the
+// home: a manifest cannot place the package (and overwrite what is there) anywhere else.
+func pluginCacheDir(codexHome, name, version string) (string, error) {
+	for what, v := range map[string]string{"name": name, "version": version} {
+		if v == "" || v == "." || v == ".." || strings.ContainsAny(v, "/\\\x00") || filepath.Base(v) != v || filepath.IsAbs(v) {
+			return "", fmt.Errorf("the plugin manifest's %s %q is not a single directory name: it cannot name an entry of the plugin cache", what, v)
+		}
+	}
+	cache := filepath.Join(codexHome, "plugins", "cache")
+	dir := filepath.Join(cache, hostMarket, name, version)
+	if !within(cache, dir) {
+		return "", fmt.Errorf("the plugin cache entry %s is outside the plugin cache %s", dir, cache)
+	}
+	if err := resolvedWithin(codexHome, dir); err != nil {
+		return "", fmt.Errorf("the plugin cache entry: %w", err)
+	}
+	return dir, nil
+}
+
 // copyPlugin copies a plugin root into the plugin cache, following links, as an installation holds
 // the package as plain files. A link to a directory is copied as that directory; a link that leads
 // back into a directory being copied (a cycle) is an error, not an endless copy.
@@ -804,8 +838,14 @@ func (h *hostEnv) judge(cell *HostCell, r *hostRun, spec hostCellSpec) {
 				add("hook %s started %d time(s), want %d", k, gotKeys[k], wantKeys[k])
 			}
 		}
+		optionalKeys := dueHooks(h.registered, spec.optional)
+		for _, k := range sortedKeysOf(optionalKeys) {
+			if wantKeys[k] == 0 && gotKeys[k] != 0 && gotKeys[k] != optionalKeys[k] {
+				add("hook %s started %d time(s), want %d (the event was raised) or none (it was not)", k, gotKeys[k], optionalKeys[k])
+			}
+		}
 		for _, k := range sortedKeysOf(gotKeys) {
-			if wantKeys[k] == 0 {
+			if wantKeys[k] == 0 && optionalKeys[k] == 0 {
 				add("hook %s started %d time(s), no declared hook is due for it", k, gotKeys[k])
 			}
 		}
@@ -991,6 +1031,8 @@ var (
 	spawnEvents = []hostEvent{{"SessionStart", ""}, {"UserPromptSubmit", ""}, {"PreToolUse", "spawn_agent"}, {"UserPromptSubmit", ""}, {"PreToolUse", "wait_agent"},
 		{"SubagentStop", "worker"}, {"Stop", ""}}
 	permissionEvents = []hostEvent{{"SessionStart", ""}, {"UserPromptSubmit", ""}, {"PreToolUse", "Bash"}, {"Stop", ""}}
+	// a host that can ask raises the permission request for the escalated command
+	permissionOptional = []hostEvent{{"PermissionRequest", "Bash"}}
 )
 
 func hostCellSpecs() []hostCellSpec {
@@ -1002,7 +1044,7 @@ func hostCellSpecs() []hostCellSpec {
 		{name: CellCompaction, state: SwitchOn, trusted: true, script: compactionScript, events: compactionEvents, check: checkCompaction,
 			config: fmt.Sprintf("model_auto_compact_token_limit = %d\nmodel_context_window = 1000\n", hostCompactLimit)},
 		{name: CellSpawn, state: SwitchOn, trusted: true, script: spawnScript, events: spawnEvents, manyTurns: true, check: checkSpawn},
-		{name: CellPermission, state: SwitchOn, trusted: true, script: permissionScript, events: permissionEvents, check: checkPermission},
+		{name: CellPermission, state: SwitchOn, trusted: true, script: permissionScript, events: permissionEvents, optional: permissionOptional, check: checkPermission},
 	}
 }
 

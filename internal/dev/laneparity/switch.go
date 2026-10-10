@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -67,6 +69,62 @@ type seedPlan struct {
 	Switch  string // SwitchOn (or empty), SwitchOff or SwitchCXC
 	CRW     string // the build the runtime link points at
 	Runtime bool   // link the runtime into the step's HOME
+	// records, when set, is told every file the step's hooks left under <CODEX_HOME>/crw/hook-
+	// observations, whatever the fixture goes on to observe.
+	records *recordLog
+}
+
+// recordLog collects the invocation records the hooks of a run left, found where the seed is taken
+// out, before the case's tree is observed: a fixture observes only the roots it names, and the
+// records are in none of them for most.
+type recordLog struct {
+	mu      sync.Mutex
+	pending []string // case-relative paths, not yet named for a fixture
+	named   []string
+}
+
+func (l *recordLog) found(rel string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !slices.Contains(l.pending, rel) {
+		l.pending = append(l.pending, rel)
+	}
+}
+
+// name gives what was found since the last call to the fixture (or probe) id.
+func (l *recordLog) name(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, rel := range l.pending {
+		l.named = append(l.named, id+": "+rel)
+	}
+	l.pending = nil
+}
+
+// all is every record found, sorted; what no fixture was named for (a case that ended in an error)
+// is named by what it is.
+func (l *recordLog) all() []string {
+	l.name("(no outcome)")
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := slices.Clone(l.named)
+	sort.Strings(out)
+	return out
+}
+
+// recordsBelow lists the files and links below <codexHome>/crw/hook-observations, relative to root.
+func recordsBelow(root, codexHome string) map[string]bool {
+	out := map[string]bool{}
+	dir := filepath.Join(codexHome, "crw", "hook-observations")
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if rel, rerr := filepath.Rel(root, path); rerr == nil {
+				out[rel] = true
+			}
+		}
+		return nil
+	})
+	return out
 }
 
 // seed puts the plan into the case for one step and returns the undo that takes it out again. A file
@@ -110,7 +168,9 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 		if err := resolvedWithin(c.Root, filepath.Dir(link)); err != nil {
 			return fail(fmt.Errorf("the runtime link under HOME %q: %w", home, err))
 		}
-		if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
+		_, lerr := os.Lstat(link)
+		switch {
+		case errors.Is(lerr, fs.ErrNotExist):
 			made, err := makeDirs(filepath.Dir(link), 0o755)
 			undos = append(undos, removeEmpty(c.Root, made))
 			if err != nil {
@@ -120,15 +180,39 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 				return fail(err)
 			}
 			undos = append(undos, func() error { return removeBelow(c.Root, link) })
+		case lerr != nil:
+			return fail(lerr)
+		default:
+			// what the scenario or an earlier step placed there is what the shell starts: it must be
+			// the build under test, or the receipts would name one build and the shell run another
+			want, err := FileDigest(p.CRW)
+			if err != nil {
+				return fail(err)
+			}
+			have, err := FileDigest(link)
+			if err != nil || have != want {
+				return fail(fmt.Errorf("%s already exists and is not the build under test (%v): the declared commands would start another executable than the one the receipts name", link, errOr(err, "sha256 "+have+", the build is "+want)))
+			}
 		}
 	}
+	codexHome := ""
+	if v, _ := lookup("CODEX_HOME"); v != "" {
+		codexHome = v
+	} else if h, _ := lookup("HOME"); h != "" {
+		codexHome = filepath.Join(h, ".codex")
+	}
+	if p.records != nil && filepath.IsAbs(codexHome) && within(c.Root, codexHome) {
+		before := recordsBelow(c.Root, codexHome)
+		undos = append(undos, func() error {
+			for rel := range recordsBelow(c.Root, codexHome) {
+				if !before[rel] {
+					p.records.found(rel)
+				}
+			}
+			return nil
+		})
+	}
 	if p.Switch != SwitchOff {
-		codexHome := ""
-		if v, _ := lookup("CODEX_HOME"); v != "" {
-			codexHome = v
-		} else if h, _ := lookup("HOME"); h != "" {
-			codexHome = filepath.Join(h, ".codex")
-		}
 		if !filepath.IsAbs(codexHome) || !within(c.Root, codexHome) {
 			return fail(fmt.Errorf("the step's Codex home %q is not under the case root %s: nothing is written there", codexHome, c.Root))
 		}
@@ -271,6 +355,14 @@ func removeEmpty(root string, made []string) func() error {
 		}
 		return first
 	}
+}
+
+// errOr is err, or the text when err is nil.
+func errOr(err error, text string) string {
+	if err != nil {
+		return err.Error()
+	}
+	return text
 }
 
 func removeIfExists(path string) error {

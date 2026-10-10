@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -144,7 +145,9 @@ func Fire(o FireOptions) (FireReport, error) {
 		defer os.RemoveAll(scratch)
 	}
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Only: o.Only}
-	in.Seed = newSeedPlan(o.Switch, o.CRW, declared).seed
+	plan := newSeedPlan(o.Switch, o.CRW, declared)
+	plan.records = &recordLog{}
+	in.Seed = plan.seed
 	switch o.Fault {
 	case FaultDropStdout:
 		in.Mutate = func(_ string, got *cxccorpus.Expect) {
@@ -156,6 +159,14 @@ func Fire(o FireOptions) (FireReport, error) {
 		in.Steps = func(_ string, steps []cxccorpus.Step) []cxccorpus.Step {
 			slices.Reverse(steps)
 			return steps
+		}
+	}
+	// the records a fixture's hooks left are named for it when its outcome is compared
+	mutate := in.Mutate
+	in.Mutate = func(id string, got *cxccorpus.Expect) {
+		plan.records.name(id)
+		if mutate != nil {
+			mutate(id, got)
 		}
 	}
 	results, err := contracttest.FireHooks(in)
@@ -201,11 +212,12 @@ func Fire(o FireOptions) (FireReport, error) {
 			wants, rep.Receipts = append(wants, ws...), append(rep.Receipts, rs...)
 		}
 	}
-	sort.Strings(rep.Recorded)
 	rep.OK = true
 	if rep.Probes, err = fireOwn(o, in, wantLeg, declared, builds, &rep, &wants, perLeg); err != nil {
 		return rep, err
 	}
+	rep.Recorded = mergeRecorded(rep.Recorded, plan.records.all())
+	sort.Strings(rep.Recorded)
 	for _, p := range rep.Probes {
 		rep.OK = rep.OK && p.OK
 	}
@@ -235,6 +247,22 @@ func Fire(o FireOptions) (FireReport, error) {
 		rep.Legs = append(rep.Legs, *leg)
 	}
 	return rep, nil
+}
+
+// mergeRecorded adds the records found where the seed was taken out to the ones the observed trees
+// held, once each: a record in both is named by its fixture and its file name.
+func mergeRecorded(observed, found []string) []string {
+	out := slices.Clone(observed)
+	for _, f := range found {
+		id, rel, _ := strings.Cut(f, ": ")
+		if !slices.ContainsFunc(observed, func(o string) bool {
+			oid, path, _ := strings.Cut(o, ": ")
+			return oid == id && filepath.Base(path) == filepath.Base(rel)
+		}) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // stepReceipts makes the receipts of a fixture's hook steps, and what each must name.

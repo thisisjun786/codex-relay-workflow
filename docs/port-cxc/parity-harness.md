@@ -35,6 +35,10 @@ fixtures of those steps ran against no switch and were silent). Nothing is writt
 directory the harness makes in is followed, and one that leaves the case root, or points nowhere, is refused, for the
 switch and for the runtime link, and again before the harness takes them out), and the account's home is never resolved. The report's `switch` (and the fire cell's) names the state every case root held, and
 `switchSilence` the cell that fires the same legs with the file absent and at `cxc`.
+The invocation records a run's hooks leave (`<CODEX_HOME>/crw/hook-observations`) are collected where the seed is taken out, for
+every fixture and every probe, whatever the fixture goes on to observe, so a hook that records while the switch is off or at `cxc`
+fails the silence cell. A file already at the runtime path of a step's `HOME` must be the build under test (the same sha256), or
+the step is refused: a receipt must name the executable the shell started.
 
 The shipped plugin starts `"$HOME/.local/share/crw-runtime/current/bin/crw"`. To fire its declarations as they are, the
 harness links that path to the build under test in the `HOME` of every step (and removes the link and the directories it
@@ -92,7 +96,7 @@ The model is a stub: `StubProvider` serves `POST /v1/responses` on `127.0.0.1` w
 that makes the host compact), and the host is pointed at it by `model_provider` in the home's `config.toml`.
 
 The plugin is placed as the host's plugin cache holds it (`plugins/cache/<marketplace>/crw/<version>`), enabled in
-`config.toml`, and its 34 hooks are trusted by running the built `crw doctor retrust --bootstrap-ok` against that home. No run
+`config.toml` (the manifest's name and version must each be one plain directory name, and the cache entry must stay below the run's home, or the run is refused before any cell is prepared), and its 34 hooks are trusted by running the built `crw doctor retrust --bootstrap-ok` against that home. No run
 passes `--dangerously-bypass-hook-trust` or any other flag that skips trust, approvals or the sandbox (the report's
 `bypassHookTrust` is false and `codexArgs` lists the arguments), and a fired hook that needed one would not count. The installed
 runtime path the declarations start holds a recorder, which keeps the arguments, the payload on stdin, the answer, the exit
@@ -106,7 +110,7 @@ status and the time of every start and hands the start to the build under test u
 | `untrusted/crw` | the same, with no trust recorded | the turn ran to its end and the host started no hook |
 | `compaction/crw` | a tool call that reports more usage than the home's auto-compaction limit | the host sent one compaction request, started the three PostCompact hooks and the SessionStart of the new session (source `compact`), and the recall context that answered reached the model |
 | `spawn/crw` | the turn spawns an agent of role `worker`, waits for it and answers | the agent had a turn of its own with the provider, the spawn hook, both SubagentStop hooks (the one matched by `.*` and the one by `^(executor\|worker)$`) and the Stop hooks started once each, and the parent's turn ran to its end |
-| `permission/crw` | a command that needs escalation | verified only if the host starts a PermissionRequest hook for it; on Codex 0.154.0 `codex exec` refuses the escalation first (`approval policy is Never` comes back to the model), so the cell reports itself not verified with that measurement |
+| `permission/crw` | a command that needs escalation | verified only if the host starts a PermissionRequest hook for it (the start is accounted for as an event the host may raise: every declared PermissionRequest hook started, or none); on Codex 0.154.0 `codex exec` refuses the escalation first (`approval policy is Never` comes back to the model), so the cell reports itself not verified with that measurement |
 
 Hook starts are compared as a multiset of (leg, event, tool): a hook started twice, not at all, or that no declaration is due
 for fails the cell. A cell the host cannot be driven into is `notVerified` with the reason; a run without a Codex binary on
