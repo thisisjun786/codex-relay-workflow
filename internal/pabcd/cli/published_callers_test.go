@@ -43,7 +43,9 @@ func cliPublishedIsolatedHome(t *testing.T) {
 // write into the replaced homes would go unseen. The seeds' fixtures are in place when this runs.
 func cliPublishedWatchSeededHomes(t *testing.T) *testsupport.AccountHomes {
 	t.Helper()
-	return testsupport.WatchAccountHomes(t, os.Getenv("HOME"), os.Getenv("CODEX_HOME"), os.Getenv("CRW_HOME"))
+	h := testsupport.WatchAccountHomes(t, os.Getenv("HOME"), os.Getenv("CODEX_HOME"), os.Getenv("CRW_HOME"))
+	h.Snapshot() // the seeds' fixtures are in place; an in-place edit of one keeps its name (CRW-1176)
+	return h
 }
 
 // cliPublishedScanWorkspace is scanRecordWorkspace with the homes it installed watched.

@@ -687,7 +687,7 @@ func TestSelfHealReportNeverTouchesTheRealHomes(t *testing.T) {
 			}
 			selfHealReportWriteConfig(t, homes.Codex)
 			selfHealReportFakeCodex(t, selfHealReportSoftOff)
-			homes.Rebase()
+			homes.Snapshot() // the config and the fake codex are in place; an in-place edit keeps its name (CRW-1176)
 			for _, in := range []string{selfHealReportSessionStart, "garbage", ""} {
 				if _, code := selfHealReportRun(t, homes.Codex, in); code != 0 {
 					t.Fatalf("exit = %d, want 0", code)
