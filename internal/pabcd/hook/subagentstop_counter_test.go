@@ -205,3 +205,80 @@ func TestSubagentStopLegacyCounters(t *testing.T) {
 		t.Fatal("the legacy counter was not kept")
 	}
 }
+
+// CRW-1106 post-evaluation round (d2): a stop that cannot get its tuple's lock mutates nothing under that tuple. Its receipt is
+// valid, so the child is released, but the counter it would have cleared is left for the holder and for the receipt-carrying
+// resolve (`crw pabcd evidence resolve`), which both run under the lock.
+func TestSubagentStopLockTimeoutLeavesTheCounterAlone(t *testing.T) {
+	cwd := subagentStopWorkspace(t)
+	for n := 1; n <= 2; n++ {
+		subagentStopBlock(t, counterStop(t, cwd, "s1", "a1", "t1", ""), n)
+	}
+	subagentStopPut(t, filepath.Join(cwd, ".crw/evidence/ok.md"), "verified")
+	held, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- evidence.WithCounterLock(cwd, "s1", "a1", "t1", func() error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	out := counterStop(t, cwd, "s1", "a1", "t1", "EVIDENCE_RECORDED: .crw/evidence/ok.md")
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Fatalf("a valid receipt was blocked: %s", out)
+	}
+	if got := evidence.ReadAttempts(cwd, "s1", "a1", "t1"); got != 2 {
+		t.Fatalf("a stop without the lock changed the counter: attempts %d, want 2", got)
+	}
+	// Under the lock the same receipt clears it.
+	if out := counterStop(t, cwd, "s1", "a1", "t1", "EVIDENCE_RECORDED: .crw/evidence/ok.md"); out != "" {
+		t.Fatal(out)
+	}
+	if got := evidence.ReadCounter(cwd, "s1", "a1", "t1"); got.State != evidence.CounterMissing {
+		t.Fatalf("a stop under the lock left the counter: %+v", got)
+	}
+}
+
+// CRW-1106 post-evaluation round (d1): an upgrade between the third blocked stop and the terminal stop. The old flat counter of a
+// session whose id sanitising changes is that tuple's counter until a receipt clears it: the budget is not restarted, and a valid
+// receipt lifts the completion latch it held. A twin that shares the flat name (a-b for a/b) is never cleared by a/b's receipt.
+func TestSubagentStopLegacyCounterOfANonCanonicalSession(t *testing.T) {
+	cwd := subagentStopWorkspace(t)
+	// The oracle's name of the tuple, shared by a/b and a-b: the file a canonical a-b writes is byte for byte the one a/b's old
+	// version wrote.
+	if !evidence.WriteAttempts(cwd, "a-b", "x", 2, "t") {
+		t.Fatal("not written")
+	}
+	files := counterFiles(t, cwd)
+	if len(files) != 1 {
+		t.Fatalf("the flat counter: %v", files)
+	}
+	legacy := files[0]
+	subagentStopBlock(t, counterStop(t, cwd, "a/b", "x", "t", ""), 3) // the third attempt, not the first
+	if out := counterStop(t, cwd, "a/b", "x", "t", ""); out != "" {
+		t.Fatalf("the terminal stop blocked: %s", out)
+	}
+	if counterComplete(t, cwd, "a/b") == "" {
+		t.Fatal("completion allowed over an exhausted budget")
+	}
+	subagentStopPut(t, filepath.Join(cwd, ".crw/evidence/ok.md"), "verified")
+	if out := counterStop(t, cwd, "a/b", "x", "t", "EVIDENCE_RECORDED: .crw/evidence/ok.md"); out != "" {
+		t.Fatal(out)
+	}
+	if got := counterComplete(t, cwd, "a/b"); got != "" {
+		t.Fatalf("a valid receipt did not lift the legacy counter's latch: %s", got)
+	}
+	// The flat file is shared with the canonical twin a-b, so a/b's receipt does not remove it.
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("the shared flat counter was deleted: %v", err)
+	}
+	if got := evidence.ReadAttempts(cwd, "a-b", "x", "t"); got != 2 {
+		t.Fatalf("a/b's receipt changed the twin a-b's counter: %d", got)
+	}
+}

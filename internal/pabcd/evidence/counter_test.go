@@ -82,9 +82,14 @@ func TestCounterLayoutBySessionShape(t *testing.T) {
 	if got := ReadCounter(cwd, "a-b", "x", "t"); got != (Counter{CounterExhausted, 3}) {
 		t.Fatalf("a-b read %+v", got)
 	}
-	if !HasSpentBudget(cwd, "a-b") || !HasSpentBudget(cwd, "a/b") {
+	if !HasSpentBudget(cwd, "a-b") || HasSpentBudget(cwd, "a/b") {
+		t.Fatal("a-b's spent counter must hold a-b, and a/b's own record of the tuple supersedes the shared name for a/b")
+	}
+	put(t, attemptsPath(cwd, "a-b", "y", "t"), []byte("{\"attempts\":3}\n")) // a name no record of a/b explains: may be a/b's own
+	if !HasSpentBudget(cwd, "a/b") {
 		t.Fatal("a spent counter of the oracle's layout stopped counting")
 	}
+	_ = os.Remove(attemptsPath(cwd, "a-b", "y", "t"))
 	ClearAttempts(cwd, "a-b", "x", "t")
 	if HasSpentBudget(cwd, "a/b") || ReadCounter(cwd, "a/b", "x", "t") != (Counter{CounterActive, 1}) {
 		t.Fatal("clearing a-b changed a/b")
@@ -143,5 +148,46 @@ func TestFreshCounterOwnershipWithRawActor(t *testing.T) {
 	put(t, counterPath(cwd, "short-x", "a/c", "t"), []byte("{\"attempts\":3,\"sessionId\":\"short\",\"agentId\":\"a/c\",\"turnId\":\"t\"}\n"))
 	if got := ReadCounter(cwd, "short-x", "a/c", "t"); got.State != CounterCorrupt {
 		t.Fatalf("a record of another session read as %+v", got)
+	}
+}
+
+// CRW-1106 post-evaluation round (d1): the flat counter of the oracle's layout under a non-canonical session's sanitised name is that
+// session's counter until a receipt clears it, but it may be a canonical twin's, so clearing never deletes it: a/b's own record of the
+// tuple supersedes it for a/b, and the twin keeps its budget.
+func TestLegacyCounterOfANonCanonicalSession(t *testing.T) {
+	cwd := t.TempDir()
+	flat := attemptsPath(cwd, "a/b", "x", "t")
+	put(t, flat, []byte("{\"attempts\":3}\n"))
+	if got := ReadCounter(cwd, "a/b", "x", "t"); got != (Counter{CounterExhausted, MaxAttempts}) {
+		t.Fatalf("the flat counter read as %+v for a/b", got)
+	}
+	if !HasSpentBudget(cwd, "a/b") || !HasSpentBudget(cwd, "a-b") {
+		t.Fatal("an exhausted flat counter stopped counting")
+	}
+	ClearAttempts(cwd, "a/b", "x", "t")
+	if got := ReadCounter(cwd, "a/b", "x", "t"); got.Spent() {
+		t.Fatalf("a/b's cleared tuple still reads as %+v", got)
+	}
+	if HasSpentBudget(cwd, "a/b") {
+		t.Fatal("a/b is still held by the counter it cleared")
+	}
+	if _, err := os.Stat(flat); err != nil {
+		t.Fatalf("the flat counter, which a-b may own, was deleted: %v", err)
+	}
+	if got := ReadCounter(cwd, "a-b", "x", "t"); got != (Counter{CounterExhausted, MaxAttempts}) || !HasSpentBudget(cwd, "a-b") {
+		t.Fatalf("a/b's clear changed the twin a-b: %+v", got)
+	}
+	// An active flat counter carries its count into a/b's next attempt, and a/b's own write supersedes it.
+	other := t.TempDir()
+	put(t, attemptsPath(other, "a/b", "x", "t"), []byte("{\"attempts\":2}\n"))
+	if got := ReadCounter(other, "a/b", "x", "t"); got != (Counter{CounterActive, 2}) {
+		t.Fatalf("the flat counter read as %+v", got)
+	}
+	if !WriteAttempts(other, "a/b", "x", 3, "t") || ReadCounter(other, "a/b", "x", "t") != (Counter{CounterExhausted, MaxAttempts}) {
+		t.Fatal("a/b's own write did not supersede the flat counter")
+	}
+	ClearAttempts(other, "a/b", "x", "t")
+	if HasSpentBudget(other, "a/b") || ReadCounter(other, "a/b", "x", "t").Spent() {
+		t.Fatal("a/b is held after its receipt")
 	}
 }

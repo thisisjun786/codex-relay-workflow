@@ -39,8 +39,9 @@ func RunSubagentStopGate(p SubagentStopPayload, env func(string) string) (out st
 		}
 	}
 	// CRW-1106 (port: fixed): the whole decision runs under the lock of the exact (session, agent, turn), so stops of one child
-	// that arrive together reserve the budget one at a time. A lock that cannot be had leaves the counter alone: the child is
-	// released and its negative verdict recorded, as for any counter that cannot be advanced.
+	// that arrive together reserve the budget one at a time. A lock that cannot be had leaves the counter alone: a child with a
+	// valid receipt is released, any other is released with its negative verdict recorded, as for any counter that cannot be
+	// advanced, and neither clears or writes the counter or resolves a verdict of the tuple.
 	decided := false
 	if err := evidence.WithCounterLock(p.Cwd, p.SessionID, p.AgentID, p.TurnID, func() error {
 		out, decided = subagentStopDecide(p, item, true), true
@@ -60,8 +61,13 @@ func subagentStopDecide(p SubagentStopPayload, item evidence.Payload, reserve bo
 	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok {
 		verdict := evidence.JudgeAssignedReceipt(p.Cwd, p.SessionID, p.AgentID, p.AgentTranscriptPath, p.LastAssistantMessage, receipt)
 		if verdict == evidence.AssignedAccepted || verdict == evidence.NoContract && evidence.HasValidReceipt(p.Cwd, receipt) {
-			evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
-			evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
+			// CRW-1106: the counter and the verdict of the tuple are changed only under its lock. Without it the child is released
+			// all the same, because its receipt is valid, and what a holder of the lock writes afterwards stays for the receipt
+			// carrying resolve (crw pabcd evidence resolve), which runs under the lock.
+			if reserve {
+				evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
+				evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
+			}
 			return ""
 		}
 	}

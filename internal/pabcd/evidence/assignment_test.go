@@ -274,3 +274,46 @@ func TestAssignmentTranscriptFIFOIsRefusedWithoutBlocking(t *testing.T) {
 	}
 	_ = a
 }
+
+// CRW-1106 post-evaluation round: an actor without an agent id claims nothing, yet the contract its packet names stands.
+func TestAssignmentMissingAgentIDIsRefusedWhenThePacketNamesAContract(t *testing.T) {
+	r := newAssignTestRig(t)
+	a := r.assign(time.Now().Add(-time.Minute))
+	receipt := r.receipt("check.txt", time.Time{})
+	packet := r.transcript(rolloutMeta("child"), rolloutUserItem("child", assignBlock(a.ID)))
+	for _, claim := range []string{receipt, filepath.Join(r.cwd, ".crw", "evidence", "native.txt")} {
+		if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "", packet, "EVIDENCE_RECORDED: "+claim, claim); got != AssignedRefused {
+			t.Fatalf("an actor without an id judged %v for %s", got, claim)
+		}
+	}
+	if got, _ := readAssignment(r.recordPath(a.ID), a.ID); got.AgentID != "" || got.Status != AssignmentOpen {
+		t.Fatalf("an actor without an id changed the record: %+v", got)
+	}
+	plain := r.transcript(rolloutMeta("child"), rolloutUserItem("child", "TASK"))
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "", plain, "", "x"); got != NoContract {
+		t.Fatalf("a packet without a contract and without an id judged %v", got)
+	}
+}
+
+// CRW-1115 post-evaluation round: a child tied to no dispatch is refused while an unclaimed assignment of the session exists, and an
+// actor that holds a claimed one keeps it.
+func TestAssignmentUntiedChildIsRefusedWhileAnAssignmentIsOpen(t *testing.T) {
+	r := newAssignTestRig(t)
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w1", "", "", "x"); got != NoContract {
+		t.Fatalf("no assignment recorded: judged %v", got)
+	}
+	a := r.assign(time.Now().Add(-time.Minute))
+	receipt := r.receipt("check.txt", time.Time{})
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w1", "", "", receipt); got != AssignedRefused {
+		t.Fatalf("an untied child with an open assignment judged %v", got)
+	}
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w1", "", AssignmentCitation+" "+a.ID, receipt); got != AssignedAccepted {
+		t.Fatalf("the cited assignment judged %v", got)
+	}
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w1", "", "", receipt); got != AssignedAccepted {
+		t.Fatalf("the actor that claimed it lost it: %v", got)
+	}
+	if got := JudgeAssignedReceipt(r.cwd, assignTestSession, "w2", "", "", receipt); got != NoContract {
+		t.Fatalf("every assignment claimed, an untied child judged %v", got)
+	}
+}

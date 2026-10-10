@@ -65,13 +65,20 @@ func ownDirectoryCounter(sessionID, agentID, turnID string) bool {
 }
 
 // legacyCounterPath is the oracle's name of a tuple that ownDirectoryCounter moved: the counter an earlier version wrote, which
-// still counts until a receipt clears it.
+// still counts until a receipt clears it. For a canonical session the name is this tuple's alone and is carried into the new record
+// and removed; for a session whose id sanitising changes the name is shared with the canonical session of that sanitised name (a/b
+// and a-b), so it is read as this tuple's counter (the denying direction: a budget spent before the upgrade is not restarted) but is
+// never deleted, and the session's own record of the tuple supersedes it (sharedLegacyCounter).
 func legacyCounterPath(cwd, sessionID, agentID, turnID string) (string, bool) {
-	if !state.IsCanonicalSessionID(sessionID) || !ownDirectoryCounter(sessionID, agentID, turnID) {
+	if !ownDirectoryCounter(sessionID, agentID, turnID) {
 		return "", false
 	}
 	return attemptsPath(cwd, sessionID, agentID, turnID), true
 }
+
+// sharedLegacyCounter reports whether the oracle's name of the tuple may belong to another session: the session's id is not
+// canonical, so the name is the same as the one of the canonical session that sanitises alike.
+func sharedLegacyCounter(sessionID string) bool { return !state.IsCanonicalSessionID(sessionID) }
 
 // tupleDigest is the first 32 hex digits of the SHA-256 of "<len>:<agent>:<len>:<turn>" taken as UTF-16 code units in
 // little-endian order, the lengths counted in code units, as the oracle's Buffer.from(.., "utf16le") hashes it.
@@ -240,16 +247,25 @@ func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) 
 	if writeRecord(path, record) != nil {
 		return false
 	}
-	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok && !sharedLegacyCounter(sessionID) {
 		removeFile(legacy) // the counter now lives in the session's directory
 	}
 	return true
 }
 
-// ClearAttempts removes the counter file of the tuple, best effort: a missing file is fine and a directory in its place stays.
+// ClearAttempts removes the counter of the tuple, best effort: a missing file is fine and a directory in its place stays. The
+// oracle's file of a canonical session's tuple goes with it. The oracle's file under a name that another session may own (a
+// non-canonical session's) is not deleted: the session's own record at zero attempts takes its place for this tuple, so the tuple
+// is unspent and the shared file stays for whoever else owns it (CRW-1106).
 func ClearAttempts(cwd, sessionID, agentID, turnID string) {
+	legacy, hasLegacy := legacyCounterPath(cwd, sessionID, agentID, turnID)
+	if hasLegacy && sharedLegacyCounter(sessionID) {
+		if info, err := os.Lstat(legacy); err == nil && !info.IsDir() && WriteAttempts(cwd, sessionID, agentID, 0, turnID) {
+			return
+		}
+	}
 	removeFile(counterPath(cwd, sessionID, agentID, turnID))
-	if legacy, ok := legacyCounterPath(cwd, sessionID, agentID, turnID); ok {
+	if hasLegacy && !sharedLegacyCounter(sessionID) {
 		removeFile(legacy)
 	}
 }

@@ -52,6 +52,7 @@ type spawnHookAssembly struct {
 	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
 	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
 	evidenceAssignment *evidence.Assignment        // CRW-1115: the evidence assignment the packet asked for, written once the spawn is allowed
+	guardReapplied     bool                        // guardReapplied: the message already starts with this surface's guard, so the hook runs over its own output (:983)
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -240,7 +241,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	}
 	switch {
 	case affordance == a.guard || strings.HasPrefix(affordance, a.guard+"\n\n"):
-		a.updatedMessage = affordance
+		a.updatedMessage, a.guardReapplied = affordance, true
 	case a.validItems && affordance == "":
 		a.updatedMessage = a.guard
 	default:
@@ -255,11 +256,12 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 // spawnHookEvidenceAssignment is CRW-1115 (port: fixed; the oracle has no such step): when the caller's packet assigns its child a
 // worktree (CRW-WORKTREE:) or allows it no evidence write (CRW-EVIDENCE: none), it builds the session's evidence assignment and
 // injects its block right after the guard. The record itself is written by spawnHookRoute once the spawn is allowed. A packet
-// that already carries an assignment block (a second pass of this hook) is left alone, and a native V2 ciphertext cannot be read,
+// that starts, after the guard, with the block of an open assignment recorded for this very request (a second pass of this hook)
+// is left alone; a marker elsewhere in the text registers nothing and suppresses nothing. A native V2 ciphertext cannot be read,
 // so it gets none. An ambiguous request or a tree that cannot be registered is a deny envelope: the parent asked for a contract
 // the gate could not honour.
 func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
-	if a.encryptedV2Message || strings.Contains(a.message, EvidenceAssignmentMarker) {
+	if a.encryptedV2Message {
 		return ""
 	}
 	worktree, none, present, err := spawnEvidenceRequest(a.message)
@@ -269,6 +271,22 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
 	mode := evidence.AssignTree
 	if none {
 		mode = evidence.AssignNone
+	}
+	// A second pass over the hook's own output has the guard first and the assignment block right after it. Only that block, and
+	// only when it names the open assignment this very request recorded, stands for the registration; a marker anywhere else in
+	// the packet (a placeholder, a log, another dispatch's quoted block) is the parent's own text and registers nothing.
+	if a.guardReapplied && err == nil {
+		rest := strings.TrimPrefix(a.updatedMessage, a.guard)
+		rest = strings.TrimPrefix(rest, "\n\n")
+		if prompt := a.resolution.PromptOverride; prompt != nil && text.Trim(*prompt) != "" {
+			rest = strings.TrimPrefix(rest, text.Trim(*prompt)+"\n\n")
+		}
+		if id, ok := evidence.LeadingAssignmentID(rest); ok {
+			if evidence.OpenAssignmentMatches(a.cwd, a.sessionID, id, worktree, mode) {
+				return ""
+			}
+			return DenyEnvelope("evidence assignment: the packet starts with an assignment block that is not an open assignment recorded for this request")
+		}
 	}
 	var assignment evidence.Assignment
 	if err == nil {
