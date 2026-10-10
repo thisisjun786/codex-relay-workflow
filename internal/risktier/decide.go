@@ -374,6 +374,9 @@ func Decode(data []byte) (Record, error) {
 			return Record{}, fmt.Errorf("the record lacks %s", m)
 		}
 	}
+	if err := refuseNulls(members); err != nil {
+		return Record{}, err
+	}
 	var r Record
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -387,6 +390,46 @@ func Decode(data []byte) (Record, error) {
 		return Record{}, err
 	}
 	return r, nil
+}
+
+// nullableMembers are the only members the schema lets be null; a null anywhere else is a type violation
+// that decoding into Go values would otherwise erase into false, nil or an empty string.
+var nullableMembers = map[string]bool{"declared_tier": true, "region_tier": true}
+
+func refuseNulls(members map[string]json.RawMessage) error {
+	for name, raw := range members {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return fmt.Errorf("the member %s is not JSON: %w", name, err)
+		}
+		if nullableMembers[name] && v == nil {
+			continue
+		}
+		if hasNull(v) {
+			return fmt.Errorf("the member %s holds a null; only declared_tier and region_tier may be null", name)
+		}
+	}
+	return nil
+}
+
+func hasNull(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case []any:
+		for _, e := range x {
+			if hasNull(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if hasNull(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Validate judges a record against the decision its own inputs give.

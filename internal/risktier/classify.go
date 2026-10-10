@@ -57,14 +57,17 @@ var (
 	// reservedTestdata are name parts that take a testdata file out of the allowlist.
 	reservedTestdata = []string{"golden", "fixture", "corpus", "oracle", "recorded", "security", "replay", "hook", "shell"}
 	testdataExts     = map[string]bool{".json": true, ".jsonl": true, ".ndjson": true, ".txt": true, ".md": true, ".toml": true, ".yaml": true, ".yml": true, ".csv": true}
-	// highTrees are the trees the decided answer names. Every path outside the allowlist is high anyway;
-	// the list only lets the record say which kind of high path it is.
+	// highTrees are the trees the decided answer names. Everything under them is high, whatever low rule
+	// its file would match, so they are checked before the allowlist.
 	highTrees = []string{"internal/relay", "internal/runtime", "internal/hookswitch", "internal/policystore"}
 	// sharedTrees and sharedFiles are the contract surfaces: the scheduler's SharedSurface list, with all of contract/.
 	sharedTrees = []string{"contract"}
 	sharedFiles = []string{"internal/relay/argparse/specs.json"}
 	// instructionFiles are root documents that instruct agents or state the policy.
 	instructionFiles = []string{"AGENTS.md", "CLAUDE.md", "POLICY.md", "SECURITY.md"}
+	// agentInstructionNames are file names that instruct an agent in whatever directory they sit: a
+	// directory-scoped AGENTS.md or CLAUDE.md is executable instruction text under docs/ or testdata too.
+	agentInstructionNames = []string{"agents.md", "claude.md"}
 )
 
 func within(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
@@ -120,14 +123,17 @@ func testdataGolden(segments []string) bool {
 	return false
 }
 
-// highFloor is the high verdict for a path that no low rule may lift: a shared contract surface or text
-// that instructs an agent. ok is false when neither applies.
+// highFloor is the high verdict for a path that no low rule may lift: a shared contract surface, text that
+// instructs an agent, or anything under a tree the decided answer names (so a testdata file there is high
+// too). ok is false when none applies.
 func highFloor(p string, segments []string) (Verdict, bool) {
 	switch {
 	case withinAny(p, sharedTrees), isOneOf(p, sharedFiles), testdataGolden(segments):
 		return Verdict{High, RuleSharedContract}, true
-	case within(p, "plugins"), isOneOf(p, instructionFiles):
+	case within(p, "plugins"), isOneOf(p, instructionFiles), isOneOf(strings.ToLower(segments[len(segments)-1]), agentInstructionNames):
 		return Verdict{High, RuleExecutableText}, true
+	case withinAny(p, highTrees):
+		return Verdict{High, RuleHighTree}, true
 	}
 	return Verdict{}, false
 }
@@ -141,12 +147,7 @@ func isOneOf(p string, list []string) bool {
 	return false
 }
 
-func defaultHigh(p string) Verdict {
-	if withinAny(p, highTrees) {
-		return Verdict{High, RuleHighTree}
-	}
-	return Verdict{High, RuleNotOnAllowlist}
-}
+func defaultHigh() Verdict { return Verdict{High, RuleNotOnAllowlist} }
 
 // Classify is the tier of one repository-relative file path. A path that is not a clean path inside the
 // repository is high, so is every path the allowlist does not name.
@@ -171,7 +172,7 @@ func Classify(p string) Verdict {
 		}
 		return Verdict{Low, RuleTestdataData}
 	}
-	return defaultHigh(p)
+	return defaultHigh()
 }
 
 // classifyTree is the tier of a declared tree region. A tree is low only when it lies in the docs prose
@@ -196,7 +197,7 @@ func classifyTree(p string) Verdict {
 		}
 		return Verdict{Low, RuleTestdataTree}
 	}
-	return defaultHigh(p)
+	return defaultHigh()
 }
 
 // Region is one declared edit region (dag-region-declare): a tree, a file, or a symbol of a file.

@@ -89,7 +89,8 @@ func TestClassifyNamesTheRuleThatDecides(t *testing.T) {
 		"plugins/crw/skills/crw-run/SKILL.md":                "executable_instruction",
 		"AGENTS.md":                                          "executable_instruction",
 		"internal/dev/cxccorpus/corpus.go":                   "not_on_allowlist",
-		"internal/runtime/install/testdata/fixtures/a.json":  "corpus_or_fixture",
+		"internal/runtime/install/testdata/fixtures/a.json":  "high_tree",
+		"internal/skill/testdata/fixtures/a.json":            "corpus_or_fixture",
 		"internal/relay/store/store.go":                      "high_tree",
 		"internal/skill/issue_ready.go":                      "not_on_allowlist",
 		"docs/../a":                                          "invalid_path",
@@ -549,5 +550,113 @@ func TestSchemaRefusesWhatTheRecordCannotSay(t *testing.T) {
 		if validates(t, schema, patch(mutate)) == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A high tree stays high whatever low rule its file would otherwise match: plain testdata under the relay,
+// runtime and policy trees is not low (CRW-1041 verification round 1).
+func TestHighTreesBeatTheLowAllowlist(t *testing.T) {
+	files := []string{
+		"internal/relay/registry/testdata/gate_cases.json", "internal/runtime/record/testdata/host-record-v1.json",
+		"internal/policystore/testdata/a.json", "internal/hookswitch/testdata/notes.txt", "internal/relay/store/testdata/a.md",
+	}
+	for _, p := range files {
+		if v := Classify(p); v.Tier != High || v.Rule != RuleHighTree {
+			t.Errorf("Classify(%q) = %+v, want high/high_tree", p, v)
+		}
+		in := input(Change{Path: p, Change: "modify"})
+		if r := must(t, in); r.Tier != High || r.ChangedTier != High {
+			t.Errorf("a diff of %s is tier %s (changed %s)", p, r.Tier, r.ChangedTier)
+		}
+	}
+	for _, p := range []string{"internal/relay/registry/testdata", "internal/runtime/record/testdata", "internal/policystore/testdata/sub"} {
+		if v := ClassifyRegion(Region{Path: p, Kind: "tree"}); v.Tier != High || v.Rule != RuleHighTree {
+			t.Errorf("tree region %q = %+v, want high/high_tree", p, v)
+		}
+		if v := ClassifyRegion(Region{Path: p + "/a.json", Kind: "file"}); v.Tier != High {
+			t.Errorf("file region %q = %+v, want high", p+"/a.json", v)
+		}
+	}
+	// a testdata directory elsewhere stays low
+	if v := Classify("internal/skill/testdata/cases.json"); v.Tier != Low {
+		t.Errorf("testdata outside the high trees = %+v", v)
+	}
+}
+
+// Agent instruction files protect themselves in every directory, not only at the root.
+func TestNestedInstructionFilesAreHigh(t *testing.T) {
+	for _, p := range []string{"docs/CLAUDE.md", "docs/relay/AGENTS.md", "internal/skill/testdata/CLAUDE.md", "internal/skill/testdata/sub/AGENTS.md",
+		"docs/agents.md", "docs/claude.md", "docs/Claude.MD"} {
+		want := RuleExecutableText
+		if v := Classify(p); v.Tier != High || v.Rule != want {
+			t.Errorf("Classify(%q) = %+v, want high/%s", p, v, want)
+		}
+		if r := must(t, input(Change{Path: p, Change: "modify"})); r.Tier != High {
+			t.Errorf("a diff of %s is tier %s", p, r.Tier)
+		}
+		if v := ClassifyRegion(Region{Path: p, Kind: "file"}); v.Tier != High {
+			t.Errorf("file region %s = %+v", p, v)
+		}
+	}
+	// a name that only contains the word is ordinary prose
+	if v := Classify("docs/relay/agents-and-claude.md"); v.Tier != Low {
+		t.Errorf("docs/relay/agents-and-claude.md = %+v", v)
+	}
+	// a rename out of an instruction file is judged on the old path too
+	r := must(t, input(Change{Path: "docs/notes.md", OldPath: "docs/CLAUDE.md", Change: "rename"}))
+	if r.Tier != High {
+		t.Errorf("rename from docs/CLAUDE.md is tier %s", r.Tier)
+	}
+}
+
+// A JSON null is a schema violation everywhere but declared_tier and region_tier; Decode must not read it as a zero value.
+func TestDecodeRefusesNullsTheSchemaForbids(t *testing.T) {
+	schema := schemaFile(t)
+	in := input(edit("docs/a.md"), Change{Path: "docs/n.md", OldPath: "docs/o.md", Change: "rename"})
+	in.Regions = []Region{{Path: "docs/a.md", Kind: "symbol", Key: "S"}}
+	in.Declared = Low
+	in.Exception = exception(High)
+	good := encode(t, must(t, in))
+	if _, err := Decode(good); err != nil {
+		t.Fatal(err)
+	}
+	patch := func(mutate func(map[string]any)) []byte {
+		var m map[string]any
+		_ = json.Unmarshal(good, &m)
+		mutate(m)
+		out, _ := json.Marshal(m)
+		return out
+	}
+	item := func(m map[string]any, key string, i int) map[string]any { return m[key].([]any)[i].(map[string]any) }
+	cases := map[string]func(map[string]any){
+		"reclassified null":  func(m map[string]any) { m["reclassified"] = nil },
+		"exception null":     func(m map[string]any) { m["exception"] = nil },
+		"old_path null":      func(m map[string]any) { item(m, "changed_paths", 0)["old_path"] = nil },
+		"region key null":    func(m map[string]any) { item(m, "declared_regions", 0)["key"] = nil },
+		"tier null":          func(m map[string]any) { m["tier"] = nil },
+		"issue null":         func(m map[string]any) { m["issue"] = nil },
+		"exception by null":  func(m map[string]any) { m["exception"].(map[string]any)["by"] = nil },
+		"outside list item":  func(m map[string]any) { m["outside_regions"] = []any{nil} },
+		"changed_tier null":  func(m map[string]any) { m["changed_tier"] = nil },
+		"change path null":   func(m map[string]any) { item(m, "changed_paths", 0)["path"] = nil },
+		"skipped gates null": func(m map[string]any) { m["skipped_gates"] = nil },
+	}
+	for name, mutate := range cases {
+		data := patch(mutate)
+		if validates(t, schema, data) == nil {
+			t.Errorf("%s: the schema accepted it", name)
+		}
+		if _, err := Decode(data); err == nil {
+			t.Errorf("%s: Decode accepted it", name)
+		}
+	}
+	// the two nullable members stay accepted as null
+	var m map[string]any
+	_ = json.Unmarshal(encode(t, must(t, input(edit("docs/a.md")))), &m)
+	if m["declared_tier"] != nil || m["region_tier"] != nil {
+		t.Fatal("the plain low record is expected to carry null declared_tier and region_tier")
+	}
+	if _, err := Decode(encode(t, must(t, input(edit("docs/a.md"))))); err != nil {
+		t.Errorf("null declared_tier and region_tier refused: %v", err)
 	}
 }
