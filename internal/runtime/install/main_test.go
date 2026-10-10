@@ -134,7 +134,10 @@ func archiveBytes(t *testing.T, version, extra string) []byte {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	compressed := gzip.NewWriter(&buf)
+	compressed, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
 	w := tar.NewWriter(compressed)
 	add := func(header *tar.Header, body []byte) {
 		header.ModTime = time.Unix(0, 0)
