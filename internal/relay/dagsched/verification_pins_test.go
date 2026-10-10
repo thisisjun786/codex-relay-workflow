@@ -346,3 +346,134 @@ func TestDeclaredNodePinsDoNotDependOnTheOrderOfAStepsKeys(t *testing.T) {
 		}
 	}
 }
+
+// declaredPinsOf reads the pins of in-memory declaration files (a file not in the map is absent).
+func declaredPinsOf(files map[string]string) (map[string]string, error) {
+	return DeclaredToolPins(func(path string) ([]byte, bool, error) {
+		body, ok := files[path]
+		return []byte(body), ok, nil
+	})
+}
+
+// refusedPinRecord asserts that a record with these tools and pins is refused as disposition_conflict naming the tool.
+func refusedPinRecord(t *testing.T, repo *gitRepo, head string, keys VerificationKeys, record map[string]string, tool string) {
+	t.Helper()
+	_, err := JudgeVerificationRecord(sealPinned(t, repo, head, keys, copyPins(record), copyPins(record)), keys)
+	if refusalReasonOf(err) != "disposition_conflict" || !strings.Contains(err.Error(), tool) {
+		t.Fatalf("a record %v must be refused as disposition_conflict naming %s, got %v", record, tool, err)
+	}
+}
+
+// A setup-node step whose uses value is a quoted scalar is the same step as an unquoted one: its node-version is required,
+// and a record without the node pin, or with another, is refused (verification round 2, finding 1).
+func TestDeclaredNodePinsOfAQuotedSetupNodeStep(t *testing.T) {
+	for name, uses := range map[string]string{
+		"double quotes":        `"actions/setup-node@v4"`,
+		"single quotes":        `'actions/setup-node@v4'`,
+		"quotes and a comment": `"actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020" # v4`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := fullDeclaration()
+			files[".github/workflows/ci.yml"] = "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n" +
+				"      - name: Set up Node\n        uses: " + uses + "\n        with:\n          node-version: '24.20.0'\n      - run: make test\n"
+			repo, head := pinnedCommit(t, files)
+			keys := pinnedKeys(t, repo, head)
+			if keys.Pins["node"] != "24.20.0" {
+				t.Fatalf("a quoted setup-node step declares node 24.20.0, the keys read %v", keys.Pins)
+			}
+			noNode := declaredAll()
+			delete(noNode, "node")
+			refusedPinRecord(t, repo, head, keys, noNode, "node")
+			wrong := declaredAll()
+			wrong["node"] = "20.0.0"
+			refusedPinRecord(t, repo, head, keys, wrong, "node")
+			if _, err := JudgeVerificationRecord(sealPinned(t, repo, head, keys, copyPins(declaredAll()), copyPins(declaredAll())), keys); err != nil {
+				t.Fatalf("the record that equals the declaration is reusable: %v", err)
+			}
+		})
+	}
+}
+
+// go.mod declares the toolchain and the staticcheck require in every form the go command reads: a single-line require, a
+// require block entry with a comment, a CRLF file, a quoted module path. Each form yields the pins, and a record without
+// them, or with other versions, is refused (verification round 2, finding 2).
+func TestDeclaredGoModPinsInEveryRequireForm(t *testing.T) {
+	for name, goMod := range map[string]string{
+		"single-line require": "module example.com/m\n\ngo 1.27\n\ntoolchain go1.27.1\n\nrequire honnef.co/go/tools v0.8.1\n",
+		"indirect in a block": "module example.com/m\n\ngo 1.27\n\ntoolchain go1.27.1\n\nrequire (\n\tgolang.org/x/sys v0.47.0\n\thonnef.co/go/tools v0.8.1 // indirect\n)\n",
+		"CRLF":                "module example.com/m\r\n\r\ngo 1.27\r\n\r\ntoolchain go1.27.1\r\n\r\nrequire (\r\n\thonnef.co/go/tools v0.8.1\r\n)\r\n",
+		"comments":            "module example.com/m // the module\n\ngo 1.27\n\ntoolchain go1.27.1 // pinned\n\nrequire ( // tools\n\thonnef.co/go/tools v0.8.1 // staticcheck\n)\n",
+		"quoted module path":  "module example.com/m\n\ngo 1.27\n\ntoolchain go1.27.1\n\nrequire \"honnef.co/go/tools\" v0.8.1\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := fullDeclaration()
+			files["go.mod"] = goMod
+			repo, head := pinnedCommit(t, files)
+			keys := pinnedKeys(t, repo, head)
+			if keys.Pins["go"] != "1.27.1" || keys.Pins["staticcheck"] != "0.8.1" {
+				t.Fatalf("go.mod declares go 1.27.1 and staticcheck 0.8.1, the keys read %v", keys.Pins)
+			}
+			for _, tool := range []string{"go", "staticcheck"} {
+				missing := declaredAll()
+				delete(missing, tool)
+				refusedPinRecord(t, repo, head, keys, missing, tool)
+				wrong := declaredAll()
+				wrong[tool] = "9.9.9"
+				refusedPinRecord(t, repo, head, keys, wrong, tool)
+			}
+			if _, err := JudgeVerificationRecord(sealPinned(t, repo, head, keys, copyPins(declaredAll()), copyPins(declaredAll())), keys); err != nil {
+				t.Fatalf("the record that equals the declaration is reusable: %v", err)
+			}
+		})
+	}
+	// a declaration the reader cannot read is an error, never "the tool is not declared"
+	for name, goMod := range map[string]string{
+		"a toolchain that is no go version": "module example.com/m\n\ntoolchain banana\n",
+		"two toolchains":                    "module example.com/m\n\ntoolchain go1.27.1\ntoolchain go1.26.0\n",
+		"a require with no version":         "module example.com/m\n\nrequire honnef.co/go/tools\n",
+		"a require that is no version":      "module example.com/m\n\nrequire (\n\thonnef.co/go/tools latest\n)\n",
+		"two staticcheck versions":          "module example.com/m\n\nrequire honnef.co/go/tools v0.8.1\nrequire honnef.co/go/tools v0.7.0\n",
+		"an open block":                     "module example.com/m\n\nrequire (\n\thonnef.co/go/tools v0.8.1\n",
+	} {
+		if pins, err := declaredPinsOf(map[string]string{"go.mod": goMod}); err == nil {
+			t.Errorf("%s: an unreadable go.mod declaration must be an error, got %v", name, pins)
+		}
+	}
+	// a go.mod that declares neither still reads an empty set
+	if pins, err := declaredPinsOf(map[string]string{"go.mod": "module example.com/m\n\ngo 1.21\n\nrequire golang.org/x/sys v0.47.0\n"}); err != nil || len(pins) != 0 {
+		t.Fatalf("a go.mod with no toolchain and no staticcheck declares nothing, got %v, %v", pins, err)
+	}
+}
+
+// A setup-node step ends with the step: the with block of a later job (a reusable workflow call), of a later step or of the
+// job itself never stands in for the node-version the setup-node step lacks (verification round 2, finding 3).
+func TestSetupNodeCannotTakeTheWithOfAnotherStepOrJob(t *testing.T) {
+	for name, ci := range map[string]string{
+		"the next job's with": "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n" +
+			"  b:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      node-version: '24.20.0'\n",
+		"a job key after the steps":           "jobs:\n  a:\n    steps:\n      - uses: actions/setup-node@v4\n    with:\n      node-version: '24.20.0'\n",
+		"the next step's with, compact steps": "jobs:\n  a:\n    steps:\n    - uses: actions/setup-node@v4\n    - uses: actions/cache@v4\n      with:\n        node-version: '24.20.0'\n",
+		"a sibling key of the steps list":     "jobs:\n  a:\n    steps:\n      - uses: actions/setup-node@v4\n    strategy:\n      matrix:\n        node-version: ['24.20.0']\n",
+		"a flow step":                         "jobs:\n  a:\n    steps:\n      - {uses: actions/setup-node@v4, with: {node-version: '24.20.0'}}\n",
+		"a job-level setup-node":              "jobs:\n  a:\n    uses: actions/setup-node@v4\n    with:\n      node-version: '24.20.0'\n",
+		"a structure the reader cannot read": "jobs:\n  a:\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '24.20.0'\n" +
+			"       broken: indentation\n",
+	} {
+		if pins, err := declaredPinsOf(map[string]string{pinWorkflowFile: ci}); err == nil {
+			t.Errorf("%s: a setup-node step with no node-version of its own must be an error, got %v", name, pins)
+		}
+	}
+	// the same shapes with the node-version on the step itself read it, and the other with blocks add nothing
+	for name, ci := range map[string]string{
+		"the next job's with": "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '24.20.0'\n" +
+			"  b:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      node-version: '22.0.0'\n",
+		"compact steps":                        "jobs:\n  a:\n    steps:\n    - uses: actions/setup-node@v4\n      with:\n        node-version: 24.20.0 # exact\n    - uses: actions/cache@v4\n      with:\n        node-version: '22.0.0'\n",
+		"a literal run block that mentions it": "jobs:\n  a:\n    steps:\n      - run: |\n          echo uses: actions/setup-node@v4\n          echo with:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: \"24.20.0\"\n",
+		"a step name that mentions it":         "jobs:\n  a:\n    steps:\n      - name: actions/setup-node@v4\n        uses: actions/setup-node@v4\n        with:\n          node-version: '24.20.0'\n",
+	} {
+		pins, err := declaredPinsOf(map[string]string{pinWorkflowFile: ci})
+		if err != nil || pins["node"] != "24.20.0" {
+			t.Errorf("%s: want node 24.20.0, got %v, %v", name, pins, err)
+		}
+	}
+}
