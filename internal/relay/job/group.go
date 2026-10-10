@@ -69,13 +69,11 @@ func psProcesses() ([]procEntry, error) {
 	return procs, nil
 }
 
-// observeGroup is the members of the group that the shell with that pid leads, listed while the shell is shown alive before and after
-// the listing (its start token matches): the number cannot have passed to another group in between. False when the shell is not shown
-// alive both times, the list does not read, or no member's start reads.
+// observeGroup is the members of the group that the shell with that pid leads. The caller has just shown the shell alive (its start
+// token matched, ownsGroup) and holds the store lock; the token is checked again after the listing, so the shell was alive throughout
+// and the number cannot have passed to another group in between. False when the shell is not shown alive after the listing, the list
+// does not read, or no member's start reads.
 func observeGroup(pid int, token string) ([]groupMember, bool) {
-	if !startsAt(pid, token) {
-		return nil, false
-	}
 	procs, err := listProcesses()
 	if err != nil || !startsAt(pid, token) {
 		return nil, false

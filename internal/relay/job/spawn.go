@@ -451,7 +451,8 @@ func cancel(ws string, input BgRecord, clock func() time.Time, kill func(pid int
 			sig = syscall.SIGKILL // asked before, and still running
 			return change{}
 		}
-		// The shell is shown alive now: the members of its group are kept with the request, for the proof of a later cancel (group.go).
+		// The shell is shown alive now (ownsGroup matched its token): the members of its group are kept with the request, for the proof
+		// of a later cancel (group.go).
 		// A group that cannot be listed leaves no members, and a later cancel after the shell has ended is refused.
 		next := cur
 		if members, ok := observeGroup(pid, *cur.StartToken); ok {
