@@ -34,24 +34,46 @@ var (
 
 // moduleSourceRefusal is "" for a source whose imports stay in the inventory, else what the source does, in a few words.
 func moduleSourceRefusal(src string) string {
-	aliases := map[string]bool{"sys": true}
+	// aliases maps each name the source gives to sys, importlib or builtins to the module (import sys as s, import importlib).
+	aliases := map[string]string{"sys": "sys", "importlib": "importlib", "builtins": "builtins"}
 	for _, stmt := range pyStatements(src) {
 		if what := pyImportStatement(stmt, aliases); what != "" {
 			return what
 		}
 	}
-	for a := range aliases {
-		if m := regexp.MustCompile(`\b` + regexp.QuoteMeta(a) + `\s*\.\s*(` + importSysAttrs + `)\b`).FindStringSubmatch(src); m != nil {
-			if m[1] == "__dict__" {
-				return "reads the namespace of sys (" + a + ".__dict__)"
+	for a, mod := range aliases {
+		qa := regexp.QuoteMeta(a)
+		switch mod {
+		case "sys":
+			if m := regexp.MustCompile(`\b` + qa + `\s*\.\s*(` + importSysAttrs + `)\b`).FindStringSubmatch(src); m != nil {
+				if m[1] == "__dict__" {
+					return "reads the namespace of sys (" + a + ".__dict__)"
+				}
+				return "uses sys." + m[1] + " (as " + a + "." + m[1] + ")"
 			}
-			return "uses sys." + m[1] + " (as " + a + "." + m[1] + ")"
+		case "importlib", "builtins":
+			if m := regexp.MustCompile(`\b` + qa + `\s*\.\s*__dict__\b`).FindString(src); m != "" {
+				return "reads the namespace of " + mod + " (" + a + ".__dict__)"
+			}
+		}
+		if mod == "importlib" {
+			for _, m := range regexp.MustCompile(`\b`+qa+`\s*\.\s*([A-Za-z_]\w*)`).FindAllStringSubmatch(src, -1) {
+				if !importlibPlainAttrs[m[1]] {
+					return "uses importlib." + m[1] + " (as " + a + "." + m[1] + ")"
+				}
+			}
 		}
 	}
 	for _, m := range reGetattrCall.FindAllStringSubmatch(src, -1) {
-		if aliases[m[2]] {
-			return "reads sys by name (" + m[1] + "(" + m[2] + ", ...))"
+		if mod, ok := aliases[m[2]]; ok {
+			return "reads " + mod + " by name (" + m[1] + "(" + m[2] + ", ...))"
 		}
+	}
+	if what := dynamicImportCall(src, aliases); what != "" {
+		return what
+	}
+	if m := reLoaderPaths.FindString(src); m != "" {
+		return "changes where a package looks for its modules (" + m + ")"
 	}
 	if reSysLiteral.MatchString(src) {
 		return "fetches the module sys by its name as a string"
@@ -110,11 +132,52 @@ func pyStatements(src string) []string {
 	return out
 }
 
+// importlibPlainAttrs are the attributes of importlib a test uses to import by name, to reload or to read package data; the rest of the
+// package (machinery, util, abc, the loaders and finders) loads code by path or builds the import system.
+var importlibPlainAttrs = map[string]bool{"import_module": true, "reload": true, "invalidate_caches": true, "resources": true, "metadata": true, "__name__": true}
+
+var (
+	reLoaderPaths  = regexp.MustCompile(`\b(__path__|submodule_search_locations)\b`)
+	reDynamicNames = regexp.MustCompile(`\b(__import__|import_module)\b`)
+	reSimpleCall   = regexp.MustCompile(`^\s*\(\s*(?:"[A-Za-z0-9_.]*"|'[A-Za-z0-9_.]*')\s*[,)]`)
+)
+
+// dynamicImportCall refuses __import__ and import_module (and the names the source gives them) with anything but one plain module name: a
+// name built at run time can be sys, importlib or a module found outside the inventory by a path the source set up. A name that is only
+// imported or listed in an import statement is no call.
+func dynamicImportCall(src string, aliases map[string]string) string {
+	names := []string{"__import__", "import_module"}
+	for a, mod := range aliases {
+		if mod == "importfn" {
+			names = append(names, a)
+		}
+	}
+	for i, n := range names {
+		names[i] = regexp.QuoteMeta(n)
+	}
+	re := regexp.MustCompile(`\b(` + strings.Join(names, "|") + `)\b`)
+	for _, loc := range re.FindAllStringIndex(src, -1) {
+		name := src[loc[0]:loc[1]]
+		rest := src[loc[1]:]
+		if strings.HasPrefix(strings.TrimLeft(rest, " \t"), "(") {
+			if !reSimpleCall.MatchString(rest) {
+				return "imports a module by a name built at run time (" + name + ")"
+			}
+			continue
+		}
+		prev := strings.TrimRight(src[:loc[0]], " \t\r\n")
+		if !strings.HasSuffix(prev, "import") && !strings.HasSuffix(prev, " as") && !strings.HasSuffix(prev, ",") && !strings.HasSuffix(prev, "(") && !strings.HasSuffix(prev, "\\") {
+			return "refers to " + name + " other than in an import statement"
+		}
+	}
+	return ""
+}
+
 var sysCodeNames = map[string]bool{"path": true, "pycache_prefix": true, "meta_path": true, "path_hooks": true, "path_importer_cache": true, "__dict__": true}
 
 // pyImportStatement judges an import statement: it names the sys aliases, and refuses a bring-in of an import-path attribute of sys,
 // of the import machinery or of the imp module.
-func pyImportStatement(stmt string, aliases map[string]bool) string {
+func pyImportStatement(stmt string, aliases map[string]string) string {
 	fields := strings.Fields(strings.NewReplacer("(", " ", ")", " ", ",", " , ").Replace(stmt))
 	if len(fields) < 2 {
 		return ""
@@ -136,8 +199,8 @@ func pyImportStatement(stmt string, aliases map[string]bool) string {
 				return "imports imp, which loads files by path"
 			case mod == "importlib.machinery" || mod == "importlib.util":
 				return "imports " + mod
-			case mod == "sys" && len(it) == 3 && it[1] == "as":
-				aliases[it[2]] = true
+			case (mod == "sys" || mod == "importlib" || mod == "builtins") && len(it) == 3 && it[1] == "as":
+				aliases[it[2]] = mod
 			}
 		}
 	case "from":
@@ -155,6 +218,9 @@ func pyImportStatement(stmt string, aliases map[string]bool) string {
 			for _, n := range names {
 				if n[0] == "machinery" || n[0] == "util" || n[0] == "*" {
 					return "imports importlib." + n[0]
+				}
+				if n[0] == "import_module" && len(n) == 3 && n[1] == "as" {
+					aliases[n[2]] = "importfn"
 				}
 			}
 		case mod == "sys":
