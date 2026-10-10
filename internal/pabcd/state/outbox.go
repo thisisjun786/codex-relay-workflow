@@ -70,6 +70,12 @@ type LedgerEvent struct {
 	// RowAppended says the row was appended to a ledger this process may write but not read (a write-only file): its presence
 	// cannot be looked up, so a retry that finds the event still pending only makes the append durable and does not append again.
 	RowAppended bool `json:"rowAppended,omitempty"`
+	// AppendStarted says an append of the row may have begun, and AppendSize is the ledger's size just before it. Both are made
+	// durable in the event's file before every append, so a writer killed after the append and before the event says how it ended
+	// leaves a mark: a retry that cannot read the ledger appends again only when the size is still AppendSize (nothing at all was
+	// appended since), and otherwise waits for a ledger it can search.
+	AppendStarted bool  `json:"appendStarted,omitempty"`
+	AppendSize    int64 `json:"appendSize,omitempty"`
 	// NeedsReadableLedger marks an event prepared while the ledger could not be read, so whether it already holds the row was not
 	// known: its row is appended only once the ledger can be searched, never blind.
 	NeedsReadableLedger bool `json:"needsReadableLedger,omitempty"`
@@ -347,9 +353,21 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 			blind := errors.Is(err, fs.ErrPermission) && !ev.NeedsReadableLedger
 			if blind {
 				end, present, err = 0, ev.RowAppended, nil
+				if !present && ev.AppendStarted {
+					// An earlier attempt may have appended the row before it was stopped. Only a ledger whose size is still the one
+					// that attempt saw certainly lacks it; anything else waits for a ledger that can be searched, never a second row.
+					if size, serr := ledgerSizeStrict(cwd); serr != nil {
+						err = serr
+					} else if size != ev.AppendSize {
+						err = errLedgerAppendUnknown
+					}
+				}
 			}
 			if err == nil && !present {
-				if err = AppendLedgerLine(cwd, ev.Line); err == nil {
+				err = markLedgerAppend(cwd, &ev)
+			}
+			if err == nil && !present {
+				if err = appendLedgerRow(cwd, ev.Line); err == nil {
 					report.Appended++
 					if blind {
 						ev.RowAppended = true
@@ -569,6 +587,39 @@ func ledgerFindLine(cwd string, offset, floor int64, line []byte) (end int64, fo
 			return 0, false, err
 		}
 	}
+}
+
+// appendLedgerRow is the drain's append of a row; a variable so a test can stop the drain right after it, as a kill would.
+var appendLedgerRow = AppendLedgerLine
+
+// errLedgerAppendUnknown is the reason an event stays pending when an earlier attempt may have appended its row to a ledger that
+// cannot be read now.
+var errLedgerAppendUnknown = errors.New("an earlier attempt may have appended this row to a ledger that cannot be read, so it is recorded once the ledger can be searched")
+
+// markLedgerAppend records in ev's file, durably, that an append of its row is about to begin and the ledger's size before it, unless
+// the file says so already for that size. The append does not run when the mark cannot be written.
+func markLedgerAppend(cwd string, ev *LedgerEvent) error {
+	size, err := ledgerSizeStrict(cwd)
+	if err != nil {
+		return err
+	}
+	if ev.AppendStarted && ev.AppendSize == size {
+		return nil
+	}
+	ev.AppendStarted, ev.AppendSize = true, size
+	return writeLedgerEvent(cwd, *ev)
+}
+
+// ledgerSizeStrict is the ledger's size in bytes, 0 for a ledger that does not exist yet, and the error of any other stat failure.
+func ledgerSizeStrict(cwd string) (int64, error) {
+	info, err := os.Stat(filepath.Join(cwd, crwdir.DirName, LedgerFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 // ledgerSize is the ledger's size in bytes, 0 when it cannot be learned.
