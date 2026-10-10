@@ -102,10 +102,44 @@ func TestExtractBalancedJSONRespectsBracesInStrings(t *testing.T) {
 	}
 }
 
-// The oracle looks the verb up in a plain object, so the inherited key constructor answers with a verb of its own.
-func TestConstructorIsAVerbAsInTheOracle(t *testing.T) {
-	if c := ParseOrchestrateCommand("orchestrate Constructor"); !reflect.DeepEqual(c, &OrchestrateCommand{Verb: VerbConstructor}) {
-		t.Errorf("got %+v", c)
+// CRW-1109 (:135): the oracle looks the verb up in a plain object, so the inherited key constructor answered with a verb of
+// its own, which the chat hook refused quoting the function's source. Only the documented verbs are verbs now: constructor is
+// no command, like any other unknown word, and the documented verbs are unchanged.
+func TestConstructorIsNoVerb(t *testing.T) {
+	for _, line := range []string{"orchestrate Constructor", "orchestrate constructor", "/orchestrate CONSTRUCTOR"} {
+		if c := ParseOrchestrateCommand(line); c != nil {
+			t.Errorf("%q: got %+v, want no command", line, c)
+		}
+	}
+	for line, verb := range map[string]OrchestrateVerb{"orchestrate i": VerbI, "orchestrate P": VerbP, "orchestrate a": VerbA, "orchestrate B": VerbB,
+		"orchestrate c": VerbC, "orchestrate D": VerbD, "orchestrate status": VerbStatus, "orchestrate RESET": VerbReset} {
+		if c := ParseOrchestrateCommand(line); !reflect.DeepEqual(c, &OrchestrateCommand{Verb: verb}) {
+			t.Errorf("%q: got %+v", line, c)
+		}
+	}
+}
+
+// CRW-1109 (:137): a would-be command whose --attest text holds a CR, U+2028 or U+2029 is answered with its FormError, where
+// the oracle read it as chat; the same character written as a JSON escape, or in the white space after the verb, or a line that
+// only mentions a command in prose, is unchanged.
+func TestSeparatorInACommandIsAFormError(t *testing.T) {
+	for _, sep := range []string{"\r", "\u2028", "\u2029"} {
+		line := `orchestrate A --attest {"from":"P","to":"A","did":"a` + sep + `b"}`
+		if c := ParseOrchestrateCommand(line); c == nil || c.Verb != VerbA || c.FormError != ErrCommandSeparator || c.Attest != nil {
+			t.Errorf("%q: got %+v, want the form error", line, c)
+		}
+	}
+	escaped := `orchestrate A --attest {"from":"P","to":"A","did":"a\u2028b"}`
+	if c := ParseOrchestrateCommand(escaped); c == nil || c.FormError != "" || c.Attest == nil || c.Attest.Did != "a\u2028b" {
+		t.Errorf("an escaped separator: %+v", c)
+	}
+	if c := ParseOrchestrateCommand("orchestrate A\u2028--attest {\"from\":\"P\",\"to\":\"A\"}"); c == nil || c.FormError != "" || c.Attest == nil {
+		t.Errorf("a separator in the white space after the verb: %+v", c)
+	}
+	for _, prose := range []string{"please orchestrate A\u2028now", "orchestrate the release\u2028tomorrow", "we said orchestrate A --attest {\"x\":\"\u2028\"}"} {
+		if c := ParseOrchestrateCommand(prose); c != nil {
+			t.Errorf("%q: prose parsed as %+v", prose, c)
+		}
 	}
 }
 

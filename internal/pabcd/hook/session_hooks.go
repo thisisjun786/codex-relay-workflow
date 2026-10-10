@@ -72,6 +72,8 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 		return ""
 	}
 	_ = lock(p.Cwd, p.SessionID, func() error {
+		// CRW-1097: a ledger row or plan-audit cleanup an earlier writer left pending is finished by this writer of the session too.
+		DrainSessionLedger(p.Cwd, p.SessionID)
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable || !sessionHookPostCompactEligible(fresh) {
 			return nil

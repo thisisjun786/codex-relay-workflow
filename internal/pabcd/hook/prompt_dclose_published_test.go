@@ -162,7 +162,9 @@ func TestPromptDcloseUnreadablePabcdLedgerWarnsOnAllDoneClose(t *testing.T) {
 	// Assert the warning's reason, not just its fixed opening sentence: the reason is what tells the
 	// operator which read failed, and the baseline answers the success directive with no warning at
 	// all. The warning text is promptDcloseLedgerWarning(reason), so pin the reason's own words.
-	if !strings.Contains(answer, promptDcloseLedgerWarning("the PABCD ledger could not be read:")) {
+	// CRW-1097: the unreadable ledger no longer ends the close row; the event stays pending, and the warning names the failure
+	// that stopped the append and says the next writer of the session records the row.
+	if !strings.Contains(answer, promptDcloseLedgerWarning("open ")) || !strings.Contains(answer, "the row is kept pending") {
 		t.Errorf("the all-done close did not carry the ledger warning with its reason: %q", answer)
 	}
 	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 1 {
