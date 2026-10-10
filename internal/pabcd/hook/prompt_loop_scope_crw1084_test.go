@@ -117,6 +117,12 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a Korean -go chain under a later -ge causative", "crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 수정하게 해", PromptRoleUnknown, "pointer"},
 		{"a Korean -go chain under a later -dorok causative", "crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정하도록 해", PromptRoleUnknown, "pointer"},
 		{"a Korean -go chain without a causative", "crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정해", PromptRoleUnknown, "recipe"},
+		{"a Korean -go chain with an object before the causative", "crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 테스트를 수정하게 해", PromptRoleUnknown, "pointer"},
+		{"a Korean -go chain with a bare noun before the causative", "crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 테스트 수정하도록 해", PromptRoleUnknown, "pointer"},
+		{"a Korean -go chain with an object and no causative", "crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 테스트를 수정해", PromptRoleUnknown, "recipe"},
+		{"a singular worker noun compounded with build", "Use crw-loop to optimize the worker build cache for this task.", PromptRoleUnknown, "recipe"},
+		{"a singular subagent noun compounded with fix", "Use crw-loop to review the subagent fix list in this session.", PromptRoleUnknown, "recipe"},
+		{"a Korean worker noun compounded with a development noun", "crw-loop로 워커 개발 환경 정리해줘", PromptRoleUnknown, "recipe"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -338,6 +344,20 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 테스트하고 수정시켜", LoopScopeProject},
 		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정해", LoopScopeCurrentTask},
 		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 제가 구현하고 수정할게", LoopScopeCurrentTask},
+		// CRW-1166 round 3: an object or a bare noun between the chain verbs does not hide the causative; an implement-keyword noun
+		// after a singular agent noun is a compound, no delegated verb.
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 테스트를 수정하게 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식에게 확인하고 구현하고 테스트 수정하도록 해", LoopScopeProject},
+		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 테스트를 수정해", LoopScopeCurrentTask},
+		{"crw-loop 돌려서 현재 세션에서 자식 작업을 확인하고 구현하고 수정해. 그리고 워커가 테스트하게 해", LoopScopeCurrentTask},
+		{"Use crw-loop to optimize the worker build cache for this task.", LoopScopeNone},
+		{"Use crw-loop to review the subagent fix list in this session.", LoopScopeCurrentTask},
+		{"crw-loop로 워커 개발 환경 정리해줘", LoopScopeNone},
+		{"crw-loop로 자식 수정 사항 정리해줘", LoopScopeProject},
+		{"Use crw-loop in this session while the workers build their parts.", LoopScopeProject},
+		{"Use crw-loop while the worker will build its part.", LoopScopeProject},
+		{"crw-loop로 현재 세션에서 워커가 구현해", LoopScopeProject},
+		{"crw-loop로 워커 구현을 시켜", LoopScopeProject},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {

@@ -431,11 +431,26 @@ func implementVerbs(clause string) (session, delegated bool) {
 		}
 		if noun, ok := delegation(clause[:at[0]], clause[at[1]:]); !ok {
 			session = true
-		} else if noun != "they" && noun != "others" {
+		} else if noun != "they" && noun != "others" && !nounUse(clause[:at[0]], noun, clause[at[0]:at[1]], clause[at[1]:]) {
 			delegated = true
 		}
 	}
 	return session, delegated
+}
+
+// nounUse reports an implement keyword that is a noun beside an agent noun and so no delegated verb (CRW-1166, "optimize the worker
+// build cache", "워커 개발 환경"): a singular English agent noun right before a bare keyword is its compound modifier (a
+// singular subject takes "builds", "will build"), and a Korean keyword 구현/수정/개발 that no 하/해/시 verb ending follows is a noun.
+// The session decision is untouched; only the project signal delegatedImplement reads this.
+func nounUse(prefix, noun, verb, rest string) bool {
+	if detectorRE(`^(?:worker|sub-?agent|child\s+(?:task|issue|session|lane|thread|agent|goal|worker)|other\s+(?:agent|session|task|thread))$`).MatchString(noun) {
+		return strings.HasSuffix(strings.TrimRight(prefix, " \t"), noun)
+	}
+	switch verb {
+	case "구현", "수정", "개발":
+		return !detectorRE(`^(?:(?:을|를)\s*)?(?:하|해|했|한|할|함|시)`).MatchString(rest)
+	}
+	return false
 }
 
 // delegation reports the agent noun whose verb the implement verb after the folded clause prefix is. Another agent as the
@@ -516,28 +531,35 @@ func hangulConnective(noun, gap, suffix string) bool {
 }
 
 // chainCausative reports a causative that governs the Korean implement verb whose folded clause rest is suffix: on the verb
-// itself ("구현하게 해", "구현하도록 해", "구현시켜") or on a later verb that a chain of connectives (-고, -서, -며) joins it to
-// ("구현하고 수정하게 해", "구현하고 테스트하고 수정시켜", CRW-1166). A verb that ends the chain without one ("구현하고 수정해",
-// "구현하고 수정할게") leaves the implement verb this session's own.
+// itself ("구현하게 해", "구현하도록 해", "구현시켜") or on a later verb of its sentence that a chain of connectives (-고, -서, -며)
+// joins it to ("구현하고 수정하게 해", "구현하고 테스트하고 수정시켜", CRW-1166), also past an object or a bare noun of a chain verb
+// ("구현하고 테스트를 수정하게 해", "구현하고 테스트 수정하도록 해"). The chain ends at a finite verb that carries no causative
+// ("구현하고 수정해", "구현하고 테스트를 수정해", "구현하고 수정할게"), at the end of the sentence and at another agent noun
+// ("구현하고 워커에게 테스트하게 해": that agent's own verb), which leave the implement verb this session's own.
 func chainCausative(suffix string) bool {
 	if detectorRE(`^(?:하게|하도록|하라고|토록|시켜|시키)`).MatchString(suffix) {
 		return true
 	}
 	words := strings.FieldsFunc(suffix, func(r rune) bool { return r == ',' || unicode.IsSpace(r) || r == '\ufeff' })
+	finite := detectorRE(`(?:해|줘|요|다|라|래|게|죠)[.!?。]*$`)
 	for i, w := range words {
 		next := ""
 		if i+1 < len(words) {
 			next = words[i+1]
 		}
+		connective := strings.HasSuffix(w, "고") || strings.HasSuffix(w, "서") || strings.HasSuffix(w, "며")
 		switch {
 		case strings.Contains(w, "시켜") || strings.Contains(w, "시키"),
 			strings.HasSuffix(w, "도록") || strings.HasSuffix(w, "토록") || strings.HasSuffix(w, "라고"),
 			strings.HasSuffix(w, "게") && (strings.HasPrefix(next, "해") || strings.HasPrefix(next, "하") || strings.HasPrefix(next, "만들")):
 			return true
-		case strings.HasSuffix(w, "고") || strings.HasSuffix(w, "서") || strings.HasSuffix(w, "며"):
+		case strings.HasPrefix(w, "자식") || strings.HasPrefix(w, "하위") || strings.HasPrefix(w, "워커"):
+			return false
+		case connective:
 			continue
+		case strings.ContainsAny(w, ".!?。") || finite.MatchString(w):
+			return false
 		}
-		return false
 	}
 	return false
 }
