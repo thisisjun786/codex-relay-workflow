@@ -111,11 +111,13 @@ func TestDryRunSeesALockAnotherRunHoldsAndAStopFile(t *testing.T) {
 
 func TestDryRunSoloModePlansOneHead(t *testing.T) {
 	w := newWorld(t)
-	w.pend("1", w.head("a", map[string]string{"a.txt": "a\n"}, true))
-	w.pend("2", w.head("b", map[string]string{"b.txt": "b\n"}, true))
-	w.r.setSoloLeft(2)
+	a := w.head("a", map[string]string{"a.txt": "a\n"}, true)
+	b := w.head("b", map[string]string{"b.txt": "b\n"}, true)
+	w.pend("1", a)
+	w.pend("2", b)
+	w.r.setSoloOwed([]string{"crw-1=" + a, "crw-2=" + b})
 	rep, err := w.r.DryRun(t.Context(), false)
-	if err != nil || len(rep.Plan) != 1 || !strings.HasPrefix(rep.Plan[0], "crw-1=") || rep.SoloLeft != 2 {
+	if err != nil || len(rep.Plan) != 1 || !strings.HasPrefix(rep.Plan[0], "crw-1=") || len(rep.SoloHeads) != 2 {
 		t.Fatalf("%+v %v", rep, err)
 	}
 }

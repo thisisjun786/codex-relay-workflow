@@ -93,6 +93,10 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 			return fail("%v", ctx.Err())
 		}
 		reason, resolvedVersion := r.mergeOne(ctx, wt, base, e, logf)
+		if ctx.Err() != nil {
+			// A git call that ended with the context says nothing about the head.
+			return fail("%v", ctx.Err())
+		}
 		switch {
 		case reason == "":
 			out.merged = append(out.merged, e)
@@ -135,6 +139,11 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 	}
 
 	if vrc := r.verify(ctx, tag, wt, head, base, record); vrc != 0 {
+		if ctx.Err() != nil {
+			// A verification the signal ended is not a failed verification: no retry is
+			// spent and no head is blocked because of it.
+			return fail("%v", ctx.Err())
+		}
 		return finish(fmt.Sprintf("verification-failed(rc=%d)", vrc), ExitVerifyFailed)
 	}
 	if rc, err := r.git(ctx, c.Checkout, nil, "fetch", c.Remote, "--quiet"); err != nil || rc != 0 {
@@ -230,9 +239,12 @@ func (r *Runner) recordVersion(ctx context.Context, tag, wt, tmp, base string, l
 		return
 	}
 	pairs := []string{"{tmpdir}", tmp, "{tag}", tag}
-	env := r.baseEnv()
+	// The command finds its repository from its directory, the private worktree, so no
+	// inherited Git routing variable reaches it. record_version_env is the operator's explicit
+	// word and is applied after that cleanup.
+	env := r.gitEnv()
 	for _, k := range sortedKeys(c.RecordVersionEnv) {
-		env = append(append([]string(nil), env...), k+"="+expand(c.RecordVersionEnv[k], pairs...))
+		env = append(env, k+"="+expand(c.RecordVersionEnv[k], pairs...))
 	}
 	rc, err := r.Exec(ctx, Cmd{Argv: expandAll(c.RecordVersionCommand, pairs...), Dir: wt, Env: env, Stdout: log, Stderr: log})
 	if err != nil || rc != 0 {
@@ -254,7 +266,8 @@ func (r *Runner) verify(ctx context.Context, tag, wt, head, base, record string)
 		return 127
 	}
 	defer vlog.Close()
-	env := append(append([]string(nil), r.baseEnv()...), "CRW_VERIFY_HEAD="+head, "CRW_VERIFY_BASE="+base, "CRW_VERIFY_RECORD="+record)
+	// Like the record command, the verification runs against the private worktree only.
+	env := append(r.gitEnv(), "CRW_VERIFY_HEAD="+head, "CRW_VERIFY_BASE="+base, "CRW_VERIFY_RECORD="+record)
 	rc, err := r.Exec(ctx, Cmd{Argv: c.VerifyCommand, Dir: wt, Env: env, Stdout: vlog, Stderr: vlog})
 	if err != nil {
 		fmt.Fprintf(vlog, "verify command: %v\n", err)

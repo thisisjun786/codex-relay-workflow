@@ -4,7 +4,6 @@ import (
 	"crypto/sha1" //nolint:gosec // names a retry marker, as the shell runner's sha1sum did
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,7 +21,7 @@ const (
 	dirRetried  = "retried"
 	fileStop    = "stop"
 	fileLog     = "runner.log"
-	fileSolo    = "solo-left"
+	fileSolo    = "solo-heads"
 )
 
 var (
@@ -156,26 +155,53 @@ func (r *Runner) touch(path string) error {
 	return os.WriteFile(path, nil, 0o664)
 }
 
-// soloLeft is how many more single-head runs the failed batch still owes (0: batching).
-func (r *Runner) soloLeft() int {
+// soloOwed is the specs (node=head) of the failed batch's members that have not yet had a run of
+// their own. Solo mode lasts while any of them is still pending with that head.
+func (r *Runner) soloOwed() []string {
 	data, err := os.ReadFile(r.qpath(fileSolo))
 	if err != nil {
-		return 0
+		return nil
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || n < 0 {
-		return 0
+	var owed []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			owed = append(owed, line)
+		}
 	}
-	return n
+	return owed
 }
 
-func (r *Runner) setSoloLeft(n int) {
+func (r *Runner) setSoloOwed(specs []string) {
 	path := r.qpath(fileSolo)
-	if n <= 0 {
+	if len(specs) == 0 {
 		_ = os.Remove(path)
 		return
 	}
-	if err := os.WriteFile(path, []byte(fmt.Sprintf("%d\n", n)), 0o664); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Join(specs, "\n")+"\n"), 0o664); err != nil {
 		r.logf("solo state: %v", err)
 	}
+}
+
+// soloPrune drops the owed heads that are no longer pending with the head they were owed for (a
+// run moved them, or the owner refreshed or removed the file), writes the state back when it
+// changed, and returns what is still owed. entries is the current pending list.
+func (r *Runner) soloPrune(entries []Entry) []string {
+	owed := r.soloOwed()
+	pending := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		pending[e.Spec()] = true
+	}
+	var kept []string
+	for _, spec := range owed {
+		if pending[spec] {
+			kept = append(kept, spec)
+		}
+	}
+	if len(kept) != len(owed) {
+		r.setSoloOwed(kept)
+		if len(kept) == 0 {
+			r.logf("solo pass over: batching again")
+		}
+	}
+	return kept
 }

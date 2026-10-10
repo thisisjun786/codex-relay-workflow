@@ -58,15 +58,29 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		rep.Result, rep.Exit = "idle", ExitPushed
 		return rep
 	}
-	solo := r.soloLeft() > 0
+	solo := len(r.soloPrune(entries)) > 0
 	var batch []Entry
 	for _, e := range entries {
+		if ctx.Err() != nil {
+			return r.cancelled(ctx, rep)
+		}
 		if !e.HeadOK {
 			r.logf("%s %q is not a full head SHA: blocked", e.Key, e.Head)
 			rep.moved(r, e, dirBlocked, "head is not a 40-hex commit")
 			continue
 		}
-		if note, ok := r.gate(ctx, e); !ok {
+		note, verdict := r.gate(ctx, e)
+		if ctx.Err() != nil {
+			// A gate the signal ended says nothing about the head.
+			return r.cancelled(ctx, rep)
+		}
+		switch verdict {
+		case gateAborted:
+			// The gate could not run: not a verdict, so the head and those behind it wait.
+			r.logf("%s %s gate could not run: %s", e.Key, e.Head, note)
+			rep.Result, rep.Exit, rep.Error = "error", ExitUsage, note
+			return rep
+		case gateFail:
 			r.logf("%s %s gate not PASS: %s", e.Key, e.Head, note)
 			rep.moved(r, e, dirBlocked, "gate not PASS: "+note)
 			continue
@@ -89,6 +103,9 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	r.logf("%s start %s", tag, strings.Join(specs, " "))
 	out := r.integrate(ctx, tag, batch)
 	if out.Err != nil {
+		if ctx.Err() != nil {
+			return r.cancelled(ctx, rep)
+		}
 		r.logf("%s rc=%d %v", tag, out.Exit, out.Err)
 		rep.Result, rep.Exit, rep.Error = "error", out.Exit, out.Err.Error()
 		return rep
@@ -113,7 +130,15 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			}
 		}
 	}
-	r.afterRun(batch, out, solo, &rep)
+	r.afterRun(batch, out, &rep)
+	return rep
+}
+
+// cancelled ends a pass whose context ended: what was decided before stays, the rest is left
+// in pending for the next pass.
+func (r *Runner) cancelled(ctx context.Context, rep Report) Report {
+	r.logf("pass cancelled: %v", ctx.Err())
+	rep.Result, rep.Exit, rep.Error = "cancelled", ExitUsage, ctx.Err().Error()
 	return rep
 }
 
@@ -124,9 +149,9 @@ func (rep *Report) moved(r *Runner, e Entry, dir, reason string) {
 }
 
 // afterRun is the retry policy after a run: a failed batch is retried once as the same batch
-// (load flakes), then each of its heads runs alone for as many runs as the batch had members
-// (not a bisection), and a head that fails alone is retried once before it is blocked.
-func (r *Runner) afterRun(batch []Entry, out Outcome, wasSolo bool, rep *Report) {
+// (load flakes), then every one of its heads runs alone (not a bisection), and a head that
+// fails alone is retried once before it is blocked.
+func (r *Runner) afterRun(batch []Entry, out Outcome, rep *Report) {
 	if out.Exit == ExitVerifyFailed {
 		switch {
 		case len(batch) > 1 && !fileExists(r.batchMarker(batch)):
@@ -136,9 +161,13 @@ func (r *Runner) afterRun(batch []Entry, out Outcome, wasSolo bool, rep *Report)
 			rep.Retry = "same batch once more"
 			r.logf("batch verification failed: one retry of the same batch (%s)", batchKey(batch))
 		case len(batch) > 1:
-			r.setSoloLeft(len(batch))
-			rep.Retry = fmt.Sprintf("one at a time for the next %d runs", len(batch))
-			r.logf("batch verification failed: one at a time for the next %d runs", len(batch))
+			specs := make([]string, len(batch))
+			for i, e := range batch {
+				specs[i] = e.Spec()
+			}
+			r.setSoloOwed(specs)
+			rep.Retry = fmt.Sprintf("one at a time: %d heads", len(batch))
+			r.logf("batch verification failed: one at a time for each of its %d heads", len(batch))
 		default:
 			e := batch[0]
 			marker := r.qpath(dirRetried, e.Name)
@@ -157,37 +186,42 @@ func (r *Runner) afterRun(batch []Entry, out Outcome, wasSolo bool, rep *Report)
 				r.logf("%s alone failed verification: blocked", e.Key)
 			}
 		}
-	} else if out.Exit == ExitPushed && wasSolo && r.pendingCount() == 0 {
-		r.setSoloLeft(0)
 	}
-	// Solo mode covers only the members of the failed batch, then batching resumes.
-	if left := r.soloLeft(); left > 0 && len(batch) == 1 {
-		left--
-		r.setSoloLeft(left)
-		if left == 0 {
-			r.logf("solo pass over: batching again")
-		}
+	// Solo mode owes each member of the failed batch a run of its own and lasts while one of them
+	// is still pending with that head: a member's retry or a run that did not conclude (the
+	// branch moved, the push was refused) keeps it owed, a pushed, blocked or moved one does not.
+	if entries, _, err := r.listPending(); err == nil {
+		r.soloPrune(entries)
 	}
 }
 
+type gateVerdict int
+
+const (
+	gatePass    gateVerdict = iota
+	gateFail                // the gate ran and did not say PASS
+	gateAborted             // the gate could not run or did not finish: no verdict
+)
+
 // gate re-checks the pre-merge gate of one head: the configured command's last output line
-// starts with PASS and its status is 0. The second result is false for anything else, with the
-// line (or the reason it could not run) as the first.
-func (r *Runner) gate(ctx context.Context, e Entry) (string, bool) {
+// starts with PASS and its status is 0. The string is that line (or the reason the gate could
+// not run). A gate that ran and said anything else is a negative verdict; one that could not
+// start or was killed is no verdict at all.
+func (r *Runner) gate(ctx context.Context, e Entry) (string, gateVerdict) {
 	var out bytes.Buffer
 	argv := expandAll(r.Cfg.GateCommand, "{issue}", e.Key, "{head}", e.Head)
 	rc, err := r.Exec(ctx, Cmd{Argv: argv, Dir: r.Cfg.Checkout, Env: r.gitEnv(), Stdout: &out, Stderr: &out})
 	last := lastLine(out.String())
 	if err != nil {
-		return "gate command: " + err.Error(), false
+		return "gate command: " + err.Error(), gateAborted
 	}
 	if rc != 0 || !strings.HasPrefix(last, "PASS") {
 		if last == "" {
 			last = fmt.Sprintf("status %d, no output", rc)
 		}
-		return last, false
+		return last, gateFail
 	}
-	return last, true
+	return last, gatePass
 }
 
 func lastLine(s string) string {

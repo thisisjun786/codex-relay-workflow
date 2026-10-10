@@ -18,7 +18,7 @@ ignored). A pass moves a file out of `pending/` only after acting on it:
 | `blocked/` | the gate is not `PASS`, the file does not hold a 40-hex head, or the head failed verification alone twice |
 | `retried/` | retry markers: `batch-<16 hex>` for a batch retried once, `<number>` holding the head retried once alone |
 | `stop` | a file that ends `--watch` (and refuses a pass) |
-| `solo-left` | how many more single-head runs a failed batch still owes |
+| `solo-heads` | the heads (`node=head`, one per line) of a failed batch that have not yet had a run of their own; the file ends when none is pending any more |
 | `runner.log` | one line per decision |
 
 A file that changed while the run worked on it (the owner refreshed the head) stays in `pending/`. A name that is not an issue number, a
@@ -31,6 +31,10 @@ directory and a link are not entries; they are reported as ignored.
    with status 2 before anything is read or run.
 3. The gate (`gate_command`, `{issue}` and `{head}` replaced, run in `checkout`) is re-checked for every pending head, in issue-number
    order: its last output line must start with `PASS` and its status must be 0. In solo mode the pass takes the first head that passes.
+   A gate that ran and did not say `PASS` blocks the head. A gate that could not start or was killed is no verdict: the pass ends with
+   status 2 (`error`) and the head and those behind it stay in `pending/`. A termination signal (`--watch` turns SIGINT and SIGTERM into a
+   cancelled context) at any point of a pass, in the gates, the merges, the record command or the verification, ends it as `cancelled`
+   (status 2): what was decided before stays, nothing else is moved, retried or blocked, and no failed verification is counted.
 4. One integration run (tag `tag_prefix` plus the month, day and time) fetches the remote, makes the detached worktree
    `work_root/run-<tag>` on `refs/remotes/<remote>/<branch>`, and merges the heads in order with `merge --no-ff`.
    - A head that is an ancestor of the branch is `already-in-dev`; a commit missing from the checkout is `head-not-in-checkout`.
@@ -41,7 +45,11 @@ directory and a link are not entries; they are reported as ignored.
      resolver for one is a separate, explicitly scoped and tested change.
    - When a version conflict was resolved, or the merged tree differs from the base under `plugin_dir`, `record_version_command` re-derives
      the manifest's version line in the worktree and the change is committed as `integration <tag>: re-derive the plugin version line ...`.
-5. `verify_command` runs in the worktree with `CRW_VERIFY_HEAD`, `CRW_VERIFY_BASE` and `CRW_VERIFY_RECORD` set; its status is the
+5. `record_version_command`, `verify_command` and the gate run with the inherited environment cleaned of Git routing variables
+   (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the others `gitprobe.Sanitize` removes), so a command that asks Git for its
+   repository finds the private worktree, never the shared checkout. `record_version_env` is the operator's explicit word and is applied
+   after that cleanup.
+   `verify_command` runs in the worktree with `CRW_VERIFY_HEAD`, `CRW_VERIFY_BASE` and `CRW_VERIFY_RECORD` set; its status is the
    verdict, and its output is `runs_dir/<tag>.verify.log`.
 6. The remote is fetched again. If the branch is no longer at the base the run ends `dev-moved:<sha>`. Otherwise the merged head is
    pushed as `<sha>:refs/heads/<branch>`: never forced, so a remote that moved refuses it and the run ends `push-failed`.
@@ -55,7 +63,7 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 | Status | Result | Meaning |
 |---|---|---|
 | 0 | `pushed`, `idle`, `stopped` | the merged heads were pushed, or there was nothing to do |
-| 2 | `locked`, `error` | usage, configuration, fetch or lock failure, or the worktree already exists; nothing changed |
+| 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, or a termination signal; no head was judged by it |
 | 3 | `verification-failed(rc=N)` | the merged tree failed verification; nothing was pushed |
 | 4 | `dev-moved:<sha>`, `push-failed` | the branch moved during the run or the push was refused; nothing was pushed |
 | 5 | `nothing-merged`, `nothing-to-integrate` | no head could be merged, or no head passed the gate |
@@ -63,8 +71,9 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 ### Retry after a failed verification
 
 A failed batch is not bisected. It is retried once as the same batch (a load flake is the usual cause); if it fails again each of its
-heads runs alone, for as many runs as the batch had members, and then batching resumes. A head that fails alone is retried once with the
-same head, then blocked. A new head under the same issue number starts again.
+heads runs alone, and batching resumes when none of them is pending with that head any more (it was pushed, blocked, moved to `conflict/`,
+or its owner refreshed or removed the file). A head that fails alone is retried once with the same head, then blocked; its retry does not
+use up the run another member is owed. A new head under the same issue number starts again.
 
 ## Command
 
@@ -103,5 +112,5 @@ operator step after the cutover install:
 3. Keep the shell scripts in place until one full batch (merged order, verification record, summary, queue moves) matches what the
    shell runner would have produced.
 
-Rollback: put a `stop` file in the queue (the watch ends), delete `solo-left` if present, remove the file and start the shell runner. The
+Rollback: put a `stop` file in the queue (the watch ends), delete `solo-heads` if present, remove the file and start the shell runner. The
 directories, markers and lock are the same, so no state needs converting.

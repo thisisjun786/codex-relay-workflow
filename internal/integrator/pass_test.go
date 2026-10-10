@@ -304,14 +304,14 @@ func TestPassVerificationFailureRetriesBatchThenGoesOneAtATime(t *testing.T) {
 	if rep.Retry != "same batch once more" || !fileExists(filepath.Join(w.cfg.QueueDir, "retried", "batch-"+batchKey([]Entry{{Node: "crw-1", Head: a}, {Node: "crw-2", Head: b}}))) {
 		t.Fatalf("retry %q", rep.Retry)
 	}
-	if w.r.soloLeft() != 0 {
+	if len(w.r.soloOwed()) != 0 {
 		t.Fatal("solo mode started before the batch retry")
 	}
 
 	rep = w.pass() // the same batch again, fails again
 	requireExit(t, rep, ExitVerifyFailed, "verification-failed(rc=3)")
-	if w.r.soloLeft() != 2 || !strings.HasPrefix(rep.Retry, "one at a time") {
-		t.Fatalf("solo left %d, retry %q", w.r.soloLeft(), rep.Retry)
+	if len(w.r.soloOwed()) != 2 || !strings.HasPrefix(rep.Retry, "one at a time") {
+		t.Fatalf("solo owed %v, retry %q", w.r.soloOwed(), rep.Retry)
 	}
 
 	rep = w.pass() // head 1 alone
@@ -321,15 +321,15 @@ func TestPassVerificationFailureRetriesBatchThenGoesOneAtATime(t *testing.T) {
 	}
 	w.mustWhere("1", "done")
 	w.mustWhere("2", "pending")
-	if w.r.soloLeft() != 1 {
-		t.Fatalf("solo left %d", w.r.soloLeft())
+	if owed := w.r.soloOwed(); len(owed) != 1 || owed[0] != "crw-2="+b {
+		t.Fatalf("solo owed %v", owed)
 	}
 
 	rep = w.pass() // head 2 alone, then batching resumes
 	requireExit(t, rep, ExitPushed, "pushed")
 	w.mustWhere("2", "done")
-	if w.r.soloLeft() != 0 {
-		t.Fatalf("solo left %d", w.r.soloLeft())
+	if len(w.r.soloOwed()) != 0 {
+		t.Fatalf("solo owed %v", w.r.soloOwed())
 	}
 }
 

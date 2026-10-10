@@ -17,12 +17,12 @@ type DryEntry struct {
 
 // DryReport is what a dry run reports.
 type DryReport struct {
-	Stop     bool       `json:"stop_file"`
-	Lock     string     `json:"lock"`
-	Base     string     `json:"base"`
-	SoloLeft int        `json:"solo_left"`
-	Entries  []DryEntry `json:"entries"`
-	Ignored  []string   `json:"ignored,omitempty"`
+	Stop      bool       `json:"stop_file"`
+	Lock      string     `json:"lock"`
+	Base      string     `json:"base"`
+	SoloHeads []string   `json:"solo_heads,omitempty"`
+	Entries   []DryEntry `json:"entries"`
+	Ignored   []string   `json:"ignored,omitempty"`
 	// Plan is the specs the next pass would hand to one integration run, in order, when every
 	// gate passes (the gate is only consulted with withGate).
 	Plan []string `json:"plan"`
@@ -34,13 +34,23 @@ type DryReport struct {
 // moved, no lock taken (it is only probed), no fetch. The gate command runs only with
 // withGate, because a gate may fetch on its own.
 func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
-	rep := DryReport{Lock: lockState(r.Cfg.LockFile), SoloLeft: r.soloLeft()}
+	rep := DryReport{Lock: lockState(r.Cfg.LockFile)}
 	rep.Stop = fileExists(r.qpath(fileStop))
 	entries, ignored, err := r.listPending()
 	if err != nil {
 		return rep, err
 	}
 	rep.Ignored = ignored
+	// The heads still owed a run of their own: the state file read without pruning it.
+	pendingSpec := map[string]bool{}
+	for _, e := range entries {
+		pendingSpec[e.Spec()] = true
+	}
+	for _, spec := range r.soloOwed() {
+		if pendingSpec[spec] {
+			rep.SoloHeads = append(rep.SoloHeads, spec)
+		}
+	}
 	if base, rc, err := r.gitRO(ctx, r.Cfg.Checkout, "rev-parse", "--verify", "-q", r.Cfg.remoteRef()); err == nil && rc == 0 {
 		rep.Base = base
 	}
@@ -64,12 +74,12 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 			pass = false
 		}
 		if withGate && e.HeadOK {
-			note, ok := r.gate(ctx, e)
+			note, verdict := r.gate(ctx, e)
 			d.Gate = note
-			pass = ok
+			pass = verdict == gatePass
 		}
 		rep.Entries = append(rep.Entries, d)
-		if pass && (rep.SoloLeft == 0 || len(planned) == 0) {
+		if pass && (len(rep.SoloHeads) == 0 || len(planned) == 0) {
 			planned = append(planned, e)
 		}
 	}
