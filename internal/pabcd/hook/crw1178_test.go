@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -308,7 +310,7 @@ cache.write_bytes(header+marshal.dumps(code))
 				mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
 				gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
 				for _, r := range []string{mem, gh} {
-					if !strings.Contains(r, "__pycache__/test_calc.") || !strings.Contains(r, "remove __pycache__, use python -B") || strings.Contains(r, "...") {
+					if !strings.Contains(r, "__pycache__/test_calc.") || !strings.Contains(r, "remove __pycache__ in a separate command first; python -B") || strings.Contains(r, "...") {
 						t.Errorf("%s: the reason lacks the file or the route, or is cut: %s", cmd, r)
 					}
 				}
@@ -499,7 +501,7 @@ print(cache.name)
 			gh := HandleGitHubPostGuard(gateBash(t, cwd, c.run))
 			if c.refused {
 				for _, r := range []string{gateDeny(t, mem), githubPostAnswerReason(t, gh)} {
-					if !strings.Contains(r, "__pycache__/"+name) || !strings.Contains(r, "remove __pycache__, use python -B") {
+					if !strings.Contains(r, "__pycache__/"+name) || !strings.Contains(r, "remove __pycache__ in a separate command first; python -B") {
 						t.Errorf("%s: the reason lacks the file or the route: %s", c.run, r)
 					}
 				}
@@ -518,5 +520,109 @@ print(cache.name)
 				t.Fatalf("%s: the cache ran %v, expected %v, so this test proves nothing", c.run, ran, c.refused)
 			}
 		})
+	}
+}
+
+// CRW-1178 verification round 5 (P0) through both guards: a write redirection of the module run itself through a hard link of a
+// source (stdout or stderr, with a command known to change no file before it) can make a stale entry current, so both guards refuse
+// it with the cause and the route; a log file the run creates stays allowed.
+func TestCRW1178RunRedirectThroughLinkIsRefusedByBothGuards(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	crw1178Cache(t, cwd)
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	for _, cmd := range []string{
+		"python3 -B -m unittest > stamp",
+		"python3 -B -m unittest 2> stamp",
+		"sleep 3; python3 -B -m unittest > stamp",
+		"sleep 3; python3 -B -m unittest 2> stamp",
+	} {
+		mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+		gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+		for _, r := range []string{mem, gh} {
+			if !strings.Contains(r, "stale only until") || !strings.Contains(r, "stamp") || !strings.Contains(r, "separate command") || strings.Contains(r, "MEMORY-WRITE-GATE") {
+				t.Errorf("%q: the reason lacks the cause or the route: %s", cmd, r)
+			}
+		}
+	}
+	for _, cmd := range []string{"python3 -B -m unittest > out.log 2>&1", "sleep 1; python3 -B -m unittest 2> out.log"} {
+		if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
+			t.Errorf("memory gate refused %q: %s", cmd, out)
+		}
+		if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out != "" {
+			t.Errorf("GitHub guard refused %q: %s", cmd, out)
+		}
+	}
+}
+
+// CRW-1178 verification round 5 (P0) end to end with a real interpreter: a stale entry recording size 0 and a second just ahead,
+// and a hard link stamp of its source. "python3 -B -m unittest > stamp" run in that second truncates the source, the entry agrees,
+// and its code (which writes a memory note) runs instead of the source the guards read. Both guards refuse the command beforehand.
+func TestCRW1178RunRedirectThroughLinkRunsUnreadCacheEndToEnd(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	const cmd = "python3 -B -m unittest > stamp"
+	// The premise needs the run to start in the second the entry records; a loaded host may miss it, so it is retried.
+	for attempt := 1; ; attempt++ {
+		cwd, root, env := gateScene(t)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(root, "injected.md")
+		for name, body := range map[string]string{
+			"calc.py":      "def add(a, b):\n    return a + b\n",
+			"test_calc.py": "import unittest\nimport calc\nclass T(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(calc.add(1, 2), 3)\n",
+		} {
+			if err := os.WriteFile(filepath.Join(cwd, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+			t.Skipf("no hard links here: %v", err)
+		}
+		second := time.Now().Unix() + 2
+		setup := `import importlib.util,marshal,struct,sys
+src=sys.argv[1]+'/calc.py';marker=sys.argv[2];t=int(sys.argv[3])
+code=compile('open('+repr(marker)+', "w").write("unread bytecode ran")\ndef add(a, b):\n    return a + b\n',src,'exec')
+cache=importlib.util.cache_from_source(src)
+import os;os.makedirs(os.path.dirname(cache))
+open(cache,'wb').write(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,t&0xffffffff,0)+marshal.dumps(code))
+`
+		if out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, strconv.FormatInt(second, 10)).CombinedOutput(); err != nil {
+			t.Fatalf("setup: %v %s", err, out)
+		}
+		mem := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env)
+		gh := HandleGitHubPostGuard(gateBash(t, cwd, cmd))
+		if mem == "" || gh == "" {
+			t.Errorf("a run that truncates its source through a link beside a stale entry was allowed: memory gate %q, GitHub guard %q", mem, gh)
+		} else {
+			for _, r := range []string{gateDeny(t, mem), githubPostAnswerReason(t, gh)} {
+				if !strings.Contains(r, "stale only until") || !strings.Contains(r, "separate command") {
+					t.Errorf("the reason lacks the cause or the route: %s", r)
+				}
+			}
+		}
+		// The premise: run in the recorded second, the entry's code runs and writes the memory note.
+		for time.Now().Unix() < second {
+			time.Sleep(10 * time.Millisecond)
+		}
+		run := exec.Command(bash, "-c", cmd)
+		run.Dir = cwd
+		run.Env = []string{"HOME=" + filepath.Dir(root), "PATH=" + filepath.Dir(python) + ":/usr/bin:/bin", "TZ=UTC"}
+		out, _ := run.CombinedOutput()
+		if b, err := os.ReadFile(marker); err == nil && string(b) == "unread bytecode ran" {
+			return
+		}
+		if attempt == 3 {
+			t.Fatalf("the cache never ran, so this test proves nothing: %s", out)
+		}
+		t.Logf("attempt %d missed the second: %s", attempt, out)
 	}
 }

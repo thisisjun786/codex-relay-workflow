@@ -217,6 +217,14 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		}
 	}
 	files = unique
+	// The shell opens the run's own write redirections before the interpreter compares an entry with its source, so a target that
+	// is a source by any name (a hard link, a link outside the inventory) can give it the time and size a stale entry records, as an
+	// earlier command can (CRW-1178).
+	if staleSkipped {
+		if why := staleCacheOwnWrite(redirs, st.dir.Path, files); why != "" {
+			return true, staleCacheRefusal(why)
+		}
+	}
 	if module == "unittest" || module == "pytest" {
 		for _, file := range files {
 			resolved, err := filepath.EvalSymlinks(file)
@@ -290,7 +298,7 @@ func pycacheEntryRefusal(p string) string {
 	}
 	// Little endian after the magic number: flags, then for flags 0 the source's modification time in whole seconds and its size,
 	// each truncated to 32 bits. Any other flags is a hash-based entry (or one Python rejects), which this reader does not check.
-	route := "; remove __pycache__, use python -B" // short: the hook bounds the reason to 200 bytes
+	route := pycacheRoute
 	if binary.LittleEndian.Uint32(header[4:8]) != 0 {
 		return "hash-based cache may run instead of " + stem + ".py" + route
 	}
@@ -402,11 +410,71 @@ func (w *walker) staleCacheConcurrent() error {
 	return nil
 }
 
+// pycacheRoute is the way past a cache refusal: remove the cache in a command of its own, then run with -B so that none is written
+// again. Removing it in the same command is refused, as the entry is still there when the command is read. Short: the hook bounds
+// the reason to 200 bytes.
+const pycacheRoute = "; remove __pycache__ in a separate command first; python -B"
+
 func staleCacheRefusal(why string) error {
 	if len(why) > 32 { // the hook bounds the reason to 200 bytes
 		why = why[:32]
 	}
-	return unreadablef("module cache entry is stale only until the command runs %s; remove __pycache__, use python -B", why)
+	return unreadablef("module cache entry is stale only until the command runs %s%s", why, pycacheRoute)
+}
+
+// writingRedir is whether a redirection may write to a file: anything but an input, a here-document, a descriptor copy or close,
+// and a write to /dev/null.
+func writingRedir(r Redir) bool {
+	switch r.Op {
+	case "<", "<<", "<<-", "<<<":
+		return false
+	case ">&", "<&":
+		return !(r.Target.Known && isDescriptorDup(r.Target.Value))
+	}
+	return !(r.Target.Known && r.Target.Value == "/dev/null")
+}
+
+// staleCacheOwnWrite names the first write redirection of a module run beside a stale entry that could change a source: a target
+// the reader cannot name or inspect, one that exists and is not a regular file, has another link, or is one of the sources (any
+// name of it). A target that does not exist yet is a new file, which no source is; "" when there is none.
+func staleCacheOwnWrite(redirs []Redir, dir string, sources []string) string {
+	var infos []os.FileInfo
+	for _, r := range redirs {
+		if !writingRedir(r) {
+			continue
+		}
+		what := r.Fd + r.Op + " " + r.Target.Value
+		if !r.Target.Known || r.Target.Value == "" {
+			return r.Fd + r.Op + " a file not known"
+		}
+		p := r.Target.Value
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		fi, err := os.Stat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil || !fi.Mode().IsRegular() {
+			return what
+		}
+		if sys, ok := fi.Sys().(*syscall.Stat_t); !ok || sys.Nlink != 1 {
+			return what
+		}
+		if infos == nil {
+			for _, s := range sources {
+				if si, err := os.Stat(s); err == nil {
+					infos = append(infos, si)
+				}
+			}
+		}
+		for _, si := range infos {
+			if os.SameFile(fi, si) {
+				return what
+			}
+		}
+	}
+	return ""
 }
 
 // fileInert are programs that change no file's content or time (an access time aside, which Python does not compare) except through
@@ -424,19 +492,9 @@ var fileInert = map[string]bool{
 func staleCacheMutator(execs []Exec) string {
 	for _, e := range execs {
 		for _, r := range e.Redirs {
-			switch r.Op {
-			case "<", "<<", "<<-", "<<<":
-				continue
-			case ">&", "<&":
-				if r.Target.Known && isDescriptorDup(r.Target.Value) {
-					continue
-				}
-			default:
-				if r.Target.Known && r.Target.Value == "/dev/null" {
-					continue
-				}
+			if writingRedir(r) {
+				return r.Op + " " + r.Target.Value
 			}
-			return r.Op + " " + r.Target.Value
 		}
 		if e.Kind != KindCommand || e.Inline != nil || !e.Program.Known {
 			return "a program the reader cannot judge"

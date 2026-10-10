@@ -448,3 +448,62 @@ func TestCRW1178CacheTimeRoundedUpBySecondsAsDoubleIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1178 verification round 5 (P0): the shell opens the module run's own write redirections before the interpreter starts, so
+// "python3 -B -m unittest > stamp" truncates the source through its hard link stamp (size 0, time now) and can make a stale entry
+// recording that size and second current. Beside a stale entry, a write target of the run itself that exists and is a source (by
+// any name), has another link or cannot be inspected is refused; /dev/null, descriptor copies and new or unrelated files stay allowed.
+func TestCRW1178RunRedirectThroughLinkBesideStaleCacheIsRefused(t *testing.T) {
+	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "notes.log"), []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	alias := filepath.Join(other, "alias")
+	if err := os.Symlink(filepath.Join(cwd, "calc.py"), alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{
+		"python3 -B -m unittest > stamp",
+		"python3 -B -m unittest 2> stamp",
+		"sleep 3; python3 -B -m unittest > stamp",
+		"sleep 3; python3 -B -m unittest 2> stamp",
+		"python3 -m unittest >> stamp",
+		"python3 -B -m unittest &> stamp",
+		"python3 -B -m unittest >& stamp",
+		"python3 -B -m unittest >| stamp",
+		"python3 -B -m unittest <> stamp",
+		"python3 -B -m unittest 1>stamp 2>&1",
+		"python3 -B -m unittest 2>&1 > stamp",
+		"python3 -B -m unittest > " + alias,
+		"python3 -B -m pytest > stamp",
+		"cd . && python3 -B -m unittest 2> stamp | tail -n 5",
+		"timeout 60 python3 -B -m unittest > stamp",
+		"env python3 -B -m unittest 2> stamp",
+		"python3 -B -m unittest > \"$CRW1178_UNSET_TARGET\"",
+	} {
+		_, err := Analyze(cmd, cwd)
+		var u *Unreadable
+		if !errors.As(err, &u) {
+			t.Errorf("%s: a write through a source's link beside a stale cache was allowed: %v", cmd, err)
+		} else if !strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "rewrite") && !strings.Contains(u.Reason, "rewritten") {
+			t.Errorf("%s: refused for another reason: %q", cmd, u.Reason)
+		}
+	}
+	for _, cmd := range []string{
+		"python3 -B -m unittest > out.log 2>&1",
+		"python3 -B -m unittest > /dev/null 2>&1",
+		"python3 -B -m unittest 2>&1 >/dev/null",
+		"python3 -B -m unittest >> notes.log",
+		"sleep 1; python3 -B -m unittest > out.log",
+		"python3 -B -m unittest 2>&1 | tail -n 20",
+		"python3 -B -m unittest < notes.log",
+	} {
+		if _, err := Analyze(cmd, cwd); err != nil {
+			t.Errorf("%s: refused beside a stale cache: %v", cmd, err)
+		}
+	}
+}
