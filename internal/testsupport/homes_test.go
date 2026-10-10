@@ -222,57 +222,115 @@ func TestAccountHomesSnapshot_stays_silent_until_a_fixture_changes(t *testing.T)
 
 // CRW-1176: a watched directory can itself be a symlink to a directory (HOME/.codex, CODEX_HOME and CRW_HOME all
 // can). The walk follows the link at its root, so an in-place edit of a fixture behind it is reported, and a
-// retarget of the link is reported too.
+// retarget of the link to a twin directory with the same contents and modes is reported by the link's target.
+// Each of the three is the only link of its own subtest, so each is shown to be walked on its own.
 func TestAccountHomesSnapshot_follows_a_watched_directory_that_is_a_symlink(t *testing.T) {
-	home := t.TempDir()
-	real := t.TempDir()
-	other := t.TempDir()
-	codexLink := filepath.Join(t.TempDir(), "codex-link")
-	if err := os.Symlink(real, codexLink); err != nil {
+	for _, which := range []string{"HOME/.codex", "CODEX_HOME", "CRW_HOME"} {
+		t.Run(which, func(t *testing.T) {
+			home, codex, crw := t.TempDir(), t.TempDir(), t.TempDir()
+			real, twin := t.TempDir(), t.TempDir()
+			const original, edited = "model = \"a\"\n", "model = \"b\"\n"
+			for _, dir := range []string{real, twin} {
+				if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(original), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var link string
+			switch which {
+			case "HOME/.codex":
+				link = filepath.Join(home, ".codex")
+			case "CODEX_HOME":
+				link = filepath.Join(t.TempDir(), "codex-link")
+				codex = link
+			case "CRW_HOME":
+				link = filepath.Join(t.TempDir(), "crw-link")
+				crw = link
+			}
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatal(err)
+			}
+			h := WatchAccountHomes(t, home, codex, crw)
+			h.Snapshot()
+			h.Verify(func(msg string) { t.Errorf("an untouched fixture behind the link is reported: %s", msg) })
+
+			// Given: the run edits the fixture behind the link in place, same name and same size.
+			fixture := filepath.Join(real, "config.toml")
+			if err := os.WriteFile(fixture, []byte(edited), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			reported := ""
+			h.Verify(func(msg string) { reported = msg })
+			if !strings.Contains(reported, "config.toml") {
+				t.Errorf("an in-place edit behind the %s link is not reported: %q", which, reported)
+			}
+			if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h.Verify(func(msg string) { t.Errorf("the restored fixture is reported: %s", msg) })
+
+			// Then: pointing the link at the twin, same contents and modes, is reported.
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(twin, link); err != nil {
+				t.Fatal(err)
+			}
+			reported = ""
+			h.Verify(func(msg string) { reported = msg })
+			if !strings.Contains(reported, "-> "+twin) {
+				t.Errorf("a retarget of the %s link to a twin directory is not reported: %q", which, reported)
+			}
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// CRW-1176: an entry the snapshot cannot read is no state to compare. A fixture the snapshot cannot read ends
+// neither the walk nor the check: a later fixture's in-place edit and mode change are still seen, and Verify
+// fails on the unreadable entry even when the run changed nothing, since the same error before and after hides
+// whatever stands behind it.
+func TestAccountHomesSnapshot_fails_on_an_entry_it_cannot_read(t *testing.T) {
+	codex := t.TempDir()
+	blocked := filepath.Join(codex, "a-unreadable")
+	fixture := filepath.Join(codex, "b-fixture.toml")
+	if err := os.WriteFile(blocked, []byte("secret"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(home, ".codex")); err != nil {
-		t.Fatal(err)
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o600) })
+	if _, err := os.ReadFile(blocked); err == nil {
+		t.Skip("the process reads a mode 0000 file (root); the unreadable entry cannot be made")
 	}
-	fixture := filepath.Join(real, "config.toml")
-	const original, edited = "model = \"a\"\n", "model = \"b\"\n"
+	const original, edited = "status = \"ACTIVE\"\n", "status = \"PAUSED\"\n"
 	if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := WatchAccountHomes(t, home, codexLink, "")
+	// The homes are built here, not by WatchAccountHomes: its cleanup would report the unreadable entry again.
+	h := &AccountHomes{Home: t.TempDir(), Codex: codex, CRW: t.TempDir(), watchHome: true}
 	h.Snapshot()
-	h.Verify(func(msg string) { t.Errorf("an untouched fixture behind a link is reported: %s", msg) })
 
-	// Given: the run edits the fixture behind the link in place, same name and same size.
+	// Then: the unreadable entry fails the check although nothing changed.
+	reported := ""
+	h.Verify(func(msg string) { reported = msg })
+	if !strings.Contains(reported, "a-unreadable") {
+		t.Errorf("an unreadable entry passes the check: %q", reported)
+	}
+
+	// Given: the run edits the later fixture in place and changes its mode.
 	if err := os.WriteFile(fixture, []byte(edited), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reported := ""
-	h.Verify(func(msg string) { reported = msg })
-	if !strings.Contains(reported, "config.toml") {
-		t.Errorf("an in-place edit behind a watched directory link is not reported: %q", reported)
-	}
-	if err := os.WriteFile(fixture, []byte(original), 0o600); err != nil {
+	if err := os.Chmod(fixture, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h.Verify(func(msg string) { t.Errorf("the restored fixture is reported: %s", msg) })
-
-	// Then: pointing the link elsewhere is reported.
-	if err := os.Remove(codexLink); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(other, codexLink); err != nil {
-		t.Fatal(err)
-	}
+	// Then: the change behind the unreadable entry is seen.
 	reported = ""
 	h.Verify(func(msg string) { reported = msg })
-	if reported == "" {
-		t.Errorf("a retargeted watched directory link is not reported")
-	}
-	if err := os.Remove(codexLink); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(real, codexLink); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(reported, "b-fixture.toml -rw-r--r--") {
+		t.Errorf("a fixture change after an unreadable entry is not seen: %q", reported)
 	}
 }

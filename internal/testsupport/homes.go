@@ -3,7 +3,9 @@ package testsupport
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,6 +21,7 @@ import (
 type AccountHomes struct {
 	Home, Codex, CRW string
 	before           string
+	beforeErr        error
 	watchHome        bool
 	content          bool
 }
@@ -60,7 +63,7 @@ func WatchAccountHomes(t *testing.T, home, codex, crw string) *AccountHomes {
 
 // Rebase takes the current state as the one later changes are measured against: the name-only listing, or the
 // content snapshot once Snapshot has been called.
-func (h *AccountHomes) Rebase() { h.before = h.state() }
+func (h *AccountHomes) Rebase() { h.before, h.beforeErr = h.state() }
 
 // Snapshot switches the homes to the content snapshot and takes it as the baseline. A home that holds fixtures
 // calls it once they are in place: an in-place edit of a fixture keeps its name, so the name-only listing does
@@ -100,17 +103,36 @@ func topLevelNames(dir string) string {
 
 // Contents is the recursive snapshot of each watched directory, one line per path, with an absent directory
 // marked. The recursion covers every directory the code could take for an account home except HOME, which
-// contributes its top-level names as Listing lists them.
-func (h *AccountHomes) Contents() string {
+// contributes its top-level names as Listing lists them. An entry it cannot read is marked in its line, the walk
+// goes on past it, and the error names every such entry: an unreadable entry is no state, and the same error
+// before and after a run would hide a change to it.
+func (h *AccountHomes) Contents() (string, error) {
 	parts := []string{}
+	var errs []error
+	unreadable := func(name string, err error) string {
+		errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		return name + " unreadable"
+	}
 	for _, dir := range h.dirs() {
 		label := h.label(dir)
-		if _, err := os.Stat(dir); err != nil {
+		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 			parts = append(parts, label+": absent")
+			continue
+		} else if err != nil {
+			parts = append(parts, unreadable(label, err))
 			continue
 		}
 		if dir == h.Home {
-			parts = append(parts, label+": "+topLevelNames(dir))
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				parts = append(parts, unreadable(label, err))
+				continue
+			}
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			parts = append(parts, label+": "+strings.Join(names, ","))
 			continue
 		}
 		// A watched directory that is itself a symlink keeps its own line (mode and target) and the walk starts at
@@ -118,74 +140,84 @@ func (h *AccountHomes) Contents() string {
 		// would go unread.
 		var entries []string
 		root := dir
-		if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if info, err := os.Lstat(dir); err != nil {
+			parts = append(parts, unreadable(label, err))
+			continue
+		} else if info.Mode()&os.ModeSymlink != 0 {
 			target, err := os.Readlink(dir)
 			if err != nil {
-				parts = append(parts, label+": unreadable: "+err.Error())
+				parts = append(parts, unreadable(label, err))
 				continue
 			}
 			entries = append(entries, label+" "+info.Mode().String()+" -> "+target)
 			if root, err = filepath.EvalSymlinks(dir); err != nil {
-				parts = append(parts, strings.Join(entries, "\n")+"\n"+label+": unreadable: "+err.Error())
+				parts = append(parts, strings.Join(append(entries, unreadable(label, err)), "\n"))
 				continue
 			}
 		}
-		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
+		// Every error reaches the callback, which marks the entry and goes on: returning it would end the walk of
+		// this directory, and the entries after it would go unread.
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			name := label
-			if rel != "." {
+			if rel, relErr := filepath.Rel(root, path); relErr == nil && rel != "." {
 				name += "/" + filepath.ToSlash(rel)
+			}
+			if err != nil {
+				// A directory whose listing fails is reported a second time after its own line; the walk skips
+				// what it could not list and goes on with its siblings.
+				entries = append(entries, unreadable(name, err))
+				return nil
 			}
 			info, err := d.Info()
 			if err != nil {
-				return err
+				entries = append(entries, unreadable(name, err))
+				return nil
 			}
 			entry := name + " " + info.Mode().String()
 			switch {
 			case info.Mode().IsRegular():
 				raw, err := os.ReadFile(path)
 				if err != nil {
-					return err
+					entries = append(entries, unreadable(entry, err))
+					return nil
 				}
 				sum := sha256.Sum256(raw)
 				entry += " sha256:" + hex.EncodeToString(sum[:])
 			case info.Mode()&os.ModeSymlink != 0:
 				target, err := os.Readlink(path)
 				if err != nil {
-					return err
+					entries = append(entries, unreadable(entry, err))
+					return nil
 				}
 				entry += " -> " + target
 			}
 			entries = append(entries, entry)
 			return nil
 		})
-		if err != nil {
-			entries = append(entries, label+": unreadable: "+err.Error())
-		}
 		parts = append(parts, strings.Join(entries, "\n"))
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), errors.Join(errs...)
 }
 
-// Verify reports through fail when the state differs from the one Rebase took.
+// Verify reports through fail when the state differs from the one Rebase took, or when the content snapshot could
+// not read an entry, before the run or after it.
 func (h *AccountHomes) Verify(fail func(string)) {
-	if after := h.state(); after != h.before {
+	after, afterErr := h.state()
+	switch {
+	case h.beforeErr != nil || afterErr != nil:
+		fail(fmt.Sprintf("the content snapshot cannot read an account home it was given:\nbefore %v\nafter  %v\nbefore %s\nafter  %s",
+			h.beforeErr, afterErr, h.before, after))
+	case after != h.before:
 		fail(fmt.Sprintf("the run changed an account home it was given:\nbefore %s\nafter  %s", h.before, after))
 	}
 }
 
 // state is what Rebase and Verify compare: the content snapshot of a home that holds fixtures, else the listing.
-func (h *AccountHomes) state() string {
+func (h *AccountHomes) state() (string, error) {
 	if h.content {
 		return h.Contents()
 	}
-	return h.Listing()
+	return h.Listing(), nil
 }
 
 // dirs are the directories the code could take for an account home, HOME first when the watch covers it; an
