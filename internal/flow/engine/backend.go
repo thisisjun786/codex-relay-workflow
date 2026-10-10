@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
@@ -168,6 +167,3 @@ func ClassifyHostFailure(codexErrorInfo string) Disposition {
 	}
 	return d
 }
-
-// errAborted marks a call the engine stopped because its run ended.
-var errAborted = errors.New("run aborted")

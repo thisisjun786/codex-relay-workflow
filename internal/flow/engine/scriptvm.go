@@ -35,7 +35,6 @@ type scriptVM struct {
 	parse      goja.Callable
 	stringify  goja.Callable
 	freeze     goja.Callable
-	errorClass *goja.Object
 	pathErrCls *goja.Object
 }
 

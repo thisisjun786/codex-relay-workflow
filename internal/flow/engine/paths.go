@@ -12,10 +12,9 @@ const RootPath = "root"
 // goroutine that runs the script (a call settles when the engine delivers its result there), so it needs no lock and
 // every position is a function of the script and the settled results only.
 type pathState struct {
-	id       string
-	next     int
-	open     *openPosition
-	children map[string]bool
+	id   string
+	next int
+	open *openPosition
 }
 
 type openPosition struct {
@@ -63,5 +62,4 @@ type joinState struct {
 	parent   *pathState
 	position int
 	label    string
-	keys     map[string]bool
 }
