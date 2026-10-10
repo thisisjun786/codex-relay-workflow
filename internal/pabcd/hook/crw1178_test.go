@@ -446,3 +446,77 @@ func TestCRW1178PreservedTimeCopyBesideStaleCacheIsRefused(t *testing.T) {
 		t.Errorf("a run beside a stale cache with read-only commands was refused: %s", out)
 	}
 }
+
+// CRW-1178 verification round 4 through both guards with a real interpreter: pytest's assertion-rewrite cache
+// (__pycache__/test_calc.<tag>-pytest-<version>.pyc) that is stale is discarded by pytest and allowed again, while the same entry
+// agreeing with its source runs unread code and is refused; and an entry recording the second Python reads for a source time just
+// below a whole second (1700000000.999999999 reads as 1700000001.0) runs, so it is refused.
+func TestCRW1178RealCacheShapesInBothGuards(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	setup := `import importlib.util,marshal,os,pathlib,struct,sys
+cwd=pathlib.Path(sys.argv[1]);marker=sys.argv[2];mode=sys.argv[3]
+p=cwd/'test_calc.py';p.write_bytes(b'def test_ok():\n    pass\n')
+if mode=='rounded':
+ os.utime(p,ns=(1700000000999999999,1700000000999999999))
+ if p.stat().st_mtime_ns!=1700000000999999999: print('no-ns');sys.exit(0)
+ cache=pathlib.Path(importlib.util.cache_from_source(str(p)))
+else:
+ from _pytest.assertion.rewrite import PYTEST_TAG
+ cache=p.parent/'__pycache__'/('test_calc.'+PYTEST_TAG+'.pyc')
+cache.parent.mkdir(exist_ok=True)
+code=compile('open('+repr(marker)+', "w").write("cache executed")\nimport unittest\nclass TestCache(unittest.TestCase):\n def test_ok(self): pass\ndef test_ok(): pass\n',str(p),'exec')
+s=p.stat();t=int(s.st_mtime)
+if mode=='stale': t+=7
+cache.write_bytes(importlib.util.MAGIC_NUMBER+struct.pack('<III',0,t&0xffffffff,s.st_size&0xffffffff)+marshal.dumps(code))
+print(cache.name)
+`
+	for _, c := range []struct {
+		mode, run, real string
+		refused         bool
+	}{
+		{"current", "python3 -B -m pytest", "-B -m pytest -q -p no:cacheprovider", true},
+		{"stale", "python3 -B -m pytest", "-B -m pytest -q -p no:cacheprovider", false},
+		{"rounded", "python3 -B -m unittest", "-B -m unittest", true},
+	} {
+		t.Run(c.mode, func(t *testing.T) {
+			cwd, root, env := gateScene(t)
+			marker := filepath.Join(root, "n.md")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, c.mode).CombinedOutput()
+			if err != nil {
+				t.Skipf("setup (pytest missing?): %v %s", err, out)
+			}
+			name := strings.TrimSpace(string(out))
+			if name == "no-ns" {
+				t.Skip("no nanosecond times here")
+			}
+			mem := HandleMemoryWriteGate(gateBash(t, cwd, c.run), env)
+			gh := HandleGitHubPostGuard(gateBash(t, cwd, c.run))
+			if c.refused {
+				for _, r := range []string{gateDeny(t, mem), githubPostAnswerReason(t, gh)} {
+					if !strings.Contains(r, "__pycache__/"+name) || !strings.Contains(r, "remove __pycache__, use python -B") {
+						t.Errorf("%s: the reason lacks the file or the route: %s", c.run, r)
+					}
+				}
+			} else if mem != "" || gh != "" {
+				t.Errorf("%s: a stale pytest cache was refused: %s %s", c.run, mem, gh)
+			}
+			// The premise: the interpreter runs the cache exactly when it is refused.
+			run := exec.Command(python, strings.Fields(c.real)...)
+			run.Dir = cwd
+			run.Env = []string{"HOME=" + filepath.Dir(root), "PATH=/usr/bin:/bin", "TZ=UTC"}
+			if out, err := run.CombinedOutput(); err != nil {
+				t.Logf("%s: %v %s", c.run, err, out)
+			}
+			_, err = os.Stat(marker)
+			if ran := err == nil; ran != c.refused {
+				t.Fatalf("%s: the cache ran %v, expected %v, so this test proves nothing", c.run, ran, c.refused)
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // pycHeader is the 16-byte header Python writes: magic, flags, then either mtime and source size (flags 0) or the source hash.
@@ -350,6 +351,100 @@ func TestCRW1178MetadataChangeBesideStaleCacheIsRefused(t *testing.T) {
 	} {
 		if _, err := Analyze(cmd, cwd); err != nil {
 			t.Errorf("%s: refused beside a stale cache: %v", cmd, err)
+		}
+	}
+}
+
+// CRW-1178 verification round 4 (P1): pytest's assertion rewriting writes and loads __pycache__/<module>.<tag>-pytest-<version>.pyc
+// beside the test module it rewrote (the version has dots: test_calc.cpython-312-pytest-8.3.2.pyc). Such an entry belongs to
+// <module>.py in the directory above exactly as an interpreter entry does, so a stale one (pytest discards it and rewrites the source
+// the reader reads) is skipped again, while one that agrees with its source or carries other flags, and any other shape, stays refused.
+func TestCRW1178PytestRewriteCacheFollowsItsSource(t *testing.T) {
+	names := []string{
+		"__pycache__/test_calc.cpython-312-pytest-8.3.2.pyc",
+		"__pycache__/test_calc.cpython-314-pytest-9.0.2.pyc",
+		"__pycache__/calc.cpython-313t-pytest-8.4.0.dev45+g1234abc.pyc",
+		"__pycache__/test_calc.pypy310-pytest-7.4.4.pyc",
+	}
+	for _, name := range names {
+		t.Run("stale "+name, func(t *testing.T) {
+			cwd := crw1178Project(t, map[string][]byte{name: append(pycHeader(0), "code"...)})
+			for _, cmd := range []string{"python3 -m pytest", "python3 -B -m pytest", "python3 -m unittest"} {
+				if _, err := Analyze(cmd, cwd); err != nil {
+					t.Errorf("%s: a stale pytest cache of a readable source was refused: %v", cmd, err)
+				}
+			}
+		})
+		t.Run("current "+name, func(t *testing.T) {
+			cwd := crw1178Project(t, nil)
+			stem := strings.SplitN(filepath.Base(name), ".", 2)[0]
+			for _, header := range [][]byte{matchingPycHeader(t, filepath.Join(cwd, stem+".py")), pycHeader(3)} {
+				p := filepath.Join(cwd, name)
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, append(header, "code"...), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				_, err := Analyze("python3 -B -m pytest", cwd)
+				var u *Unreadable
+				if !errors.As(err, &u) || !strings.Contains(u.Reason, filepath.Base(name)) || !strings.Contains(u.Reason, "-B") {
+					t.Errorf("a pytest cache that agrees with its source or is not a timestamp entry was allowed or lacks the file: %v", err)
+				}
+			}
+		})
+	}
+	for _, name := range []string{
+		"__pycache__/test_calc.cpython-312-pytest-.pyc",
+		"__pycache__/test_calc.cpython-312-pytest-8..3.pyc",
+		"__pycache__/test_calc.cpython-312-pytest-x.pyc",
+		"__pycache__/test_calc.cpython-312-pytest-8.3.2-1.pyc",
+		"__pycache__/test_calc.cpython-312-pytest-8.3.2..pyc",
+		"__pycache__/test_calc.cpython-312-pytest-8.3.2.opt-1.pyc",
+		"__pycache__/test_calc.pytest-8.3.2.pyc",
+		"__pycache__/test_calc.x.cpython-312-pytest-8.3.2.pyc",
+		"__pycache__/nosource.cpython-312-pytest-8.3.2.pyc",
+	} {
+		t.Run("refused "+name, func(t *testing.T) {
+			cwd := crw1178Project(t, map[string][]byte{name: append(pycHeader(0), "code"...)})
+			_, err := Analyze("python3 -m pytest", cwd)
+			var u *Unreadable
+			if !errors.As(err, &u) || !strings.Contains(u.Reason, filepath.Base(name)) {
+				t.Errorf("a malformed pytest cache name or one without a source was skipped: %v", err)
+			}
+		})
+	}
+}
+
+// CRW-1178 verification round 4 (P2): Python compares int(st_mtime), and st_mtime is a double that rounds a time just below a whole
+// second up to it (1700000000.999999999 s reads 1700000001.0). An entry recording the next second then agrees with the source and
+// runs, so it is refused; a time two seconds off stays stale.
+func TestCRW1178CacheTimeRoundedUpBySecondsAsDoubleIsRefused(t *testing.T) {
+	cwd := crw1178Project(t, nil)
+	src := filepath.Join(cwd, "calc.py")
+	mtime := time.Unix(1700000000, 999999999)
+	if err := os.Chtimes(src, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(src); err != nil || fi.ModTime().Nanosecond() != 999999999 {
+		t.Skipf("no nanosecond times here: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(cwd, "__pycache__", "calc.cpython-312.pyc")
+	for _, c := range []struct {
+		sec     uint32
+		refused bool
+	}{{1700000000, true}, {1700000001, true}, {1700000002, false}, {1699999999, false}} {
+		h := matchingPycHeader(t, src)
+		binary.LittleEndian.PutUint32(h[8:], c.sec)
+		if err := os.WriteFile(entry, append(h, "code"...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Analyze("python3 -B -m unittest", cwd)
+		if refused := err != nil; refused != c.refused {
+			t.Errorf("entry time %d: refused %v, want %v (%v)", c.sec, refused, c.refused, err)
 		}
 	}
 }

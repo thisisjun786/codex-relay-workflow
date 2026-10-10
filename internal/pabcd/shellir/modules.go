@@ -300,39 +300,25 @@ func pycacheEntryRefusal(p string) string {
 	return "cache runs instead of " + stem + ".py" + route
 }
 
-// pycacheEntryStem is the module of a cache entry name <module>.<tag>[.opt-N].pyc, the only shape the interpreter writes and loads
-// from __pycache__. Any other .pyc there (calc.pyc, calc.cpython-312.extra.pyc) is no cache of calc.py: calc.pyc imports as the
-// sourceless module __pycache__.calc, which is never compared with a source.
+// pycacheEntryStem is the module of a cache entry name, one of the two shapes written to and loaded from __pycache__ for the source
+// <module>.py in the directory above: <module>.<tag>[.opt-N].pyc (the interpreter) and <module>.<tag>-pytest-<version>.pyc (pytest's
+// assertion rewriting of a test module or conftest, test_calc.cpython-312-pytest-8.3.2.pyc). Any other .pyc there (calc.pyc,
+// calc.cpython-312.extra.pyc) is no cache of calc.py: calc.pyc imports as the sourceless module __pycache__.calc, which is never
+// compared with a source. Neither shape is importable as a sourceless module (its name has a dot or a dash past the module).
 func pycacheEntryStem(name string) (string, bool) {
-	parts := strings.Split(name, ".")
-	if len(parts) != 3 && len(parts) != 4 || parts[len(parts)-1] != "pyc" || parts[0] == "" {
+	stem, rest, ok := strings.Cut(name, ".")
+	if !ok || stem == "" || !strings.HasSuffix(rest, ".pyc") {
 		return "", false
 	}
-	tag := parts[1]
-	i := 0
-	for i < len(tag) && (tag[i] >= 'a' && tag[i] <= 'z') {
-		i++
+	rest = strings.TrimSuffix(rest, ".pyc")
+	if tag, version, ok := strings.Cut(rest, "-pytest-"); ok {
+		return stem, pycacheTag(tag) && pytestVersion(version)
 	}
-	if i == 0 || i == len(tag) {
+	tag, opt, hasOpt := strings.Cut(rest, ".")
+	if !pycacheTag(tag) {
 		return "", false
 	}
-	if tag[i] == '-' {
-		i++
-	}
-	j := i
-	for j < len(tag) && tag[j] >= '0' && tag[j] <= '9' {
-		j++
-	}
-	if j == i {
-		return "", false
-	}
-	for ; j < len(tag); j++ { // free-threaded and debug builds append letters (313t)
-		if tag[j] < 'a' || tag[j] > 'z' {
-			return "", false
-		}
-	}
-	if len(parts) == 4 {
-		opt := parts[2]
+	if hasOpt {
 		if !strings.HasPrefix(opt, "opt-") || len(opt) == 4 {
 			return "", false
 		}
@@ -342,7 +328,54 @@ func pycacheEntryStem(name string) (string, bool) {
 			}
 		}
 	}
-	return parts[0], true
+	return stem, true
+}
+
+// pycacheTag is whether tag is an implementation cache tag: letters, an optional dash, digits, then optional letters (cpython-312,
+// pypy310, cpython-313t for free-threaded and debug builds).
+func pycacheTag(tag string) bool {
+	i := 0
+	for i < len(tag) && (tag[i] >= 'a' && tag[i] <= 'z') {
+		i++
+	}
+	if i == 0 || i == len(tag) {
+		return false
+	}
+	if tag[i] == '-' {
+		i++
+	}
+	j := i
+	for j < len(tag) && tag[j] >= '0' && tag[j] <= '9' {
+		j++
+	}
+	if j == i {
+		return false
+	}
+	for ; j < len(tag); j++ {
+		if tag[j] < 'a' || tag[j] > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// pytestVersion is whether v is a pytest version as its cache tag spells it: dot-separated non-empty parts of letters, digits, plus
+// and underscore, starting with a digit (8.3.2, 8.4.0.dev45+g1234abc).
+func pytestVersion(v string) bool {
+	if v == "" || v[0] < '0' || v[0] > '9' {
+		return false
+	}
+	for _, part := range strings.Split(v, ".") {
+		if part == "" {
+			return false
+		}
+		for _, c := range part {
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '+' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // staleWatch is a module run that skipped a stale cache entry and runs alongside the records the walk appends from from on: the
@@ -419,19 +452,20 @@ func staleCacheMutator(execs []Exec) string {
 }
 
 // pycacheStale is whether a timestamp header (modification time and size, 32 bits each) disagrees with the source, so that the
-// interpreter discards the entry. Python compares int(st_mtime), truncated toward zero, and st_size; both the floor and the
-// truncated second count as agreeing, so a time before 1970 cannot pass as stale.
+// interpreter (or pytest) discards the entry. Both compare int(st_mtime) and st_size, and st_mtime is a double: the whole second
+// below the time (its floor), the one toward zero, and the next one (a time just below a whole second rounds up to it as a double,
+// 1700000000.999999999 reads 1700000001.0) all count as agreeing, so no rounding of the platform's can make a stale entry current.
 func pycacheStale(stamp []byte, source os.FileInfo) bool {
 	mtime, size := binary.LittleEndian.Uint32(stamp[0:4]), binary.LittleEndian.Uint32(stamp[4:8])
 	if size != uint32(source.Size()) {
 		return true
 	}
 	t := source.ModTime()
-	floor, trunc := t.Unix(), t.Unix()
-	if floor < 0 && t.Nanosecond() > 0 {
-		trunc++
+	floor := t.Unix()
+	if mtime == uint32(floor) {
+		return false
 	}
-	return mtime != uint32(floor) && mtime != uint32(trunc)
+	return t.Nanosecond() == 0 || mtime != uint32(floor+1)
 }
 
 // walkErrorWhat names what failed in a directory walk: the operation, the cause and the file or directory it failed on, relative to the
