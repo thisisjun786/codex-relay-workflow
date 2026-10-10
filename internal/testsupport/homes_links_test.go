@@ -320,3 +320,81 @@ func TestContentsDepthLimitIsThirtyTwoDirectoriesForPlainLinkedAndMixedChains(t 
 		}
 	}
 }
+
+// relativeCodexHome is a CODEX_HOME spelled relative to the working directory ("codex" in a fresh base), the spelling a
+// test gets from a relative path: the walk must key it by the same absolute physical path a link with an absolute target
+// resolves to.
+func relativeCodexHome(t *testing.T) (*AccountHomes, string) {
+	t.Helper()
+	base := t.TempDir()
+	codex := filepath.Join(base, "codex")
+	if err := os.Mkdir(codex, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	return &AccountHomes{Home: t.TempDir(), Codex: "codex", CRW: t.TempDir(), content: true}, codex
+}
+
+// A relative root and an absolute link back to it name one directory: the link is a cycle at its first visit, not a
+// second walk of the root.
+func TestContentsMarksAnAbsoluteLinkToARelativeRootAsACycle(t *testing.T) {
+	h, codex := relativeCodexHome(t)
+	if err := os.Symlink(codex, filepath.Join(codex, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	out := mustContents(t, h)
+	if strings.Contains(out, "codex/loop/loop") {
+		t.Fatalf("the root is walked again through an absolute link to it:\n%s", out)
+	}
+	if !strings.Contains(out, "codex/loop Lrwxrwxrwx -> "+codex+" (cycle)") {
+		t.Fatalf("an absolute link to a relative root is not marked as a cycle:\n%s", out)
+	}
+}
+
+// Under a relative root, a directory reached by its plain path and by a link with an absolute target is read once, so a
+// 40 MiB fixture fits the 64 MiB byte budget.
+func TestContentsCountsAnAbsoluteLinkAliasOnceUnderARelativeRoot(t *testing.T) {
+	h, codex := relativeCodexHome(t)
+	real := filepath.Join(codex, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "big"), make([]byte, 40<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(codex, "a")); err != nil {
+		t.Fatal(err)
+	}
+	out := mustContents(t, h)
+	if got := fileLines(out, "big"); len(got) != 1 {
+		t.Fatalf("the fixture is read %d times, want once:\n%s", len(got), out)
+	}
+}
+
+// The target of a followed link is part of the fixture: a mode change of a directory or a regular file a link names, out
+// of the watched root, is seen as a plain entry's mode change is.
+func TestContentsSeesAModeChangeOfALinkedTarget(t *testing.T) {
+	for _, kind := range []string{"directory", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			h, codex := linkHomes(t)
+			target := t.TempDir()
+			if kind == "file" {
+				target = filepath.Join(target, "f")
+				writeFixture(t, target, "same")
+			}
+			if err := os.Chmod(target, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(codex, "link")); err != nil {
+				t.Fatal(err)
+			}
+			before := mustContents(t, h)
+			if err := os.Chmod(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if after := mustContents(t, h); after == before {
+				t.Fatalf("a mode change of the linked %s is not seen:\n%s", kind, after)
+			}
+		})
+	}
+}

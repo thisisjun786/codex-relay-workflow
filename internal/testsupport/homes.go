@@ -115,7 +115,7 @@ func topLevelNames(dir string) string {
 // Contents is the recursive snapshot of each watched directory, one line per path, with an absent directory marked. The
 // recursion covers every directory the code could take for an account home except HOME, which contributes its top-level
 // names as Listing lists them. A link below a watched directory is followed to the directory or file it names and walked
-// within the limits (CRW-1182): a link is recorded with its target, a dangling link with "(dangling)", a link back to a
+// within the limits (CRW-1182): a link is recorded with its target (and a followed target's mode), a dangling link with "(dangling)", a link back to a
 // directory above it with "(cycle)", and a link to a directory already walked with "(alias of <first link>)". An entry the
 // walk cannot read is marked in its line, the walk goes on past it, and the error names every such entry: an unreadable
 // entry is no state, and the same error before and after a run would hide a change to it. A walk past a limit (the depth,
@@ -159,7 +159,9 @@ func (h *AccountHomes) Contents() (string, error) {
 // walkHomeDir walks one watched directory. A watched directory that is itself a link keeps its own line (mode and target)
 // and a dangling one ends there; the directory it names is walked under the same label. The walk starts at the physical
 // directory the spelling resolves to, because a link followed by ".." names the directory the kernel resolves, and a root
-// left as spelled would read a lexical counterpart, or none, instead of the home itself.
+// left as spelled would read a lexical counterpart, or none, instead of the home itself. The root is made absolute before it
+// is resolved: a relative root would resolve to a relative path while a link with an absolute target resolves to an absolute
+// one, and the two spellings of one directory would be two keys of the cycle and alias tests.
 func walkHomeDir(label, dir string, info fs.FileInfo) *snapshotWalk {
 	w := &snapshotWalk{walked: map[string]string{}}
 	if info.Mode()&os.ModeSymlink != 0 {
@@ -175,7 +177,17 @@ func walkHomeDir(label, dir string, info fs.FileInfo) *snapshotWalk {
 		}
 		w.add(line)
 	}
-	root, err := filepath.EvalSymlinks(dir)
+	abs := dir
+	if !filepath.IsAbs(dir) {
+		// Prefixed, not filepath.Abs: Abs cleans the path and would fold a ".." after a link lexically (see above).
+		wd, err := os.Getwd()
+		if err != nil {
+			w.fail(label, err)
+			return w
+		}
+		abs = wd + string(filepath.Separator) + dir
+	}
+	root, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		w.fail(label, err)
 		return w
@@ -210,8 +222,8 @@ func (w *snapshotWalk) stop(name, what string) {
 	}
 }
 
-// entry records the path named name at depth directories below the root. path is physical: names are joined below a
-// directory the walk resolved, and a link is followed by os.Stat, never by joining its target. ancestors are the real
+// entry records the path named name at depth directories below the root. path is absolute and physical: names are joined
+// below a directory the walk resolved, and a link is followed by os.Stat, never by joining its target. ancestors are the real
 // directories that contain path on this walk, the cycle test of a link.
 func (w *snapshotWalk) entry(name, path string, ancestors []string, depth int) {
 	if w.stopped {
@@ -257,7 +269,9 @@ func (w *snapshotWalk) entry(name, path string, ancestors []string, depth int) {
 // link records a link found below a watched directory and, when it names a directory, walks that directory. A cycle is a
 // directory the link's own ancestors already contain; an alias is a directory walked earlier, through another link or as a
 // plain directory. A link to a regular file is read through the link; a link to anything else (a FIFO, a device, a socket) is
-// recorded with the target's mode and never opened, since opening it could block or read without end.
+// recorded with the target's mode and never opened, since opening it could block or read without end. A followed target's
+// mode is part of its link's line, "(target <mode>)", since the target can lie outside every watched directory and no other
+// line records it.
 func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth int) {
 	st, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -278,6 +292,7 @@ func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth i
 			w.add(line + " (target " + st.Mode().String() + ", not read)")
 			return
 		}
+		line += " (target " + st.Mode().String() + ")"
 		if sum, ok := w.digest(line, real, st.Size()); ok {
 			w.add(line + " sha256:" + sum)
 		}
@@ -291,7 +306,7 @@ func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth i
 		w.add(line + " (alias of " + first + ")")
 		return
 	}
-	w.add(line)
+	w.add(line + " (target " + st.Mode().String() + ")")
 	w.walked[real] = name
 	w.children(name, real, append(slices.Clip(ancestors), real), depth)
 }
