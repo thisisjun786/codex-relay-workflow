@@ -154,21 +154,58 @@ func TestSweep1131DuplicateRowsAreWrittenByIdentity(t *testing.T) {
 		"INSERT INTO jobs VALUES ('memory_stage1','a','error',0,9,'capacity')",
 		"INSERT INTO jobs VALUES ('memory_stage1','a','error',0,9,'capacity')",
 		"INSERT INTO jobs VALUES ('memory_stage1','b','error',0,9,'capacity')")
-	if r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true, Retries: requeueNumber(0.5)}); r.Applied || r.Changed != 0 {
-		t.Fatalf("a refused allowance counted rows: %+v", r)
-	}
-	r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true, Retries: requeueNumber(2)})
-	if !r.Applied || len(r.Selected) != 3 || r.Changed != 3 {
+	// One row of the two that share a kind and key is selected, and that row alone is written.
+	r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true, Retries: requeueNumber(2), Limit: requeueNumber(1)})
+	if !r.Applied || len(r.Selected) != 1 || r.Changed != 1 {
 		t.Fatalf("%+v", r)
 	}
+	if n := countRows(requeueTestRows(t, home), "retry_remaining", float64(2)); n != 1 {
+		t.Fatalf("one selected row, %d rows rewritten", n)
+	}
+	r = RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true, Retries: requeueNumber(2)})
+	if !r.Applied || len(r.Selected) != 2 || r.Changed != 2 {
+		t.Fatalf("%+v", r)
+	}
+	if n := countRows(requeueTestRows(t, home), "retry_remaining", float64(2)); n != 3 {
+		t.Fatalf("the report says %v, the store holds %d rewritten rows", r.Changed, n)
+	}
+}
+
+func countRows(rows []map[string]any, column string, value any) int {
 	n := 0
-	for _, row := range requeueTestRows(t, home) {
-		if row["retry_remaining"] == float64(2) {
+	for _, row := range rows {
+		if row[column] == value {
 			n++
 		}
 	}
-	if n != 3 {
-		t.Fatalf("the report says %v, the store holds %d rewritten rows", r.Changed, n)
+	return n
+}
+
+// :624 -- a table without rowids is written by its primary key: a limit of one changes one row though two share a kind and key.
+func TestSweep1131WithoutRowidTableIsWrittenByItsPrimaryKey(t *testing.T) {
+	const schema = "CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT, job_key TEXT, status TEXT, retry_remaining INTEGER, retry_at INTEGER, last_error TEXT) WITHOUT ROWID"
+	home := requeueTestHome(t, schema,
+		"INSERT INTO jobs VALUES ('one','memory_stage1','a','error',0,9,'capacity')",
+		"INSERT INTO jobs VALUES ('two','memory_stage1','a','error',0,9,'capacity')")
+	r := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: true, Retries: requeueNumber(3), Limit: requeueNumber(1)})
+	if !r.Applied || len(r.Selected) != 1 || r.Changed != 1 {
+		t.Fatalf("%+v", r)
+	}
+	rows := requeueTestRows(t, home)
+	if n := countRows(rows, "retry_remaining", float64(3)); n != 1 {
+		t.Fatalf("one selected row, %d rows rewritten: %v", n, rows)
+	}
+	if n := countRows(rows, "retry_at", float64(9)); n != 1 {
+		t.Fatalf("the row that was not selected lost its retry_at: %v", rows)
+	}
+	// Without a primary key to name a row there is nothing to write by: the apply is refused and the store stays as it is.
+	keyless := requeueTestHome(t, "CREATE VIEW jobs AS SELECT 'memory_stage1' AS kind, 'a' AS job_key, 'error' AS status, 0 AS retry_remaining, NULL AS retry_at, 'capacity' AS last_error")
+	before := memoryStatusFiles(t, keyless)
+	if r := RequeueExhaustedMemoryJobs(keyless, RequeueOptions{Apply: true}); r.Applied || r.Changed != 0 {
+		t.Fatalf("%+v", r)
+	}
+	if !reflect.DeepEqual(memoryStatusFiles(t, keyless), before) {
+		t.Fatal("a refused apply wrote the store")
 	}
 }
 

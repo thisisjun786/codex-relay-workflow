@@ -2,6 +2,7 @@
 package recall
 
 import (
+	"cmp"
 	"math"
 	"os"
 	"slices"
@@ -18,6 +19,8 @@ type RequeueCandidate struct {
 	// (known-defects.md :624).
 	rowid    int64
 	hasRowid bool
+	// key holds the values of the primary key columns of a table without rowids, in the order of RequeueResult.keyColumns.
+	key []any
 }
 
 type RequeueOptions struct {
@@ -40,6 +43,10 @@ type RequeueResult struct {
 
 	// selectedFile is the store file as it was when the rows were selected; the write opens the same file or none (known-defects.md :623).
 	selectedFile os.FileInfo
+	// keyColumns are the primary key columns that name a row of a table without rowids; noIdentity is set when the rows have neither a
+	// rowid nor a primary key, so that no write can name one row (known-defects.md :624).
+	keyColumns []string
+	noIdentity bool
 }
 
 // TransientCauses returns the upstream set without mutable package state.
@@ -135,12 +142,32 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 	const where = " FROM jobs WHERE status = 'error' AND retry_remaining = 0 ORDER BY kind, job_key"
 	withRowid := true
 	rows, err := read("SELECT rowid AS rid, typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error" + where + ", rowid")
+	var keyColumns []string
 	if err != nil {
-		// A table without rowids is addressed by kind and key.
+		// A table without rowids is addressed by its primary key: two rows can share a kind and a key, and only the key names the one
+		// that was selected.
 		withRowid = false
-		if rows, err = read("SELECT typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error" + where); err != nil {
+		type pkColumn struct {
+			order float64
+			name  string
+		}
+		var pk []pkColumn
+		for _, column := range columns {
+			if order, ok := column["pk"].(float64); ok && order > 0 {
+				pk = append(pk, pkColumn{order, memoryStatusString(column["name"])})
+			}
+		}
+		slices.SortFunc(pk, func(a, b pkColumn) int { return cmp.Compare(a.order, b.order) })
+		query := "SELECT typeof(kind) AS kt, typeof(job_key) AS jt, kind, job_key, last_error"
+		for i, c := range pk {
+			quoted := `"` + strings.ReplaceAll(c.name, `"`, `""`) + `"`
+			query += ", " + quoted + " AS pk" + strconv.Itoa(i) + ", typeof(" + quoted + ") AS pt" + strconv.Itoa(i)
+			keyColumns = append(keyColumns, quoted)
+		}
+		if rows, err = read(query + where); err != nil {
 			return r, err
 		}
+		r.keyColumns, r.noIdentity = keyColumns, len(pk) == 0
 	}
 	for _, row := range rows {
 		// A kind or key that is not text (NULL, a number, a BLOB) cannot be addressed by the text the write binds; it is left alone
@@ -164,6 +191,21 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 					c.rowid, c.hasRowid = int64(id), true
 				}
 			}
+			for i := range keyColumns {
+				// A key column is bound back as it was read; a value of another type than text or integer cannot be bound back exactly.
+				value, typ := row["pk"+strconv.Itoa(i)], row["pt"+strconv.Itoa(i)]
+				if number, ok := value.(float64); ok && typ == "integer" {
+					value = int64(number)
+				} else if _, ok := value.(string); !ok || typ != "text" {
+					addRequeueCause(&r.SkippedByCause, "untyped-key")
+					c.key = nil
+					break
+				}
+				c.key = append(c.key, value)
+			}
+			if len(keyColumns) != 0 && len(c.key) != len(keyColumns) {
+				continue
+			}
 			r.Selected = append(r.Selected, c)
 		} else {
 			addRequeueCause(&r.SkippedByCause, cause)
@@ -179,6 +221,10 @@ func readMemoryRequeue(db *RwDb, path string, retries float64, opts RequeueOptio
 func requeueIsConsolidation(kind string) bool { return strings.Contains(Lower(kind), "consolidat") }
 
 func applyMemoryRequeue(r RequeueResult) RequeueResult {
+	if r.noIdentity {
+		r.State, r.Detail = MemoryStatusUnavailable, "the jobs table has neither rowids nor a primary key to name a row by; nothing was changed"
+		return r
+	}
 	// The store is opened for writing without CREATE, and it must be the file the rows were selected from: a store removed or replaced
 	// since then is reported, not recreated empty or written blindly (known-defects.md :623).
 	db, err := openDbReadWriteExisting(*r.StorePath)
@@ -225,11 +271,20 @@ func writeMemoryRequeue(db *RwDb, r RequeueResult) (changed float64, began bool,
 	if err != nil {
 		byRow = nil // a table without rowids
 	}
+	var byPK *Stmt
+	if len(r.keyColumns) != 0 {
+		if byPK, err = db.Prepare(set + "kind = ? AND job_key = ? AND " + strings.Join(r.keyColumns, " = ? AND ") + " = ?"); err != nil {
+			return 0, true, err
+		}
+	}
 	for _, c := range r.Selected {
 		var info RunResult
-		if c.hasRowid && byRow != nil {
+		switch {
+		case c.hasRowid && byRow != nil:
 			info, err = byRow.Run(r.Retries, c.rowid, c.Kind, c.JobKey)
-		} else {
+		case byPK != nil && len(c.key) == len(r.keyColumns):
+			info, err = byPK.Run(append([]any{r.Retries, c.Kind, c.JobKey}, c.key...)...)
+		default:
 			info, err = byKey.Run(r.Retries, c.Kind, c.JobKey)
 		}
 		if err != nil {
