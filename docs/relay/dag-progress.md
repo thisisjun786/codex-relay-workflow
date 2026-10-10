@@ -247,7 +247,7 @@ A node entry has the node's `node_id`, `issue_key`, `kind`, `title`, and `stage`
 ### Evidence and activity are two things
 
 Both entries read the rows of every execution the plan ever bound to the node (`dag_node_executions`), and each is the newest of its sources. An entry carries `label`, `relationship_id`,
-`execution_generation` (null for a row the store cannot tie to one generation: a row keyed by the turn or the task alone, or a check of a head no acceptance or refresh names; a past observation is never given the generation the relationship stands on now), `event_id` (null for a row that is not about an event), `ref` (the stored identity of the row itself: a turn, a check, an
+`execution_generation` (null for a row the store cannot tie to one generation: a row keyed by the task alone, an observation of a turn that neither its stored event nor a single admission ties to one generation, a revalidation whose event the store does not hold, or a check of a head no acceptance or refresh names; a past observation is never given the generation the relationship stands on now), `event_id` (null for a row that is not about an event), `ref` (the stored identity of the row itself: a turn, a check, an
 acceptance, a record digest, the child's thread), `change` (what the row says: an outcome, a verdict, a status), `recorded_at` (the time the store recorded) and `source`.
 
 | Label | `source` | Table | `recorded_at` |
@@ -266,7 +266,7 @@ acceptance, a record digest, the child's thread), `change` (what the row says: a
 | `activity` | `turn_observation` | `observations` | `observed_at` |
 | `activity` | `child_lifecycle` | `recipient_lifecycle` of the child's thread | `observed_at` |
 
-A `base_refresh` entry carries the refresh's own relationship, generation, event and `ref` (the refresh id), and `change` is the head the acceptance then stood on. A `merge_check` entry carries the identity of
+A `base_refresh` entry carries the refresh's own relationship, generation, event and `ref` (the refresh id), and `change` is the head the acceptance then stood on. A `revalidation` entry carries the relationship and generation of the event it was ruled on (after a base refresh, the refreshed generation), not those of the acceptance. A `merge_check` entry carries the identity of
 the head the check judged (`dag_merge_checks.head_sha`): the acceptance's generation and event when that is the accepted head, the refresh's when it is the head of a valid base refresh, and no generation
 and no event for a head neither names.
 

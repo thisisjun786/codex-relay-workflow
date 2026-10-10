@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // activity is one query of a plan in its own read transaction, the way dag-activity asks it.
@@ -575,5 +576,79 @@ func TestActivityMergeCheckNamesTheIdentityOfTheHeadItJudged(t *testing.T) {
 	e = evidence()
 	if e == nil || e.Ref != "mc-3" || e.HasGeneration || e.EventID != "" || e.RelationshipID != a.Acceptance.RelationshipID {
 		t.Fatalf("a check of a head neither the acceptance nor a valid refresh names = %+v, want no generation and no event", e)
+	}
+}
+
+// Verification round 2, finding 1: a revalidation after a base refresh records the event of the refreshed generation, so its entry names that event's relationship and generation, not the generation
+// the acceptance was first recorded under.
+func TestActivityRevalidationNamesTheGenerationOfItsEvent(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	other := dig("the second edition of I's criteria after the refresh")
+	s.rvReregister("g", "I", "g-r3", s.rid, other, nil)
+	s.rvRule(s.rid, "verified", other, rvVerified())
+	res, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(s.sched, context.Background(), "g", "I", s.head)})
+	if err != nil || !res.Revalidated {
+		t.Fatalf("revalidation = %+v %v", res, err)
+	}
+	// The revalidation is the newest durable verification change of the node.
+	s.exec("UPDATE dag_acceptance_revalidations SET revalidated_at = '2099-01-01T00:00:00Z' WHERE acceptance_id = ?", res.AcceptanceID)
+	e := s.activity("g").node("I").Evidence
+	if e == nil || e.Source != EvidenceRevalidation {
+		t.Fatalf("evidence = %+v, want the revalidation", e)
+	}
+	var rid string
+	var generation, accepted int64
+	if err := s.s.DB.QueryRow("SELECT relationship_id, execution_generation FROM events WHERE event_id = ?", e.EventID).Scan(&rid, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.s.DB.QueryRow("SELECT execution_generation FROM dag_acceptances WHERE acceptance_id = ?", res.AcceptanceID).Scan(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if generation == accepted {
+		t.Fatalf("the fixture revalidated on the acceptance's own generation %d; it must revalidate on the refreshed one", accepted)
+	}
+	if !e.HasGeneration || e.Generation != generation || e.RelationshipID != rid {
+		t.Errorf("the revalidation names event %s (relationship %s, generation %d) but prints %+v", e.EventID, rid, generation, e)
+	}
+	// A revalidation whose event the store does not hold cannot be tied to a generation.
+	s.exec("UPDATE dag_acceptance_revalidations SET event_id = 'evt-not-stored' WHERE acceptance_id = ?", res.AcceptanceID)
+	if e := s.activity("g").node("I").Evidence; e == nil || e.Source != EvidenceRevalidation || e.HasGeneration {
+		t.Errorf("a revalidation of an unstored event = %+v, want no generation", e)
+	}
+}
+
+// Verification round 2, finding 2: a turn may be admitted under more than one generation of a relationship; an observation of that turn names a generation only when its event or a single admission
+// ties it to one.
+func TestActivityTurnObservationNamesAGenerationOnlyWhenOneTiesIt(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	forkJoinPlan(f, "p1")
+	rid := f.startNode("p1", "design")
+	f.addCorrection("p1", "design", rid, 2, nil, true)
+	reg := &registry.Registry{Store: f.s}
+	if err := reg.AdmitExplicitly(context.Background(), rid, 1, "turn-shared", "parent", "explicit shared turn"); err != nil {
+		t.Fatalf("admit generation 1: %v", err)
+	}
+	f.exec("INSERT INTO observations (thread_id, turn_id, terminal_status, relationship_id, classification, observed_at) VALUES ('child-design', 'turn-shared', 'completed', ?, 'unreported', '2099-01-01T00:00:00Z')", rid)
+	e := f.activity("p1").node("design").Activity
+	if e == nil || e.Source != ActivityTurnObservation {
+		t.Fatalf("activity = %+v, want the turn observation", e)
+	}
+	if !e.HasGeneration || e.Generation != 1 {
+		t.Errorf("a turn admitted under generation 1 alone prints %+v, want generation 1", e)
+	}
+	if err := reg.AdmitExplicitly(context.Background(), rid, 2, "turn-shared", "parent", "explicit shared turn"); err != nil {
+		t.Fatalf("admit generation 2: %v", err)
+	}
+	if e := f.activity("p1").node("design").Activity; e == nil || e.Source != ActivityTurnObservation || e.HasGeneration {
+		t.Errorf("a turn admitted under generations 1 and 2 prints %+v, want no generation", e)
+	}
+	if got := nodeOfDecoded(t, f.activity("p1").decoded(t), "design")["activity"].(map[string]any)["execution_generation"]; got != nil {
+		t.Errorf("the printed generation of the ambiguous turn observation is %v, want null", got)
 	}
 }
