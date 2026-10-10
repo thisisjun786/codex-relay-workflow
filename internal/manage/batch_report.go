@@ -96,6 +96,14 @@ func batchParseDigest(raw []byte) (BatchDigest, error) {
 			return d, fmt.Errorf("%s %q is not an RFC 3339 time", name, value)
 		}
 	}
+	if d.Selected == nil {
+		return d, errors.New(`the digest has no "selected" list (write [] when nothing was selected)`)
+	}
+	for i, key := range d.Selected {
+		if strings.TrimSpace(key) == "" {
+			return d, fmt.Errorf("selected entry %d is blank", i+1)
+		}
+	}
 	for i, item := range d.Items {
 		if strings.TrimSpace(item.Issue) == "" {
 			return d, fmt.Errorf("item %d has no issue key", i+1)
@@ -108,9 +116,15 @@ func batchParseDigest(raw []byte) (BatchDigest, error) {
 // only the digest: an item is placed by what the digest records, and what the record does not show is
 // listed as unverified rather than reported as done.
 func BatchReport(d BatchDigest, checkedAt time.Time) string {
+	// The selected list, each issue once. An empty or missing list selects nothing: every item is then
+	// outside it.
 	selected := map[string]bool{}
+	var selectedKeys []string
 	for _, key := range d.Selected {
-		selected[key] = true
+		if !selected[key] {
+			selected[key] = true
+			selectedKeys = append(selectedKeys, key)
+		}
 	}
 	var integrated, carried, decision, unverified []string
 	counts := map[string]int{}
@@ -128,7 +142,7 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 		}
 		seen[item.Issue] = true
 		reason := strings.TrimSpace(item.Reason)
-		if len(d.Selected) > 0 && !selected[item.Issue] {
+		if !selected[item.Issue] {
 			decision = append(decision, fmt.Sprintf("%s: 선택 목록 밖 이슈가 실행 기록에 있다 (결과 %q). 해제 경위를 확인해야 한다", name, item.Outcome))
 			counts[batchOutcomeDecision]++
 			continue
@@ -166,18 +180,14 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 			unverified = append(unverified, fmt.Sprintf("%s: 알 수 없는 결과 %q (분류하지 않음)", item.Issue, item.Outcome))
 		}
 	}
-	for _, key := range d.Selected {
+	for _, key := range selectedKeys {
 		if !recorded[key] {
 			unverified = append(unverified, fmt.Sprintf("%s: 선택됐으나 실행 기록 없음", key))
 		}
 	}
 
 	var b strings.Builder
-	total := len(d.Selected)
-	scope := fmt.Sprintf("선택 %d건 중", total)
-	if total == 0 {
-		scope = fmt.Sprintf("기록 %d건 중", len(d.Items))
-	}
+	scope := fmt.Sprintf("선택 %d건 중", len(selectedKeys))
 	fmt.Fprintf(&b, "# 밤 배치 아침 보고: %s\n\n", strings.TrimSpace(d.Label))
 	fmt.Fprintf(&b, "**결론**: %s 통합 %d건, 취소 %d건, 이월 %d건, Jun 결정 필요 %d건, 미확인 %d건.", scope,
 		counts[batchOutcomeIntegrated], counts[batchOutcomeCancelled], counts[batchOutcomeCarried], counts[batchOutcomeDecision], len(unverified))

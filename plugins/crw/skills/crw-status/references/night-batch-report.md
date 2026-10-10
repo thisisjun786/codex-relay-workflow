@@ -31,15 +31,17 @@ An empty section says `없음`; it is never left out.
   `이유 기록 없음`, and is listed as unverified.
 * An item outside the plan's selected list is not reported as integrated whatever its outcome. It goes
   to Jun's decision section, because a release outside the batch's list is the thing the batch must not do.
+  An empty `selected` list selects nothing, so every item is outside it. A digest without a `selected`
+  list is refused rather than read as selecting everything.
 * A selected issue with no item in the digest is unverified (`실행 기록 없음`). A repeated issue is
-  counted once; the repeat is unverified. An outcome the report does not know is unverified.
+  counted once; the repeat is unverified. A key repeated in `selected` is one selected issue. An outcome the report does not know is unverified.
 * A provider whose quota or capacity the run could not observe is shown as `관측 안 됨`, never as
   having room. A digest with no provider record says so.
 
 ## The digest
 
-The run writes one JSON object, schema `crw-batch-digest/1`: `label`, `selected` (the issue keys of the
-plan), `started_at`, `finished_at` and `deadline` (RFC 3339, each optional), `stopped` (why the run
+The run writes one JSON object, schema `crw-batch-digest/1`: `label`, `selected` (required: the issue keys of the
+plan, `[]` when none), `started_at`, `finished_at` and `deadline` (RFC 3339, each optional), `stopped` (why the run
 ended: finished, deadline, budget, stopped), `providers` (`name`, `observed`, `detail`) and `items`
 (`issue`, `title`, `outcome`, `reason`, `evidence`). `outcome` is `integrated`, `cancelled`, `carried` or
 `needs_decision`. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func batchDigest(items string) string {
@@ -129,15 +130,41 @@ func TestBatchReportDoesNotTrustWhatTheDigestDoesNotShow(t *testing.T) {
 	}
 }
 
+// An empty selected list means nothing was selected: every recorded item is then outside the list and
+// none is reported as integrated. A repeated key in the list is one selected issue.
+func TestBatchReportChecksTheSelectedListWhenItIsEmptyAndCountsRepeatsOnce(t *testing.T) {
+	item := `{"issue":"CRW-9","title":"outside","outcome":"integrated","evidence":"merged abc"}`
+	empty := BatchReport(BatchDigest{Schema: batchDigestSchema, Label: "night", Selected: []string{}, Items: []BatchItem{{Issue: "CRW-9", Title: "outside", Outcome: batchOutcomeIntegrated, Evidence: "merged abc"}}}, time.Time{})
+	nilList := BatchReport(BatchDigest{Schema: batchDigestSchema, Label: "night", Items: []BatchItem{{Issue: "CRW-9", Title: "outside", Outcome: batchOutcomeIntegrated, Evidence: "merged abc"}}}, time.Time{})
+	for name, report := range map[string]string{"empty list": empty, "nil list": nilList} {
+		if !strings.Contains(report, "선택 0건 중 통합 0건") || !strings.Contains(report, "Jun 결정 필요 1건") {
+			t.Errorf("%s: an item outside an empty selection is not an integration (%s): %s", name, item, report)
+		}
+		if i := strings.Index(report, batchHeadingIntegrated); i < 0 || strings.Contains(report[i:strings.Index(report, batchHeadingCarried)], "CRW-9") {
+			t.Errorf("%s: CRW-9 listed under integrated: %s", name, report)
+		}
+		if !strings.Contains(report, "선택 목록 밖") {
+			t.Errorf("%s: no outside-the-list mention: %s", name, report)
+		}
+	}
+	dup := BatchReport(BatchDigest{Schema: batchDigestSchema, Label: "night", Selected: []string{"CRW-1", "CRW-1"}}, time.Time{})
+	if !strings.Contains(dup, "선택 1건 중") || !strings.Contains(dup, "미확인 1건") || strings.Count(dup, "CRW-1: 선택됐으나 실행 기록 없음") != 1 {
+		t.Errorf("a repeated selected key is one selected issue: %s", dup)
+	}
+}
+
 func TestBatchReportRefusesAnUnusableDigest(t *testing.T) {
 	state := auditListHome(t)
 	e, _, _ := auditTestEnv(t)
 	for name, body := range map[string]string{
-		"not json":     "{",
-		"wrong schema": `{"schema":"other/1","label":"night","items":[]}`,
-		"no label":     `{"schema":"crw-batch-digest/1","items":[]}`,
-		"bad time":     `{"schema":"crw-batch-digest/1","label":"night","finished_at":"yesterday","items":[]}`,
-		"item no key":  `{"schema":"crw-batch-digest/1","label":"night","items":[{"title":"t","outcome":"integrated"}]}`,
+		"not json":           "{",
+		"wrong schema":       `{"schema":"other/1","label":"night","items":[]}`,
+		"no label":           `{"schema":"crw-batch-digest/1","items":[]}`,
+		"bad time":           `{"schema":"crw-batch-digest/1","label":"night","selected":[],"finished_at":"yesterday","items":[]}`,
+		"item no key":        `{"schema":"crw-batch-digest/1","label":"night","selected":[],"items":[{"title":"t","outcome":"integrated"}]}`,
+		"no selected":        `{"schema":"crw-batch-digest/1","label":"night","items":[]}`,
+		"null selected":      `{"schema":"crw-batch-digest/1","label":"night","selected":null,"items":[]}`,
+		"blank selected key": `{"schema":"crw-batch-digest/1","label":"night","selected":["CRW-1"," "],"items":[]}`,
 	} {
 		file := filepath.Join(t.TempDir(), "d.json")
 		if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
@@ -158,7 +185,7 @@ func TestBatchReportRefusesAnUnusableDigest(t *testing.T) {
 func TestBatchReportFileNameCannotEscapeTheReportsDirectory(t *testing.T) {
 	state := auditListHome(t)
 	e, _, _ := auditTestEnv(t)
-	body := `{"schema":"crw-batch-digest/1","label":"../../etc/x y","finished_at":"2026-10-12T06:40:00+09:00","items":[]}`
+	body := `{"schema":"crw-batch-digest/1","label":"../../etc/x y","selected":[],"finished_at":"2026-10-12T06:40:00+09:00","items":[]}`
 	file := filepath.Join(t.TempDir(), "d.json")
 	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
