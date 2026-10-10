@@ -43,8 +43,7 @@ func TestClassifyPathSets(t *testing.T) {
 	low := map[string]string{
 		"docs/relay/risk-tier.md":                             "docs_prose",
 		"docs/port-cxc/known-defects/CRW-1041.md":             "docs_prose",
-		"internal/skill/testdata/issue_size_calibration.json": "testdata_data",
-		"internal/affordance/testdata/cases.txt":              "testdata_data",
+		"internal/skill/search/testdata/ranking.json":         "testdata_data",
 	}
 	for p, rule := range low {
 		if v := Classify(p); v.Tier != Low || v.Rule != rule {
@@ -123,7 +122,9 @@ func TestClassifyRegionByKind(t *testing.T) {
 	}{
 		{Region{Path: "docs", Kind: "tree"}, Low},
 		{Region{Path: "docs/relay", Kind: "tree"}, Low},
-		{Region{Path: "internal/skill/testdata", Kind: "tree"}, Low},
+		{Region{Path: "internal/skill/search/testdata", Kind: "tree"}, Low},
+		{Region{Path: "internal/skill/testdata", Kind: "tree"}, High},
+		{Region{Path: "internal/role/testdata", Kind: "tree"}, High},
 		{Region{Path: "docs/crw-run/dispatch-cases/recorded", Kind: "tree"}, High},
 		{Region{Path: "internal/skill/testdata/golden", Kind: "tree"}, High},
 		{Region{Path: "internal/relay", Kind: "tree"}, High},
@@ -210,10 +211,10 @@ func TestDiffThatLeavesDeclaredRegionsIsReclassified(t *testing.T) {
 		t.Fatalf("reclassified %v outside %v", r.Reclassified, r.OutsideRegions)
 	}
 	// An outside path that is itself low leaves the regions without changing the result.
-	in = input(edit("docs/a.md"), edit("internal/skill/testdata/cases.json"))
+	in = input(edit("docs/a.md"), edit("internal/skill/search/testdata/ranking.json"))
 	in.Regions = []Region{{Path: "docs", Kind: "tree"}}
 	r = must(t, in)
-	if r.Tier != Low || r.Reclassified || !reflect.DeepEqual(r.OutsideRegions, []string{"internal/skill/testdata/cases.json"}) {
+	if r.Tier != Low || r.Reclassified || !reflect.DeepEqual(r.OutsideRegions, []string{"internal/skill/search/testdata/ranking.json"}) {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -578,9 +579,12 @@ func TestHighTreesBeatTheLowAllowlist(t *testing.T) {
 			t.Errorf("file region %q = %+v, want high", p+"/a.json", v)
 		}
 	}
-	// a testdata directory elsewhere stays low
-	if v := Classify("internal/skill/testdata/cases.json"); v.Tier != Low {
-		t.Errorf("testdata outside the high trees = %+v", v)
+	// a listed testdata tree elsewhere stays low, an unlisted one is high
+	if v := Classify("internal/skill/search/testdata/ranking.json"); v.Tier != Low {
+		t.Errorf("listed testdata outside the high trees = %+v", v)
+	}
+	if v := Classify("internal/skill/testdata/cases.json"); v.Tier != High || v.Rule != RuleTestdataUnlisted {
+		t.Errorf("unlisted testdata = %+v", v)
 	}
 }
 

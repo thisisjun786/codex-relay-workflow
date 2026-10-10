@@ -33,23 +33,28 @@ type Verdict struct {
 
 // The rules a verdict names.
 const (
-	RuleDocsProse       = "docs_prose"
-	RuleDocsProseTree   = "docs_prose_tree"
-	RuleTestdataData    = "testdata_data"
-	RuleTestdataTree    = "testdata_tree"
-	RuleSharedContract  = "shared_contract"
-	RuleExecutableText  = "executable_instruction"
-	RuleCorpusOrFixture = "corpus_or_fixture"
-	RuleHighTree        = "high_tree"
-	RuleNotOnAllowlist  = "not_on_allowlist"
-	RuleInvalidPath     = "invalid_path"
-	RuleTypeChange      = "type_change"
-	RuleSecurityCorpus  = "security_corpus"
+	RuleDocsProse        = "docs_prose"
+	RuleDocsProseTree    = "docs_prose_tree"
+	RuleTestdataData     = "testdata_data"
+	RuleTestdataTree     = "testdata_tree"
+	RuleTestdataUnlisted = "testdata_not_listed"
+	RuleSharedContract   = "shared_contract"
+	RuleExecutableText   = "executable_instruction"
+	RuleCorpusOrFixture  = "corpus_or_fixture"
+	RuleHighTree         = "high_tree"
+	RuleNotOnAllowlist   = "not_on_allowlist"
+	RuleInvalidPath      = "invalid_path"
+	RuleTypeChange       = "type_change"
+	RuleSecurityCorpus   = "security_corpus"
 )
 
-// The allowlist is the whole of "low": documentation prose under docs/ (Markdown only), and plain data
-// files under a testdata directory. A path counts as low only when no name on it marks the file as a
-// corpus, a fixture, a golden or a security reader's input. The "sweeps and small edits outside high
+// The allowlist is the whole of "low": documentation prose under docs/ (Markdown only), and the plain data
+// files of the testdata trees listed in lowTestdata. A testdata file is not low for being under a testdata
+// directory with a data extension: tests replay such files as the expected answers of a security reader
+// (internal/role/testdata/dispatch/safety.json, internal/pabcd/cli/testdata/boundary.json) or run their
+// strings as commands (internal/pabcd/source/session/testdata/scenarios.json), and neither the name nor the
+// extension says which. A testdata file outside the list is high, and a listed one is still high when a name
+// on its path marks it as a corpus, a fixture, a golden, an oracle or a security reader's input. The "sweeps and small edits outside high
 // paths" of the decided answer cannot be told from a path, so they are not on it: such a change is high
 // until its tree is added here, one reviewed line at a time.
 var (
@@ -57,7 +62,12 @@ var (
 	reservedDocs = []string{"golden", "fixture", "corpus", "oracle", "recorded", "security"}
 	// reservedTestdata are name parts that take a testdata file out of the allowlist.
 	reservedTestdata = []string{"golden", "fixture", "corpus", "oracle", "recorded", "security", "replay", "hook", "shell"}
-	testdataExts     = map[string]bool{".json": true, ".jsonl": true, ".ndjson": true, ".txt": true, ".md": true, ".toml": true, ".yaml": true, ".yml": true, ".csv": true}
+	// lowTestdata are the testdata trees (or single files) whose files are plain data that the tests of
+	// their package feed to a pure function: the skill search ranking inputs. No test of those packages replays them against a gate or a reader, or runs them as a command. A
+	// tree is added one reviewed line at a time, after reading how its tests use it; every other testdata
+	// file is high.
+	lowTestdata  = []string{"internal/skill/search/testdata"}
+	testdataExts = map[string]bool{".json": true, ".jsonl": true, ".ndjson": true, ".txt": true, ".md": true, ".toml": true, ".yaml": true, ".yml": true, ".csv": true}
 	// highTrees are the trees the decided answer names. Everything under them is high, whatever low rule
 	// its file would match, so they are checked before the allowlist.
 	highTrees = []string{"internal/relay", "internal/runtime", "internal/hookswitch", "internal/policystore"}
@@ -179,13 +189,16 @@ func Classify(p string) Verdict {
 		if reserved(p, reservedTestdata) {
 			return Verdict{High, RuleCorpusOrFixture}
 		}
+		if !withinAny(p, lowTestdata) {
+			return Verdict{High, RuleTestdataUnlisted}
+		}
 		return Verdict{Low, RuleTestdataData}
 	}
 	return defaultHigh()
 }
 
 // classifyTree is the tier of a declared tree region. A tree is low only when it lies in the docs prose
-// area or in a testdata directory; what is really edited under it is judged from the changed paths.
+// area or inside a listed testdata tree (lowTestdata); what is really edited under it is judged from the changed paths.
 func classifyTree(p string) Verdict {
 	if !validPath(p) {
 		return Verdict{High, RuleInvalidPath}
@@ -203,6 +216,9 @@ func classifyTree(p string) Verdict {
 	case hasSegment(segments, "testdata"):
 		if reserved(p, reservedTestdata) {
 			return Verdict{High, RuleCorpusOrFixture}
+		}
+		if !withinAny(p, lowTestdata) {
+			return Verdict{High, RuleTestdataUnlisted}
 		}
 		return Verdict{Low, RuleTestdataTree}
 	}
