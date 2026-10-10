@@ -14,12 +14,16 @@ func TestCall_retires_stalled_transmit_inside_its_bound(t *testing.T) {
 	// Given: a completed handshake and a write which cannot drain until cancelled.
 	host := fakehost.Start(t)
 	entered := make(chan struct{})
-	bounds := PhaseBounds{Establish: time.Second, Transmit: 40 * time.Millisecond, Ack: time.Second}
+	// The handshake runs under generous bounds: the short transmit bound is the subject of the call
+	// below, and the two handshake writes before it are setup a loaded host can stretch (CRW-1161).
+	bounds := PhaseBounds{Establish: 30 * time.Second, Transmit: 30 * time.Second, Ack: 30 * time.Second}
 	client := New(host.SocketPath, bounds)
 	defer client.Close()
 	if err := client.connect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	bounds.Transmit = 40 * time.Millisecond
+	client.bounds = bounds
 	client.mu.Lock()
 	old := client.conn
 	client.mu.Unlock()

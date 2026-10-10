@@ -25,6 +25,7 @@ import (
 // Python's own functions' over the same str: the transcript scan (stopadapter.event_identity),
 // the claim (stopadapter.claim_event) and the journal row (stopadapter.journal).
 func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
+	loadProofDeadlines(t) // the scan reads a real transcript; its production 750 ms is not the subject
 	root := t.TempDir()
 	journal := filepath.Join(root, "j\xff") // a directory whose name is not UTF-8
 	if err := os.MkdirAll(filepath.Join(journal, "20260930"), 0o700); err != nil {

@@ -34,8 +34,11 @@ func TestCreatePathAckBoundIsSixtySeconds(t *testing.T) {
 func slowCreateBridge(t *testing.T, ack time.Duration) (*Bridge, *fakehost.Server, *appserver.Client) {
 	t.Helper()
 	host := fakehost.Start(t)
-	client := appserver.New(host.SocketPath, appserver.PhaseBounds{Establish: time.Second, Transmit: time.Second, Ack: ack})
-	if err := client.Connect(context.Background()); err != nil {
+	// The handshake answers later than the scaled ack bound, as it does on a loaded host.
+	host.Script("initialize", fakehost.Reply{Delay: 3 * ack})
+	client := appserver.New(host.SocketPath, appserver.PhaseBounds{Establish: 30 * time.Second, Transmit: 30 * time.Second, Ack: ack})
+	// Only the calls under test see the scaled bound; the handshake is setup and gets a generous one.
+	if err := client.Connect(appserver.WithAckBound(context.Background(), 30*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })

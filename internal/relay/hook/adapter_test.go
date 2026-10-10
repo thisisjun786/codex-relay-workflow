@@ -20,17 +20,19 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// loadProofDeadlines lengthens the hook's real absolute and guard deadlines for the in-process test
-// that follows. Its subject is not a deadline, and its guard does real store and journal work that a
-// loaded host can stretch past the production 5 s and 3.5 s (CRW-1161). The settings' timeoutSeconds
-// cannot do this: it only shortens the deadline. The tests of the deadlines keep the production ones.
-// The fake host's hang guard grows with them: a peer that reads until the adapter hangs up waits out
-// the guard's work.
+// loadProofDeadlines lengthens the hook's real absolute, guard and transcript scan deadlines for the
+// test that follows. Its subject is not a deadline, and its guard does real store and journal work
+// that a loaded host can stretch past the production 5 s and 3.5 s, as it can stretch the transcript
+// scan past 750 ms (CRW-1161). The settings' timeoutSeconds cannot do this: it only shortens the
+// deadline. The tests of the deadlines keep the production ones. The fake host's hang guard grows
+// with them: a peer that reads until the adapter hangs up waits out the guard's work.
 func loadProofDeadlines(t *testing.T) {
 	t.Helper()
-	was, wasGuard, wasPeer := absoluteDeadline, guardDeadline, fakeControlDeadline
-	absoluteDeadline, guardDeadline, fakeControlDeadline = 2*time.Minute, time.Minute, 2*time.Minute
-	t.Cleanup(func() { absoluteDeadline, guardDeadline, fakeControlDeadline = was, wasGuard, wasPeer })
+	was, wasGuard, wasPeer, wasScan := absoluteDeadline, guardDeadline, fakeControlDeadline, scanDeadline
+	absoluteDeadline, guardDeadline, fakeControlDeadline, scanDeadline = 2*time.Minute, time.Minute, 2*time.Minute, time.Minute
+	t.Cleanup(func() {
+		absoluteDeadline, guardDeadline, fakeControlDeadline, scanDeadline = was, wasGuard, wasPeer, wasScan
+	})
 }
 
 func hookHome(t *testing.T, budget float64) string {
@@ -392,6 +394,34 @@ func Test33LoadProofDeadlinesOutlastASlowGuard(t *testing.T) {
 					t.Fatalf("lengthened=%v code=%d answer=%q", lengthened, code, out.String())
 				}
 			})
+		})
+	}
+}
+
+// The load-proof deadlines include the transcript scan's: the fault and replay tests identify the
+// event through a real transcript before the guard or the claim write they test, and a scan that a
+// loaded host stretches past its production 750 ms would skip both. A scan deadline already spent
+// (the unlengthened form) refuses the identity; the lengthened form establishes it.
+func Test33LoadProofDeadlinesLengthenTheTranscriptScan(t *testing.T) {
+	for _, lengthened := range []bool{false, true} {
+		t.Run(fmt.Sprint("lengthened=", lengthened), func(t *testing.T) {
+			previous := scanDeadline
+			t.Cleanup(func() { scanDeadline = previous }) // runs after loadProofDeadlines' own restore
+			scanDeadline = time.Nanosecond
+			if lengthened {
+				loadProofDeadlines(t)
+			}
+			home := t.TempDir()
+			path := filepath.Join(home, "transcript.jsonl")
+			writeTest(t, path, []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}`+"\n"+`{"type":"event_msg","payload":{"type":"item_completed","turn_id":"t","thread_id":"s","item":{"type":"AgentMessage","id":"i","content":[{"type":"Text","text":"done"}]}}}`+"\n"))
+			stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "done"}, {Key: "transcript_path", Value: path}}
+			_, identity := EventIdentity(context.Background(), stop)
+			if established := identity.Get("established") == true; established != lengthened {
+				t.Fatalf("lengthened=%v identity=%v", lengthened, identity)
+			}
+			if !lengthened && identity.Get("reason") != "scan_timed_out" {
+				t.Fatal(identity)
+			}
 		})
 	}
 }

@@ -133,8 +133,9 @@ func TestCall_does_not_retry_any_method_on_ack_or_transport_failure(t *testing.T
 					reply = fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1001}}
 				}
 				host.Respond(method, reply)
-				client := appserver.New(host.SocketPath, appserver.PhaseBounds{Establish: time.Second, Transmit: time.Second, Ack: 15 * time.Millisecond})
-				defer client.Close()
+				// The handshake itself answers later than the ack bound, as it does on a loaded host.
+				host.Script("initialize", fakehost.Reply{Delay: 150 * time.Millisecond})
+				client := connectedWithShortAck(t, host.SocketPath, 15*time.Millisecond)
 				// When
 				_, err := client.Call(bounded(t), method, map[string]any{})
 				// Then: neither failure path is safe to replay, for reads or mutations.
