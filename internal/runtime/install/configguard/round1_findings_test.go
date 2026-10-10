@@ -46,7 +46,7 @@ func TestIntentThatMayNotBeDurableStopsBeforeEveryEffect(t *testing.T) {
 		t.Fatal(err)
 	}
 	total := *published
-	if total != 6 { // the first intent, one per flag, one for the managed key
+	if total != 8 { // the first intent, one per flag, the last flag's done record, the managed key's attempt and its done record
 		t.Fatalf("a clean activation publishes %d intents", total)
 	}
 	for n := 1; n <= total; n++ {
@@ -61,7 +61,17 @@ func TestIntentThatMayNotBeDurableStopsBeforeEveryEffect(t *testing.T) {
 				}
 				return base(args)
 			}
-			if _, err := Activate(deps); err == nil || !strings.Contains(err.Error(), "may not survive a power failure") || crwdir.Published(err) {
+			_, err := Activate(deps)
+			if n == total {
+				// The last intent is the done record of the key, published after the key is in place: the command has done and
+				// recorded everything, and reports that the record may not be durable.
+				if err == nil || !crwdir.Published(err) || !strings.Contains(err.Error(), "may not survive a power failure") {
+					t.Fatalf("an unsynced done record was not reported as a change in place: %v", err)
+				}
+				txCheckRecorded(t, home, path, state)
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "may not survive a power failure") || crwdir.Published(err) {
 				t.Fatalf("an intent that may not be durable did not stop the activation: %v", err)
 			}
 			wantEnables := max(min(n-2, 4), 0)

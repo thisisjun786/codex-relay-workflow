@@ -187,9 +187,12 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 			}
 			backup = &name
 		}
-		op, effect := "config-set", intentEffect{Kind: intentKey, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: original, Applied: applied, Owned: hadRecord && recorded.SetByCodexclaw, Attempted: true}
+		// The intent names the file the edit starts from and the post-image it publishes: a recovery proves the edit was crw's
+		// from them, not from a matching value alone (CRW-1153).
+		preFP, postFP := fingerprintBytes(pre), fingerprintBytes([]byte(res.Content))
+		op, effect := "config-set", intentEffect{Kind: intentKey, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: original, Applied: applied, Owned: hadRecord && recorded.SetByCodexclaw, Attempted: true, PreHash: preFP, PostHash: postFP}
 		if value == nil {
-			op, effect = "config-unset", intentEffect{Kind: intentRestore, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: recorded.PriorValue, Applied: recorded.AppliedValue, Attempted: true}
+			op, effect = "config-unset", intentEffect{Kind: intentRestore, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: recorded.PriorValue, Applied: recorded.AppliedValue, Attempted: true, PreHash: preFP, PostHash: postFP}
 		}
 		in, err := newIntent(deps.CodexHome, op, path, m)
 		if err != nil {
@@ -204,6 +207,12 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 		if err := txPublish("config", target, []byte(res.Content), &unsynced); err != nil {
 			// Nothing was published over config.toml, so the intent describes nothing in place; it is closed when it can be.
 			return ConfigSetOutcome{}, errors.Join(err, closeIntent(deps.CodexHome, &unsynced))
+		}
+		// The edit is in place: the intent says so before the manifest is committed (CRW-1153). When that cannot be published
+		// the edit is still recorded by this command; only a kill before the manifest leaves it unproven.
+		in.Effects[0].Done = true
+		if err := in.publish("intent"); err != nil {
+			unsynced = errors.Join(unsynced, err)
 		}
 	}
 	if value == nil {

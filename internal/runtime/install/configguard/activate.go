@@ -96,21 +96,33 @@ func configLockPathsPublishChecked(path string, b []byte, check func() error) er
 // install manifest, the self-heal marker) are not shared with another writer and keep
 // activationPublish.
 func activationSetKeyLocked(path, table, key string, unsynced *error) (TomlEditResult, error) {
-	content, _, e := activationReadFile(path)
+	_, res, e := activationPlanKey(path, table, key)
 	if e != nil {
 		return TomlEditResult{}, e
+	}
+	return res, activationPublishKey(path, res, unsynced)
+}
+
+// activationPlanKey reads config.toml and plans the key's edit on what is there now. The caller records the file's
+// fingerprint and the edit's post-image in the intent before the edit is published (CRW-1153).
+func activationPlanKey(path, table, key string) ([]byte, TomlEditResult, error) {
+	content, _, e := activationReadFile(path)
+	if e != nil {
+		return nil, TomlEditResult{}, e
 	}
 	res, _, e := semanticSet(string(content), table, key, true)
 	if e != nil {
-		return TomlEditResult{}, errInvalidConfig(path, e.Error())
+		return nil, TomlEditResult{}, errInvalidConfig(path, e.Error())
 	}
+	return content, res, nil
+}
+
+// activationPublishKey publishes a planned edit.
+func activationPublishKey(path string, res TomlEditResult, unsynced *error) error {
 	if !res.Changed {
-		return res, nil
+		return nil
 	}
-	if e := txPublish("config", path, []byte(res.Content), unsynced); e != nil {
-		return TomlEditResult{}, e
-	}
-	return res, nil
+	return txPublish("config", path, []byte(res.Content), unsynced)
 }
 
 // activationCarries reports whether an activation continues the ownership prior records (CRW-1145): a manifest of the same
@@ -439,43 +451,15 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 	var hardErr error
 	ran := false
 	exitedZero := map[string]bool{}
-	for i, effect := range in.Effects {
-		if effect.Kind != intentFlag || hardErr != nil {
-			continue
-		}
-		if e = in.attempt(i); e != nil {
-			return finish(e)
-		}
-		ran = true
-		key := DeclaredFeature(effect.Name)
-		r := deps.Run([]string{"features", "enable", effect.Name})
-		f := m.Flags[effect.Name]
-		if r.ExitCode == 0 {
-			f.EnabledByCodexclaw = true
-			exitedZero[effect.Name] = true
-		} else {
-			f.EnableFailed = true
-			f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
-			if !slices.Contains(SoftFeatures(), key) {
-				hardErr = fmt.Errorf("codex features enable %s failed (exit %d): %s; the flags enabled before it are recorded, and 'crw install features disable' reverts them", key, r.ExitCode, text.Trim(r.Stderr))
-			}
-		}
-		m.Flags[effect.Name] = f
-		// The CLI may have replaced config.toml or its directory (CRW-1144): the next effect, and the manifest, are written only
-		// under a lock that guards the file the caller's path names now. Otherwise nothing more runs, and the intent stays for
-		// the explicit retry to record what the CLI did.
-		if err := locks.recheck(path, dirInfo); err != nil {
-			return nil, fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
-		}
-	}
-	// An exit 0 is not proof, and a nonzero exit is not proof of no change (CRW-1143): the flags are read back from the same
-	// config, and a flag observed enabled is crw's whatever the process said, while the failure stays reported. A list that
-	// cannot be read proves nothing either way, so nothing is committed as changed or unchanged: the intent stays for the next
-	// explicit command to measure and record.
-	if ran {
+	// readBack reads the flags this command asked to change and records, from what it reads, which are crw's. An exit 0 is not
+	// proof, and a nonzero exit is not proof of no change (CRW-1143): a flag observed enabled is crw's whatever the process
+	// said, while the failure stays reported, and a flag that exited 0 without being enabled is not crw's. A list that cannot be
+	// read proves nothing either way, so nothing is committed as changed or unchanged: the intent stays for the next explicit
+	// command to measure.
+	readBack := func() error {
 		observed, err := ReadFeatureStates(deps.Run)
 		if err != nil {
-			return nil, fmt.Errorf("the flags were asked to change but could not be read back (%w); the change is kept in %s, and the next 'crw install features enable' or 'disable' records what is in place", err, intentPath(deps.CodexHome))
+			return fmt.Errorf("the flags were asked to change but could not be read back (%w); the change is kept in %s, and the next 'crw install features enable' or 'disable' records what is in place", err, intentPath(deps.CodexHome))
 		}
 		for _, effect := range in.Effects {
 			if effect.Kind != intentFlag || !effect.Attempted {
@@ -497,7 +481,71 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 			m.Flags[effect.Name] = f
 		}
 		if err := locks.recheck(path, dirInfo); err != nil {
+			return fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
+		}
+		return nil
+	}
+	// stop ends the command on cause. A flag that was asked to change is read back first, so the manifest never records a flag
+	// as crw's on the strength of an exit code (CRW-1143); when that cannot be read, nothing is committed and the intent stays.
+	stop := func(cause error) (*InstallManifest, error) {
+		if ran {
+			if err := readBack(); err != nil {
+				return nil, errors.Join(cause, err)
+			}
+		}
+		return finish(cause)
+	}
+	lastRan := -1
+	for i, effect := range in.Effects {
+		if effect.Kind != intentFlag || hardErr != nil {
+			continue
+		}
+		fp, e := configFingerprint(path)
+		if e != nil {
+			return stop(e)
+		}
+		in.Effects[i].PreHash = fp
+		if e = in.attempt(i); e != nil {
+			return stop(e)
+		}
+		ran = true
+		key := DeclaredFeature(effect.Name)
+		r := deps.Run([]string{"features", "enable", effect.Name})
+		// The runner returned: the file as it is now is the proof that crw's own run changed it, and the next publication of the
+		// intent carries it (CRW-1153).
+		in.Effects[i].Done = true
+		if in.Effects[i].PostHash, e = configFingerprint(path); e != nil {
+			return stop(e)
+		}
+		lastRan = i
+		f := m.Flags[effect.Name]
+		if r.ExitCode == 0 {
+			exitedZero[effect.Name] = true
+		} else {
+			f.EnableFailed = true
+			f.Failure = &FailureRecord{float64(r.ExitCode), activationFailureMessage(r.Stderr)}
+			if !slices.Contains(SoftFeatures(), key) {
+				hardErr = fmt.Errorf("codex features enable %s failed (exit %d): %s; the flags enabled before it are recorded, and 'crw install features disable' reverts them", key, r.ExitCode, text.Trim(r.Stderr))
+			}
+		}
+		m.Flags[effect.Name] = f
+		// The CLI may have replaced config.toml or its directory (CRW-1144): the next effect, and the manifest, are written only
+		// under a lock that guards the file the caller's path names now. Otherwise nothing more runs, and the intent stays for
+		// the explicit retry to record what the CLI did.
+		if err := locks.recheck(path, dirInfo); err != nil {
+			_ = in.publish("intent")
 			return nil, fmt.Errorf("%w; the flags codex changed are kept in %s, and the next 'crw install features enable' or 'disable' records them", err, intentPath(deps.CodexHome))
+		}
+	}
+	// The proof of the last flag is published before anything else runs.
+	if lastRan >= 0 {
+		if e = in.publish("intent"); e != nil {
+			return stop(e)
+		}
+	}
+	if ran {
+		if err := readBack(); err != nil {
+			return nil, err
 		}
 	}
 	if hardErr != nil {
@@ -507,15 +555,29 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 		if effect.Kind != intentKey {
 			continue
 		}
-		if e = in.attempt(i); e != nil {
-			return finish(e)
-		}
 		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
 		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
 		// published in that window be overwritten with content built from the pre-retrust bytes.
-		res, e := activationSetKeyLocked(path, effect.Table, effect.Key, &unsynced)
+		before, res, e := activationPlanKey(path, effect.Table, effect.Key)
 		if e != nil {
 			return finish(e)
+		}
+		// The intent names the file this edit starts from and the post-image it publishes, so a recovery can tell crw's write
+		// from a user's later edit of the same key (CRW-1153).
+		in.Effects[i].PreHash = fingerprintBytes(before)
+		in.Effects[i].PostHash = fingerprintBytes([]byte(res.Content))
+		if e = in.attempt(i); e != nil {
+			return finish(e)
+		}
+		if e = activationPublishKey(path, res, &unsynced); e != nil {
+			return finish(e)
+		}
+		// The edit is in place: the intent says so before the manifest is committed. When that cannot be published the edit is
+		// still recorded by this command; only a kill before the manifest would leave it unproven, which is reported as the
+		// uncertainty it is.
+		in.Effects[i].Done = true
+		if e = in.publish("intent"); e != nil {
+			unsynced = errors.Join(unsynced, e)
 		}
 		if res.Action == TomlUnsupportedValue {
 			continue

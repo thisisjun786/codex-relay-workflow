@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,6 +87,16 @@ func txActivationFixture(t *testing.T) (string, string, ActivateDeps, map[string
 // original value, and no intent is left.
 func txCheckRecorded(t *testing.T, home, path string, state map[string]bool) {
 	t.Helper()
+	if left := txUnrecorded(t, home, path, state, 0); len(left) != 0 {
+		t.Fatalf("effects in place but not recorded as crw's: %v", left)
+	}
+}
+
+// txUnrecorded asserts the pending record as txCheckRecorded does, except that up to slack effects may be in place without a
+// record: a kill between an effect and its done record leaves that one effect unproven (CRW-1153). It answers their names.
+func txUnrecorded(t *testing.T, home, path string, state map[string]bool, slack int) []string {
+	t.Helper()
+	var left []string
 	if _, err := os.Stat(intentPath(home)); !os.IsNotExist(err) {
 		t.Fatalf("an intent is left after the rerun: %v", err)
 	}
@@ -95,19 +106,23 @@ func txCheckRecorded(t *testing.T, home, path string, state map[string]bool) {
 	}
 	for _, k := range DeclaredFeatures() {
 		if f := m.Flags[string(k)]; state[string(k)] && (!f.EnabledByCodexclaw || f.PriorEnabled) {
-			t.Fatalf("flag %s is on but not recorded as crw's: %+v", k, f)
+			left = append(left, string(k))
 		}
 	}
 	rec, ok := m.TableKeys["memories.dedicated_tools"]
 	if live, _ := semanticRaw(activationRead(t, path), "memories", "dedicated_tools"); live != nil && (!ok || !rec.SetByCodexclaw || rec.PriorValue != nil) {
-		t.Fatalf("the key is set but not recorded as crw's: %+v", rec)
+		left = append(left, "memories.dedicated_tools")
 	}
+	if len(left) > slack {
+		t.Fatalf("effects in place but not recorded as crw's (at most %d allowed): %v", slack, left)
+	}
+	return left
 }
 
 func TestActivationTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 	_, _, clean, _ := txActivationFixture(t)
 	steps := txCountSteps(t, func() error { _, err := Activate(clean); return err })
-	if steps < 8 {
+	if steps < 10 {
 		t.Fatalf("only %d steps", steps)
 	}
 	for k := 1; k <= steps; k++ {
@@ -125,18 +140,24 @@ func TestActivationTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 				if _, err := Activate(deps); err != nil {
 					t.Fatalf("the rerun after a stop at %s: %v", stopped, err)
 				}
-				txCheckRecorded(t, home, path, state)
+				// A kill between an effect and the record that it ran leaves that one effect unproven: it is not recorded, and
+				// the deactivation leaves it as it is (CRW-1153).
+				slack := 0
+				if kill && stopped == "intent" {
+					slack = 1
+				}
+				left := txUnrecorded(t, home, path, state, slack)
 				r, err := Deactivate(deactivationDeps(home, deps.Run))
 				if err != nil || len(r.Failed) != 0 {
 					t.Fatalf("deactivate: %+v %v", r, err)
 				}
 				for key, on := range state {
-					if on {
+					if on && !slices.Contains(left, key) {
 						t.Fatalf("flag %s is still on after the deactivation (stop at %s)", key, stopped)
 					}
 				}
-				if strings.Contains(activationRead(t, path), "dedicated_tools") {
-					t.Fatalf("the key is left after the deactivation (stop at %s): %q", stopped, activationRead(t, path))
+				if strings.Contains(activationRead(t, path), "dedicated_tools") != slices.Contains(left, "memories.dedicated_tools") {
+					t.Fatalf("the key is left after the deactivation, or an unproven one was removed (stop at %s): %q", stopped, activationRead(t, path))
 				}
 			})
 		}
@@ -176,6 +197,20 @@ func TestConfigSetTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 				_, pending := os.Stat(intentPath(home))
 				if _, recorded := m.TableKeys[configSetKey]; activationRead(t, path) != txOriginal && !recorded && pending != nil {
 					t.Fatalf("stop at %s left an unrecorded change: %q", stopped, activationRead(t, path))
+				}
+				// A kill between the edit and the record that it ran leaves the key written but unproven (CRW-1153): the rerun finds
+				// the value in place, records it as the user's, and the unset leaves it.
+				if kill && stopped == "intent" && activationRead(t, path) != txOriginal {
+					if r, err := ApplyManagedKey(deps, configSetKey, &value); err != nil || !r.OK || r.Changed {
+						t.Fatalf("rerun after a stop at %s: %+v %v", stopped, r, err)
+					}
+					if configSetManifest(t, home).TableKeys[configSetKey].SetByCodexclaw {
+						t.Fatal("an unproven key was recorded as crw's")
+					}
+					if r, err := ApplyManagedKey(deps, configSetKey, nil); err != nil || r.OK || !strings.Contains(activationRead(t, path), "dedicated_tools = true") {
+						t.Fatalf("the unset removed an unproven key: %+v %v", r, err)
+					}
+					return
 				}
 				if r, err := ApplyManagedKey(deps, configSetKey, &value); err != nil || !r.OK {
 					t.Fatalf("rerun after a stop at %s: %+v %v", stopped, r, err)
@@ -292,9 +327,8 @@ func TestRecoveryNeverAdoptsOrRevertsAConcurrentExternalEdit(t *testing.T) {
 	home, path := configSetHome(t, txOriginal, true)
 	deps := ConfigSetDeps{CodexHome: home, ConfigPath: path}
 	value := true
-	stopped, err := txRunStoppedAt(t, 4, true, func() error { _, err := ApplyManagedKey(deps, configSetKey, &value); return err })
-	if err == nil || stopped != "manifest" {
-		t.Fatalf("stopped at %q: %v", stopped, err)
+	if !r3KillAtStep(t, "manifest", func() error { _, err := ApplyManagedKey(deps, configSetKey, &value); return err }) {
+		t.Fatal("the manifest step was not reached")
 	}
 	if !strings.Contains(activationRead(t, path), "dedicated_tools = true") {
 		t.Fatalf("the set did not reach config.toml before the kill: %q", activationRead(t, path))
