@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -16,69 +17,100 @@ import (
 // expected to take this long; it only turns a hang into a failure.
 const interruptedWait = 90 * time.Second
 
-// interruptedAck is the ack bound of the timeout cases. It is the interruption under test, but the
-// client applies it to every request of the call, so thread/start before a turn/start stage is
-// bound by it too: 100 ms expired on that earlier request under load, and the stage was never sent
-// (CRW-1181). The held answer outlasts any bound, so the case takes this long and no longer.
+// interruptedAck is the ack bound of the timeout cases. It is the interruption under test, so it
+// is given to the stage under test alone (ackOnStage): the client would otherwise apply it to every
+// request of the call, and thread/start before a turn/start stage expired on it under load, so the
+// stage was never sent (CRW-1181). The held answer outlasts any bound, so the case takes this long
+// and no longer.
 const interruptedAck = time.Second
 
+// ackOnStage gives the ack bound to the calls of one method and leaves every other call of the
+// bridge on the client's own bound.
+type ackOnStage struct {
+	RPC
+	method string
+	bound  time.Duration
+}
+
+func (a ackOnStage) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	if method == a.method {
+		ctx = appserver.WithAckBound(ctx, a.bound)
+	}
+	return a.RPC.Call(ctx, method, params)
+}
+
 func Test_test_interrupted_dispatch_is_retained_and_never_repeated(t *testing.T) {
-	for _, stage := range []string{"thread/start", "turn/start"} {
-		for _, interruption := range []string{"cancel", "timeout"} {
-			t.Run(stage+"/"+interruption, func(t *testing.T) {
-				b, host := testBridge(t)
-				input := worktreeInput(t)
-				input.Prompt = "READY"
-				worktreeHost(host, input.Destination)
-				paused, release := make(chan struct{}), make(chan struct{})
-				t.Cleanup(func() {
-					select {
-					case <-release:
-					default:
-						close(release)
-					}
-				})
-				response := fakehost.Reply{Paused: paused, Release: release}
-				if stage == "thread/start" {
-					response.Result = worktreeStart(input.Destination)
-				} else {
-					response.Result = map[string]any{"turn": map[string]any{"id": "turn-1"}}
-				}
-				host.Script(stage, response)
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-				if interruption == "timeout" {
-					b.RPC.(*appserver.Client).BoundAck(interruptedAck)
-				}
-				result := make(chan map[string]any, 1)
-				go func() { receipt, _ := b.CreateWorktreeThread(ctx, input); result <- receipt }()
-				select {
-				case <-paused:
-				case <-time.After(interruptedWait):
-					t.Fatal("stage did not reach host")
-				}
-				if interruption == "cancel" {
-					cancel()
-				}
-				select {
-				case receipt := <-result:
-					if receipt["status"] != "outcome_unknown" {
-						t.Fatalf("receipt=%v", receipt)
-					}
-				case <-time.After(interruptedWait):
-					t.Fatal("interrupted launch hung")
-				}
-				stored, err := b.GetOperation(context.Background(), input.RequestID)
-				if err != nil || stored["status"] != "outcome_unknown" || pyjson.Map(stored["worktree"])["state"] != "created" {
-					t.Fatalf("stored=%v err=%v", stored, err)
-				}
-				before := len(host.Requests())
-				replay, err := b.CreateWorktreeThread(context.Background(), input)
-				if err != nil || replay["replayed"] != true || len(host.Requests()) != before || host.Count(stage) != 1 {
-					t.Fatalf("replay=%v err=%v", replay, err)
-				}
-				close(release)
-			})
+	for _, c := range []struct {
+		stage, interruption string
+		slowPrior           bool
+	}{
+		{"thread/start", "cancel", false}, {"thread/start", "timeout", false},
+		{"turn/start", "cancel", false}, {"turn/start", "timeout", false},
+		// The earlier thread/start answers later than the bound the stage is given: the bound is the stage's alone, so the
+		// stage is still sent, times out on its own held answer and is never repeated.
+		{"turn/start", "timeout", true},
+	} {
+		stage, interruption := c.stage, c.interruption
+		name := stage + "/" + interruption
+		if c.slowPrior {
+			name += "/after a slow thread/start"
 		}
+		t.Run(name, func(t *testing.T) {
+			b, host := testBridge(t)
+			input := worktreeInput(t)
+			input.Prompt = "READY"
+			worktreeHost(host, input.Destination)
+			paused, release := make(chan struct{}), make(chan struct{})
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+			response := fakehost.Reply{Paused: paused, Release: release}
+			if stage == "thread/start" {
+				response.Result = worktreeStart(input.Destination)
+			} else {
+				response.Result = map[string]any{"turn": map[string]any{"id": "turn-1"}}
+			}
+			host.Script(stage, response)
+			if c.slowPrior {
+				host.Script("thread/start", fakehost.Reply{Result: worktreeStart(input.Destination), Delay: 2 * interruptedAck})
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if interruption == "timeout" {
+				b.RPC = ackOnStage{RPC: b.RPC, method: stage, bound: interruptedAck}
+			}
+			result := make(chan map[string]any, 1)
+			go func() { receipt, _ := b.CreateWorktreeThread(ctx, input); result <- receipt }()
+			select {
+			case <-paused:
+			case <-time.After(interruptedWait):
+				t.Fatal("stage did not reach host")
+			}
+			if interruption == "cancel" {
+				cancel()
+			}
+			select {
+			case receipt := <-result:
+				if receipt["status"] != "outcome_unknown" {
+					t.Fatalf("receipt=%v", receipt)
+				}
+			case <-time.After(interruptedWait):
+				t.Fatal("interrupted launch hung")
+			}
+			stored, err := b.GetOperation(context.Background(), input.RequestID)
+			if err != nil || stored["status"] != "outcome_unknown" || pyjson.Map(stored["worktree"])["state"] != "created" {
+				t.Fatalf("stored=%v err=%v", stored, err)
+			}
+			before := len(host.Requests())
+			replay, err := b.CreateWorktreeThread(context.Background(), input)
+			if err != nil || replay["replayed"] != true || len(host.Requests()) != before || host.Count(stage) != 1 {
+				t.Fatalf("replay=%v err=%v", replay, err)
+			}
+			close(release)
+		})
 	}
 }
