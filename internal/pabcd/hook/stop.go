@@ -40,6 +40,7 @@
 package hook
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -666,13 +667,17 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 	return ResolveCRWInDirective(strings.Join(lines, "\n"), env)
 }
 
-// stopCheckBound is the source-identity predicate of `orchestrate P` for a goalplan-bound session; a variable so a test can see
-// where it runs.
-var stopCheckBound = sourcesession.CheckBound
+// stopCheckBound is the source-identity predicate of `orchestrate P` for a goalplan-bound session, owned by the context it is
+// given (the git it runs ends with it); a variable so a test can see where it runs.
+var stopCheckBound = sourcesession.CheckBoundContext
 
 // stopSourceBudget bounds the source-identity investigation of one Stop (git status and the hashing of the dirty files): the
-// Stop wiring has 15 seconds in all.
-var stopSourceBudget = 5 * time.Second
+// Stop wiring has 15 seconds in all. stopSourceGrace is how long the Stop then waits for an investigation it has cancelled to
+// finish ending (its git is killed whole and reaped, see stopCanArm) before it answers anyway.
+var (
+	stopSourceBudget = 5 * time.Second
+	stopSourceGrace  = 2 * time.Second
+)
 
 // stopArming is the answer of stopCanArm: whether `orchestrate P` can run for the session and, when it cannot, why (the
 // CheckBound verdict).
@@ -680,22 +685,37 @@ type stopArming struct {
 	ok     bool
 	reason string
 	cause  sourcesession.GateCause
+	probe  error // the failure of the git behind sourcesession.CauseProbeFailed
 }
 
 // stopCanArm is whether `orchestrate P` can run for the session, judged by stopCheckBound within stopSourceBudget. An
 // investigation that does not finish in the budget is no evidence that arming is impossible, so the answer is then the oracle's
-// (the command is offered); the investigation's goroutine ends with the hook process.
+// (the command is offered). The budget is the investigation's own deadline and not only the time the Stop waits for it: at the
+// deadline the investigation is cancelled, its git (and any clean filter git started) is killed and reaped, and the Stop waits
+// up to stopSourceGrace for that, so no git started for a Stop is left running behind the hook process. An answer that arrives
+// as the deadline passes is not a verdict (a cancelled probe reports its cancellation as a failure).
 func stopCanArm(cwd, sessionID string) stopArming {
+	ctx, cancel := context.WithTimeout(context.Background(), stopSourceBudget)
+	defer cancel()
 	done := make(chan sourcesession.GateResult, 1)
-	go func() { done <- stopCheckBound(cwd, sessionID) }()
-	timer := time.NewTimer(stopSourceBudget)
-	defer timer.Stop()
+	go func() { done <- stopCheckBound(ctx, cwd, sessionID) }()
+	var got sourcesession.GateResult
 	select {
-	case got := <-done:
-		return stopArming{ok: got.OK, reason: got.Reason, cause: got.Cause}
-	case <-timer.C:
+	case got = <-done:
+	case <-ctx.Done():
+		cancel()
+		grace := time.NewTimer(stopSourceGrace)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+		}
 		return stopArming{ok: true}
 	}
+	if ctx.Err() != nil {
+		return stopArming{ok: true}
+	}
+	return stopArming{ok: got.OK, reason: got.Reason, cause: got.Cause, probe: got.Probe}
 }
 
 // stopBlockAhead is whether the counter, judged on st (read before the lock) with the bound goalplan plan and the session's
@@ -710,6 +730,10 @@ func stopBlockAhead(p StopPayload, st state.State, plan *goalplan.Goalplan) bool
 // command; any other refusal (a corrupt, foreign or moved binding, a bound worktree without an identity, a failed git probe) is
 // named as CheckBound gave it, because a binding is immutable and the bind command would be refused the same way.
 func stopArmingRefusal(a stopArming) string {
+	if a.cause == sourcesession.CauseProbeFailed {
+		detail := strings.Join(strings.Fields(fmt.Sprint(a.probe)), " ")
+		return "The next work-phase cannot be armed from this workspace: git could not read the source tree (" + detail + "), and a goalplan-bound cycle cannot be closed without a resolved source identity (C -> D needs a test receipt bound to a commit), so entering P is refused. Binding a git source tree does not clear this (binding runs the same git); make git work for this workspace first."
+	}
 	if a.cause == sourcesession.CauseUnavailable {
 		return "The next work-phase cannot be armed from this workspace: it has no resolvable git source identity, and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. To make arming possible, bind a git source tree: `crw relay session source <absolute-path> --json`."
 	}

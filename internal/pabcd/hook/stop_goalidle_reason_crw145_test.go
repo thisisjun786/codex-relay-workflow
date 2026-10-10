@@ -1,6 +1,8 @@
 package hook
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +50,7 @@ func TestStopGoalIdleBlockNamesACorruptBindingRefusal(t *testing.T) {
 func TestStopGoalIdleBlockNamesABoundSourceWithoutIdentity(t *testing.T) {
 	cwd, env := stopIdleRig(t, false)
 	old := stopCheckBound
-	stopCheckBound = func(string, string) sourcesession.GateResult {
+	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
 		return sourcesession.GateResult{Reason: "oracle text", Cause: sourcesession.CauseBoundUnavailable}
 	}
 	defer func() { stopCheckBound = old }()
@@ -61,12 +63,29 @@ func TestStopGoalIdleBlockNamesABoundSourceWithoutIdentity(t *testing.T) {
 	}
 }
 
+// A git that could not answer is named with its failure, and the bind command and the arming command are both withheld.
+func TestStopGoalIdleBlockNamesAFailedGitProbe(t *testing.T) {
+	cwd, env := stopIdleRig(t, false)
+	old := stopCheckBound
+	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
+		return sourcesession.GateResult{Reason: "oracle text", Cause: sourcesession.CauseProbeFailed, Probe: errors.New("git exited with\nstatus 128")}
+	}
+	defer func() { stopCheckBound = old }()
+	got := stopBlockReason(t, stopRun(cwd, env))
+	want := stopIdleHead +
+		"The next work-phase cannot be armed from this workspace: git could not read the source tree (git exited with status 128), and a goalplan-bound cycle cannot be closed without a resolved source identity (C -> D needs a test receipt bound to a commit), so entering P is refused. Binding a git source tree does not clear this (binding runs the same git); make git work for this workspace first.\n" +
+		stopIdleChain("") + stopIdleWork
+	if got != want {
+		t.Errorf("failed git probe:\n got %q\nwant %q", got, want)
+	}
+}
+
 // stopCountChecks replaces the source check with a counting one that answers "cannot arm, unbound".
 func stopCountChecks(t *testing.T) *int {
 	t.Helper()
 	calls := 0
 	old := stopCheckBound
-	stopCheckBound = func(string, string) sourcesession.GateResult {
+	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
 		calls++
 		return sourcesession.GateResult{Reason: "none", Cause: sourcesession.CauseUnavailable}
 	}
