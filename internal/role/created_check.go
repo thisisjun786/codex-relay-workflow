@@ -1,14 +1,12 @@
 package role
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"io"
 	"io/fs"
 	"math/big"
 	"net/url"
@@ -212,8 +210,11 @@ type createdSpawnResult struct {
 // session, whose path the native thread database holds. The host writes each collaboration tool call it runs as an item of
 // type CollabAgentToolCall whose id is the call's tool use id (the id the spawn hook received and recorded), and its
 // item_completed event names the threads the call created (receiver_thread_ids). The caller cannot write that event; a line
-// that does not parse is not a result.
+// that does not parse is not a result. The look runs under the same 30 s bound as the host's other reads, and the rollout is
+// read within the scan's bounds (dispatchRolloutScan).
 func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, call string) (createdSpawnResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	path := ""
 	err := createdCheckWithDB(ctx, env, func(conn *sql.Conn, columns map[string]bool) error {
 		if !columns["rollout_path"] {
@@ -234,38 +235,37 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 	}
 	defer f.Close()
 	var out createdSpawnResult
-	r := bufio.NewReaderSize(f, 64*1024)
-	for {
-		line, err := r.ReadBytes('\n')
-		// Only a line naming the item type is decoded; the id is compared decoded, however the host escaped it.
-		if bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) {
-			var e struct {
-				Type    string `json:"type"`
-				Payload struct {
-					Type string `json:"type"`
-					Item struct {
-						Type      string   `json:"type"`
-						ID        string   `json:"id"`
-						Tool      string   `json:"tool"`
-						Status    string   `json:"status"`
-						Sender    string   `json:"sender_thread_id"`
-						Receivers []string `json:"receiver_thread_ids"`
-					} `json:"item"`
-				} `json:"payload"`
-			}
-			if json.Unmarshal(line, &e) == nil && e.Type == "event_msg" && e.Payload.Type == "item_completed" {
-				if it := e.Payload.Item; it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session {
-					out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
-				}
+	err = dispatchRolloutScan(ctx, f, func(line []byte) {
+		// Only a line naming the item type is decoded; the id is compared decoded, however the host escaped it. A line over the
+		// scan's line bound (nil) is not decoded.
+		if !bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) {
+			return
+		}
+		var e struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+				Item struct {
+					Type      string   `json:"type"`
+					ID        string   `json:"id"`
+					Tool      string   `json:"tool"`
+					Status    string   `json:"status"`
+					Sender    string   `json:"sender_thread_id"`
+					Receivers []string `json:"receiver_thread_ids"`
+				} `json:"item"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(line, &e) == nil && e.Type == "event_msg" && e.Payload.Type == "item_completed" {
+			if it := e.Payload.Item; it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session {
+				out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
 			}
 		}
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return createdSpawnResult{}, err
-			}
-			return out, nil
-		}
+	})
+	if err != nil {
+		// A scan the context or the read bound cut short did not read the whole rollout: the result it may have missed is unseen.
+		return createdSpawnResult{}, err
 	}
+	return out, nil
 }
 
 // createdCheckComplete is the complete report at the checked boundary: an independent review is complete only through a child

@@ -74,7 +74,7 @@ func dispatchObserve(ctx context.Context, env host.LookupEnv, h DispatchHost, se
 		return o
 	}
 	if native.RolloutPath != "" {
-		if o.Newest = dispatchRolloutNewest(native.RolloutPath); o.Newest != "" {
+		if o.Newest = dispatchRolloutNewest(ctx, native.RolloutPath); o.Newest != "" {
 			o.Source = "native-rollout"
 		}
 	}
@@ -114,52 +114,101 @@ func dispatchOpenRollout(path string) (*os.File, error) {
 	return f, nil
 }
 
+// The rollout scans read a bounded amount of a file the host keeps appending to: a line longer than dispatchRolloutLineCap is
+// not decoded or held, and a file that runs past dispatchRolloutReadCap is not evidence at all. Tests lower them.
+var (
+	dispatchRolloutLineCap       = 64 << 20
+	dispatchRolloutReadCap int64 = 1 << 30
+)
+
+// dispatchRolloutScan reads the rollout f line by line while ctx lasts and hands each line to line, the final one too when it
+// has no newline. A line longer than dispatchRolloutLineCap is handed as nil, its bytes read past without being kept. The scan
+// stops with ctx's error once ctx is done, checked before every line and every buffer of a long one, and with an error once it
+// has read more than dispatchRolloutReadCap bytes; either way what it handed on is not the whole file.
+func dispatchRolloutScan(ctx context.Context, f *os.File, line func([]byte)) error {
+	r := bufio.NewReaderSize(f, 64*1024)
+	var read int64
+	for {
+		var whole []byte
+		over := false
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			chunk, err := r.ReadSlice('\n')
+			if read += int64(len(chunk)); read > dispatchRolloutReadCap {
+				return errors.New("rollout is longer than a scan reads")
+			}
+			if !over {
+				if len(whole)+len(chunk) > dispatchRolloutLineCap {
+					over, whole = true, nil
+				} else {
+					whole = append(whole, chunk...)
+				}
+			}
+			if errors.Is(err, bufio.ErrBufferFull) {
+				continue
+			}
+			if over {
+				line(nil)
+			} else if len(whole) > 0 {
+				line(whole)
+			}
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				return err
+			}
+			break
+		}
+	}
+}
+
 // dispatchRolloutNewest reads the child's rollout, which the host appends to, and returns how its newest started turn ended:
 // "completed" (task_complete), "interrupted" (turn_aborted), or "" when no turn started, the newest one has not ended in the
 // file, or a damaged or unfinished line leaves it unclear how the newest turn stands. A turn that has not ended in the file
 // may still be running, or its process may be gone; the rollout cannot tell, so it is never read as in progress. Only regular
-// files are read, line by line.
-func dispatchRolloutNewest(path string) string {
+// files are read, line by line, within the scan's bounds (dispatchRolloutScan): a scan the context or the read bound cut short
+// shows nothing.
+func dispatchRolloutNewest(ctx context.Context, path string) string {
 	f, err := dispatchOpenRollout(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	r := bufio.NewReaderSize(f, 64*1024)
 	newest, ended := "", ""
-	for {
-		line, err := r.ReadBytes('\n')
+	err = dispatchRolloutScan(ctx, f, func(line []byte) {
 		// Every line the host wrote whole parses. A line that does not, terminated or not, is damage or a write in progress,
 		// and nothing in it says which record it was: it may be the start or the end of a turn, so what was read before it no
 		// longer shows how the newest turn stands, and the end stays unseen until a later turn starts and ends whole. A line
-		// is classified by its decoded type, never by the text it contains.
-		if len(bytes.TrimSpace(line)) > 0 {
-			var event struct {
-				Type    string `json:"type"`
-				Payload struct {
-					Type string `json:"type"`
-					Turn string `json:"turn_id"`
-				} `json:"payload"`
-			}
-			if json.Unmarshal(line, &event) != nil {
-				newest, ended = "", ""
-			} else if event.Type == "event_msg" {
-				switch p := event.Payload; p.Type {
-				case "task_started":
-					newest, ended = p.Turn, ""
-				case "task_complete", "turn_aborted":
-					if newest != "" && p.Turn == newest {
-						ended = map[string]string{"task_complete": "completed", "turn_aborted": "interrupted"}[p.Type]
-					}
+		// over the scan's line bound is not decoded, so it is the same. A line is classified by its decoded type, never by the
+		// text it contains.
+		if line != nil && len(bytes.TrimSpace(line)) == 0 {
+			return
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+				Turn string `json:"turn_id"`
+			} `json:"payload"`
+		}
+		if line == nil || json.Unmarshal(line, &event) != nil {
+			newest, ended = "", ""
+		} else if event.Type == "event_msg" {
+			switch p := event.Payload; p.Type {
+			case "task_started":
+				newest, ended = p.Turn, ""
+			case "task_complete", "turn_aborted":
+				if newest != "" && p.Turn == newest {
+					ended = map[string]string{"task_complete": "completed", "turn_aborted": "interrupted"}[p.Type]
 				}
 			}
 		}
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return ""
-			}
-			break
-		}
+	})
+	if err != nil {
+		return ""
 	}
 	return ended
 }
