@@ -334,17 +334,12 @@ func stopObserveProgress(st state.State, snap stopSnapshot) stopProgress {
 	rows := snap.rows
 	// High-water: a hand-truncated ledger must not let restored rows replay as new observations.
 	cursor := math.Max(st.StopMetricCursor, float64(len(rows)))
-	// CRW-1086: a bound goalplan that cannot be read says nothing about the active work phase, so the one recorded stands; read as
-	// no work phase it was a switch away and, when the plan read again, a switch back, and each recharged a spent budget.
-	workPhaseID := st.StopBlockWorkPhaseID
-	if snap.plan != nil {
-		workPhaseID = goalplan.EffectiveActiveWorkPhaseID(snap.plan)
-	}
+	workPhaseID, bound := stopMetricScope(st, snap)
 	if float64(len(rows)) > st.StopMetricCursor {
 		// The cursor counts the whole ledger; only the rows of the active work phase (and the legacy default scope)
 		// are judged, so a finished work phase's rising row does not recharge the budget the active one spent.
 		scoped, from := rows, int(st.StopMetricCursor)
-		if snap.plan != nil {
+		if bound {
 			scoped, from = stopScopeRows(rows, from, workPhaseID)
 		}
 		improved = metric.JudgeNewRows(scoped, from, stopPlateauNoiseFloor) == metric.JudgmentImproving
@@ -353,6 +348,18 @@ func stopObserveProgress(st state.State, snap stopSnapshot) stopProgress {
 	workChanged := !stopSameText(st.StopBlockWorkPhaseID, workPhaseID)
 	newTurn := st.StopBlockTotal == 0
 	return stopProgress{progressed: phaseChanged || workChanged || improved || newTurn, metricCursor: cursor, workPhaseID: workPhaseID}
+}
+
+// stopMetricScope is the active work phase of st and whether the metric judgment is scoped to it (a session bound to a goalplan).
+// A bound goalplan names it; one that cannot be read says nothing about the active work phase, so the one recorded for the
+// session stands, for the work phase and for the metric scope alike (CRW-1086 d2: read as no work phase it was a switch away and,
+// when the plan read again, a switch back, and each recharged a spent budget; judged unscoped, a finished work phase's rising row
+// recharged it and its flat rows were the plateau). A session bound to no goalplan judges every row, as the oracle does.
+func stopMetricScope(st state.State, snap stopSnapshot) (*string, bool) {
+	if snap.plan != nil {
+		return goalplan.EffectiveActiveWorkPhaseID(snap.plan), true
+	}
+	return st.StopBlockWorkPhaseID, st.Slug != ""
 }
 
 // stopScopeRows is the rows of a bound goalplan's judgment scope: the active work phase's and the legacy default
@@ -405,8 +412,8 @@ func stopObjectivePlateau(cwd string, st state.State, snap stopSnapshot) (metric
 	if metric.InferObjectiveKind(cwd, st.SessionID, rows) != metric.Maximize {
 		return none, "", 0
 	}
-	if snap.plan != nil {
-		rows, _ = stopScopeRows(rows, 0, goalplan.EffectiveActiveWorkPhaseID(snap.plan))
+	if active, bound := stopMetricScope(st, snap); bound {
+		rows, _ = stopScopeRows(rows, 0, active)
 	}
 	plateau := metric.PlateauOf(rows, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
 	if len(rows) == 0 {
