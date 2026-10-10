@@ -240,6 +240,10 @@ func TestStorePathFollowsTheRootRule(t *testing.T) {
 	if _, err := StorePath(env); err == nil {
 		t.Fatal("a relative CRW_HOME was used")
 	}
+	// A store path that cannot be resolved leaves the routing undecided: reads and resolutions are refused with the typed error.
+	if _, err := ResolveSpawnConfig(env, Explorer); !errors.As(err, &unusable) || !strings.Contains(err.Error(), "CRW_HOME") {
+		t.Fatalf("a relative CRW_HOME resolved: %v", err)
+	}
 
 	vars["CRW_HOME"] = ""
 	path, err = StorePath(env)

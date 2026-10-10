@@ -14,9 +14,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
-// UnusableSettingsError is a helper role store that exists but cannot be used: a file that cannot be read or is not the store's
-// JSON document (Role is empty, and every role is unusable), or one role whose routing fields are not valid (Role names it, and only
-// that role is unusable). The oracle read both as no override, so a spawn silently inherited the main model (CRW-1119). Nothing that
+// UnusableSettingsError is a helper role store that cannot be used: a store path that cannot be resolved (Path is empty), a file
+// that cannot be read or is not the store's JSON document (Role is empty, and every role is unusable), or one role whose routing
+// fields are not valid (Role names it, and only that role is unusable). The oracle read both as no override, so a spawn silently inherited the main model (CRW-1119). Nothing that
 // reports it writes the store: its bytes stay as they are until the operator repairs them.
 type UnusableSettingsError struct {
 	Path   string
@@ -25,6 +25,9 @@ type UnusableSettingsError struct {
 }
 
 func (e *UnusableSettingsError) Error() string {
+	if e.Path == "" {
+		return "unusable helper role settings: " + e.Reason + "; the store cannot be found, so no role routing is decided"
+	}
 	if e.Role == "" {
 		return fmt.Sprintf("unusable helper role settings in %s: %s; correct the file, or move it away to inherit the defaults (it is left as it is)", e.Path, e.Reason)
 	}
@@ -122,7 +125,8 @@ func readRaw(env host.LookupEnv, path string, forWrite bool) (rawConfig, error) 
 func readSettings(env host.LookupEnv) (Settings, map[RoleName]error, error) {
 	path, err := StorePath(env)
 	if err != nil {
-		return Settings{}, nil, err
+		// A CRW_HOME or home that cannot name the store leaves every role's routing undecided, as an unreadable store does.
+		return Settings{}, nil, &UnusableSettingsError{Reason: err.Error()}
 	}
 	raw, err := readRaw(env, path, false)
 	if err != nil {

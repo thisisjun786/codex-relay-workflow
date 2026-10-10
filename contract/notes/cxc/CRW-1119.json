@@ -1,0 +1,15 @@
+{
+  "issue": "CRW-1119",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__subagents__malformed_global_config",
+      "reason": "Claim handover from CRW-441 (identical there). CRW-1119: a store whose roles member is not an object is an unusable store, refused with the store's path and the repair instead of read as the defaults; the CLI prints the refusal and exits 1, and the store is left as it is.",
+      "set": {
+        "steps/0/exit": "1",
+        "steps/0/form": "text",
+        "steps/0/stdout": "subagents: unusable helper role settings in ${CXC_HOME}/subagents.json: roles must be an object; correct the file, or move it away to inherit the defaults (it is left as it is)\n"
+      }
+    }
+  ]
+}
