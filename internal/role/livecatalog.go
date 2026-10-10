@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,6 +42,11 @@ type LiveCatalog struct {
 	Message   string      `json:"message,omitempty"`
 	raw       object
 	fetchedMS int64
+	// nativePath is the native catalog file the reader that produced this catalog resolved for its
+	// source, set when sourced is true. CatalogIsAuthoritative judges that file, not the one the
+	// configuration names when it is asked (CRW-1132).
+	nativePath string
+	sourced    bool
 }
 
 func (c LiveCatalog) MarshalJSON() ([]byte, error) {
@@ -89,7 +93,61 @@ func catalogEnv(environ []string) host.LookupEnv {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 
+// catalogSource is the source one request discovers from, resolved once when the request starts: the
+// process directory relative paths are read from, the native home and the native catalog file chosen
+// from it, the OCX executable PATH finds (or why none is found) and the OPENCODEX_HOME it runs with, or,
+// while that is blank, the HOME it falls back to. The key names this snapshot, and the discovery reads
+// that native file and runs that executable, so a configuration or PATH that changes while the request
+// discovers cannot put another source's list under this key (CRW-1132).
+type catalogSource struct {
+	dir        string
+	nativeHome string
+	nativePath string
+	ocxExe     string
+	ocxErr     error
+	ocxHome    string
+}
+
+func resolveCatalogSource(env host.LookupEnv) catalogSource {
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = ""
+	}
+	h, _ := env("CODEX_HOME")
+	ocx, _ := env("OPENCODEX_HOME")
+	userHome, _ := host.Home(env)
+	nativeHome := ""
+	if text.Trim(h) != "" {
+		nativeHome = text.Trim(h)
+	} else if userHome != "" {
+		nativeHome = filepath.Join(userHome, ".codex")
+	}
+	ocxHome := ocx
+	if text.Trim(ocxHome) == "" {
+		ocxHome = userHome
+	}
+	s := catalogSource{dir: dir, nativeHome: inDir(dir, nativeHome), nativePath: inDir(dir, NativeCatalogPath(env)), ocxHome: inDir(dir, ocxHome)}
+	s.ocxExe, s.ocxErr = ocxExecutable(env, dir)
+	return s
+}
+
+// stamp records on a catalog the native file of the source it answers for.
+func (s catalogSource) stamp(c LiveCatalog) LiveCatalog {
+	c.nativePath, c.sourced = s.nativePath, true
+	return c
+}
+
+// sourceKey names the source a cached or pending catalog belongs to: what the reader resolves from the
+// environment, not the raw variables alone (CRW-1132; the oracle hashed CODEX_HOME, the catalog path,
+// PATH and OPENCODEX_HOME as written, so a shared CRW_HOME with another HOME merged two native homes).
+// The raw variables stay in the key, so anything that changed before still changes it. The project
+// directory is not part of the key. A path is keyed as the file the reader opens: a relative one is read
+// from the process directory, so the same relative text in another directory is another source.
 func sourceKey(env host.LookupEnv) string {
+	return resolveCatalogSource(env).key(env)
+}
+
+func (s catalogSource) key(env host.LookupEnv) string {
 	p, ok := env("PATH")
 	if !ok {
 		p, _ = env("Path")
@@ -97,9 +155,20 @@ func sourceKey(env host.LookupEnv) string {
 	h, _ := env("CODEX_HOME")
 	cache, _ := env("CODEX_MODELS_CACHE_PATH")
 	ocx, _ := env("OPENCODEX_HOME")
-	b, _ := Stringify([]string{h, cache, p, ocx}, "")
+	b, _ := Stringify([]string{h, cache, p, ocx, s.nativeHome, s.nativePath, s.ocxExe, s.ocxHome}, "")
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// inDir is a relative path prefixed with the process directory as written, without lexical cleaning, so
+// it names the file the kernel opens for the relative path: a symbolic link followed by ".." resolves
+// to the link target's parent, which a lexical cleaning would replace with the link's own directory. An
+// absolute or empty path, or one with no known directory, stays as written.
+func inDir(dir, p string) string {
+	if p == "" || dir == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return strings.TrimSuffix(dir, string(os.PathSeparator)) + string(os.PathSeparator) + p
 }
 
 // ReadCatalog ports ts:83-119. Only failure to resolve the user's home escapes
@@ -114,7 +183,8 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	if err != nil {
 		return LiveCatalog{}, err
 	}
-	path, key := filepath.Join(filepath.Dir(store), "model-catalog.json"), sourceKey(env)
+	src := resolveCatalogSource(env)
+	path, key := filepath.Join(filepath.Dir(store), "model-catalog.json"), src.key(env)
 	now := o.Now
 	if now == nil {
 		now = time.Now
@@ -129,7 +199,7 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	cached := cachedCatalog(path, key, now().UnixMilli())
 	if !o.ForceRefresh && cached != nil && now().UnixMilli()-cached.fetchedMS < CatalogTTLMS {
 		r.mu.Unlock()
-		return *cached, nil
+		return src.stamp(*cached), nil
 	}
 	q := &catalogRequest{done: make(chan struct{})}
 	if r.pending == nil {
@@ -137,7 +207,7 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	}
 	r.pending[pendingKey] = q
 	r.mu.Unlock()
-	c := queryCatalog(path, key, environ, env, now, o, cached)
+	c := src.stamp(queryCatalog(path, key, src, environ, env, now, o, cached))
 	r.mu.Lock()
 	q.catalog = c
 	delete(r.pending, pendingKey)
@@ -146,10 +216,10 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	return c, nil
 }
 
-func queryCatalog(path, key string, environ []string, env host.LookupEnv, now func() time.Time, o CatalogOptions, cached *LiveCatalog) LiveCatalog {
+func queryCatalog(path, key string, src catalogSource, environ []string, env host.LookupEnv, now func() time.Time, o CatalogOptions, cached *LiveCatalog) LiveCatalog {
 	run := o.RunOcx
 	if run == nil {
-		run = RunOcxModels
+		run = func(environ []string) (string, error) { return runOcx(src, environ) }
 	}
 	stdout, err := run(environ)
 	source := ModelOcx
@@ -161,7 +231,7 @@ func queryCatalog(path, key string, environ []string, env host.LookupEnv, now fu
 		source = ModelNative
 		read := o.ReadNative
 		if read == nil {
-			read = ReadNativeCatalog
+			read = func(host.LookupEnv) []CatalogEntry { return readNativeCatalogAt(src.nativePath) }
 		}
 		entries = read(env)
 		err = nil
@@ -263,11 +333,21 @@ func ParseOcxModels(stdout string) ([]CatalogEntry, error) {
 		if display, ok := stringOf(m["displayName"]); ok && text.Trim(display) != "" {
 			label = display + " (" + id + ")"
 		}
-		entries = append(entries, CatalogEntry{id, source, label, reasoningEfforts(m["reasoningEfforts"])})
+		entries = append(entries, newCatalogEntry(id, source, label, m["reasoningEfforts"]))
 	}
 	return entries, nil
 }
 
+// catalogTimeLayout is how the writer spells fetchedAt (queryCatalog).
+const catalogTimeLayout = "2006-01-02T15:04:05.000Z"
+
+// cachedCatalog is the cache file's catalog when every member that claims freshness is one this writer
+// produces for the key's source: the status "fresh", a source of ocx or native, the state that source
+// writes, a fetchedAt in the writer's spelling that is not in the future, and entries with a non-blank
+// ID and label, a known source and an effort ladder that is null or a list of strings (CRW-1132; the
+// oracle coerced a fetchedAt of any type and accepted any state and blank IDs and labels). Anything
+// else is no cache: the caller discovers again, and a successful read replaces the file. Members this
+// validation does not name stay in the raw object and are returned as they were read.
 func cachedCatalog(path, key string, now int64) *LiveCatalog {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -289,21 +369,28 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 	m, _ := members(raw)
 	status, _ := stringOf(m["status"])
 	source, _ := stringOf(m["source"])
+	state, stateOK := stringOf(m["state"])
 	if status != "fresh" || (source != "ocx" && source != "native") {
+		return nil
+	}
+	wantState := CatalogOcx
+	if source == "native" {
+		wantState = CatalogNative
+	}
+	if !stateOK || CatalogState(state) != wantState {
 		return nil
 	}
 	var rows []json.RawMessage
 	if len(m["entries"]) == 0 || m["entries"][0] != '[' || json.Unmarshal(m["entries"], &rows) != nil {
 		return nil
 	}
-	at, err := jsString(m["fetchedAt"])
-	ms, valid := catalogDate(at)
-	var numeric float64
-	zero := len(m["fetchedAt"]) > 0 && m["fetchedAt"][0] != '"' && json.Unmarshal(m["fetchedAt"], &numeric) == nil && numeric == 0
-	if err != nil || zero || !valid || ms > now+1000 {
+	at, atOK := stringOf(m["fetchedAt"])
+	written, err := time.Parse(catalogTimeLayout, at)
+	if !atOK || err != nil || written.Format(catalogTimeLayout) != at || written.UnixMilli() > now+1000 {
 		return nil
 	}
 	entries := make([]CatalogEntry, 0, len(rows))
+	seen := map[string]bool{}
 	for _, row := range rows {
 		m, ok := members(row)
 		if !ok || m == nil {
@@ -312,9 +399,10 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 		id, idOK := stringOf(m["id"])
 		label, labelOK := stringOf(m["label"])
 		src, _ := stringOf(m["source"])
-		if !idOK || id == "" || !labelOK || (src != "ocx" && src != "native") {
+		if !idOK || text.Trim(id) == "" || !labelOK || text.Trim(label) == "" || (src != "ocx" && src != "native") || seen[id] {
 			return nil
 		}
+		seen[id] = true
 		efforts := m["reasoningEfforts"]
 		if string(efforts) != "null" {
 			var ladder []json.RawMessage
@@ -331,107 +419,8 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 		_ = json.Unmarshal(efforts, &ladder) // Already validated: retain blanks and duplicates in cached rows.
 		entries = append(entries, CatalogEntry{id, ModelSource(src), label, &ladder})
 	}
-	state, _ := stringOf(m["state"])
 	message, _ := stringOf(m["message"])
-	return &LiveCatalog{Catalog: Catalog{State: CatalogState(state), Entries: entries}, Status: status, Source: ModelSource(source), FetchedAt: &at, Message: message, raw: o, fetchedMS: ms}
-}
-
-// catalogDate covers ISO timestamps/date forms, RFC dates and the legacy numeric
-// forms accepted by Date.parse in the oracle's cache. Cache reads keep the original spelling.
-func catalogDate(s string) (int64, bool) {
-	s = text.Trim(s)
-	if i := strings.Index(s, " ("); i >= 0 && strings.HasSuffix(s, ")") {
-		s = text.Trim(s[:i])
-	}
-	// V8 normalizes days 29..31 and midnight written as 24:00. It still
-	// rejects month 0/13 and day 0/32; retain those validation boundaries.
-	extraDay := int64(0)
-	if len(s) >= 10 && s[4] == '-' && s[7] == '-' {
-		year, e1 := strconv.Atoi(s[:4])
-		month, e2 := strconv.Atoi(s[5:7])
-		day, e3 := strconv.Atoi(s[8:10])
-		if e1 == nil && e2 == nil && e3 == nil {
-			if month < 1 || month > 12 || day < 1 || day > 31 {
-				return 0, false
-			}
-			date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-			s = date.Format("2006-01-02") + s[10:]
-			if len(s) >= 16 && s[10] == 'T' && s[11:16] == "24:00" {
-				tail := s[16:]
-				tail = strings.TrimPrefix(tail, ":00")
-				if strings.HasPrefix(tail, ".") {
-					tail = tail[1:]
-					for len(tail) > 0 && tail[0] == '0' {
-						tail = tail[1:]
-					}
-				}
-				if tail != "" && tail[0] != 'Z' && tail[0] != '+' && tail[0] != '-' {
-					return 0, false
-				}
-				s = s[:11] + "00:00" + s[16:]
-				extraDay = 24 * 60 * 60 * 1000
-			}
-		}
-	}
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05Z0700", "2006-01-02", "2006-01", "2006"} {
-		if at, err := time.Parse(layout, s); err == nil {
-			return at.UnixMilli() + extraDay, true
-		}
-	}
-	location := time.Local
-	fields := strings.Fields(s)
-	normalizedZone := false
-	for i, field := range fields {
-		name := strings.ToUpper(field)
-		for _, zone := range []struct {
-			name  string
-			hours int
-		}{{"UT", 0}, {"UTC", 0}, {"GMT", 0}, {"EST", -5}, {"EDT", -4}, {"CST", -6}, {"CDT", -5}, {"MST", -7}, {"MDT", -6}, {"PST", -8}, {"PDT", -7}} {
-			if name == zone.name {
-				if name == "UT" {
-					name = "GMT"
-				} // Go's zone token needs three letters.
-				fields[i] = name
-				normalizedZone = true
-				location = time.FixedZone(name, zone.hours*60*60)
-				break
-			}
-		}
-	}
-	if normalizedZone {
-		s = strings.Join(fields, " ")
-	}
-	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC822Z, time.ANSIC, time.UnixDate, time.RFC850, "Mon Jan 02 2006 15:04:05 GMT-0700", "Jan 2 2006", "January 2, 2006", "2006/1/2", "2006,1,2", "1/2/2006", "1-2-2006", "1.2.2006", "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
-		if at, err := time.ParseInLocation(layout, s, location); err == nil {
-			return at.UnixMilli() + extraDay, true
-		}
-	}
-	if len(s) <= 2 {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			year, month := n, time.January
-			switch {
-			case n == 0:
-				year = 2000
-			case n <= 12:
-				year, month = 2001, time.Month(n)
-			case n < 32:
-				return 0, false
-			case n < 50:
-				year += 2000
-			default:
-				year += 1900
-			}
-			return time.Date(year, month, 1, 0, 0, 0, 0, time.Local).UnixMilli(), true
-		}
-	}
-	if parts := strings.Split(s, "."); len(parts) == 2 {
-		month, e1 := strconv.Atoi(parts[0])
-		day, e2 := strconv.Atoi(parts[1])
-		if e1 == nil && e2 == nil && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
-			return time.Date(2001, time.Month(month), day, 0, 0, 0, 0, time.Local).UnixMilli(), true
-		}
-	}
-	return 0, false
+	return &LiveCatalog{Catalog: Catalog{State: CatalogState(state), Entries: entries}, Status: status, Source: ModelSource(source), FetchedAt: &at, Message: message, raw: o, fetchedMS: written.UnixMilli()}
 }
 
 // persistCatalog retains ts:71-80's exclusive 0600 temp and rename. This oracle
@@ -469,16 +458,27 @@ func (b *catalogOutput) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
-// ocxExecutable searches the supplied POSIX PATH (including relative/empty
-// elements); denied candidates are skipped, with EACCES retained at exhaustion.
-func ocxExecutable(env host.LookupEnv) (string, error) {
+// ocxExecutable searches the supplied POSIX PATH (including relative/empty elements) from the process
+// directory dir; denied candidates are skipped, with EACCES retained at exhaustion. Each candidate is the PATH element and
+// "ocx" joined as execvp joins them, without lexical cleaning, and a relative one is prefixed with dir
+// as written (inDir), so the file tested is the file the kernel executes and the one returned.
+func ocxExecutable(env host.LookupEnv, dir string) (string, error) {
 	path, set := env("PATH")
 	if !set {
 		path = "/bin:/usr/bin"
 	}
 	var denied, missing error
-	for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
-		candidate := filepath.Join(dir, "ocx")
+	for _, element := range strings.Split(path, string(os.PathListSeparator)) {
+		candidate := "ocx"
+		if element != "" {
+			candidate = strings.TrimSuffix(element, "/") + "/ocx"
+		}
+		candidate = inDir(dir, candidate)
+		if !filepath.IsAbs(candidate) {
+			// No process directory is known to name a relative candidate by.
+			missing = &os.PathError{Op: "exec", Path: candidate, Err: os.ErrNotExist}
+			continue
+		}
 		info, err := os.Stat(candidate)
 		if errors.Is(err, os.ErrPermission) {
 			denied = err
@@ -495,7 +495,7 @@ func ocxExecutable(env host.LookupEnv) (string, error) {
 			denied = &os.PathError{Op: "exec", Path: candidate, Err: os.ErrPermission}
 			continue
 		}
-		return filepath.Abs(candidate)
+		return candidate, nil
 	}
 	if denied != nil {
 		return "", denied
@@ -512,17 +512,23 @@ func RunOcxModels(environ []string) (string, error) {
 	if environ == nil {
 		environ = os.Environ()
 	}
-	file, err := ocxExecutable(catalogEnv(environ))
-	if err != nil {
-		return "", err
+	return runOcx(resolveCatalogSource(catalogEnv(environ)), environ)
+}
+
+// runOcx runs the executable the request's source resolved, from the process directory that source was
+// resolved in, so relative OPENCODEX_HOME and HOME values name the homes its key names.
+func runOcx(src catalogSource, environ []string) (string, error) {
+	if src.ocxErr != nil {
+		return "", src.ocxErr
 	}
+	file := src.ocxExe
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	out, stderr := &catalogOutput{cancel: cancel}, &catalogOutput{cancel: cancel}
 	cmd := exec.CommandContext(ctx, file, "models", "live", "--json")
-	cmd.Env, cmd.Stdout, cmd.Stderr = environ, out, stderr
+	cmd.Env, cmd.Stdout, cmd.Stderr, cmd.Dir = environ, out, stderr, src.dir
 	cmd.WaitDelay = 2 * time.Second
-	err = cmd.Run()
+	err := cmd.Run()
 	if out.overflow || stderr.overflow {
 		return "", sentinel("OCX output exceeded 4 MiB")
 	}

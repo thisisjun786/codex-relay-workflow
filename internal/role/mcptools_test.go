@@ -35,8 +35,29 @@ func TestMCPToolOracle(t *testing.T) {
 	if len(fixture.Cases) != 13 {
 		t.Fatalf("oracle cases: %d", len(fixture.Cases))
 	}
-	if got, want := string(must(Stringify(MCPTools(), ""))), string(must(Stringify(fixture.Tools, ""))); got != want {
-		t.Fatalf("tool definitions differ:\n%s\nwant\n%s", got, want)
+	// The definitions are the oracle's with the project scope taken out (CRW-1120; the settings API is global-only, decision 7), as
+	// the snapshot tools-global.json holds them. The snapshot differs from the recorded tools in exactly that.
+	var oracleTools, globalTools []MCPTool
+	check(t, json.Unmarshal(fixture.Tools, &oracleTools))
+	check(t, json.Unmarshal([]byte(readText(t, "testdata/mcptools/tools-global.json")), &globalTools))
+	if got, want := string(must(Stringify(MCPTools(), ""))), string(must(Stringify(globalTools, ""))); got != want {
+		t.Fatalf("tool definitions differ from the snapshot:\n%s\nwant\n%s", got, want)
+	}
+	if len(oracleTools) != len(globalTools) {
+		t.Fatalf("tools: %d, snapshot %d", len(globalTools), len(oracleTools))
+	}
+	for i, tool := range oracleTools {
+		scrubbed := strings.NewReplacer(`"enum":["project","global"]`, `"enum":["global"]`,
+			"Project defaults to global, then original session.", "Only the global scope exists; a role with no override uses the original session.",
+			"inherit the next scope", "inherit the original session").Replace(string(must(Stringify(tool, ""))))
+		if scrubbed != string(must(Stringify(globalTools[i], ""))) {
+			t.Fatalf("tool %s: the snapshot changes more than the project scope:\n%s\n%s", tool.Name, scrubbed, must(Stringify(globalTools[i], "")))
+		}
+	}
+	for _, tool := range MCPTools() {
+		if strings.Contains(strings.ToLower(tool.Description+string(tool.InputSchema)), "project") {
+			t.Fatalf("tool %s still advertises the project scope: %s", tool.Name, tool.InputSchema)
+		}
 	}
 	// A returned schema must not share mutable memory with the next call.
 	first := MCPTools()
@@ -68,6 +89,16 @@ func TestMCPToolOracle(t *testing.T) {
 			}}
 			for i, a := range c.Answers {
 				got, err := h.HandleToolCall(a.Params)
+				if a.Error != nil && *a.Error == "Cannot convert object to primitive value" {
+					// The oracle's String() throws here and its stdio queue drops the call without a reply; the port converts nothing and
+					// answers the unknown tool like any other (CRW-1120).
+					want := mcpToolErrorResult(t, "unknown tool: [object Object]")
+					check(t, err)
+					if g, w := string(must(Stringify(got, ""))), string(must(Stringify(want, ""))); g != w {
+						t.Fatalf("answer %d (%s):\n%s\nwant\n%s", i, a.Params, g, w)
+					}
+					continue
+				}
 				if a.Error != nil {
 					if err == nil || err.Error() != *a.Error {
 						t.Fatalf("answer %d: error %v, want %s", i, err, *a.Error)
@@ -97,6 +128,11 @@ func TestMCPToolOracle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mcpToolErrorResult(t *testing.T, message string) MCPToolResult {
+	t.Helper()
+	return must(mcpToolError(message))
 }
 
 func mcpToolCall(t *testing.T, h *MCPToolHandler, params string) MCPToolResult {
@@ -275,4 +311,20 @@ func TestMCPToolLiveGetJoinsLateDiscovery(t *testing.T) {
 			t.Fatal("get reused fresh cache", calls.Load())
 		}
 	})
+}
+
+// CRW-1120 (known-defects.md, "CRW-531 — multi_agent_v2 settings library", item beginning "`catalog_list` does not catch"): a catalog
+// read that fails is answered by one isError tool result that names the failure, not by an error the transport has no reply for.
+func TestMCPToolCatalogListReadFailureIsAnswered(t *testing.T) {
+	o := liveOptions(t)
+	o.Environ = append(o.Environ, "CRW_HOME=relative/dir") // the store path cannot be named, so the catalog cannot be located
+	h := MCPToolHandler{Options: o}
+	r, err := h.HandleToolCall(json.RawMessage(`{"name":"catalog_list"}`))
+	if err != nil {
+		t.Fatalf("the failure escaped as an error with no tool reply: %v", err)
+	}
+	var body ErrorBody
+	if !r.IsError || len(r.Content) != 1 || r.Content[0].Type != "text" || json.Unmarshal([]byte(r.Content[0].Text), &body) != nil || !strings.Contains(body.Error, "CRW_HOME is not an absolute path") {
+		t.Fatalf("catalog_list failure answer: %+v", r)
+	}
 }

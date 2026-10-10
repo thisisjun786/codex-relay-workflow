@@ -9,8 +9,8 @@
 // I2 ParseScope takes an optional scope that defaults to "global" and accepts nothing else. I3 The legacy
 // <CODEX_HOME>/codexclaw/subagents.json is not read. I5 A patch holds typed values; a request member of the wrong JSON type is kept
 // raw and refused by Validate in the oracle's order with the oracle's message ("promptOverride must be a string or null", "fallback must
-// be an object or null", and String() of the value in the mode and effort messages, which throws for an object that has a toString
-// member), and the settings API reads its members by exact name, as JavaScript does. I6 Members this package does not own are carried
+// be an object or null", and String() of the value in the mode and effort messages, which prints an object as [object Object] and never
+// throws for an own toString member, as the oracle's does, CRW-1120), and the settings API reads its members by exact name, as JavaScript does. I6 Members this package does not own are carried
 // as the file wrote them (a number keeps its form, an escape its spelling, integer-like keys are not moved first; U+2028 and U+2029
 // print literally, as JSON.stringify prints them). I13 A store that exists but cannot be read or parsed, and a role whose routing fields are not valid (a role that is not an
 // object included), are an UnusableSettingsError where the oracle read them as no override (CRW-1119); an unusable role stops only

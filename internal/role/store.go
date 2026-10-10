@@ -272,9 +272,16 @@ func SetRole(env host.LookupEnv, role RoleName, patch RolePatch) (Config, error)
 
 // setRole is SetRole with the publishing rename and the lock's sleep as seams, so a test can hold a writer inside its critical section.
 func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (Config, error) {
+	s, err := setRoleSettings(env, role, patch, rename, sleep)
+	return Config{Roles: s.Roles}, err
+}
+
+// setRoleSettings is setRole's write with the settings it left, read before the store's lock is released: the answer of a write is the
+// state that write made, whatever another writer then does (CRW-1120).
+func setRoleSettings(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (Settings, error) {
 	path, raw, release, err := open(env, role, sleep)
 	if err != nil {
-		return Config{}, err
+		return Settings{}, err
 	}
 	defer release()
 	// A set merges into what the file holds, so a role whose stored routing is not usable would be merged into a normalised copy
@@ -283,7 +290,7 @@ func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp
 	for _, r := range Roles() {
 		if value, ok := raw.roles.raw(string(r)); ok {
 			if _, reason := parseRole(value); reason != "" {
-				return Config{}, fmt.Errorf("cannot update subagent config: %w", &UnusableSettingsError{Path: path, Role: r, Reason: reason})
+				return Settings{}, fmt.Errorf("cannot update subagent config: %w", &UnusableSettingsError{Path: path, Role: r, Reason: reason})
 			}
 		}
 	}
@@ -293,13 +300,13 @@ func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp
 		existing, _ = parseObject(value)
 	}
 	if err := Validate(RolePatch{Fallback: patch.Fallback}); err != nil {
-		return Config{}, err
+		return Settings{}, err
 	}
 	base := current.patch()
 	next := RolePatch{Mode: pick(base.Mode, patch.Mode), Model: pick(base.Model, patch.Model), Effort: pick(base.Effort, patch.Effort),
 		PromptOverride: pick(base.PromptOverride, patch.PromptOverride), Fallback: fallbackOpt(mergeFallback(current.Fallback, patch.Fallback))}
 	if err := Validate(next); err != nil {
-		return Config{}, err
+		return Settings{}, err
 	}
 	cfg := next.config()
 	if cfg.Mode == ModeDefault {
@@ -310,16 +317,20 @@ func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp
 	}
 	raw.roles.set(string(role), &existing)
 	if err := writeRaw(path, raw.doc, rename); err != nil {
-		return Config{}, err
+		return Settings{}, err
 	}
-	return ReadConfig(env)
+	return ReadSettings(env)
 }
 
 // ResetReport is what a reset that committed answers: the config (a role that stays unusable is at its default there) and the joined
 // errors of the roles that stay unusable, nil when every role is usable.
+//
+// Settings is the settings answer read under the same lock as the reset, with each unusable role named in its Unusable member, so a
+// caller's answer describes the state the reset left, whatever another writer then does (CRW-1120).
 type ResetReport struct {
 	Config   Config
 	Unusable error
+	Settings Settings
 }
 
 // ResetRoleReport is ResetRole for a caller that tells a reset that failed from one that committed while another role stays
@@ -358,7 +369,20 @@ func resetRoleReport(env host.LookupEnv, role RoleName, rename func(tmp, finalPa
 	if err != nil {
 		return ResetReport{}, err
 	}
-	return ResetReport{Config: Config{Roles: s.Roles}, Unusable: joinUnusable(unusable)}, nil
+	for _, r := range Roles() {
+		if err := unusable[r]; err != nil {
+			if s.Unusable == nil {
+				s.Unusable = map[RoleName]string{}
+			}
+			var reason *UnusableSettingsError
+			if errors.As(err, &reason) {
+				s.Unusable[r] = reason.Reason
+			} else {
+				s.Unusable[r] = err.Error()
+			}
+		}
+	}
+	return ResetReport{Config: Config{Roles: s.Roles}, Unusable: joinUnusable(unusable), Settings: s}, nil
 }
 
 // SettingsSnapshot is one read of the store: the settings of every usable role, the error of each unusable role, and the error of a

@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -46,8 +50,11 @@ type ProviderCatalogInput struct {
 	OcxModels *[]string `json:"ocxModels,omitempty"`
 }
 type CatalogDeps struct {
-	ReadNativeCache func() []string
-	ProviderStatus  *ProviderCatalogInput
+	// ReadNativeEntries produces the native entries with their labels and effort ladders; when set it
+	// replaces ReadNativeCache. Neither set reads the process environment's native catalog.
+	ReadNativeEntries func() []CatalogEntry
+	ReadNativeCache   func() []string
+	ProviderStatus    *ProviderCatalogInput
 }
 
 func entryKey(raw json.RawMessage) string {
@@ -64,8 +71,30 @@ func entryKey(raw json.RawMessage) string {
 }
 func isRoutedSlug(key string) bool { return strings.Contains(key, "/") }
 
-// NativeCatalogPath scans only root-level model_catalog_json. The oracle accepts JSON
-// escapes in a basic string, not all TOML escapes; a malformed selected key fails closed.
+// readConfigFile reads a native configuration file that must be a regular file. It is opened without
+// blocking and checked once open, so a FIFO nobody writes (or a link to one) or a device is no
+// configuration instead of a wait that no timeout bounds: an OCX answer and a cache hit do not depend on
+// this file, and the reader reaches it before either (CRW-1132, CRW-1120). The error is not "not
+// exist": the caller selects nothing, as for a directory.
+func readConfigFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, &os.PathError{Op: "read", Path: path, Err: syscall.EINVAL}
+	}
+	return io.ReadAll(f)
+}
+
+// NativeCatalogPath scans only root-level model_catalog_json. A basic string is read with TOML's
+// escapes (tomlBasicString), not JSON's (CRW-1132; the oracle decoded it with JSON.parse); a malformed
+// selected key fails closed.
 func NativeCatalogPath(env host.LookupEnv) string {
 	if env == nil {
 		env = os.LookupEnv
@@ -82,7 +111,7 @@ func NativeCatalogPath(env host.LookupEnv) string {
 		}
 		home = filepath.Join(h, ".codex")
 	}
-	b, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	b, err := readConfigFile(filepath.Join(home, "config.toml"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return ""
 	}
@@ -127,7 +156,9 @@ func NativeCatalogPath(env host.LookupEnv) string {
 		var selected string
 		if value[0] == '\'' {
 			selected = value[1:end]
-		} else if json.Unmarshal([]byte(value[:end+1]), &selected) != nil {
+		} else if s, ok := tomlBasicString(value[1:end]); ok {
+			selected = s
+		} else {
 			return ""
 		}
 		if text.Trim(selected) == "" {
@@ -164,6 +195,21 @@ func NativeCatalogPath(env host.LookupEnv) string {
 	return filepath.Join(home, "models_cache.json")
 }
 
+// newCatalogEntry is the one construction of a catalog entry, for every reader: the ladder is read
+// the same way whichever source gave the row (CRW-1132).
+func newCatalogEntry(id string, source ModelSource, label string, efforts json.RawMessage) CatalogEntry {
+	return CatalogEntry{ID: id, Source: source, Label: label, ReasoningEfforts: reasoningEfforts(efforts)}
+}
+
+// nativeEntry is the entry of a native catalog row: a routed slug is OCX-backed, and the label is the ID.
+func nativeEntry(id string, efforts json.RawMessage) CatalogEntry {
+	source := ModelNative
+	if isRoutedSlug(id) {
+		source = ModelOcx
+	}
+	return newCatalogEntry(id, source, id, efforts)
+}
+
 func reasoningEfforts(raw json.RawMessage) *[]string {
 	var efforts []string
 	if len(raw) == 0 || raw[0] != '[' {
@@ -191,7 +237,11 @@ func reasoningEfforts(raw json.RawMessage) *[]string {
 
 // ReadNativeCatalog returns nil for unavailable and a non-nil empty slice for an empty catalog.
 func ReadNativeCatalog(env host.LookupEnv) []CatalogEntry {
-	p := NativeCatalogPath(env)
+	return readNativeCatalogAt(NativeCatalogPath(env))
+}
+
+// readNativeCatalogAt is ReadNativeCatalog of the catalog file p already chosen; an empty p is unavailable.
+func readNativeCatalogAt(p string) []CatalogEntry {
 	if p == "" {
 		return nil
 	}
@@ -227,15 +277,11 @@ func ReadNativeCatalog(env host.LookupEnv) []CatalogEntry {
 			continue
 		}
 		seen[id] = true
-		source := ModelNative
-		if isRoutedSlug(id) {
-			source = ModelOcx
-		}
 		efforts := m["reasoningEfforts"]
 		if len(efforts) == 0 || string(efforts) == "null" {
 			efforts = m["supported_reasoning_levels"]
 		}
-		entries = append(entries, CatalogEntry{id, source, id, reasoningEfforts(efforts)})
+		entries = append(entries, nativeEntry(id, efforts))
 	}
 	return entries
 }
@@ -250,18 +296,30 @@ func ReadNativeCacheDefault(env host.LookupEnv) []string {
 	}
 	return ids
 }
+
+// nativeEntries are the native entries of the library catalog: the injected entries, else the injected IDs,
+// else the process environment's native catalog. They are deduplicated by exact ID and a blank ID is dropped
+// where it is produced, whichever way they arrived (CRW-1132; the oracle trusted an injected list).
 func nativeEntries(deps CatalogDeps) []CatalogEntry {
-	read := deps.ReadNativeCache
-	if read == nil {
-		read = func() []string { return ReadNativeCacheDefault(os.LookupEnv) }
-	}
-	entries := make([]CatalogEntry, 0)
-	for _, id := range read() {
-		source := ModelNative
-		if isRoutedSlug(id) {
-			source = ModelOcx
+	var in []CatalogEntry
+	switch {
+	case deps.ReadNativeEntries != nil:
+		in = deps.ReadNativeEntries()
+	case deps.ReadNativeCache != nil:
+		for _, id := range deps.ReadNativeCache() {
+			in = append(in, nativeEntry(id, nil))
 		}
-		entries = append(entries, CatalogEntry{ID: id, Source: source, Label: id + " (" + string(source) + ")"})
+	default:
+		in = ReadNativeCatalog(os.LookupEnv)
+	}
+	entries := make([]CatalogEntry, 0, len(in))
+	seen := map[string]bool{}
+	for _, e := range in {
+		if text.Trim(e.ID) == "" || seen[e.ID] {
+			continue
+		}
+		seen[e.ID] = true
+		entries = append(entries, e)
 	}
 	return entries
 }
@@ -290,11 +348,68 @@ func BuildCatalog(deps CatalogDeps) Catalog {
 		seen[e.ID] = true
 	}
 	for _, id := range *p.OcxModels {
-		if id == "" || seen[id] {
+		if text.Trim(id) == "" || seen[id] {
 			continue
 		}
 		seen[id] = true
-		entries = append(entries, CatalogEntry{ID: id, Source: ModelOcx, Label: id + " (ocx)"})
+		entries = append(entries, newCatalogEntry(id, ModelOcx, id, nil))
 	}
 	return Catalog{CatalogOcx, entries}
+}
+
+// tomlBasicString is the text of a TOML basic string's body (the characters between its quotes): the
+// escapes \b \t \n \f \r \" \\ and \e, \uXXXX and \UXXXXXXXX for a Unicode scalar value. A surrogate or
+// out-of-range code point, any other escape (JSON's \/ among them) and a control character other than
+// a tab are refused, as TOML refuses them. It needs no dependency: only this one string syntax is read.
+func tomlBasicString(body string) (string, bool) {
+	var out strings.Builder
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c != '\\' {
+			if c < 0x20 && c != '\t' || c == 0x7f {
+				return "", false
+			}
+			out.WriteByte(c)
+			continue
+		}
+		i++
+		if i >= len(body) {
+			return "", false
+		}
+		switch body[i] {
+		case 'b':
+			out.WriteByte('\b')
+		case 't':
+			out.WriteByte('\t')
+		case 'n':
+			out.WriteByte('\n')
+		case 'f':
+			out.WriteByte('\f')
+		case 'r':
+			out.WriteByte('\r')
+		case 'e':
+			out.WriteByte(0x1b)
+		case '"':
+			out.WriteByte('"')
+		case '\\':
+			out.WriteByte('\\')
+		case 'u', 'U':
+			digits := 4
+			if body[i] == 'U' {
+				digits = 8
+			}
+			if i+1+digits > len(body) {
+				return "", false
+			}
+			n, err := strconv.ParseUint(body[i+1:i+1+digits], 16, 32)
+			if err != nil || !utf8.ValidRune(rune(n)) {
+				return "", false
+			}
+			out.WriteRune(rune(n))
+			i += digits
+		default:
+			return "", false
+		}
+	}
+	return out.String(), true
 }

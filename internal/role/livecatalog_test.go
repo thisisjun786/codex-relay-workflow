@@ -231,14 +231,16 @@ func TestLiveCatalogValidation(t *testing.T) {
 		valid       bool
 	}{
 		{"fresh", `{}`, true}, {"future1000", `{"fetchedAt":"2026-01-01T00:00:01.000Z"}`, true},
-		{"future1001", `{"fetchedAt":"2026-01-01T00:00:01.001Z"}`, false}, {"date-only", `{"fetchedAt":"2026-01-01"}`, true},
+		{"future1001", `{"fetchedAt":"2026-01-01T00:00:01.001Z"}`, false}, {"date-only", `{"fetchedAt":"2026-01-01"}`, false},
 		{"bad-date", `{"fetchedAt":"invalid"}`, false}, {"bad-source", `{"source":"other"}`, false}, {"stale", `{"status":"stale"}`, false},
 		{"null-entries", `{"entries":null}`, false}, {"empty", `{"entries":[]}`, true},
-		{"blank-id", `{"entries":[{"id":" ","source":"ocx","label":"","reasoningEfforts":[""]}]}`, true},
+		{"blank-id", `{"entries":[{"id":" ","source":"ocx","label":"x","reasoningEfforts":[""]}]}`, false},
+		{"blank-label", `{"entries":[{"id":"x","source":"ocx","label":" ","reasoningEfforts":[""]}]}`, false},
+		{"blank-efforts-kept", `{"entries":[{"id":"x","source":"ocx","label":"x","reasoningEfforts":["","high","high"]}]}`, true},
 		{"missing-efforts", `{"entries":[{"id":"x","source":"ocx","label":"x"}]}`, false},
 		{"invalid-efforts", `{"entries":[{"id":"x","source":"ocx","label":"x","reasoningEfforts":[1]}]}`, false},
-		{"missing-state", `{"state":null,"extra":7}`, true},
-		{"numeric-date", `{"fetchedAt":2026}`, true},
+		{"missing-state", `{"state":null,"extra":7}`, false}, {"extension-kept", `{"extra":7}`, true},
+		{"numeric-date", `{"fetchedAt":2026}`, false},
 		{"zero-date", `{"fetchedAt":-0.0}`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -305,43 +307,11 @@ func TestLiveCatalogSourceIdentityAndClock(t *testing.T) {
 	if ticks != 4 {
 		t.Fatal("TTL clock calls", ticks)
 	}
-	// HOME is absent from the oracle's key, even if it selects the native home.
-	first := catalogEnv([]string{"HOME=first", "CRW_HOME=shared"})
-	second := catalogEnv([]string{"HOME=second", "CRW_HOME=shared"})
-	if sourceKey(first) != sourceKey(second) {
-		t.Fatal("changed oracle home-key omission")
-	}
-}
-
-// Date.parse results recorded under UTC; numeric falsiness is separately tested through cache reads.
-func TestLiveCatalogOracleDates(t *testing.T) {
-	// Zone-less inputs ("2026/1/2", "1/2/2026", "0") are read in the local zone; pin it to the zone the
-	// recorded values were made in so a non-UTC host (TZ=Asia/Seoul) gives the same answers.
-	old := time.Local
-	time.Local = time.UTC
-	t.Cleanup(func() { time.Local = old })
-	for _, c := range []struct {
-		input string
-		ms    int64
-		valid bool
-	}{
-		{"2026-01-01T00:00:00.000Z", 1767225600000, true}, {"2026-01-01", 1767225600000, true},
-		{"2026-01", 1767225600000, true}, {"2026", 1767225600000, true},
-		{"2026-02-30", 1772409600000, true}, {"2026-02-31", 1772496000000, true}, {"2026-13-01", 0, false},
-		{"2026-01-01T24:00:00Z", 1767312000000, true}, {"2026-01-01T00:00:00+0000", 1767225600000, true},
-		{"2026/1/2", 1767312000000, true}, {"1/2/2026", 1767312000000, true},
-		{"Thu Jan 01 2026 00:00:00 GMT+0000 (Coordinated Universal Time)", 1767225600000, true},
-		{"Thu, 01 Jan 2026 00:00:00 GMT", 1767225600000, true},
-		{"Thu, 01 Jan 2026 00:00:00 PST", 1767254400000, true},
-		{"0", 946684800000, true}, {"1", 978307200000, true}, {"32", 1956528000000, true},
-		{"49", 2493072000000, true}, {"50", -631152000000, true}, {"1.5", 978652800000, true},
-	} {
-		t.Run(c.input, func(t *testing.T) {
-			ms, valid := catalogDate(c.input)
-			if valid != c.valid || valid && ms != c.ms {
-				t.Fatal(ms, valid, "want", c.ms, c.valid)
-			}
-		})
+	// HOME selects the native home when CODEX_HOME is unset (CRW-1132; the oracle omitted it).
+	first := catalogEnv([]string{"HOME=/first", "CRW_HOME=/shared"})
+	second := catalogEnv([]string{"HOME=/second", "CRW_HOME=/shared"})
+	if sourceKey(first) == sourceKey(second) {
+		t.Fatal("two HOMEs that select two native homes share a key")
 	}
 }
 
@@ -399,29 +369,23 @@ func TestLiveCatalogReviewTypedCache(t *testing.T) {
 	}
 }
 
-func TestLiveCatalogReviewLocalCacheDate(t *testing.T) {
-	o := liveOptions(t)
-	path := livePath(o)
-	check(t, os.MkdirAll(filepath.Dir(path), 0700))
-	cache := map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": map[string]any{"state": "ocx-active", "entries": []any{}, "status": "fresh", "source": "ocx", "fetchedAt": "2026/1/2"}}
-	check(t, os.WriteFile(path, must(json.Marshal(cache)), 0600))
-	cmd := exec.Command(must(os.Executable()), "-test.run=^TestLiveCatalogProcess$")
-	cmd.Env = append(os.Environ(), "TZ=Asia/Seoul", "CRW_LIVE_TEST_MODE=date-cache", "CRW_LIVE_TEST_ENV="+string(must(json.Marshal(o.Environ))))
-	var c LiveCatalog
-	check(t, json.Unmarshal(must(cmd.Output()), &c))
-	if c.Status != "fresh" {
-		t.Fatal("local cache date rejected", c)
-	}
-}
-
-func TestLiveCatalogReviewTimezoneSpellings(t *testing.T) {
+// CRW-1132: fetchedAt must be the writer's spelling; the other date spellings Date.parse accepted in the oracle's
+// cache (local-zone, RFC, zone-name and legacy numeric forms) are refused and the catalog is discovered again.
+func TestLiveCatalogFetchedAtIsTheWritersSpelling(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
-		at string
-		ms int64
-	}{{"Thu Jan  1 00:00:00 PST 2026", 1767254400000}, {"Thu, 01 Jan 2026 00:00:00 UT", 1767225600000}} {
+		at    string
+		valid bool
+	}{
+		{"2026-01-01T00:00:00.000Z", true}, {"2025-12-31T23:59:59.999Z", true}, {"2026-01-01T00:00:01.000Z", true}, {"2026-01-01T00:00:01.001Z", false},
+		{"2026/1/2", false}, {"1/2/2026", false}, {"2026-01-01T00:00:00Z", false}, {"2026-01-01T00:00:00.0Z", false},
+		{"2026-01-01T00:00:00.000+00:00", false}, {"2026-01-01T09:00:00.000+09:00", false}, {"2026-01-01T00:00:00.000z", false},
+		{"Thu Jan  1 00:00:00 PST 2026", false}, {"Thu, 01 Jan 2026 00:00:00 UT", false}, {"2026-02-30T00:00:00.000Z", false},
+		{"2026-01-01T24:00:00.000Z", false}, {" 2026-01-01T00:00:00.000Z", false}, {"0", false}, {"", false},
+	} {
 		t.Run(c.at, func(t *testing.T) {
 			o := liveOptions(t)
-			o.Now = func() time.Time { return time.UnixMilli(c.ms) }
+			o.Now = func() time.Time { return now }
 			path := livePath(o)
 			check(t, os.MkdirAll(filepath.Dir(path), 0700))
 			cache := map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": map[string]any{"state": "ocx-active", "entries": []any{}, "status": "fresh", "source": "ocx", "fetchedAt": c.at}}
@@ -430,8 +394,11 @@ func TestLiveCatalogReviewTimezoneSpellings(t *testing.T) {
 			o.RunOcx = func([]string) (string, error) { calls++; return "", errors.New("discovery fails") }
 			var r CatalogReader
 			got := liveRead(t, &r, o)
-			if got.Status != "fresh" || calls != 0 || got.FetchedAt == nil || *got.FetchedAt != c.at {
-				t.Fatal("explicit cache timezone changed", got, calls)
+			if c.valid && (got.Status != "fresh" || calls != 0 || got.FetchedAt == nil || *got.FetchedAt != c.at) {
+				t.Fatal("the writer's spelling was refused", got, calls)
+			}
+			if !c.valid && (calls != 1 || got.Status != "unavailable") {
+				t.Fatal("a spelling the writer never produces was accepted", got, calls)
 			}
 		})
 	}
@@ -496,14 +463,11 @@ func TestLiveCatalogProcess(t *testing.T) {
 	if mode == "" {
 		return
 	}
-	if mode == "cache" || mode == "date-cache" {
+	if mode == "cache" {
 		var env []string
 		check(t, json.Unmarshal([]byte(os.Getenv("CRW_LIVE_TEST_ENV")), &env))
 		var r CatalogReader
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		if mode == "date-cache" {
-			now = time.UnixMilli(1767279600000)
-		}
 		c := liveRead(t, &r, CatalogOptions{Environ: env, Now: func() time.Time { return now }, RunOcx: func([]string) (string, error) { return "", errors.New("cache not reused") }})
 		fmt.Print(string(must(Stringify(c, ""))))
 		os.Exit(0)

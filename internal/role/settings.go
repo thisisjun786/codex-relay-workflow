@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -63,6 +65,12 @@ func checkScope(raw json.RawMessage) error {
 // UpdateSettings is updateSettings: body names a role and either inherit: true (reset the role) or the members to change, and the answer
 // is the settings after the write. Unknown members are ignored.
 func UpdateSettings(env host.LookupEnv, body json.RawMessage) (Settings, error) {
+	return updateSettings(env, body, nil)
+}
+
+// updateSettings is UpdateSettings with a seam for a test: afterWrite runs once the write has returned and its lock is released, which
+// is where another writer can get in.
+func updateSettings(env host.LookupEnv, body json.RawMessage, afterWrite func()) (Settings, error) {
 	body = bytes.TrimSpace(body)
 	b, ok := members(body)
 	if !ok || len(body) == 0 || body[0] != '{' {
@@ -92,44 +100,31 @@ func UpdateSettings(env host.LookupEnv, body json.RawMessage) (Settings, error) 
 			present++
 		}
 	}
-	var err error
 	switch {
 	case inherit && present > 0:
 		return Settings{}, errors.New("inherit cannot be combined with role settings")
 	case inherit:
 		// A reset that committed answers with the settings even when another role stays unusable: the answer names that role instead
 		// of reporting a failure for a store that has changed (CRW-1119).
-		return resetSettings(env, role)
+		return resetSettings(env, role, afterWrite)
 	default:
-		_, err = SetRole(env, role, patch)
+		answer, err := setRoleSettings(env, role, patch, crwdir.Rename, time.Sleep)
+		if afterWrite != nil {
+			afterWrite()
+		}
+		return answer, err
 	}
-	if err != nil {
-		return Settings{}, err
-	}
-	return ReadSettings(env)
 }
 
-// resetSettings is the settings after a reset of role, with the roles that stay unusable named in Unusable (and at their defaults).
-func resetSettings(env host.LookupEnv, role RoleName) (Settings, error) {
-	if _, err := ResetRoleReport(env, role); err != nil {
-		return Settings{}, err
+// resetSettings is the settings a reset left, read under the reset's lock, with the roles that stay unusable named in Unusable (and at
+// their defaults).
+func resetSettings(env host.LookupEnv, role RoleName, afterWrite func()) (Settings, error) {
+	report, err := ResetRoleReport(env, role)
+	if afterWrite != nil {
+		afterWrite()
 	}
-	s, unusable, err := readSettings(env)
 	if err != nil {
 		return Settings{}, err
 	}
-	for _, r := range Roles() {
-		if err := unusable[r]; err != nil {
-			if s.Unusable == nil {
-				s.Unusable = map[RoleName]string{}
-			}
-			var reason *UnusableSettingsError
-			if errors.As(err, &reason) {
-				s.Unusable[r] = reason.Reason
-			} else {
-				s.Unusable[r] = err.Error()
-			}
-		}
-	}
-	return s, nil
+	return report.Settings, nil
 }
