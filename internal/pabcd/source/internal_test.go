@@ -1,6 +1,8 @@
 package source
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,18 +41,57 @@ func TestParseStatusZ(t *testing.T) {
 }
 
 // The limit is Node's maxBuffer: stdout and stderr together, more than the limit is refused, and the child is killed
-// at once even when a grandchild still holds the pipes.
+// at once even when a grandchild still holds the pipes. The time limit (CRW-1135) ends a probe the same way.
 func TestRunOutputLimit(t *testing.T) {
 	hermetic(t)
 	for limit, ok := range map[int]bool{8: true, 7: false, 5: false} {
-		out, err := run(t.TempDir(), limit, "sh", "-c", "printf aaaa; printf bbbb >&2")
+		out, err := runBounded("", "sh", []string{"-c", "printf aaaa; printf bbbb >&2"}, nil, limit, time.Minute)
 		if (err == nil) != ok || (ok && string(out) != "aaaa") {
 			t.Errorf("limit %d: %q, %v", limit, out, err)
 		}
 	}
 	started := time.Now()
-	if _, err := run(t.TempDir(), 4, "sh", "-c", "sleep 5 & printf 12345; wait"); err == nil || time.Since(started) > 3*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", "sleep 5 & printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 3*time.Second {
 		t.Fatalf("a child over the limit must be killed at once: %v after %v", err, time.Since(started))
+	}
+	started = time.Now()
+	if _, err := runBounded("", "sh", []string{"-c", "sleep 5 & printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
+		t.Fatalf("a child past the time limit must be killed at once: %v after %v", err, time.Since(started))
+	}
+	var exit *ExitError
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128"}, nil, 1<<20, time.Minute); !errors.As(err, &exit) || !NotARepository(err) {
+		t.Fatalf("exit 128: %v", err)
+	}
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any parent up to mount point /m)' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
+		t.Fatalf("mount point variant: %v", err)
+	}
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any parent up to mount point /m)' >&2; echo 'Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
+		t.Fatalf("mount point variant with git's boundary line: %v", err)
+	}
+	if _, err := runBounded("", "sh", []string{"-c", "echo \"warning: unable to access '/h/.config/git/attributes': Permission denied\" >&2; echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
+		t.Fatalf("a warning before the discovery message: %v", err)
+	}
+	// CRW-1135: the answer is git's whole discovery message, not a substring of any stderr: a path echoed by the
+	// unreadable-Git-directory message, or another line beside the message, is not the answer.
+	for _, script := range []string{
+		"echo 'fatal: not a git repository: /b/not a git repository (or any of the parent directories)/x' >&2; exit 128",
+		"echo 'fatal: not a git repository: /b/not a git repository (or any parent up to mount point /)/x' >&2; exit 128",
+		"echo 'fatal: not a git repository: /b' >&2; echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128",
+		"echo 'fatal: not a git repository (or any of the parent directories): .git/worktrees/w' >&2; exit 128",
+		"echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; echo 'fatal: bad' >&2; exit 128",
+		"echo 'hint: x' >&2; echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128",
+	} {
+		if _, err := runBounded("", "sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
+			t.Errorf("%s: %v is not git's discovery answer", script, err)
+		}
+	}
+	for _, script := range []string{"echo 'fatal: not a git repository: /r/.git/worktrees/w' >&2; exit 128", "echo 'fatal: detected dubious ownership' >&2; exit 128", "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 1"} {
+		if _, err := runBounded("", "sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
+			t.Errorf("%s: %v is not the not-a-repository answer", script, err)
+		}
+	}
+	if _, err := runBounded("", "/nonexistent/git", nil, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
+		t.Errorf("a git that cannot start: %v", err)
 	}
 }
 
