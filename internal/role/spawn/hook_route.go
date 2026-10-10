@@ -401,7 +401,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	answer := a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
 	if a.supersedes != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
-		a.supersedes.Remove(a.cwd) // no child holds it and no packet names it any more (CRW-1121)
+		a.supersedes.Remove(a.cwd) // under the claim lock, only while it is still open and unclaimed (CRW-1121)
 	}
 	if a.replay != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
 		a.replay(answer) // CRW-1121: the same event again gets this answer
