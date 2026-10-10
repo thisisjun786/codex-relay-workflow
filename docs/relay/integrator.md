@@ -33,9 +33,12 @@ directory and a link are not entries; they are reported as ignored.
    order: its last output line must start with `PASS` and its status must be 0. In solo mode the pass takes the first head that passes.
    A gate that ran and did not say `PASS` blocks the head. A gate that could not start or was killed is no verdict: the pass ends with
    status 2 (`error`) and the head and those behind it stay in `pending/`. A termination signal (`--watch` turns SIGINT and SIGTERM into a
-   cancelled context) at any point of a pass, in the gates, the merges, the record command or the verification, ends it as `cancelled`
-   (status 2): what was decided before stays, nothing else is moved, retried or blocked, and no failed verification is counted.
-4. One integration run (tag `tag_prefix` plus the month, day and time) fetches the remote, makes the detached worktree
+   cancelled context) at any point of a pass, in the gates, the merges, the record command, the verification, or the second fetch and
+   the push after a verification that passed, ends it as `cancelled` (status 2): what was decided before stays, nothing else is moved,
+   retried or blocked, and no failed verification is counted. A push that had already landed when the signal came makes those heads
+   `already-in-dev` on the next pass.
+4. One integration run (tag `tag_prefix` plus the month, day and time, reserved by creating `runs_dir/<tag>.log` exclusively; a tag an
+   earlier run used, as two passes in the same second do, gets the suffix `-2`, `-3`, ...) fetches the remote, makes the detached worktree
    `work_root/run-<tag>` on `refs/remotes/<remote>/<branch>`, and merges the heads in order with `merge --no-ff`.
    - A head that is an ancestor of the branch is `already-in-dev`; a commit missing from the checkout is `head-not-in-checkout`.
    - A head that conflicts is abandoned (`merge --abort`) and left out as `conflict`; the rest go on.
@@ -45,6 +48,10 @@ directory and a link are not entries; they are reported as ignored.
      resolver for one is a separate, explicitly scoped and tested change.
    - When a version conflict was resolved, or the merged tree differs from the base under `plugin_dir`, `record_version_command` re-derives
      the manifest's version line in the worktree and the change is committed as `integration <tag>: re-derive the plugin version line ...`.
+     A change that cannot be added or committed (a refusing hook, for example) ends the run with status 2 before the verification.
+   - What is verified is what is pushed: before the verification the worktree must be clean (`git status --porcelain` empty, so no
+     uncommitted or untracked change beside the commit); otherwise the run ends with status 2, nothing is verified or pushed, and the heads
+     stay in `pending/`.
 5. `record_version_command`, `verify_command` and the gate run with the inherited environment cleaned of Git routing variables
    (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the others `gitprobe.Sanitize` removes), so a command that asks Git for its
    repository finds the private worktree, never the shared checkout. `record_version_env` is the operator's explicit word and is applied
@@ -63,7 +70,7 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 | Status | Result | Meaning |
 |---|---|---|
 | 0 | `pushed`, `idle`, `stopped` | the merged heads were pushed, or there was nothing to do |
-| 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, or a termination signal; no head was judged by it |
+| 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, a re-derived version line that could not be committed, a worktree not clean before the verification, or a termination signal; no head was judged by it |
 | 3 | `verification-failed(rc=N)` | the merged tree failed verification; nothing was pushed |
 | 4 | `dev-moved:<sha>`, `push-failed` | the branch moved during the run or the push was refused; nothing was pushed |
 | 5 | `nothing-merged`, `nothing-to-integrate` | no head could be merged, or no head passed the gate |

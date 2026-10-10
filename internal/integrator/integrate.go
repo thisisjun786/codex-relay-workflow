@@ -112,7 +112,12 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 		pluginChanged = err != nil || rc != 0
 	}
 	if rerecord || pluginChanged {
-		r.recordVersion(ctx, tag, wt, tmp, base, logf)
+		if err := r.recordVersion(ctx, tag, wt, tmp, logf); err != nil {
+			return fail("%v", err)
+		}
+	}
+	if ctx.Err() != nil {
+		return fail("%v", ctx.Err())
 	}
 
 	head, err := r.gitOut(ctx, wt, "rev-parse", "HEAD")
@@ -138,6 +143,15 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 		return finish("nothing-merged", ExitNothingMerged)
 	}
 
+	// What is verified is what is pushed: the commit HEAD, with nothing beside it in the
+	// worktree that the verification would see and the push would not carry.
+	if dirty, err := r.gitOut(ctx, wt, "status", "--porcelain"); err != nil || dirty != "" {
+		if err == nil {
+			err = fmt.Errorf("the merged worktree has changes no commit holds; nothing is verified or pushed:\n%s", dirty)
+		}
+		return fail("%v", err)
+	}
+
 	if vrc := r.verify(ctx, tag, wt, head, base, record); vrc != 0 {
 		if ctx.Err() != nil {
 			// A verification the signal ended is not a failed verification: no retry is
@@ -146,15 +160,30 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 		}
 		return finish(fmt.Sprintf("verification-failed(rc=%d)", vrc), ExitVerifyFailed)
 	}
+	// From here on a git call the signal ended is not a moved branch or a refused push: the
+	// pass is cancelled and the heads stay pending (a push that did land makes them
+	// already-in-dev on the next pass).
+	if ctx.Err() != nil {
+		return fail("%v", ctx.Err())
+	}
 	if rc, err := r.git(ctx, c.Checkout, nil, "fetch", c.Remote, "--quiet"); err != nil || rc != 0 {
+		if ctx.Err() != nil {
+			return fail("%v", ctx.Err())
+		}
 		r.logf("%s: the second fetch failed; the push is still fast-forward only", tag)
 	}
 	now, err := r.gitOut(ctx, c.Checkout, "rev-parse", c.remoteRef())
+	if ctx.Err() != nil {
+		return fail("%v", ctx.Err())
+	}
 	if err != nil || now != base {
 		return finish("dev-moved:"+now, ExitMoved)
 	}
 	// Never forced: no plus, no --force, so a remote that moved refuses the push.
 	if rc, err := r.git(ctx, wt, logf, "push", c.Remote, head+":refs/heads/"+c.Branch); err != nil || rc != 0 {
+		if ctx.Err() != nil {
+			return fail("%v", ctx.Err())
+		}
 		return finish("push-failed", ExitMoved)
 	}
 	return finish("pushed", ExitPushed)
@@ -231,12 +260,14 @@ func (r *Runner) resolveVersionOnly(ctx context.Context, wt string, log io.Write
 }
 
 // recordVersion re-derives the manifest's version line on the merged tree with the configured
-// command and commits the change. A failing command is logged and left to the verification.
-func (r *Runner) recordVersion(ctx context.Context, tag, wt, tmp, base string, log io.Writer) {
+// command and commits the change. A failing command is logged and left to the verification; a
+// change that cannot be committed is an error, because the verification would see a tree the
+// push does not carry.
+func (r *Runner) recordVersion(ctx context.Context, tag, wt, tmp string, log io.Writer) error {
 	c := r.Cfg
 	if err := os.MkdirAll(tmp, 0o775); err != nil {
 		fmt.Fprintf(log, "record version: %v\n", err)
-		return
+		return nil
 	}
 	pairs := []string{"{tmpdir}", tmp, "{tag}", tag}
 	// The command finds its repository from its directory, the private worktree, so no
@@ -251,10 +282,16 @@ func (r *Runner) recordVersion(ctx context.Context, tag, wt, tmp, base string, l
 		fmt.Fprintf(log, "record version command: status %d, %v\n", rc, err)
 	}
 	if rc, err := r.git(ctx, wt, nil, "diff", "--quiet", "--", c.PluginManifest); err == nil && rc == 0 {
-		return
+		return nil
 	}
-	_, _ = r.git(ctx, wt, log, "add", "--", c.PluginManifest)
-	_, _ = r.git(ctx, wt, log, "commit", "-q", "-m", "integration "+tag+": re-derive the plugin version line (payload digest) after the merges")
+	if rc, err := r.git(ctx, wt, log, "add", "--", c.PluginManifest); err != nil || rc != 0 {
+		return fmt.Errorf("record version: git add of %s failed (status %d, %v); nothing is verified or pushed", c.PluginManifest, rc, err)
+	}
+	msg := "integration " + tag + ": re-derive the plugin version line (payload digest) after the merges"
+	if rc, err := r.git(ctx, wt, log, "commit", "-q", "-m", msg); err != nil || rc != 0 {
+		return fmt.Errorf("record version: the re-derived version line could not be committed (status %d, %v); nothing is verified or pushed", rc, err)
+	}
+	return nil
 }
 
 // verify runs the verification command on the merged tree and returns its status (127 when it

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -95,7 +96,12 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		return rep
 	}
 
-	tag := r.Cfg.TagPrefix + r.Now().Format("0102150405")
+	tag, err := r.reserveTag()
+	if err != nil {
+		r.logf("run tag: %v", err)
+		rep.Result, rep.Exit, rep.Error = "error", ExitUsage, err.Error()
+		return rep
+	}
 	specs := make([]string, len(batch))
 	for i, e := range batch {
 		specs[i] = e.Spec()
@@ -132,6 +138,44 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	}
 	r.afterRun(batch, out, &rep)
 	return rep
+}
+
+// runFileExts are the files a run leaves in runs_dir under its tag.
+var runFileExts = []string{".log", ".out", ".summary.json", ".verify.log", ".json"}
+
+// reserveTag picks the tag of the next run, tag_prefix plus the month, day and time, and
+// reserves it by creating its log exclusively. A tag an earlier run already used (two passes in
+// the same second) gets the suffix -2, -3, ..., so no run overwrites another's evidence.
+func (r *Runner) reserveTag() (string, error) {
+	if err := os.MkdirAll(r.Cfg.RunsDir, 0o775); err != nil {
+		return "", err
+	}
+	stem := r.Cfg.TagPrefix + r.Now().Format("0102150405")
+	for i := 1; i <= 1000; i++ {
+		tag := stem
+		if i > 1 {
+			tag = fmt.Sprintf("%s-%d", stem, i)
+		}
+		used := false
+		for _, ext := range runFileExts[1:] {
+			if _, err := os.Lstat(filepath.Join(r.Cfg.RunsDir, tag+ext)); err == nil {
+				used = true
+				break
+			}
+		}
+		if used {
+			continue
+		}
+		f, err := os.OpenFile(filepath.Join(r.Cfg.RunsDir, tag+runFileExts[0]), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o664)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return tag, f.Close()
+	}
+	return "", fmt.Errorf("no free run tag for %s in %s", stem, r.Cfg.RunsDir)
 }
 
 // cancelled ends a pass whose context ended: what was decided before stays, the rest is left

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -239,5 +240,112 @@ func TestPassSoloStateDropsHeadsThatLeftThePending(t *testing.T) {
 	requireExit(t, rep, ExitPushed, "pushed")
 	if len(w.r.soloOwed()) != 0 {
 		t.Fatalf("owed %v after both owed heads left", w.r.soloOwed())
+	}
+}
+
+// The re-derived version line is verified only as the commit that is pushed: a commit the
+// repository refuses (a pre-commit hook here) ends the run with status 2 before the
+// verification, nothing is pushed and the head stays pending.
+func TestPassRefusedVersionCommitPushesNothing(t *testing.T) {
+	w := newWorld(t)
+	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
+	// git merge runs no pre-commit hook, so only the re-derivation commit meets this one.
+	w.write(filepath.Join(w.checkout, ".git", "hooks", "pre-commit"), "#!/bin/sh\necho refused >&2\nexit 1\n")
+	base := w.remoteDev()
+	rep := w.pass()
+	requireExit(t, rep, ExitUsage, "error")
+	w.mustWhere("1", "pending")
+	if w.remoteDev() != base {
+		t.Fatalf("pushed although the version commit was refused: remote manifest %s", w.fileAt("dev", manifestPath))
+	}
+	if w.ctlRead("verify-calls") != "" {
+		t.Fatal("the verification ran on a tree that is not the commit to push")
+	}
+}
+
+// A change the record command leaves beside the manifest is not part of the pushed commit, so
+// the run does not verify that tree: status 2, nothing pushed.
+func TestPassDirtyWorktreeBeforeVerifyPushesNothing(t *testing.T) {
+	w := newWorld(t)
+	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
+	w.write(filepath.Join(w.root, "scripts", "record.sh"), recordScript+"echo stray >> README.md\n")
+	base := w.remoteDev()
+	rep := w.pass()
+	requireExit(t, rep, ExitUsage, "error")
+	if !strings.Contains(rep.Error, "README.md") {
+		t.Fatalf("error %q does not name the stray change", rep.Error)
+	}
+	w.mustWhere("1", "pending")
+	if w.remoteDev() != base || w.ctlRead("verify-calls") != "" {
+		t.Fatal("a dirty worktree was verified or pushed")
+	}
+}
+
+// A signal after a verification that passed, during the second fetch or during the push, is
+// still a cancelled pass (status 2), not dev-moved or push-failed (status 4).
+func TestPassCancelledAfterVerificationIsCancelled(t *testing.T) {
+	for name, at := range map[string]func(c Cmd, fetches *int) bool{
+		"after verify passed": func(c Cmd, _ *int) bool { return strings.HasSuffix(c.Argv[0], "verify.sh") },
+		"second fetch": func(c Cmd, fetches *int) bool {
+			if slices.Contains(c.Argv, "fetch") {
+				*fetches++
+				return *fetches == 2
+			}
+			return false
+		},
+		"push": func(c Cmd, _ *int) bool { return slices.Contains(c.Argv, "push") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.pend("1", w.head("a", map[string]string{"a.txt": "a\n"}, true))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fetches := 0
+			delegate := w.r.Exec
+			w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
+				if !at(c, &fetches) {
+					return delegate(ctx, c)
+				}
+				if strings.HasSuffix(c.Argv[0], "verify.sh") {
+					// The verification passes; the signal arrives as it returns.
+					rc, err := delegate(ctx, c)
+					cancel()
+					return rc, err
+				}
+				cancel()
+				return -1, ctx.Err()
+			}
+			base := w.remoteDev()
+			rep := w.r.Pass(ctx)
+			requireExit(t, rep, ExitUsage, "cancelled")
+			w.mustWhere("1", "pending")
+			if w.remoteDev() != base || rep.Retry != "" {
+				t.Fatalf("a cancelled pass pushed or counted something: %+v", rep)
+			}
+		})
+	}
+}
+
+// Two passes in the same second keep their own evidence: the second run's tag differs, so the
+// first run's summary and verification log are not overwritten.
+func TestPassSameSecondRunsKeepTheirOwnEvidence(t *testing.T) {
+	w := newWorld(t)
+	w.pend("1", w.head("a", map[string]string{"a.txt": "a\n"}, true))
+	w.ctlWrite("verify-rc", "3\n0\n")
+	first := w.r.Pass(context.Background())
+	requireExit(t, first, ExitVerifyFailed, "verification-failed(rc=3)")
+	second := w.r.Pass(context.Background())
+	requireExit(t, second, ExitPushed, "pushed")
+	if first.Summary.Tag == second.Summary.Tag || first.Summary.Record == second.Summary.Record {
+		t.Fatalf("both runs used tag %q", first.Summary.Tag)
+	}
+	data, err := os.ReadFile(filepath.Join(w.cfg.RunsDir, first.Summary.Tag+".summary.json"))
+	if err != nil || !strings.Contains(string(data), `"result":"verification-failed(rc=3)"`) {
+		t.Fatalf("the first run's summary was lost: %s %v", data, err)
+	}
+	for _, s := range []*Summary{first.Summary, second.Summary} {
+		if _, err := os.Stat(filepath.Join(w.cfg.RunsDir, s.Tag+".verify.log")); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
