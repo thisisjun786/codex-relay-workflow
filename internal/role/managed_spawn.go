@@ -20,6 +20,12 @@ func managedSpawnMarker(message string) []string {
 	return regexp.MustCompile(`(?:^|[\r\n\x{2028}\x{2029}])\[CRW-DISPATCH:([a-zA-Z0-9_-]+):([a-zA-Z0-9_-]+)\](?:\r?\n|$|[\r\x{2028}\x{2029}])`).FindStringSubmatch(message)
 }
 
+// managedSpawnCarries reports whether message carries the marker of this attempt of this dispatch, anywhere in it: a role's
+// prompt can be put before the work message, so other markers may come first.
+func managedSpawnCarries(message, dispatch, attempt string) bool {
+	return regexp.MustCompile(`(?:^|[\r\n\x{2028}\x{2029}])\[CRW-DISPATCH:` + regexp.QuoteMeta(dispatch) + `:` + regexp.QuoteMeta(attempt) + `\](?:\r?\n|$|[\r\x{2028}\x{2029}])`).MatchString(message)
+}
+
 // ManagedSpawn ports fallback-dispatch.ts:237-247 after name substitution.
 func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) {
 	root, err := dispatchRoot(cwd)
@@ -51,6 +57,11 @@ func ManagedSpawn(cwd, session, message string) (*ManagedSpawnSelection, error) 
 func IssueManagedSpawn(cwd, session, message string, toolUseID *string) (*ManagedSpawnSelection, error) {
 	return IssueManagedSpawnEnv(cwd, session, message, toolUseID, nil)
 }
+
+// managedSpawnLookupBudget bounds the issuance's look at the host's marked children. It runs under the record's lock inside the
+// installed hook's own limit (10 seconds for the whole process), so it is kept to a third of that: when it runs out the
+// issuance is still saved and the lock released, with the children seen so far unrecorded.
+var managedSpawnLookupBudget = 3 * time.Second
 
 // IssueManagedSpawnEnv is IssueManagedSpawn that also records which children the host already shows with the attempt's marker
 // (see DispatchAttempt.PriorChildren), reading the native thread database through env. A nil env, a host without a thread
@@ -92,7 +103,7 @@ func IssueManagedSpawnEnv(cwd, session, message string, toolUseID *string, env h
 		return nil, errors.New("attempt already issued to another native call; reconcile before retry")
 	}
 	if !a.SpawnIssued && env != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), managedSpawnLookupBudget)
 		prior, err := createdCheckMarked(ctx, env, session, d.ID, a.ID)
 		cancel()
 		if err == nil && len(prior) > 0 {

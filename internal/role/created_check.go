@@ -167,7 +167,7 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 // independent review.
 func createdCheckTie(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, agent, first string) (string, error) {
 	if first != "" {
-		if m := managedSpawnMarker(first); m == nil || m[1] != d.ID || m[2] != a.ID {
+		if !managedSpawnCarries(first, d.ID, a.ID) {
 			return "", errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
 		}
 	}
@@ -550,7 +550,7 @@ func createdCheckMarked(ctx context.Context, env host.LookupEnv, session, dispat
 			if err != nil || row.Parent != session {
 				continue
 			}
-			if m := managedSpawnMarker(row.FirstMessage); m != nil && m[1] == dispatch && m[2] == attempt {
+			if managedSpawnCarries(row.FirstMessage, dispatch, attempt) {
 				out = append(out, row)
 			}
 		}
