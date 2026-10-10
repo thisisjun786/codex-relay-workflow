@@ -110,7 +110,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 
 // memoryGateNoStateHint replaces the grant route when the call carries no absolute working directory or no session id: the gate
 // reads no authorization for such a call, so a grant or a request could not be spent by it (CRW-1178).
-const memoryGateNoStateHint = "This call carries no absolute working directory and session id, so no grant or request can be matched to it; retry from a session whose hook payload carries both."
+const memoryGateNoStateHint = "This call has no absolute working directory or no session id, so no grant or request can be matched to it; retry from a session whose hook payload carries both."
 
 // memoryGateStateReachable is whether the gate consults the session state for this call (memoryGateHandle): only then can a
 // grant or a request authorize it. A relative working directory is looked up from the hook process's own directory, which the
