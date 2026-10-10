@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Derivation (CRW-718): the raise record a supervisor obligation asks for. The caller reads the
@@ -21,9 +22,14 @@ const (
 	OutcomeBlockedNeeds    = "blocked_needs_input"
 )
 
-// SourceKindObligation is the source kind of a derived record: its ref is the supervisor
-// obligation's id, the link between the question and the obligation that raised it.
-const SourceKindObligation = "supervisor_obligation"
+// SourceKindEvent is the source kind of a question that waits on a receipt's reply: its ref is the
+// receipt's event id, which decision-apply compares with the receipt the applying reply answers.
+// SourceKindObligation is the source kind of a question no reply applies: its ref is the supervisor
+// obligation's id. Either way every observation's seen note names the obligation.
+const (
+	SourceKindEvent      = "event"
+	SourceKindObligation = "supervisor_obligation"
+)
 
 // RaisedViaObligation is the raised_via of a derived record.
 const RaisedViaObligation = "supervisor-obligation"
@@ -109,6 +115,9 @@ func deriveRecord(obs Observation, needsID bool) (Record, error) {
 			return Record{}, fmt.Errorf("%w: %s", ErrObservationField, name)
 		}
 	}
+	if strings.ContainsFunc(obs.ObligationID, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || r == '|' }) {
+		return Record{}, fmt.Errorf("%w: obligation id", ErrObservationField)
+	}
 	if err := checkRFC3339Field(obs.ObservedAt, ErrBadRaisedAt); err != nil {
 		return Record{}, err
 	}
@@ -130,18 +139,30 @@ func deriveRecord(obs Observation, needsID bool) (Record, error) {
 		Blocking:   blocking,
 		NeededBy:   obs.NeededBy,
 		Origin:     Origin{Issue: obs.Issue, Project: obs.Project},
-		Source:     Source{Kind: SourceKindObligation, Ref: obs.ObligationID},
+		Source:     derivedSource(obs),
 		Authority:  authority,
 		State:      StateRaised,
 		RaisedAt:   obs.ObservedAt,
 		RaisedVia:  RaisedViaObligation,
-		Seen:       []Seen{{At: obs.ObservedAt, Source: "event:" + obs.EventID, Note: note}},
+		Seen:       []Seen{{At: obs.ObservedAt, Source: "event:" + obs.EventID, Note: note + ", obligation " + obs.ObligationID}},
 	}
 	record.Fingerprint = Fingerprint(record.Context, record.Blocking, record.Options)
 	if err := ValidateRaise(record); err != nil {
 		return Record{}, err
 	}
 	return record, nil
+}
+
+// derivedSource is where the question was read from. A question that blocks a relationship is
+// applied by a reply that answers the receipt it waits on, and decision-apply compares the reply with
+// the receipt named by an "event" source, so such a question names the receipt; the obligation link
+// is then in the seen note and in the context. Any other question has no receipt to answer and links
+// to the obligation directly.
+func derivedSource(obs Observation) Source {
+	if obs.Outcome == OutcomeBlockedNeeds {
+		return Source{Kind: SourceKindEvent, Ref: obs.EventID}
+	}
+	return Source{Kind: SourceKindObligation, Ref: obs.ObligationID}
 }
 
 // derivedChoices are the options and the blocking subject of a derived question. A child waiting on
@@ -168,17 +189,22 @@ func derivedChoices(obs Observation) ([]Option, []Blocking) {
 }
 
 // derivedContext states the question from facts that are the same each time the obligation is
-// observed (relationship, generation, status, reason, summary), so a repeated observation is the same
-// fingerprint. The format refuses the fingerprint's delimiter and control characters in a context
-// (a newline and a tab excepted), so those are replaced rather than carried.
+// observed (relationship, generation, status, reason, summary, obligation id), so a repeated
+// observation is the same fingerprint. The receipt's outcome is not one of them for a work report:
+// the supervisor's obligation id does not include it, so a later event of the same obligation may
+// end differently. The obligation id is part of the text, so the lossy replacements below (the
+// format refuses the fingerprint's delimiter and control characters in a context, a newline and a
+// tab excepted) can never make two obligations one question.
 func derivedContext(obs Observation, fromReport bool) string {
 	statement := strings.TrimSpace(obs.Summary)
-	if statement == "" {
-		statement = "the turn ended " + obs.Outcome
-	}
 	head := fmt.Sprintf("The child of relationship %s stopped at generation %d on a %s receipt and waits for a decision", obs.RelationshipID, obs.Generation, OutcomeBlockedNeeds)
 	if fromReport {
 		head = fmt.Sprintf("The child of relationship %s reported %s at generation %d", obs.RelationshipID, obs.ReportStatus, obs.Generation)
+		if statement == "" {
+			statement = "the work report gave no summary"
+		}
+	} else if statement == "" {
+		statement = "the turn ended " + obs.Outcome
 	}
 	if reason := strings.TrimSpace(obs.Reason); reason != "" {
 		head += " (" + reason + ")"
@@ -193,5 +219,5 @@ func derivedContext(obs Observation, fromReport bool) string {
 			return ' '
 		}
 		return r
-	}, head+": "+statement)
+	}, head+": "+statement+"\nObligation: "+obs.ObligationID)
 }

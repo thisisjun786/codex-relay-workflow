@@ -46,8 +46,13 @@ func TestDeriveReceiptPathMakesOneLinkedRecord(t *testing.T) {
 	if record.State != StateRaised || record.DecisionID != "ud-718" || record.Kind != KindBlockedEscalation || record.RaisedAt != deriveObservedAt || record.RaisedVia != RaisedViaObligation {
 		t.Fatalf("record = %+v", record)
 	}
-	if record.Source != (Source{Kind: SourceKindObligation, Ref: obs.ObligationID}) {
-		t.Fatalf("the record must link to the obligation: %+v", record.Source)
+	// A relationship-blocking question is applied by a reply that answers this receipt: decision-apply
+	// reads that receipt from an "event" source, so the receipt is the source (CRW-718 d1).
+	if record.Source != (Source{Kind: SourceKindEvent, Ref: obs.EventID}) {
+		t.Fatalf("a receipt question's source is the receipt: %+v", record.Source)
+	}
+	if !strings.Contains(record.Seen[0].Note, obs.ObligationID) || !strings.Contains(record.Context, obs.ObligationID) {
+		t.Fatalf("the record must stay linked to the obligation: seen %+v context %q", record.Seen, record.Context)
 	}
 	if want := []Blocking{{Kind: BlockingRelationship, Ref: obs.RelationshipID}}; !reflect.DeepEqual(record.Blocking, want) {
 		t.Fatalf("blocking = %+v", record.Blocking)
@@ -55,7 +60,7 @@ func TestDeriveReceiptPathMakesOneLinkedRecord(t *testing.T) {
 	if len(record.Options) != 2 || record.Options[0].Reply != ReplyAnswer || record.Options[1].Reply != ReplyStop {
 		t.Fatalf("a relationship-blocking option names its reply: %+v", record.Options)
 	}
-	if want := []Seen{{At: deriveObservedAt, Source: "event:ev-blocked", Note: "receipt blocked_needs_input"}}; !reflect.DeepEqual(record.Seen, want) {
+	if want := []Seen{{At: deriveObservedAt, Source: "event:ev-blocked", Note: "receipt blocked_needs_input, obligation 0123456789abcdef0123456789abcdef"}}; !reflect.DeepEqual(record.Seen, want) {
 		t.Fatalf("seen = %+v", record.Seen)
 	}
 	if record.Origin != (Origin{Issue: "CRW-718", Project: "PRJ-A"}) || record.Authority.Kind != AuthorityUser {
@@ -75,7 +80,7 @@ func TestDeriveWorkReportPathUnsafeAndNeedsHuman(t *testing.T) {
 	if err := ValidateRaise(unsafe); err != nil {
 		t.Fatal(err)
 	}
-	if unsafe.Source.Ref != "0123456789abcdef0123456789abcdef" || unsafe.Seen[0].Note != "work report UNSAFE" || unsafe.Blocking[0].Kind != BlockingRelationship {
+	if unsafe.Source != (Source{Kind: SourceKindEvent, Ref: "ev-blocked"}) || unsafe.Seen[0].Note != "work report UNSAFE, obligation 0123456789abcdef0123456789abcdef" || unsafe.Blocking[0].Kind != BlockingRelationship {
 		t.Fatalf("unsafe = %+v", unsafe)
 	}
 	if !strings.Contains(unsafe.Context, "UNSAFE") || !strings.Contains(unsafe.Context, "destructive step") || !strings.Contains(unsafe.Context, "drop a live table") {
@@ -90,6 +95,10 @@ func TestDeriveWorkReportPathUnsafeAndNeedsHuman(t *testing.T) {
 	human := mustDerive(t, obs, nil)
 	if want := []Blocking{{Kind: BlockingIssue, Ref: "CRW-718"}}; !reflect.DeepEqual(human.Blocking, want) {
 		t.Fatalf("blocking = %+v", human.Blocking)
+	}
+	// No receipt waits for a reply, so the link to the obligation is the source.
+	if human.Source != (Source{Kind: SourceKindObligation, Ref: obs.ObligationID}) {
+		t.Fatalf("source = %+v", human.Source)
 	}
 	for _, option := range human.Options {
 		if option.Reply != "" {
@@ -139,7 +148,7 @@ func TestDeriveRepeatOfAnsweredAndAppliedKeepsAnswerAndApply(t *testing.T) {
 		again.ObservedAt = "2026-10-10T03:00:00Z"
 		merged := mustDerive(t, again, &stored)
 		want := stored
-		want.Seen = append(append([]Seen{}, stored.Seen...), Seen{At: again.ObservedAt, Source: "event:ev-blocked", Note: "receipt blocked_needs_input"})
+		want.Seen = append(append([]Seen{}, stored.Seen...), Seen{At: again.ObservedAt, Source: "event:ev-blocked", Note: "receipt blocked_needs_input, obligation " + obs.ObligationID})
 		if !reflect.DeepEqual(merged, want) {
 			t.Fatalf("%s: a repeat of an answered record changes only seen:\n got %+v\nwant %+v", state, merged, want)
 		}
@@ -207,6 +216,7 @@ func TestDeriveRefusals(t *testing.T) {
 		"relationship id": func(o *Observation) { o.RelationshipID = " " },
 		"project":         func(o *Observation) { o.Project = "" },
 		"observed at":     func(o *Observation) { o.ObservedAt = "" },
+		"bad obligation":  func(o *Observation) { o.ObligationID = "a b" },
 	} {
 		obs := deriveReceipt()
 		change(&obs)
@@ -250,7 +260,57 @@ func TestDeriveContextIsMadeValid(t *testing.T) {
 	}
 	blank := deriveReceipt()
 	blank.Summary = ""
-	if got := mustDerive(t, blank, nil).Context; !strings.HasSuffix(got, "the turn ended blocked_needs_input") {
+	if got := mustDerive(t, blank, nil).Context; !strings.Contains(got, "the turn ended blocked_needs_input") {
 		t.Fatalf("context = %q", got)
+	}
+}
+
+// Two obligations whose statements differ only in a character the format cannot carry are different
+// questions: the lossy display form must not make them one record (CRW-718 d2).
+func TestDeriveObligationsThatReadAlikeAreDifferentQuestions(t *testing.T) {
+	a, b := deriveUnsafeReport(), deriveUnsafeReport()
+	a.ObligationID, a.Summary = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Run a|b?"
+	b.ObligationID, b.Summary = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Run a/b?"
+	first := mustDerive(t, a, nil)
+	if second := mustDerive(t, b, nil); second.Fingerprint == first.Fingerprint {
+		t.Fatal("two obligations share a fingerprint")
+	}
+	if _, err := Derive(b, &first); !errors.Is(err, ErrFingerprintMismatch) {
+		t.Fatalf("a different obligation merged into a held question = %v", err)
+	}
+	first.State, first.AnsweredAt, first.AnsweredBy, first.AnsweredVia, first.AnswerText = StateAnswered, "2026-10-10T01:30:00Z", "jun", "file-import", "answer"
+	if _, err := Derive(b, &first); !errors.Is(err, ErrFingerprintMismatch) {
+		t.Fatalf("a different obligation took an answered question's answer = %v", err)
+	}
+	// The same obligation still merges.
+	again := a
+	again.EventID, again.ObservedAt = "ev-again", "2026-10-10T02:00:00Z"
+	if merged := mustDerive(t, again, &first); len(merged.Seen) != 2 {
+		t.Fatalf("seen = %+v", merged.Seen)
+	}
+}
+
+// The supervisor's obligation id for a work report does not include the receipt outcome, so a later
+// event of the same obligation with another outcome is the same question (CRW-718 d3).
+func TestDeriveSameObligationWithAnotherOutcomeMerges(t *testing.T) {
+	first := deriveUnsafeReport()
+	first.Outcome, first.Reason, first.Summary = "failed", "needs approval", ""
+	stored := mustDerive(t, first, nil)
+	if strings.Contains(stored.Context, "failed") {
+		t.Fatalf("the outcome is not part of the question: %q", stored.Context)
+	}
+	for _, outcome := range []string{"ready_for_review", "failed", "cancelled"} {
+		next := first
+		next.EventID, next.Outcome, next.ObservedAt = "ev-"+outcome, outcome, "2026-10-10T02:00:00Z"
+		merged := mustDerive(t, next, &stored)
+		if merged.Fingerprint != stored.Fingerprint || len(merged.Seen) != 2 {
+			t.Fatalf("%s: %+v", outcome, merged)
+		}
+	}
+	// A receipt that waits for a reply blocks the relationship instead of the issue: another question.
+	waiting := first
+	waiting.Outcome = OutcomeBlockedNeeds
+	if _, err := Derive(waiting, &stored); !errors.Is(err, ErrFingerprintMismatch) {
+		t.Fatalf("a blocked receipt of the same report = %v", err)
 	}
 }
