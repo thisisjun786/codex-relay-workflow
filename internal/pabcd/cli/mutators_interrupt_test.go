@@ -421,3 +421,37 @@ func TestLoopSteerInterruptCancelledOnceTheWriteBeganAnswersAsToday(t *testing.T
 		t.Fatalf("steering log has %d entries, want 1", n)
 	}
 }
+
+// Red on 3fceb240: a retry of an applied batch that records the rows its first attempt lost wrote them without announcing the write,
+// so a cancellation that landed as the first row began was answered as an interrupted run (exit 130, no result) over rows that
+// were written. It now answers what the retry did.
+func TestLoopSteerInterruptCancelledOnceARetryBeganToRecordRowsAnswersAsDone(t *testing.T) {
+	cwd, slug := loopMutWorkspace(t, nil)
+	ledger := filepath.Join(cwd, ".crw", "goalplans", slug, goalplan.GoalplanLedgerFile)
+	if err := os.Mkdir(ledger, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	batch := `{"idempotencyKey":"k-retry","rationale":"r","evidence":"e","ops":[{"kind":"annotate","note":"n"}]}`
+	args, err := ParseLoopCliArgs([]string{"steer", "--session", loopMutSession, "--cwd", cwd, "--batch-json", batch}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loopSteer(context.Background(), args, nil, nil); err != nil || got.Code != 0 || !strings.Contains(got.Output, "warning") {
+		t.Fatalf("first attempt: %+v %v, want applied with the ledger warning", got, err)
+	}
+	if err := os.Remove(ledger); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got, err := loopSteer(ctx, args, nil, cancel)
+	if err != nil || got.Code != 0 {
+		t.Fatalf("retry cancelled as the first row began: %+v %v, want its own answer", got, err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("the write-begin seam did not run")
+	}
+	if raw, err := os.ReadFile(ledger); err != nil || !strings.Contains(string(raw), `"eventId":"steer:\"k-retry\""`) {
+		t.Fatalf("the retry did not record its row: %q %v", raw, err)
+	}
+}

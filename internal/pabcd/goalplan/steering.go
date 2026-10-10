@@ -39,7 +39,8 @@ type SteeringBatchOptions struct {
 	// BeforeWrite (CRW-1074), when non-nil, runs once, immediately before the plan write, the transaction's
 	// first write, after the last context check. A caller the first SIGINT can end uses it to tell a result
 	// reached before any write began (an ended context outranks it) from one of a transaction that has begun
-	// to write (it answers as before). It does not run for a batch that writes nothing.
+	// to write (it answers as before). It also runs once for a retry of an applied batch that records a missing row, right before that row;
+	// it does not run for a batch that writes nothing.
 	BeforeWrite func()
 
 	// publish is the CRW-793 durability seam of the plan write this batch performs. It is an
@@ -54,12 +55,17 @@ type SteeringBatchOptions struct {
 	// syncLedger replaces the fsync of the plan's ledger and its directory that a retry performs before it counts a row it finds
 	// as recorded (CRW-1111), so a test can fail it. nil is syncSteeringLedger.
 	syncLedger func(cwd, slug string) error
+
+	// afterScan runs in a retry after the plan's ledger was scanned and before the first row is written (CRW-1097 evaluation), so
+	// a test can end the invocation exactly there. nil is none.
+	afterScan func()
 }
 
 // steeringLedgerOps is the ledger I/O of a batch: the append of one row and the fsync of the ledger a retry performs.
 type steeringLedgerOps struct {
-	append func(cwd, slug string, entry GoalplanLedgerEntry) error
-	sync   func(cwd, slug string) error
+	append    func(cwd, slug string, entry GoalplanLedgerEntry) error
+	sync      func(cwd, slug string) error
+	afterScan func()
 }
 
 // steeringBatchSummary is the oracle's entry summary (:275): how many ops the batch carried and
@@ -212,6 +218,16 @@ func steeringRecordedRows(cwd, slug, ts string) (steeringRecorded, error) {
 	}
 }
 
+// steeringOwesRows reports whether some row of the entry is not in the ledger yet.
+func steeringOwesRows(entry SteeringEntry, recorded steeringRecorded) bool {
+	for _, ev := range entry.Events {
+		if !recorded.has(ev) {
+			return true
+		}
+	}
+	return false
+}
+
 // steeringRecordEvents appends the entry's rows, in order, each with its event id, skipping those recorded already (a retry; a
 // fresh entry has none). It answers the warning of the first row that could not be written, "" when every row is in the ledger.
 // A row found in the ledger may be one an earlier attempt wrote whole and could not fsync (the append's error came from its
@@ -271,7 +287,7 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 	var beforeWrite func()
 	var ledger steeringLedgerOps
 	if o != nil {
-		ledger = steeringLedgerOps{append: o.appendLedger, sync: o.syncLedger}
+		ledger = steeringLedgerOps{append: o.appendLedger, sync: o.syncLedger, afterScan: o.afterScan}
 		if o.Now != nil {
 			now = o.Now
 		}
@@ -340,6 +356,22 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 			recorded, err := steeringRecordedRows(cwd, slug, existing.AppliedAt)
 			if err != nil {
 				return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringLedgerWarning(slug, err)}, nil
+			}
+			if ledger.afterScan != nil {
+				ledger.afterScan()
+			}
+			// A retry that owes a row is a transaction that writes: the context is read once more immediately before the first
+			// row, and the write-start callback runs, exactly as for a fresh batch, so a first SIGINT that lands during the scan
+			// writes nothing and one that lands after the write began answers what the retry did.
+			if steeringOwesRows(existing, recorded) {
+				if ctx != nil {
+					if err := ctx.Err(); err != nil {
+						return SteerResult{}, err
+					}
+				}
+				if beforeWrite != nil {
+					beforeWrite()
+				}
 			}
 			return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringRecordEvents(cwd, slug, existing, recorded, ledger)}, nil
 		}
