@@ -73,6 +73,7 @@ type CapacityPlan struct {
 	Verdict         string              `json:"verdict"`
 	Reasons         []string            `json:"reasons"`
 	Alert           bool                `json:"alert"`
+	AlertEpoch      int                 `json:"-"`
 	Branches        *BranchCandidates   `json:"branches,omitempty"`
 	// BranchesUnmeasured is why the plan's branches were not measured: a store that predates the DAG
 	// zone holds no plan to read. The branches field is null beside it, which is how a reader tells
@@ -127,10 +128,11 @@ type capacitySettings struct {
 }
 
 type capacityPlanState struct {
-	Since     float64  `json:"since"`
-	Waiting   []string `json:"waiting"`
-	Alerted   []string `json:"alerted"`
-	AlertedAt float64  `json:"alerted_at"`
+	Since      float64  `json:"since"`
+	Waiting    []string `json:"waiting"`
+	Alerted    []string `json:"alerted"`
+	AlertedAt  float64  `json:"alerted_at"`
+	AlertEpoch int      `json:"alert_epoch"`
 }
 
 type capacityState struct {
@@ -168,9 +170,38 @@ func capacityFamilyOf(ref capacityPlanRef) string {
 // parents is the management session's work. dry judges without writing that state, and a relay read
 // failure is an error the command reports as exit 3.
 func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, error) {
+	ev, err := capacityEvaluate(ctx, e, cfg)
+	if err != nil {
+		return CapacityReport{}, err
+	}
+	if !dry {
+		if err := ev.Commit(); err != nil {
+			return CapacityReport{}, err
+		}
+	}
+	return ev.Report, nil
+}
+
+// capacityEvaluation is one judgement not yet reflected in the alerted state: the report, with the
+// alerts it carries, and the state the judgement would write.
+type capacityEvaluation struct {
+	Report    CapacityReport
+	statePath string
+	next      capacityState
+}
+
+// Commit persists the alerted state of the judgement. A caller that must make an alert durable
+// elsewhere first (the pump's pending events) evaluates, records the alert, and only then commits;
+// an evaluation that is never committed leaves the state as it was, so the next evaluation judges
+// the same alert under the same epoch (CapacityPlan.AlertEpoch) and converges on the same event.
+func (ev capacityEvaluation) Commit() error { return capacityWriteState(ev.statePath, ev.next) }
+
+// capacityEvaluate is the pure half of Capacity: it reads the signals and the previous state and
+// writes nothing.
+func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluation, error) {
 	settings := capacitySettings{}
 	if err := cfg.Section("capacity", &settings); err != nil {
-		return CapacityReport{}, fmt.Errorf("capacity: the section: %w", err)
+		return capacityEvaluation{}, fmt.Errorf("capacity: the section: %w", err)
 	}
 	limits, now := capacityLimitsFrom(settings), e.Now()
 	report := CapacityReport{At: now, Limits: limits, Plans: []CapacityPlan{}}
@@ -204,7 +235,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 	if len(settings.Plans) > 0 {
 		stateDir, err = e.relayHelperState(ctx, cfg)
 		if err != nil {
-			return CapacityReport{}, err
+			return capacityEvaluation{}, err
 		}
 	}
 	// The store's DAG zone is read once, before the relay is asked for anything: a store that predates
@@ -215,18 +246,18 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 	if len(settings.Plans) > 0 {
 		zoneReason, headerMissing, err = capacityZoneReason(ctx, stateDir)
 		if err != nil {
-			return CapacityReport{}, err
+			return capacityEvaluation{}, err
 		}
 	}
 
 	for _, ref := range settings.Plans {
 		waiting, err := capacityWaitingFor(ctx, e, cfg, ref.Plan, zoneReason, headerMissing)
 		if err != nil {
-			return CapacityReport{}, err
+			return capacityEvaluation{}, err
 		}
 		receipt, err := capacityReceiptWaitFor(ctx, stateDir, ref.Parent, now.Add(-capacityReceiptWindow))
 		if err != nil {
-			return CapacityReport{}, err
+			return capacityEvaluation{}, err
 		}
 		hostMemory := waiting.HostMemory
 		if hostMemory == "" {
@@ -240,7 +271,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
 		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, zoneReason)
 		if err != nil {
-			return CapacityReport{}, err
+			return capacityEvaluation{}, err
 		}
 		plan.Branches, plan.BranchesUnmeasured = branches, unmeasured
 		if plan.Verdict != capacityExpand {
@@ -248,16 +279,15 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 		} else if plan.Alert {
 			entry := next.Plans[ref.Plan]
 			entry.Alerted, entry.AlertedAt = append([]string(nil), plan.Waiting...), float64(now.Unix())
+			// The epoch counts this plan's alerts from the previous committed state only, so an
+			// evaluation that was never committed is judged again under the same epoch.
+			plan.AlertEpoch = previous.Plans[ref.Plan].AlertEpoch + 1
+			entry.AlertEpoch = plan.AlertEpoch
 			next.Plans[ref.Plan] = entry
 		}
 		report.Plans = append(report.Plans, plan)
 	}
-	if !dry {
-		if err := capacityWriteState(statePath, next); err != nil {
-			return CapacityReport{}, err
-		}
-	}
-	return report, nil
+	return capacityEvaluation{Report: report, statePath: statePath, next: next}, nil
 }
 
 // capacityPersist records this run's waiting set and reports how long it has waited and whether the
@@ -287,7 +317,7 @@ func capacityPersist(next *capacityState, before capacityPlanState, plan Capacit
 	// The last alert is carried forward whether or not this run may alert again, so a hold that
 	// sees a different waiting set does not erase the suppression of the set that was alerted.
 	entry := capacityPlanState{Since: since, Waiting: append([]string(nil), plan.Waiting...),
-		Alerted: append([]string(nil), before.Alerted...), AlertedAt: before.AlertedAt}
+		Alerted: append([]string(nil), before.Alerted...), AlertedAt: before.AlertedAt, AlertEpoch: before.AlertEpoch}
 	next.Plans[plan.Plan] = entry
 	return waitingMinutes, alert
 }
