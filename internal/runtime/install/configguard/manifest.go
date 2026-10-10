@@ -34,7 +34,11 @@ type InstallManifest struct {
 	BackupPath, PostActivateHash *string
 	Flags                        map[string]FlagRecord
 	TableKeys                    map[string]TableKeyRecord
-	flagOrder, tableOrder        []string
+	// Switch is the `switch` section: what `crw install switch` changed and the values it changed
+	// them from. It is kept apart from TableKeys so Deactivate and `features disable` never touch it
+	// (CRW-201); every writer of the manifest carries it over.
+	Switch                *SwitchRecord
+	flagOrder, tableOrder []string
 }
 
 func manifestPath(home string) string { return filepath.Join(home, InstallManifestName) }
@@ -111,6 +115,13 @@ func parseInstallManifest(input string) *InstallManifest {
 				m.tableOrder = append(m.tableOrder, entry.Key)
 			}
 		}
+	}
+	if raw, present := o.Lookup("switch"); present {
+		rec := parseSwitchRecord(raw)
+		if rec == nil {
+			return nil
+		}
+		m.Switch = rec
 	}
 	return m
 }
@@ -189,6 +200,9 @@ func manifestBytes(m *InstallManifest) ([]byte, error) {
 		keys = append(keys, pyjson.Field{Key: id, Value: pyjson.Object{{Key: "table", Value: r.Table}, {Key: "key", Value: r.Key}, {Key: "priorValue", Value: manifestNullable(r.PriorValue)}, {Key: "appliedValue", Value: r.AppliedValue}, {Key: "setByCodexclaw", Value: r.SetByCodexclaw}}})
 	}
 	body := pyjson.Object{{Key: "version", Value: m.Version}, {Key: "activatedAt", Value: m.ActivatedAt}, {Key: "configPath", Value: m.ConfigPath}, {Key: "backupPath", Value: manifestNullable(m.BackupPath)}, {Key: "postActivateHash", Value: manifestNullable(m.PostActivateHash)}, {Key: "flags", Value: flags}, {Key: "tableKeys", Value: keys}}
+	if m.Switch != nil {
+		body = append(body, pyjson.Field{Key: "switch", Value: switchRecordObject(m.Switch)})
+	}
 	b, e := pyjson.Encode(body, pyjson.Options{Indent: 2, Unicode: true})
 	if e != nil {
 		return nil, e

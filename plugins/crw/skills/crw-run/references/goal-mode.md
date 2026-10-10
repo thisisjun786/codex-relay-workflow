@@ -270,8 +270,9 @@ implementation loop, so that a later session reads it before anything else. Keep
 transcripts out. Do not grow scope from a later backlog scan.
 
 Use `objective` and only fields allowed by the tool. Set `token_budget` only when the user explicitly
-supplies a token budget and the host supports it; never invent one. An incompatible budget guard is a
-reported conflict, not a reason to discard the limit. Record the returned identity and status where
+supplies a token budget, with exactly that value, and let the host validate the field; never invent one.
+With no budget requested the goal is unlimited. A host whose `create_goal` does not accept `token_budget`
+is a reported capability conflict, not a reason to create the goal unlimited or to discard the limit. Record the returned identity and status where
 available and verify the objective and active status. Wording in a document is not a created goal. Do not
 call `crw pabcd loop init` or enter PABCD merely to support this parent goal. A child's loop setup remains
 separate.
@@ -331,7 +332,9 @@ retries to reach a count; use real continuations and record concrete evidence.
 User stop or pause and resource limits are not successful completion or automatic blocked status. Honor
 them immediately using the host's supported controls; `update_goal` is not a pause, resume or budget API.
 If the needed control is unavailable, report the required user action and preserve pending work. Never
-resume a user-paused task automatically.
+resume a user-paused task automatically. A goal the host holds as `budgetLimited` keeps the limit the
+user named: report it and wait for the user to raise the limit or resume; do not recreate the goal
+without the limit.
 
 Record goal ID and status, scope and limits, pending owners, results and receipts, the last meaningful
 transition, continuation mode and exact resume step. A hook rejection, expired wait or host interruption

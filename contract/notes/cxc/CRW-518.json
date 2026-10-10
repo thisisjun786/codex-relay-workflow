@@ -1,12 +1,7 @@
 {
   "issue": "CRW-518",
   "identical": [
-    "hook__pre-tool-use-guarding-memory-write__baseline_empty_workspace",
-    "hook__pre-tool-use-guarding-memory-write__edit_tools_under_memories_gated",
-    "hook__pre-tool-use-guarding-memory-write__fail_open_and_subagent_denied",
-    "hook__pre-tool-use-guarding-memory-write__shell_clobber_and_inplace_interpreters",
-    "hook__pre-tool-use-guarding-memory-write__shell_destinations_classified",
-    "hook__pre-tool-use-guarding-memory-write__unrequested_note_denies"
+    "hook__pre-tool-use-guarding-memory-write__baseline_empty_workspace"
   ],
   "intentionally-changed": []
 }

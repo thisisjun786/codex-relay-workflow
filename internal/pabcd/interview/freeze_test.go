@@ -166,10 +166,24 @@ func TestFreezeGoalActivationDirectiveIsTheRecordedConstant(t *testing.T) {
 		}
 		return s
 	}
-	if got, want := GoalActivationDirective, sub.Expected(oracle("GOAL_ACTIVATION_DIRECTIVE")); got != want {
+	want := sub.Expected(oracle("GOAL_ACTIVATION_DIRECTIVE"))
+	if !strings.Contains(want, oracleStep2) {
+		t.Fatalf("the recorded directive no longer holds the line this test replaces: %q", want)
+	}
+	want = strings.Replace(want, oracleStep2, goalActivationStep2, 1)
+	if got := GoalActivationDirective; got != want {
 		t.Errorf("directive\n got %q\nwant %q", got, want)
 	}
 	if PlanSubdir != oracle("PLAN_SUBDIR") || FreezeManifestDir != oracle("FREEZE_MANIFEST_DIR") || FreezeManifestFile != oracle("FREEZE_MANIFEST_FILE") {
 		t.Error("a path constant differs from the oracle's")
 	}
 }
+
+// oracleStep2 is the line of the oracle's handoff that CRW-1133 replaces: it told the agent to drop a requested token_budget.
+const oracleStep2 = "2. Call create_goal with objective ONLY (no token_budget \u2014 the L3 gate denies budgeted goals).\n"
+
+// goalActivationStep2 is the step of the goal handoff that creates the goal (CRW-1133): the user's token limit, when
+// there is one, goes to the host's create_goal as the user gave it; with none the goal is unlimited; a host that cannot
+// take the field is reported, not worked around.
+const goalActivationStep2 = "2. Call create_goal with the objective. Add token_budget only when the user named a token limit, and pass exactly that value; never choose one yourself.\n" +
+	"   With no limit named the goal stays unlimited. If the host's create_goal does not accept token_budget, report that capability conflict and do not start the goal without the limit.\n"

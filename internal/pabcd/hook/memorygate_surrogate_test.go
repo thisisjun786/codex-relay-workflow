@@ -45,7 +45,7 @@ func TestMemoryGateRefusesToRewriteTextTheDecoderWouldAlter(t *testing.T) {
 				cwd, _, env := gateScene(t)
 				before := rewriteLosslessSeed(t, cwd, kind, receipt, "3")
 				payload := gatePayload(t, cwd, map[string]any{"tool_name": "memories.add_ad_hoc_note"})
-				if reason := gateDeny(t, HandleMemoryWriteGate(payload, env)); !strings.Contains(reason, "cannot rewrite") {
+				if reason := gateDeny(t, HandleMemoryWriteGate(payload, env)); !strings.Contains(reason, "authorization-state") {
 					t.Errorf("reason: %s", reason)
 				}
 				if after, _ := os.ReadFile(state.StatePath(cwd, gateSession)); string(after) != string(before) {

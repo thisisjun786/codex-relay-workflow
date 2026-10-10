@@ -1,0 +1,239 @@
+package hook
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+)
+
+// TestPathlibCreateRealGate runs the real PreToolUse entry points (CRW-951, fix round 1): a Python pathlib touch() or mkdir() of
+// the protected memory root is refused without a grant, spends the grant once, and is refused again; a command that writes
+// nothing there (a Node Path().touch() method, the text p.touch() as data, a work tree path) passes and spends nothing.
+func TestPathlibCreateRealGate(t *testing.T) {
+	write := []string{
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(root).joinpath("a").touch()'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(root).joinpath("a").mkdir()'`,
+		`python3 -c 'from pathlib import Path; m="{M}/a"; Path(m).touch()'`,
+		`python3 -c 'from pathlib import Path; Path("{M}/d").mkdir(parents=True, exist_ok=True)'`,
+		`python3 -c 'import os; print(f"{p.touch()}", os.path.exists("{M}/x"))'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n.md").touch()'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n").mkdir()'`,
+		`python3 -c 'from pathlib import Path; root="{M}"; Path(f"{root}/n.md").write_text("x")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("p.\x74ouch()")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("p.\x77rite_text(\"x\")")'`,
+		`python3 -c 'from pathlib import Path; os=Path("{M}/d"); os.mkdir()'`,
+		"python3 -c 'from pathlib import Path\nimport sys, \\\n os\nos=Path(\"{M}/d\"); os.mkdir()'",
+		"python3 -c 'from pathlib import Path\nif True: import os\nos=Path(\"{M}/d\"); os.mkdir()'",
+		`python3 -c "import os; print(f\"{'a' + str(p.touch())}\", os.path.exists('{M}/n.md'))"`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("\x65\x78\x65\x63\x28\x22\x70\x2e\x5c\x78\x37\x34\x6f\x75\x63\x68\x28\x29\x22\x29")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("p.\x77rite_bytes(b\"x\")")'`,
+		`python3 -c 'from pathlib import Path; p=Path("{M}/n.md"); exec("\x67etattr(p, \"write_text\")(\"x\")")'`,
+	}
+	pass := []string{
+		`node -e 'function Path(x) { return {touch() { console.log(x) }} }; Path("{M}/a").touch()'`,
+		`node -e 'function Path(x) { return {mkdir() { console.log(x) }} }; Path("{M}/d").mkdir()'`,
+		`python3 -c 'import os; print("p.touch()", os.path.exists("{M}/x"))'`,
+		`python3 -c 'import os; print(os.path.exists("{M}/x")) # p.mkdir()'`,
+		`python3 -c 'from pathlib import Path; Path("/w/x").touch()'`,
+		`python3 -c 'from pathlib import Path; print(Path("{M}/a").exists())'`,
+		`python3 -c 'import os; print(f"p.touch()", os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; print("exec p.touch()", os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; print(os.path.exists("{M}/n.md")) # execute p.touch()'`,
+		`python3 -c 'from pathlib import Path; Path(f"/w/x").touch()'`,
+		`python3 -c 'import os; os.mkdir("/w/d")'`,
+		"python3 -c 'import sys, \\\n os; os.mkdir(\"/w/d\")'",
+		"python3 -c 'import sys, \\\r\n os; os.mkdir(\"/w/d\")'",
+		"python3 -c 'if True: import os\nos.mkdir(\"/w/d\")'",
+		`python3 -c "import os; print(f\"{'exec'} p.touch()\", os.path.exists('{M}/n.md'))"`,
+		`python3 -c "import os; print(f\"{'p.touch()'}\", os.path.exists('{M}/n.md'))"`,
+		`python3 -c "import os; print(f\"{f'p.touch()'}\", os.path.exists('{M}/n.md'))"`,
+		"python3 -c \"import os\nprint(f\\\"{'x' # execute p.touch()\n}\\\", os.path.exists('{M}/n.md'))\"",
+		`python3 -c 'import os; exec("print(\"p.\x74ouch()\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"p.\x77rite_text()\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"p.\x77rite_bytes()\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("# p.\x77rite_text()\nprint(1)"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"\x67etattr\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"io\x2eopen(\x27w\x27)\")"); print(os.path.exists("{M}/n.md"))'`,
+		`python3 -c 'import os; exec("print(\"a\x5bi]\")"); print(os.path.exists("{M}/n.md"))'`,
+	}
+	for _, tmpl := range write {
+		t.Run("write "+tmpl, func(t *testing.T) {
+			cwd, root, env := gateScene(t)
+			cmd := strings.ReplaceAll(tmpl, "{M}", root)
+			if reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env)); !strings.Contains(reason, "MEMORY-WRITE-GATE") {
+				t.Fatalf("no grant: reason %q", reason)
+			}
+			gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+			if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
+				t.Fatalf("with a grant the write was refused: %s", out)
+			}
+			if state.ReadState(cwd, gateSession).MemoryWriteGrant {
+				t.Error("the grant was not spent by the write")
+			}
+			gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+		})
+	}
+	for _, tmpl := range pass {
+		t.Run("pass "+tmpl, func(t *testing.T) {
+			cwd, root, env := gateScene(t)
+			cmd := strings.ReplaceAll(tmpl, "{M}", root)
+			gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+			if out := HandleMemoryWriteGate(gateBash(t, cwd, cmd), env); out != "" {
+				t.Fatalf("refused: %s", out)
+			}
+			if !state.ReadState(cwd, gateSession).MemoryWriteGrant {
+				t.Error("a command that writes nothing spent the grant")
+			}
+			if out := HandleGitHubPostGuard(gateBash(t, cwd, cmd)); out != "" {
+				t.Errorf("the GitHub post guard answered %s", out)
+			}
+		})
+	}
+}
+
+// A computed receiver without a protected string still writes relative to the
+// command's effective directory. The grant belongs to the session cwd, even
+// after the command changes directory.
+func TestPathlibCreateEffectiveDirectory(t *testing.T) {
+	for _, method := range []string{"touch", "mkdir"} {
+		for _, receiver := range []string{
+			`Path("x")`, `Path(name)`, `Path(".").joinpath("x")`, `(Path(".") / "x")`, `p`, `Path(f"{name}")`,
+			`decoded-bound`, `decoded-computed`, `field-computed`, `Path("/w/x")`, `data`,
+		} {
+			for _, scene := range []string{"cwd-memory", "cwd-memory-child", "cd-memory", "cd-unknown", "cwd-linked-memory", "cd-linked-memory", "cwd-work", "cd-work"} {
+				t.Run(method+"/"+receiver+"/"+scene, func(t *testing.T) {
+					cwd, root, env := gateScene(t)
+					child := filepath.Join(root, "child")
+					if err := os.MkdirAll(child, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					link := filepath.Join(filepath.Dir(cwd), "memory-link")
+					if err := os.Symlink(root, link); err != nil {
+						t.Fatal(err)
+					}
+					prefix := ""
+					wantWrite := true
+					switch scene {
+					case "cwd-memory":
+						cwd = root
+					case "cwd-memory-child":
+						cwd = child
+					case "cd-memory":
+						prefix = "cd '" + root + "'; "
+					case "cd-unknown":
+						prefix = `cd "$DEST"; `
+					case "cwd-linked-memory":
+						cwd = link
+					case "cd-linked-memory":
+						prefix = "cd '" + link + "'; "
+					case "cwd-work":
+						wantWrite = false
+					case "cd-work":
+						prefix = "cd '" + cwd + "' && "
+						cwd, wantWrite = root, false
+					}
+					program := `from pathlib import Path; name="x"; p=Path("x"); ` + receiver + "." + method + "()"
+					switch receiver {
+					case "decoded-bound":
+						program = `from pathlib import Path; p=Path("x"); exec("p.` + method + `()")`
+					case "decoded-computed":
+						program = `from pathlib import Path; name="x"; exec("Path(name).` + method + `()")`
+					case "field-computed":
+						program = `from pathlib import Path; name="x"; print(f"{Path(name).` + method + `()}")`
+					case "data":
+						program = `from pathlib import Path; print("p.` + method + `()") # p.` + method + `()`
+					}
+					if receiver == `Path("/w/x")` || receiver == "data" {
+						wantWrite = false
+					}
+					payload := gateBash(t, cwd, prefix+"python3 -c '"+program+"'")
+					if out := HandleMemoryWriteGate(payload, env); strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
+						t.Errorf("without grant: %q, want attempt=%v", out, wantWrite)
+					}
+					gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+					if out := HandleMemoryWriteGate(payload, env); out != "" {
+						t.Fatalf("with grant: %q", out)
+					}
+					if got := state.ReadState(cwd, gateSession).MemoryWriteGrant; got == wantWrite {
+						t.Errorf("grant kept=%v, want %v", got, !wantWrite)
+					}
+					if out := HandleMemoryWriteGate(payload, env); strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
+						t.Errorf("after grant: %q, want attempt=%v", out, wantWrite)
+					}
+				})
+			}
+		}
+	}
+}
+
+// The d4 create relaxation must leave other unknown writers fail closed.
+func TestPathlibOtherWritesEffectiveDirectory(t *testing.T) {
+	for _, write := range []string{`write_text("x")`, `write_bytes(b"x")`, `open("w")`} {
+		for _, prefix := range []string{"", `cd "{M}"; `, `cd "$DEST"; `} {
+			t.Run(write+"/"+prefix, func(t *testing.T) {
+				cwd, root, env := gateScene(t)
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if prefix == "" {
+					cwd = root
+				}
+				command := strings.ReplaceAll(prefix, "{M}", root) + `python3 -c 'from pathlib import Path; name="x"; Path(name).` + write + `'`
+				payload := gateBash(t, cwd, command)
+				gateDeny(t, HandleMemoryWriteGate(payload, env))
+				gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+				if out := HandleMemoryWriteGate(payload, env); out != "" {
+					t.Fatalf("with grant: %q", out)
+				}
+				if state.ReadState(cwd, gateSession).MemoryWriteGrant {
+					t.Fatal("the write did not spend its grant")
+				}
+				gateDeny(t, HandleMemoryWriteGate(payload, env))
+			})
+		}
+	}
+}
+
+func TestPathlibCreateResolvedWithoutEnvironment(t *testing.T) {
+	for _, tc := range []struct{ command, want string }{
+		{`python3 -c 'from pathlib import Path; Path("/w/x").touch()'`, "/w/x"},
+		{`python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'`, ""},
+		{`cd "$DEST"; python3 -c 'from pathlib import Path; name="x"; Path(name).mkdir()'`, shellIRUnknownDest},
+	} {
+		dests, ok := shellIRWriteDestsResolved(tc.command, "/w", nil)
+		if !ok || strings.Join(dests, ",") != tc.want {
+			t.Fatalf("no-environment reading of %q: %q, readable=%v, want %q", tc.command, dests, ok, tc.want)
+		}
+	}
+}
+
+// The frozen CRW-951 promise permits computed create receivers when the program
+// has no protected reference. Mentioning the protected area makes them attempts.
+func TestPathlibCreateProtectedReference(t *testing.T) {
+	for _, method := range []string{"touch", "mkdir"} {
+		for _, receiver := range []string{`Path("/w").joinpath("x")`, `(Path("/w") / "x")`, `p`, `Path(f"{root}/x")`} {
+			for _, reference := range []string{"", `note="{M}"; `, `note="memories"; `, `note=".codex"; `, `note="\x6demories"; `, `CODEX_HOME="/h"; `} {
+				t.Run(method+" "+receiver+" "+reference, func(t *testing.T) {
+					cwd, root, env := gateScene(t)
+					program := `from pathlib import Path; root="/w"; p=Path("/w/x"); ` + strings.ReplaceAll(reference, "{M}", root) + receiver + "." + method + "()"
+					payload := gateBash(t, cwd, "python3 -c '"+program+"'")
+					wantWrite := reference != ""
+					out := HandleMemoryWriteGate(payload, env)
+					if strings.Contains(out, "MEMORY-WRITE-GATE") != wantWrite {
+						t.Fatalf("without grant: %q, want attempt=%v", out, wantWrite)
+					}
+					gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
+					if out := HandleMemoryWriteGate(payload, env); out != "" {
+						t.Fatalf("with grant: %q", out)
+					}
+					if got := state.ReadState(cwd, gateSession).MemoryWriteGrant; got == wantWrite {
+						t.Fatalf("grant kept=%v, want %v", got, !wantWrite)
+					}
+				})
+			}
+		}
+	}
+}

@@ -18,11 +18,30 @@ func AnalyzeEnv(src, cwd string, lookup func(string) (string, bool)) (Result, er
 	return analyze(src, newState(cwd), lookup)
 }
 
+// AnalyzeEnvProvenDirectory retains the previous directory when a cd can fail
+// and execution can continue. Only a success condition such as && establishes
+// the requested directory for subsequent commands. The legacy AnalyzeEnv
+// reading is kept for consumers whose existing policy assumes literal cd succeeds.
+func AnalyzeEnvProvenDirectory(src, cwd string, lookup func(string) (string, bool)) (Result, error) {
+	st := newState(cwd)
+	st.proveCD = true
+	return analyze(src, st, lookup)
+}
+
 // AnalyzeScript reads the text of a script file that a shell runs from a program record that had Cdpath: with CDPATH possibly set
 // in the environment the script inherits, a cd to a bare name in it may land in a directory the text does not show.
 func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
 	st := newState(cwd)
 	st.cdpath = cdpath
+	return analyze(src, st, nil)
+}
+
+// AnalyzeScriptProvenDirectory is AnalyzeScript with the same failed-cd
+// tracking as AnalyzeEnvProvenDirectory, for memory destinations in carried files.
+func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) {
+	st := newState(cwd)
+	st.cdpath = cdpath
+	st.proveCD = true
 	return analyze(src, st, nil)
 }
 

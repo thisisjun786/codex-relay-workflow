@@ -9,7 +9,6 @@
     "hook__stop-checking-pabcd-continuation__in_flight_without_goal_releases",
     "hook__stop-checking-pabcd-continuation__interview_phase_never_driven",
     "hook__stop-checking-pabcd-continuation__phase_c_reason",
-    "hook__stop-checking-pabcd-continuation__stop_budget_three_per_phase",
     "hook__stop-checking-pabcd-continuation__total_cap_releases_with_system_message",
     "hook__stop-checking-pabcd-continuation__unreadable_goal_db_releases"
   ]

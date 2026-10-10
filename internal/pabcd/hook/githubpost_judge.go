@@ -58,7 +58,7 @@ func HandleGitHubPostGuard(raw string) string {
 	if !denied {
 		return ""
 	}
-	return githubPostDeny(site.rule, site.place)
+	return githubPostDenyPayload(site, p)
 }
 
 // githubPostJudgeArgv judges an argv array as the text that runs it: each word is quoted, so the reader
@@ -82,7 +82,7 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
 	res, err := shellir.AnalyzeScript(command, cwd, cdpath)
 	if err != nil {
-		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
 	}
 	layoutLine, layout := 0, true
 	if depth > 0 {
@@ -112,12 +112,12 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		// redirection, list, declaration, compound command or word with an expansion): what the execution records cannot show.
 		if !layout {
 			failLine = layoutLine
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
 		}
 		for _, e := range execs {
 			if !githubPostScriptLine(e) {
 				failLine = e.Line
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
 			}
 		}
 	}
@@ -136,7 +136,7 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		failLine = e.Line
 		if e.Kind == shellir.KindScriptFile {
 			if textWrites().stale(i, e.Script.Value, e.Dir) {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
 			}
 			if site, denied := githubPostJudgeScript(e, depth, writes().as(githubPostBodyKey(e.Script.Value, e.Dir))); denied {
 				return site, true
@@ -144,16 +144,16 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 			continue
 		}
 		if e.Inline != nil && githubPostInlineNamesPost(e.Inline.Source.Value) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
 		}
 		// A runner's arguments are judged whatever runs it: an installed tmux, or ./tmux, a binary of any size the reader does not read.
 		if githubPostRunnerNamesPost(e) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
 		}
 		direct := githubPostDirectPath(e)
 		// A file run by path (./gh among them) that the text, or a script body it runs before, writes is not the file read here.
 		if direct && githubPostDirectStale(textWrites(), i, e) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
 		}
 		if direct && githubPostProgram(e.Name) != "gh" {
 			if site, denied := githubPostJudgeDirect(e, depth, writes().as(githubPostBodyKey(e.Program.Value, e.Dir))); denied {
@@ -171,15 +171,16 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 		}
 		var reads []string
 		if site, denied := githubPostJudgeWords(words, githubPostDir{path: base, reads: &reads}); denied {
+			site.post = githubPostPostSub(words)
 			return site, true
 		}
 		// A post of a script that passed the line rule is the whole command of its line, so what it reads is what the guard read
 		// unless something the script, or the text that runs it, writes reaches that file.
 		if !simple && !lines && githubPostPostSub(words) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
 		}
 		if depth > 0 && len(reads) > 0 && writes().readsReach(reads) {
-			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}, true
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true
 		}
 		// ./gh is a file in the directory, which may be a script and not the installed gh: the file is read as well.
 		if direct {
@@ -424,7 +425,7 @@ func githubPostPlainContext(c shellir.Context) bool {
 
 // githubPostJudgeScript reads the file a shell or a sed or awk program runs and judges its text.
 func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
-	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}
+	unread := githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}
 	if depth >= githubPostMaxScriptDepth || !e.Script.Known {
 		return unread, true
 	}
@@ -441,6 +442,7 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 	switch e.Name {
 	case "sed", "awk", "gawk", "mawk", "nawk":
 		if githubPostInlineNamesPost(body) {
+			unread.post = true
 			return unread, true
 		}
 		return githubPostSite{}, false
@@ -492,8 +494,8 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 
 // githubPostJudgeWords is the rule for one gh command whose words the reader gave.
 func githubPostJudgeWords(words []string, cwd githubPostDir) (githubPostSite, bool) {
-	expansion := githubPostSite{githubPostRuleExpand, githubPostWhereCommand, 0}
-	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}
+	expansion := githubPostSite{rule: githubPostRuleExpand, place: githubPostWhereCommand, line: 0}
+	unread := githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}
 	site, denied, handled := githubPostForm(words, cwd)
 	if handled && denied {
 		return site, true
@@ -616,7 +618,7 @@ func githubPostScriptKnown(name string, dir shellir.Dir) bool {
 // runs it), is judged as shell text; a script of another interpreter that names a post is refused (its lines cannot satisfy the line
 // rule).
 func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) (githubPostSite, bool) {
-	unread := githubPostSite{githubPostRuleUnread, githubPostWhereCommand, 0}
+	unread := githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}
 	if depth >= githubPostMaxScriptDepth || !githubPostScriptKnown(e.Program.Value, e.Dir) {
 		return unread, true
 	}
