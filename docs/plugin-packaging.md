@@ -254,8 +254,9 @@ is written by hand.
 The completion Stop runs whatever the switch says. The command a declaration names does not change
 with the switch, so neither do the hooks' trust hashes. The 33 ported declarations are new hook
 identities and each needs its own trust, which the user gives; installing records none. One leg,
-`subagent-stop-observing-review`, answers nothing until its issue fills the handler (CRW-564); a
-trust hash covers the declaration, not the handler, so filling it needs no new trust. With these files the package check's report counts
+`subagent-stop-observing-review`, is served by its handler `HandleReviewObserver` (CRW-564, registered
+in `internal/harness/legs.go`), which records the review sign-off in the goalplan and writes no output;
+a trust hash covers the declaration, not the handler, so the handler needed no new trust. With these files the package check's report counts
 three Stop hooks (`stopHooks`), and an update from a payload without them reads as `changed` in
 [updating safely](#updating-safely).
 
