@@ -149,7 +149,7 @@ func TestOrchestrateReplanCleanupFailureIsFinishedByTheNextCall(t *testing.T) {
 	}{
 		{"nothing-closed", func(string, string, hookCleanup, *goalplan.Goalplan) error { return syscall.EIO }},
 		{"closed-without-rows", func(cwd, sessionID string, c hookCleanup, plan *goalplan.Goalplan) error {
-			swept, _ := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds)
+			swept, _ := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds, c.ClosedAt)
 			if err := goalplan.WriteGoalplan(cwd, swept); err != nil {
 				return err
 			}
@@ -224,5 +224,36 @@ func TestOrchestrateReplanLateSignoffKeepsTheBinding(t *testing.T) {
 	after := state.ReadState(cwd, id)
 	if after.PlanEpoch == nil || bound.PlanEpoch == nil || *after.PlanEpoch != *bound.PlanEpoch || after.PlanUnit == nil || *after.PlanUnit != unit {
 		t.Fatalf("the binding moved: before %+v after %+v", bound, after)
+	}
+}
+
+// Red on 3fceb240: a re-plan whose cleanup failed and whose transition row could not be written answered the row warning only, so the
+// old plan_audit rounds stayed open with nothing said about it. Both are reported, each with its own reason.
+func TestOrchestrateReplanReportsTheCleanupWhenTheRowFailsToo(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "replan-both"
+	unit := orchestrateReplanSeed(t, cwd, id)
+	orchestrateCommitLedgerDirectory(t, cwd)
+	seams := &orchestrateCommitSeams{cleanup: func(string, string, hookCleanup, *goalplan.Goalplan) error { return syscall.EIO }}
+	got := orchestrateCommitRunOK(t, cwd, seams, "A", "--session", id, "--attest", orchestrateReplanAttest(unit))
+	if got.Code != 0 || !strings.Contains(got.Output, "ledger row for P -> A could not be written") {
+		t.Fatalf("the row warning is missing: %+v", got)
+	}
+	if !strings.Contains(got.Output, "cleanup of this session's earlier plan_audit rounds is pending: "+syscall.EIO.Error()) {
+		t.Fatalf("the cleanup warning is missing or lost its reason: %+v", got)
+	}
+	if s := state.ReadState(cwd, id); s.Phase != state.PhaseA {
+		t.Fatalf("the re-plan did not stand: %+v", s)
+	}
+	// Both are finished by the next command once the ledger works.
+	orchestrateOutboxUnblock(t, cwd)
+	orchestrateCommitRunOK(t, cwd, nil, "C", "--session", id)
+	if got := orchestrateReplanStatuses(t, cwd, id); got != orchestrateReplanAllClosed {
+		t.Fatalf("rounds after the next call: %s, want %s", got, orchestrateReplanAllClosed)
+	}
+	if counts := orchestrateReplanSuperseded(t, cwd, id); counts["r1"] != 1 || counts["r2"] != 1 || len(counts) != 2 {
+		t.Fatalf("superseded rows: %v", counts)
+	}
+	if edges := orchestrateOutboxEdges(t, cwd); strings.Join(edges, " ") != "P>A" {
+		t.Fatalf("PABCD rows: %v, want exactly [P>A]", edges)
 	}
 }

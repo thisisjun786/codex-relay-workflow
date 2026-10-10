@@ -421,6 +421,30 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 	return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: warning}, nil
 }
 
+// SyncGoalplanArtifacts makes what the plan's directory holds durable: the ledger file when there is one, then the directory, which
+// carries the entry of the plan file a rename published and the entry of the ledger. A caller that finished work on the plan and its
+// ledger and saw only a visible result (a plan write whose directory sync failed, a row whose fsync failed) calls it before it counts
+// the work as done.
+func SyncGoalplanArtifacts(cwd, slug string) error {
+	path, err := goalplanLedgerPath(cwd, slug)
+	if err != nil {
+		return err
+	}
+	for _, p := range []string{path, filepath.Dir(path)} {
+		f, err := os.Open(p)
+		if errors.Is(err, fs.ErrNotExist) && p == path {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := errors.Join(f.Sync(), f.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // syncSteeringLedger makes the rows of the plan's ledger durable: the ledger file, then the plan directory that holds its entry.
 // Both are opened read-only, for the fsync alone.
 func syncSteeringLedger(cwd, slug string) error {

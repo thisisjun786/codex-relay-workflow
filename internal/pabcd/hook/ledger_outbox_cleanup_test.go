@@ -1,0 +1,135 @@
+package hook
+
+// The plan-audit cleanup of a P>A event (CRW-1100) as the pre-merge evaluation of 3fceb240 judged it: a superseded row is owed to the
+// rounds this cleanup closed and to no other, and a row or a plan write that is only visible is made durable before the cleanup is
+// finished.
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+)
+
+const cleanupStamp = "2026-10-10T00:00:00.000Z"
+
+// cleanupPlan writes a plan with the session's open plan_audit rounds r1 and r2 of an earlier epoch and returns it.
+func cleanupPlan(t *testing.T, cwd, slug string) *goalplan.Goalplan {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "cleanup"})
+	plan.Slug = slug
+	round := func(id string) goalplan.ReviewRoundState {
+		return goalplan.ReviewRoundState{
+			RoundID: id, Purpose: goalplan.PurposePlanAudit, PlanPath: "u", PlanSha256: strings.Repeat("a", 64), Status: goalplan.ReviewInFlight,
+			Lane: goalplan.ReviewLane{LaunchID: id + "-launch"}, OpenedAt: "2026-08-28T00:00:00.000Z", OwnerSessionID: "s1", PlanUnit: "u", PlanEpoch: "e-old",
+		}
+	}
+	plan.ReviewRounds = []goalplan.ReviewRoundState{round("r1"), round("r2")}
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	return goalplan.ReadGoalplan(cwd, slug)
+}
+
+func cleanupSupersededRows(t *testing.T, cwd, slug string) []string {
+	t.Helper()
+	rows, err := planAuditSupersededRows(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []string{}
+	for id := range rows {
+		out = append(out, id)
+	}
+	return out
+}
+
+// Red on 3fceb240: the rows owed were inferred from "inconclusive, no verdict", which an abort produces as well, so a round that was
+// aborted on its own while the cleanup was pending got a superseded row it was never given. The cleanup's stamp tells them apart.
+func TestSupersedePlanAuditRoundsGivesNoRowToARoundAbortedOnItsOwn(t *testing.T) {
+	cwd := t.TempDir()
+	plan := cleanupPlan(t, cwd, "demo")
+	// r2 was aborted by the agent after the cleanup was queued and before it ran: closed, inconclusive, no verdict, another stamp.
+	aborted := "2026-10-10T00:00:05.000Z"
+	reviewer := "aborted: by the agent"
+	plan.ReviewRounds[1].Status, plan.ReviewRounds[1].ClosedAt, plan.ReviewRounds[1].Lane.ReviewerSession = goalplan.ReviewInconclusive, &aborted, &reviewer
+	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err != nil {
+		t.Fatal(err)
+	}
+	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 1 || rows[0] != "r1" {
+		t.Fatalf("superseded rows: %v, want r1 only", rows)
+	}
+	// Replayed: the same, and nothing twice.
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, goalplan.ReadGoalplan(cwd, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 1 {
+		t.Fatalf("superseded rows after the replay: %v", rows)
+	}
+}
+
+// A round this cleanup closed, whose row could not be written, still gets it on the replay, though the plan already shows it closed.
+func TestSupersedePlanAuditRoundsRecordsTheRowsOfARoundItClosedOnTheReplay(t *testing.T) {
+	cwd := t.TempDir()
+	plan := cleanupPlan(t, cwd, "demo")
+	dir, err := goalplan.GoalplanDir(cwd, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := filepath.Join(dir, goalplan.GoalplanLedgerFile)
+	if err := os.Mkdir(ledger, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err == nil {
+		t.Fatal("a blocked ledger finished the cleanup")
+	}
+	if err := os.Remove(ledger); err != nil {
+		t.Fatal(err)
+	}
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, goalplan.ReadGoalplan(cwd, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 2 {
+		t.Fatalf("superseded rows: %v, want r1 and r2", rows)
+	}
+}
+
+// Red on 3fceb240: a row that was visible but whose fsync failed was found on the replay and skipped without a sync, and a plan write
+// whose directory sync failed was discarded at once, so the cleanup counted as finished and its event was retired over a storage
+// failure nobody had been told about. The plan's ledger and directory are synced every time, and a failed sync keeps the cleanup pending.
+func TestSupersedePlanAuditRoundsSyncsWhatItFindsBeforeItIsFinished(t *testing.T) {
+	cwd := t.TempDir()
+	plan := cleanupPlan(t, cwd, "demo")
+	synced := 0
+	fail := true
+	real := planAuditSync
+	t.Cleanup(func() { planAuditSync = real })
+	planAuditSync = func(cwd, slug string) error {
+		synced++
+		if fail {
+			return errors.New("injected sync failure")
+		}
+		return real(cwd, slug)
+	}
+	c := PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: "demo", Epoch: "e-new", Rounds: []string{"r1", "r2"}, ClosedAt: cleanupStamp}
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, plan); err == nil || !strings.Contains(err.Error(), "injected sync failure") {
+		t.Fatalf("a failed sync finished the cleanup: %v", err)
+	}
+	// The replay finds both rounds closed and both rows in the ledger: nothing to write, and the sync still runs.
+	fail = false
+	if err := SupersedePlanAuditRounds(cwd, "s1", c, goalplan.ReadGoalplan(cwd, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	if synced != 2 {
+		t.Fatalf("the sync ran %d times, want once per attempt", synced)
+	}
+	if rows := cleanupSupersededRows(t, cwd, "demo"); len(rows) != 2 {
+		t.Fatalf("superseded rows: %v", rows)
+	}
+}

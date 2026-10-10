@@ -361,10 +361,14 @@ func ObsoleteRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, sessio
 // purpose, owned by session, of another non-empty epoch. A round that changed since it was listed (closed, re-owned, re-bound
 // to keep) is left alone, so replaying the same list closes nothing twice. The cursor of purpose is cleared only when it named
 // a round this call closed; a cursor on another round, which may hold a valid review, is kept. With nothing to close the
-// original plan pointer is returned.
-func SupersedeRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, session, keep string, ids []string) (*goalplan.Goalplan, []string) {
+// original plan pointer is returned. Every round it closes is stamped closedAt ("" is the time of the call): a cleanup that must tell
+// its own closures from a later abort of the same round fixes that stamp before it starts and compares it afterwards.
+func SupersedeRounds(p *goalplan.Goalplan, purpose goalplan.ReviewPurpose, session, keep string, ids []string, closedAt string) (*goalplan.Goalplan, []string) {
 	closed := []string{}
-	now := reviewTimestamp(nil)
+	now := closedAt
+	if now == "" {
+		now = reviewTimestamp(nil)
+	}
 	list := make([]goalplan.ReviewRoundState, len(p.ReviewRounds))
 	for i, r := range p.ReviewRounds {
 		if r.Purpose == purpose && !reviewTerminal(r.Status) && r.OwnerSessionID != "" && r.OwnerSessionID == session &&

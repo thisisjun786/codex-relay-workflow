@@ -2,8 +2,11 @@ package hook
 
 // ledger_outbox.go is the one place the hook and the orchestrate CLI drain a session's pending transition-ledger events
 // (CRW-1097, state/outbox.go): every writer that records a transition prepares its row as a pending event before it publishes the
-// state and drains it afterwards, and every locked writer of the session drains whatever an earlier writer left, so a row whose
-// writer died or whose append failed is recorded by the next one, exactly once.
+// state and drains it afterwards. Every holder of the session lock first judges what an earlier writer left (state.JudgeLedgerOutbox,
+// called by the lock itself: published or never published, and the verdict is kept), so no write of the session, the memory,
+// scan, evidence and idle-edit writers included, can be mistaken for an event's transition; the prompt hook, the Stop and
+// PostCompact hooks and every orchestrate command then drain it, so a row whose writer died or whose append failed is recorded by
+// the next one, exactly once. Status only reports the pending count.
 
 import (
 	"bufio"
@@ -81,22 +84,38 @@ const PlanAuditCleanupKind = "plan-audit-supersede"
 
 // PlanAuditCleanup is the followup a P>A event of a bound session carries (CRW-1100): the plan it minted the
 // epoch in, the epoch itself and the exact plan_audit rounds of this session that the new epoch strands,
-// listed under the plan's write lock before the state was published. Recording them keeps one epoch and one
-// round list across every retry: a reconcile never mints an epoch and never widens the list.
+// listed under the plan's write lock before the state was published, and the stamp the cleanup gives every
+// round it closes. Recording them keeps one epoch and one round list across every retry: a reconcile never
+// mints an epoch and never widens the list, and the stamp tells a round this cleanup closed from one that
+// was aborted on its own afterwards, which is closed the same way (inconclusive, no verdict).
 type PlanAuditCleanup struct {
-	Kind   string   `json:"kind"`
-	Slug   string   `json:"slug"`
-	Epoch  string   `json:"epoch"`
-	Rounds []string `json:"rounds"`
+	Kind     string   `json:"kind"`
+	Slug     string   `json:"slug"`
+	Epoch    string   `json:"epoch"`
+	Rounds   []string `json:"rounds"`
+	ClosedAt string   `json:"closedAt,omitempty"`
 }
 
+// NewPlanAuditCleanup is the cleanup of rounds under epoch on slug, with its closing stamp fixed now.
+func NewPlanAuditCleanup(slug, epoch string, rounds []string) PlanAuditCleanup {
+	return PlanAuditCleanup{Kind: PlanAuditCleanupKind, Slug: slug, Epoch: epoch, Rounds: rounds, ClosedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z")}
+}
+
+// planAuditSync is the durability step that ends a cleanup; a variable so a test can fail it.
+var planAuditSync = goalplan.SyncGoalplanArtifacts
+
 // SupersedePlanAuditRounds closes the rounds of c on plan, which the caller's write lock of c.Slug read, and
-// records one review_round_superseded row per round it closed now or an earlier attempt closed; a row the
-// plan's ledger already holds is not written again. A plan write that published and then failed its
-// directory sync counts as written. The first failure is returned and the caller keeps the work pending.
+// records one review_round_superseded row per round this cleanup closed, now or in an earlier attempt: a row
+// the plan's ledger already holds is not written again, and a round that closed some other way (an abort) is
+// never given a row. A plan write that published and then failed its directory sync, and a row that is
+// visible but was never fsynced, are not taken for done: the plan's ledger and directory are made durable
+// before the cleanup counts as finished, and the first failure is returned, so the caller keeps the work
+// pending.
 func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *goalplan.Goalplan) error {
-	swept, closed := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds)
+	swept, closed := review.SupersedeRounds(plan, goalplan.PurposePlanAudit, sessionID, c.Epoch, c.Rounds, c.ClosedAt)
+	var first error
 	if len(closed) > 0 {
+		// A publication whose directory sync failed is visible; the sync is made again below and its failure is reported there.
 		if err := goalplan.WriteGoalplan(cwd, swept); err != nil && !state.Published(err) {
 			return err
 		}
@@ -104,30 +123,32 @@ func SupersedePlanAuditRounds(cwd, sessionID string, c PlanAuditCleanup, plan *g
 	owed := []string{}
 	for _, r := range swept.ReviewRounds {
 		if r.Purpose == goalplan.PurposePlanAudit && r.Status == goalplan.ReviewInconclusive && slices.Contains(c.Rounds, r.RoundID) &&
-			r.Lane.Verdict == "" && !slices.Contains(owed, r.RoundID) {
+			!slices.Contains(owed, r.RoundID) && (slices.Contains(closed, r.RoundID) || c.ClosedAt != "" && r.ClosedAt != nil && *r.ClosedAt == c.ClosedAt) {
 			owed = append(owed, r.RoundID)
 		}
 	}
-	if len(owed) == 0 {
-		return nil
-	}
-	recorded, err := planAuditSupersededRows(cwd, c.Slug)
-	if err != nil {
-		return err
-	}
-	for _, roundID := range owed {
-		if recorded[roundID] {
-			continue
-		}
-		row := roundID
-		if err := goalplan.AppendGoalplanLedger(cwd, c.Slug, goalplan.GoalplanLedgerEntry{
-			Ts: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), Slug: c.Slug, Event: goalplan.EventReviewRoundSuperseded,
-			Detail: "the plan was re-planned, so this round can no longer be spent", RoundID: &row,
-		}); err != nil {
+	if len(owed) > 0 {
+		recorded, err := planAuditSupersededRows(cwd, c.Slug)
+		if err != nil {
 			return err
 		}
+		for _, roundID := range owed {
+			if recorded[roundID] {
+				continue
+			}
+			row := roundID
+			if err := goalplan.AppendGoalplanLedger(cwd, c.Slug, goalplan.GoalplanLedgerEntry{
+				Ts: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), Slug: c.Slug, Event: goalplan.EventReviewRoundSuperseded,
+				Detail: "the plan was re-planned, so this round can no longer be spent", RoundID: &row,
+			}); err != nil {
+				return err
+			}
+		}
 	}
-	return nil
+	if len(c.Rounds) > 0 {
+		first = planAuditSync(cwd, c.Slug)
+	}
+	return first
 }
 
 // planAuditSupersededRows is the set of round ids the plan's ledger already holds a review_round_superseded

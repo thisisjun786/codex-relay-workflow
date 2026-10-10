@@ -249,8 +249,10 @@ type orchestrateCommitOutcome struct {
 	err       error
 	refusal   *CliResult
 	// cleanupDone is set when the P>A plan-audit cleanup the event carries was completed inside the
-	// publication's goalplan lock (CRW-1100).
+	// publication's goalplan lock (CRW-1100); cleanupErr is why it was not, nil when it was or when there is none. The reason
+	// is kept apart from the row's, so an answer reports both when the ledger fails as well.
 	cleanupDone bool
+	cleanupErr  error
 }
 
 // orchestrateCommitEvent prepares, without writing it, the outbox event of the row a write records: the row
@@ -270,14 +272,16 @@ func orchestrateCommitEvent(cwd string, cur, next state.State, row *state.Ledger
 // known as published, so an earlier pending row goes first. The error is the reason ev's row is still
 // pending, nil once it is in the ledger.
 func orchestrateCommitRecord(cwd, sessionID string, ev *state.LedgerEvent) error {
-	rowErr, _ := orchestrateCommitRecordAll(cwd, sessionID, ev, false)
+	rowErr, _ := orchestrateCommitRecordAll(cwd, sessionID, ev, false, nil)
 	return rowErr
 }
 
 // orchestrateCommitRecordAll is orchestrateCommitRecord for an event that may carry the P>A plan-audit
 // cleanup (CRW-1100): rowErr is the reason the row is still pending, cleanupErr the reason the cleanup is,
-// each nil once done. cleanupDone says the publication completed the cleanup itself.
-func orchestrateCommitRecordAll(cwd, sessionID string, ev *state.LedgerEvent, cleanupDone bool) (rowErr, cleanupErr error) {
+// each nil once done and each reported on its own: a ledger that cannot be written does not hide a cleanup
+// that did not finish. cleanupDone says the publication completed the cleanup itself, publishedCleanupErr is
+// why it did not.
+func orchestrateCommitRecordAll(cwd, sessionID string, ev *state.LedgerEvent, cleanupDone bool, publishedCleanupErr error) (rowErr, cleanupErr error) {
 	if ev == nil {
 		return nil, nil
 	}
@@ -297,7 +301,14 @@ func orchestrateCommitRecordAll(cwd, sessionID string, ev *state.LedgerEvent, cl
 		if pending.RowRecorded {
 			return nil, reason
 		}
-		return reason, nil
+		// The drain stopped at the row, so it never reached the cleanup: its reason is the publication's own.
+		if len(ev.Followup) > 0 && !cleanupDone {
+			cleanupErr = publishedCleanupErr
+			if cleanupErr == nil {
+				cleanupErr = errors.New("it is still pending")
+			}
+		}
+		return reason, cleanupErr
 	}
 	return nil, nil
 }
@@ -403,7 +414,8 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		var cleanup *hook.PlanAuditCleanup
 		if binding != nil && ev != nil {
 			if rounds := review.ObsoleteRounds(plan, goalplan.PurposePlanAudit, sessionID, binding.epoch); len(rounds) > 0 {
-				cleanup = &hook.PlanAuditCleanup{Kind: hook.PlanAuditCleanupKind, Slug: cur.Slug, Epoch: binding.epoch, Rounds: rounds}
+				c := hook.NewPlanAuditCleanup(cur.Slug, binding.epoch, rounds)
+				cleanup = &c
 				payload, err := json.Marshal(cleanup)
 				if err != nil {
 					return orchestrateCommitOutcome{}, err
@@ -416,7 +428,8 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 			return orchestrateCommitOutcome{}, outcome.err
 		}
 		if cleanup != nil {
-			outcome.cleanupDone = orchestrateCommitCleanup(seams, cwd, sessionID, *cleanup, plan) == nil
+			outcome.cleanupErr = orchestrateCommitCleanup(seams, cwd, sessionID, *cleanup, plan)
+			outcome.cleanupDone = outcome.cleanupErr == nil
 		}
 		return outcome, nil
 	})
@@ -785,7 +798,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	if result.State.Phase == state.PhaseP {
 		hook.ResetRenderLedger(cwd)
 	}
-	rowErr, cleanupErr := orchestrateCommitRecordAll(cwd, sessionID, ev, published.cleanupDone)
+	rowErr, cleanupErr := orchestrateCommitRecordAll(cwd, sessionID, ev, published.cleanupDone, published.cleanupErr)
 	arrow := string(cur.Phase) + " \u2192 " + string(result.State.Phase)
 	answer := orchestrateTransitionWithArchitectHint(result.State.Phase,
 		"orchestrate "+VerbText(verb)+": current="+string(cur.Phase)+" -> "+string(result.State.Phase)+" ("+arrow+", session "+sessionID+")")
