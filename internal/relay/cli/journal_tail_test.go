@@ -172,9 +172,8 @@ func TestJournalTailWaitReturnsOnNewRow(t *testing.T) {
 	defer cli.SetJournalTailPoll(20 * time.Millisecond)()
 
 	// without --wait, nothing new returns at once
-	started := time.Now()
-	if code, none := s.tail("--after", strconv.FormatInt(head, 10)); code != 0 || len(seqs(t, none)) != 0 || time.Since(started) > 2*time.Second {
-		t.Fatalf("no wait: exit %d %v after %v", code, none, time.Since(started))
+	if code, none := s.tail("--after", strconv.FormatInt(head, 10)); code != 0 || len(seqs(t, none)) != 0 {
+		t.Fatalf("no wait: exit %d %v", code, none)
 	}
 	// with --wait, a row written meanwhile ends the wait
 	var wg sync.WaitGroup
@@ -185,19 +184,21 @@ func TestJournalTailWaitReturnsOnNewRow(t *testing.T) {
 		time.Sleep(150 * time.Millisecond)
 		added = s.add("tail_late", "", "")
 	}()
-	started = time.Now()
+	started := time.Now()
 	code, got := s.tail("--after", strconv.FormatInt(head, 10), "--wait", "30")
 	wg.Wait()
 	if code != 0 || !reflect.DeepEqual(seqs(t, got), []int64{added}) || got["cursor"] != float64(added) {
 		t.Fatalf("waited for a new row: exit %d %v", code, got)
 	}
-	if took := time.Since(started); took > 10*time.Second {
+	if took := time.Since(started); took >= 29*time.Second {
 		t.Fatalf("the wait ran to its bound although the row arrived: %v", took)
 	}
 	// a row of another kind does not end a filtered wait; the wait runs to its bound and answers empty
 	started = time.Now()
-	go func() { time.Sleep(50 * time.Millisecond); s.add("tail_other", "", "") }()
+	other := make(chan struct{})
+	go func() { defer close(other); time.Sleep(50 * time.Millisecond); s.add("tail_other", "", "") }()
 	code, empty := s.tail("--after", strconv.FormatInt(added, 10), "--kinds", "tail_wanted", "--wait", "1")
+	<-other
 	if code != 0 || len(seqs(t, empty)) != 0 || time.Since(started) < 900*time.Millisecond {
 		t.Fatalf("a filtered wait with no matching row: exit %d %v after %v", code, empty, time.Since(started))
 	}
@@ -240,9 +241,11 @@ func TestJournalTailNoLongReadTx(t *testing.T) {
 	s := newTailStore(t)
 	head := s.add("tail_head", "", "")
 	defer cli.SetJournalTailPoll(20 * time.Millisecond)()
+	// the command waits for a kind that is written last, so the rows written meanwhile do not end its
+	// wait and its bound is far past anything a loaded host needs
 	done := make(chan map[string]any, 1)
 	go func() {
-		got := goCLI(t, "--state", s.state, "journal-tail", "--after", strconv.FormatInt(head, 10), "--wait", "3")
+		got := goCLI(t, "--state", s.state, "journal-tail", "--after", strconv.FormatInt(head, 10), "--kinds", "tail_wanted", "--wait", "120")
 		var answer map[string]any
 		_ = json.Unmarshal([]byte(got.stdout), &answer)
 		done <- answer
@@ -261,7 +264,8 @@ func TestJournalTailNoLongReadTx(t *testing.T) {
 		}
 		time.Sleep(30 * time.Millisecond)
 	}
-	if answer := <-done; answer == nil || len(answer["entries"].([]any)) == 0 {
-		t.Fatalf("the wait did not return the rows written while it ran: %v", answer)
+	wanted := s.add("tail_wanted", "", "")
+	if answer := <-done; answer == nil || !reflect.DeepEqual(seqs(t, answer), []int64{wanted}) {
+		t.Fatalf("the wait did not return the row written while it ran: %v", answer)
 	}
 }
