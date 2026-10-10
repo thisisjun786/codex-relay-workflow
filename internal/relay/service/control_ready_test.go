@@ -53,6 +53,8 @@ func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
 	if err = os.WriteFile(plain, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// ENOTDIR is the answer proved; the 9 s is a ceiling under the 10 s deadline, which a wait that retried the
+	// error would run to (it was 5 s: too close for a loaded host to the slow side, still far from the deadline).
 	started := time.Now()
 	if err = awaitControlAccepting(filepath.Join(plain, "control.sock"), 10*time.Second); !errors.Is(err, unix.ENOTDIR) || time.Since(started) > 9*time.Second {
 		t.Fatalf("a path under a regular file ended after %v with %v, want ENOTDIR at once", time.Since(started), err)

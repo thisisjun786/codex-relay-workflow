@@ -224,8 +224,10 @@ func Test33HookNoSocketJournalOnly(t *testing.T) {
 	if err != nil || len(out) != 0 {
 		t.Fatalf("%v %s", err, out)
 	}
+	// The empty output and the journal row below are what is proved; the 10 s only catches a hook that waits
+	// for a socket that is not there (a hang), with room for a loaded host (it was 3 s).
 	if time.Since(start) > 10*time.Second {
-		t.Fatal("unreachable hook did not return")
+		t.Fatal("unreachable hook did not return within the 10s hang guard")
 	}
 	rows := rowsAt(t, home)
 	if len(rows) != 1 || rows[0]["adapterOutcome"] != "guard_unreachable" || rows[0]["errno"] != "ENOENT" || rows[0]["held"] != false || rows[0]["eventIdentity"] != nil || rows[0]["acceptance"] != nil {

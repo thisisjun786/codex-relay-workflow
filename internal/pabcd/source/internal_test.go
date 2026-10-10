@@ -50,12 +50,17 @@ func TestRunOutputLimit(t *testing.T) {
 			t.Errorf("limit %d: %q, %v", limit, out, err)
 		}
 	}
+	// The grandchild holds the output pipes for up to a minute, so a call that waited for them would
+	// outlast the ten seconds a loaded host is allowed to take killing the child. It writes a byte
+	// every tenth of a second, so once the reader has closed its end the write ends it (SIGPIPE) and
+	// the test leaves no process behind, where a plain sleep would run on, orphaned, to the end of its minute.
+	const holder = `(i=0; while [ $i -lt 600 ]; do printf .; sleep 0.1; i=$((i+1)); done) &`
 	started := time.Now()
-	if _, err := runBounded("", "sh", []string{"-c", "sleep 60 & printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 10*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", holder + " printf 12345; wait"}, nil, 4, time.Minute); err == nil || time.Since(started) > 10*time.Second {
 		t.Fatalf("a child over the limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	started = time.Now()
-	if _, err := runBounded("", "sh", []string{"-c", "sleep 60 & printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 10*time.Second {
+	if _, err := runBounded("", "sh", []string{"-c", holder + " printf 1; wait"}, nil, 1<<20, 200*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 10*time.Second {
 		t.Fatalf("a child past the time limit must be killed at once: %v after %v", err, time.Since(started))
 	}
 	var exit *ExitError

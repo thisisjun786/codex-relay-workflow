@@ -6,7 +6,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,6 +109,34 @@ func (w *scaleWorld) exec(query string, args ...any) {
 	w.t.Helper()
 	_, err := execSQL(w.f.ctx, w.f.store, query, args...)
 	mustDo(w.t, err)
+}
+
+// requireLinearDuePlans holds the due reads to the plans that make them linear in the deliveries, which does not move with
+// the host's load as the time they take does: no subquery is correlated to a candidate row, the hour's spent counts are
+// reached by an index search of one derived table (not computed for each candidate), and the waiting heads are reached the
+// same way (an automatic index over their derived table, not a scan of the heads for each candidate).
+func (w *scaleWorld) requireLinearDuePlans() {
+	w.t.Helper()
+	join, where, args := w.f.delivery.eligibility(w.f.clock.Now())
+	for name, query := range map[string]string{
+		"parents": "SELECT DISTINCT r.parent_task_id" + dueFrom + join + where,
+		"rows":    "SELECT d.*" + dueFrom + join + where + " AND r.parent_task_id = ?",
+	} {
+		queryArgs := args
+		if name == "rows" {
+			queryArgs = append(slices.Clone(args), scaleParent)
+		}
+		plan, err := all(w.f.ctx, w.f.store, "EXPLAIN QUERY PLAN "+query, queryArgs...)
+		mustDo(w.t, err)
+		var lines []string
+		for _, line := range plan {
+			lines = append(lines, line.S("detail"))
+		}
+		joined := strings.Join(lines, " | ")
+		if strings.Contains(joined, "CORRELATED") || !strings.Contains(joined, "SEARCH sbspent USING") || !regexp.MustCompile(`SEARCH (bh|\(subquery-\d+\)) USING AUTOMATIC`).MatchString(joined) {
+			w.t.Errorf("the %s read does not take the spent counts and the waiting heads from derived tables by index: %s", name, joined)
+		}
+	}
 }
 
 // tick is one delivery pass at the current time, then the daemon's sleep.
@@ -461,7 +491,14 @@ func TestScale_a_legacy_scheduler_cursor_is_not_a_pointer(t *testing.T) {
 // Whether a relationship has spent its hour is one grouped read joined to the due list, not an
 // expression evaluated for each candidate: ten thousand queued deliveries of a runaway relationship
 // are set aside in a fraction of a second (the per-candidate form took six seconds).
-// sequential: asserts a three-second wall-clock bound on the selection, which a host running the package's tests in parallel can exceed.
+//
+// The linearity is asserted on the statements' plans (requireLinearDuePlans), which do not move with the host's load: the
+// spent counts are read once into a derived table and reached by an index search, and no
+// subquery is correlated to the candidate row (the per-candidate form is a CORRELATED SCALAR
+// SUBQUERY that rescans the relationship's deliveries for each candidate). The elapsed time is only
+// the hang guard: 30 s is five times the six seconds the per-candidate form took, and the
+// selection takes a fraction of a second even where a tick has been seen to take 4 s under host load.
+// sequential: the elapsed-time guard shares the host with the package's parallel tests otherwise.
 func TestScale_a_large_backlog_of_a_capped_relationship_is_set_aside_in_linear_time(t *testing.T) {
 	const backlog = 10000
 	w := newScaleWorld(t, 2)
@@ -471,13 +508,14 @@ func TestScale_a_large_backlog_of_a_capped_relationship_is_set_aside_in_linear_t
 	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, first_seen_at, last_seen_at) SELECT 'bulk-' || i, ?, 1, 'h', 'ready_for_review', 'child', ?, ?, 'completed', '{}', ?, ? FROM n", backlog, runaway.rid, runaway.child, runaway.turn, stamp, stamp)
 	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) SELECT 'bulk-' || i, ?, 'completion', ?, ?, 'queued', 0, ?, ? FROM n", backlog, runaway.rid, scaleParent, scaleParent, stamp, stamp)
 	calm := w.emit(1)
+	w.requireLinearDuePlans()
 	began := time.Now()
 	parents, err := w.f.delivery.EligibleParents(w.f.ctx, w.f.clock.Now())
 	mustDo(t, err)
 	rows, err := w.f.delivery.EligibleRows(w.f.ctx, scaleParent, w.f.clock.Now(), allDue)
 	mustDo(t, err)
 	if elapsed := time.Since(began); elapsed > 30*time.Second {
-		t.Errorf("selecting among %d queued deliveries took %v", backlog, elapsed)
+		t.Errorf("selecting among %d queued deliveries took %v, past the hang guard", backlog, elapsed)
 	}
 	if !slices.Equal(parents, []string{scaleParent}) || len(rows) != 1 || rows[0].S("event_id") != calm {
 		t.Errorf("due: parents %v, %d rows; want the parent and only the calm sibling's %s", parents, len(rows), calm)

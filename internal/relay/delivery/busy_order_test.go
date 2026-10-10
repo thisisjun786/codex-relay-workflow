@@ -585,7 +585,9 @@ func TestBusy_the_scheduler_ends_the_queue_when_an_older_busy_row_appears_after_
 
 // A listing with many waiting heads is one pass over the rows, not a scan of the heads for each
 // candidate, and a head's relationship is counted once however many deliveries it holds.
-// sequential: asserts a three-second wall-clock bound on the listing, which a host running the package's tests in parallel can exceed.
+// The linearity is asserted on the plans of the two reads (requireLinearDuePlans), which do not move with the host's load; the
+// time is only a thirty-second hang guard.
+// sequential: asserts a thirty-second wall-clock hang guard on the listing, which a host running the package's tests in parallel can exceed.
 func TestBusy_many_waiting_heads_are_listed_in_linear_time(t *testing.T) {
 	for _, shape := range []struct {
 		name                  string
@@ -623,11 +625,13 @@ func TestBusy_many_waiting_heads_are_listed_in_linear_time(t *testing.T) {
 				}
 				return nil
 			}))
+			w.requireLinearDuePlans()
 			began := time.Now()
 			parents, err := f.delivery.EligibleParents(f.ctx, base)
 			mustDo(t, err)
 			rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, base, allDue)
 			mustDo(t, err)
+			// The listing's rows are asserted below and the linear plans above; the 30 s is a hang guard for a loaded host.
 			if elapsed := time.Since(began); elapsed > 30*time.Second {
 				t.Errorf("listing %d deliveries behind %d waiting heads took %v", shape.recipients*(1+shape.followers)+free, shape.recipients, elapsed)
 			}

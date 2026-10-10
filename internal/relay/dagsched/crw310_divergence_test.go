@@ -389,6 +389,8 @@ func crw310GH(t *testing.T, body string) string {
 }
 
 // c4 (red): a compare call that does not answer is cut at the bound and says so. The stand-in execs sleep, so the kill reaches the process that holds the pipe.
+// The error naming the timeout is what is proved. The 10 s is a regression ceiling, about 65 times the 150 ms
+// bound, and the stand-in sleeps 30 s so a call that was not cut still exceeds it.
 // sequential: asserts a ten-second wall-clock bound on the call, which a host running the package's tests in parallel can exceed.
 func TestTheAncestryCompareCallHasADeadline(t *testing.T) {
 	gh := crw310GH(t, "exec sleep 30")

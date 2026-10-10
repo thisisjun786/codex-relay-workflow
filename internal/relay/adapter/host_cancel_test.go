@@ -211,6 +211,9 @@ func TestTickBudgetEndsTheHostCallInFlight(t *testing.T) {
 	if deadline.IsZero() {
 		t.Fatal("the held host call ran under a context with no deadline")
 	}
+	// The deadline is fixed when the pass measures its budget, so only a late wakeup between the start and the
+	// measurement moves it: 2 s is ten times the budget, a ceiling that still fails a pass given a longer
+	// (or the daemon's) budget. The call-ended and note assertions below are what the test proves.
 	if after := deadline.Sub(started); after > 2*time.Second {
 		t.Errorf("the held call's deadline is %v after the tick began, want the 0.2 s the pass may spend, within 2 s", after)
 	}

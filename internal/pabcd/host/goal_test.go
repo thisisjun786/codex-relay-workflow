@@ -97,6 +97,8 @@ func TestGoalActiveStatusUnderAWriterLock(t *testing.T) {
 				t.Fatal(mode, statement, err)
 			}
 		}
+		// The status is what is proved. The 4 s (it was 2 s) is a regression ceiling under the 5 s busy timeout that
+		// SQLite drivers commonly default to (a read that waited for the lock would sit it out), with room for a loaded host.
 		start := time.Now()
 		if got := GoalActiveStatus("t", path); got != want || time.Since(start) > 4*time.Second {
 			t.Errorf("%s: %s after %v, want %s at once", mode, got, time.Since(start), want)

@@ -46,8 +46,11 @@ func TestCall_retires_stalled_transmit_inside_its_bound(t *testing.T) {
 	if !errors.As(err, &phase) || phase.Phase != "transmit" || phase.Method != "thread/read" {
 		t.Fatalf("wrong transmit failure: %v", err)
 	}
+	// The transmit bound is 40 ms and the error above is its phase timeout; the 1 s is a regression ceiling
+	// (25 times the bound, and below the 2 s close handshake budget a transmit that waited on the peer's
+	// close would take), with room for a loaded host.
 	if elapsed >= time.Second {
-		t.Fatalf("transmit took %s against %s bound", elapsed, bounds.Transmit)
+		t.Fatalf("transmit took %s against %s bound (ceiling 1s)", elapsed, bounds.Transmit)
 	}
 	client.mu.Lock()
 	current := client.conn
@@ -78,7 +81,9 @@ func TestClose_bounds_stalled_handshake_to_two_seconds(t *testing.T) {
 	// When
 	started := time.Now()
 	err = client.Close()
-	// Then: a 60-second close timeout would violate this independent timer.
+	// Then: a 60-second close timeout would violate this independent timer. The lower bound is the budget
+	// itself and the DeadlineExceeded below says it was the budget that ended the wait; the upper bound is a
+	// 10 s regression ceiling (five times the budget, for a loaded host), still far under the 60 s.
 	if elapsed := time.Since(started); elapsed < 2*time.Second || elapsed >= 10*time.Second {
 		t.Fatalf("close bound: %s", elapsed)
 	}
