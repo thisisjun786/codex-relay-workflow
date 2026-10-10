@@ -308,8 +308,8 @@ cache.write_bytes(header+marshal.dumps(code))
 				mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
 				gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
 				for _, r := range []string{mem, gh} {
-					if !strings.Contains(r, "test_calc") || !strings.Contains(r, "-B") {
-						t.Errorf("%s: the reason lacks the file or the route: %s", cmd, r)
+					if !strings.Contains(r, "__pycache__/test_calc.") || !strings.Contains(r, "remove __pycache__, use python -B") || strings.Contains(r, "...") {
+						t.Errorf("%s: the reason lacks the file or the route, or is cut: %s", cmd, r)
 					}
 				}
 			}

@@ -275,14 +275,14 @@ func pycacheEntryRefusal(p string) string {
 	}
 	// Little endian after the magic number: flags, then for flags 0 the source's modification time in whole seconds and its size,
 	// each truncated to 32 bits. Any other flags is a hash-based entry (or one Python rejects), which this reader does not check.
-	route := "; remove __pycache__ and run python with -B"
+	route := "; remove __pycache__, use python -B" // short: the hook bounds the reason to 200 bytes
 	if binary.LittleEndian.Uint32(header[4:8]) != 0 {
-		return "a hash-based cache entry may run instead of " + stem + ".py" + route
+		return "hash-based cache may run instead of " + stem + ".py" + route
 	}
 	if pycacheStale(header[8:16], source) {
 		return ""
 	}
-	return "this cache entry runs instead of " + stem + ".py, and its code is not read" + route
+	return "cache runs instead of " + stem + ".py" + route
 }
 
 // pycacheStale is whether a timestamp header (modification time and size, 32 bits each) disagrees with the source, so that the
