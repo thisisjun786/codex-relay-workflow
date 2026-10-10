@@ -284,7 +284,7 @@ func memoryGateClassifyUsing(tool string, input any, cwd string, env host.Lookup
 // one of them refuses is a write attempt of its own. The differential fuzz counts the commands this refuses
 // (MemoryGateCommandReadable).
 func memoryGateShellReadable(command, dir string, env host.LookupEnv) bool {
-	if _, err := shellir.AnalyzeEnv(command, dir, env); err != nil {
+	if _, err := shellir.AnalyzeEnvProvenDirectory(command, dir, env); err != nil {
 		return false
 	}
 	if _, err := shellir.Analyze(command, dir); err != nil {

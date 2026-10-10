@@ -1,8 +1,41 @@
 # Dispatch surfaces — thread or subagent
 
 Read before choosing how to fan work out. This file owns the choice between
-surfaces. [Delegation](delegation.md) owns what a subagent packet contains once
+surfaces for unmanaged work; a CRW-managed lane is chosen first by
+[DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
+[Delegation](delegation.md) owns what a subagent packet contains once
 the choice is made, and its V1/V2 section owns the tool schemas.
+
+## DISPATCH-MANAGED-01 (STRICT) — start from the binding, not from the mechanism
+
+Before choosing a surface, find out what owns the work. Read the binding the task carries:
+the task packet, the assignment record the relay holds for it, or the DAG node
+([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).
+
+- **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
+  or not. An issue with no assignment yet is not unmanaged: its first independent lane is the
+  managed start `crw-run` makes. An independent lane for it is an
+  independent relay child, started and resumed through `crw-run`: the managed start, the DAG release
+  and their bridge recovery, pair/profile, capacity and receipt rules. It is never a desktop
+  `create_thread` lane. The relay refuses a second active or paused assignment of the same issue and
+  a release past capacity; those answers are followed, not routed around by creating a thread by
+  hand. A project parent uses read-only and review helpers only; the implementation of an issue is
+  its independent relay child's, and that child may own bounded native helpers for its own task.
+  The manifest of managed lanes is a read-only projection of the relay assignments and DAG records,
+  not a second file to keep. A goal-free parent is resumed by relay delivery
+  ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
+  checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))
+  and yields only after that readiness is established, never by arming a wake of its own.
+- **Unmanaged** — standalone PABCD with no Linear issue and no CRW execution binding, and bounded
+  helper delegation inside any task. A Linear issue with no assignment yet is not this case. The
+  rest of this file applies as written.
+- **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is
+  not permission to take the unmanaged route for an independent lane: resolve the binding, or
+  report that it is unresolved and keep to bounded helpers meanwhile. Nothing is forced the other
+  way either: a bounded helper or worktree worker needs no relay binding, and none is invented for it.
+
+A native helper's dispatch record is a local helper record. It is never an independent child's
+assignment, a DAG acceptance or a relay receipt.
 
 ## DISPATCH-SURFACE-01 (STRICT) — name the surface before dispatching
 
@@ -28,7 +61,12 @@ only a disjoint checkout and returns a patch or evidence to the coordinator:
 create a managed worktree, then give its absolute path to a subagent. The
 subagent's native cwd still inherits the coordinator's; the packet must require
 that path as the shell workdir on every command. Workers do not acquire their
-own goal or PABCD state. Different workers must use different worktrees.
+own goal or PABCD state. Different workers must use different worktrees. The
+SubagentStop gate reads `.crw/evidence` under the coordinator's native cwd, so a receipt
+the worker writes under its assigned tree is not accepted there: have the worker write its
+receipt under the native cwd's `.crw/evidence` and report that absolute path. Only where the
+runtime in use reads the tree the dispatch assigned (the evidence-location change of the 10-10
+review) is a receipt in the assigned tree accepted.
 
 Say which one you are creating, in those words, before you create it.
 
@@ -83,7 +121,9 @@ Therefore:
 
 ## DISPATCH-ROUTE-01 (STRICT) — routing the work
 
-Route by what the work needs to own, not by how parallel it is:
+Route by what the work needs to own, not by how parallel it is. A CRW-bound issue or DAG
+node is routed by [DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
+first; this list is for the rest:
 
 - Needs its own goal, PABCD cycle, user-visible task, or long-running
   merge/CI lifecycle -> **thread**, one per independent task lane, with
@@ -111,7 +151,8 @@ keep the thread route and handle its actual permission state.
 
 ## DISPATCH-AUTHORITY-01 — asking for lane work is asking for the lanes
 
-Creating a thread is user-visible, so it needs a user request. A request for
+Creating a thread is user-visible, so it needs a user request (a managed lane is started
+by the relay, not created as a thread by hand). A request for
 independent task lanes **is** that request: the lanes are the mechanism the work
 needs, not a separate deliverable the user forgot to ask for. Bounded checkout
 workers stay under the coordinator and follow DISPATCH-ROUTE-01. Do not read
@@ -125,7 +166,7 @@ do not treat silence as a refusal of the surface the work requires.
 
 ## Parallel lanes, and the shape that works
 
-N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.
+For unmanaged work, N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.
 The coordinator uses `wait_threads` and integrates; neither side advances the
 other's FSM. N bounded checkout workers mean N managed worktrees and N
 subagents, with one coordinator goal/FSM. The coordinator uses the returned
@@ -177,10 +218,12 @@ a lane because discovery failed; that is how one task becomes two writers.
 
 ### Arm the wake before you yield the turn (DISPATCH-WAKE-01, DEFAULT)
 
-Lane work outlives a turn, and nothing resumes a parent automatically. Stop-continuation
-is bounded on purpose: it releases under context pressure and at the stagnation cap. A
-parent that dispatches lanes, yields, and expects to wake up later has arranged nothing,
-and every lane then sits finished and unmerged.
+Lane work outlives a turn, and for unmanaged lanes nothing resumes a parent automatically.
+Stop-continuation is bounded on purpose: it releases under context pressure and at the
+stagnation cap. A parent that dispatches lanes, yields, and expects to wake up later has
+arranged nothing, and every lane then sits finished and unmerged. In a managed run a
+goal-free parent is resumed by relay delivery instead (DISPATCH-MANAGED-01): it verifies that
+wake readiness and arranges no second wake or manifest.
 
 Before yielding a turn with work still running, name the continuation owner and the
 mechanism, verify the wake is actually active, and keep its identifier. With no wake
@@ -227,9 +270,11 @@ ids do not. Two `local` threads on one checkout still collide.
 
 ### The lane manifest (DISPATCH-LANE-MANIFEST-01, DEFAULT)
 
-Independent task lanes are separate tasks, so nothing in the system knows two were handed the
-same issue until their pull requests collide. One shared record makes that visible before
-the branches diverge. Per lane: repository, lane id, task and host id, worktree, branch,
+For unmanaged work, independent task lanes are separate tasks, so nothing in the system knows
+two were handed the same issue until their pull requests collide. One shared record makes that
+visible before the branches diverge. Managed lanes keep no such file: the relay refuses a
+second active assignment of an issue, and their identity, checkout and status are read from
+its assignment and DAG records. Per lane: repository, lane id, task and host id, worktree, branch,
 base ref and sha, head sha, issue, owner, scope and status.
 A bounded worktree worker remains under its coordinator and does not invent a
 thread id or its own FSM. Record its worktree path and assigned scope in the

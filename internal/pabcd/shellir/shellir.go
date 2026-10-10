@@ -93,6 +93,9 @@ type Redir struct {
 
 // Context describes where an Exec sits in the text.
 type Context struct {
+	// succeeds is an assumption about this statement's exit status, used only
+	// for the directory passed to the right side of &&. It never covers a body.
+	succeeds    bool
 	Conditional bool
 	Background  bool
 	Coprocess   bool
@@ -180,11 +183,14 @@ func parseText(src string) (*syntax.File, error) {
 // Analyze reads a command text run in the working directory cwd.
 // state is what the walk knows at one point.
 type state struct {
-	dir    Dir
-	vars   map[string]string
-	funcs  map[string]*syntax.Stmt
-	cdpath bool
-	lookup func(string) (string, bool)
+	dir Dir
+	// proveCD retains failed-cd possibilities for consumers that require a
+	// proven effective directory rather than the legacy literal-cd reading.
+	proveCD bool
+	vars    map[string]string
+	funcs   map[string]*syntax.Stmt
+	cdpath  bool
+	lookup  func(string) (string, bool)
 }
 
 func newState(cwd string) *state {
@@ -197,11 +203,12 @@ func newState(cwd string) *state {
 
 func (s *state) clone() *state {
 	c := &state{
-		dir:    s.dir,
-		vars:   make(map[string]string, len(s.vars)),
-		funcs:  make(map[string]*syntax.Stmt, len(s.funcs)),
-		cdpath: s.cdpath,
-		lookup: s.lookup,
+		dir:     s.dir,
+		proveCD: s.proveCD,
+		vars:    make(map[string]string, len(s.vars)),
+		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
+		cdpath:  s.cdpath,
+		lookup:  s.lookup,
 	}
 	for k, v := range s.vars {
 		c.vars[k] = v
@@ -244,6 +251,7 @@ func joinStates(states ...*state) *state {
 		funcs: map[string]*syntax.Stmt{},
 	}
 	out.lookup = first.lookup
+	out.proveCD = first.proveCD
 	for _, s := range states {
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false
@@ -296,6 +304,7 @@ type walker struct {
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
+	ctx.succeeds = false
 	for _, s := range list {
 		if err := w.stmt(s, st, ctx); err != nil {
 			return err
@@ -315,6 +324,14 @@ func isCompound(c syntax.Command) bool {
 func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	if s == nil {
 		return nil
+	}
+	if s.Negated || s.Background || s.Coprocess || ctx.Pipeline {
+		ctx.succeeds = false
+	}
+	if isCompound(s.Cmd) {
+		if _, binary := s.Cmd.(*syntax.BinaryCmd); !binary {
+			ctx.succeeds = false
+		}
 	}
 	// The records this statement adds that no inner statement already placed are on this statement's line.
 	start, line := len(w.out), int(s.Pos().Line())
@@ -614,16 +631,29 @@ func (e *effectScan) function(name string, body *syntax.Stmt) bool {
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 	switch c.Op {
 	case syntax.AndStmt, syntax.OrStmt:
-		if err := w.stmt(c.X, st, ctx); err != nil {
+		before := st.dir
+		lctx := ctx
+		lctx.succeeds = st.proveCD && c.Op == syntax.AndStmt
+		if err := w.stmt(c.X, st, lctx); err != nil {
 			return err
 		}
 		right := st.clone()
 		rctx := ctx
 		rctx.Conditional = true
+		rctx.succeeds = ctx.succeeds && c.Op == syntax.AndStmt
 		if err := w.stmt(c.Y, right, rctx); err != nil {
 			return err
 		}
-		st.replace(joinStates(st, right))
+		if ctx.succeeds && c.Op == syntax.AndStmt {
+			st.replace(right)
+		} else {
+			st.replace(joinStates(st, right))
+			// The left side can fail and skip the right side. A directory
+			// established only on success cannot escape the && list.
+			if st.proveCD && c.Op == syntax.AndStmt && st.dir != before {
+				st.dir = unknownDir(st.dir)
+			}
+		}
 		return nil
 	case syntax.Pipe, syntax.PipeAll:
 		lctx := ctx
@@ -1130,7 +1160,13 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 			st.dir = unknownDir(st.dir)
 			return nil
 		}
+		before := st.dir
 		st.cd(words[1:])
+		if st.proveCD && !ctx.succeeds && st.dir != before {
+			// A failed cd keeps the previous directory. Without a success
+			// condition both possibilities remain, even for a literal target.
+			st.dir = unknownDir(st.dir)
+		}
 		return nil
 	case name == "pushd" || name == "popd":
 		st.dir = unknownDir(st.dir)

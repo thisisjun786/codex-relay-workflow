@@ -112,7 +112,8 @@ func TestFreezeRunsLikeTheRecordedOracle(t *testing.T) {
 					t.Fatalf("step %d: error %v, oracle failed: %v", i, err, step.Error)
 				}
 				if step.Output != nil {
-					if want := strings.ReplaceAll(sub.Expected(*step.Output), "$"+"{WS}", ws); out != want {
+					// CRW-1133: the handoff's step 2 is CRW's own (the oracle's told the agent to drop a requested token_budget).
+					if want := strings.ReplaceAll(strings.Replace(sub.Expected(*step.Output), oracleStep2, goalActivationStep2, 1), "$"+"{WS}", ws); out != want {
 						t.Errorf("step %d output\n got %q\nwant %q", i, out, want)
 					}
 				}
