@@ -87,7 +87,8 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	st.cdpath = st.cdpath || textNamesCdpath(src)
 	w.prefixNamed = textNamesPycachePrefix(src)
 	w.pythonPathNamed = strings.Contains(src, "PYTHONPATH")
-	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
+	w.exitProof = st.proveCD && plainForExitProof(file, lookup)
+	if err := w.stmts(file.Stmts, st, Context{top: true}); err != nil {
 		return Result{}, err
 	}
 	if err := w.writersBesideModules(); err != nil {

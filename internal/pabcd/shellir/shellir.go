@@ -102,7 +102,10 @@ type Context struct {
 	Subshell    bool
 	Pipeline    bool
 	// pipeID names the pipeline the command is a stage of (0 outside one): its stages run at the same time.
-	pipeID    int
+	pipeID int
+	// top is whether the statement is a direct member of the list of the text being read (CRW-1165): not inside a block, a branch, a loop,
+	// a function, a subshell or a substitution, and not in a carried text.
+	top       bool
 	Loop      bool
 	FuncBody  bool
 	CmdSubst  bool
@@ -309,8 +312,10 @@ type walker struct {
 	// pythonPathNamed is whether a text the walk read spells PYTHONPATH (CRW-1187). moduleRuns are the module runs of the text whose directory
 	// was checked, and pipeSeq numbers its pipelines (Context.pipeID).
 	pythonPathNamed bool
-	moduleRuns      []moduleRun
-	pipeSeq         int
+	// exitProof is whether the text leaves exit and cd alone, so that `cd <literal> || exit <digits>` proves the cd (CRW-1165).
+	exitProof  bool
+	moduleRuns []moduleRun
+	pipeSeq    int
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
@@ -335,6 +340,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	if s == nil {
 		return nil
 	}
+	// Only a statement of the text's own list is at its top; what it holds is not (ctx.top is cleared for it).
+	top := ctx.top && !s.Negated && !s.Background && !s.Coprocess && len(s.Redirs) == 0
+	ctx.top = false
 	_, simple := s.Cmd.(*syntax.CallExpr)
 	_, binary := s.Cmd.(*syntax.BinaryCmd)
 	if (!simple && !binary) || s.Negated || s.Background || s.Coprocess || ctx.Pipeline {
@@ -395,6 +403,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		wctx.Unsequenced = multiSubst
 		return w.call(c, redirs, st, ctx, wctx)
 	case *syntax.BinaryCmd:
+		if top && w.exitProof && cdExitForm(c) {
+			return w.cdOrExit(c, st, ctx)
+		}
 		return w.binary(c, st, ctx)
 	case *syntax.Subshell:
 		sctx := ctx
@@ -636,6 +647,21 @@ func (e *effectScan) function(name string, body *syntax.Stmt) bool {
 	e.active = e.active[:len(e.active)-1]
 	e.verdicts[name] = changes
 	return changes
+}
+
+// cdOrExit walks `cd <literal> || exit <digits>` at the top of the text: the cd is taken as succeeding for what follows, because a cd that
+// fails runs the exit, which ends the shell (cdExitForm; exitProof says nothing in the text changes that). The exit is walked on a copy of
+// the state, which is dropped: nothing runs after it.
+func (w *walker) cdOrExit(c *syntax.BinaryCmd, st *state, ctx Context) error {
+	lctx := ctx
+	lctx.succeeds = true
+	if err := w.stmt(c.X, st, lctx); err != nil {
+		return err
+	}
+	rctx := ctx
+	rctx.Conditional = true
+	rctx.succeeds = false
+	return w.stmt(c.Y, st.clone(), rctx)
 }
 
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
