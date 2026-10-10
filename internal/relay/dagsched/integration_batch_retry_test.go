@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
@@ -44,6 +45,12 @@ func retryVerifier(t *testing.T, fails func(dir string) bool, runs *int) Integra
 // and acceptances stand on the generation the edge makes; cFile is what c commits.
 func retryPlanKit(t *testing.T, cFile string) *batchKit {
 	t.Helper()
+	return retryPlanKitEdges(t, cFile, [][2]string{{"b", "c"}})
+}
+
+// retryPlanKitEdges is the same plan with the given prerequisite edges (from, to) in its first revision.
+func retryPlanKitEdges(t *testing.T, cFile string, edges [][2]string) *batchKit {
+	t.Helper()
 	nodes := []batchNode{
 		{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		{name: "b", files: map[string]string{"b.txt": "b\n"}},
@@ -64,8 +71,10 @@ func retryPlanKit(t *testing.T, cFile string) *batchKit {
 		changes = append(changes, addRelNode(n.name, dag.NodeImplementation))
 	}
 	k.repo.git("checkout", "-q", "dev")
-	changes = append(changes, addEdge("bc", "b", "c", dag.EdgeArtifactVerified,
-		doc{"pins_code_head": true, "target_repository": k.repo.path, "target_base_ref": "dev"}))
+	for _, e := range edges {
+		changes = append(changes, addEdge(e[0]+e[1], e[0], e[1], dag.EdgeArtifactVerified,
+			doc{"pins_code_head": true, "target_repository": k.repo.path, "target_base_ref": "dev"}))
+	}
 	k.putPlan("g", 0, "g-r1", changes...)
 	for _, n := range nodes {
 		r := k.reportNode("g", n.name, acceptOpts{})
@@ -81,9 +90,15 @@ func retryPlanKit(t *testing.T, cFile string) *batchKit {
 // runRetryBatch runs one batch of the kit with the retry flag set as asked, counting the verifications it starts.
 func (k *batchKit) runRetryBatch(t *testing.T, retry bool, runs *int) (IntegrationBatchResult, error) {
 	t.Helper()
+	return k.runRetryBatchWith(t, retry, repairFails, runs)
+}
+
+// runRetryBatchWith is runRetryBatch with another predicate for the verifier.
+func (k *batchKit) runRetryBatchWith(t *testing.T, retry bool, fails func(dir string) bool, runs *int) (IntegrationBatchResult, error) {
+	t.Helper()
 	in := k.batchIn()
 	in.RetryNotProven = retry
-	return k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: retryVerifier(t, repairFails, runs), Update: updateIntegrationRef})
+	return k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: retryVerifier(t, fails, runs), Update: updateIntegrationRef})
 }
 
 // splitReasons maps each split node to its reason.
@@ -189,6 +204,53 @@ func TestIntegrationBatchRetryIssuesOnlyAPass(t *testing.T) {
 	}
 	if res.Verification.HeadCommit != tip {
 		t.Fatalf("the record names %s; the branch is at %s", res.Verification.HeadCommit, tip)
+	}
+}
+
+// A failing retry returns to the verified survivors without making them again: the verifier of the failing retry set takes more
+// than a second (the merge commits carry the time they are made), and the branch, the issued record and the merge commit of
+// each merged candidate still name the one commit the survivors were verified at.
+func TestIntegrationBatchRetryFailureKeepsTheVerifiedSurvivorCommits(t *testing.T) {
+	k := retryPlanKit(t, "c.txt")
+	var runs int
+	slow := func(dir string) bool {
+		bad := repairFails(dir)
+		if bad {
+			if _, err := os.Stat(filepath.Join(dir, "c.txt")); err == nil {
+				time.Sleep(1100 * time.Millisecond)
+			}
+		}
+		return bad
+	}
+	res, err := k.runRetryBatchWith(t, true, slow, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].NodeID != "a" {
+		t.Fatalf("merged %+v; want a alone", res.Merged)
+	}
+	tip, _ := k.branchTip("dev-int")
+	if tip != res.NewHead || res.Verification.HeadCommit != tip || res.Merged[0].MergeCommit != tip {
+		t.Fatalf("branch %s, new head %s, record %s, merge commit of a %s; want one commit", tip, res.NewHead, res.Verification.HeadCommit, res.Merged[0].MergeCommit)
+	}
+}
+
+// The prerequisites of a retried candidate are judged on the current plan edges, all of them: c waits on b (not proven failing)
+// and on d (failing alone), so it is not retried although its stored reason names b; only d's recovery would not matter either.
+func TestIntegrationBatchRetryNeedsEveryPrerequisiteOfACandidate(t *testing.T) {
+	k := retryPlanKitEdges(t, "repair.txt", [][2]string{{"b", "c"}, {"d", "c"}})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	for _, m := range res.Merged {
+		if m.NodeID == "c" {
+			t.Fatalf("merged %v; c must not merge while its prerequisite d is excluded", mergedNodes(res))
+		}
+	}
+	if got := splitReasons(res); got["d"] != "verification_failed" || got["c"] == "" {
+		t.Fatalf("split %v; want d verification_failed and c left out", got)
 	}
 }
 

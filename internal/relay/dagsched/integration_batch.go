@@ -686,7 +686,7 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 	}
 	// CRW-1026 (d3): the candidates the bisection left out as not_proven_failing are retried once on top of the verified survivors
 	if w.retryNotProven {
-		retry, ok, err := w.retryNotProvenSet(ctx, kept, removed)
+		retry, ok, err := w.retryNotProvenSet(ctx, kept, commits, removed)
 		if err != nil {
 			return out, err
 		}
@@ -775,18 +775,47 @@ type retryOutcome struct {
 	retried []Candidate
 }
 
-// retryCandidates is the retry set, in node-id order: the not_proven_failing candidates the bisection removed, and each
-// candidate that depends on one of them (depends_on_<node>). A dependant whose prerequisite is not in the set is not retried.
-func retryCandidates(removed []removedCandidate) []Candidate {
-	notProven := map[string]bool{}
+// retryCandidates is the retry set, in node-id order: the not_proven_failing candidates the bisection removed, and each removed
+// dependant whose every removed prerequisite (by the plan edges, not by the reason stored when it was removed) is itself in the
+// set. A candidate with a prerequisite that stays out is not retried, and neither is anything that depends on it.
+func retryCandidates(removed []removedCandidate, successors map[string][]string) []Candidate {
+	preds := map[string][]string{}
+	for from, tos := range successors {
+		for _, to := range tos {
+			preds[to] = append(preds[to], from)
+		}
+	}
+	gone := map[string]bool{}
+	in := map[string]bool{}
 	for _, r := range removed {
+		gone[r.NodeID] = true
 		if r.reason == "not_proven_failing" {
-			notProven[r.NodeID] = true
+			in[r.NodeID] = true
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, r := range removed {
+			if in[r.NodeID] || !strings.HasPrefix(r.reason, "depends_on_") {
+				continue
+			}
+			waits, ready := false, true
+			for _, p := range preds[r.NodeID] {
+				if in[p] {
+					waits = true
+				} else if gone[p] {
+					ready = false
+				}
+			}
+			if waits && ready {
+				in[r.NodeID] = true
+				changed = true
+			}
 		}
 	}
 	var out []Candidate
 	for _, r := range removed {
-		if r.reason == "not_proven_failing" || (strings.HasPrefix(r.reason, "depends_on_") && notProven[strings.TrimPrefix(r.reason, "depends_on_")]) {
+		if in[r.NodeID] {
 			out = append(out, r.Candidate)
 		}
 	}
@@ -795,31 +824,47 @@ func retryCandidates(removed []removedCandidate) []Candidate {
 }
 
 // retryNotProvenSet merges the retry set on top of the verified survivors and verifies the whole set once (CRW-1026, d3).
-// It answers the set and its record when the verification passes. Anything else (a retry candidate that no longer merges
-// cleanly, or a failing verification) answers false, and the worktree is back at the verified survivors.
-func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, kept []Candidate, removed []removedCandidate) (retryOutcome, bool, error) {
-	retry := retryCandidates(removed)
-	if len(retry) == 0 {
-		return retryOutcome{}, false, nil
-	}
-	set := append(append([]Candidate{}, kept...), retry...)
-	commits, conflicted, err := w.build(ctx, set)
+// The survivors keep their verified commits: the retry merges on the survivors' head, and any other answer (a retry candidate
+// that no longer merges cleanly, a failing verification) resets the worktree to that head and answers false, so the branch,
+// the issued record and the merge commits stay the ones the survivors were verified at.
+func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, kept []Candidate, commits []string, removed []removedCandidate) (retryOutcome, bool, error) {
+	edges, err := w.s.Successors(ctx, w.in.Plan)
 	if err != nil {
 		return retryOutcome{}, false, err
 	}
-	if conflicted == nil {
-		rec, dig, pass, err := w.verify(ctx)
+	retry := retryCandidates(removed, edges)
+	if len(retry) == 0 {
+		return retryOutcome{}, false, nil
+	}
+	survivors := w.start
+	if len(kept) > 0 {
+		// the worktree is at the verified survivors when the settle loop leaves it with a passing set
+		if survivors, err = w.head(ctx); err != nil {
+			return retryOutcome{}, false, err
+		}
+	} else if err := w.reset(ctx, survivors); err != nil {
+		return retryOutcome{}, false, err
+	}
+	all := append([]string{}, commits...)
+	for _, c := range retry {
+		ok, commit, err := w.merge(ctx, c)
 		if err != nil {
 			return retryOutcome{}, false, err
 		}
-		if pass {
-			return retryOutcome{set: set, commits: commits, record: rec, digest: dig, retried: retry}, true, nil
+		if !ok {
+			return retryOutcome{}, false, w.reset(ctx, survivors)
 		}
+		all = append(all, commit)
 	}
-	if _, _, err := w.build(ctx, kept); err != nil {
+	rec, dig, pass, err := w.verify(ctx)
+	if err != nil {
 		return retryOutcome{}, false, err
 	}
-	return retryOutcome{}, false, nil
+	if !pass {
+		return retryOutcome{}, false, w.reset(ctx, survivors)
+	}
+	set := append(append([]Candidate{}, kept...), retry...)
+	return retryOutcome{set: set, commits: all, record: rec, digest: dig, retried: retry}, true, nil
 }
 
 // firstFailingPrefix is the smallest k such that the first k candidates fail verification, found by bisection over the
