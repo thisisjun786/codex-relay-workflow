@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // orchestrateTransitionRoot is a temporary world for the transition tests: HOME, CODEX_HOME and CRW_HOME point
@@ -652,12 +653,12 @@ func TestOrchestrateTransitionRefusesALossyStateRewrite(t *testing.T) {
 }
 
 // TestOrchestrateTransitionLeavesRealHomesAlone is the packet's real-state rule: HOME, CODEX_HOME and CRW_HOME
-// point into temporary directories, and the ambient listings of the host's ~/.codex and ~/.crw are compared
-// before and after; a difference is reported, never cleaned up by this test.
+// point into temporary directories, and the transitions write nothing into them. The host's own ~/.codex and
+// ~/.crw are not listed: other processes write there at any moment (CRW-1170), and with the variables
+// repointed the run cannot resolve them.
 func TestOrchestrateTransitionLeavesRealHomesAlone(t *testing.T) {
-	home := os.Getenv("HOME")
-	before := orchestrateTransitionListing(t, home)
-	cwd := orchestrateTransitionRoot(t)
+	testsupport.SandboxAccountHomes(t)
+	cwd := t.TempDir()
 	id := "real-home"
 	orchestrateTransitionSession(t, cwd, id, `{"phase":"P"}`)
 	unit := orchestrateTransitionSeedPlanUnit(t, cwd)
@@ -666,9 +667,6 @@ func TestOrchestrateTransitionLeavesRealHomesAlone(t *testing.T) {
 	}
 	if got := orchestrateTransitionRun(t, cwd, "reset", "--session", id); got.Code != 0 {
 		t.Fatalf("reset: %+v", got)
-	}
-	if after := orchestrateTransitionListing(t, home); before != after {
-		t.Fatalf("the host's ~/.codex or ~/.crw changed: %q -> %q", before, after)
 	}
 }
 
@@ -728,23 +726,4 @@ func TestOrchestrateTransitionStateBeforeRow(t *testing.T) {
 	if state.ReadState(cwd, id).Phase != state.PhaseP {
 		t.Fatal("the published transition did not move the session")
 	}
-}
-
-// orchestrateTransitionListing is the entry names under ~/.codex and ~/.crw, or "absent".
-
-func orchestrateTransitionListing(t *testing.T, home string) string {
-	t.Helper()
-	out := []string{}
-	for _, name := range []string{".codex", ".crw"} {
-		entries, err := os.ReadDir(filepath.Join(home, name))
-		names := []string{}
-		for _, entry := range entries {
-			names = append(names, entry.Name())
-		}
-		if err != nil {
-			names = []string{"absent"}
-		}
-		out = append(out, name+"="+strings.Join(names, ","))
-	}
-	return strings.Join(out, ";")
 }

@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 )
@@ -320,5 +322,176 @@ func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(out.String(), "(unreadable-github-post) at command") {
 		t.Errorf("a cancelled GitHub post guard did not answer the deny for the command: %q", out.String())
+	}
+}
+
+// TestGitHubPostGuardLegLeavesObservation: the GitHub post guard leg leaves the same metadata-only invocation record as every other
+// leg, before it judges, and its answer is unchanged by it (CRW-1139).
+func TestGitHubPostGuardLegLeavesObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name, command string
+		deny          bool
+	}{
+		{"allowed", "ls -la", false},
+		{"denied", "gh pr comment 1 --body hi", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := recallHookComponentHome(t)
+			plugin := filepath.Join(t.TempDir(), "plugin")
+			if err := os.MkdirAll(filepath.Join(plugin, ".codex-plugin"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(plugin, ".codex-plugin", "plugin.json"), []byte(`{"version":"1.0.0"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PLUGIN_ROOT", plugin)
+			payload, err := json.Marshal(map[string]any{"session_id": "hook-fixture", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, bytes.NewReader(payload), componentHooks())
+			if !claimed || code != 0 || strings.Contains(out.String(), `"permissionDecision":"deny"`) != tc.deny {
+				t.Fatalf("claimed=%v code=%d out=%q want deny=%v", claimed, code, out.String(), tc.deny)
+			}
+			var records []map[string]any
+			if err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() || !strings.HasSuffix(p, ".json") {
+					return err
+				}
+				b, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				var rec map[string]any
+				if err := json.Unmarshal(b, &rec); err != nil {
+					return err
+				}
+				records = append(records, rec)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 1 || records[0]["component"] != "pabcd-state" || records[0]["event"] != "pre-tool-use-github-post" || records[0]["outcome"] != "invoked" {
+				t.Fatalf("records %v, want exactly one pabcd-state pre-tool-use-github-post record", records)
+			}
+			if _, has := records[0]["decision"]; has {
+				t.Fatalf("the record carries a decision: %v", records[0])
+			}
+		})
+	}
+}
+
+// TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel: a guard cancelled while it waits for its input answers
+// the deny and returns; a payload that arrives afterwards finds a leg that has already answered, so it records nothing, as the
+// other pabcd-state legs do (CRW-1139).
+func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *testing.T) {
+	home := recallHookComponentHome(t)
+	plugin := filepath.Join(t.TempDir(), "plugin")
+	if err := os.MkdirAll(filepath.Join(plugin, ".codex-plugin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, ".codex-plugin", "plugin.json"), []byte(`{"version":"1.0.0"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PLUGIN_ROOT", plugin)
+	in, w := io.Pipe()
+	t.Cleanup(func() { w.Close() })
+	readerDone := make(chan struct{})
+	old := githubPostGuardReaderDone
+	var once sync.Once
+	githubPostGuardReaderDone = func() { once.Do(func() { close(readerDone) }) }
+	t.Cleanup(func() { githubPostGuardReaderDone = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	answered := make(chan int, 1)
+	go func() {
+		_, code := runComponentHook(invocation{ctx: ctx, args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, in, componentHooks())
+		answered <- code
+	}()
+	cancel()
+	select {
+	case code := <-answered:
+		if code != 0 || !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+			t.Fatalf("code %d, out %q: the cancelled guard did not answer the deny", code, out.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cancelled guard did not return")
+	}
+	payload, err := json.Marshal(map[string]any{"session_id": "hook-fixture", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": "ls -la"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	// The late reader runs on its own goroutine: wait until it has finished with the input, then count what it left.
+	select {
+	case <-readerDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the guard's input goroutine did not finish after its input arrived")
+	}
+	var files []string
+	if err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".json") {
+			files = append(files, p)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("reading the observation store: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("the cancelled leg created a late observation after returning the deny: %v", files)
+	}
+}
+
+// TestSessionStartStaticLegsSkipResumeThroughTheDispatcher: through the production row table, a resumed session that was given the
+// map-affordance and subagent-fallback guidance at its start gets only the session binding from the first leg and nothing from the
+// second; a resume of a session never given it (the switch was off at its start) and a startup or compact get both whole (CRW-1146).
+func TestSessionStartStaticLegsSkipResumeThroughTheDispatcher(t *testing.T) {
+	_ = fallbackComponentEnv(t)
+	t.Setenv("CRW_BIN", "crw")
+	ws := t.TempDir()
+	run := func(leg, session, source string) string {
+		raw := `{"session_id":` + strconv.Quote(session) + `,"cwd":` + strconv.Quote(ws) + `,"hook_event_name":"SessionStart","source":` + strconv.Quote(source) + `}`
+		var out bytes.Buffer
+		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"session-start", "--leg", leg}, stdout: &out}, strings.NewReader(raw), componentHooks())
+		if !claimed || code != 0 {
+			t.Fatalf("%s %s: claimed=%v code=%d", leg, source, claimed, code)
+		}
+		return out.String()
+	}
+	const mapLeg, fallbackLeg = "session-start-announcing-map-affordance", "session-start-announcing-subagent-fallback"
+	for _, source := range []string{"startup", "compact"} {
+		if out := run(mapLeg, "s-1", source); !strings.Contains(out, "External skill catalogs are searchable") || !strings.Contains(out, "This session's id is `s-1`") {
+			t.Errorf("map affordance, source %s: %q", source, out)
+		}
+		if out := run(fallbackLeg, "s-1", source); out == "" {
+			t.Errorf("subagent fallback, source %s answered nothing", source)
+		}
+	}
+	out := run(mapLeg, "s-1", "resume")
+	if !strings.Contains(out, "This session's id is `s-1`") || strings.Contains(out, "External skill catalogs") || strings.Contains(out, "Loop contract") {
+		t.Errorf("map affordance on resume: %q", out)
+	}
+	if out := run(fallbackLeg, "s-1", "resume"); out != "" {
+		t.Errorf("subagent fallback on resume: %q", out)
+	}
+	// A session whose legs were silent at its start (the hook switch off) hears both on its first resume, and only then.
+	if out := run(mapLeg, "s-2", "resume"); !strings.Contains(out, "External skill catalogs are searchable") {
+		t.Errorf("map affordance on the first resume of a session never given it: %q", out)
+	}
+	if out := run(fallbackLeg, "s-2", "resume"); out == "" {
+		t.Error("subagent fallback on the first resume of a session never given it answered nothing")
+	}
+	if out := run(mapLeg, "s-2", "resume"); strings.Contains(out, "External skill catalogs") {
+		t.Errorf("map affordance on the second resume: %q", out)
+	}
+	if out := run(fallbackLeg, "s-2", "resume"); out != "" {
+		t.Errorf("subagent fallback on the second resume: %q", out)
 	}
 }

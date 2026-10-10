@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -166,7 +167,9 @@ func TestRescanQAOverflowMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := mindsLoadCases(t).Overflow
-	if err := os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(c.Row), 0600); err != nil {
+	// the recorded row names no session; the ledger reader counts the rows of the session asked for only (CRW-1108)
+	row := `{"sessionId":"s",` + strings.TrimPrefix(c.Row, "{")
+	if err := os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(row), 0600); err != nil {
 		t.Fatal(err)
 	}
 	got := I.HasPendingInterviewWork(cwd, "s", nil, rescanDeps())

@@ -148,8 +148,10 @@ func TestLoopInitWritesNothingWhenTheSessionLockIsHeld(t *testing.T) {
 	const slug = "bound-objective"
 	loopSession(t, cwd, id)
 
+	// A live holder (this process's pid in the oracle's record): since CRW-1094 a dead owner's lock is taken over, so
+	// the held lock is a live one and init answers the session-busy refusal once its wait runs out.
 	lockPath := state.StatePath(cwd, id) + ".lock"
-	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(loopDeadPID(t))), 0o666); err != nil {
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,7 +160,7 @@ func TestLoopInitWritesNothingWhenTheSessionLockIsHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := RunLoopCli(args)
-	if err == nil {
+	if err == nil && result.Code == 0 {
 		t.Fatalf("init succeeded while the session lock was held: %d %q", result.Code, result.Output)
 	}
 	if _, statErr := os.Stat(loopPlanFile(cwd, slug)); !os.IsNotExist(statErr) {
@@ -1038,6 +1040,14 @@ func TestLoopInitAnswersAlreadyExistsWhenThePlanAppearsBeforeTheWaitGivesUp(t *t
 			t.Cleanup(func() { loopInitSessionProbeSeam = nil })
 
 			result := loopRunWithin(t, 10*time.Second, cwd, "init", "--objective", "Bound objective", "--session", id)
+			if kind == "dead" {
+				// CRW-1094: the lock of a dead owner is taken over at the first attempt, so init never waits and never
+				// probes; it binds the plan itself.
+				if result.Code != 0 || published || state.ReadState(cwd, id).Slug != slug {
+					t.Fatalf("a dead owner's lock: got %d %q, probed %v", result.Code, result.Output, published)
+				}
+				return
+			}
 			want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
 			if result.Code != 1 || result.Output != want {
 				t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)

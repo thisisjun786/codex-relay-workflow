@@ -1,8 +1,11 @@
 package affordance
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +16,17 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
-func testEnv(k string) (string, bool) { return "crw", k == "CRW_BIN" }
+// testEnv runs crw as `crw`. Its Codex home is the temporary one TestMain gives the process, so the session-start leg records
+// what it gave a session there and never under the account's real home.
+func testEnv(k string) (string, bool) {
+	switch k {
+	case "CRW_BIN":
+		return "crw", true
+	case "CODEX_HOME":
+		return os.LookupEnv("CODEX_HOME")
+	}
+	return "", false
+}
 
 func golden(t *testing.T, name string) string {
 	t.Helper()
@@ -400,5 +413,176 @@ func TestUnicodeSessionBoundAndSingleConsumer(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatal("consumers", n)
+	}
+}
+
+// sessionEnv is testEnv with a Codex home of its own, where the guidance a session was given is recorded.
+func sessionEnv(t *testing.T, bin string) host.LookupEnv {
+	t.Helper()
+	home := t.TempDir()
+	return func(k string) (string, bool) {
+		switch k {
+		case "CRW_BIN":
+			return bin, true
+		case "CODEX_HOME":
+			return home, true
+		}
+		return "", false
+	}
+}
+
+// CRW-1146: a resumed session is not given again the guidance it was given, so source=resume re-issues only what can change (the
+// session binding and the not-on-PATH banner); startup, compact, clear, a missing or an unknown or non-string source keep the whole
+// list.
+func TestSessionStartResumeKeepsOnlyTheChangeableSections(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	full := hookAnswer(t, payload(big, "SessionStart", "SESSION", nil), big, env)
+	if n := len(strings.Split(contextOf(t, full, "SessionStart"), "\n\n")); n != 8 {
+		t.Fatalf("baseline has %d sections", n)
+	}
+	for _, source := range []any{"startup", "compact", "clear", "", "future-source", 7, nil, "RESUME", "resume "} {
+		got := hookAnswer(t, payload(big, "SessionStart", "SESSION", map[string]any{"source": source}), big, env)
+		if got != full {
+			t.Errorf("source %v changed the output", source)
+		}
+	}
+	resumed := hookAnswer(t, payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, env)
+	if got := contextOf(t, resumed, "SessionStart"); got != RenderSessionBinding("SESSION", env) {
+		t.Errorf("resume context is not exactly the session binding: %q", got)
+	}
+	// Without a session id nothing can be recorded or looked up, so a resume cannot be known to hold the pointers.
+	if got := hookAnswer(t, payload(big, "SessionStart", "", map[string]any{"source": "resume"}), big, env); got == "" {
+		t.Errorf("resume without a session id answered nothing")
+	}
+}
+
+// The first start a session hears the pointers is not always its first start: the switch can be off then, or the hook run by an
+// older build that kept no record. A resume of such a session gets everything once, and only the changeable part after that.
+func TestSessionStartResumeOfASessionNeverGivenThePointersGivesThemOnce(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	resume := payload(big, "SessionStart", "S1", map[string]any{"source": "resume"})
+	full := hookAnswer(t, payload(big, "SessionStart", "elsewhere", nil), big, env)
+	if got := hookAnswer(t, resume, big, env); got != strings.ReplaceAll(full, "elsewhere", "S1") {
+		t.Fatalf("first resume of an unrecorded session did not give the whole list: %q", got)
+	}
+	if got := contextOf(t, hookAnswer(t, resume, big, env), "SessionStart"); got != RenderSessionBinding("S1", env) {
+		t.Errorf("second resume: %q", got)
+	}
+	// The pointers say how to run crw, so a resume where that differs gives them whole again, with the banner.
+	other := func(k string) (string, bool) {
+		if k == "CRW_BIN" {
+			return "chosen-crw", true
+		}
+		return env(k)
+	}
+	got := contextOf(t, hookAnswer(t, resume, big, other), "SessionStart")
+	if !strings.Contains(got, "External skill catalogs are searchable") || !strings.Contains(got, "is not on PATH here") {
+		t.Errorf("resume with crw elsewhere: %q", got)
+	}
+	// And a small workspace then a large one: the map pointer appearing is a change too.
+	small := t.TempDir()
+	sm := payload(small, "SessionStart", "S2", map[string]any{"source": "resume"})
+	hookAnswer(t, payload(small, "SessionStart", "S2", nil), small, env)
+	if got := contextOf(t, hookAnswer(t, sm, small, env), "SessionStart"); got != RenderSessionBinding("S2", env) {
+		t.Errorf("small workspace resume: %q", got)
+	}
+	seed(t, small, 40)
+	if got := contextOf(t, hookAnswer(t, sm, small, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("resume after the workspace grew past the map threshold: %q", got)
+	}
+}
+
+// With crw off PATH the banner is the one changeable section a resume repeats.
+func TestSessionStartResumeRepeatsTheBannerWhenCrwIsOffPath(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "chosen-crw")
+	hookAnswer(t, payload(big, "SessionStart", "SESSION", nil), big, env)
+	got := contextOf(t, hookAnswer(t, payload(big, "SessionStart", "SESSION", map[string]any{"source": "resume"}), big, env), "SessionStart")
+	if parts := strings.Split(got, "\n\n"); len(parts) != 2 || parts[0] != RenderSessionBinding("SESSION", env) || !strings.Contains(parts[1], "is not on PATH here") {
+		t.Errorf("resume with crw off PATH: %q", got)
+	}
+}
+
+// limitedWriter takes at most n bytes in all, then fails: a closed pipe (n = 0) or a short write.
+type limitedWriter struct{ n int }
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if len(p) <= w.n {
+		w.n -= len(p)
+		return len(p), nil
+	}
+	k := w.n
+	w.n = 0
+	return k, errors.New("write failed")
+}
+
+// hookAnswer is what the session-start leg writes when the dispatcher runs it (RunHook), recording what the session was given.
+func hookAnswer(t *testing.T, raw, cwd string, env host.LookupEnv) string {
+	t.Helper()
+	var out strings.Builder
+	startHook(t, raw, cwd, env, &out)
+	return out.String()
+}
+
+// startHook runs the session-start leg as the dispatcher does (RunHook), the path that records what the session was given.
+func startHook(t *testing.T, raw, cwd string, env host.LookupEnv, out io.Writer) {
+	t.Helper()
+	if code := RunHook(context.Background(), "session-start", strings.NewReader(raw), out, env, cwd); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+// CRW-1146: the guidance counts as given only when the hook wrote all of it. A start or resume whose output could not be written
+// (a closed pipe, a short write) leaves no record, so the next resume of that session gives the whole list, then only the binding.
+func TestSessionStartGuidanceThatWasNotWrittenIsNotRecorded(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	for _, tc := range []struct {
+		name, source string
+		budget       int
+	}{{"resume-closed", "resume", 0}, {"resume-short", "resume", 100}, {"startup-closed", "startup", 0}, {"startup-short", "startup", 100}} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := sessionEnv(t, "crw")
+			sid := "S-" + tc.name
+			resume := payload(big, "SessionStart", sid, map[string]any{"source": "resume"})
+			// The whole list as a session with no record gets it, rendered against a home of its own.
+			want := RunMapAffordanceSessionStart(resume, big, sessionEnv(t, "crw"))
+			startHook(t, payload(big, "SessionStart", sid, map[string]any{"source": tc.source}), big, env, &limitedWriter{n: tc.budget})
+			var got strings.Builder
+			startHook(t, resume, big, env, &got)
+			if got.String() != want {
+				t.Fatalf("resume after an unwritten answer has %d sections, want the whole list of %d", len(strings.Split(contextOf(t, got.String(), "SessionStart"), "\n\n")), len(strings.Split(contextOf(t, want, "SessionStart"), "\n\n")))
+			}
+			var again strings.Builder
+			startHook(t, resume, big, env, &again)
+			if ctx := contextOf(t, again.String(), "SessionStart"); ctx != RenderSessionBinding(sid, env) {
+				t.Errorf("resume after the whole list was written: %q", ctx)
+			}
+		})
+	}
+}
+
+// Rendering the answer records nothing; only the hook that wrote it does.
+func TestRenderingTheSessionStartAnswerRecordsNothing(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	home := t.TempDir()
+	env := func(k string) (string, bool) {
+		switch k {
+		case "CRW_BIN":
+			return "crw", true
+		case "CODEX_HOME":
+			return home, true
+		}
+		return "", false
+	}
+	RunMapAffordanceSessionStart(payload(big, "SessionStart", "SESSION", nil), big, env)
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatalf("rendering wrote under the Codex home: %v %v", entries, err)
 	}
 }

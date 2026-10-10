@@ -3,9 +3,10 @@ package main
 import (
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestMain(m *testing.M) {
-	testsupport.Main(m)
+	testsupport.Main(m, guidancerecord.RefuseAccountHome)
 }

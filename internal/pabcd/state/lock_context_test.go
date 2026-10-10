@@ -46,7 +46,7 @@ func TestWithSessionLockContextCancelledAtTheGiveUpAnswersInterrupted(t *testing
 		t.Fatal(err)
 	}
 	lockPath := StatePath(cwd, "s") + ".lock"
-	if err := createExclusive(lockPath, "999999"); err != nil {
+	if err := createExclusive(lockPath, lockOwnerLive()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = removeFile(lockPath) }()
@@ -76,7 +76,7 @@ func TestWithSessionLockContextGiveUpWithALiveContextKeepsTheBusyError(t *testin
 		t.Fatal(err)
 	}
 	lockPath := StatePath(cwd, "s") + ".lock"
-	if err := createExclusive(lockPath, "999999"); err != nil {
+	if err := createExclusive(lockPath, lockOwnerLive()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = removeFile(lockPath) }()
@@ -100,7 +100,7 @@ func TestWithSessionLockContextCancelledDuringTheWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	lockPath := StatePath(cwd, "s") + ".lock"
-	if err := createExclusive(lockPath, "999999"); err != nil {
+	if err := createExclusive(lockPath, lockOwnerLive()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = removeFile(lockPath) }()
@@ -158,7 +158,7 @@ func TestWithSessionLockStillUsesItsSleepSeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	lockPath := StatePath(cwd, "counter") + ".lock"
-	if err := createExclusive(lockPath, "999999"); err != nil {
+	if err := createExclusive(lockPath, lockOwnerLive()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = removeFile(lockPath) }()

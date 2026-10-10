@@ -95,8 +95,8 @@ func TestReadInterviewEventsReturnsScanOnlyRowsFromAMixedLedger(t *testing.T) { 
 
 func TestReadInterviewEventsReadsACrlfLedgerLikeAnLfOne(t *testing.T) { // crlf-inputs.test.ts, the scan reader row
 	rows := []string{
-		`{"ts":"2026-08-21T00:00:00Z","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0}`,
-		`{"ts":"2026-08-21T00:00:01Z","sessionId":"s","event":"scan_completed","roundId":1,"contradictionCount":2}`,
+		`{"ts":"2026-08-21T00:00:00Z","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0,"highContradictionCount":0}`,
+		`{"ts":"2026-08-21T00:00:01Z","sessionId":"s","event":"scan_completed","roundId":1,"contradictionCount":2,"highContradictionCount":0}`,
 	}
 	read := func(eol string) []InterviewEvent {
 		cwd := t.TempDir()
@@ -138,15 +138,21 @@ func TestAppendersCreateTheStateDirectoryWithItsIgnoreFileAndKeepAnExistingOne(t
 	}
 }
 
-func TestInterviewEventsOfAliasedSessionIDsShareOneLedgerAndTheReaderSanitisesToo(t *testing.T) { // recorded interview_events aliasFile; the sharing is a known defect
+// Recorded interview_events aliasFile: the oracle appends a/b's row to a-b's ledger and reads it back as either id. Port: fixed by
+// CRW-1108 (known-defects.md:109): the alias is refused on append and read, and a-b's ledger holds only a-b's rows.
+func TestInterviewEventsOfAnAliasSessionIDAreRefusedAndNeverShareALedger(t *testing.T) {
 	cwd := t.TempDir()
-	if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: "a/b", Event: ScanStarted, RoundID: 1}); err != nil {
+	if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: "a/b", Event: ScanStarted, RoundID: 1}); !errors.Is(err, ErrNonCanonicalSessionID) {
+		t.Fatalf("alias append: %v", err)
+	}
+	if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: "a-b", Event: ScanStarted, RoundID: 2}); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"a/b", "a-b"} {
-		if got := ReadInterviewEvents(cwd, id); len(got) != 1 || got[0].SessionID != "a/b" {
-			t.Errorf("read as %q: %+v", id, got)
-		}
+	if got := ReadInterviewEvents(cwd, "a/b"); len(got) != 0 {
+		t.Errorf("read as a/b: %+v", got)
+	}
+	if got := ReadInterviewEvents(cwd, "a-b"); len(got) != 1 || got[0].SessionID != "a-b" || got[0].RoundID != 2 {
+		t.Errorf("read as a-b: %+v", got)
 	}
 }
 
@@ -179,11 +185,11 @@ func TestReadInterviewEventsDecodesAttributionsSoAReadEventCanBeAppendedAgain(t 
 		empty bool
 		isNil bool
 	}{
-		"no map":           {`{"event":"scan_started","roundId":1,"contradictionCount":0}`, false, true},
-		"empty map":        {`{"event":"scan_started","roundId":1,"contradictionCount":0,"map":{}}`, true, false},
-		"a non-string":     {`{"event":"scan_started","roundId":1,"contradictionCount":0,"map":{"q":1}}`, false, true},
-		"a null map":       {`{"event":"scan_started","roundId":1,"contradictionCount":0,"map":null}`, false, true},
-		"another key case": {`{"event":"scan_started","roundId":1,"contradictionCount":0,"MAP":{"q":"d"}}`, false, true},
+		"no map":           {`{"ts":"t","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0,"highContradictionCount":0}`, false, true},
+		"empty map":        {`{"ts":"t","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0,"highContradictionCount":0,"map":{}}`, true, false},
+		"a non-string":     {`{"ts":"t","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0,"highContradictionCount":0,"map":{"q":1}}`, false, true},
+		"a null map":       {`{"ts":"t","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0,"highContradictionCount":0,"map":null}`, false, true},
+		"another key case": {`{"ts":"t","sessionId":"s","event":"scan_started","roundId":1,"contradictionCount":0,"highContradictionCount":0,"MAP":{"q":"d"}}`, false, true},
 	} {
 		cwd := t.TempDir()
 		if err := os.MkdirAll(filepath.Dir(interviewLedgerPath(cwd, "s")), 0o777); err != nil || os.WriteFile(interviewLedgerPath(cwd, "s"), []byte(c.row+"\n"), 0o644) != nil {

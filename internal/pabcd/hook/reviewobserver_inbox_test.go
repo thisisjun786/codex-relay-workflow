@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
@@ -94,18 +96,42 @@ func (e reviewObsEnv) holdGoalplanLock(t *testing.T) (release func()) {
 	}
 }
 
-// holdSessionLock takes the session lock file a live writer holds and returns the release.
+// holdSessionLock holds the same kernel-owned lock as a live writer until release, including on a failed assertion.
 func (e reviewObsEnv) holdSessionLock(t *testing.T) (release func()) {
 	t.Helper()
-	lock := state.StatePath(e.cwd, e.session) + ".lock"
-	if err := os.WriteFile(lock, []byte("4242"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return func() {
-		if err := os.Remove(lock); err != nil {
-			t.Fatal(err)
+	const bound = 30 * time.Second
+	entered, unlock, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	var lockErr error
+	go func() {
+		lockErr = state.WithSessionLock(e.cwd, e.session, func() error {
+			close(entered)
+			<-unlock
+			return nil
+		})
+		close(done)
+	}()
+	release = func() {
+		t.Helper()
+		once.Do(func() { close(unlock) })
+		select {
+		case <-done:
+			if lockErr != nil {
+				t.Fatal(lockErr)
+			}
+		case <-time.After(bound):
+			t.Fatal("the session lock holder never finished after release")
 		}
 	}
+	t.Cleanup(release)
+	select {
+	case <-entered:
+	case <-done:
+		t.Fatalf("the session lock holder never entered: %v", lockErr)
+	case <-time.After(bound):
+		t.Fatal("the session lock holder never took the lock")
+	}
+	return release
 }
 
 func TestReviewObserverKeepsASignoffThatMetAHeldLockAndApprovesItAfterwards(t *testing.T) {

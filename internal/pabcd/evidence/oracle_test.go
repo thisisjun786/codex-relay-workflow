@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -209,7 +210,13 @@ func TestAttemptsFileNames(t *testing.T) {
 			must(t, err)
 			content = append(content, string(raw))
 		}
-		same(t, k.ID, map[string]any{"files": files, "content": content}, g.Names[k.ID])
+		want := g.Names[k.ID]
+		if !state.IsCanonicalSessionID(k.Session) {
+			// port: fixed by CRW-1108 (known-defects.md:172): the oracle writes the counter under the sanitised id, which a-b's
+			// counter shares with a/b's; the port writes nothing for an id that sanitising would rewrite, or an empty one
+			want = map[string]any{"files": []any{}, "content": []any{}}
+		}
+		same(t, k.ID, map[string]any{"files": files, "content": content}, want)
 	}
 }
 
@@ -394,7 +401,7 @@ func TestTombstone(t *testing.T) {
 		lock := lockFunc(state.WithSessionLock)
 		switch k.Lock {
 		case "held":
-			put(t, filepath.Join(sessions, "s1.json.lock"), []byte("12345"))
+			put(t, filepath.Join(sessions, "s1.json.lock"), []byte(strconv.Itoa(os.Getpid()))) // a live holder: since CRW-1094 a dead owner's lock is taken over
 		case "sentinel_window": // the first acquisition fails, the second finds the lock free
 			calls := 0
 			lock = func(cwd, sessionID string, fn func() error) error {

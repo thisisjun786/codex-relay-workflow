@@ -31,6 +31,9 @@ func pabcdCLITestHome(t *testing.T) string {
 		}
 		t.Setenv(key, dir)
 	}
+	// The terminal rows bind a session mutation to CODEX_THREAD_ID (CRW-1108); a run inside a native Codex session must not
+	// refuse the ids these tests name.
+	orchestrateTestUnsetenv(t, "CODEX_THREAD_ID")
 	t.Chdir(root)
 	return root
 }

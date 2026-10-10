@@ -278,6 +278,12 @@ func TestOrchestrateReadOracle(t *testing.T) {
 			}
 			want := c.Want
 			want.Output = expand(want.Output)
+			if c.ID == "raw_and_sanitized" {
+				// port: fixed by CRW-1108 (known-defects/CRW-1108.md). The oracle reads raw-id.json for "raw id" (phase A); the port
+				// refuses the non-canonical id at the state read boundary, so the session reads as a fresh IDLE one and the
+				// sanitised session's state stays unseen
+				want.Output = `{"phase":"IDLE","flags":{"interview":false,"auditPassed":false,"checkPassed":false},"sessionId":"raw id","selection":"explicit"}`
+			}
 			if *read.Result != want {
 				t.Fatalf("got %+v\nwant %+v", *read.Result, want)
 			}

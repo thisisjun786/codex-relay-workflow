@@ -145,8 +145,11 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 	// outbox (CRW-1097): the row is prepared as a pending event inside the session lock before the state
 	// is published and is appended in the same lock, and an event a dead writer or a failed append left
 	// behind is recorded by the next locked writer of the session.
-	next, landed, warning, rowPending := promptOrchestrateWrite(lock, p, current, verb, command, turn, seams)
+	next, landed, warning, rowPending, writeErr := promptOrchestrateWrite(lock, p, current, verb, command, turn, seams)
 	if !landed {
+		if writeErr != nil {
+			return promptSubmitNotApplied(p.Cwd, p.SessionID, verb, writeErr), true
+		}
 		return "[crw — refused: the session state changed or cannot be rewritten without losing a stored record, so this command was not applied. Nothing was written.]", true
 	}
 
@@ -208,14 +211,15 @@ func promptOrchestrateSourceGate(p PromptSubmitPayload, current state.State) (st
 // must still be the one the handler read - same phase, same slug - and the transition is applied to that
 // fresh state rather than to a copy of the stale one, so an update a participating writer landed in
 // between survives and the row describes what was really applied. A write that does not land leaves the
-// file exactly as it was and nothing pending.
+// file exactly as it was and nothing pending. The last answer is the lock or pre-publication write error
+// (CRW-1094), nil when the locked state simply no longer matches the handler's read.
 //
 // Inside the lock, in order (CRW-1097): the session's pending ledger events are drained, so an earlier
 // transition's row goes first; the row of this transition is prepared as a pending event; the state is
 // published (a failure before the rename drops the event again); and the drain records the row. The
 // seam afterOrchestratePublish stops the write right after the publication, as a writer killed there
 // would, so a test can show the next writer recording the row.
-func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string, seams *promptDcloseSeams) (state.State, bool, string, string) {
+func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string, seams *promptDcloseSeams) (state.State, bool, string, string, error) {
 	next, landed, rowPending := state.State{}, false, ""
 	var publishedErr error
 	err := lock(p.Cwd, p.SessionID, func() error {
@@ -264,7 +268,7 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 		return nil
 	})
 	if !landed {
-		return state.State{}, false, "", ""
+		return state.State{}, false, "", "", err
 	}
 	// The state is at its final path, so the command was applied; only its durability may be in
 	// question (a *state.PublishedError, from the write or reported by the lock), and the caller
@@ -273,7 +277,7 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 		publishedErr = err
 	}
 	_, warning := promptDcloseWriteLanded(publishedErr)
-	return next, true, warning, rowPending
+	return next, true, warning, rowPending, nil
 }
 
 // promptOrchestrateAfterPublish runs the test seam that stops a write right after its publication;

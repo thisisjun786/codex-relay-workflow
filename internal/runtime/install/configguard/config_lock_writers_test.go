@@ -181,9 +181,11 @@ func TestMultiAgentV2SetTakesTheConfigLock(t *testing.T) {
 	}
 }
 
-// An uninstall with nothing to write is not gated on the lock: with no owned table key and no flag
-// CRW enabled, the injected CLI has nothing to disable and no config.toml write to serialize, so a
-// busy lock must not fail the command.
+// An uninstall with nothing to write to config.toml does its work without the lock: with no owned table
+// key and no flag CRW enabled, the injected CLI has nothing to disable and config.toml is not touched.
+// Its release of the install manifest is a write the activation's own manifest write must not race,
+// so it is taken under the lock (CRW-1145): a busy lock leaves the manifest unreleased and fails the
+// command for a retry, which then releases it.
 func TestDeactivateWithNothingToWriteTakesNoLock(t *testing.T) {
 	home := configLockWritersTempHomes(t)
 	path := filepath.Join(home, "config.toml")
@@ -192,18 +194,28 @@ func TestDeactivateWithNothingToWriteTakesNoLock(t *testing.T) {
 	m.ConfigPath = path
 	deactivationSaveManifest(t, home, m)
 	held := configLockWritersHold(t, path)
-	defer held.Release()
-	r, err := Deactivate(deactivationDeps(home, func(a []string) CodexRunResult {
+	run := func(a []string) CodexRunResult {
 		if a[1] != "list" {
 			t.Fatalf("a disable reached the runner: %v", a)
 		}
 		return CodexRunResult{}
-	}))
-	if err != nil || r.FileDrifted || len(r.RestoredKeys) != 0 || len(r.Disabled) != 0 {
+	}
+	r, err := Deactivate(deactivationDeps(home, run))
+	held.Release()
+	if err == nil || !strings.Contains(err.Error(), "release of the install manifest") || r == nil || r.FileDrifted || len(r.RestoredKeys) != 0 || len(r.Disabled) != 0 {
 		t.Fatalf("result=%+v error=%v", r, err)
 	}
 	if activationRead(t, path) != deactivationConfig {
 		t.Fatal("the no-op deactivation changed config.toml")
+	}
+	if after := parseInstallManifest(activationRead(t, manifestPath(home))); after.ReleasedAt != nil {
+		t.Fatal("the manifest was released without the config lock")
+	}
+	if _, err := Deactivate(deactivationDeps(home, run)); err != nil {
+		t.Fatal(err)
+	}
+	if after := parseInstallManifest(activationRead(t, manifestPath(home))); after.ReleasedAt == nil {
+		t.Fatal("the retry did not release the manifest")
 	}
 }
 

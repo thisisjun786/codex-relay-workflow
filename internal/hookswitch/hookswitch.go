@@ -114,15 +114,22 @@ func readState(path string) (State, error) {
 // the opened handle must be a regular file, so a FIFO, a device or a socket is a read error at
 // once, whether it is the entry or the target of a link, and whatever a writer does with it.
 // ENOENT is an absent switch only when nothing is at the path; a link whose target is gone is
-// there and cannot be read.
+// there and cannot be read, and the problem says so with the link's target (CRW-1142).
 func readFile(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {
+			info, lerr := os.Lstat(path)
+			if errors.Is(lerr, fs.ErrNotExist) {
 				return nil, errAbsent
 			}
-			return nil, fmt.Errorf("%s: %w", path, err)
+			// The open error already names the path, so it is not named again.
+			if lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
+				if target, rerr := os.Readlink(path); rerr == nil {
+					return nil, fmt.Errorf("switch file %s is a symlink to a target that does not exist (%s)", path, target)
+				}
+			}
+			return nil, err
 		}
 		return nil, err
 	}

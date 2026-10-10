@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -90,15 +91,36 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if !fallbackRootStartup(payload) {
 		return 0
 	}
+	// CRW-1146: a resumed session that was given exactly this notice holds it from the start (or the last compact) and is not
+	// given it again. The notice is computed from the role store, CRW_SPAWN_V1 and the model catalog, so what counts is the text,
+	// not the source: a resume of a session that never had it (this leg was off at its start), or whose settings have changed since,
+	// hears it. Startup, compact, clear and a missing or unknown source always answer.
+	session, resumed := "", false
+	if object, ok := payload.(map[string]any); ok {
+		session, _ = object["session_id"].(string)
+		resumed = object["source"] == "resume"
+	}
 	answer, err := SessionFallbackNotice(env)
 	if ctx.Err() != nil {
 		return fallbackInterrupted
 	}
-	if err == nil {
-		_, _ = io.WriteString(out, answer)
+	if err != nil {
+		return 0
+	}
+	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
+		return 0
+	}
+	n, werr := io.WriteString(out, answer)
+	// Only a notice written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a cancelled
+	// hook, leaves no record, so the session's next resume hears the notice.
+	if werr == nil && n == len(answer) && ctx.Err() == nil {
+		guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
 	}
 	return 0
 }
+
+// fallbackNoticeLeg names this leg's record of what a session was given.
+const fallbackNoticeLeg = "subagent-fallback"
 
 // fallbackRootStartup is true for a SessionStart payload that is an object naming its session and no child. A child is a leaf
 // when it carries a non-empty string agent_id or agent_type, the same test the spawn hook applies to a spawner

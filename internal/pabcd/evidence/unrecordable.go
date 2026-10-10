@@ -113,12 +113,16 @@ func jsString(s string) string {
 // MarkerWriter, so the SubagentStop gate passes it to RecordTombstone. A second marker for one session and agent in the same
 // millisecond fails on the exclusive create, and the failure is the caller's to swallow. A symbolic link or a file at the state
 // directory or at the marker directory is refused with an error (makeMarkerDir), so nothing is created outside the workspace
-// through a link planted there.
+// through a link planted there. A session id that sanitising would rewrite, or an empty one, is refused with
+// state.ErrNonCanonicalSessionID before anything is created (CRW-1108: the oracle wrote a marker that a-b's status reads for a/b).
 func WriteUnrecordableMarker(cwd, sessionID, agentID string) error {
 	return writeUnrecordableMarker(cwd, sessionID, agentID, time.Now())
 }
 
 func writeUnrecordableMarker(cwd, sessionID, agentID string, now time.Time) error {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return state.ErrNonCanonicalSessionID
+	}
 	if err := makeMarkerDir(cwd); err != nil {
 		return err
 	}
@@ -150,8 +154,12 @@ func markerDirWritable(cwd string) bool {
 // that starts with <session>-, so the markers of a session whose id continues with a dash after this one's count too. The query
 // is not read-only: it creates the state directory, its .gitignore and the marker directory, and writes and removes a probe. A
 // marker directory that is a link is read through, which can only deny: a marker of the session in the directory it leads to is
-// Present, and without one the probe is refused, so the answer is Unreadable.
+// Present, and without one the probe is refused, so the answer is Unreadable. A session id that sanitising would rewrite, or an empty
+// one, names no marker of its own: it is Unreadable without a read or a probe (CRW-1108: the oracle read a-b's markers for a/b).
 func UnrecordableVerdictStatus(cwd, sessionID string) VerdictStatus {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return VerdictStatus{Unreadable: true}
+	}
 	names, err := dirNames(unrecordableDir(cwd))
 	switch {
 	case err == nil:

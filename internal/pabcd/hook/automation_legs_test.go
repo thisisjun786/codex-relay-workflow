@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // automationLegPayload is one PreToolUse automation_update call.
@@ -17,44 +17,19 @@ func automationLegPayload(cwd, session, tool, input string) harness.Call {
 		`","cwd":"` + cwd + `","tool_name":"` + tool + `","tool_input":` + input + `}`}
 }
 
-// homeListing is the sorted name listing of a directory, or an error marker; it exists to prove a
-// run touched no real home.
-func homeListing(t *testing.T, dir string) string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "<absent>"
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	sort.Strings(names)
-	return strings.Join(names, ",")
-}
-
 // The automation ownership leg is wired to the port: the row keeps its Guard registration, the
 // caller's own stored heartbeat passes in silence, and a foreign or missing store denies through
 // the harness envelope. The leg reads the process environment, so the test points HOME, CODEX_HOME
-// and CRW_HOME at temporary directories and proves the real homes were untouched.
+// and CRW_HOME at temporary directories and proves the leg wrote nothing into them (the real homes are not
+// observed: the host's own Codex sessions write there, CRW-1170).
 func TestAutomationOwnershipLegAnswersThroughTheEnvelope(t *testing.T) {
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeCodex, beforeCRW := homeListing(t, filepath.Join(realHome, ".codex")), homeListing(t, filepath.Join(realHome, ".crw"))
-
+	homes := testsupport.SandboxAccountHomes(t)
 	dir := t.TempDir()
 	cwd := filepath.Join(dir, "work")
-	home := filepath.Join(dir, "home")
-	codexHome := filepath.Join(dir, "codex-home")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	store := filepath.Join(codexHome, "automations", "heartbeat-one")
+	store := filepath.Join(homes.Codex, "automations", "heartbeat-one")
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +37,7 @@ func TestAutomationOwnershipLegAnswersThroughTheEnvelope(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store, "automation.toml"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", codexHome)
-	t.Setenv("CRW_HOME", filepath.Join(dir, "crw-home"))
+	homes.Rebase()
 
 	leg := worktreeLeg(t, "pre-tool-use-guarding-automation-ownership")
 	if leg.Stage != harness.Guard || leg.Recover || leg.Slug != "pre-tool-use-automation-ownership" {
@@ -101,12 +74,5 @@ func TestAutomationOwnershipLegAnswersThroughTheEnvelope(t *testing.T) {
 
 	if got := leg.Handle(automationLegPayload(cwd, "s1", "Bash", `{"command":"ls"}`)); got != "" {
 		t.Errorf("an unrelated tool: %q", got)
-	}
-
-	if after := homeListing(t, filepath.Join(realHome, ".codex")); after != beforeCodex {
-		t.Errorf("the real ~/.codex changed: %q -> %q", beforeCodex, after)
-	}
-	if after := homeListing(t, filepath.Join(realHome, ".crw")); after != beforeCRW {
-		t.Errorf("the real ~/.crw changed: %q -> %q", beforeCRW, after)
 	}
 }

@@ -23,8 +23,12 @@ import (
 // missing attempts directory is an absence; an unreadable one, and a counter that is not a JSON object with an integer attempts
 // from 0 below MaxAttempts, count as spent. A counter is a file named <session>-...json, so the counters of a session whose id
 // continues with a dash after this one's count too. A counter nested deeper than Go's JSON limit of 10,000 levels reads as spent,
-// where the oracle parses it and may find the attempts beside the nesting unspent.
+// where the oracle parses it and may find the attempts beside the nesting unspent. A session id that sanitising would rewrite, or an
+// empty one, cannot be shown below the cap and counts as spent without a read (CRW-1108: the oracle read a-b's counters for a/b).
 func HasSpentBudget(cwd, sessionID string) bool {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return true
+	}
 	dir := filepath.Join(cwd, crwdir.DirName, AttemptsSubdir)
 	names, err := dirNames(dir)
 	if err != nil {

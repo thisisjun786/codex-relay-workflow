@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -124,30 +125,73 @@ func RunUserPromptAffordance(raw string, env host.LookupEnv) string {
 	})
 }
 
-// RunMapAffordanceSessionStart is read-only and keeps unconditional pointers on
-// malformed stdin or a failed walk. Only this handler trims before JSON.parse.
+// RunMapAffordanceSessionStart keeps unconditional pointers on malformed stdin or a failed walk. Only this handler trims before
+// JSON.parse. It renders the answer and records nothing: the hook that writes the answer records it (runHook), so guidance
+// counts as given only once it reached the host (see mapAffordanceSessionStart).
 func RunMapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) string {
-	cwd, sid := fallbackCwd, ""
+	answer, _ := mapAffordanceSessionStart(raw, fallbackCwd, env)
+	return answer
+}
+
+// mapAffordanceLeg names this leg's record of what a session was given.
+const mapAffordanceLeg = "map-affordance"
+
+// mapAffordanceSessionStart returns the answer and the function that records the pointers it gave. A resume (CRW-1146)
+// re-issues only the session binding and the PATH banner when the session was given exactly these pointers before; it holds them from
+// its start or its last compact. Resume alone proves nothing (the switch can be off at the start and on at the resume, and the pointers
+// name the command and the workspace size), so a resume of a session that was not given them, or given others, gets them whole. A
+// missing or unknown source always gets the whole list.
+func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (string, func()) {
+	cwd, sid, resumed := fallbackCwd, "", false
 	if p := object(text.Trim(raw)); p != nil {
 		if s, ok := p["cwd"].(string); ok && s != "" {
 			cwd = s
 		}
 		sid, _ = p["session_id"].(string)
+		resumed = p["source"] == "resume"
 	}
 	lines := []harness.ContextSection{}
 	if validSessionID(sid) {
 		lines = append(lines, harness.ContextSection{Text: RenderSessionBinding(sid, env), Required: true})
 	}
+	// The pointers as said, and as compared with a session's record: with the command spelled as one fixed word (the record keeps
+	// the command in a field of its own, a path that differs per host) and the map pointer's file count, a size hint that moves
+	// with every new file, left out.
+	words := func(k string) (string, bool) {
+		if k == host.BinEnv {
+			return "crw", true
+		}
+		return env(k)
+	}
+	fixed := func(env host.LookupEnv) []string {
+		return []string{RenderSkillSearchAffordance(env), RenderKwriteAffordance(), RenderLoopAffordance(env),
+			RenderStackedPrAffordance(), RenderBackgroundTerminalAffordance(), RenderQuestionAffordance()}
+	}
+	pointers, identity := fixed(env), fixed(words)
 	if count := CountSourceFiles(cwd); count >= MapAffordanceMinFiles {
-		lines = append(lines, harness.ContextSection{Text: RenderMapAffordance(count, env)})
+		pointers = append([]string{RenderMapAffordance(count, env)}, pointers...)
+		identity = append([]string{RenderMapAffordance(MapAffordanceMinFiles, words)}, identity...)
 	}
-	lines = append(lines, harness.ContextSection{Text: RenderSkillSearchAffordance(env)}, harness.ContextSection{Text: RenderKwriteAffordance()},
-		harness.ContextSection{Text: RenderLoopAffordance(env), Required: true}, harness.ContextSection{Text: RenderStackedPrAffordance()},
-		harness.ContextSection{Text: RenderBackgroundTerminalAffordance()}, harness.ContextSection{Text: RenderQuestionAffordance()})
-	if inv := invocation(env); inv != "crw" {
-		lines = append(lines, harness.ContextSection{Text: "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: " + inv})
+	banner := []harness.ContextSection{}
+	command := invocation(env)
+	if command != "crw" {
+		banner = append(banner, harness.ContextSection{Text: "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: " + command})
 	}
-	return harness.ContextOutputSections("SessionStart", lines)
+	given := strings.Join(identity, "\n\n")
+	record := func() {
+		if sid != "" {
+			guidancerecord.Record(env, sid, mapAffordanceLeg, given, command)
+		}
+	}
+	if resumed && sid != "" && guidancerecord.Delivered(env, sid, mapAffordanceLeg, given, command) {
+		lines = append(lines, banner...)
+		return harness.ContextOutputSections("SessionStart", lines), func() {}
+	}
+	for i, pointer := range pointers {
+		lines = append(lines, harness.ContextSection{Text: pointer, Required: identity[i] == RenderLoopAffordance(words)})
+	}
+	lines = append(lines, banner...)
+	return harness.ContextOutputSections("SessionStart", lines), record
 }
 
 // RunHook bounds physical stdin before decoding, observation or handlers. Input
@@ -176,7 +220,15 @@ func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	var answer string
 	switch event {
 	case "session-start":
-		answer = RunMapAffordanceSessionStart(raw, cwd, env)
+		var record func()
+		answer, record = mapAffordanceSessionStart(raw, cwd, env)
+		n, err := io.WriteString(out, answer)
+		// Only an answer written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a
+		// cancelled hook, leaves no record, so the session's next resume gets the whole list.
+		if err == nil && n == len(answer) && ctx.Err() == nil {
+			record()
+		}
+		answer = ""
 	case "post-compact":
 		answer = RunPostCompactAffordance(raw)
 	case "user-prompt-submit":

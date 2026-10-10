@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -82,7 +81,7 @@ func TestLockWaitBudgetDecidesWhetherASlowHolderBlocksTheWriter(t *testing.T) {
 					t.Fatalf("the oracle's budget: err %v entered %v slept %v", err, entered, slept)
 				}
 				// the holder still owns a lock nobody broke, which is the oracle's answer to a dead one
-				if got := fileText(t, lock); got != strconv.Itoa(os.Getpid()) {
+				if got := fileText(t, lock); got != sessionLockRecord(os.Getpid()) {
 					t.Fatalf("the lock holds %q", got)
 				}
 				letGo()
