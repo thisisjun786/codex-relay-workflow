@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/execfile"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The J4 rule (Jun, 2026-10-06) makes this hook report-only: it diagnoses the declared [features]
@@ -128,22 +129,6 @@ func selfHealReportListing(t *testing.T, dir string) []string {
 	})
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("listing %s: %v", dir, err)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// selfHealReportShallowListing is the top level of a directory: cheap, and enough to catch a new file
-// appearing in a home this test must not touch.
-func selfHealReportShallowListing(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		out = append(out, entry.Name())
 	}
 	sort.Strings(out)
 	return out
@@ -664,30 +649,19 @@ func TestSelfHealReportObservationIsTheOnlyWrite(t *testing.T) {
 	}
 }
 
-// TestSelfHealReportNeverTouchesTheRealHomes lists ~/.codex and ~/.crw before and after runs whose
-// inputs are all temporary. A difference is reported, never cleaned up here.
+// TestSelfHealReportNeverTouchesTheRealHomes lists the temporary homes the runs are given (HOME, CODEX_HOME,
+// CRW_HOME and the .codex and .crw below HOME) before and after runs whose inputs are all temporary. The real
+// ~/.codex and ~/.crw are not listed: the host's Codex sessions write there at any moment (CRW-1170), and with
+// the variables repointed the hook cannot resolve them. A difference is reported, never cleaned up here.
 func TestSelfHealReportNeverTouchesTheRealHomes(t *testing.T) {
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Skipf("no real home to watch: %v", err)
-	}
-	codexBefore := selfHealReportShallowListing(t, filepath.Join(realHome, ".codex"))
-	crwBefore := selfHealReportShallowListing(t, filepath.Join(realHome, ".crw"))
-
-	home := selfHealReportTempHome(t)
-	selfHealReportWriteConfig(t, home)
+	homes := testsupport.SandboxAccountHomes(t)
+	selfHealReportWriteConfig(t, homes.Codex)
 	selfHealReportFakeCodex(t, selfHealReportSoftOff)
+	homes.Rebase()
 	for _, in := range []string{selfHealReportSessionStart, "garbage", ""} {
-		if _, code := selfHealReportRun(t, home, in); code != 0 {
+		if _, code := selfHealReportRun(t, homes.Codex, in); code != 0 {
 			t.Fatalf("exit = %d, want 0", code)
 		}
-	}
-
-	if after := selfHealReportShallowListing(t, filepath.Join(realHome, ".codex")); !reflect.DeepEqual(codexBefore, after) {
-		t.Fatalf("the real ~/.codex changed:\n before %v\n after  %v", codexBefore, after)
-	}
-	if after := selfHealReportShallowListing(t, filepath.Join(realHome, ".crw")); !reflect.DeepEqual(crwBefore, after) {
-		t.Fatalf("the real ~/.crw changed:\n before %v\n after  %v", crwBefore, after)
 	}
 }
 

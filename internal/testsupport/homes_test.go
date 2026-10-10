@@ -58,3 +58,39 @@ func TestSandboxAccountHomes_reports_a_write_below_the_homes_and_ignores_the_rea
 	}
 	h.Rebase()
 }
+
+// CRW-1170: a test that lists the account's real ~/.codex or ~/.crw fails whenever another process of the host
+// writes there (a live Codex session opens its sqlite files). The real home is reached through os.UserHomeDir
+// in a test binary that does not isolate HOME; no test file may ask for it. A test that needs a home uses
+// SandboxAccountHomes, or reads the HOME the isolation gave it.
+func TestNoTestFileResolvesTheAccountHome(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := filepath.Join("internal", "testsupport", "homes_test.go")
+	needle := "os.User" + "HomeDir("
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules" || strings.HasPrefix(rel, ".omo")) {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, "_test.go") || rel == self {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(raw), needle) {
+			t.Errorf("%s resolves the account home; use SandboxAccountHomes", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

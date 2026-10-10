@@ -13,6 +13,7 @@ import (
 
 	hostenv "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The retrust tests never touch the real Codex home: every one builds a temporary home with a fake
@@ -467,40 +468,15 @@ func TestHookTrustRetrustCLI_unknown_option(t *testing.T) {
 	}
 }
 
-// TestHookTrustRetrust_real_home_is_untouched is the operator rule after CRW-499: the real ~/.codex
-// and ~/.crw listings must not change while these tests run.
+// TestHookTrustRetrust_real_home_is_untouched is the operator rule after CRW-499: the run writes nothing into
+// the account homes it can resolve. HOME, CODEX_HOME and CRW_HOME are temporary directories and those are
+// checked; the real ~/.codex and ~/.crw are not observed, because the host's Codex sessions write there at
+// any moment (CRW-1170).
 func TestHookTrustRetrust_real_home_is_untouched(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no real home to compare")
-	}
-	before := realHomeListing(home)
+	testsupport.SandboxAccountHomes(t)
 	f := newRetrustFixture(t, "")
 	f.write(f.config(), f.installed())
 	if _, stderr, code := f.run("--bootstrap-ok"); code != 0 {
 		t.Fatalf("bootstrap: code=%d stderr=%q", code, stderr)
 	}
-	if after := realHomeListing(home); before != after {
-		t.Fatalf("the real home changed:\nbefore:\n%s\nafter:\n%s", before, after)
-	}
-}
-
-func realHomeListing(home string) string {
-	var lines []string
-	for _, name := range []string{".codex", ".crw"} {
-		root := filepath.Join(home, name)
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			rel, _ := filepath.Rel(home, path)
-			info, err := d.Info()
-			if err != nil {
-				return nil
-			}
-			lines = append(lines, rel+" "+info.Mode().String())
-			return nil
-		})
-	}
-	return strings.Join(lines, "\n")
 }
