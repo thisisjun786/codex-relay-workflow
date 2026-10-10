@@ -43,6 +43,9 @@ func moduleSourceRefusal(src string) string {
 	if lexed.nonASCIICode {
 		return "uses a name with non-ASCII characters outside a string, which Python folds to other names (sys can be written as another spelling)"
 	}
+	if m := reAttrSys.FindString(lexed.code); m != "" {
+		return "reaches sys as an attribute of another module (" + strings.Join(strings.Fields(m), "") + "), which is sys.path by another name"
+	}
 	if what := moduleSourceRefusalOf(src, lexed.stmts); what != "" {
 		return what
 	}
@@ -51,6 +54,9 @@ func moduleSourceRefusal(src string) string {
 	}
 	return ""
 }
+
+// reAttrSys: a name sys that is an attribute (os.sys, a.b.sys): the module sys under another module's name.
+var reAttrSys = regexp.MustCompile(`\.\s*sys\b`)
 
 // moduleSourceRefusalOf is the scans of moduleSourceRefusal on one text, with the statements of the source.
 func moduleSourceRefusalOf(src string, stmts []string) string {
@@ -121,6 +127,9 @@ type pyLexed struct {
 	stmts []string
 	// view is the source without its comments, with each explicit line join (a backslash before a line end) read as one space.
 	view string
+	// code is view with the text of every string that is not an f-string blanked (an f-string holds expressions): what a name or an
+	// attribute in code is matched against, so that a word in a string (a mock.patch target) is not taken for a use of it.
+	code string
 	// nonASCIICode is whether a character outside ASCII stands in code (outside a string and a comment).
 	nonASCIICode bool
 }
@@ -131,7 +140,7 @@ type pyLexed struct {
 // are cut where a bracket count says, and that only moves where an import statement is seen; the scans read the whole text as well.
 func pyLex(src string) pyLexed {
 	var out pyLexed
-	var view, cur strings.Builder
+	var view, cur, code strings.Builder
 	depth := 0
 	flush := func() {
 		if s := strings.TrimSpace(cur.String()); s != "" {
@@ -142,6 +151,17 @@ func pyLex(src string) pyLexed {
 	put := func(b byte) {
 		view.WriteByte(b)
 		cur.WriteByte(b)
+		code.WriteByte(b)
+	}
+	// putString writes a byte of a string: the statement and the view keep it, the code view keeps it only for an f-string.
+	putString := func(b byte, keep bool) {
+		view.WriteByte(b)
+		cur.WriteByte(b)
+		if keep || b == '\n' {
+			code.WriteByte(b)
+		} else {
+			code.WriteByte(' ')
+		}
 	}
 	n := len(src)
 	i := 0
@@ -163,6 +183,8 @@ func pyLex(src string) pyLexed {
 			put(' ')
 		case c == '\'' || c == '"':
 			quote := c
+			// An f-prefix (rf, fr, f) makes the text of the string code that is evaluated: the code view keeps it.
+			keep := (i > 0 && (src[i-1] == 'f' || src[i-1] == 'F')) || (i > 1 && (src[i-2] == 'f' || src[i-2] == 'F') && isPyLetter(src[i-1]))
 			triple := i+2 < n && src[i+1] == quote && src[i+2] == quote
 			width := 1
 			if triple {
@@ -175,8 +197,8 @@ func pyLex(src string) pyLexed {
 			for i < n {
 				d := src[i]
 				if d == '\\' && i+1 < n {
-					put(d)
-					put(src[i+1])
+					putString(d, keep)
+					putString(src[i+1], keep)
 					i += 2
 					continue
 				}
@@ -190,7 +212,7 @@ func pyLex(src string) pyLexed {
 				if d == '\n' && !triple {
 					break
 				}
-				put(d)
+				putString(d, keep)
 				i++
 			}
 		case c == '(' || c == '[' || c == '{':
@@ -205,6 +227,7 @@ func pyLex(src string) pyLexed {
 			i++
 		case c == '\n':
 			view.WriteByte(c)
+			code.WriteByte(c)
 			if depth == 0 {
 				flush()
 			} else {
@@ -213,10 +236,12 @@ func pyLex(src string) pyLexed {
 			i++
 		case c == ';' && depth == 0:
 			view.WriteByte(c)
+			code.WriteByte(c)
 			flush()
 			i++
 		case c == ':' && depth == 0 && !(i+1 < n && src[i+1] == '='):
 			view.WriteByte(c)
+			code.WriteByte(c)
 			flush()
 			i++
 		default:
@@ -229,8 +254,12 @@ func pyLex(src string) pyLexed {
 	}
 	flush()
 	out.view = view.String()
+	out.code = code.String()
 	return out
 }
+
+// isPyLetter is whether a byte can be part of a string prefix.
+func isPyLetter(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' }
 
 // importlibPlainAttrs are the attributes of importlib a test uses to import by name, to reload or to read package data; the rest of the
 // package (machinery, util, abc, the loaders and finders) loads code by path or builds the import system.
@@ -308,6 +337,13 @@ func pyImportStatement(stmt string, aliases map[string]string) string {
 		}
 		mod := fields[1]
 		names := splitImportItems(fields[3:])
+		if mod != "sys" {
+			for _, n := range names {
+				if n[0] == "sys" {
+					return "imports sys from " + mod + ", which is sys.path by another name"
+				}
+			}
+		}
 		switch {
 		case mod == "imp" || strings.HasPrefix(mod, "imp."):
 			return "imports from imp, which loads files by path"

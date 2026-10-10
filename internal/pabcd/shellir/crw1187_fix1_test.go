@@ -30,6 +30,11 @@ func TestCRW1187FixRound1SourceSpellingsThatMoveTheImportPathAreRefused(t *testi
 		"bracketed import":           "from sys import (\n    path as p,\n)\np.insert(0, LIB)\nimport evil\n",
 		"alias in a compound header": "while False: import sys as s\ns.path.insert(0, LIB)\nimport evil\n",
 		"class body alias":           "class A:\n    import sys as s\n    s.path.insert(0, LIB)\nimport evil\n",
+		"sys as an attribute":        "import os\nos.sys.path.insert(0, LIB)\nimport evil\n",
+		"sys from another module":    "from os import sys as s\ns.path.insert(0, LIB)\nimport evil\n",
+		"sys kept in a name":         "import os\ns = os.sys\ns.path.insert(0, LIB)\nimport evil\n",
+		"attribute in an f-string":   "import os\nx = f\"{os.sys}\"\nimport evil\n",
+		"attribute in a raw f":       "import os\nx = rf'{os.sys}'\nimport evil\n",
 		"string prefix then alias":   "x = r'\\''\nimport sys as s\ns.path.insert(0, LIB)\nimport evil\n",
 	} {
 		if what := moduleSourceRefusal(body); what == "" {
@@ -45,16 +50,19 @@ func TestCRW1187FixRound1SourceSpellingsThatMoveTheImportPathAreRefused(t *testi
 // What stays allowed: ordinary sources, with strings, comments and non-ASCII text in the places a name cannot be.
 func TestCRW1187FixRound1OrdinarySourcesWithStringsAndCommentsStayAllowed(t *testing.T) {
 	for label, body := range map[string]string{
-		"non-ASCII string":       "import unittest\nGREETING = '\uc548\ub155 (\ud14c\uc2a4\ud2b8)'\n",
-		"non-ASCII comment":      "import unittest\n# \ud55c\uae00 \uc8fc\uc11d (\n\nx = 1\n",
-		"non-ASCII docstring":    "\"\"\"\ud14c\uc2a4\ud2b8 (\"\"\"\nimport unittest\n",
-		"byte order mark":        "\ufeffimport unittest\nx = 1\n",
-		"bracket in a string":    "import unittest\nnote = '('\nvalue = ')'\nimport calc\n",
-		"line join in a call":    "import unittest\nvalue = max(1, \\\n    2)\n",
-		"argv and exit":          "import sys\nimport unittest\nif len(sys.argv) > 3:\n    sys.exit(1)\n",
-		"dict and slices":        "import unittest\nd = {1: 2}\nx = [1, 2, 3][1:2]\n",
-		"annotations and lambda": "import unittest\nx: int = 3\nf = lambda a: a + 1\n",
-		"import_module by name":  "import importlib\nm = importlib.import_module('calc')\n",
+		"non-ASCII string":          "import unittest\nGREETING = '\uc548\ub155 (\ud14c\uc2a4\ud2b8)'\n",
+		"non-ASCII comment":         "import unittest\n# \ud55c\uae00 \uc8fc\uc11d (\n\nx = 1\n",
+		"non-ASCII docstring":       "\"\"\"\ud14c\uc2a4\ud2b8 (\"\"\"\nimport unittest\n",
+		"byte order mark":           "\ufeffimport unittest\nx = 1\n",
+		"bracket in a string":       "import unittest\nnote = '('\nvalue = ')'\nimport calc\n",
+		"line join in a call":       "import unittest\nvalue = max(1, \\\n    2)\n",
+		"argv and exit":             "import sys\nimport unittest\nif len(sys.argv) > 3:\n    sys.exit(1)\n",
+		"dict and slices":           "import unittest\nd = {1: 2}\nx = [1, 2, 3][1:2]\n",
+		"annotations and lambda":    "import unittest\nx: int = 3\nf = lambda a: a + 1\n",
+		"import_module by name":     "import importlib\nm = importlib.import_module('calc')\n",
+		"patch target string":       "import unittest\nfrom unittest import mock\n@mock.patch('app.sys.argv', ['x'])\ndef f(): pass\n",
+		"dotted name in a string":   "import unittest\nNAME = 'a.sys'\nDOC = \"\"\"os.sys is not used\"\"\"\n",
+		"names that start with sys": "import unittest\nx = obj.sysinfo + obj.sys_version\n",
 	} {
 		if what := moduleSourceRefusal(body); what != "" {
 			t.Errorf("%s: refused: %s", label, what)
