@@ -13,6 +13,27 @@ import (
 // under test (crw). False for a command whose first word names no file the harness can identify
 // (another variable, a relative path, a shell builtin such as exit).
 func CommandExecutable(command, crw string) (string, bool) {
+	word, ok := firstWord(command)
+	if !ok {
+		return "", false
+	}
+	switch word {
+	case "crw", "$CRW_BIN", "${CRW_BIN}":
+		return crw, true
+	case "$HOME/" + runtimeBin, "${HOME}/" + runtimeBin:
+		// The installed runtime the shipped plugin starts: the harness links it to the build under test
+		// in the HOME of every step it fires (seedPlan), so that build is what the command starts.
+		return crw, true
+	}
+	if strings.Contains(word, "$") || strings.ContainsAny(word, "`\\") || !filepath.IsAbs(word) {
+		return "", false
+	}
+	return word, true
+}
+
+// firstWord is the first word of a command line, as the shell reads it: the text in double quotes
+// or up to the first blank or operator.
+func firstWord(command string) (string, bool) {
 	s := strings.TrimLeft(command, " \t")
 	var word string
 	if strings.HasPrefix(s, `"`) {
@@ -26,13 +47,6 @@ func CommandExecutable(command, crw string) (string, bool) {
 		if i := strings.IndexAny(word, " \t;&|"); i >= 0 {
 			word = word[:i]
 		}
-	}
-	switch word {
-	case "crw", "$CRW_BIN", "${CRW_BIN}":
-		return crw, true
-	}
-	if strings.Contains(word, "$") || strings.ContainsAny(word, "`\\") || !filepath.IsAbs(word) {
-		return "", false
 	}
 	return word, true
 }
