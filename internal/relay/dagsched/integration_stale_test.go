@@ -283,3 +283,104 @@ func TestPushListsAMergedNodeWhoseMarkStayedPending(t *testing.T) {
 		t.Fatalf("a pushed merge with a pending mark and changed criteria is listed: %+v", push)
 	}
 }
+
+// A batch that moved the branch and committed ref_moved, then stopped before it wrote any mark, holds its merges in the pushed
+// head all the same: the push lists them (verification round 2, finding 4). A later batch that marks one of them leaves the
+// other unmarked, and both are still listed.
+func TestPushListsTheMergesOfABatchThatStoppedBeforeAnyMark(t *testing.T) {
+	k := newBatchKit(t,
+		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
+		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
+	remote := bareRemote(t)
+	k.pushRepo(t, remote)
+	k.acceptByCommit("a")
+	k.acceptByCommit("b")
+	stop := fmt.Errorf("the batch stops after the move")
+	in := k.batchIn()
+	in.Nodes = []string{"a", "b"}
+	res, err := k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: inProcessVerifier(t), Update: updateIntegrationRef,
+		AfterMove: func(context.Context) error { return stop }})
+	if err != stop || len(res.Merged) != 2 || len(res.MarkedEvents) != 0 || len(res.Pending) != 0 {
+		t.Fatalf("want a batch that moved and wrote no mark: %+v, %v", res, err)
+	}
+	if tip, _ := k.branchTip("dev-int"); tip != res.NewHead {
+		t.Fatalf("the branch is at %s, want the moved head %s", tip, res.NewHead)
+	}
+	k.changeCriteria("a")
+	k.changeCriteria("b")
+	if got := staleSummary(k.staleNodes(t, "dev-int", res.NewHead)); !reflect.DeepEqual(got, []string{"a:criteria_changed", "b:criteria_changed"}) {
+		t.Fatalf("the moved batch's merges are in the head: got %v", got)
+	}
+	push, err := PushIntegration(context.Background(), k.repo.path, "origin", "dev", "dev-int", k.sched.VerifiedMoveOnto, k.sched.StaleIntegratedNodes)
+	if err != nil || push.Outcome != PushPushed || push.StaleNodesError != "" {
+		t.Fatalf("the push goes through: %+v, %v", push, err)
+	}
+	if got := staleSummary(push.StaleNodes); !reflect.DeepEqual(got, []string{"a:criteria_changed", "b:criteria_changed"}) {
+		t.Fatalf("the push lists the moved batch's merges: got %v", got)
+	}
+}
+
+// Partial marks: the moved batch stopped before its marks, and a later batch marked only one of its merges (from the frozen
+// row, as contained). The unmarked merge stays listed next to the marked one.
+func TestStaleNodesListAMoveWhoseMarksArePartial(t *testing.T) {
+	k := newBatchKit(t,
+		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
+		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
+	k.acceptByCommit("a")
+	k.acceptByCommit("b")
+	in := k.batchIn()
+	in.Nodes = []string{"a", "b"}
+	stop := fmt.Errorf("the batch stops after the move")
+	res, err := k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: inProcessVerifier(t), Update: updateIntegrationRef,
+		AfterMove: func(context.Context) error { return stop }})
+	if err != stop || len(res.Merged) != 2 {
+		t.Fatalf("want a moved batch with no marks: %+v, %v", res, err)
+	}
+	in.Nodes = []string{"a"}
+	again, err := k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: inProcessVerifier(t), Update: updateIntegrationRef})
+	if err != nil || len(again.AlreadyContained) != 1 || again.AlreadyContained[0].MarkedEvent == "" {
+		t.Fatalf("the later batch marks a from the head that contains it: %+v, %v", again, err)
+	}
+	k.changeCriteria("a")
+	k.changeCriteria("b")
+	if got := staleSummary(k.staleNodes(t, "dev-int", res.NewHead)); !reflect.DeepEqual(got, []string{"a:criteria_changed", "b:criteria_changed"}) {
+		t.Fatalf("a marked and b unmarked are both in the head: got %v", got)
+	}
+}
+
+// A batch that moved the branch and died before the moved record committed is recorded as moved by the next run's
+// reconciliation (no batch row): its verified candidates are in the head and are listed; a candidate the same batch split
+// out is not.
+func TestStaleNodesListTheVerifiedCandidatesOfAReconciledMove(t *testing.T) {
+	k := newBatchKit(t,
+		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
+		batchNode{name: "c", files: map[string]string{"c.txt": "c\n", "bad.txt": "bad\n"}})
+	k.acceptByCommit("a")
+	k.acceptByCommit("c")
+	in := k.batchIn()
+	in.Nodes = []string{"a", "c"}
+	// the swap lands and the process dies before the moved record commits: the transaction rolls back
+	diesAfterSwap := func(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
+		if err := updateIntegrationRef(ctx, checkout, ref, newCommit, oldCommit); err != nil {
+			return err
+		}
+		return fmt.Errorf("the process died after the swap")
+	}
+	res, err := k.sched.IntegrateBatch(context.Background(), in, IntegrationBatchDeps{Verify: inProcessVerifier(t), Update: diesAfterSwap})
+	if err == nil || len(res.Merged) != 1 || res.Merged[0].NodeID != "a" || len(res.Split) != 1 || res.Split[0].NodeID != "c" {
+		t.Fatalf("want a merged, c split, and the batch dead after the swap: %+v, %v", res, err)
+	}
+	tip, _ := k.branchTip("dev-int")
+	if tip != res.NewHead {
+		t.Fatalf("the swap landed: the branch is at %s, want %s", tip, res.NewHead)
+	}
+	var reconciled IntegrationBatchResult
+	if err := k.sched.reconcilePlannedMoves(context.Background(), in, tip, &reconciled); err != nil || len(reconciled.Reconciled) != 1 {
+		t.Fatalf("the next run reconciles the move: %+v, %v", reconciled, err)
+	}
+	k.changeCriteria("a")
+	k.changeCriteria("c")
+	if got := staleSummary(k.staleNodes(t, "dev-int", tip)); !reflect.DeepEqual(got, []string{"a:criteria_changed"}) {
+		t.Fatalf("the reconciled move's verified candidate is listed and the split one is not: got %v", got)
+	}
+}
