@@ -276,7 +276,7 @@ below `XDG_STATE_HOME`. The store, its WAL and its sidecars are never placed apa
 names it; the relay's own `daemon.log` stays in its store directory with the rest of that bundle.
 Neither root moves data that is already somewhere: the move is a separate, approved step.
 
-`crw config check [--config <path>]` prints every root, its path, whether it exists, its file system
+`crw config check [--config <path>]` (also `crw doctor storage`, which runs the same check) prints every root, its path, whether it exists, its file system
 and free space, and the placement already in use when that holds data. It writes nothing and creates
 no directory. It reports two kinds of finding. An error exits 1 and is a structural fault, and any
 product command that uses a root the file names refuses to run against it:
