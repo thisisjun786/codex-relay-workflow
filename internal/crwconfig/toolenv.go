@@ -168,3 +168,23 @@ func SetEnv(env []string, name, value string) []string {
 	}
 	return out
 }
+
+// ExplicitFile is the configuration file this environment selects through CRW_CONFIG or
+// XDG_CONFIG_HOME, when that file exists. A process started somewhere else (a systemd user manager has
+// neither variable of the shell a service was registered from) finds only the default location, so a
+// registration that must keep the configuration it used names this file for the process it starts. A
+// file at the default location, a missing file and an unusable (relative) location return "": the
+// other process finds the default itself, or nothing configured it.
+func ExplicitFile(getenv func(string) string) string {
+	if getenv("CRW_CONFIG") == "" && getenv("XDG_CONFIG_HOME") == "" {
+		return ""
+	}
+	path, _, err := locate(getenv, "")
+	if err != nil {
+		return ""
+	}
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return path
+}
