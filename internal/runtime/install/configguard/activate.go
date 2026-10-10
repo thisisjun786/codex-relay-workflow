@@ -76,12 +76,14 @@ func activationPublished(err error) error {
 }
 
 // configLockPathsPublishChecked is activationPublish with check run at the last step, after the new content
-// is written and synced and immediately before the rename. A refusal publishes nothing (CRW-993 c1).
+// is written and synced and immediately before the rename. A refusal publishes nothing (CRW-993 c1). Unlike
+// activationPublish it returns a publication whose directory sync failed as a *crwdir.PublishedError, for the
+// deactivation to report with the restore in place (CRW-1153).
 func configLockPathsPublishChecked(path string, b []byte, check func() error) error {
 	if _, _, e := activationReadFile(path); e != nil {
 		return e
 	}
-	return activationPublished(crwdir.PublishChecked(path, b, check))
+	return crwdir.PublishChecked(path, b, check)
 }
 
 // activationSetKeyLocked is the whole read-modify-write of one auto-enabled key under the sidecar

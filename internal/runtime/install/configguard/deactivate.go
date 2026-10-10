@@ -803,10 +803,7 @@ func deactivateTableKeys(path, content string, m *InstallManifest, r *Deactivate
 		r.RestoredKeys = append(r.RestoredKeys, id)
 	}
 	if changed {
-		if _, _, e := activationReadFile(path); e != nil {
-			return e
-		}
-		return crwdir.PublishChecked(path, []byte(content), guard)
+		return configLockPathsPublishChecked(path, []byte(content), guard)
 	}
 	return nil
 }
