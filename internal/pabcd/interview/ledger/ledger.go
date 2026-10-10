@@ -42,8 +42,8 @@ func DeriveEventID(turnID, questionID string, kind QaKind) string {
 	return turnID + ":" + questionID + ":" + string(kind)
 }
 
-// ledgerPath is cwd/.crw/interviews/<sanitised session id>.jsonl, the file of the state package's scan rows too; sessions whose ids
-// sanitise alike share it.
+// ledgerPath is cwd/.crw/interviews/<session id>.jsonl, the file of the state package's scan rows too. Every reader and writer takes
+// a canonical id only (CRW-1108), so the sanitising never joins two sessions in one file.
 func ledgerPath(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, state.InterviewsSubdir, state.SanitizeKey(sessionID)+".jsonl")
 }
@@ -178,8 +178,12 @@ func quote(s string) string {
 
 // appendEvent appends the row to its session's ledger: the .crw directory, the interviews directory below it, then one write to a file
 // opened for appending, as the oracle does it; an error leaves what the earlier steps made. The write starts with a line feed when the
-// file already ends in a line that has none (endsMidLine).
+// file already ends in a line that has none (endsMidLine). A session id that sanitising would rewrite, or an empty one, is refused with
+// state.ErrNonCanonicalSessionID before anything is created (CRW-1108).
 func appendEvent(cwd string, e QaEvent) error {
+	if !state.IsCanonicalSessionID(e.SessionID) {
+		return state.ErrNonCanonicalSessionID
+	}
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return err
 	}
@@ -231,13 +235,13 @@ type CaptureInput struct {
 type CaptureResult struct{ Written []QaEvent }
 
 // CaptureInterviewAnswers records one round: a question_asked row per question and an answer_recorded row per answered question,
-// each skipped when its id is already in the file (idempotent per turn, question and kind). A round without a session id records
-// nothing and a missing turn id records as no-turn. A failed append loses that row only; it is never an error.
+// each skipped when its id is already in the file (idempotent per turn, question and kind). A round without a session id, or with
+// one that sanitising would rewrite (CRW-1108), records nothing and a missing turn id records as no-turn. A failed append loses that row only; it is never an error.
 func CaptureInterviewAnswers(in CaptureInput) CaptureResult { return capture(in, time.Now) }
 
 func capture(in CaptureInput, now func() time.Time) CaptureResult {
 	written := []QaEvent{}
-	if in.SessionID == "" {
+	if !state.IsCanonicalSessionID(in.SessionID) {
 		return CaptureResult{written}
 	}
 	turn := in.TurnID

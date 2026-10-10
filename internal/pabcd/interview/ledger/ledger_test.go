@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -360,11 +361,30 @@ func TestTheClockIsReadOncePerEventBuilt(t *testing.T) {
 	}
 }
 
-func TestSessionIDsThatSanitiseAlikeShareOneLedger(t *testing.T) { // oracle behaviour, port: kept (known-defects)
+// CRW-1108 (known-defects.md:200, port: fixed): the oracle names the ledger by SanitizeKey of the session id, so a/b's round
+// filled a-b's ledger and a-b's own round was then dropped as already recorded. A non-canonical id, the empty one included,
+// records nothing and reads no rows, and a-b keeps its own ledger.
+func TestSessionIDsThatSanitiseAlikeNoLongerShareOneLedger(t *testing.T) {
 	cwd := t.TempDir()
-	run(t, cwd, "a/b", "t", toolInputJSON, toolResponseJSON)
-	if n := len(run(t, cwd, "a-b", "t", toolInputJSON, toolResponseJSON).Written); n != 0 {
-		t.Errorf("the alias session wrote %d rows", n)
+	if n := len(run(t, cwd, "a/b", "t", toolInputJSON, toolResponseJSON).Written); n != 0 {
+		t.Errorf("the non-canonical session wrote %d rows", n)
+	}
+	if _, err := os.Lstat(filepath.Join(cwd, ".crw")); !os.IsNotExist(err) {
+		t.Errorf("the non-canonical session created .crw (%v)", err)
+	}
+	if n := len(run(t, cwd, "a-b", "t", toolInputJSON, toolResponseJSON).Written); n == 0 {
+		t.Errorf("a-b's own round was dropped")
+	}
+	for _, id := range []string{"a/b", "", " a-b"} {
+		if got := ReadQaEvents(cwd, id); len(got) != 0 {
+			t.Errorf("ReadQaEvents(%q) read %d of a-b's rows", id, len(got))
+		}
+		if got := DimensionsBackedByAnswers(cwd, id); len(got) != 0 {
+			t.Errorf("DimensionsBackedByAnswers(%q) = %v", id, got)
+		}
+	}
+	if err := appendEvent(cwd, QaEvent{SessionID: "a/b", Event: QuestionAsked, QuestionID: "q", EventID: "e"}); !errors.Is(err, state.ErrNonCanonicalSessionID) {
+		t.Errorf("appendEvent(a/b) = %v; want ErrNonCanonicalSessionID", err)
 	}
 }
 func TestRowTextFollowsJSONStringify(t *testing.T) {

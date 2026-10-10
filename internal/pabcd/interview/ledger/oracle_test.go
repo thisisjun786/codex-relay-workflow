@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
 // testdata/oracle-ledger.json holds what the CXC v0.2.40 oracle's interview-ledger.js answered for each case, recorded once by
@@ -30,11 +32,13 @@ type oracleCase struct {
 }
 
 // changedCases are the oracle cases that append to a final line without a line feed: the oracle joins the new row to it and
-// loses both, the port keeps the old line and starts the new rows on their own (data loss, known-defects: port: fixed).
+// loses both, the port keeps the old line and starts the new rows on their own (data loss, known-defects: port: fixed), and the
+// case whose session id sanitising would rewrite, which the port no longer records (CRW-1108, known-defects: port: fixed).
 func changedCases() map[string]string {
 	return map[string]string{
 		"capture_unterminated_valid_row": "the oracle joins the new row to a final line without a line feed, so neither is read; the port writes a line feed first",
 		"capture_unterminated_tail":      "the oracle joins the new row to a partial final line, so the row is lost; the port writes a line feed first",
+		"capture_sanitised_session":      "the oracle records a non-canonical session in the ledger of the id it sanitises to, which that session then shares; the port records nothing for it (CRW-1108)",
 	}
 }
 
@@ -106,6 +110,18 @@ func replayCapture(t *testing.T, c oracleCase) {
 		}
 		res := capture(CaptureInput{Cwd: cwd, SessionID: c.SessionID, TurnID: turn, ToolInput: decodeRaw(t, r.ToolInput), ToolResponse: decodeRaw(t, r.ToolResponse)}, fixed)
 		written = append(written, ids(res.Written))
+	}
+	if !state.IsCanonicalSessionID(c.SessionID) {
+		t.Logf("intentionally changed: %s", changedCases()[c.ID])
+		none := [][]string{}
+		for range c.Rounds {
+			none = append(none, []string{})
+		}
+		wantEq(t, "written", written, none)
+		if _, err := os.Lstat(filepath.Join(cwd, ".crw")); !os.IsNotExist(err) {
+			t.Errorf("a non-canonical session created .crw (%v)", err)
+		}
+		return
 	}
 	wantEq(t, "written", written, c.Written)
 	var files []string

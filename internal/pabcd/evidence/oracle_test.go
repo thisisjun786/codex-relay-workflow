@@ -210,7 +210,13 @@ func TestAttemptsFileNames(t *testing.T) {
 			must(t, err)
 			content = append(content, string(raw))
 		}
-		same(t, k.ID, map[string]any{"files": files, "content": content}, g.Names[k.ID])
+		want := g.Names[k.ID]
+		if !state.IsCanonicalSessionID(k.Session) {
+			// port: fixed by CRW-1108 (known-defects.md:172): the oracle writes the counter under the sanitised id, which a-b's
+			// counter shares with a/b's; the port writes nothing for an id that sanitising would rewrite, or an empty one
+			want = map[string]any{"files": []any{}, "content": []any{}}
+		}
+		same(t, k.ID, map[string]any{"files": files, "content": content}, want)
 	}
 }
 

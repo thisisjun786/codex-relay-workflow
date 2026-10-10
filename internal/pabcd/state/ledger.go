@@ -85,7 +85,12 @@ func (e LedgerEntry) members() []member {
 // AppendLedger appends the row to <state dir>/ledger.jsonl (appendLedger). The counters of a row are written as JSON.stringify
 // writes a number: -0 as 0, NaN and the infinities as null. The row starts with a line feed when the file ends in a line that has
 // none, or when its last byte cannot be read (appendRow), so a final line left by a crash, a full disk or a hand edit is not joined to it.
+// The row's session id must be canonical (ErrNonCanonicalSessionID otherwise, nothing created): the oracle records a/b's or the empty
+// id's transition in the ledger although no state file of that id can exist (CRW-1108).
 func AppendLedger(cwd string, e LedgerEntry) error {
+	if !IsCanonicalSessionID(e.SessionID) {
+		return ErrNonCanonicalSessionID
+	}
 	return appendRow(cwd, "", LedgerFile, e.members(), true)
 }
 

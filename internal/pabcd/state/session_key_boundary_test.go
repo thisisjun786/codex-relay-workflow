@@ -28,6 +28,9 @@ func TestStateBoundariesRefuseNonCanonicalSessionIDs(t *testing.T) {
 		if err := AppendInterviewEvent(cwd, InterviewEvent{TS: "t", SessionID: id, Event: ScanStarted, RoundID: 1}); !errors.Is(err, ErrNonCanonicalSessionID) {
 			t.Fatalf("AppendInterviewEvent(%q) = %v; want ErrNonCanonicalSessionID", id, err)
 		}
+		if err := AppendLedger(cwd, LedgerEntry{TS: "t", SessionID: id, To: PhaseP, Reason: "x"}); !errors.Is(err, ErrNonCanonicalSessionID) {
+			t.Fatalf("AppendLedger(%q) = %v; want ErrNonCanonicalSessionID", id, err)
+		}
 		if _, err := os.Lstat(filepath.Join(cwd, crwdir.DirName)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%q: a refused id created %s (%v)", id, crwdir.DirName, err)
 		}
