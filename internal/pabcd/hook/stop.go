@@ -729,8 +729,9 @@ func stopBlockAhead(p StopPayload, st state.State, plan *goalplan.Goalplan) bool
 
 // stopArmingRefusal is the line of a goal-idle block whose next work-phase cannot be armed. Only a session without a source
 // binding whose working directory has no git source identity is cleared by binding a git source tree, so only it is offered the
-// command; any other refusal (a corrupt, foreign or moved binding, a bound worktree without an identity, a failed git probe) is
-// named as CheckBound gave it, because a binding is immutable and the bind command would be refused the same way.
+// command. A git that could not answer (CauseProbeFailed) is named by its failure, because binding runs the same git; any other
+// refusal (a corrupt, foreign or moved binding, a bound worktree without an identity) is named as CheckBound gave it, because a
+// binding is immutable and the bind command would be refused the same way.
 func stopArmingRefusal(a stopArming) string {
 	if a.cause == sourcesession.CauseProbeFailed {
 		detail := strings.Join(strings.Fields(fmt.Sprint(a.probe)), " ")
