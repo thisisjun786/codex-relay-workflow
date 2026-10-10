@@ -149,6 +149,12 @@ func TestSigkillLeftoverNamesAndNextAcquirer(t *testing.T) {
 					t.Fatalf("%s: state phase %q unreadable=%v, want %q", row.step, got.Phase, unreadable, row.phase)
 				}
 			}
+			var orphans []string // the real temp names before the next acquirer
+			for _, name := range sigkillList(t, cwd) {
+				if strings.HasSuffix(name, ".tmp") {
+					orphans = append(orphans, name)
+				}
+			}
 			slept := 0
 			previous := state.SigkillSleepSeam(func(time.Duration) { slept++ })
 			defer previous()
@@ -169,10 +175,17 @@ func TestSigkillLeftoverNamesAndNextAcquirer(t *testing.T) {
 			if _, err := os.Lstat(state.SessionLockPath(cwd, sigkillID)); !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("%s: the lock is still there after the next acquirer released: %v", row.step, err)
 			}
+			var after []string
 			for _, name := range sigkillList(t, cwd) { // the hooks never sweep: only the lock is gone, the orphans stay
 				if strings.HasSuffix(name, ".lock") {
 					t.Fatalf("%s: %s is left", row.step, name)
 				}
+				if strings.HasSuffix(name, ".tmp") {
+					after = append(after, name)
+				}
+			}
+			if !slices.Equal(after, orphans) {
+				t.Fatalf("%s: the temp files before the next acquirer %v, after it %v; the hooks never sweep", row.step, orphans, after)
 			}
 		})
 	}
