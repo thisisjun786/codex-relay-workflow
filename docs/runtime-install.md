@@ -261,16 +261,28 @@ and no device name is written into the product, its skills or its packet templat
 
 A root that is unset passes the tool nothing: the product starts `go` with the caller's own
 environment, and only a configured `build_cache`, `module_cache` or `build_work` becomes an
-environment entry. Which commands start a tool with them: `crw-dev ci local` (the build cache and the
+environment entry. A configured `build_work` that does not exist yet passes `crw config check` (the check
+creates nothing) and is made, owner-only, by the command that is about to start a tool, because `go`
+makes its work directory directly below `GOTMPDIR` and fails when that is missing. Which commands start
+a tool with them: `crw-dev ci local` (the build cache and the
 build work directory, not the module cache: a sealed run keeps its own, see [CI](CI.md#sealed-runs)),
 `crw-dev ci validate` (`go mod tidy -diff`), the `merge-build-check` skill command (the build work
 directory holds the run's owned temporary directory, and is never removed itself) and the audit
-package expansion of `crw manage` (`go list`).
+package expansion of `crw manage` (`go list`), the relay processes `crw manage` starts (a configuration
+named with `--config` is handed to them as `CRW_CONFIG`), the jobs `crw relay` runs in the background
+and the commands the relay's evidence reads run. A job is started with the roots the relay process's
+own configuration names, so a host that moves the roots names them in the file the relay reads.
 
-`relay_state` is the relay's durable state as one bundle. Its precedence is `--state`, then
-`CODEX_SESSION_RELAY_STATE`, then `manage.relay.state`, then the scope directory below a configured
-`relay_state` (named by the socket's digest, as the relay names it), then the relay's own discovery
-below `XDG_STATE_HOME`. The store, its WAL and its sidecars are never placed apart: a
+`relay_state` is the relay's durable state as one bundle, and it is read in one place, the relay's own
+state selection (`store.DiscoverStateDir`), so a relay started directly, the registered services, the
+install commands and the relay `crw manage` starts choose the same bundle for one configuration and one
+socket. Its precedence is `--state`, then `CODEX_SESSION_RELAY_STATE`, then the scope directory below a
+configured `relay_state` (named by the socket's digest, as the relay names it; the selection reports
+`source: config`), then the relay's own discovery below `XDG_STATE_HOME`. `crw manage` passes
+`manage.relay.state` as `--state`, so it is the most specific setting; it never turns `relay_state`
+into a `--state` of its own, and an environment variable is never overridden by a derived value. The
+scope directories and the legacy directories discovery already adopts are looked for below the
+configured root exactly as they are below the XDG base. The store, its WAL and its sidecars are never placed apart: a
 `paths.relay_store`, `relay_db`, `relay_wal`, `relay_sidecar` or `relay_sidecars` key is refused, and
 `manage_state` does not move the relay. `log_root` moves the management tool's pump log once the file
 names it; the relay's own `daemon.log` stays in its store directory with the rest of that bundle.
