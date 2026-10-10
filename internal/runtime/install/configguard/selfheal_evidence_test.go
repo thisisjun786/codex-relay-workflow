@@ -992,3 +992,86 @@ func TestSelfHealEvidenceRecordingReturnsAtTheDeadlineDuringASlowPublication(t *
 		t.Fatal("the publication never started, so the test did not stall it")
 	}
 }
+
+// CRW-1169: the failure paths of a recording drop an older record, and that drop shares the
+// recording's deadline too: a marker lock held past it does not hold the caller, whose result is the
+// same as when the drop finished.
+func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheMarkerLockIsHeld(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, home string) (cwd string, run CodexRunner)
+	}{
+		{"config unreadable", func(t *testing.T, home string) (string, CodexRunner) {
+			if err := os.Remove(filepath.Join(home, "config.toml")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(home, "config.toml"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return selfHealEvidenceCwd(t, home), (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+		}},
+		{"unknown working directory", func(t *testing.T, home string) (string, CodexRunner) {
+			return "", (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+		}},
+		{"listing fails", func(t *testing.T, home string) (string, CodexRunner) {
+			return selfHealEvidenceCwd(t, home), func([]string) CodexRunResult { return CodexRunResult{ExitCode: 1} }
+		}},
+		{"no readable version", func(t *testing.T, home string) (string, CodexRunner) {
+			return selfHealEvidenceCwd(t, home), (&selfHealEvidenceRunner{listing: selfHealReportSoftOn}).run
+		}},
+		{"config moved while measuring", func(t *testing.T, home string) (string, CodexRunner) {
+			inner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}
+			return selfHealEvidenceCwd(t, home), func(args []string) CodexRunResult {
+				if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("model = \"other\"\n"), 0o644); err != nil {
+					t.Error(err)
+				}
+				return inner.run(args)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := selfHealReportTempHome(t)
+			selfHealReportWriteConfig(t, home)
+			selfHealEvidenceRecord(t, home, &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn})
+			older, err := ReadSelfHealMarkerFile(home)
+			if err != nil || older == nil || older.Probe == nil {
+				t.Fatalf("the older record was not written: %+v %v", older, err)
+			}
+			cwd, run := tc.setup(t, home)
+			prevWait := selfHealMarkerLockWait
+			selfHealMarkerLockWait = 5 * time.Second
+			t.Cleanup(func() { selfHealMarkerLockWait = prevWait })
+			unlock, err := lockSelfHealMarker(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			returned := make(chan error, 1)
+			start := time.Now()
+			go func() {
+				returned <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx})
+			}()
+			select {
+			case err := <-returned:
+				if err != nil {
+					t.Fatalf("the abandoned drop changed the command's result: %v", err)
+				}
+				if elapsed := time.Since(start); elapsed > 2*time.Second {
+					t.Fatalf("the recording returned after %v, past its 200ms deadline", elapsed)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the failed recording outlived its deadline while the marker lock was held")
+			}
+			// A drop that had not started when the deadline ended writes nothing once the lock frees.
+			unlock()
+			time.Sleep(300 * time.Millisecond)
+			after, err := ReadSelfHealMarkerFile(home)
+			if err != nil || after == nil || after.Probe == nil {
+				t.Fatalf("the abandoned drop wrote after the deadline: %+v %v", after, err)
+			}
+		})
+	}
+}

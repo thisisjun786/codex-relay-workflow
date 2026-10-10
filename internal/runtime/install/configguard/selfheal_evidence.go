@@ -269,24 +269,24 @@ func RecordSelfHealEvidence(deps RecordSelfHealEvidenceDeps) error {
 	ctx := deps.Ctx
 	before, err := selfHealConfigDigest(ctx, deps.CodexHome)
 	if err != nil {
-		return dropSelfHealEvidence(deps.CodexHome)
+		return dropSelfHealEvidence(ctx, deps.CodexHome)
 	}
 	layersBefore, err := selfHealLayersDigest(ctx, deps.CodexHome, deps.Cwd)
 	if err != nil {
-		return dropSelfHealEvidence(deps.CodexHome)
+		return dropSelfHealEvidence(ctx, deps.CodexHome)
 	}
 	version := selfHealCodexVersion(deps.Run)
 	state, err := ReadDeclaredState(deps.Run)
 	if err != nil {
-		return dropSelfHealEvidence(deps.CodexHome)
+		return dropSelfHealEvidence(ctx, deps.CodexHome)
 	}
 	versionAfter := selfHealCodexVersion(deps.Run)
 	after, err := selfHealConfigDigest(ctx, deps.CodexHome)
 	if version == "" || version != versionAfter || err != nil || after != before {
-		return dropSelfHealEvidence(deps.CodexHome)
+		return dropSelfHealEvidence(ctx, deps.CodexHome)
 	}
 	if layersAfter, err := selfHealLayersDigest(ctx, deps.CodexHome, deps.Cwd); err != nil || layersAfter != layersBefore {
-		return dropSelfHealEvidence(deps.CodexHome)
+		return dropSelfHealEvidence(ctx, deps.CodexHome)
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return nil
@@ -367,22 +367,47 @@ func updateSelfHealMarker(home string, requireLock bool, update func() (*SelfHea
 // could not measure. The attempt follows a command that changed the declared flags, so the oracle's
 // mtime cache no longer describes them either: it is retired too (selfHealRetireLegacyCache), and a
 // marker with neither is left as it is.
-func dropSelfHealEvidence(home string) error {
-	if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
-		return err
+//
+// The drop shares the recording's deadline like the publication does: the marker read, the lock wait
+// and the write run in their own goroutine and the call returns nil when ctx ends first, so a held
+// lock or a stalled filesystem cannot keep the explicit command past it. A step that has not started
+// by then writes nothing and the older record stays (the digests still gate every use of it); one
+// already running finishes on its own, under the lock. nil ctx means no deadline.
+func dropSelfHealEvidence(ctx context.Context, home string) error {
+	drop := func() error {
+		if ctx != nil && ctx.Err() != nil {
+			return nil
+		}
+		if marker, err := ReadSelfHealMarkerFile(home); err != nil || marker == nil {
+			return err
+		}
+		return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
+			if ctx != nil && ctx.Err() != nil {
+				return nil, nil
+			}
+			marker, err := ReadSelfHealMarkerFile(home)
+			if err != nil || marker == nil {
+				return nil, err
+			}
+			if marker.Probe == nil && !marker.probeSeen && (marker.AllEnabled == nil || !*marker.AllEnabled) {
+				return nil, nil
+			}
+			marker.Probe = nil
+			selfHealRetireLegacyCache(marker)
+			return marker, nil
+		})
 	}
-	return updateSelfHealMarker(home, false, func() (*SelfHealMarker, error) {
-		marker, err := ReadSelfHealMarkerFile(home)
-		if err != nil || marker == nil {
-			return nil, err
-		}
-		if marker.Probe == nil && !marker.probeSeen && (marker.AllEnabled == nil || !*marker.AllEnabled) {
-			return nil, nil
-		}
-		marker.Probe = nil
-		selfHealRetireLegacyCache(marker)
-		return marker, nil
-	})
+	if ctx == nil {
+		return drop()
+	}
+	dropped := make(chan error, 1)
+	go func() { dropped <- drop() }()
+	select {
+	case err := <-dropped:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 // selfHealRetireLegacyCache turns the oracle's all-enabled cache off (allEnabled false is the
