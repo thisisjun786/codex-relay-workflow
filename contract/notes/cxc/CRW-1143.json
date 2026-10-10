@@ -1,0 +1,156 @@
+{
+  "issue": "CRW-1143",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__disable__features_list_unavailable_reverts_from_manifest",
+      "reason": "CRW-1143 handover of this claim from CRW-866.json (the seeded manifest, the R19 .crw-install.json rewrite and the config.toml.crw-lock sidecar are CRW-866's and unchanged): an exit 0 is not proof that a flag changed, so after the disables the deactivation reads the flags back with one more 'codex features list' (calls/3). The fixture's list fails, so neither disable can be confirmed: both are reported on stderr as failures that keep crw's ownership and the command exits 1. The manifest is not released, so its bytes stay as seeded. The original fixture is unchanged.",
+      "given": {
+        "json": {
+          "codex/.codexclaw-install.json": null,
+          "codex/.crw-install.json": {
+            "version": 2,
+            "activatedAt": "2025-12-01T00:00:00.000Z",
+            "configPath": "${CODEX_HOME}/config.toml",
+            "backupPath": null,
+            "postActivateHash": null,
+            "flags": {
+              "multi_agent": {
+                "priorEnabled": false,
+                "enabledByCodexclaw": true,
+                "enableFailed": false
+              },
+              "goals": {
+                "priorEnabled": false,
+                "enabledByCodexclaw": true,
+                "enableFailed": false
+              },
+              "hooks": {
+                "priorEnabled": true,
+                "enabledByCodexclaw": false,
+                "enableFailed": false
+              },
+              "default_mode_request_user_input": {
+                "priorEnabled": false,
+                "enabledByCodexclaw": false,
+                "enableFailed": true,
+                "failure": {
+                  "exitCode": 1,
+                  "message": "unknown feature"
+                }
+              }
+            },
+            "tableKeys": {
+              "memories.dedicated_tools": {
+                "table": "memories",
+                "key": "dedicated_tools",
+                "priorValue": null,
+                "appliedValue": "true",
+                "setByCodexclaw": true
+              }
+            }
+          }
+        }
+      },
+      "remove": [
+        "tree/codex/.codexclaw-install.json/"
+      ],
+      "set": {
+        "tree/codex/.crw-install.json/type": "file",
+        "tree/codex/.crw-install.json/mode": "0644",
+        "tree/codex/.crw-install.json/target": "",
+        "tree/codex/.crw-install.json/form": "json-line",
+        "tree/codex/.crw-install.json/sha256": "",
+        "tree/codex/.crw-install.json/size": "",
+        "tree/codex/.crw-install.json/content": "{\"version\":2,\"activatedAt\":\"<TS>\",\"configPath\":\"${CODEX_HOME}/config.toml\",\"backupPath\":null,\"postActivateHash\":null,\"flags\":{\"multi_agent\":{\"priorEnabled\":false,\"enabledByCodexclaw\":true,\"enableFailed\":false},\"goals\":{\"priorEnabled\":false,\"enabledByCodexclaw\":true,\"enableFailed\":false},\"hooks\":{\"priorEnabled\":true,\"enabledByCodexclaw\":false,\"enableFailed\":false},\"default_mode_request_user_input\":{\"priorEnabled\":false,\"enabledByCodexclaw\":false,\"enableFailed\":true,\"failure\":{\"exitCode\":1,\"message\":\"unknown feature\"}}},\"tableKeys\":{\"memories.dedicated_tools\":{\"table\":\"memories\",\"key\":\"dedicated_tools\",\"priorValue\":null,\"appliedValue\":\"true\",\"setByCodexclaw\":true}}}",
+        "tree/codex/config.toml.crw-lock/type": "file",
+        "tree/codex/config.toml.crw-lock/mode": "0644",
+        "tree/codex/config.toml.crw-lock/target": "",
+        "tree/codex/config.toml.crw-lock/form": "empty",
+        "tree/codex/config.toml.crw-lock/sha256": "",
+        "tree/codex/config.toml.crw-lock/size": "",
+        "tree/codex/config.toml.crw-lock/content": "",
+        "calls/3": "{\"cmd\":\"codex\",\"argv\":[\"features\",\"list\"],\"cwd\":\"${WS}\"}",
+        "exit": "1",
+        "steps/0/exit": "1",
+        "steps/0/stdout": "crw: disabled [none]; kept pre-existing [hooks]\nrestored keys: memories.dedicated_tools\nnote: could not read 'codex features list'; reverted flags from the manifest alone\n",
+        "steps/0/stderr": "crw: could not disable 'multi_agent' (exit 0): codex features disable exited 0, but the flags could not be read back to confirm it: codex features list failed (exit 1): boom\ncrw: could not disable 'goals' (exit 0): codex features disable exited 0, but the flags could not be read back to confirm it: codex features list failed (exit 1): boom\ncrw: the flags above are still recorded as crw's; run 'crw install features disable' again once codex can disable them\n"
+      }
+    },
+    {
+      "id": "cli__disable__reverts_live_flags_and_key",
+      "reason": "CRW-1143 handover of this claim from CRW-866.json (the seeded manifest, the R19 .crw-install.json rewrite and the config.toml.crw-lock sidecar are CRW-866's and unchanged): an exit 0 is not proof that a flag changed, so after the disables the deactivation reads the flags back with one more 'codex features list' (calls/3). The fixture's scripted list reports every flag on whatever was disabled, so both disables read back as still enabled: they are reported on stderr as failures that keep crw's ownership and the command exits 1. The manifest is not released, so its bytes stay as seeded. The original fixture is unchanged.",
+      "given": {
+        "json": {
+          "codex/.codexclaw-install.json": null,
+          "codex/.crw-install.json": {
+            "version": 2,
+            "activatedAt": "2025-12-01T00:00:00.000Z",
+            "configPath": "${CODEX_HOME}/config.toml",
+            "backupPath": null,
+            "postActivateHash": null,
+            "flags": {
+              "multi_agent": {
+                "priorEnabled": false,
+                "enabledByCodexclaw": true,
+                "enableFailed": false
+              },
+              "goals": {
+                "priorEnabled": false,
+                "enabledByCodexclaw": true,
+                "enableFailed": false
+              },
+              "hooks": {
+                "priorEnabled": true,
+                "enabledByCodexclaw": false,
+                "enableFailed": false
+              },
+              "default_mode_request_user_input": {
+                "priorEnabled": false,
+                "enabledByCodexclaw": false,
+                "enableFailed": true,
+                "failure": {
+                  "exitCode": 1,
+                  "message": "unknown feature"
+                }
+              }
+            },
+            "tableKeys": {
+              "memories.dedicated_tools": {
+                "table": "memories",
+                "key": "dedicated_tools",
+                "priorValue": null,
+                "appliedValue": "true",
+                "setByCodexclaw": true
+              }
+            }
+          }
+        }
+      },
+      "remove": [
+        "tree/codex/.codexclaw-install.json/"
+      ],
+      "set": {
+        "tree/codex/.crw-install.json/type": "file",
+        "tree/codex/.crw-install.json/mode": "0644",
+        "tree/codex/.crw-install.json/target": "",
+        "tree/codex/.crw-install.json/form": "json-line",
+        "tree/codex/.crw-install.json/sha256": "",
+        "tree/codex/.crw-install.json/size": "",
+        "tree/codex/.crw-install.json/content": "{\"version\":2,\"activatedAt\":\"<TS>\",\"configPath\":\"${CODEX_HOME}/config.toml\",\"backupPath\":null,\"postActivateHash\":null,\"flags\":{\"multi_agent\":{\"priorEnabled\":false,\"enabledByCodexclaw\":true,\"enableFailed\":false},\"goals\":{\"priorEnabled\":false,\"enabledByCodexclaw\":true,\"enableFailed\":false},\"hooks\":{\"priorEnabled\":true,\"enabledByCodexclaw\":false,\"enableFailed\":false},\"default_mode_request_user_input\":{\"priorEnabled\":false,\"enabledByCodexclaw\":false,\"enableFailed\":true,\"failure\":{\"exitCode\":1,\"message\":\"unknown feature\"}}},\"tableKeys\":{\"memories.dedicated_tools\":{\"table\":\"memories\",\"key\":\"dedicated_tools\",\"priorValue\":null,\"appliedValue\":\"true\",\"setByCodexclaw\":true}}}",
+        "tree/codex/config.toml.crw-lock/type": "file",
+        "tree/codex/config.toml.crw-lock/mode": "0644",
+        "tree/codex/config.toml.crw-lock/target": "",
+        "tree/codex/config.toml.crw-lock/form": "empty",
+        "tree/codex/config.toml.crw-lock/sha256": "",
+        "tree/codex/config.toml.crw-lock/size": "",
+        "tree/codex/config.toml.crw-lock/content": "",
+        "calls/3": "{\"cmd\":\"codex\",\"argv\":[\"features\",\"list\"],\"cwd\":\"${WS}\"}",
+        "exit": "1",
+        "steps/0/exit": "1",
+        "steps/0/stdout": "crw: disabled [none]; kept pre-existing [hooks]\nrestored keys: memories.dedicated_tools\n",
+        "steps/0/stderr": "crw: could not disable 'multi_agent' (exit 0): codex features disable exited 0, but the flag is still enabled\ncrw: could not disable 'goals' (exit 0): codex features disable exited 0, but the flag is still enabled\ncrw: the flags above are still recorded as crw's; run 'crw install features disable' again once codex can disable them\n"
+      }
+    }
+  ]
+}

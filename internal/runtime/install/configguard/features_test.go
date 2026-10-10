@@ -101,6 +101,7 @@ func TestFeaturesToEnableRealTable(t *testing.T) {
 }
 
 func TestParseFeaturesListRecordedEdges(t *testing.T) {
+	refusedRows := map[string]bool{"last_valid_duplicate": true, "invalid_duplicate_keeps_prior": true, "nel_after_bool": true, "comment_tail": true, "invalid_bool": true, "single_field": true}
 	// Independent Node recordings of features.ts:61-76, including its kept quirks.
 	for _, tc := range []struct {
 		name, stdout string
@@ -124,6 +125,14 @@ func TestParseFeaturesListRecordedEdges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ParseFeaturesList(tc.stdout); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("parsed = %v, want %v", got, tc.want)
+			}
+			// CRW-1143 (port: fixed): the command path refuses a declared row it cannot read, and conflicting rows, instead
+			// of reading them as disabled; the oracle parser above keeps its recorded answers.
+			if refusedRows[tc.name] {
+				if _, err := ReadDeclaredState(func([]string) CodexRunResult { return CodexRunResult{Stdout: tc.stdout} }); err == nil {
+					t.Fatal("an unreadable declared row was read")
+				}
+				return
 			}
 			state, err := ReadDeclaredState(func([]string) CodexRunResult { return CodexRunResult{Stdout: tc.stdout} })
 			if err != nil || len(state) != 4 {

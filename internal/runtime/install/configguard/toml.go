@@ -3,7 +3,8 @@
 // TOML tables and keys; nothing here opens a file, so the grammar can be tested from strings and cannot reach a real config.toml by itself.
 //
 // The grammar is the oracle's, quirks included (docs/port-cxc/known-defects.md): it recognises only the bare [table] header and bare
-// "key = value" lines, and refuses value forms it cannot rewrite. It differs from the oracle in one class on purpose: a line that is the
+// "key = value" lines, and refuses value forms it cannot rewrite. It is kept as the recorded reference testdata/oracle-toml-edit.json
+// replays; no writer of config.toml uses it any more (CRW-1141): they read and edit through internal/tomledit (semantic.go). It differs from the oracle in one class on purpose: a line that is the
 // inside of a multi-line string is never a table header, a table start or a key, because the oracle rewrote or deleted such a line as if it
 // were the managed key, which loses text of another setting.
 package configguard

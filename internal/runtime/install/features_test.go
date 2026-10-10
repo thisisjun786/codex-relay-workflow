@@ -55,6 +55,10 @@ func TestFeatureCodexHelper(t *testing.T) {
 		os.Exit(3)
 	}
 	path := filepath.Join(home, "config.toml")
+	if os.Getenv("CRW499_FAKE_USE_CODEX_HOME") != "" {
+		// The real CLI reads the config.toml that CODEX_HOME names through the kernel, ".." after a symlink included.
+		path = os.Getenv("CRW499_FAKE_CODEX_HOME") + string(filepath.Separator) + "config.toml"
+	}
 	b, _ := os.ReadFile(path)
 	content := string(b)
 	if args[1] == "list" {
@@ -73,6 +77,7 @@ func TestFeatureCodexHelper(t *testing.T) {
 	}
 	content = configguard.SetTableKey(content, "features", args[2], args[1] == "enable").Content
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(93)
 	}
 	os.Exit(0)
@@ -96,12 +101,13 @@ func newFeatureHome(t *testing.T, content string) featureHome {
 		t.Fatal(err)
 	}
 	quoted := "'" + strings.ReplaceAll(exe, "'", "'\\''") + "'"
-	script := "#!/bin/sh\nexec " + quoted + " -test.run='^TestFeatureCodexHelper$' -- \"$@\"\n"
+	// The CODEX_HOME the command hands the CLI is captured before the test binary's own isolation replaces it.
+	script := "#!/bin/sh\nCRW499_FAKE_CODEX_HOME=\"$CODEX_HOME\" exec " + quoted + " -test.run='^TestFeatureCodexHelper$' -- \"$@\"\n"
 	if err := writeExecutable(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	env := scope.Env(os.Environ()).With("HOME", t.TempDir()).With("CODEX_HOME", home).With("PATH", bin).With("CRW499_FAKE_HOME", home)
-	for _, key := range []string{"CRW499_FAKE_MODE", "CRW499_FAKE_LIST_FAIL", "CRW499_FAKE_FAIL_KEY", "CRW499_FAKE_DISABLE_FAIL", "CRW1150_FAKE_VERSION", "CRW1150_FAKE_VERSION_HANG"} {
+	for _, key := range []string{"CRW499_FAKE_MODE", "CRW499_FAKE_LIST_FAIL", "CRW499_FAKE_FAIL_KEY", "CRW499_FAKE_DISABLE_FAIL", "CRW499_FAKE_USE_CODEX_HOME", "CRW1150_FAKE_VERSION", "CRW1150_FAKE_VERSION_HANG"} {
 		env = env.Without(key)
 	}
 	return featureHome{t, home, env}
@@ -142,6 +148,21 @@ func TestFeaturesManagedKeyRoundTrips(t *testing.T) {
 				content += "dedicated_tools = " + prior + "\n"
 			}
 			h := newFeatureHome(t, content)
+			if prior == `"oops` {
+				// CRW-1141: an unterminated string is a config.toml that does not decode. The enable is refused before the
+				// backup and before Codex is asked to change anything, so nothing is written.
+				code, out, err := h.run("enable")
+				if code != 1 || out != "" || !strings.Contains(err, "not valid TOML") || h.read("config.toml") != content {
+					t.Fatalf("%d %q %q", code, out, err)
+				}
+				entries, _ := os.ReadDir(h.home)
+				for _, e := range entries {
+					if e.Name() != "config.toml" && e.Name() != "calls" && !strings.HasSuffix(e.Name(), ".crw-lock") {
+						t.Fatalf("refused enable wrote %s", e.Name())
+					}
+				}
+				return
+			}
 			out := h.success("enable")
 			if !strings.HasPrefix(out, "crw: enabled [multi_agent, goals, hooks, default_mode_request_user_input]\n") {
 				t.Fatal(out)
@@ -156,11 +177,7 @@ func TestFeaturesManagedKeyRoundTrips(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec, exists := manifest.TableKeys["memories.dedicated_tools"]
-			if prior == `"oops` {
-				if exists {
-					t.Fatal("unsupported value recorded")
-				}
-			} else if !exists || rec.SetByCodexclaw != (prior != "true") || prior == "" && rec.PriorValue != nil || prior != "" && (rec.PriorValue == nil || *rec.PriorValue != prior) {
+			if !exists || rec.SetByCodexclaw != (prior != "true") || prior == "" && rec.PriorValue != nil || prior != "" && (rec.PriorValue == nil || *rec.PriorValue != prior) {
 				t.Fatalf("record %+v", rec)
 			}
 			if prior == "false" {
@@ -201,8 +218,13 @@ func TestFeaturesSoftAndHardFailures(t *testing.T) {
 				if code != 1 || out != "" || !strings.Contains(err, "codex features enable goals failed (exit 2)") {
 					t.Fatalf("%d %q %q", code, out, err)
 				}
-				if _, err := os.Stat(filepath.Join(h.home, configguard.InstallManifestName)); !os.IsNotExist(err) {
-					t.Fatal("manifest written after hard failure")
+				// CRW-1153 (port: fixed): the flag enabled before the hard failure is recorded, and disable reverts it.
+				if !strings.Contains(h.read(configguard.InstallManifestName), `"enabledByCodexclaw": true`) {
+					t.Fatal("the flag enabled before the hard failure is not recorded")
+				}
+				h.env = h.env.Without("CRW499_FAKE_FAIL_KEY")
+				if out := h.success("disable"); !strings.Contains(out, "disabled [multi_agent]") {
+					t.Fatalf("disable after a hard failure: %q", out)
 				}
 				return
 			}
@@ -283,11 +305,13 @@ func TestFeaturesDisableBranches(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(h.home, "config.toml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// CRW-1143 (port: fixed): with the list unreadable the disables cannot be confirmed, so they are reported as failures
+	// (exit 1) and stay crw's for a retry; the keys and the notes are reported as before.
 	h.env = h.env.With("CRW499_FAKE_LIST_FAIL", "1")
-	out := h.success("disable")
-	for _, text := range []string{"disabled [multi_agent, goals, default_mode_request_user_input]; kept pre-existing [hooks]", "restored keys: memories.dedicated_tools", "note: config.toml changed since activation; reverted per key", "note: could not read 'codex features list'; reverted flags from the manifest alone"} {
-		if !strings.Contains(out, text) {
-			t.Fatal(out)
+	code, out, errOut := h.run("disable")
+	for _, text := range []string{"disabled [none]; kept pre-existing [hooks]", "restored keys: memories.dedicated_tools", "note: config.toml changed since activation; reverted per key", "note: could not read 'codex features list'; reverted flags from the manifest alone"} {
+		if code != 1 || !strings.Contains(out, text) || !strings.Contains(errOut, "could not disable 'multi_agent' (exit 0)") {
+			t.Fatalf("%d %q %q", code, out, errOut)
 		}
 	}
 	if !strings.Contains(h.read("config.toml"), "# user edit") {
@@ -295,9 +319,10 @@ func TestFeaturesDisableBranches(t *testing.T) {
 	}
 	h.env = h.env.Without("CRW499_FAKE_LIST_FAIL")
 	h.success("enable")
+	// CRW-1145 (port: fixed): a flag that could not be disabled fails the command and is named.
 	h.env = h.env.With("CRW499_FAKE_DISABLE_FAIL", "1")
-	if out := h.success("disable"); !strings.Contains(out, "disabled [none]") {
-		t.Fatal(out)
+	if code, out, err := h.run("disable"); code != 1 || !strings.Contains(out, "disabled [none]") || !strings.Contains(err, "could not disable 'multi_agent' (exit 2)") {
+		t.Fatalf("%d %q %q", code, out, err)
 	}
 }
 
