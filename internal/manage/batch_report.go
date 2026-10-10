@@ -1,0 +1,332 @@
+package manage
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+)
+
+// The morning report of a night batch (CRW-1040). It is made from a run digest, the record the night
+// run leaves (CRW-1040 part b), and written in the crw-status report form: the conclusion first, then
+// what was integrated, what was cancelled or carried and why, what needs Jun's decision, and last the
+// evidence checked and what stays unverified. The form is
+// plugins/crw/skills/crw-status/references/night-batch-report.md; the headings below are its headings.
+
+const batchReportUsage = "usage: crw manage batch report --digest FILE"
+
+// batchDigestSchema is the schema of the run digest the report reads.
+const batchDigestSchema = "crw-batch-digest/1"
+
+// The four section headings of the report, in order.
+const (
+	batchHeadingIntegrated = "## 통합됨"
+	batchHeadingCarried    = "## 취소·이월"
+	batchHeadingDecision   = "## Jun 결정이 필요한 것"
+	batchHeadingEvidence   = "## 확인한 증거와 미확인"
+)
+
+var batchReportHeadings = []string{batchHeadingIntegrated, batchHeadingCarried, batchHeadingDecision, batchHeadingEvidence}
+
+// What an item of the digest ended as.
+const (
+	batchOutcomeIntegrated = "integrated"
+	batchOutcomeCancelled  = "cancelled"
+	batchOutcomeCarried    = "carried"
+	batchOutcomeDecision   = "needs_decision"
+)
+
+const batchNoReason = "이유 기록 없음"
+
+// BatchProvider is one provider's observation at the end of the run. A provider whose quota or capacity
+// could not be observed is recorded as not observed and shown so, never assumed to have room.
+type BatchProvider struct {
+	Name     string `json:"name"`
+	Observed bool   `json:"observed"`
+	Detail   string `json:"detail"`
+}
+
+// BatchItem is one issue's end state in the run.
+type BatchItem struct {
+	Issue    string `json:"issue"`
+	Title    string `json:"title"`
+	Outcome  string `json:"outcome"`
+	Reason   string `json:"reason"`
+	Evidence string `json:"evidence"`
+}
+
+// BatchDigest is the run digest.
+type BatchDigest struct {
+	Schema     string          `json:"schema"`
+	Label      string          `json:"label"`
+	Selected   []string        `json:"selected"`
+	StartedAt  string          `json:"started_at"`
+	FinishedAt string          `json:"finished_at"`
+	Deadline   string          `json:"deadline"`
+	Stopped    string          `json:"stopped"`
+	Providers  []BatchProvider `json:"providers"`
+	Items      []BatchItem     `json:"items"`
+}
+
+// batchParseDigest reads and checks a digest: the schema, a label, the times that are given, and a key
+// on every item. What an item says is judged by the report, not refused here.
+func batchParseDigest(raw []byte) (BatchDigest, error) {
+	var d BatchDigest
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return d, fmt.Errorf("the digest is not a JSON object: %v", err)
+	}
+	if d.Schema != batchDigestSchema {
+		return d, fmt.Errorf("the digest schema is %q, want %q", d.Schema, batchDigestSchema)
+	}
+	if strings.TrimSpace(d.Label) == "" {
+		return d, errors.New("the digest has no label")
+	}
+	for name, value := range map[string]string{"started_at": d.StartedAt, "finished_at": d.FinishedAt, "deadline": d.Deadline} {
+		if value == "" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, value); err != nil {
+			return d, fmt.Errorf("%s %q is not an RFC 3339 time", name, value)
+		}
+	}
+	for i, item := range d.Items {
+		if strings.TrimSpace(item.Issue) == "" {
+			return d, fmt.Errorf("item %d has no issue key", i+1)
+		}
+	}
+	return d, nil
+}
+
+// BatchReport renders the morning report of a digest. checkedAt is when the report was made. It reads
+// only the digest: an item is placed by what the digest records, and what the record does not show is
+// listed as unverified rather than reported as done.
+func BatchReport(d BatchDigest, checkedAt time.Time) string {
+	selected := map[string]bool{}
+	for _, key := range d.Selected {
+		selected[key] = true
+	}
+	var integrated, carried, decision, unverified []string
+	counts := map[string]int{}
+	seen := map[string]bool{}
+	recorded := map[string]bool{}
+	for _, item := range d.Items {
+		recorded[item.Issue] = true
+		name := item.Issue
+		if t := strings.TrimSpace(item.Title); t != "" {
+			name += " " + t
+		}
+		if seen[item.Issue] {
+			unverified = append(unverified, fmt.Sprintf("%s: 같은 이슈가 중복 기록됨 (첫 기록만 사용, 뒤 기록 결과 %q)", item.Issue, item.Outcome))
+			continue
+		}
+		seen[item.Issue] = true
+		reason := strings.TrimSpace(item.Reason)
+		if len(d.Selected) > 0 && !selected[item.Issue] {
+			decision = append(decision, fmt.Sprintf("%s: 선택 목록 밖 이슈가 실행 기록에 있다 (결과 %q). 해제 경위를 확인해야 한다", name, item.Outcome))
+			counts[batchOutcomeDecision]++
+			continue
+		}
+		withReason := func(label string) string {
+			if reason == "" {
+				unverified = append(unverified, fmt.Sprintf("%s: %s로 기록됐으나 %s", item.Issue, label, batchNoReason))
+				return fmt.Sprintf("%s: %s: %s", name, label, batchNoReason)
+			}
+			return fmt.Sprintf("%s: %s: %s", name, label, reason)
+		}
+		switch item.Outcome {
+		case batchOutcomeIntegrated:
+			if strings.TrimSpace(item.Evidence) == "" {
+				unverified = append(unverified, fmt.Sprintf("%s: 통합으로 기록됐으나 증거 없음 (통합으로 세지 않음)", item.Issue))
+				continue
+			}
+			counts[batchOutcomeIntegrated]++
+			integrated = append(integrated, fmt.Sprintf("%s: 증거 %s", name, strings.TrimSpace(item.Evidence)))
+		case batchOutcomeCancelled:
+			counts[batchOutcomeCancelled]++
+			carried = append(carried, withReason("취소"))
+		case batchOutcomeCarried:
+			counts[batchOutcomeCarried]++
+			carried = append(carried, withReason("이월"))
+		case batchOutcomeDecision:
+			counts[batchOutcomeDecision]++
+			if reason == "" {
+				unverified = append(unverified, fmt.Sprintf("%s: 결정 필요로 기록됐으나 %s", item.Issue, batchNoReason))
+				decision = append(decision, fmt.Sprintf("%s: %s", name, batchNoReason))
+			} else {
+				decision = append(decision, fmt.Sprintf("%s: %s", name, reason))
+			}
+		default:
+			unverified = append(unverified, fmt.Sprintf("%s: 알 수 없는 결과 %q (분류하지 않음)", item.Issue, item.Outcome))
+		}
+	}
+	for _, key := range d.Selected {
+		if !recorded[key] {
+			unverified = append(unverified, fmt.Sprintf("%s: 선택됐으나 실행 기록 없음", key))
+		}
+	}
+
+	var b strings.Builder
+	total := len(d.Selected)
+	scope := fmt.Sprintf("선택 %d건 중", total)
+	if total == 0 {
+		scope = fmt.Sprintf("기록 %d건 중", len(d.Items))
+	}
+	fmt.Fprintf(&b, "# 밤 배치 아침 보고: %s\n\n", strings.TrimSpace(d.Label))
+	fmt.Fprintf(&b, "**결론**: %s 통합 %d건, 취소 %d건, 이월 %d건, Jun 결정 필요 %d건, 미확인 %d건.", scope,
+		counts[batchOutcomeIntegrated], counts[batchOutcomeCancelled], counts[batchOutcomeCarried], counts[batchOutcomeDecision], len(unverified))
+	if d.Deadline != "" {
+		fmt.Fprintf(&b, " 기한 %s.", d.Deadline)
+	}
+	if d.Stopped != "" {
+		fmt.Fprintf(&b, " 종료 사유 %s.", d.Stopped)
+	}
+	b.WriteString("\n")
+	section := func(heading string, lines []string) {
+		fmt.Fprintf(&b, "\n%s\n\n", heading)
+		if len(lines) == 0 {
+			b.WriteString("- 없음\n")
+		}
+		for _, l := range lines {
+			fmt.Fprintf(&b, "- %s\n", l)
+		}
+	}
+	section(batchHeadingIntegrated, integrated)
+	section(batchHeadingCarried, carried)
+	section(batchHeadingDecision, decision)
+
+	evidence := []string{"확인 시각: " + checkedAt.UTC().Format(time.RFC3339)}
+	times := func(label, v string) {
+		if v == "" {
+			evidence = append(evidence, label+": 기록 없음")
+		} else {
+			evidence = append(evidence, label+": "+v)
+		}
+	}
+	times("시작", d.StartedAt)
+	times("종료", d.FinishedAt)
+	if len(d.Providers) == 0 {
+		evidence = append(evidence, "제공자 관측: 기록 없음 (미확인)")
+	}
+	for _, p := range d.Providers {
+		state := "관측됨"
+		if !p.Observed {
+			state = "관측 안 됨"
+		}
+		line := fmt.Sprintf("제공자 관측: %s: %s", p.Name, state)
+		if p.Detail != "" {
+			line += " (" + p.Detail + ")"
+		}
+		evidence = append(evidence, line)
+	}
+	for _, u := range unverified {
+		evidence = append(evidence, "미확인: "+u)
+	}
+	if len(unverified) == 0 {
+		evidence = append(evidence, "미확인: 없음")
+	}
+	section(batchHeadingEvidence, evidence)
+	return b.String()
+}
+
+// batchSlug is a label as a file name part: letters and digits, the rest folded to one dash, so a label
+// can never name a path.
+func batchSlug(label string) string {
+	var b strings.Builder
+	dash := true
+	for _, r := range strings.ToLower(label) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash {
+			b.WriteRune('-')
+			dash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if r := []rune(slug); len(r) > 64 {
+		slug = strings.Trim(string(r[:64]), "-")
+	}
+	if slug == "" {
+		return "batch"
+	}
+	return slug
+}
+
+// batchReportPath is where a digest's report is written: <state_dir>/batch/reports/<date>-<label>.md,
+// the date being the finish day in the digest's own offset (the morning the report is read), or today
+// when the run recorded no finish.
+func batchReportPath(e *Env, d BatchDigest) string {
+	day := e.Now().UTC().Format("2006-01-02")
+	if t, err := time.Parse(time.RFC3339, d.FinishedAt); err == nil {
+		day = t.Format("2006-01-02")
+	}
+	return crwconfig.JoinRoot(coreDefaults(e).StateDir, "batch", "reports", day+"-"+batchSlug(d.Label)+".md")
+}
+
+func batchRunReport(_ context.Context, e *Env, args []string) int {
+	if auditOptionsHelpRequested(args) {
+		fmt.Fprintln(e.Stdout, batchReportUsage)
+		return 0
+	}
+	values, err := auditPkgParseArgs(args, map[string]bool{"digest": true})
+	if err != nil {
+		return batchRefuse(e, batchReportUsage, "report", err)
+	}
+	if strings.TrimSpace(values["digest"]) == "" {
+		return batchRefuse(e, batchReportUsage, "report", errors.New("the option --digest needs a value"))
+	}
+	raw, err := batchReadInput(e, values["digest"])
+	if err != nil {
+		return batchRefuse(e, batchReportUsage, "report", err)
+	}
+	digest, err := batchParseDigest(raw)
+	if err != nil {
+		return batchRefuse(e, batchReportUsage, "report", err)
+	}
+	path := batchReportPath(e, digest)
+	if err := batchWriteFile(path, []byte(BatchReport(digest, e.Now()))); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage batch report: error: %v\n", err)
+		return 3
+	}
+	fmt.Fprintln(e.Stdout, path)
+	return 0
+}
+
+// batchWriteFile writes a report through a private temporary file in its directory, synced before the
+// rename that commits it, so a morning reader sees the old report or the whole new one.
+func batchWriteFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("the report directory: %w", err)
+	}
+	file, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("the report temporary file: %w", err)
+	}
+	temporary := file.Name()
+	fail := func(step string, err error) error {
+		file.Close()
+		os.Remove(temporary)
+		return fmt.Errorf("%s: %w", step, err)
+	}
+	if _, err := file.Write(data); err != nil {
+		return fail("write the report", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fail("sync the report", err)
+	}
+	if err := file.Close(); err != nil {
+		return fail("close the report", err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return fail("commit the report", err)
+	}
+	return nil
+}
