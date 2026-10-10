@@ -71,13 +71,7 @@ func memorySearchBuildCwdScope(home string, opts MemorySearchOptions, warnings *
 		*warnings = append(*warnings, meta.Warning)
 	}
 	lower := Lower(prefix)
-	prefixes := [2]string{lower, strings.ReplaceAll(lower, "/", "\\")}
-	if prefix == "" {
-		// The root directory normalizes to nothing; it is mentioned by any absolute path, so its spellings are the separators alone
-		// (mentionsPath).
-		prefixes = [2]string{"/", "\\"}
-	}
-	return &CwdScope{prefix, prefixes, opts.CwdOnly, meta.ByID, repoKeyForCwd(prefix, opts.ReadOriginUrl)}, nil
+	return &CwdScope{prefix, [2]string{lower, strings.ReplaceAll(lower, "/", "\\")}, opts.CwdOnly, meta.ByID, repoKeyForCwd(prefix, opts.ReadOriginUrl)}, nil
 }
 
 func memorySearchScopeAdjust(scope *CwdScope, hitCwd *string, lowerText, hitRepoKey string) (bool, float64) {
@@ -106,7 +100,9 @@ func isPathRune(r rune) bool {
 // /proj/here-adjacent and /x/proj/here are not /proj/here, while "/proj/here." at the end of a sentence is (known-defects.md :762).
 func mentionsPath(lowerText, prefix string) bool {
 	if prefix == "" {
-		return false
+		// The root directory normalizes to nothing and contains every path, so every text is inside it, as the oracle's
+		// includes("") answers (known-defects.md :762).
+		return true
 	}
 	for from := 0; from <= len(lowerText); {
 		i := strings.Index(lowerText[from:], prefix)
@@ -128,17 +124,9 @@ func mentionsPath(lowerText, prefix string) bool {
 			continue
 		}
 		if end == len(lowerText) {
-			// A prefix that is a bare separator (the root directory) is a mention only when a name follows it.
-			return !isSeparatorPrefix(prefix)
+			return true
 		}
 		next, size := utf8.DecodeRuneInString(lowerText[end:])
-		if isSeparatorPrefix(prefix) {
-			// Every path under the root starts with its separator, so a name right after it is a path in the root; "and/or" and "1 / 2" are not.
-			if isPathRune(next) && next != '/' && next != '\\' {
-				return true
-			}
-			continue
-		}
 		switch {
 		case next == '/' || next == '\\':
 			return true
@@ -153,9 +141,6 @@ func mentionsPath(lowerText, prefix string) bool {
 	}
 	return false
 }
-
-// isSeparatorPrefix is the prefix of the root directory: a path separator alone.
-func isSeparatorPrefix(prefix string) bool { return prefix == "/" || prefix == "\\" }
 
 // quotedPath is the text from start to the quote that closes the one just before it, on the same line; closed is false when the path is
 // not quoted or the quote is never closed.

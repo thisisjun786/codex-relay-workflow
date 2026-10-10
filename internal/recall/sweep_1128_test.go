@@ -451,38 +451,37 @@ func TestSweep1128LeadingKeysEndAtAnyLineTerminator(t *testing.T) {
 	}
 }
 
-// :762 -- the root directory is a scope too: the text that names a path under it is inside it, and prose without a path is not.
-func TestSweep1128RootCwdScopeMatchesAbsolutePaths(t *testing.T) {
+// :762 -- the root directory contains every path, so every text is inside it: a memory without a cwd of its own is kept by --cwd-only /
+// whether or not it names a path, and keeps the half boost of a mention (the oracle's includes("") answer).
+func TestSweep1128RootCwdScopeKeepsEveryText(t *testing.T) {
 	home := sweepMemoryHome(t, map[string]string{
 		"path.md":  "zebra in /proj/here\n",
-		"win.md":   "zebra in \\proj\\here\n",
-		"plain.md": "zebra and/or other prose, 1 / 2\n",
+		"plain.md": "zebra and other prose\n",
 	})
-	for _, cwd := range []string{"/", "//", "\\"} {
-		r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: memoryPtr(cwd), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
+	search := func(cwd *string, only bool) map[string]float64 {
+		r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: cwd, CwdOnly: only, ReadOriginUrl: func(string) string { return "" }})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var got []string
+		scores := map[string]float64{}
 		for _, h := range r.Hits {
-			got = append(got, h.Relpath)
+			scores[h.Relpath] = h.Score
 		}
-		slices.Sort(got)
-		if want := []string{"path.md", "win.md"}; !slices.Equal(got, want) {
-			t.Errorf("--cwd-only %q: %v, want %v", cwd, got, want)
+		return scores
+	}
+	base := search(nil, false)
+	for _, cwd := range []string{"/", "//", "\\\\"} {
+		for _, only := range []bool{true, false} {
+			got := search(memoryPtr(cwd), only)
+			if len(got) != 2 {
+				t.Fatalf("--cwd %q only=%v: %v", cwd, only, got)
+			}
+			for name, score := range got {
+				if score <= base[name] {
+					t.Errorf("--cwd %q only=%v: %s scores %v, unscoped %v", cwd, only, name, score, base[name])
+				}
+			}
 		}
-	}
-	// Without --cwd-only the same mention earns the half boost and the prose does not.
-	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: memoryPtr("/"), ReadOriginUrl: func(string) string { return "" }})
-	if err != nil || len(r.Hits) != 3 {
-		t.Fatalf("%+v %v", r.Hits, err)
-	}
-	scores := map[string]float64{}
-	for _, h := range r.Hits {
-		scores[h.Relpath] = h.Score
-	}
-	if !(scores["path.md"] > scores["plain.md"]) {
-		t.Fatalf("the path mention earns no boost: %v", scores)
 	}
 }
 
