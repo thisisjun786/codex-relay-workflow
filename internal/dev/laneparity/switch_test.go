@@ -409,4 +409,70 @@ func TestSeed_refusesALinkOutOfTheCaseRoot(t *testing.T) {
 			t.Errorf("a file outside the case root was removed or changed: %q %v", raw, err)
 		}
 	})
+	// The directories the seed made are taken out only through a way that still stays in the case
+	// root: with the Codex home (or the HOME of the runtime link) replaced by a link out after the
+	// seed, the empty directories of the same names behind it stay, and so does a made directory
+	// that is a link now.
+	t.Run("a made directory behind an ancestor replaced by a link out stays", func(t *testing.T) {
+		root := t.TempDir()
+		out := t.TempDir()
+		codexHome := filepath.Join(root, "codex")
+		home := filepath.Join(root, "home")
+		for _, d := range []string{codexHome, home} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		undo, err := seedPlan{Switch: SwitchOn, CRW: "/opt/crw", Runtime: true}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + home, "CODEX_HOME=" + codexHome})
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep := []string{
+			filepath.Join(out, "codex", "crw"),
+			filepath.Join(out, "home", ".local", "share", "crw-runtime", "current", "bin"),
+		}
+		for _, d := range keep {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, d := range []string{codexHome, home} {
+			if err := os.Rename(d, d+"-moved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(out, filepath.Base(d)), d); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := undo(); err == nil || !strings.Contains(err.Error(), "outside the case root") {
+			t.Errorf("the undo did not refuse the way out of the case root: %v", err)
+		}
+		for _, d := range keep {
+			if _, err := os.Stat(d); err != nil {
+				t.Errorf("the undo removed %s outside the case root: %v", d, err)
+			}
+		}
+	})
+	t.Run("a made directory that is a link now stays", func(t *testing.T) {
+		root := t.TempDir()
+		codexHome := filepath.Join(root, "codex")
+		undo, err := seedPlan{Switch: SwitchOn}.seed(&cxccorpus.Case{Root: root}, []string{"HOME=" + filepath.Join(root, "home"), "CODEX_HOME=" + codexHome})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(codexHome, filepath.Join(root, "moved")); err != nil {
+			t.Fatal(err)
+		}
+		out := t.TempDir()
+		if err := os.Symlink(out, codexHome); err != nil {
+			t.Fatal(err)
+		}
+		_ = undo()
+		if fi, err := os.Lstat(codexHome); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the undo removed a link it did not make: %v", err)
+		}
+		if entries, _ := os.ReadDir(out); len(entries) != 0 {
+			t.Errorf("the undo left %d entr(ies) outside the case root", len(entries))
+		}
+	})
 }

@@ -112,7 +112,7 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 		}
 		if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
 			made, err := makeDirs(filepath.Dir(link), 0o755)
-			undos = append(undos, removeEmpty(made))
+			undos = append(undos, removeEmpty(c.Root, made))
 			if err != nil {
 				return fail(err)
 			}
@@ -138,7 +138,7 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 		}
 		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 			made, err := makeDirs(filepath.Dir(path), 0o700) // as the hooks make <CODEX_HOME>/crw: MkdirAll 0700
-			undos = append(undos, removeEmpty(made))
+			undos = append(undos, removeEmpty(c.Root, made))
 			if err != nil {
 				return fail(err)
 			}
@@ -239,15 +239,37 @@ func makeDirs(dir string, perm os.FileMode) ([]string, error) {
 }
 
 // removeEmpty is the undo of makeDirs: the directories it made, innermost first, each only when it
-// is empty again (a hook may have written below one, and what a hook wrote stays).
-func removeEmpty(made []string) func() error {
+// is empty again (a hook may have written below one, and what a hook wrote stays). Like removeBelow,
+// it checks the way to each one again first: a step may have replaced a directory above it with a
+// link out of the case root, and then the directory of that name behind the link is not the one the
+// seed made and stays. A made directory that is no longer a directory (a link now) stays as well.
+func removeEmpty(root string, made []string) func() error {
 	return func() error {
+		var first error
 		for i := len(made) - 1; i >= 0; i-- {
-			if err := os.Remove(made[i]); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) {
-				return err
+			if err := resolvedWithin(root, filepath.Dir(made[i])); err != nil {
+				if first == nil {
+					first = fmt.Errorf("not removing %s: %w", made[i], err)
+				}
+				continue
+			}
+			fi, err := os.Lstat(made[i])
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			} else if err != nil {
+				if first == nil {
+					first = err
+				}
+				continue
+			}
+			if !fi.IsDir() {
+				continue
+			}
+			if err := os.Remove(made[i]); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && first == nil {
+				first = err
 			}
 		}
-		return nil
+		return first
 	}
 }
 
