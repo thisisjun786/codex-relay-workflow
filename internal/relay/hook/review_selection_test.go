@@ -27,7 +27,7 @@ type reviewSelectionFixture struct {
 // (testdata/fixtures/review-selection-<name>), the fixture's environment what prepare set in it.
 func prepareSelection(t *testing.T, name string) (string, reviewSelectionFixture, *fixtureNames) {
 	t.Helper()
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	environ := os.Environ()
 	_, names := layFixture(t, "review-selection-"+name, home, "app.sock", "other.sock", "link/app.sock", "real/app.sock")
 	raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))

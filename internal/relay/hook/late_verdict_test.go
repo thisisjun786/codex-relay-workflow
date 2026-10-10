@@ -36,7 +36,8 @@ func (c *journalDeadline) Err() error {
 func Test33LateVerdictPython(t *testing.T) {
 	for _, edge := range []string{"bookkeeping", "guard_timeout"} {
 		t.Run(edge, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			loadProofDeadlines(t)
+			home := hookHome(t, 5)
 			t.Setenv("CODEX_HOME", home)
 			lateVerdictFixture(t, home)
 			payload, err := os.ReadFile(filepath.Join(home, "stop.json"))

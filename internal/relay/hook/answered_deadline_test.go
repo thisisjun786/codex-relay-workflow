@@ -28,7 +28,7 @@ func (w *gatedAnswer) Write(p []byte) (int, error) {
 func (w *gatedAnswer) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
 
 func Test33AnsweredDeadlinePython(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	t.Setenv("CODEX_HOME", home)
 	lateVerdictFixture(t, home)
 	payload, err := os.ReadFile(filepath.Join(home, "stop.json"))

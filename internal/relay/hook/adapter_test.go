@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -19,14 +20,16 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// hookTestBudget is the hook's time budget in the tests that do not test the budget. It covers the
-// guard's real work (store opens, journal writes, a built binary's start), so a loaded host must not
-// be able to spend it (CRW-1161); the tests of the budget itself pass their own small one.
-const hookTestBudget = 120.0
-
-// pluginTestBudget is the most a plugin-owned configuration may carry (the doctor and the launch
-// refuse a budget over 7 seconds when the owner is the plugin).
-const pluginTestBudget = 7.0
+// loadProofDeadlines lengthens the hook's real absolute and guard deadlines for the in-process test
+// that follows. Its subject is not a deadline, and its guard does real store and journal work that a
+// loaded host can stretch past the production 5 s and 3.5 s (CRW-1161). The settings' timeoutSeconds
+// cannot do this: it only shortens the deadline. The tests of the deadlines keep the production ones.
+func loadProofDeadlines(t *testing.T) {
+	t.Helper()
+	was, wasGuard := absoluteDeadline, guardDeadline
+	absoluteDeadline, guardDeadline = 2*time.Minute, time.Minute
+	t.Cleanup(func() { absoluteDeadline, guardDeadline = was, wasGuard })
+}
 
 func hookHome(t *testing.T, budget float64) string {
 	t.Helper()
@@ -145,7 +148,7 @@ func Test33HookHappyAndInvalid(t *testing.T) {
 		{"refused", `{"error":"refused","reason":"ownership"}`, "guard_refused", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			home := hookHome(t, 5)
 			done, _ := fakeControl(t, home, func(conn net.Conn) error {
 				request, err := readFrame(conn)
 				if err != nil {
@@ -175,7 +178,7 @@ func Test33HookHappyAndInvalid(t *testing.T) {
 func Test33HookFailures(t *testing.T) {
 	for _, c := range []struct{ name, input string }{{"missing", "{}"}, {"unreadable", "{}"}, {"malformed", "not json"}} {
 		t.Run(c.name, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			home := hookHome(t, 5)
 			if c.name == "missing" {
 				if err := os.Remove(filepath.Join(home, ConfigName)); err != nil {
 					t.Fatal(err)
@@ -203,7 +206,7 @@ func Test33HookFailures(t *testing.T) {
 	}
 }
 func Test33HookNoSocketJournalOnly(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	payload := `{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"done","transcript_path":"/must-not-be-read"}`
 	cmd := hookCommand(t, home, payload)
 	start := time.Now()
@@ -287,7 +290,8 @@ func Test33HookSlowGuardDeadline(t *testing.T) {
 	})
 }
 func Test33RecoveredGuardPanic(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	loadProofDeadlines(t)
+	home := hookHome(t, 5)
 	t.Setenv("CODEX_HOME", home)
 	done, _ := fakeControl(t, home, func(conn net.Conn) error { _, err := io.Copy(io.Discard, conn); return err })
 	var stdout bytes.Buffer
@@ -299,7 +303,7 @@ func Test33RecoveredGuardPanic(t *testing.T) {
 	}
 }
 func Test33ClaimWithoutOutcomeNeverReplayed(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	config, failed, _ := ReadSettings(context.Background(), filepath.Join(home, ConfigName))
 	if failed != "" {
 		t.Fatal(failed)
@@ -325,5 +329,39 @@ func Test33ClaimWithoutOutcomeNeverReplayed(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || a != "duplicate" || !bytes.Equal(before, after) {
 		t.Fatalf("%s %v", a, err)
+	}
+}
+
+// The load-proof deadlines are the hook's real ones: a guard slower than the production 3.5 s cap
+// (a loaded host's store and journal work) still answers under them, and does not without them.
+func Test33LoadProofDeadlinesOutlastASlowGuard(t *testing.T) {
+	for _, lengthened := range []bool{false, true} {
+		t.Run(fmt.Sprint("lengthened=", lengthened), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				if lengthened {
+					loadProofDeadlines(t)
+				}
+				home := hookHome(t, 5)
+				t.Setenv("CODEX_HOME", home)
+				writeTest(t, filepath.Join(home, "transcript.jsonl"), []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}`+"\n"+`{"type":"event_msg","payload":{"type":"item_completed","turn_id":"t","thread_id":"s","item":{"type":"AgentMessage","id":"i","content":[{"type":"Text","text":"done"}]}}}`+"\n"))
+				payload := `{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"done","transcript_path":` + strconv.Quote(filepath.Join(home, "transcript.jsonl")) + `}`
+				done, _ := fakeControl(t, home, func(net.Conn) error { return nil })
+				verdict := Object{{Key: "decision", Value: "block"}, {Key: "state", Value: "receipt_missing"}, {Key: "hook_output", Value: Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: "verify"}, {Key: "continue", Value: true}}}}
+				var out bytes.Buffer
+				code := runAdapter(context.Background(), nil, strings.NewReader(payload), &out, time.Now(), func(ctx context.Context, _ Object, _ GuardOptions) (Object, error) {
+					select {
+					case <-time.After(10 * time.Second):
+						return verdict, nil
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				})
+				awaitHost(t, done)
+				answered := out.String() == `{"decision": "block", "reason": "verify", "continue": true}`
+				if code != 0 || answered != lengthened {
+					t.Fatalf("lengthened=%v code=%d answer=%q", lengthened, code, out.String())
+				}
+			})
+		})
 	}
 }

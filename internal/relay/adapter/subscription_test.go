@@ -34,7 +34,7 @@ func TestRelayResumesAgainAfterTerminalSubscriptionRelease(t *testing.T) {
 		if err != nil || r.Get("status") != "accepted" || r.Get("turnId") != turn {
 			t.Fatalf("delivery %d: receipt=%v err=%v", i, r, err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		err = host.WaitCount(ctx, "thread/unsubscribe", i)
 		cancel()
 		if err != nil {

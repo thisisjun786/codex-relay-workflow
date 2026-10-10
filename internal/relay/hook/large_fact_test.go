@@ -22,7 +22,7 @@ import (
 // as Python's guard verdict and records. The owned hook evaluates in-process, so the control
 // socket sees no request.
 func Test33LargeFactHookPython(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	built := binary(t) // built before the timeout starts, which is for the hook
 	layFixture(t, "large-fact", home)
 	listener, err := net.Listen("unix", filepath.Join(home, "state", "control.sock"))

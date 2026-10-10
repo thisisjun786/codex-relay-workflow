@@ -26,7 +26,8 @@ func Test33PR181ClaimWriteFailurePython(t *testing.T) {
 	for _, role := range []string{"host", "accepted"} {
 		for _, code := range []syscall.Errno{syscall.ENOSPC, syscall.EIO} {
 			t.Run(role+"-"+strconv.Itoa(int(code)), func(t *testing.T) {
-				home := hookHome(t, hookTestBudget)
+				loadProofDeadlines(t)
+				home := hookHome(t, 5)
 				t.Setenv("CODEX_HOME", home)
 				writeTest(t, filepath.Join(home, "transcript.jsonl"), []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}`+"\n"+`{"type":"event_msg","payload":{"type":"item_completed","turn_id":"t","thread_id":"s","item":{"type":"AgentMessage","id":"i","content":[{"type":"Text","text":"done"}]}}}`+"\n"))
 				payload := `{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"done","transcript_path":` + strconv.Quote(filepath.Join(home, "transcript.jsonl")) + `}`
@@ -68,7 +69,7 @@ func Test33PR181ClaimWriteFailurePython(t *testing.T) {
 	}
 }
 func Test33PR181StatusSymlinkPython(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	path := filepath.Join(home, ConfigName)
 	target := filepath.Join(home, "real.json")
 	if err := os.Rename(path, target); err != nil {

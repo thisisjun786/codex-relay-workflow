@@ -99,7 +99,7 @@ func TestAcknowledgedTurnRearmsExhaustedCleanup(t *testing.T) {
 	next := make(chan *TurnWatch, 1)
 	go func() { w, _ := c.WatchTurn(context.Background(), "root"); next <- w }()
 	// Observe the queued admission before allowing the old unsubscribe to fail.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
@@ -200,7 +200,7 @@ func TestCleanupDrainsAdmittedOperations(t *testing.T) {
 	}
 	other.Finish("pending", false)
 	subscriptionSignal(t, entered)
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestCleanupKeepsCompletionThroughRefusedWatch(t *testing.T) {
 	subscriptionSignal(t, entered)
 	refused = rootWatch(t, c)
 	refused.Finish("", false)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)

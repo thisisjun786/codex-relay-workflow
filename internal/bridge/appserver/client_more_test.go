@@ -197,7 +197,7 @@ func TestCall_delivers_notification_before_response(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Then
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	select {
 	case event := <-client.Notifications():

@@ -15,7 +15,7 @@ import (
 
 func nativeJournalFixture(t *testing.T) (string, Object) {
 	t.Helper()
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	out, err := hookCommand(t, home, `{"session_id":"s","turn_id":"t","stop_hook_active":false}`).CombinedOutput()
 	if err != nil || len(out) != 0 {
 		t.Fatalf("hook %v %s", err, out)

@@ -95,7 +95,7 @@ func decoded(t *testing.T, raw []byte) any {
 func Test33RoutedSelectionRefusals(t *testing.T) {
 	for _, name := range []string{"override", "ambiguous"} {
 		t.Run(name, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			home := hookHome(t, 5)
 			_, names := layFixture(t, "routed-selection-"+name, home, "app.sock")
 			raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))
 			if err != nil {
@@ -139,7 +139,7 @@ func Test33RoutedSelectionRefusals(t *testing.T) {
 // is written there; the owner's own root and store, under any spelling that is the same file,
 // are evaluated with the owner's own paths. The fixture is routed_selection.py paths'.
 func Test33OwnerEvaluatesOnlyItsOwnLocations(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	layFixture(t, "routed-selection-paths", home)
 	raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))
 	if err != nil {

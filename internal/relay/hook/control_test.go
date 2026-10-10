@@ -47,7 +47,7 @@ func Test33ControlHandler(t *testing.T) {
 	}
 }
 func Test33OwnedGuardRunsInProcess(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	ctx := context.Background()
 	db, err := fixtureStore(ctx, filepath.Join(home, "state/relay.sqlite3"), "")
 	if err != nil {

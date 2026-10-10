@@ -164,13 +164,13 @@ func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			home := hookHome(t, 5)
 			t.Setenv("CODEX_HOME", home)
 			t.Setenv("HOME", home)
 			t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "xdg"))
 			pinned, state := c.config(home)
-			config := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "never-run")}, {Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "timeoutSeconds", Value: hookTestBudget}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
+			config := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "never-run")}, {Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "timeoutSeconds", Value: 5.0}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
 			writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(append(config, pinned...), pyjson.Options{})))
 			if err := os.MkdirAll(state, 0o700); err != nil {
 				t.Fatal(err)

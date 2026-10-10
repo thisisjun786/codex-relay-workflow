@@ -15,7 +15,7 @@ func TestHookRuntimeBuildRecordsExecutingBinary(t *testing.T) {
 	built := testsupport.BuildCRW(t, "-ldflags=-X main.version=hook-build-proof")
 	for _, payload := range []string{"not json", `{"session_id":"s","turn_id":"t"}`} {
 		t.Run(payload, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			home := hookHome(t, 5)
 			executable := filepath.Join(home, "bin", "crw")
 			if err := testsupport.CopyBinary(built, executable); err != nil {
 				t.Fatal(err)

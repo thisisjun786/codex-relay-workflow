@@ -17,7 +17,7 @@ import (
 
 func controlPair(t *testing.T) (net.Conn, net.Conn) {
 	t.Helper()
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	path := filepath.Join(home, "state/control.sock")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func Test33PeerCredentials(t *testing.T) {
 func Test33UntrustedPeerReleases(t *testing.T) {
 	for _, name := range []string{"wrong_owner", "writable_directory"} {
 		t.Run(name, func(t *testing.T) {
-			home := hookHome(t, hookTestBudget)
+			home := hookHome(t, 5)
 			t.Setenv("CODEX_HOME", home)
 			// A real same-uid listener is ready to block. Refusal must occur before
 			// sending any request, not merely after examining an untrusted answer.

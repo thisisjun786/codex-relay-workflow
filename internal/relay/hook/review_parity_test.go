@@ -75,7 +75,7 @@ func Test33ReviewD4Complaints(t *testing.T) {
 // Time is the behavior under test: begin the 300ms delay only after Read starts.
 // Both EOF and the adapter's completion are signalled, never polled.
 func Test33ReviewD9Late(t *testing.T) {
-	home := hookHome(t, hookTestBudget)
+	home := hookHome(t, 5)
 	t.Setenv("CODEX_HOME", home)
 	reader, writer := io.Pipe()
 	defer reader.Close()
