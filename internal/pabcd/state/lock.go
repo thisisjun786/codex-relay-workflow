@@ -36,6 +36,11 @@ func WaitForSessionLock(guard time.Duration) (restore func()) {
 // sessionLockSleep is the sleep a caller without a seam of its own uses. It is a test seam; production keeps time.Sleep.
 var sessionLockSleep = time.Sleep
 
+// sessionLockNow is the clock the patience guard of WaitForSessionLock is judged on. It is a test seam, so a test that advances a
+// virtual clock in sessionLockSleep reaches the guard by the waits the code schedules and not by the wall clock; production keeps
+// time.Now (CRW-1181).
+var sessionLockNow = time.Now
+
 // WithSessionLock runs fn holding the session's exclusive lock, the file <state file>.lock (withSessionLock). The session id must
 // be canonical: an id that sanitising would rewrite, or an empty one, is refused with ErrNonCanonicalSessionID before anything is
 // created (CRW-1108).
@@ -122,7 +127,7 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		schedule = retryDelays
 	}
 	var held *sessionLock
-	waitStarted := time.Now()
+	waitStarted := sessionLockNow()
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -132,7 +137,7 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		if err == nil {
 			break
 		}
-		patient := attempt >= len(schedule) && errors.Is(err, fs.ErrExist) && time.Since(waitStarted) < time.Duration(sessionLockPatience.Load())
+		patient := attempt >= len(schedule) && errors.Is(err, fs.ErrExist) && sessionLockNow().Sub(waitStarted) < time.Duration(sessionLockPatience.Load())
 		if !patient && (!errors.Is(err, fs.ErrExist) || attempt >= len(schedule)) {
 			if sessionLockOutcome != nil {
 				sessionLockOutcome(err)

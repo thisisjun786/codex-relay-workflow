@@ -157,7 +157,11 @@ func TestWaitForSessionLockOutlastsTheScheduleThroughWithSessionLock(t *testing.
 	}
 }
 
-// The patience ends at its guard: a holder that never lets go is answered with the busy error once the guard has passed.
+// The patience ends at its guard: a holder that never lets go is answered with the busy error once the guard has passed. The guard is
+// judged on a virtual clock (sessionLockNow) that the sleep seam advances by each delay the code schedules and that never sleeps, so
+// neither a loaded host nor slow lock-file I/O moves it. The guard outlasts the oracle's whole schedule, so the wait goes on past it
+// with the patience delay, and the busy error comes back on the first attempt the clock reaches the guard: after the schedule's
+// delays and as many patience delays as fit below the guard, without fn ever running.
 func TestWaitForSessionLockGivesUpAtItsGuard(t *testing.T) {
 	cwd := t.TempDir()
 	held, release, released := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -167,14 +171,21 @@ func TestWaitForSessionLockGivesUpAtItsGuard(t *testing.T) {
 	}()
 	<-held
 	t.Cleanup(func() { close(release); <-released })
-	previous := sessionLockSleep
+	const guard = time.Second // a hang guard well past the schedule's 250 ms
+	virtual := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	start := virtual
+	previousNow, previousSleep := sessionLockNow, sessionLockSleep
 	var calls int
-	sessionLockSleep = func(time.Duration) { calls++; time.Sleep(time.Millisecond) }
-	t.Cleanup(func() { sessionLockSleep = previous })
-	defer WaitForSessionLock(50 * time.Millisecond)()
+	sessionLockNow = func() time.Time { return virtual }
+	sessionLockSleep = func(d time.Duration) { calls++; virtual = virtual.Add(d) }
+	t.Cleanup(func() { sessionLockNow, sessionLockSleep = previousNow, previousSleep })
+	defer WaitForSessionLock(guard)()
 	err := WithSessionLock(cwd, "counter", func() error { t.Error("entered a held lock"); return nil })
-	if !errors.Is(err, fs.ErrExist) || calls <= lockBudgetScheduleLen {
-		t.Fatalf("err %v after %d sleeps, want the busy error after more than the schedule's %d", err, calls, lockBudgetScheduleLen)
+	// 250 ms of schedule, then patience delays while the clock is below the guard: 250+19*40 = 1010 ms is the first at or past it
+	patienceDelays := int((guard - lockBudgetScheduleTotal + sessionLockPatienceDelay - 1) / sessionLockPatienceDelay)
+	wantCalls, wantSlept := lockBudgetScheduleLen+patienceDelays, lockBudgetScheduleTotal+time.Duration(patienceDelays)*sessionLockPatienceDelay
+	if !errors.Is(err, fs.ErrExist) || calls != wantCalls || virtual.Sub(start) != wantSlept {
+		t.Fatalf("err %v after %d sleeps and %v, want the busy error after %d sleeps and %v", err, calls, virtual.Sub(start), wantCalls, wantSlept)
 	}
 }
 
