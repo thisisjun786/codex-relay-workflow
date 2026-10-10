@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // PluginName is the plugin a CRW root declares itself as.
@@ -253,6 +254,9 @@ type hookEntry struct {
 // the harness and for the first cells of a run before the activation PR lands; any other root can
 // be named instead.
 func GeneratePluginRoot(dest, src, crw string, legs []Leg) error {
+	if err := homeguard.Refuse(dest); err != nil {
+		return err
+	}
 	// The links point at src from dest, a directory elsewhere: a relative src would be read from there.
 	src, err := filepath.Abs(src)
 	if err != nil {
@@ -261,7 +265,7 @@ func GeneratePluginRoot(dest, src, crw string, legs []Leg) error {
 	if strings.ContainsAny(crw, "\"$`\\\n") || !filepath.IsAbs(crw) {
 		return fmt.Errorf("crw path %q must be absolute and free of quote, dollar, backtick and backslash", crw)
 	}
-	if err := os.MkdirAll(filepath.Join(dest, ".codex-plugin"), 0o755); err != nil {
+	if err := homeguard.MkdirAll(filepath.Join(dest, ".codex-plugin"), 0o755); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(src)
@@ -273,7 +277,7 @@ func GeneratePluginRoot(dest, src, crw string, legs []Leg) error {
 		case ".codex-plugin", "wiring":
 			continue
 		}
-		if err := os.Symlink(filepath.Join(src, e.Name()), filepath.Join(dest, e.Name())); err != nil {
+		if err := homeguard.Symlink(filepath.Join(src, e.Name()), filepath.Join(dest, e.Name())); err != nil {
 			return err
 		}
 	}
@@ -327,10 +331,10 @@ func marshal(v any) ([]byte, error) {
 }
 
 func writeFile(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := homeguard.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return homeguard.WriteFile(path, data, 0o644)
 }
 
 func copyExceptHooks(src, dest string) error {
@@ -346,7 +350,7 @@ func copyExceptHooks(src, dest string) error {
 			return nil
 		}
 		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(dest, rel), 0o755)
+			return homeguard.MkdirAll(filepath.Join(dest, rel), 0o755)
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -356,7 +360,7 @@ func copyExceptHooks(src, dest string) error {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(filepath.Join(dest, rel), data, info.Mode().Perm())
+		return homeguard.WriteFile(filepath.Join(dest, rel), data, info.Mode().Perm())
 	})
 }
 

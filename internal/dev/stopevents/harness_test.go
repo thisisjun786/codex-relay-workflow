@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -28,7 +29,7 @@ import (
 // three Stops of one turn, the second and third with byte-identical payloads. A guard peer on the
 // host's control.sock stands in for the relay and answers every request it is asked.
 
-func TestMain(m *testing.M) { testsupport.Main(m) }
+func TestMain(m *testing.M) { testsupport.Main(m, homeguard.RefuseAccountHome) }
 
 func repositoryRoot() string {
 	root, _ := filepath.Abs("../../..")

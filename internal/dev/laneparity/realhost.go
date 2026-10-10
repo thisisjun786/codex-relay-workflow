@@ -21,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // The real-host cells (CRW-1082): the real Codex binary runs whole turns in an isolated home against
@@ -166,6 +168,12 @@ type hostScript struct{ image string }
 func RealHost(o RealHostOptions) (RealHostReport, error) {
 	rep := RealHostReport{Run: NewRunID(), OK: true}
 	var err error
+	// every cell's home is made below the scratch directory: it is never the account's real home
+	if o.Scratch != "" {
+		if err = homeguard.Refuse(o.Scratch); err != nil {
+			return rep, fmt.Errorf("the scratch directory: %w", err)
+		}
+	}
 	if rep.Binary, err = FileDigest(o.CRW); err != nil {
 		return rep, err
 	}
@@ -195,7 +203,7 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 	if o.Fault != FaultNone && o.Fault != FaultNoop && o.Fault != FaultDropStdout {
 		return rep, fmt.Errorf("fault %q cannot be injected into a real-host run (choose %s or %s)", o.Fault, FaultNoop, FaultDropStdout)
 	}
-	scratch, err := os.MkdirTemp(o.Scratch, "rh-")
+	scratch, err := makeScratch(o.Scratch, "rh-")
 	if err != nil {
 		return rep, err
 	}
@@ -312,7 +320,7 @@ func (h *hostEnv) control() (*hostControl, error) {
 	dir := filepath.Join(h.scratch, fmt.Sprintf("c%d-control", h.n))
 	home, codexHome, work, tmp := filepath.Join(dir, "home"), filepath.Join(dir, "codex"), filepath.Join(dir, "work"), filepath.Join(dir, "tmp")
 	for _, d := range []string{home, codexHome, work, tmp} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := homeguard.MkdirAll(d, 0o755); err != nil {
 			return nil, err
 		}
 	}
@@ -321,7 +329,7 @@ func (h *hostEnv) control() (*hostControl, error) {
 		return nil, err
 	}
 	defer provider.Close()
-	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(stubProviderConfig(provider.URL())), 0o600); err != nil {
+	if err := homeguard.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(stubProviderConfig(provider.URL())), 0o600); err != nil {
 		return nil, err
 	}
 	env := hostEnviron(home, codexHome, tmp, h.codex)
@@ -375,16 +383,16 @@ func (h *hostEnv) run(spec hostCellSpec) (HostCell, error) {
 	r := &hostRun{codexHome: filepath.Join(dir, "codex")}
 	home, work, tmp, rec := filepath.Join(dir, "home"), filepath.Join(dir, "work"), filepath.Join(dir, "tmp"), filepath.Join(dir, "rec")
 	for _, d := range []string{home, r.codexHome, work, tmp, rec} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := homeguard.MkdirAll(d, 0o755); err != nil {
 			return cell, err
 		}
 	}
 	// The installed runtime the declarations start is the recorder.
 	shim := filepath.Join(home, runtimeBin)
-	if err := os.MkdirAll(filepath.Dir(shim), 0o755); err != nil {
+	if err := homeguard.MkdirAll(filepath.Dir(shim), 0o755); err != nil {
 		return cell, err
 	}
-	if err := os.WriteFile(shim, []byte(hostShim(h.opts.CRW, rec, h.opts.Fault)), 0o755); err != nil {
+	if err := homeguard.WriteFile(shim, []byte(hostShim(h.opts.CRW, rec, h.opts.Fault)), 0o755); err != nil {
 		return cell, err
 	}
 	// The plugin as the host's plugin cache holds it: <cache>/<marketplace>/<plugin>/<version>.
@@ -408,16 +416,16 @@ func (h *hostEnv) run(spec hostCellSpec) (HostCell, error) {
 [plugins.%q]
 enabled = true
 `, h.manifest.Name+"@"+hostMarket)
-	if err := os.WriteFile(filepath.Join(r.codexHome, "config.toml"), []byte(config), 0o600); err != nil {
+	if err := homeguard.WriteFile(filepath.Join(r.codexHome, "config.toml"), []byte(config), 0o600); err != nil {
 		return cell, err
 	}
 	if spec.state != SwitchOff {
 		state := spec.state
 		doc := fmt.Sprintf("{\"active\":%q,\"changedAt\":%q,\"by\":%q}\n", state, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), SwitchBy)
-		if err := os.MkdirAll(filepath.Join(r.codexHome, "crw"), 0o700); err != nil {
+		if err := homeguard.MkdirAll(filepath.Join(r.codexHome, "crw"), 0o700); err != nil {
 			return cell, err
 		}
-		if err := os.WriteFile(filepath.Join(r.codexHome, "crw", "switch.json"), []byte(doc), 0o644); err != nil {
+		if err := homeguard.WriteFile(filepath.Join(r.codexHome, "crw", "switch.json"), []byte(doc), 0o644); err != nil {
 			return cell, err
 		}
 	}
@@ -657,14 +665,14 @@ func copyTree(src, dst string, active map[string]bool) error {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(dst, raw, info.Mode().Perm())
+		return homeguard.WriteFile(dst, raw, info.Mode().Perm())
 	}
 	if active[real] {
 		return fmt.Errorf("%s links back to %s, a directory being copied: a plugin package holds no link cycle", src, real)
 	}
 	active[real] = true
 	defer delete(active, real)
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	if err := homeguard.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(real)
@@ -687,7 +695,7 @@ func writePNG(path string) error {
 	if err := png.Encode(&buf, img); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return homeguard.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 // payload is the part of a hook payload the cells read.

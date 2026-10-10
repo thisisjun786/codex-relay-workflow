@@ -3,10 +3,11 @@
 package cxcfuzz
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // workerHomes are the locations a worker's environment points at, all under the harness's own start-up root:
@@ -33,7 +34,7 @@ func workerRoot(root string) error {
 	}
 	for name, dir := range workerHomes(root) {
 		if strings.HasPrefix(name, "XDG_") {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 				return err
 			}
 		}

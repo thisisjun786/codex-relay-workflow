@@ -21,6 +21,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // CRW-964: `crw-dev ci local`. It runs the local step table in a clean worktree of the
@@ -161,6 +163,17 @@ func Local(args []string, stdout, stderr io.Writer) int {
 // localVerify answers a reused record when every key matches, or runs the table and returns the
 // record it made.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	// CRW-1186: what the run writes outside the clean worktree is the record (and its siblings) and the
+	// probes' directories in TMPDIR; neither lands in the account's real home, and nothing is made
+	// before both are known. A work root is judged again where it is made (localWorkRoot).
+	if opts.Record != "" {
+		if err := localCheckRecordDestination(opts.Root, opts.Record); err != nil {
+			return verificationRecord{}, false, err
+		}
+	}
+	if err := homeguard.Refuse(localTempDir()); err != nil {
+		return verificationRecord{}, false, fmt.Errorf("TMPDIR: %w", err)
+	}
 	localScrubGitEnv()
 	opts.HeavyGate = localAbsGate(opts.HeavyGate)
 	// Replacement refs (refs/replace) would let another object stand in for a commit; the run reads the
@@ -725,6 +738,9 @@ func localWorkRoot(opts localOptions) (string, error) {
 		return "", fmt.Errorf("the work root %q is not absolute", root)
 	}
 	root = filepath.Clean(root)
+	if err := homeguard.Refuse(root); err != nil {
+		return "", fmt.Errorf("the work root: %w", err)
+	}
 	for _, banned := range localBannedRoots(opts) {
 		if banned == "" {
 			continue

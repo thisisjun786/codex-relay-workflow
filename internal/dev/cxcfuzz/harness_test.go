@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -37,7 +38,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv(helperEnv) == "1" {
 		os.Exit(helperMain())
 	}
-	testsupport.Main(m, testsupport.TempDirInRoot, func(root string) (func() error, error) {
+	testsupport.Main(m, testsupport.TempDirInRoot, homeguard.RefuseAccountHome, func(root string) (func() error, error) {
 		return nil, os.Setenv("CRW_HOME", filepath.Join(root, "crw-home"))
 	})
 }

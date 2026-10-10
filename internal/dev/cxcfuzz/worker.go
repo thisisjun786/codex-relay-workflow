@@ -83,7 +83,7 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 	if startup <= 0 {
 		startup = DefaultStartupTimeout
 	}
-	root, err := os.MkdirTemp("", "cxcfuzz-worker-")
+	root, err := MkdirTempRoot("cxcfuzz-worker-")
 	if err != nil {
 		return nil, err
 	}

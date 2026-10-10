@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // CRW-964: the pinned tool versions and the ones this host actually has. The pins come from the
@@ -104,6 +106,10 @@ func localObserveToolIn(name, pathEnv string, goMod []byte, gate string) string 
 	}
 	// The probe runs in a directory of its own, without the caller's GOENV, so the version it reads is
 	// the one a step with this PATH runs.
+	// the probe makes its directory in TMPDIR, which is never the account's real home (CRW-1186)
+	if homeguard.Refuse(localTempDir()) != nil {
+		return ""
+	}
 	dir, err := os.MkdirTemp(localTempDir(), "probe")
 	if err != nil {
 		return ""
