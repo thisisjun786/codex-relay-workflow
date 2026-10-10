@@ -77,7 +77,8 @@ the claim is made from, the turn the acknowledgement is proved from and the turn
 from. `--verdict-file` is a JSON object whose keys are the `verdict` command's options:
 `verdict` (required), `criterion` and `finding` (lists of strings), `criteria` (a JSON array of
 findings, or a string: its text, or `@path`), `restoration`, `reason`, `expect-criteria-digest` and
-`verified-head`. A key it does not know, including a verdict turn of its own, is a usage error.
+`verified-head`. A key it does not know, including a verdict turn of its own, a key an object gives twice, and
+anything after the JSON document are usage errors.
 
 * **One command per step.** Each step is the library function its command calls, in the store
   transaction that function opens: the claim (`Ack.ClaimVerification`), the acknowledgement
