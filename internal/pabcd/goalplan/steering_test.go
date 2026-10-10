@@ -456,9 +456,11 @@ func TestSteeringApplyLockReleasedAfterAppliedAndRejected(t *testing.T) {
 
 // steeringApplyRetryDelays is a generous retry list: eight contenders in one process each hold
 // the lock for several milliseconds, and the oracle's own list (5/10/20/40 ms, :47) is tuned for
-// two. A run that exhausts it answers locked, and the case then says so.
+// two. The list is a bound on how long a loaded host may starve the lock's holder, not part of what
+// the case proves, so it is long enough to outlast a minute of waiting (30,000 waits of 2 ms or
+// more): a run that exhausts it answers locked, and the case then says so (CRW-1172).
 func steeringApplyRetryDelays() []int {
-	delays := make([]int, 200)
+	delays := make([]int, 30000)
 	for i := range delays {
 		delays[i] = 2
 	}
