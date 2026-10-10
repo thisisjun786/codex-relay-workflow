@@ -1,6 +1,7 @@
 [crw] Subagent dispatch: V1 requested by CRW_SPAWN_V1=1 (override, not host evidence).
-Code Mode first cell: await tools.multi_agent_v1__spawn_agent({message:"Report your model and say OK; do not edit files.",model:"command-code/deepseek-deepseek-v4.1-flash",reasoning_effort:"low"});
+Code Mode first cell: await tools.multi_agent_v1__spawn_agent({message:"Report your model and say OK; do not edit files.",reasoning_effort:"low"});
 Direct: multi_agent_v1.spawn_agent({message,model?,reasoning_effort?}); wait: tools.multi_agent_v1__wait_agent({targets:[agent_id],timeout_ms}); close: tools.multi_agent_v1__close_agent({target:agent_id}). Replace the probe message with the task; obey managed fallback dispatch first.
+No alias is verified locally: the cell sets no model (role default).
 Aliases (map 2026-09-24; local Codex catalog membership only):
 deepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)
 swe2 -> devin/swe-2 (unverified, map 2026-09-24)

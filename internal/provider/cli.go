@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -146,6 +147,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// providerLeg names this hook's record of what a session was told.
+const providerLeg = "provider-bridge"
+
 // RunHook owns this component's input and answer. Input is used only for the
 // metadata observation; malformed/oversized/unreadable input still detects.
 func RunHook(ctx context.Context, in io.Reader, stdout io.Writer, env host.LookupEnv) int {
@@ -165,7 +169,17 @@ func RunHook(ctx context.Context, in io.Reader, stdout io.Writer, env host.Looku
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
+	// CRW-1180: the compact start right after a resume that said this very line, in the same turn, adds nothing: Codex keeps the
+	// resume's output after the compaction record, so saying it again stacks the line twice. The line is live state, so a resume
+	// always says it.
+	if guidancerecord.SilentCompact(env, raw, providerLeg, line) {
+		return 0
+	}
 	out := "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":" + quote(line) + "}}\n"
-	_, _ = io.Copy(stdout, strings.NewReader(out))
+	n, err := io.Copy(stdout, strings.NewReader(out))
+	// Only a line written whole, by a hook that was not cancelled, counts as said.
+	if err == nil && n == int64(len(out)) && ctx.Err() == nil {
+		guidancerecord.Said(env, raw, providerLeg, line)
+	}
 	return 0
 }

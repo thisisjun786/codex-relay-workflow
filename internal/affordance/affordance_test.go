@@ -522,6 +522,65 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 }
 
 // hookAnswer is what the session-start leg writes when the dispatcher runs it (RunHook), recording what the session was given.
+// CRW-1180 (S4-F4b): a resume that gave the whole list and the compaction of the same turn stack it twice. The compact right after a whole
+// resume answer is silent, once; a start between them, a changed list and a session the resume did not answer for are not the pair.
+func TestSessionStartCompactRightAfterAWholeResumeIsSilentOnce(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	src := func(id, source string) string {
+		return payload(big, "SessionStart", id, map[string]any{"source": source})
+	}
+	// A session never given the list hears it whole on its resume.
+	wholeResume := func(id string) {
+		t.Helper()
+		if got := contextOf(t, hookAnswer(t, src(id, "resume"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+			t.Fatalf("resume of %s, never given the list: %q", id, got)
+		}
+	}
+	full := hookAnswer(t, payload(big, "SessionStart", "S", nil), big, env)
+	// The resume of a session that was given the list is short, so the compact that follows must say the list.
+	if got := contextOf(t, hookAnswer(t, src("S", "resume"), big, env), "SessionStart"); got != RenderSessionBinding("S", env) {
+		t.Fatalf("short resume: %q", got)
+	}
+	if got := hookAnswer(t, src("S", "compact"), big, env); got != full {
+		t.Errorf("compact after a short resume did not say the whole list: %q", got)
+	}
+	// After a whole resume the compact of the same turn adds nothing, and only that one.
+	wholeResume("N")
+	if got := hookAnswer(t, src("N", "compact"), big, env); got != "" {
+		t.Errorf("compact in the turn of a whole resume repeated the list: %q", got)
+	}
+	if got := contextOf(t, hookAnswer(t, src("N", "compact"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") || !strings.Contains(got, "`N`") {
+		t.Errorf("the next compact did not say the whole list: %q", got)
+	}
+	// A start between the resume and the compact begins a new generation.
+	wholeResume("C")
+	hookAnswer(t, src("C", "clear"), big, env)
+	if got := hookAnswer(t, src("C", "compact"), big, env); got == "" {
+		t.Error("compact after a clear was silenced")
+	}
+	// The list changing between the resume and the compact is said.
+	wholeResume("D")
+	other := func(k string) (string, bool) {
+		if k == "CRW_BIN" {
+			return "chosen-crw", true
+		}
+		return env(k)
+	}
+	if got := contextOf(t, hookAnswer(t, src("D", "compact"), big, other), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact after the list changed: %q", got)
+	}
+	// Another session's compact is not the pair, and a compact without a session id cannot be matched.
+	wholeResume("E")
+	if got := hookAnswer(t, src("M", "compact"), big, env); got == "" {
+		t.Error("another session's compact was silenced")
+	}
+	if got := hookAnswer(t, src("", "compact"), big, env); got == "" {
+		t.Error("a compact without a session id was silenced")
+	}
+}
+
 func hookAnswer(t *testing.T, raw, cwd string, env host.LookupEnv) string {
 	t.Helper()
 	var out strings.Builder

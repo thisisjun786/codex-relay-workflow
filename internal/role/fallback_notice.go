@@ -95,11 +95,12 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	// given it again. The notice is computed from the role store, CRW_SPAWN_V1 and the model catalog, so what counts is the text,
 	// not the source: a resume of a session that never had it (this leg was off at its start), or whose settings have changed since,
 	// hears it. Startup, compact, clear and a missing or unknown source always answer.
-	session, resumed := "", false
+	session, source := "", ""
 	if object, ok := payload.(map[string]any); ok {
 		session, _ = object["session_id"].(string)
-		resumed = object["source"] == "resume"
+		source, _ = object["source"].(string)
 	}
+	resumed := source == "resume"
 	answer, err := SessionFallbackNotice(env)
 	if ctx.Err() != nil {
 		return fallbackInterrupted
@@ -108,13 +109,24 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 		return 0
 	}
 	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
+		// This resume gave nothing: a pair an earlier resume left open no longer describes what the context holds.
+		guidancerecord.ClearResume(env, session, fallbackNoticeLeg)
+		return 0
+	}
+	// CRW-1180: the compact start right after a resume that gave this notice, in the same turn, adds nothing: Codex keeps the resume's
+	// output after the compaction record, so saying it again stacks the notice twice.
+	if source == "compact" && guidancerecord.CompactRepeatsResume(env, session, fallbackNoticeLeg, answer, "") {
 		return 0
 	}
 	n, werr := io.WriteString(out, answer)
 	// Only a notice written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a cancelled
 	// hook, leaves no record, so the session's next resume hears the notice.
 	if werr == nil && n == len(answer) && ctx.Err() == nil {
-		guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
+		if resumed {
+			guidancerecord.RecordResume(env, session, fallbackNoticeLeg, answer, "")
+		} else {
+			guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
+		}
 	}
 	return 0
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -81,12 +82,14 @@ func Delivered(env host.LookupEnv, session, leg, text, command string) bool {
 	return err == nil && string(data) == line(text, command)
 }
 
-// Record notes that this session was given this text by this leg, replacing the leg's earlier record. It is best effort.
+// Record notes that this session was given this text by this leg, replacing the leg's earlier record. It is best effort. A whole
+// output that is not a resume's starts a generation of its own, so it also ends the pair a resume left open (see RecordResume).
 func Record(env host.LookupEnv, session, leg, text, command string) {
 	path := slot(env, session, leg)
 	if path == "" || os.MkdirAll(filepath.Dir(path), 0o700) != nil {
 		return
 	}
+	_ = os.Remove(path + resumeSuffix)
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
 		return
@@ -100,4 +103,96 @@ func Record(env host.LookupEnv, session, leg, text, command string) {
 	if err := f.Close(); werr != nil || err != nil || os.Rename(tmp, path) != nil {
 		_ = os.Remove(tmp)
 	}
+}
+
+// resumeSuffix names the mark a resume that gave the whole text leaves beside the leg's record.
+const resumeSuffix = ".resume"
+
+// PairWindow bounds the pair: a compact start comes right after the resume start of the same turn (the host compacts a resumed
+// session's first turn before it samples), so one that comes much later is a compaction of its own, which empties a context that
+// still held what the resume said.
+const PairWindow = 15 * time.Minute
+
+// RecordResume is Record for a resume that gave the whole text: besides the record it leaves a mark that lets the compact start of
+// the same turn stay silent, once (CompactRepeatsResume). Codex appends the resume's output after the compaction record, so the
+// compact start would otherwise stack the same text a second time (CRW-1180).
+func RecordResume(env host.LookupEnv, session, leg, text, command string) {
+	Record(env, session, leg, text, command)
+	path := slot(env, session, leg)
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path + resumeSuffix) // a fresh mark, never a link or a file kept from before
+	if f, err := os.OpenFile(path+resumeSuffix, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+		_ = f.Close()
+	}
+}
+
+// ClearResume ends the pair a resume left open without writing anything where none is open: a start, a clear or a compact that said
+// its text starts a new generation.
+func ClearResume(env host.LookupEnv, session, leg string) {
+	if path := slot(env, session, leg); path != "" {
+		_ = os.Remove(path + resumeSuffix)
+	}
+}
+
+// CompactRepeatsResume reports whether a compact start that would say this text is the second half of a resume that already gave
+// exactly it in the same turn, and takes the pair: the next compact is a compaction of its own. A missing, stale or other-text pair
+// answers false, so the compact says the text as it did before records.
+func CompactRepeatsResume(env host.LookupEnv, session, leg, text, command string) bool {
+	path := slot(env, session, leg)
+	if path == "" {
+		return false
+	}
+	mark := path + resumeSuffix
+	st, err := os.Lstat(mark)
+	if err != nil || !st.Mode().IsRegular() {
+		return false
+	}
+	if age := time.Since(st.ModTime()); age > PairWindow {
+		_ = os.Remove(mark)
+		return false
+	}
+	if !Delivered(env, session, leg, text, command) {
+		return false
+	}
+	// One compact takes the pair: of two that race, only the one whose removal succeeds stays silent.
+	return os.Remove(mark) == nil
+}
+
+// StartOf reads the session id and the source out of a SessionStart payload; each is "" when the payload is not an object or the
+// member is absent or not a string. It is for the legs whose text is live state (the provider line, the flag warning), which keep no
+// record at a start and need the pair only.
+func StartOf(raw string) (session, source string) {
+	var p struct {
+		Session any `json:"session_id"`
+		Source  any `json:"source"`
+	}
+	if json.Unmarshal([]byte(raw), &p) != nil {
+		return "", ""
+	}
+	session, _ = p.Session.(string)
+	source, _ = p.Source.(string)
+	return session, source
+}
+
+// SilentCompact reports whether a live-state leg that would say text on this SessionStart payload stays silent because it is the
+// compact start of the turn in which a resume said exactly that (CRW-1180). It takes the pair.
+func SilentCompact(env host.LookupEnv, raw, leg, text string) bool {
+	session, source := StartOf(raw)
+	return source == "compact" && session != "" && CompactRepeatsResume(env, session, leg, text, "")
+}
+
+// Said notes, after a live-state leg wrote text whole, what the start gave: a resume leaves the record and the mark that let the
+// compact start of the same turn stay silent, and any other start ends a pair a resume left open without writing anything.
+func Said(env host.LookupEnv, raw, leg, text string) {
+	session, source := StartOf(raw)
+	if session == "" {
+		return
+	}
+	if source == "resume" {
+		RecordResume(env, session, leg, text, "")
+		return
+	}
+	ClearResume(env, session, leg)
 }

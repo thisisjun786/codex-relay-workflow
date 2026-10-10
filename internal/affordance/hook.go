@@ -140,16 +140,18 @@ const mapAffordanceLeg = "map-affordance"
 // re-issues only the session binding and the PATH banner when the session was given exactly these pointers before; it holds them from
 // its start or its last compact. Resume alone proves nothing (the switch can be off at the start and on at the resume, and the pointers
 // name the command and the workspace size), so a resume of a session that was not given them, or given others, gets them whole. A
-// missing or unknown source always gets the whole list.
+// missing or unknown source always gets the whole list, except the compact start that follows, in the same turn, a resume that gave the
+// whole list (CRW-1180): that one adds nothing, once.
 func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (string, func()) {
-	cwd, sid, resumed := fallbackCwd, "", false
+	cwd, sid, source := fallbackCwd, "", ""
 	if p := object(text.Trim(raw)); p != nil {
 		if s, ok := p["cwd"].(string); ok && s != "" {
 			cwd = s
 		}
 		sid, _ = p["session_id"].(string)
-		resumed = p["source"] == "resume"
+		source, _ = p["source"].(string)
 	}
+	resumed := source == "resume"
 	lines := []harness.ContextSection{}
 	if validSessionID(sid) {
 		lines = append(lines, harness.ContextSection{Text: RenderSessionBinding(sid, env), Required: true})
@@ -179,13 +181,23 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 	}
 	given := strings.Join(identity, "\n\n")
 	record := func() {
-		if sid != "" {
+		switch {
+		case sid == "":
+		case resumed:
+			guidancerecord.RecordResume(env, sid, mapAffordanceLeg, given, command)
+		default:
 			guidancerecord.Record(env, sid, mapAffordanceLeg, given, command)
 		}
 	}
 	if resumed && sid != "" && guidancerecord.Delivered(env, sid, mapAffordanceLeg, given, command) {
 		lines = append(lines, banner...)
-		return harness.ContextOutputSections("SessionStart", lines), func() {}
+		// This resume gave the binding only: a pair an earlier resume left open no longer describes what the context holds.
+		return harness.ContextOutputSections("SessionStart", lines), func() { guidancerecord.ClearResume(env, sid, mapAffordanceLeg) }
+	}
+	// CRW-1180: the compact start right after a resume that gave the whole list, in the same turn, adds nothing: Codex keeps the resume's
+	// output after the compaction record, so saying it again stacks the list twice.
+	if source == "compact" && sid != "" && guidancerecord.CompactRepeatsResume(env, sid, mapAffordanceLeg, given, command) {
+		return "", func() {}
 	}
 	for i, pointer := range pointers {
 		lines = append(lines, harness.ContextSection{Text: pointer, Required: identity[i] == RenderLoopAffordance(words)})

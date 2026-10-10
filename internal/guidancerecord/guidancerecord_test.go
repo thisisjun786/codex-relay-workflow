@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func envFor(home string) func(string) (string, bool) {
@@ -107,5 +108,54 @@ func TestRefuseAccountHomeKeepsRecordsOutOfTheRealHome(t *testing.T) {
 	}
 	if p := slot(real, "s", "leg"); p == "" {
 		t.Fatal("the guard outlived its cleanup")
+	}
+}
+
+// CRW-1180: a resume that gave the whole text lets the compact that follows it in the same turn stay silent, once.
+func TestCompactAfterAResumeRepeatsOnlyOncePerResume(t *testing.T) {
+	env := envFor(t.TempDir())
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a compact with no record was taken for the pair")
+	}
+	Record(env, "s", "leg", "a", "") // a start or a compact: the whole text, no resume
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a compact after a start without a resume was taken for the pair")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	if CompactRepeatsResume(env, "s", "leg", "b", "") || CompactRepeatsResume(env, "t", "leg", "a", "") || CompactRepeatsResume(env, "s", "other", "a", "") {
+		t.Fatal("a compact with other text, session or leg was taken for the pair")
+	}
+	if !CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("the compact right after the resume was not taken for the pair")
+	}
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a second compact was taken for the same pair")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	Record(env, "s", "leg", "a", "") // a later whole output starts a new generation
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a resume's mark survived a later whole output")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	ClearResume(env, "s", "leg")
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a cleared mark was taken for the pair")
+	}
+}
+
+// A compact long after the resume is a compaction of its own: what the resume said is no longer in the context.
+func TestCompactLongAfterTheResumeIsNotThePair(t *testing.T) {
+	env := envFor(t.TempDir())
+	RecordResume(env, "s", "leg", "a", "")
+	path := slot(env, "s", "leg") + ".resume"
+	old := time.Now().Add(-2 * PairWindow)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a compact after the window was taken for the pair")
+	}
+	if _, err := os.Lstat(path); err == nil {
+		t.Fatal("a stale mark was left behind")
 	}
 }

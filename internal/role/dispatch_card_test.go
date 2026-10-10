@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf16"
 )
@@ -83,5 +84,54 @@ func TestDispatchAliasOracleMembershipAndPassthrough(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(m["CRW_HOME"], StoreFile)); !os.IsNotExist(err) {
 		t.Fatal("card wrote settings")
+	}
+}
+
+// CRW-1180 (S5-R2-F2): the first cell the card prints is run as printed, so its model is one the local catalog lists, or none: with no
+// alias verified the cell sets no model and the role default applies.
+func TestDispatchCardFirstCellNeverPinsAModelTheCatalogDoesNotList(t *testing.T) {
+	for _, v1 := range []bool{false, true} {
+		for _, tc := range []struct {
+			name    string
+			catalog string // "" writes none
+			model   string // "" means the cell carries no model key
+		}{
+			{"no catalog", "", ""},
+			{"empty catalog", `{"models":[]}`, ""},
+			{"only unrelated models", `{"models":[{"id":"someone/else"}]}`, ""},
+			{"deepseek listed", `{"models":[{"id":"command-code/deepseek-deepseek-v4.1-flash"}]}`, "command-code/deepseek-deepseek-v4.1-flash"},
+			{"deepseek hidden, swe2 listed", `{"models":[{"id":"command-code/deepseek-deepseek-v4.1-flash","disabled":true},{"id":"devin/swe-2"}]}`, "devin/swe-2"},
+			{"only luna listed", `{"models":[{"id":"gpt-6-luna"}]}`, "gpt-6-luna"},
+		} {
+			t.Run(tc.name+map[bool]string{false: "", true: " v1"}[v1], func(t *testing.T) {
+				m, env := fallbackTestEnv(t)
+				if tc.catalog != "" {
+					if err := os.WriteFile(m["CODEX_MODELS_CACHE_PATH"], []byte(tc.catalog), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if v1 {
+					m["CRW_SPAWN_V1"] = "1"
+				}
+				got, err := RenderDispatchCard(env)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cell := strings.SplitN(got, "\nAliases (", 2)[0]
+				if tc.model == "" {
+					if strings.Contains(cell, "model:") {
+						t.Fatalf("the first cell pins a model with none verified:\n%s", got)
+					}
+					if !strings.Contains(cell, "role default") {
+						t.Fatalf("the card does not say the cell uses the role default:\n%s", got)
+					}
+				} else if !strings.Contains(cell, `model:"`+tc.model+`"`) || strings.Count(cell, "model:") != 1 {
+					t.Fatalf("the first cell does not use the listed model %s:\n%s", tc.model, got)
+				}
+				if len(utf16.Encode([]rune(got))) > 1200 {
+					t.Fatal("card over budget")
+				}
+			})
+		}
 	}
 }

@@ -214,6 +214,66 @@ func TestHookInputPolicyAndObservation(t *testing.T) {
 	}
 }
 
+// CRW-1180 (S4-F4b): the provider line is said once per generation. A resume says it, and the compact of the same turn does not repeat
+// it; startup, clear, a later compact, another session's compact and a line that changed between them say it.
+func TestHookCompactRightAfterAResumeDoesNotRepeatTheLine(t *testing.T) {
+	path := providerPath(t, "printf '%s' '{\"proxy\":{\"running\":true}}'")
+	start := func(session, source string) string {
+		t.Helper()
+		var out bytes.Buffer
+		if RunHook(context.Background(), strings.NewReader(`{"session_id":"`+session+`","source":"`+source+`"}`), &out, os.LookupEnv) != 0 {
+			t.Fatal("exit")
+		}
+		return out.String()
+	}
+	line := start("s1", "startup")
+	if !strings.Contains(line, `"hookEventName":"SessionStart"`) {
+		t.Fatal(line)
+	}
+	if got := start("s1", "resume"); got != line {
+		t.Fatalf("resume = %q", got)
+	}
+	if got := start("s1", "compact"); got != "" {
+		t.Fatalf("compact in the turn of a resume repeated the line: %q", got)
+	}
+	if got := start("s1", "compact"); got != line {
+		t.Fatalf("the next compact = %q", got)
+	}
+	for _, source := range []string{"startup", "clear", "compact", ""} {
+		if got := start("s2", source); got != line {
+			t.Fatalf("source %q = %q", source, got)
+		}
+	}
+	start("s3", "resume")
+	start("s3", "clear")
+	if got := start("s3", "compact"); got != line {
+		t.Fatalf("compact after a clear = %q", got)
+	}
+	start("s4", "resume")
+	if got := start("s5", "compact"); got != line {
+		t.Fatalf("another session's compact = %q", got)
+	}
+	// The bridge stopping between the resume and the compact is a different line, and it is said.
+	start("s6", "resume")
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":false}}'\n"), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if got := start("s6", "compact"); got == "" || got == line {
+		t.Fatalf("compact after the line changed = %q", got)
+	}
+	// Input that names no session cannot be matched to a resume.
+	for _, raw := range []string{"", "not JSON", `{"source":"compact"}`, `{"session_id":"a b","source":"compact"}`} {
+		var out bytes.Buffer
+		RunHook(context.Background(), strings.NewReader(raw), &out, os.LookupEnv)
+		if out.Len() == 0 {
+			t.Fatalf("%q was silenced", raw)
+		}
+	}
+}
+
 func TestHookCancellationHasNoLateEffects(t *testing.T) {
 	providerPath(t, "exit 0")
 	in, hold, err := os.Pipe()

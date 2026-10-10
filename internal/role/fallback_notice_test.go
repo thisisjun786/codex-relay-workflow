@@ -108,7 +108,8 @@ func TestFallbackNoticeHookResumeRepeatsOnlyWhatChanged(t *testing.T) {
 	if card := run(resume); card == "" {
 		t.Error("resume after the host card changed answered nothing")
 	}
-	// A compact empties the context: it answers whatever the record says.
+	// A compact empties the context: it answers whatever the record says (here after a start, not right after a resume's whole answer).
+	run(`{"session_id":"s","source":"startup"}`)
 	if got := run(`{"session_id":"s","source":"compact"}`); got == "" {
 		t.Error("compact answered nothing")
 	}
@@ -209,5 +210,54 @@ func TestFallbackNoticeLeafAndNonObjectStartups(t *testing.T) {
 				t.Fatalf("card=%v want %v: %q", got, c.card, out.String())
 			}
 		})
+	}
+}
+
+// CRW-1180 (S4-F4b): a resume that gave the whole notice and the compaction of the same turn stack the notice twice, because the compact
+// start answers whatever the record says. The compact right after a whole resume answer stays silent, once; a later compact, a compact after
+// a changed notice and a compact that no resume answered before it say the notice.
+func TestFallbackNoticeHookCompactAfterAWholeResumeAnswerIsSilentOnce(t *testing.T) {
+	m, env := fallbackTestEnv(t)
+	run := func(raw string) string {
+		var out strings.Builder
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), &out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return out.String()
+	}
+	resume, compact := `{"session_id":"s","source":"resume"}`, `{"session_id":"s","source":"compact"}`
+	whole := run(`{"session_id":"s"}`)
+	if whole == "" {
+		t.Fatal("baseline notice is empty")
+	}
+	// The session started, then was resumed with the record in place: the resume is silent, so a compact must say the notice.
+	if got := run(resume); got != "" {
+		t.Fatalf("resume answered %q", got)
+	}
+	if got := run(compact); got != whole {
+		t.Errorf("compact after a silent resume answered %q", got)
+	}
+	// A resume of a session never given the notice answers whole; the compact of the same turn adds nothing.
+	if got := run(`{"session_id":"n","source":"resume"}`); got != whole {
+		t.Fatalf("resume of a session never given the notice answered %q", got)
+	}
+	if got := run(`{"session_id":"n","source":"compact"}`); got != "" {
+		t.Errorf("compact in the same turn as a whole resume repeated the notice: %q", got)
+	}
+	if got := run(`{"session_id":"n","source":"compact"}`); got != whole {
+		t.Errorf("the next compact did not say the notice: %q", got)
+	}
+	// The notice changing between the resume and the compact is said.
+	if got := run(`{"session_id":"c","source":"resume"}`); got != whole {
+		t.Fatalf("resume answered %q", got)
+	}
+	m["CRW_SPAWN_V1"] = "1"
+	if got := run(`{"session_id":"c","source":"compact"}`); got == "" || got == whole {
+		t.Errorf("compact after the notice changed answered %q", got)
+	}
+	// Another session's compact is not the pair.
+	run(`{"session_id":"d","source":"resume"}`)
+	if got := run(`{"session_id":"e","source":"compact"}`); got == "" {
+		t.Error("another session's compact was silenced")
 	}
 }
