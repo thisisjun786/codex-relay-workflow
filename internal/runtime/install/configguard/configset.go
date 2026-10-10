@@ -206,6 +206,8 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (out ConfigSetO
 		if err != nil {
 			return ConfigSetOutcome{}, err
 		}
+		// The effect is about the file the edit is published to, whatever config.toml names later (CRW-1153).
+		effect.Target, _ = configLockPathsRealPath(path)
 		in.Effects = []intentEffect{effect}
 		// config.toml changes only on an intent known to be durable (CRW-1153); until then nothing depends on it.
 		if err := in.publish("intent"); err != nil {

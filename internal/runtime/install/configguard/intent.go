@@ -38,7 +38,9 @@ import (
 // not make would have the deactivation or unset undo the user's setting, and it is never forgotten either: it is kept as a
 // pending entry of the intent, carried from intent to intent and reported by every command, until it is resolved. It is
 // resolved when it is no longer in place (the flag is off, the key no longer holds the value crw was writing), by 'crw install
-// config unset <key> --release' for a key, or by removing the intent file, which every report names.
+// config unset <key> --release' for a key, or by removing the intent file, which every report names. Only the file the effect
+// was about can show that: while config.toml names another file, or does not decode, or holds the key in a form crw does not
+// read, the entry stays.
 
 // InstallIntentName is the intent file beside the install manifest.
 const InstallIntentName = ".crw-install.intent.json"
@@ -81,8 +83,9 @@ type intentEffect struct {
 	// file holds it in a form crw does not read.
 	PreOn  *bool `json:"preOn,omitempty"`
 	PostOn *bool `json:"postOn,omitempty"`
-	// Target is the file the effect was about: the file config.toml resolved to when the effect ended (the CLI may replace
-	// config.toml itself, CRW-1144), the intent's Target when it did not end, and for a pending entry the file it is kept for.
+	// Target is the file the effect was about: the file config.toml resolved to when the effect was attempted, then the file
+	// it resolved to when the effect ended (the CLI may replace config.toml itself, CRW-1144), and for a pending entry the file
+	// it is kept for. Empty in an intent written before it was recorded: the intent's Target.
 	Target string `json:"target,omitempty"`
 }
 
@@ -404,10 +407,13 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 		}
 		return flags[name] == FeatureEnabled, nil
 	}
-	keyInPlace := func(e intentEffect) bool {
+	// keyState reports whether key effect e is in place in config.toml, and whether that could be read at all: a file that
+	// does not decode, or a key written in a form crw does not read, is no evidence that crw's value is gone.
+	keyState := func(e intentEffect) (inPlace, readable bool) {
 		live, editable := semanticRaw(string(content), e.Table, e.Key)
-		return editable && live != nil && (tomledit.SameValue(*live, e.Applied) || *live == e.Applied)
+		return editable && live != nil && (tomledit.SameValue(*live, e.Applied) || *live == e.Applied), editable
 	}
+	const unreadable = "config.toml does not decode, or holds the key in a form crw does not read, so whether it still holds the value is unknown"
 	var recorded []string
 	var pending []intentEffect
 	keep := func(e intentEffect, why string) {
@@ -421,14 +427,25 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 		pending = append(pending, e)
 		recorded = append(recorded, fmt.Sprintf("%s (%s; kept pending in %s until it is resolved: crw does not treat it as its own)", e.Name, why, intentPath(home)))
 	}
+	// elsewhere is why an effect about a file config.toml no longer names is kept.
+	elsewhere := func(e intentEffect) string {
+		about := e.Target
+		if about == "" {
+			about = in.Target
+		}
+		return "it was about " + about + ", which config.toml no longer names"
+	}
 	// The pending entries an earlier recovery kept stay until they are no longer in place. One about another file, and a flag
 	// a command that cannot read the flags meets, cannot be checked and stays.
 	for _, e := range in.Pending {
 		switch {
 		case !onFile(e.Target):
-			keep(e, "it was about "+e.Target+", which config.toml no longer names")
+			keep(e, elsewhere(e))
 		case e.Kind == intentKey:
-			if keyInPlace(e) {
+			switch inPlace, readable := keyState(e); {
+			case !readable:
+				keep(e, unreadable)
+			case inPlace:
 				keep(e, "set, but not shown to be crw's")
 			}
 		case e.Kind == intentFlag && run == nil:
@@ -454,6 +471,14 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 			if f.PriorEnabled || f.EnabledByCodexclaw {
 				continue
 			}
+			// An effect about another file is kept whatever the file config.toml names now holds: that file is no evidence of
+			// what crw's run left in the one it ran on. Only a done record showing crw's run left the flag off there clears it.
+			if !effectFile(e) {
+				if !proof.notFlag[i] {
+					keep(e, elsewhere(e))
+				}
+				continue
+			}
 			if run == nil {
 				return nil, fmt.Errorf("an interrupted 'crw install features enable' is pending in %s; run 'crw install features enable' or 'disable' first, which can read the flags it changed. Nothing was changed", intentPath(home))
 			}
@@ -464,8 +489,6 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 			switch {
 			case !on:
 				continue
-			case !effectFile(e):
-				keep(e, "on in the file config.toml names now, but the interrupted change was about another file")
 			case proof.flag[i]:
 				f.EnabledByCodexclaw, f.EnableFailed, f.Failure = true, false, nil
 				m.Flags[e.Name] = f
@@ -479,12 +502,14 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 				keep(e, "on, but not shown to be crw's")
 			}
 		case intentKey:
-			if !keyInPlace(e) {
-				continue
-			}
+			inPlace, readable := keyState(e)
 			switch {
 			case !effectFile(e):
-				keep(e, "set in the file config.toml names now, but the interrupted change was about another file")
+				keep(e, elsewhere(e))
+			case !readable:
+				keep(e, unreadable)
+			case !inPlace:
+				continue
 			case !proof.key[i]:
 				keep(e, "set, but not shown to be crw's")
 			default:

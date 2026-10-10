@@ -80,8 +80,8 @@ func TestDoneFlagTheRunnerLeftOffIsNotAdopted(t *testing.T) {
 }
 
 // CRW-1153: an activation stopped before its manifest, then config.toml retargeted to another file the user's flags are on in:
-// the recovery records nothing on the new file, the deactivation leaves its flags, and the effects on the original file are
-// kept pending.
+// the recovery records nothing on the new file, the deactivation leaves its flags, and the effects on the original file (the
+// four flags and the managed key) are kept pending.
 func TestRetargetedFlagRecoveryKeepsPendingAndLeavesTheNewFile(t *testing.T) {
 	home, path, deps, state := txActivationFixture(t)
 	a, b := filepath.Join(home, "a.toml"), filepath.Join(home, "b.toml")
@@ -109,8 +109,8 @@ func TestRetargetedFlagRecoveryKeepsPendingAndLeavesTheNewFile(t *testing.T) {
 	if activationRead(t, b) != user || !state["multi_agent"] {
 		t.Fatalf("the recovery carried the flags of a.toml to b.toml: %+v %q", r, activationRead(t, b))
 	}
-	if names := r4PendingNames(t, home); len(names) != 4 {
-		t.Fatalf("the flag effects on a.toml are not kept pending: %v", names)
+	if names := r4PendingNames(t, home); len(names) != 5 {
+		t.Fatalf("the effects on a.toml are not kept pending: %v", names)
 	}
 	if len(r.Recovered) == 0 || !strings.Contains(strings.Join(r.Recovered, "\n"), "pending") {
 		t.Fatalf("the deactivation does not report the pending effects: %+v", r)

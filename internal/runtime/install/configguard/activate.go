@@ -494,6 +494,9 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 			return stop(e)
 		}
 		in.Effects[i].PreHash, in.Effects[i].PreOn = fp, on
+		// The effect is about the file config.toml names when it runs; a recovery after config.toml was retargeted keeps it for
+		// that file (CRW-1153).
+		in.Effects[i].Target, _ = configLockPathsRealPath(path)
 		if e = in.attempt(i); e != nil {
 			return stop(e)
 		}
@@ -556,6 +559,7 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 		// from a user's later edit of the same key (CRW-1153).
 		in.Effects[i].PreHash = fingerprintBytes(before)
 		in.Effects[i].PostHash = fingerprintBytes([]byte(res.Content))
+		in.Effects[i].Target, _ = configLockPathsRealPath(path)
 		if e = in.attempt(i); e != nil {
 			return finish(e)
 		}
