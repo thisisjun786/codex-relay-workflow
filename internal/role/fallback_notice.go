@@ -87,10 +87,8 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if err != nil || payload == nil {
 		return 0
 	}
-	if object, ok := payload.(map[string]any); ok {
-		if id, ok := object["agent_id"].(string); ok && id != "" {
-			return 0
-		}
+	if !fallbackRootStartup(payload) {
+		return 0
 	}
 	answer, err := SessionFallbackNotice(env)
 	if ctx.Err() != nil {
@@ -100,4 +98,24 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 		_, _ = io.WriteString(out, answer)
 	}
 	return 0
+}
+
+// fallbackRootStartup is true for a SessionStart payload that is an object naming its session and no child. A child is a leaf
+// when it carries a non-empty string agent_id or agent_type, the same test the spawn hook applies to a spawner
+// (spawn.IsSubagentSpawner), and gets no card. A payload that is not an object, or names no session, is not a session start
+// the card can be addressed to, so it gets none either (CRW-1130; the oracle gave agent_type-only children the root card and
+// every non-null primitive the dispatch card).
+func fallbackRootStartup(payload any) bool {
+	object, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	if id, _ := object["agent_id"].(string); id != "" {
+		return false
+	}
+	if kind, _ := object["agent_type"].(string); kind != "" {
+		return false
+	}
+	session, _ := object["session_id"].(string)
+	return session != ""
 }
