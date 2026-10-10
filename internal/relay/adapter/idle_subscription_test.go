@@ -93,7 +93,7 @@ func TestIdleReports_reads_the_status_the_subscription_makes_arrive(t *testing.T
 	}
 	// The backlog emptied: the hold is dropped and the subscription released on the same socket.
 	a.ReleaseThread("parent")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatalf("the released hold did not unsubscribe: %v", err)

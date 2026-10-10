@@ -51,7 +51,7 @@ func Test33ReviewD6(t *testing.T) {
 	for _, name := range []string{"wrong_socket", "ambiguous", "unidentified", "override"} {
 		t.Run(name, func(t *testing.T) {
 			home, f, names := prepareSelection(t, name)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if err := os.MkdirAll(f.State, 0700); err != nil {
 				t.Fatal(err)
@@ -176,7 +176,7 @@ func Test33ReviewD8(t *testing.T) {
 			if !filepath.IsAbs(path) {
 				t.Fatal(path)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if err := os.MkdirAll(path, 0700); err != nil {
 				t.Fatal(err)

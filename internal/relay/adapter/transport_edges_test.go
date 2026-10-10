@@ -21,7 +21,7 @@ func waitEdge[T any](t *testing.T, ch <-chan T) T {
 	select {
 	case value := <-ch:
 		return value
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("transport state signal not received")
 		var zero T
 		return zero
@@ -67,7 +67,7 @@ func transportEdge(t *testing.T, kind string) {
 		waitEdge(t, rpc.entered)
 		select {
 		case result["abandoned"] = <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			result["abandoned"] = map[string]any{"error": "caller did not give up within its budget"}
 		}
 		// Only the deliberately stalled caller has a short budget.

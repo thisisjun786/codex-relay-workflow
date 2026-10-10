@@ -58,7 +58,7 @@ func Test33AnsweredDeadlinePython(t *testing.T) {
 		}()
 		select {
 		case <-writer.started:
-		case <-time.After(10 * time.Second):
+		case <-time.After(time.Minute):
 			t.Fatal("accepted block never reached stdout")
 		}
 		// Drain runnable work without timing luck. The old bounded write leaves

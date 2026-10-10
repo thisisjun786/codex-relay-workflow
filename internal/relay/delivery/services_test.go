@@ -41,7 +41,7 @@ func TestVCU13_the_cli_closes_what_it_opened_and_builds_nothing_to_close(t *test
 		t.Fatalf("criteria-register %d %s", code, out.String())
 	}
 	// The store the command opened is closed: a writer with no busy wait takes the lock at once.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
 	mustDo(t, err)

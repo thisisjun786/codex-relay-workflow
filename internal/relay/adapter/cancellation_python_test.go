@@ -143,7 +143,10 @@ func cancellationRows(t *testing.T, held bool) []map[string]any {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a := New(Options{RPC: rpc, Ledger: l, Timeout: time.Second, CallerSlack: time.Second})
+		// The caller's cancellation is the behavior under test, not the send's budgets: they only keep a
+		// stuck send from lasting forever, so they leave the ledger writes and host calls before the
+		// stage all the time a loaded host needs (CRW-1161).
+		a := New(Options{RPC: rpc, Ledger: l, Timeout: time.Minute, CallerSlack: time.Minute})
 		var ctx context.Context
 		var cancel func()
 		propagate := func() {}

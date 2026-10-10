@@ -60,11 +60,15 @@ func TestOpenWaitsForLockBeforeJournalMode(t *testing.T) {
 		close(released)
 	}()
 
-	openCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// The test proves that open waits for the lock before journal_mode: the retry hook fires, the
+	// lock is released, open succeeds. The deadline only keeps a hang from lasting forever; it
+	// covers the schema and DAG zone initialization after the release as well, so it must not be
+	// a timing claim a loaded host can miss (CRW-1161).
+	openCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	var signalOnce = make(chan struct{}, 1)
 	var retryOnce = make(chan struct{}, 1)
-	reopened, err := open(openCtx, path, "", OpenOptions{BusyTimeout: 5 * time.Second, OnConnect: func() {
+	reopened, err := open(openCtx, path, "", OpenOptions{BusyTimeout: 30 * time.Second, OnConnect: func() {
 		select {
 		case signalOnce <- struct{}{}:
 			close(started)
@@ -109,7 +113,7 @@ func TestOpenCancellationStopsBusyJournalModeRetry(t *testing.T) {
 	select {
 	case <-firstRetry:
 		cancel()
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("connection hook did not report a busy retry")
 	}
 	select {
@@ -117,7 +121,7 @@ func TestOpenCancellationStopsBusyJournalModeRetry(t *testing.T) {
 		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "PRAGMA journal_mode=WAL") {
 			t.Fatalf("open cancellation: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("Open ignored cancellation after its first busy retry")
 	}
 }

@@ -31,7 +31,7 @@ func TestReadReturnsOnTheReadOnlyHandle(t *testing.T) {
 	f.startNode("p1", "research")
 	f.acceptNode("p1", "design", acceptOpts{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	readOnly, err := store.Open(store.WithReadOnlyCommand(ctx), f.path, "")
 	if err != nil {

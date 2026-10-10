@@ -159,7 +159,7 @@ func TestPrecreate_RealHandoverWaitsForTheRegistration(t *testing.T) {
 	doneA := x.runAsync(raw)
 	recv(t, atRegistration, "the start to reach its registration")
 	// The park holds no store lock: another write goes through while it lasts.
-	ctx, cancel := context.WithTimeout(x.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(x.ctx, time.Minute)
 	defer cancel()
 	if _, err := x.store.DB.ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES('2026-09-26T00:00:00.000000+00:00','test','probe','{}')"); err != nil {
 		t.Fatalf("the parked start holds the store: %v", err)

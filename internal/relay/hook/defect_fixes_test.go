@@ -232,6 +232,7 @@ func probeDial(endpoint string) syscall.Errno {
 func Test33D2FaultRowPython(t *testing.T) {
 	for _, kind := range []string{"panic", "error"} {
 		t.Run(kind, func(t *testing.T) {
+			loadProofDeadlines(t)
 			home := hookHome(t, 5)
 			t.Setenv("CODEX_HOME", home)
 			payload := `{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"DONE","transcript_path":` + strconv.Quote(filepath.Join(home, "transcript.jsonl")) + `}`
