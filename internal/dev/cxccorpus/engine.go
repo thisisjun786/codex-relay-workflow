@@ -171,6 +171,14 @@ func InstallStubs(c *Case, g Given, install func(name string) error) error {
 		stubs[name] = stub
 	}
 	for name, stub := range stubs {
+		// a stub is a file of the stubs directory: a name that leads out of it is refused, and so is
+		// a place of it that lies in the account's real home, before the installer writes (CRW-1186)
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
+			return fmt.Errorf("stub name %q is not a file name of the stubs directory", name)
+		}
+		if err := homeguard.Refuse(filepath.Join(c.Root, "stubs", name)); err != nil {
+			return err
+		}
 		if err := install(name); err != nil {
 			return err
 		}
@@ -573,6 +581,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 			steps = append(steps, []string{"worktree", "add", "-q", "-b", wt.Branch, path})
 		}
 		for _, args := range steps {
+			if err := refuseGitDirs(c, rt, ws); err != nil {
+				return err
+			}
 			cmd := exec.Command("/bin/sh", append([]string{"-c", umask022, rt.GitPath()}, args...)...)
 			cmd.Dir = ws
 			cmd.Env = c.Env
@@ -611,6 +622,45 @@ func setUp(c *Case, g Given, rt Runtime) error {
 			return err
 		}
 		if err := os.Chtimes(path, when, when); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refuseGitDirs refuses a git command whose repository metadata lies in the account's real home. The
+// working directory is guarded on its own, but git writes where its metadata is: ws/.git may be a
+// link or a file ("gitdir: ...") that leads there, and the common directory of a worktree can name
+// another place. The places are read the way git reads them and each is guarded before the command
+// runs (CRW-1186). A directory that holds no repository yet is judged by the name ws/.git alone.
+func refuseGitDirs(c *Case, rt Runtime, ws string) error {
+	dotGit := filepath.Join(ws, ".git")
+	if err := homeguard.Refuse(dotGit); err != nil {
+		return err
+	}
+	if raw, err := os.ReadFile(dotGit); err == nil {
+		if line, _, _ := strings.Cut(string(raw), "\n"); strings.HasPrefix(line, "gitdir:") {
+			dir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(ws, dir)
+			}
+			if err := homeguard.Refuse(dir); err != nil {
+				return err
+			}
+		}
+	}
+	cmd := exec.Command("/bin/sh", "-c", umask022, rt.GitPath(), "rev-parse", "--absolute-git-dir", "--git-common-dir")
+	cmd.Dir = ws
+	cmd.Env = c.Env
+	out, err := cmd.Output()
+	if err != nil {
+		return nil // no repository yet, or none git can read: nothing to resolve
+	}
+	for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(ws, dir)
+		}
+		if err := homeguard.Refuse(dir); err != nil {
 			return err
 		}
 	}

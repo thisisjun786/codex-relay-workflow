@@ -172,7 +172,12 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			return fail(fmt.Errorf("the step's HOME %q is not under the case root %s: no runtime is linked there", home, c.Root))
 		}
 		link := filepath.Join(home, runtimeBin)
-		if err := homeguard.RefuseAll(home, link); err != nil {
+		// the link is made, or an existing one is read as it stands: its own place is judged, and
+		// what it leads to (the build under test may be a file in a managed checkout) is only read
+		if err := homeguard.Refuse(home); err != nil {
+			return fail(fmt.Errorf("the runtime link under HOME %q: %w", home, err))
+		}
+		if err := homeguard.RefuseEntry(link); err != nil {
 			return fail(fmt.Errorf("the runtime link under HOME %q: %w", home, err))
 		}
 		if err := resolvedWithin(c.Root, filepath.Dir(link)); err != nil {

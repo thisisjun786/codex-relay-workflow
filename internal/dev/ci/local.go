@@ -163,6 +163,17 @@ func Local(args []string, stdout, stderr io.Writer) int {
 // localVerify answers a reused record when every key matches, or runs the table and returns the
 // record it made.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	// CRW-1186: what the run writes outside the clean worktree is the record (and its siblings) and the
+	// probes' directories in TMPDIR; neither lands in the account's real home, and nothing is made
+	// before both are known. A work root is judged again where it is made (localWorkRoot).
+	if opts.Record != "" {
+		if err := localCheckRecordDestination(opts.Root, opts.Record); err != nil {
+			return verificationRecord{}, false, err
+		}
+	}
+	if err := homeguard.Refuse(localTempDir()); err != nil {
+		return verificationRecord{}, false, fmt.Errorf("TMPDIR: %w", err)
+	}
 	localScrubGitEnv()
 	opts.HeavyGate = localAbsGate(opts.HeavyGate)
 	// Replacement refs (refs/replace) would let another object stand in for a commit; the run reads the

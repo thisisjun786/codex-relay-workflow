@@ -214,3 +214,36 @@ func TestGeneratePluginRoot_refusesALinkInsideTheDestinationThatLeadsIntoTheAcco
 		})
 	}
 }
+
+// CRW-1186 evaluation d3: the build under test may be an executable in a managed checkout below the
+// account's .codex. The runtime link a safe case root holds leads there, and a second step's seed only
+// reads that link (digest comparison): it is not a write into the account home, so it is not refused.
+// The link's own place and the case root are still guarded.
+func TestSeed_aRuntimeLinkToABuildInAManagedCheckoutIsReadNotRefused(t *testing.T) {
+	account := fakeAccount(t)
+	checkout := filepath.Join(account, ".codex", "worktrees", "w", "dist")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := writeScript(t, checkout, "crw", "echo build\n")
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	env := []string{"HOME=" + home, "CODEX_HOME=" + filepath.Join(home, "codex")}
+	plan := seedPlan{Switch: SwitchOff, Runtime: true, CRW: build}
+	c := &cxccorpus.Case{Root: root}
+	for step := 1; step <= 2; step++ {
+		if _, err := plan.seed(c, env); err != nil {
+			t.Fatalf("seed %d: %v", step, err)
+		}
+	}
+	if target, _ := os.Readlink(filepath.Join(home, runtimeBin)); target != build {
+		t.Errorf("the runtime link leads to %q, want %q", target, build)
+	}
+	// the link's own place is still guarded: a case root in the account home is refused
+	protected := filepath.Join(account, ".codex", "case")
+	if err := os.MkdirAll(protected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := plan.seed(&cxccorpus.Case{Root: protected}, []string{"HOME=" + filepath.Join(protected, "home")})
+	wantRefusal(t, err)
+}

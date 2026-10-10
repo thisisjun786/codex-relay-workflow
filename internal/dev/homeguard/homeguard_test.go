@@ -318,3 +318,84 @@ func TestMkdirAllRefusesAProtectedParentItWouldMake(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// RefuseEntry judges the place of an entry, not what a link that is the entry leads to: a link in a
+// safe directory that leads into the account's home is not refused (it is made, or read, there), while
+// the entry in a protected directory, or below a link that leads into one, is.
+func TestRefuseEntryJudgesTheEntryNotItsTarget(t *testing.T) {
+	home := t.TempDir()
+	defer SetAccountHome(home)()
+	protected := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(filepath.Join(protected, "worktrees"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	safe := t.TempDir()
+	toBuild := filepath.Join(safe, "crw")
+	if err := os.Symlink(filepath.Join(protected, "worktrees"), toBuild); err != nil {
+		t.Fatal(err)
+	}
+	toDir := filepath.Join(safe, "dir")
+	if err := os.Symlink(protected, toDir); err != nil {
+		t.Fatal(err)
+	}
+	var refusal *Error
+	if err := RefuseEntry(toBuild); err != nil {
+		t.Errorf("a link in a safe directory: %v", err)
+	}
+	if err := Refuse(toBuild); !errors.As(err, &refusal) {
+		t.Errorf("Refuse follows the link and refuses it, got %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(protected, "x"),
+		protected,
+		filepath.Join(toDir, "x"),
+		toDir + "/../.codex/x",
+		filepath.Join(protected, "new", "x"),
+	} {
+		if err := RefuseEntry(path); !errors.As(err, &refusal) {
+			t.Errorf("%s: want a refusal, got %v", path, err)
+		}
+	}
+	if err := RefuseEntry(filepath.Join(safe, "a", "b")); err != nil {
+		t.Errorf("a safe entry below a missing directory: %v", err)
+	}
+}
+
+// RefuseUnlessWithin lets a managed checkout below the account's .codex keep its own output and
+// nothing else of the protected directories.
+func TestRefuseUnlessWithinKeepsOnlyTheCheckoutsOwnOutput(t *testing.T) {
+	home := t.TempDir()
+	defer SetAccountHome(home)()
+	checkout := filepath.Join(home, ".codex", "worktrees", "w")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "crw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".codex", "crw"), filepath.Join(checkout, "out")); err != nil {
+		t.Fatal(err)
+	}
+	var refusal *Error
+	for _, path := range []string{filepath.Join(checkout, "r.json"), filepath.Join(checkout, "a", "b", "r.json")} {
+		if err := RefuseUnlessWithin(checkout, path); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".codex", "crw", "switch.json"),
+		checkout + "/../../crw/switch.json",
+		filepath.Join(checkout, "out", "switch.json"),
+	} {
+		if err := RefuseUnlessWithin(checkout, path); !errors.As(err, &refusal) {
+			t.Errorf("%s: want a refusal, got %v", path, err)
+		}
+	}
+	// a root that is not below a protected directory has no exception, nor has the protected directory itself
+	if err := RefuseUnlessWithin(home, filepath.Join(home, ".codex", "crw", "switch.json")); !errors.As(err, &refusal) {
+		t.Errorf("the account home as the root: want a refusal, got %v", err)
+	}
+	if err := RefuseUnlessWithin(filepath.Join(home, ".codex"), filepath.Join(home, ".codex", "crw", "switch.json")); !errors.As(err, &refusal) {
+		t.Errorf("the protected directory as the root: want a refusal, got %v", err)
+	}
+}

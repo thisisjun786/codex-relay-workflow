@@ -134,6 +134,16 @@ func (e *Error) Error() string {
 // does. A path that cannot be resolved (a link cycle, more links than the kernel follows) is refused
 // with an error that is not an *Error: nothing can be said of where a write would land.
 func Refuse(path string) error {
+	err := check(path)
+	var refusal *Error
+	if errors.As(err, &refusal) {
+		note(path)
+	}
+	return err
+}
+
+// check is Refuse without the record of a refusal.
+func check(path string) error {
 	protected := Protected()
 	if len(protected) == 0 {
 		return nil
@@ -156,8 +166,101 @@ func Refuse(path string) error {
 	for _, candidate := range []string{abs, given, cleaned} {
 		for _, dir := range protected {
 			if within(dir, candidate) {
-				note(path)
 				return &Error{Path: path, Resolved: given, Home: dir}
+			}
+		}
+	}
+	return nil
+}
+
+// RefuseEntry is Refuse for a directory entry that is made, replaced or only read as it stands, never
+// written through: the place of the entry itself is judged (the way to it with every link followed,
+// the entry's own name last), and a link that is the entry is not followed. A harness that makes a
+// link calls it for the link's place; a link that is already there leads where it leads, and only its
+// target is read.
+func RefuseEntry(path string) error {
+	err := checkEntry(path)
+	var refusal *Error
+	if errors.As(err, &refusal) {
+		note(path)
+	}
+	return err
+}
+
+// checkEntry is RefuseEntry without the record of a refusal.
+func checkEntry(path string) error {
+	protected := Protected()
+	if len(protected) == 0 {
+		return nil
+	}
+	raw := path
+	if !filepath.IsAbs(raw) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		raw = wd + string(filepath.Separator) + raw
+	}
+	trimmed := strings.TrimRight(raw, string(filepath.Separator))
+	cut := strings.LastIndex(trimmed, string(filepath.Separator))
+	name := trimmed[cut+1:]
+	if cut < 0 || name == "" || name == "." || name == ".." {
+		return check(path)
+	}
+	abs := filepath.Clean(raw)
+	candidates := []string{abs}
+	for _, parent := range []string{trimmed[:cut+1], filepath.Dir(abs)} {
+		place, err := physical(parent)
+		if err != nil {
+			return fmt.Errorf("cannot tell where %s leads, so it is not written: %w", path, err)
+		}
+		candidates = append(candidates, filepath.Join(place, name))
+	}
+	for _, candidate := range candidates {
+		for _, dir := range protected {
+			if within(dir, candidate) {
+				return &Error{Path: path, Resolved: candidates[1], Home: dir}
+			}
+		}
+	}
+	return nil
+}
+
+// Physical is the place the kernel reaches by path (see Refuse): every link on the way followed in
+// order, a part that does not exist yet taken as written below the deepest part that does.
+func Physical(path string) (string, error) { return physical(path) }
+
+// RefuseUnlessWithin is Refuse, except for a destination inside root when root is itself a place
+// strictly below a protected directory (a managed checkout below the account's .codex): the output
+// of a command that works on that checkout stays in it. The destination and the way to it are taken
+// physically, so a link inside root that leads out of it, or a ".." that leaves it, is refused as
+// by Refuse.
+func RefuseUnlessWithin(root, path string) error {
+	err := check(path)
+	var refusal *Error
+	if !errors.As(err, &refusal) {
+		return err
+	}
+	refuse := func() error {
+		note(path)
+		return err
+	}
+	realRoot, rootErr := physical(root)
+	if rootErr != nil {
+		return refuse()
+	}
+	abs, absErr := filepath.Abs(path)
+	if absErr != nil {
+		return refuse()
+	}
+	for _, spelling := range []string{path, abs} {
+		place, placeErr := physical(spelling)
+		if placeErr != nil || !within(realRoot, place) {
+			return refuse()
+		}
+		for _, dir := range Protected() {
+			if within(dir, place) && (!within(dir, realRoot) || dir == realRoot) {
+				return refuse()
 			}
 		}
 	}
