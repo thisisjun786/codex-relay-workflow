@@ -332,3 +332,56 @@ func TestSweepEscapedMatchesAreDecodedBeforeTheyAreJudged(t *testing.T) {
 		t.Fatalf("an escaped type is the same type: %+v, %v", entries, err)
 	}
 }
+
+// :506 -- every JSON escape, not only \u, is decoded before the raw prefilter judges a file:
+// a scan finds what the index finds for a backslash, a quote, a slash and a control character.
+func TestSweepEveryJSONEscapeMatchesLikeTheIndex(t *testing.T) {
+	cases := []struct{ name, text, query string }{
+		{"backslash", `open C:\repo now`, `C:\repo`},
+		{"quote", `the say"so flag`, `say"so`},
+		{"slash", `escaped \/ slash in a/b path`, `a/b`},
+		{"tab", "tab\tseparated", "tab separated"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			line := sweepMessage(t, c.text)
+			if c.name == "slash" {
+				line = strings.Replace(line, "a/b", `a\/b`, 1)
+			}
+			sweepSession(t, home, "2026/08/20", "a.jsonl", line)
+			days := float64(0)
+			scan, err := SearchChat(c.query, ChatSearchOptions{Home: &home, Scan: true, Days: &days})
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, path := indexTestDB(t)
+			ingestForTest(t, home, db, 0)
+			indexed, err := SearchChat(c.query, ChatSearchOptions{Home: &home, IndexPath: &path, NoRefresh: true, Days: &days})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(scan.Hits) != 1 || len(indexed.Hits) != 1 {
+				t.Fatalf("%s: scan=%d index=%d", c.query, len(scan.Hits), len(indexed.Hits))
+			}
+		})
+	}
+}
+
+func TestPrefilterTextDecodesJSONEscapes(t *testing.T) {
+	for raw, want := range map[string]string{
+		`a\\b`:            `a\b`,
+		`q\"x\/y`:         `q"x/y`,
+		`\u0043I \\u0043`: `CI \u0043`,
+		`\ud83d\ude00!`:   "\U0001F600!",
+		`lone \ud83d end`: "lone \uFFFD end",
+		`\n\t\r\b\f`:      "\n\t\r\b\f",
+		`bad \x and \u12`: `bad \x and \u12`,
+		`trailing \`:      `trailing \`,
+		`plain text`:      `plain text`,
+	} {
+		if got := prefilterText(raw); got != want {
+			t.Errorf("prefilterText(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}

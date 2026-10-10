@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -181,9 +180,9 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 			result.Warnings = append(result.Warnings, "unreadable rollout: "+file.Path+" ("+err.Error()+")")
 			continue
 		}
-		// The raw text is a prefilter only while it spells what the decoded text would: a file with a
-		// \u escape can hide a match from it, so such a file is parsed and judged on the decoded text.
-		if !MatchesFilePrefilter(Lower(content), shared.Plan) && !strings.Contains(content, `\u`) {
+		// The prefilter judges the content with its JSON escapes decoded: any escape (\u, \\, \", ...) in
+		// the raw text could otherwise hide a match the index, which stores decoded text, finds.
+		if !MatchesFilePrefilter(Lower(prefilterText(content)), shared.Plan) {
 			continue
 		}
 		entries, err := ParseRollout(content, includeTools)

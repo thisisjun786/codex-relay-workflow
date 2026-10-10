@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -357,9 +358,77 @@ func ReadRolloutMeta(path string) (RolloutMeta, error) {
 }
 
 // MatchesFilePrefilter shares the message predicate; callers lowercase the raw content.
-// JSON-escaped text can still make the oracle prefilter miss a decoded message.
+// Judged on raw JSON text it misses a message whose match is escaped; callers pass prefilterText.
 func MatchesFilePrefilter(lowerContent string, plan MatchPlan) bool {
 	return !PlanIsEmpty(plan) && PlanMatches(lowerContent, plan)
+}
+
+// prefilterText is the raw content of a rollout with every JSON string escape decoded and every
+// invalid UTF-8 byte replaced as encoding/json replaces it, so a decoded message appears in it
+// verbatim: the file prefilter judged on it never drops a file whose decoded text would match.
+// Outside strings JSON has no backslash, so decoding the whole content at once is safe; an escape
+// JSON does not define is kept as written (such a line does not parse anyway).
+func prefilterText(raw string) string {
+	if !strings.Contains(raw, `\`) && utf8.ValidString(raw) {
+		return raw
+	}
+	var b strings.Builder
+	b.Grow(len(raw))
+	for i := 0; i < len(raw); {
+		c := raw[i]
+		if c != '\\' {
+			r, size := utf8.DecodeRuneInString(raw[i:])
+			if r == utf8.RuneError && size == 1 {
+				b.WriteRune(utf8.RuneError)
+			} else {
+				b.WriteString(raw[i : i+size])
+			}
+			i += size
+			continue
+		}
+		if i+1 >= len(raw) {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if simple, ok := jsonSimpleEscapes[raw[i+1]]; ok {
+			b.WriteByte(simple)
+			i += 2
+			continue
+		}
+		r, ok := jsonHex4(raw, i+2)
+		if raw[i+1] != 'u' || !ok {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		i += 6
+		if utf16.IsSurrogate(r) {
+			if raw[i:min(i+2, len(raw))] == `\u` {
+				if low, ok := jsonHex4(raw, i+2); ok {
+					if pair := utf16.DecodeRune(r, low); pair != utf8.RuneError {
+						b.WriteRune(pair)
+						i += 6
+						continue
+					}
+				}
+			}
+			r = utf8.RuneError
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+var jsonSimpleEscapes = map[byte]byte{'"': '"', '\\': '\\', '/': '/', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t'}
+
+// jsonHex4 reads the four hex digits of a \u escape that start at raw[at].
+func jsonHex4(raw string, at int) (rune, bool) {
+	if at+4 > len(raw) {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(raw[at:at+4], 16, 32)
+	return rune(v), err == nil
 }
 
 // rolloutString adapts the unexported internal/role jsText: JS String of parsed JSON.
