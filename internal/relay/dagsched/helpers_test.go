@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,18 +118,48 @@ func storeTemplate(t *testing.T) (string, error) {
 	return dir, template.get(t, dir)
 }
 
-// copyStoreTemplate puts a copy of the store template at path (nothing may exist there) and re-homes its mirror the way
-// testsupport.Rehome does (the copy's physical identity and control socket; owner, epoch, phase and store id stay the template's), but
-// without Rehome's three read-only connections: every connection parses the whole schema, and the store.Open that follows validates
-// the mirror against the durable stamp all the same.
+// copyStoreTemplate puts a copy of the store template at path (see installStoreTemplate) and fails the test when it cannot.
 func copyStoreTemplate(t *testing.T, path string) {
 	t.Helper()
 	dir, err := storeTemplate(t)
 	if err != nil {
 		t.Fatalf("store template: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := installStoreTemplate(dir, path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// installStoreTemplate puts a copy of the template in dir at path and re-homes its mirror the way testsupport.Rehome does (the copy's
+// physical identity and control socket; owner, epoch, phase and store id stay the template's), but without Rehome's three read-only
+// connections: every connection parses the whole schema, and the store.Open that follows validates the mirror against the durable stamp
+// all the same. It keeps testsupport.Create's refusal to initialize over anything: the database must be absent (or an empty regular
+// file), the ownership mirror and the write gate must be absent, and every file is created exclusively, so an existing store, a symlink
+// to one or another store's ownership directory is refused before anything is written and is never truncated or replaced.
+func installStoreTemplate(dir, path string) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	target := filepath.Dir(absolute)
+	flags := os.O_CREATE | os.O_EXCL | os.O_WRONLY
+	if info, e := os.Lstat(absolute); e == nil && info.Mode().IsRegular() && info.Size() == 0 {
+		flags = os.O_WRONLY
+	} else if e == nil || !errors.Is(e, os.ErrNotExist) {
+		return fmt.Errorf("store is not absent: %s exists (%v)", absolute, e)
+	}
+	for _, name := range []string{"takeover.json", "write-gate.lock", "takeover.lock"} {
+		existing := filepath.Join(target, name)
+		if _, e := os.Lstat(existing); e == nil || !errors.Is(e, os.ErrNotExist) {
+			return fmt.Errorf("store is not absent: %s exists (%v)", existing, e)
+		}
+	}
+	record, err := readTemplateRecord(dir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		return err
 	}
 	for _, name := range []string{"relay.sqlite3", "write-gate.lock", "takeover.lock"} {
 		raw, err := os.ReadFile(filepath.Join(dir, name))
@@ -136,31 +167,36 @@ func copyStoreTemplate(t *testing.T, path string) {
 			continue
 		}
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
-		target := filepath.Join(filepath.Dir(path), name)
+		dest, mode := filepath.Join(target, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY
 		if name == "relay.sqlite3" {
-			target = path
+			dest, mode = absolute, flags
 		}
-		if err := os.WriteFile(target, raw, 0o600); err != nil {
-			t.Fatal(err)
+		file, err := os.OpenFile(dest, mode, 0o600)
+		if err != nil {
+			return err
+		}
+		_, err = file.Write(raw)
+		if err = errors.Join(err, file.Close()); err != nil {
+			return err
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "takeover.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record ownership.Record
-	if err := json.Unmarshal(raw, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record.Database, err = ownership.Physical(path); err != nil {
-		t.Fatal(err)
+	if record.Database, err = ownership.Physical(absolute); err != nil {
+		return err
 	}
 	record.RelayRPCSocket = filepath.Join(filepath.Dir(record.Database.RealPath), "control.sock")
-	if err := ownership.Publish(record.Database.RealPath, record, nil); err != nil {
-		t.Fatal(err)
+	return ownership.Publish(record.Database.RealPath, record, nil)
+}
+
+func readTemplateRecord(dir string) (ownership.Record, error) {
+	var record ownership.Record
+	raw, err := os.ReadFile(filepath.Join(dir, "takeover.json"))
+	if err != nil {
+		return record, err
 	}
+	err = json.Unmarshal(raw, &record)
+	return record, err
 }
 
 func (f *fixture) clock() string {
