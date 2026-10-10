@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
@@ -60,6 +61,10 @@ type localOptions struct {
 	Plan          []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
+	// Tools are the tool roots the configuration file names (paths.build_cache, paths.build_work).
+	// A root that is not configured passes nothing. paths.module_cache is not handed to a step: a
+	// module tree is trusted from a cache without the go.sum check, so a sealed run keeps its own.
+	Tools crwconfig.ToolRoots
 	// output is the file the changed-path decision writes its answer to, set once per run.
 	output string
 	// script counts the step scripts written under the run's temporary root.
@@ -110,7 +115,12 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return failf(stderr, "local: %s", err)
 	}
+	tools, err := crwconfig.LoadToolRoots(os.Getenv, "")
+	if err != nil {
+		return failf(stderr, "local: %s", err)
+	}
 	opts := localOptions{
+		Tools:     tools,
 		Root:      root,
 		Commit:    *commit,
 		Base:      *base,
@@ -671,6 +681,12 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 			env = append(env, name+"="+value)
 		}
 	}
+	// The configured build cache and build work directory decide how fast and where a step builds,
+	// not what it decides, as the inherited GOCACHE does. The module cache is left out: it would
+	// let a module tree stand without the go.sum check.
+	sealed := opts.Tools
+	sealed.ModuleCache = ""
+	env = sealed.Apply(env)
 	env = append(env, opts.Env...)
 	return env, nil
 }

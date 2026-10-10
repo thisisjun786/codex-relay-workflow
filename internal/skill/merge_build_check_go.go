@@ -18,6 +18,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // mergeBuildPackage is one Go package of the merged tree the check builds for one target. dir is its
@@ -153,6 +155,37 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 		env = append(env, "HOME="+home, "GOCACHE="+caches[0], "GOMODCACHE="+caches[1], "GOPATH="+caches[2])
 	}
 	return env, nil
+}
+
+// mergeBuildToolEnv is mergeBuildEnv with the tool roots the configuration names (CRW-958). Under a
+// configured build_work the run's owned directory is made there, so the go tool's temporary files
+// and its telemetry mode live on that disk; the run removes the directory it made, never build_work.
+// Otherwise the owned directory is below scratch, as before. A configured build_cache and
+// module_cache are named after everything else, so they win over the caller's values and over what
+// the darwin read took from the caller's go environment; a root nothing configured passes nothing.
+// The returned function removes what the call made and is safe to call more than once.
+func mergeBuildToolEnv(ctx context.Context, base []string, scratch string, tools crwconfig.ToolRoots, targetOS ...string) ([]string, func(), error) {
+	owned := filepath.Join(scratch, "go")
+	cleanup := func() {}
+	if tools.BuildWork != "" {
+		if err := os.MkdirAll(tools.BuildWork, 0o700); err != nil {
+			return nil, cleanup, err
+		}
+		dir, err := os.MkdirTemp(tools.BuildWork, "merge-build-go-")
+		if err != nil {
+			return nil, cleanup, err
+		}
+		owned = dir
+		cleanup = func() { os.RemoveAll(dir) }
+	}
+	env, err := mergeBuildEnv(ctx, base, owned, targetOS...)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	caches := tools
+	caches.BuildWork = "" // GOTMPDIR is the owned directory's, named by mergeBuildEnv
+	return caches.Apply(env), cleanup, nil
 }
 
 // mergeBuildTelemetryModeFiles are the mode files that say telemetry is off for the go tool: the one

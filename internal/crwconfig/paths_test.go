@@ -88,14 +88,14 @@ func TestRootsFollowTheXdgVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	rootsCheck(t, roots, map[string]string{
-		RootTools:    filepath.Join(data, "crw", "tools"),
-		RootCache:    filepath.Join(cache, "crw"),
-		RootScratch:  filepath.Join(cache, "crw", "scratch"),
-		RootWorktree: filepath.Join(data, "crw", "worktrees"),
-		RootEvidence: filepath.Join(state, "crw", "evidence"),
-		RootTemp:     filepath.Join(temp, "crw"),
-		RootData:     filepath.Join(data, "crw", "data"),
-		RootManage:   filepath.Join(state, "crw", "manage"),
+		RootTools:       filepath.Join(data, "crw", "tools"),
+		RootCache:       filepath.Join(cache, "crw"),
+		RootScratch:     filepath.Join(cache, "crw", "scratch"),
+		RootWorktree:    filepath.Join(data, "crw", "worktrees"),
+		RootEvidence:    filepath.Join(state, "crw", "evidence"),
+		RootTemp:        filepath.Join(temp, "crw"),
+		RootData:        filepath.Join(data, "crw", "data"),
+		RootManage:      filepath.Join(state, "crw", "manage"),
 		RootBuildCache:  "",
 		RootModuleCache: "",
 		RootBuildWork:   "",
