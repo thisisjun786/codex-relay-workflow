@@ -312,20 +312,36 @@ func TestWriteRawReportsADirectorySyncFailureAsPublishedNotDurable(t *testing.T)
 // A directory that cannot be synced at all is not a failure to report: nothing can be confirmed.
 func TestWriteRawAcceptsAFilesystemThatCannotSyncADirectory(t *testing.T) {
 	for _, errno := range []syscall.Errno{syscall.EINVAL, syscall.ENOTSUP, syscall.ENOSYS} {
-		home := t.TempDir()
-		was := syncDir
-		t.Cleanup(func() { syncDir = was })
-		syncDir = func(dir string) error {
-			// The real function's own rule, applied to an error the filesystem gives.
-			return classifySyncError(&os.PathError{Op: "sync", Path: dir, Err: errno})
-		}
-		if err := WriteRaw(home, []byte("{}")); err != nil {
-			t.Errorf("%v: WriteRaw = %v", errno, err)
-		}
+		t.Run(errno.Error(), func(t *testing.T) {
+			home := t.TempDir()
+			was := syncDir
+			t.Cleanup(func() { syncDir = was })
+			syncDir = func(dir string) error {
+				// The real function's own rule, applied to an error the filesystem gives.
+				return classifySyncError(&os.PathError{Op: "sync", Path: dir, Err: errno})
+			}
+			if err := WriteRaw(home, []byte("{}")); err != nil {
+				t.Errorf("%v: WriteRaw = %v", errno, err)
+			}
+		})
 	}
-	// And the real sync of a real directory succeeds.
+}
+
+// The real syncDir of a real directory succeeds, and an error that is not one of the unsupported
+// answers is still an error (the real function, not an injected one, is called here).
+func TestSyncDirSucceedsOnARealDirectoryAndClassifiesByErrno(t *testing.T) {
 	if err := syncDir(t.TempDir()); err != nil {
 		t.Fatalf("syncDir of a directory = %v", err)
+	}
+	for _, errno := range []syscall.Errno{syscall.EINVAL, syscall.ENOTSUP, syscall.ENOSYS} {
+		if err := classifySyncError(&os.PathError{Op: "sync", Path: "d", Err: errno}); err != nil {
+			t.Errorf("%v classified as %v, want nil", errno, err)
+		}
+	}
+	for _, errno := range []syscall.Errno{syscall.EIO, syscall.EACCES} {
+		if err := classifySyncError(&os.PathError{Op: "sync", Path: "d", Err: errno}); !errors.Is(err, errno) {
+			t.Errorf("%v classified as %v, want the error", errno, err)
+		}
 	}
 }
 
@@ -342,5 +358,72 @@ func TestSyncDirReportsAnOpenFailure(t *testing.T) {
 	}
 	if err := syncDir(filepath.Join(dir, "absent")); err == nil {
 		t.Fatal("syncDir of a missing directory = nil")
+	}
+}
+
+// A link is kept as the link, never as the file it points at: the platform's link(2) may follow a
+// symbolic link (Darwin does, with a dangling one failing as ENOENT), so the copy of a link is made
+// with Symlink and is a different entry from the original, on every platform.
+func TestKeepAsideKeepsALinkAsTheLinkItself(t *testing.T) {
+	for name, mk := range map[string]func(t *testing.T, home, file string) string{
+		"dangling link": func(t *testing.T, home, file string) string {
+			target := filepath.Join(home, "gone.json")
+			if err := os.Symlink(target, file); err != nil {
+				t.Fatal(err)
+			}
+			return target
+		},
+		"relative link": func(t *testing.T, home, file string) string {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(file), "other.json"), []byte("{"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("other.json", file); err != nil {
+				t.Fatal(err)
+			}
+			return "other.json"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home, file := switchDir(t)
+			target := mk(t, home, file)
+			original, err := os.Lstat(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := KeepAside(home, "s4")
+			if err != nil || a == nil {
+				t.Fatalf("KeepAside = %v, %v", a, err)
+			}
+			kept, err := os.Lstat(a.Path)
+			if err != nil || kept.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("kept entry %v, %v; want a symbolic link", kept, err)
+			}
+			if got, err := os.Readlink(a.Path); err != nil || got != target {
+				t.Fatalf("kept link points at %q, %v; want %q", got, err, target)
+			}
+			if os.SameFile(original, kept) {
+				t.Fatal("the kept link is a hard link of the original, which a platform may resolve to the target")
+			}
+			// The switch path is untouched until the publication: a hook never sees it absent.
+			if _, err := os.Lstat(file); err != nil {
+				t.Fatalf("the switch path is gone: %v", err)
+			}
+			if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.Restore(); err != nil {
+				t.Fatal(err)
+			}
+			back, err := os.Lstat(file)
+			if err != nil || back.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("restored entry %v, %v; want the symbolic link", back, err)
+			}
+			if got, _ := os.Readlink(file); got != target {
+				t.Fatalf("restored link points at %q, want %q", got, target)
+			}
+			if _, err := os.Lstat(a.Path); !os.IsNotExist(err) {
+				t.Fatalf("the backup name remains: %v", err)
+			}
+		})
 	}
 }
