@@ -613,15 +613,26 @@ func (w *pabcd1167BatchWriter) await(done <-chan struct{}, timeout time.Duration
 	}
 }
 
-// release frees a writer still blocked in its open (by opening the FIFO for reading), waits for the goroutine's
-// result unless await already took it, and closes the file.
+// release frees a writer still blocked in its open, or not yet in it, and closes the file. The reader it opens
+// stays open until the goroutine's result is in (unless await already took it): a writer whose open begins after the
+// child ended finds that reader and returns, where a reader closed at once left it blocked for good. A reader that
+// cannot be opened is retried.
 func (w *pabcd1167BatchWriter) release(batch string) {
-	if r, err := os.OpenFile(batch, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
-		r.Close()
+	var r *os.File
+	for !w.received {
+		if r == nil {
+			if f, err := os.OpenFile(batch, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+				r = f
+			}
+		}
+		select {
+		case w.open = <-w.result:
+			w.received = true
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-	if !w.received {
-		w.open = <-w.result
-		w.received = true
+	if r != nil {
+		r.Close()
 	}
 	if w.open.f != nil {
 		w.open.f.Close()
@@ -642,5 +653,55 @@ func TestPabcd1167BatchWriterReleasesAfterAFailedOpen(t *testing.T) {
 	case <-released:
 	case <-time.After(3 * time.Second):
 		t.Fatal("release hung after the failed open: the only result was consumed by await")
+	}
+}
+
+// TestPabcd1171BatchWriterReleaseOutlastsALateOpen: the child ended before the writer goroutine reached its open, so
+// no reader exists when the open starts. release must keep a reader open until the goroutine has its result; a release
+// that closed its reader at once left the late open blocked forever and itself waiting for it.
+func TestPabcd1171BatchWriterReleaseOutlastsALateOpen(t *testing.T) {
+	batch := filepath.Join(t.TempDir(), "batch.fifo")
+	if err := syscall.Mkfifo(batch, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opening := make(chan struct{})
+	w := pabcd1167StartBatchWriter(func() (*os.File, error) {
+		<-opening
+		return os.OpenFile(batch, os.O_WRONLY, 0)
+	})
+	released := make(chan struct{})
+	go func() { w.release(batch); close(released) }()
+	// the writer reaches its open only after release has opened its reader and kept it: a non-blocking write open of
+	// the FIFO fails with ENXIO until a reader exists, so it observes release's reader (the test has none of its own)
+	probe := func() bool {
+		fd, err := syscall.Open(batch, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return false
+		}
+		syscall.Close(fd)
+		return true
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !probe() {
+		if time.Now().After(deadline) {
+			t.Fatal("release never opened its reader")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// the reader stays open while the writer's result is pending; a release that closed it at once fails here
+	for end := time.Now().Add(100 * time.Millisecond); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if !probe() {
+			t.Fatal("release closed its reader before the writer's result arrived")
+		}
+	}
+	close(opening)
+	select {
+	case <-released:
+	case <-time.After(5 * time.Second):
+		// unblock the stuck goroutine so the package can end
+		if r, err := os.OpenFile(batch, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+			defer r.Close()
+		}
+		t.Fatal("release hung: the writer's open began after release had closed its reader")
 	}
 }
