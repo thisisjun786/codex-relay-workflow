@@ -41,16 +41,16 @@ var terminalEvents = map[string]string{
 // Event is one append-only journal row. The in-memory journal stands in for the zone tables (flow_runs, flow_calls,
 // flow_events) that arrive with the store (F06); a row is never updated.
 type Event struct {
-	Seq      int
-	RunID    string
-	Kind     string
-	CallID   string
-	Path     string
-	Position int
-	Op       string // agent, crw.clock, parallel, pipeline, workflow: what occupies the position
-	Label    string
-	Event    string
-	Data     map[string]any
+	Seq      int            `json:"seq"`
+	RunID    string         `json:"runId"`
+	Kind     string         `json:"kind"`
+	CallID   string         `json:"callId,omitempty"`
+	Path     string         `json:"path,omitempty"`
+	Position int            `json:"position,omitempty"`
+	Op       string         `json:"op,omitempty"` // agent, crw.clock, join, workflow: what occupies the position
+	Label    string         `json:"label,omitempty"`
+	Event    string         `json:"event"`
+	Data     map[string]any `json:"data,omitempty"`
 }
 
 // Journal is what the engine appends to. Implementations must be safe for concurrent use.
