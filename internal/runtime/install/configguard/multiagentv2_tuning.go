@@ -157,8 +157,10 @@ func multiAgentV2CheckRepair(pre, post, out string, want bool) error {
 	if err != nil {
 		return fmt.Errorf("the multi_agent_v2 tuning repair would leave config.toml invalid: %w", err)
 	}
+	// The tuning is compared without enabled, which the repair always writes with the requested value: a table that had no
+	// enabled key before is restored with one, and its tuning keys must be the same keys with the same values.
 	table, ok := multiAgentV2Table(cand)
-	if !ok || table["enabled"] != want || len(table) != len(oldTable) {
+	if !ok || table["enabled"] != want || multiAgentV2TuningKeys(table) != multiAgentV2TuningKeys(oldTable) {
 		return errors.New("the multi_agent_v2 tuning repair would not restore the table as it was")
 	}
 	for key, value := range oldTable {
@@ -170,6 +172,15 @@ func multiAgentV2CheckRepair(pre, post, out string, want bool) error {
 		return errors.New("the multi_agent_v2 tuning repair would change more than the multi_agent_v2 table")
 	}
 	return nil
+}
+
+// multiAgentV2TuningKeys counts the keys of a multi_agent_v2 table other than enabled.
+func multiAgentV2TuningKeys(table map[string]any) int {
+	n := len(table)
+	if _, ok := table["enabled"]; ok {
+		n--
+	}
+	return n
 }
 
 // withoutMultiAgentV2 is a copy of a decoded document without features.multi_agent_v2.
