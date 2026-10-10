@@ -1169,9 +1169,12 @@ BEGIN SELECT RAISE(ABORT, 'delivery_wakes.event_id is NULL: a row is addressed b
 	// The tables are rowid tables, and an INSERT OR REPLACE that names the rowid (rowid, _rowid_ or oid) of a stored row replaces it whatever the declared keys say. Each table also has a
 	// <table>_rowid_guard (BEFORE INSERT, WHEN NEW.rowid <> -1 AND the earlier trigger's NOT COALESCE AND a stored row has that rowid; the text SQLite gives a plain INSERT of a stored rowid,
 	// 'UNIQUE constraint failed: <table>.rowid') appended after the key guards, so it fires first, as SQLite checks the rowid before the declared keys. A BEFORE INSERT trigger reads -1 as NEW.rowid
-	// for every row whose rowid SQLite assigns afterwards (the product's own inserts), so -1 cannot be told from an explicit rowid of -1 there: the guard stands aside for -1 and
-	// <table>_rowid_reserved_guard (AFTER INSERT, WHEN NEW.rowid = -1) refuses a row stored under that rowid (the statement is rolled back, an INSERT OR REPLACE's deletion included), so no
-	// row holds it and an assigned rowid (the next above the largest) never collides with one.
+	// for every row whose rowid SQLite assigns afterwards (the product's own inserts), so -1 cannot be told from an explicit rowid of -1 there: the guard stands aside for -1.
+	// A row may be stored under -1 (SQLite assigns it when the largest rowid is -2), so -1 is told apart by what the insert did, through dag_zone_rowid_marks, which holds
+	// no row of a store whose tables hold no rowid -1: <table>_rowid_minus1_mark_guard (BEFORE INSERT, WHEN NEW.rowid = -1) leaves a mark for the table exactly when a stored row
+	// already has rowid -1 (an assigned rowid is then the next above the largest, never -1), and <table>_rowid_minus1_guard (AFTER INSERT, WHEN NEW.rowid = -1 AND that mark)
+	// refuses the row that then landed under -1, which only a REPLACE of the stored row can do, with the same rowid text; the statement is rolled back, its deletion included.
+	// Triggers fire per row, so the mark is the incoming row's own; an assigned insert is never refused, whatever the table holds.
 	// One unique key has no guard: (plan_id, document, seq) of dag_summary_outbox. dag_summary_outbox_order refuses every entry whose seq is not the next of its stream, INSERT OR REPLACE included, and a
 	// repeated seq is never the next one, so the key cannot be repeated; its guard would carry that trigger's WHEN as its stand-aside condition and could never fire
 	// (TestDAGZoneOutboxSequenceKeyIsRefusedByTheOrderTrigger).
@@ -1259,111 +1262,182 @@ BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_premerge.acc
 	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_pk_guard BEFORE INSERT ON dag_revalidation_premerge
 WHEN EXISTS (SELECT 1 FROM dag_revalidation_premerge WHERE revalidation_id = NEW.revalidation_id)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_revalidation_premerge.revalidation_id'); END`,
+	`CREATE TABLE IF NOT EXISTS dag_zone_rowid_marks (
+  table_name TEXT NOT NULL
+)`,
 	`CREATE TRIGGER IF NOT EXISTS dag_plans_rowid_guard BEFORE INSERT ON dag_plans
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_plans WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plans.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_plans_rowid_reserved_guard AFTER INSERT ON dag_plans
+	`CREATE TRIGGER IF NOT EXISTS dag_plans_rowid_minus1_mark_guard BEFORE INSERT ON dag_plans
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_plans.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_plans';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_plans' WHERE EXISTS (SELECT 1 FROM dag_plans WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plans_rowid_minus1_guard AFTER INSERT ON dag_plans
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_plans')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plans.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_rowid_guard BEFORE INSERT ON dag_plan_revisions
 WHEN NEW.rowid <> -1 AND NOT COALESCE((NEW.parent_revision_no > 0 AND NOT EXISTS (
       SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND revision_no = NEW.parent_revision_no)), 0) AND EXISTS (SELECT 1 FROM dag_plan_revisions WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plan_revisions.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_rowid_reserved_guard AFTER INSERT ON dag_plan_revisions
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_rowid_minus1_mark_guard BEFORE INSERT ON dag_plan_revisions
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_plan_revisions.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_plan_revisions';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_plan_revisions' WHERE EXISTS (SELECT 1 FROM dag_plan_revisions WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_rowid_minus1_guard AFTER INSERT ON dag_plan_revisions
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_plan_revisions')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_plan_revisions.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_nodes_rowid_guard BEFORE INSERT ON dag_nodes
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_nodes WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_nodes.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_nodes_rowid_reserved_guard AFTER INSERT ON dag_nodes
+	`CREATE TRIGGER IF NOT EXISTS dag_nodes_rowid_minus1_mark_guard BEFORE INSERT ON dag_nodes
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_nodes.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_nodes';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_nodes' WHERE EXISTS (SELECT 1 FROM dag_nodes WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_nodes_rowid_minus1_guard AFTER INSERT ON dag_nodes
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_nodes')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_nodes.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_edges_rowid_guard BEFORE INSERT ON dag_edges
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_edges WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_edges.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_edges_rowid_reserved_guard AFTER INSERT ON dag_edges
+	`CREATE TRIGGER IF NOT EXISTS dag_edges_rowid_minus1_mark_guard BEFORE INSERT ON dag_edges
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_edges.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_edges';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_edges' WHERE EXISTS (SELECT 1 FROM dag_edges WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_edges_rowid_minus1_guard AFTER INSERT ON dag_edges
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_edges')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_edges.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_rowid_guard BEFORE INSERT ON dag_summary_outbox
 WHEN NEW.rowid <> -1 AND NOT COALESCE((NEW.state <> 'pending' OR NEW.attempts <> 0
     OR NEW.seq <> COALESCE((SELECT MAX(seq) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0) + 1
     OR NEW.plan_revision < COALESCE((SELECT MAX(plan_revision) FROM dag_summary_outbox WHERE plan_id = NEW.plan_id AND document = NEW.document), 0)), 0) AND EXISTS (SELECT 1 FROM dag_summary_outbox WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_summary_outbox.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_rowid_reserved_guard AFTER INSERT ON dag_summary_outbox
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_rowid_minus1_mark_guard BEFORE INSERT ON dag_summary_outbox
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_summary_outbox.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_summary_outbox';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_summary_outbox' WHERE EXISTS (SELECT 1 FROM dag_summary_outbox WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_summary_outbox_rowid_minus1_guard AFTER INSERT ON dag_summary_outbox
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_summary_outbox')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_summary_outbox.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_rowid_guard BEFORE INSERT ON dag_base_refreshes
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_base_refreshes WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_base_refreshes.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_rowid_reserved_guard AFTER INSERT ON dag_base_refreshes
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_rowid_minus1_mark_guard BEFORE INSERT ON dag_base_refreshes
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_base_refreshes.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_base_refreshes';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_base_refreshes' WHERE EXISTS (SELECT 1 FROM dag_base_refreshes WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_base_refreshes_rowid_minus1_guard AFTER INSERT ON dag_base_refreshes
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_base_refreshes')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_base_refreshes.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_rowid_guard BEFORE INSERT ON dag_generation_withdrawals
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_generation_withdrawals WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_generation_withdrawals.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_rowid_reserved_guard AFTER INSERT ON dag_generation_withdrawals
+	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_rowid_minus1_mark_guard BEFORE INSERT ON dag_generation_withdrawals
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_generation_withdrawals.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_generation_withdrawals';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_generation_withdrawals' WHERE EXISTS (SELECT 1 FROM dag_generation_withdrawals WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_generation_withdrawals_rowid_minus1_guard AFTER INSERT ON dag_generation_withdrawals
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_generation_withdrawals')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_generation_withdrawals.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_rowid_guard BEFORE INSERT ON dag_acceptance_refreshes
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_acceptance_refreshes WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_refreshes.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_rowid_reserved_guard AFTER INSERT ON dag_acceptance_refreshes
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_rowid_minus1_mark_guard BEFORE INSERT ON dag_acceptance_refreshes
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_acceptance_refreshes';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_acceptance_refreshes' WHERE EXISTS (SELECT 1 FROM dag_acceptance_refreshes WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_rowid_minus1_guard AFTER INSERT ON dag_acceptance_refreshes
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_acceptance_refreshes')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_refreshes.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_rowid_guard BEFORE INSERT ON dag_verified_heads
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_verified_heads WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_verified_heads.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_rowid_reserved_guard AFTER INSERT ON dag_verified_heads
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_rowid_minus1_mark_guard BEFORE INSERT ON dag_verified_heads
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_verified_heads.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_verified_heads';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_verified_heads' WHERE EXISTS (SELECT 1 FROM dag_verified_heads WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_rowid_minus1_guard AFTER INSERT ON dag_verified_heads
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_verified_heads')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_verified_heads.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS merge_trains_rowid_guard BEFORE INSERT ON merge_trains
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM merge_trains WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_trains.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS merge_trains_rowid_reserved_guard AFTER INSERT ON merge_trains
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_rowid_minus1_mark_guard BEFORE INSERT ON merge_trains
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'merge_trains.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'merge_trains';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'merge_trains' WHERE EXISTS (SELECT 1 FROM merge_trains WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_rowid_minus1_guard AFTER INSERT ON merge_trains
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'merge_trains')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_trains.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS merge_train_members_rowid_guard BEFORE INSERT ON merge_train_members
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM merge_train_members WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_train_members.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS merge_train_members_rowid_reserved_guard AFTER INSERT ON merge_train_members
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_rowid_minus1_mark_guard BEFORE INSERT ON merge_train_members
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'merge_train_members.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'merge_train_members';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'merge_train_members' WHERE EXISTS (SELECT 1 FROM merge_train_members WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_rowid_minus1_guard AFTER INSERT ON merge_train_members
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'merge_train_members')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_train_members.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS merge_train_events_rowid_guard BEFORE INSERT ON merge_train_events
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM merge_train_events WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_train_events.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS merge_train_events_rowid_reserved_guard AFTER INSERT ON merge_train_events
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_rowid_minus1_mark_guard BEFORE INSERT ON merge_train_events
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'merge_train_events.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'merge_train_events';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'merge_train_events' WHERE EXISTS (SELECT 1 FROM merge_train_events WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_rowid_minus1_guard AFTER INSERT ON merge_train_events
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'merge_train_events')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: merge_train_events.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_rowid_guard BEFORE INSERT ON dag_acceptance_verifications
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_acceptance_verifications WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_verifications.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_rowid_reserved_guard AFTER INSERT ON dag_acceptance_verifications
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_rowid_minus1_mark_guard BEFORE INSERT ON dag_acceptance_verifications
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_acceptance_verifications';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_acceptance_verifications' WHERE EXISTS (SELECT 1 FROM dag_acceptance_verifications WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_verifications_rowid_minus1_guard AFTER INSERT ON dag_acceptance_verifications
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_acceptance_verifications')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_verifications.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_rowid_guard BEFORE INSERT ON dag_integration_batches
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_integration_batches WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_integration_batches.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_rowid_reserved_guard AFTER INSERT ON dag_integration_batches
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_rowid_minus1_mark_guard BEFORE INSERT ON dag_integration_batches
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_integration_batches.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_integration_batches';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_integration_batches' WHERE EXISTS (SELECT 1 FROM dag_integration_batches WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_rowid_minus1_guard AFTER INSERT ON dag_integration_batches
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_integration_batches')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_integration_batches.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_rowid_guard BEFORE INSERT ON dag_integration_stages
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_integration_stages WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_integration_stages.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_rowid_reserved_guard AFTER INSERT ON dag_integration_stages
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_rowid_minus1_mark_guard BEFORE INSERT ON dag_integration_stages
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_integration_stages.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_integration_stages';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_integration_stages' WHERE EXISTS (SELECT 1 FROM dag_integration_stages WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_rowid_minus1_guard AFTER INSERT ON dag_integration_stages
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_integration_stages')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_integration_stages.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_rowid_guard BEFORE INSERT ON dag_acceptance_premerge
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_acceptance_premerge WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_premerge.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_rowid_reserved_guard AFTER INSERT ON dag_acceptance_premerge
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_rowid_minus1_mark_guard BEFORE INSERT ON dag_acceptance_premerge
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_acceptance_premerge.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_acceptance_premerge';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_acceptance_premerge' WHERE EXISTS (SELECT 1 FROM dag_acceptance_premerge WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_premerge_rowid_minus1_guard AFTER INSERT ON dag_acceptance_premerge
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_acceptance_premerge')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_acceptance_premerge.rowid'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_rowid_guard BEFORE INSERT ON dag_revalidation_premerge
 WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_revalidation_premerge WHERE rowid = NEW.rowid)
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_revalidation_premerge.rowid'); END`,
-	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_rowid_reserved_guard AFTER INSERT ON dag_revalidation_premerge
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_rowid_minus1_mark_guard BEFORE INSERT ON dag_revalidation_premerge
 WHEN NEW.rowid = -1
-BEGIN SELECT RAISE(ABORT, 'dag_revalidation_premerge.rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END`,
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_revalidation_premerge';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_revalidation_premerge' WHERE EXISTS (SELECT 1 FROM dag_revalidation_premerge WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_rowid_minus1_guard AFTER INSERT ON dag_revalidation_premerge
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_revalidation_premerge')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_revalidation_premerge.rowid'); END`,
 }
 
 // zoneKeyGuardName finds the key guards among the zone's triggers: a guard's name ends in _guard (CRW-974).

@@ -212,7 +212,10 @@ tables (decision D-01):
   (`UNIQUE constraint failed: <table>.<column>, ...`); the extended result code of the refusal is the trigger's (1811) and not the index's.
   `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING` on a stored key are refused as well, and no writer uses either on these tables.
   Each table also has `<table>_rowid_guard` (an `INSERT OR REPLACE` that names a stored rowid is refused with `UNIQUE constraint failed: <table>.rowid`)
-  and `<table>_rowid_reserved_guard` (a row stored under rowid -1 is refused: a BEFORE INSERT trigger reads -1 for every rowid SQLite assigns).
+  and, because a BEFORE INSERT trigger reads -1 for every rowid SQLite assigns, `<table>_rowid_minus1_mark_guard` and `<table>_rowid_minus1_guard`:
+  the first notes in `dag_zone_rowid_marks` whether a stored row has rowid -1 as a row that reads -1 arrives, the second (AFTER INSERT) refuses
+  that row with the same text when it then lands under -1, which only a REPLACE of the stored row does. An assigned insert is never refused, so a
+  table whose largest rowid is -2 (the next assigned is -1) stays writable.
   A guard stands aside for an earlier trigger of its table under `NOT COALESCE((<that trigger's WHEN>), 0)`, so a NULL condition never lets a
   row through. The key `(plan_id, document, seq)` of `dag_summary_outbox` has no guard: `dag_summary_outbox_order` already refuses every entry whose `seq` is not the
   next of its stream. `store.MissingZoneKeyGuards` is the read-only check, after an install, that a store holds every guard its build declares

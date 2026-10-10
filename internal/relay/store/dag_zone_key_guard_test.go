@@ -80,24 +80,35 @@ func zoneKeyGuardSQL(g keyGuard) string {
 		"\nBEGIN SELECT RAISE(ABORT, '" + g.message() + "'); END"
 }
 
-// zoneRowidGuardSQL are the two statements a rowid table gets for its implicit key: the rowid. An INSERT OR REPLACE
+// zoneRowidMarksSQL is the table the rowid -1 guards keep their marks in: one row per guarded table that held a row under
+// rowid -1 when an insert that reads -1 began, none in a store whose tables hold no rowid -1.
+const zoneRowidMarksSQL = "CREATE TABLE IF NOT EXISTS dag_zone_rowid_marks (\n  table_name TEXT NOT NULL\n)"
+
+// zoneRowidGuardSQL are the three statements a rowid table gets for its implicit key: the rowid. An INSERT OR REPLACE
 // that names the rowid of a stored row (rowid, _rowid_ or oid) replaces it whatever the declared keys say.
 // before refuses the row when a stored row holds NEW.rowid, with the text a plain INSERT of it gets; it is appended
 // after the table's key guards so it fires first, as SQLite checks the rowid before the declared keys, and it stands
 // aside under the same earlier-trigger condition as the key guards. A BEFORE INSERT trigger reads -1 as NEW.rowid
-// for every row whose rowid SQLite assigns afterwards, so before stands aside for -1 and after (AFTER INSERT)
-// refuses a row stored under -1: the statement is rolled back, an INSERT OR REPLACE's deletion included, so no row
-// holds the rowid the guard cannot tell from an assigned one.
-func zoneRowidGuardSQL(table, earlier string) (before, after string) {
+// for every row whose rowid SQLite assigns afterwards, so before stands aside for -1. A row may be stored under -1
+// (SQLite assigns it when the largest rowid is -2), so mark (BEFORE INSERT, WHEN NEW.rowid = -1) records in
+// dag_zone_rowid_marks whether a stored row has rowid -1 as the incoming row arrives, and after (AFTER INSERT) refuses
+// the row that landed under -1 when one did: an assigned rowid is then the next above the largest, so only a REPLACE of
+// the stored row puts the new one there. The statement is rolled back, the REPLACE's deletion included, and an
+// assigned insert is never refused.
+func zoneRowidGuardSQL(table, earlier string) (before, mark, after string) {
 	when := "NEW.rowid <> -1"
 	if earlier != "" {
 		when += " AND NOT COALESCE((" + earlier + "), 0)"
 	}
 	before = "CREATE TRIGGER IF NOT EXISTS " + table + "_rowid_guard BEFORE INSERT ON " + table + "\nWHEN " + when +
 		" AND EXISTS (SELECT 1 FROM " + table + " WHERE rowid = NEW.rowid)\nBEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: " + table + ".rowid'); END"
-	after = "CREATE TRIGGER IF NOT EXISTS " + table + "_rowid_reserved_guard AFTER INSERT ON " + table + "\nWHEN NEW.rowid = -1\nBEGIN SELECT RAISE(ABORT, '" +
-		table + ".rowid -1 is reserved: a BEFORE INSERT trigger reads it for every row whose rowid SQLite assigns'); END"
-	return before, after
+	mark = "CREATE TRIGGER IF NOT EXISTS " + table + "_rowid_minus1_mark_guard BEFORE INSERT ON " + table + "\nWHEN NEW.rowid = -1\n" +
+		"BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = '" + table + "';\n" +
+		"  INSERT INTO dag_zone_rowid_marks (table_name) SELECT '" + table + "' WHERE EXISTS (SELECT 1 FROM " + table + " WHERE rowid = -1); END"
+	after = "CREATE TRIGGER IF NOT EXISTS " + table + "_rowid_minus1_guard AFTER INSERT ON " + table +
+		"\nWHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = '" + table + "')\n" +
+		"BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: " + table + ".rowid'); END"
+	return before, mark, after
 }
 
 // zoneRowidEarlier is the earlier BEFORE INSERT trigger's condition of the tables that have one.
@@ -114,7 +125,7 @@ func zoneRowidEarlier(table string) string {
 func zoneRowidGuardNames() []string {
 	var names []string
 	for _, table := range zoneKeyGuardTables() {
-		names = append(names, table+"_rowid_guard", table+"_rowid_reserved_guard")
+		names = append(names, table+"_rowid_guard", table+"_rowid_minus1_mark_guard", table+"_rowid_minus1_guard")
 	}
 	return names
 }
@@ -226,6 +237,7 @@ func zoneDropKeyGuards(t *testing.T, db *sql.DB) {
 	for _, name := range zoneRowidGuardNames() {
 		zoneMustExec(t, db, "DROP TRIGGER IF EXISTS "+name)
 	}
+	zoneMustExec(t, db, "DROP TABLE IF EXISTS dag_zone_rowid_marks")
 }
 
 // zoneTableColumns is table's columns in order with the facts a placeholder row needs.
@@ -397,14 +409,17 @@ func TestDAGZoneKeyGuardsAreTheTemplateAndCoverEveryAppendOnlyKey(t *testing.T) 
 	}
 
 	for _, table := range zoneKeyGuardTables() {
-		before, after := zoneRowidGuardSQL(table, zoneRowidEarlier(table))
-		for name, text := range map[string]string{table + "_rowid_guard": before, table + "_rowid_reserved_guard": after} {
+		before, mark, after := zoneRowidGuardSQL(table, zoneRowidEarlier(table))
+		for name, text := range map[string]string{table + "_rowid_guard": before, table + "_rowid_minus1_mark_guard": mark, table + "_rowid_minus1_guard": after} {
 			held, ok := catalog["trigger "+name]
 			want := normalizeSQL(strings.Replace(text, "IF NOT EXISTS ", "", 1))
 			if !ok || held != want {
 				t.Errorf("trigger %s\n got  %s\n want %s", name, held, want)
 			}
 		}
+	}
+	if held, want := catalog["table dag_zone_rowid_marks"], normalizeSQL(strings.Replace(zoneRowidMarksSQL, "IF NOT EXISTS ", "", 1)); held != want {
+		t.Errorf("table dag_zone_rowid_marks\n got  %s\n want %s", held, want)
 	}
 
 	db := zoneRawDB(t, path)
@@ -1199,50 +1214,146 @@ func TestDAGZoneRefusesAnInsertOrReplaceOfAStoredRowid(t *testing.T) {
 	}
 }
 
-// The guard cannot tell an explicit rowid of -1 from the -1 a BEFORE INSERT trigger reads for an assigned one, so a
-// row stored under -1 is refused after the write (rolled back with the statement), and a store that already
-// holds one (written before the guards) is not made unwritable by it.
-func TestDAGZoneRowidMinusOneIsReservedAndAssignedInsertsAreNotRefused(t *testing.T) {
+// The guard cannot tell an explicit rowid of -1 from the -1 a BEFORE INSERT trigger reads for an assigned one, so a row
+// may be stored under -1, and the REPLACE of such a row is refused with the rowid's text while an assigned insert next to
+// it is written: on an old zone that held rows under -1 before the open added the guards, and on a store the build created
+// that is given one. A store whose tables hold no rowid -1 keeps no mark.
+func TestDAGZoneRowidMinusOneIsWrittenAndItsReplaceIsRefused(t *testing.T) {
 	t.Parallel()
 	current, old := zoneKeyStores(t)
 	oldDB := zoneKeyDB(t, old)
 	for _, table := range zoneKeyGuardTables() {
-		scenario := zoneRowidScenario(table)
 		clearTable(t, oldDB, table)
-		columns := zoneTableColumns(t, oldDB, table)
-		var all []string
-		for _, c := range columns {
-			all = append(all, c.name)
-		}
-		statement := strings.Replace(zoneKeyRow("INSERT", table, columns, scenario, all), "INTO "+table+" (", "INTO "+table+" (rowid,", 1)
-		zoneMustExec(t, oldDB, strings.Replace(statement, "VALUES (", "VALUES (-1,", 1))
-		zoneMustExec(t, oldDB, scenario.settle...)
+		zoneMustExec(t, oldDB, zoneNthRow("INSERT", table, zoneTableColumns(t, oldDB, table), 0, "-1"))
 	}
 	if err := oldDB.Close(); err != nil {
 		t.Fatal(err)
 	}
 	zoneOpenClose(t, old) // the guards are added to the store that holds the -1 rows
-	oldDB = zoneKeyDB(t, old)
-	for _, table := range zoneKeyGuardTables() {
-		scenario := zoneRowidScenario(table)
-		columns := zoneTableColumns(t, oldDB, table)
-		if err := zoneExec(t, oldDB, zoneKeyRow("INSERT", table, columns, scenario, zoneRowidKeep(table))); err != nil {
-			t.Errorf("%s: an assigned insert next to a stored rowid of -1: %v", table, err)
-		}
-	}
 	db := zoneKeyDB(t, current)
 	for _, table := range zoneKeyGuardTables() {
-		scenario := zoneRowidScenario(table)
-		columns := zoneSeedKeyRow(t, db, table, scenario)
-		before := zoneTableContents(t, db, table)
-		for _, verb := range []string{"INSERT", "INSERT OR REPLACE"} {
-			err := zoneExec(t, db, zoneRowidStatement(verb, table, "rowid", "-1", columns, scenario))
-			if err == nil || !strings.Contains(err.Error(), table+".rowid -1 is reserved") {
-				t.Errorf("%s: %s of rowid -1: %v; want the reserved refusal", table, verb, err)
+		columns := zoneTableColumns(t, db, table)
+		clearTable(t, db, table)
+		zoneMustExec(t, db, zoneNthRow("INSERT", table, columns, 0, ""), zoneNthRow("INSERT", table, columns, 1, ""))
+		if marks := zoneStringList(t, db, "SELECT table_name FROM dag_zone_rowid_marks"); len(marks) != 0 {
+			t.Fatalf("%s: marks %v in a store whose tables hold no rowid -1", table, marks)
+		}
+		zoneMustExec(t, db, zoneNthRow("INSERT", table, columns, 2, "-1"))
+	}
+	for _, which := range []struct{ name, path string }{{"upgraded", old}, {"created", current}} {
+		db := zoneKeyDB(t, which.path)
+		for _, table := range zoneKeyGuardTables() {
+			columns := zoneTableColumns(t, db, table)
+			before := zoneTableContents(t, db, table)
+			for _, verb := range []string{"INSERT OR REPLACE", "INSERT", "REPLACE"} {
+				for _, name := range []string{"rowid", "_rowid_", "oid"} {
+					statement := strings.Replace(zoneNthRow(verb, table, columns, 9, "-1"), "INTO "+table+" (rowid,", "INTO "+table+" ("+name+",", 1)
+					err := zoneExec(t, db, statement)
+					if err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed: "+table+".rowid") {
+						t.Errorf("%s: %s: %s of the stored rowid -1: %v; want the refusal of the rowid", which.name, table, verb, err)
+					}
+				}
+			}
+			// two REPLACEs in one statement: the second row's mark is its own
+			err := zoneExec(t, db, zoneNthRow("INSERT OR REPLACE", table, columns, 8, "500")+", "+
+				strings.SplitN(zoneNthRow("INSERT", table, columns, 9, "-1"), "VALUES ", 2)[1])
+			if err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed: "+table+".rowid") {
+				t.Errorf("%s: %s: a free row and a REPLACE of rowid -1 in one statement: %v; want the refusal of the rowid", which.name, table, err)
+			}
+			if err := zoneExec(t, db, "INSERT OR IGNORE"+strings.TrimPrefix(zoneNthRow("INSERT", table, columns, 9, "-1"), "INSERT")); err != nil {
+				t.Errorf("%s: %s: INSERT OR IGNORE of the stored rowid -1: %v; want a no-op", which.name, table, err)
+			}
+			if after := zoneTableContents(t, db, table); !slices.Equal(before, after) {
+				t.Errorf("%s: %s: a refused row of rowid -1 changed the table:\n%q\n%q", which.name, table, before, after)
+			}
+			if err := zoneExec(t, db, zoneNthRow("INSERT", table, columns, 3, "")); err != nil {
+				t.Errorf("%s: %s: an assigned insert next to a stored rowid of -1: %v", which.name, table, err)
 			}
 		}
-		if after := zoneTableContents(t, db, table); !slices.Equal(before, after) {
-			t.Errorf("%s: a refused row of rowid -1 changed the table:\n%q\n%q", table, before, after)
+	}
+}
+
+// zoneNthRow is an INSERT of a row of table that shares no key with the row of any other n: every key column carries
+// n, except the columns the table's own BEFORE INSERT trigger pins (a revision with no parent, a live node, an outbox
+// entry that opens a stream of its own). rowid, when not empty, is named with the given value.
+func zoneNthRow(verb, table string, columns []zoneColumn, n int, rowid string) string {
+	pinned := map[string]string{"parent_revision_no": "0", "retired_rev": "NULL", "state": "'pending'", "attempts": "0", "plan_revision": "1"}
+	if table == "dag_summary_outbox" {
+		pinned["seq"] = "1"
+	}
+	keyish := zoneKeyColumns(table)
+	var names, values []string
+	if rowid != "" {
+		names, values = append(names, "rowid"), append(values, rowid)
+	}
+	for _, c := range columns {
+		v, pin := pinned[c.name]
+		key := slices.Contains(keyish, c.name)
+		switch {
+		case pin && (key || c.notnull):
+		case key && c.integer:
+			v = fmt.Sprint(100 + n)
+		case key:
+			v = fmt.Sprintf("'n%d-%s'", n, c.name)
+		case c.notnull && !c.dflt && c.integer:
+			v = "1"
+		case c.notnull && !c.dflt:
+			v = "'b-" + c.name + "'"
+		default:
+			continue
+		}
+		names, values = append(names, c.name), append(values, v)
+	}
+	return fmt.Sprintf("%s INTO %s (%s) VALUES (%s)", verb, table, strings.Join(names, ","), strings.Join(values, ","))
+}
+
+// zoneRowids is the rowids of table in order.
+func zoneRowids(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+	return zoneStringList(t, db, "SELECT CAST(rowid AS TEXT) FROM "+table+" ORDER BY rowid")
+}
+
+// A table whose largest rowid is -2 has -1 assigned to its next row. That row is written and committed, and so is the
+// one after it (0), on a store the build created and wrote a rowid of -2 into, and on an old zone that held a row
+// under -2 before the open added the guards; a REPLACE of the row stored under -1 is still refused afterwards.
+func TestDAGZoneAssignedInsertsFollowARowidOfMinusTwo(t *testing.T) {
+	t.Parallel()
+	current, old := zoneKeyStores(t)
+	oldDB := zoneKeyDB(t, old)
+	for _, table := range zoneKeyGuardTables() {
+		clearTable(t, oldDB, table)
+		zoneMustExec(t, oldDB, zoneNthRow("INSERT", table, zoneTableColumns(t, oldDB, table), 0, "-2"))
+	}
+	if err := oldDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zoneOpenClose(t, old) // the open adds the guards to the old zone that holds the rows under -2
+	for _, which := range []struct{ name, path string }{{"created", current}, {"upgraded", old}} {
+		db := zoneKeyDB(t, which.path)
+		for _, table := range zoneKeyGuardTables() {
+			columns := zoneTableColumns(t, db, table)
+			if which.name == "created" {
+				clearTable(t, db, table)
+				zoneMustExec(t, db, zoneNthRow("INSERT", table, columns, 0, "-2"))
+			}
+			for n := 1; n <= 2; n++ {
+				if err := zoneExec(t, db, zoneNthRow("INSERT", table, columns, n, "")); err != nil {
+					t.Errorf("%s: %s: assigned insert %d after the rowid -2: %v", which.name, table, n, err)
+				}
+			}
+			if got := zoneRowids(t, db, table); !slices.Equal(got, []string{"-2", "-1", "0"}) {
+				t.Errorf("%s: %s: rowids %v, want [-2 -1 0] committed", which.name, table, got)
+			}
+			before := zoneTableContents(t, db, table)
+			for _, rowid := range []string{"-1", "0", "-2"} {
+				err := zoneExec(t, db, zoneNthRow("INSERT OR REPLACE", table, columns, 9, rowid))
+				if err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed: "+table+".rowid") {
+					t.Errorf("%s: %s: REPLACE of the stored rowid %s: %v; want the refusal of the rowid", which.name, table, rowid, err)
+				}
+			}
+			if after := zoneTableContents(t, db, table); !slices.Equal(before, after) {
+				t.Errorf("%s: %s: a refused REPLACE changed the table:\n%q\n%q", which.name, table, before, after)
+			}
 		}
 	}
 }
