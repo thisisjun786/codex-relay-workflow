@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	bridgesettings "github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -336,6 +338,16 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 				params["config"] = expectedMCP.Overrides()
 			}
 		}
+		// CRW-1140: the thread's PABCD state lives at the cwd the host reports for it now, not at the
+		// recorded cwd, which a later settings record may have changed. A resume that would run the
+		// thread elsewhere while that state is in flight is refused before anything is sent, so the
+		// refusal is retry-safe and a repeated request ID is checked again once the conflict is gone;
+		// so is a resume whose native root could not be recorded for the thread's SessionStart.
+		target, _ := params["cwd"].(string)
+		if refusal := stateroot.Guard(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread); refusal != nil {
+			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.CodeOf(refusal)}, {Key: "message", Value: refusal.Error() + "; message withheld"}}, true)
+			return nil
+		}
 		// The limit is not in the record (the host never reports it back), so a resume built from the
 		// record would drop it and the thread would return to the host's own window. It is resolved
 		// from the policy by the pair the record states, on both routes: a settings-free resume sends
@@ -364,6 +376,13 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
+		var moveErr error
+		if err == nil {
+			// The host took the resume: the anchor follows the cwd it reports for the thread, which is
+			// not necessarily the one asked for (verifyResume judges that below).
+			reported, _ := plain(resumed).(map[string]any)
+			moveErr = stateroot.Moved(os.LookupEnv, pyjson.Text(th["cwd"]), pyjson.Text(reported["cwd"]), thread)
+		}
 		// A resume the transport certainly withheld never reached the host, so the stored limit is
 		// withdrawn; a resume that may have gone out (its answer lost) keeps it. The transport's own
 		// error decides this before a cancellation of the caller replaces it, as the caller's
@@ -414,6 +433,10 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			if err = save(); err != nil {
 				return err
 			}
+		}
+		if moveErr != nil {
+			refuse("thread/resume", contract.OrderedObject{{Key: "code", Value: stateroot.CodeOf(moveErr)}, {Key: "message", Value: moveErr.Error() + "; the thread was resumed but no turn was started, message withheld"}}, false)
+			return nil
 		}
 		if guard != nil {
 			decision, err := guard(ctx)
