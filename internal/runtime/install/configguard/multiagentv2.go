@@ -108,7 +108,7 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 	path := multiAgentV2ConfigPath(deps)
 	// The pre-image read, the injected runner that rewrites config.toml, the repair and its publish
 	// are one critical section under the sidecar lock every CRW writer of config.toml takes
-	// (CRW-866), the shape of activate.go's activationSetKeyLocked: a retrust or an activation that
+	// (CRW-866), the shape of activate.go's activationPlanKey and activationPublishKey: a retrust or an activation that
 	// published in that window would otherwise be overwritten by the repair, which is computed from
 	// the pre-image this read took. An explicitly empty config path names no file, so it is not
 	// given a sidecar and keeps its missing-path no-op behaviour.

@@ -71,7 +71,7 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 			"Without it there is nowhere to record the previous value, and 'crw install features disable' could not revert this key."}, nil
 	}
 	// The whole command is one critical section under the sidecar lock every CRW writer of
-	// config.toml takes (CRW-866), the shape of activate.go's activationSetKeyLocked: the read, the
+	// config.toml takes (CRW-866), the shape of activate.go's activationPlanKey and activationPublishKey: the read, the
 	// decision, the backup and the activationPublish of config.toml, and the install manifest that
 	// records the key's ownership, are serialized against retrust, the activation and every other
 	// CRW writer. Reading the manifest before the lock, or publishing it after the release, lets an

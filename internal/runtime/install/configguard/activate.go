@@ -86,25 +86,14 @@ func configLockPathsPublishChecked(path string, b []byte, check func() error) er
 	return crwdir.PublishChecked(path, b, check)
 }
 
-// activationSetKeyLocked is the whole read-modify-write of one auto-enabled key under the sidecar
-// lock every CRW writer of config.toml takes (CRW-844): the read, the decision and the publish are
-// serialized against retrust and any other CRW writer, so two writers never interleave on one
-// config.toml, and a retrust that publishes between this read and this write cannot be overwritten
-// with content built from the pre-retrust bytes. The lock is taken once by Activate and held across
-// the whole flow (CRW-877), so this helper takes no lock of its own: taking one here would be the
-// activation deadlocking on the lock it already holds. The other files this package publishes (the
-// install manifest, the self-heal marker) are not shared with another writer and keep
-// activationPublish.
-func activationSetKeyLocked(path, table, key string, unsynced *error) (TomlEditResult, error) {
-	_, res, e := activationPlanKey(path, table, key)
-	if e != nil {
-		return TomlEditResult{}, e
-	}
-	return res, activationPublishKey(path, res, unsynced)
-}
-
-// activationPlanKey reads config.toml and plans the key's edit on what is there now. The caller records the file's
-// fingerprint and the edit's post-image in the intent before the edit is published (CRW-1153).
+// activationPlanKey reads config.toml and plans one auto-enabled key's edit on what is there now, and activationPublishKey
+// publishes it, both under the sidecar lock every CRW writer of config.toml takes (CRW-844): the read, the decision and the
+// publish are serialized against retrust and any other CRW writer, so two writers never interleave on one config.toml, and a
+// retrust that publishes between this read and this write cannot be overwritten with content built from the pre-retrust
+// bytes. The lock is taken once by Activate and held across the whole flow (CRW-877), so these helpers take no lock of their
+// own: taking one here would be the activation deadlocking on the lock it already holds. The other files this package
+// publishes (the install manifest, the self-heal marker) are not shared with another writer and keep activationPublish. The
+// caller records the file's fingerprint and the edit's post-image in the intent between the two (CRW-1153).
 func activationPlanKey(path, table, key string) ([]byte, TomlEditResult, error) {
 	content, _, e := activationReadFile(path)
 	if e != nil {
