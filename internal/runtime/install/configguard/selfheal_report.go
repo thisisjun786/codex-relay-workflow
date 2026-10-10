@@ -51,7 +51,8 @@ const (
 	SelfHealReportOff SelfHealReportAction = "off"
 )
 
-// The three skips, spelled as the oracle's SelfHealOutcome reasons.
+// The three skips, spelled as the oracle's SelfHealOutcome reasons. SelfHealReasonCached is no longer returned by the report
+// path (CRW-1185): a legacy mtime cache is not trusted, so the round measures instead of answering "cached".
 const (
 	SelfHealReasonOptedOut       = "opted-out"
 	SelfHealReasonCached         = "cached"
@@ -91,16 +92,9 @@ func SelfHealReport(deps SelfHealReportDeps) []SelfHealReportOutcome {
 	}
 
 	healable := SelfHealReportableFeatures()
-	configMtimeMs := selfHealReportMtimeMs(filepath.Join(deps.CodexHome, "config.toml"))
-	// A cache that predates a SOFT_FEATURES addition must not vouch for the new key.
-	cacheCoversCurrentKeys := marker != nil && marker.CachedKeys != nil && selfHealReportCovers(marker.CachedKeys, healable)
-	// A marker that carries verified evidence, even evidence that no longer parses, is judged by the
-	// evidence alone: the mtime cache an older CXC wrote must not vouch ahead of a newer explicit
-	// finding (CRW-1150).
-	if marker != nil && marker.Probe == nil && !marker.probeSeen && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
-		marker.ConfigMtimeMs != nil && configMtimeMs != nil && *marker.ConfigMtimeMs == *configMtimeMs {
-		return []SelfHealReportOutcome{{Action: SelfHealReportSkipped, Reason: SelfHealReasonCached}}
-	}
+	// The oracle's mtime cache (allEnabled, cachedKeys, configMtimeMs) is not trusted by this report path (CRW-1185): a
+	// marker that carries no probe evidence measures like any other, so a soft flag that is off still gets its notice at
+	// every SessionStart, and the report writes nothing. The cache is the only way a legacy-only marker got a silent answer.
 
 	healedKeys := []string{}
 	if marker != nil {
@@ -242,31 +236,11 @@ func selfHealReportHome(env host.LookupEnv) (string, error) {
 	return filepath.Join(base, ".codex"), nil
 }
 
-// selfHealReportMtimeMs is statSync(path).mtimeMs; nil when the path does not exist. Node adds the
-// seconds and the nanoseconds apart, so the port does too: a single float64(UnixNano()) loses
-// precision above 2^53 ns (1970 + about 104 days) and the last bit decides this equality.
-func selfHealReportMtimeMs(path string) *float64 {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil
-	}
-	ms := selfHealReportMsOf(info.ModTime())
-	return &ms
-}
-
-// selfHealReportMsOf is msOf (internal/relay/job/store.go:418): mtimeMs with the fractions kept.
+// selfHealReportMsOf is msOf (internal/relay/job/store.go:418): mtimeMs with the fractions kept. Node adds the seconds and
+// the nanoseconds apart, so the port does too: a single float64(UnixNano()) loses precision above 2^53 ns (1970 + about 104
+// days). The report path no longer compares mtimes (CRW-1185); the tests write a legacy marker's configMtimeMs with it.
 func selfHealReportMsOf(t time.Time) float64 {
 	return float64(t.Unix())*1e3 + float64(t.Nanosecond())/1e6
-}
-
-// selfHealReportCovers is the cache guard's "cachedKeys covers every soft key" test.
-func selfHealReportCovers(have []string, want []DeclaredFeature) bool {
-	for _, key := range want {
-		if !selfHealReportContains(have, string(key)) {
-			return false
-		}
-	}
-	return true
 }
 
 func selfHealReportContains(list []string, want string) bool {
