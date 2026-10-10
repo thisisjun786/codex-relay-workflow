@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -39,6 +40,7 @@ const (
 	EvidenceVerdict            = "verdict"
 	EvidenceVerifiedHead       = "verified_head"
 	EvidenceAcceptance         = "acceptance"
+	EvidenceBaseRefresh        = "base_refresh"
 	EvidenceRevalidation       = "revalidation"
 	EvidenceMergeCheck         = "merge_check"
 	EvidenceCommitVerification = "commit_verification"
@@ -237,6 +239,8 @@ func (t *tableSet) has(ctx context.Context, name string) (bool, error) {
 type entrySource struct {
 	table, source, query string
 	by                   scope
+	// read replaces the query for a source whose rows need more than SQL can say (a digest to check, an identity to resolve): it returns the node's rows of this source.
+	read func(ctx context.Context, tables *tableSet, plan, node string) ([]ActivityEntry, error)
 }
 
 type scope int
@@ -247,21 +251,22 @@ const (
 )
 
 var evidenceSources = []entrySource{
-	{"verdicts", EvidenceVerdict, "SELECT e.relationship_id, e.execution_generation, v.event_id, v.verdict_turn_id, v.verdict, v.decided_at FROM verdicts v JOIN events e ON e.event_id = v.event_id WHERE e.relationship_id IN (%s)", byRelationships},
-	{"dag_verified_heads", EvidenceVerifiedHead, "SELECT relationship_id, execution_generation, event_id, verdict_turn_id, head_sha, recorded_at FROM dag_verified_heads WHERE relationship_id IN (%s)", byRelationships},
-	{"dag_acceptances", EvidenceAcceptance, "SELECT relationship_id, execution_generation, event_id, acceptance_id, state, accepted_at FROM dag_acceptances WHERE plan_id = ? AND node_id = ?", byNode},
-	{"dag_acceptance_revalidations", EvidenceRevalidation, "SELECT a.relationship_id, a.execution_generation, r.event_id, r.revalidation_id, r.criteria_set_digest, r.revalidated_at FROM dag_acceptance_revalidations r JOIN dag_acceptances a ON a.acceptance_id = r.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode},
-	{"dag_merge_checks", EvidenceMergeCheck, "SELECT a.relationship_id, a.execution_generation, a.event_id, c.check_id, c.outcome, c.recorded_at FROM dag_merge_checks c JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode},
-	{"dag_acceptance_verifications", EvidenceCommitVerification, "SELECT a.relationship_id, a.execution_generation, a.event_id, v.record_digest, v.head_commit, v.recorded_at FROM dag_acceptance_verifications v JOIN dag_acceptances a ON a.acceptance_id = v.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode},
-	{"dag_acceptance_premerge", EvidencePremerge, "SELECT a.relationship_id, a.execution_generation, a.event_id, p.record_digest, p.evaluated_head, p.recorded_at FROM dag_acceptance_premerge p JOIN dag_acceptances a ON a.acceptance_id = p.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode},
+	{"verdicts", EvidenceVerdict, "SELECT e.relationship_id, e.execution_generation, v.event_id, v.verdict_turn_id, v.verdict, v.decided_at FROM verdicts v JOIN events e ON e.event_id = v.event_id WHERE e.relationship_id IN (%s)", byRelationships, nil},
+	{"dag_verified_heads", EvidenceVerifiedHead, "SELECT relationship_id, execution_generation, event_id, verdict_turn_id, head_sha, recorded_at FROM dag_verified_heads WHERE relationship_id IN (%s)", byRelationships, nil},
+	{table: "dag_base_refreshes", source: EvidenceBaseRefresh, by: byNode, read: baseRefreshEntries},
+	{"dag_acceptances", EvidenceAcceptance, "SELECT relationship_id, execution_generation, event_id, acceptance_id, state, accepted_at FROM dag_acceptances WHERE plan_id = ? AND node_id = ?", byNode, nil},
+	{"dag_acceptance_revalidations", EvidenceRevalidation, "SELECT a.relationship_id, a.execution_generation, r.event_id, r.revalidation_id, r.criteria_set_digest, r.revalidated_at FROM dag_acceptance_revalidations r JOIN dag_acceptances a ON a.acceptance_id = r.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
+	{table: "dag_merge_checks", source: EvidenceMergeCheck, by: byNode, read: mergeCheckEntries},
+	{"dag_acceptance_verifications", EvidenceCommitVerification, "SELECT a.relationship_id, a.execution_generation, a.event_id, v.record_digest, v.head_commit, v.recorded_at FROM dag_acceptance_verifications v JOIN dag_acceptances a ON a.acceptance_id = v.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
+	{"dag_acceptance_premerge", EvidencePremerge, "SELECT a.relationship_id, a.execution_generation, a.event_id, p.record_digest, p.evaluated_head, p.recorded_at FROM dag_acceptance_premerge p JOIN dag_acceptances a ON a.acceptance_id = p.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
 }
 
 var activitySources = []entrySource{
-	{"events", ActivityChildEvent, "SELECT relationship_id, execution_generation, event_id, turn_id, outcome, last_seen_at FROM events WHERE producer = 'child' AND relationship_id IN (%s)", byRelationships},
-	{"generation_turns", ActivityTurnAdmitted, "SELECT relationship_id, execution_generation, NULL, turn_id, evidence, admitted_at FROM generation_turns WHERE relationship_id IN (%s)", byRelationships},
-	{"poll_observations", ActivityPoll, "SELECT relationship_id, execution_generation, NULL, turn_id, last_status, last_polled_at FROM poll_observations WHERE last_polled_at IS NOT NULL AND relationship_id IN (%s)", byRelationships},
-	{"observations", ActivityTurnObservation, "SELECT o.relationship_id, (SELECT MIN(g.execution_generation) FROM generation_turns g WHERE g.relationship_id = o.relationship_id AND g.turn_id = o.turn_id), o.event_id, o.turn_id, o.terminal_status, o.observed_at FROM observations o WHERE o.relationship_id IN (%s)", byRelationships},
-	{"recipient_lifecycle", ActivityLifecycle, "SELECT r.relationship_id, r.execution_generation, NULL, l.task_id, l.runtime_status, l.observed_at FROM recipient_lifecycle l JOIN relationships r ON r.child_task_id = l.task_id WHERE r.relationship_id IN (%s)", byRelationships},
+	{"events", ActivityChildEvent, "SELECT relationship_id, execution_generation, event_id, turn_id, outcome, last_seen_at FROM events WHERE producer = 'child' AND relationship_id IN (%s)", byRelationships, nil},
+	{"generation_turns", ActivityTurnAdmitted, "SELECT relationship_id, execution_generation, NULL, turn_id, evidence, admitted_at FROM generation_turns WHERE relationship_id IN (%s)", byRelationships, nil},
+	{"poll_observations", ActivityPoll, "SELECT relationship_id, execution_generation, NULL, turn_id, last_status, last_polled_at FROM poll_observations WHERE last_polled_at IS NOT NULL AND relationship_id IN (%s)", byRelationships, nil},
+	{"observations", ActivityTurnObservation, "SELECT o.relationship_id, (SELECT MIN(g.execution_generation) FROM generation_turns g WHERE g.relationship_id = o.relationship_id AND g.turn_id = o.turn_id), o.event_id, o.turn_id, o.terminal_status, o.observed_at FROM observations o WHERE o.relationship_id IN (%s)", byRelationships, nil},
+	{"recipient_lifecycle", ActivityLifecycle, "SELECT r.relationship_id, NULL, NULL, l.task_id, l.runtime_status, l.observed_at FROM recipient_lifecycle l JOIN relationships r ON r.child_task_id = l.task_id WHERE r.relationship_id IN (%s)", byRelationships, nil},
 }
 
 // lastEntry is the newest row among the label's sources for the node, or nil when the store holds none. "Newest" compares the recorded times with one another; a tie is broken by the source, the
@@ -275,6 +280,20 @@ func lastEntry(ctx context.Context, tables *tableSet, plan, node string, relatio
 		if ok, err := tables.has(ctx, src.table); err != nil {
 			return nil, err
 		} else if !ok {
+			continue
+		}
+		if src.read != nil {
+			entries, err := src.read(ctx, tables, plan, node)
+			if err != nil {
+				return nil, err
+			}
+			for _, e := range entries {
+				e.Label, e.Source = label, src.source
+				if best == nil || newerEntry(e, *best) {
+					kept := e
+					best = &kept
+				}
+			}
 			continue
 		}
 		query, args := src.query, []any{}
@@ -317,6 +336,107 @@ func lastEntry(ctx context.Context, tables *tableSet, plan, node string, relatio
 		}
 	}
 	return best, nil
+}
+
+// refreshRow is a base refresh recorded for an acceptance that digests to its id, with the acceptance it belongs to.
+type refreshRow struct {
+	acceptanceID, refreshID, relationshipID, eventID, head, recordedAt string
+	generation                                                         int64
+}
+
+// validRefreshes are the node's base refreshes that count: the rows of acceptance.Stands (the refresh names the acceptance's relationship, stands on its generation or a later one, and its id is the
+// digest of what it records), with the time the store recorded each. A store that predates the table, or the acceptances, has none.
+func validRefreshes(ctx context.Context, tables *tableSet, plan, node string) ([]refreshRow, error) {
+	for _, name := range []string{"dag_base_refreshes", "dag_acceptances"} {
+		if ok, err := tables.has(ctx, name); err != nil || !ok {
+			return nil, err
+		}
+	}
+	rows, err := tables.q.QueryContext(ctx, "SELECT r.acceptance_id, a.relationship_id, a.execution_generation, r.refresh_id, r.relationship_id, r.execution_generation, r.event_id, r.revision_hash, r.head_sha,"+
+		" r.base_repository, r.base_ref, r.base_tip_sha, r.proof_json, r.resolved_paths_json, r.recorded_at FROM dag_base_refreshes r JOIN dag_acceptances a ON a.acceptance_id = r.acceptance_id"+
+		" WHERE a.plan_id = ? AND a.node_id = ? ORDER BY r.acceptance_id, r.refresh_seq", plan, node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []refreshRow
+	for rows.Next() {
+		var accRelationship, revision, baseRepo, baseRef, baseTip, proof, resolved string
+		var accGeneration int64
+		var at sql.NullString
+		r := refreshRow{}
+		if err := rows.Scan(&r.acceptanceID, &accRelationship, &accGeneration, &r.refreshID, &r.relationshipID, &r.generation, &r.eventID, &revision, &r.head, &baseRepo, &baseRef, &baseTip, &proof, &resolved, &at); err != nil {
+			return nil, err
+		}
+		if r.relationshipID != accRelationship || r.generation < accGeneration ||
+			r.refreshID != acceptance.RefreshDigest(r.acceptanceID, r.relationshipID, r.generation, r.eventID, revision, r.head, baseRepo, baseRef, baseTip, proof, resolved) {
+			continue
+		}
+		r.recordedAt = at.String
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// baseRefreshEntries are the node's valid base refreshes as evidence: after one, the acceptance stands on the refreshed head, and that is the latest durable change to what the node was verified at.
+func baseRefreshEntries(ctx context.Context, tables *tableSet, plan, node string) ([]ActivityEntry, error) {
+	refreshes, err := validRefreshes(ctx, tables, plan, node)
+	if err != nil {
+		return nil, err
+	}
+	var out []ActivityEntry
+	for _, r := range refreshes {
+		if r.recordedAt == "" {
+			continue
+		}
+		out = append(out, ActivityEntry{RelationshipID: r.relationshipID, Generation: r.generation, HasGeneration: true, EventID: r.eventID, Ref: r.refreshID, Change: r.head, RecordedAt: r.recordedAt})
+	}
+	return out, nil
+}
+
+// mergeCheckEntries are the node's merge checks as evidence. A check judges the head its acceptance stood on when it was made (head_sha), so the entry takes the generation and event of that head: the
+// acceptance's own, or the valid base refresh whose head it is. A check of a head neither names has no generation and no event: the store cannot say which execution it judged.
+func mergeCheckEntries(ctx context.Context, tables *tableSet, plan, node string) ([]ActivityEntry, error) {
+	if ok, err := tables.has(ctx, "dag_acceptances"); err != nil || !ok {
+		return nil, err
+	}
+	refreshes, err := validRefreshes(ctx, tables, plan, node)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tables.q.QueryContext(ctx, "SELECT a.acceptance_id, a.relationship_id, a.execution_generation, a.event_id, a.head_sha, c.head_sha, c.check_id, c.outcome, c.recorded_at FROM dag_merge_checks c"+
+		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", plan, node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ActivityEntry
+	for rows.Next() {
+		var acceptanceID, relationship, event, checkID, outcome string
+		var generation int64
+		var ownHead, judged, at sql.NullString
+		if err := rows.Scan(&acceptanceID, &relationship, &generation, &event, &ownHead, &judged, &checkID, &outcome, &at); err != nil {
+			return nil, err
+		}
+		if at.String == "" {
+			continue
+		}
+		e := ActivityEntry{RelationshipID: relationship, Ref: checkID, Change: outcome, RecordedAt: at.String}
+		switch {
+		case judged.String == ownHead.String:
+			e.Generation, e.HasGeneration, e.EventID = generation, true, event
+		default:
+			// the newest valid refresh recorded for this head, as the stand reads them (newest first)
+			for i := len(refreshes) - 1; i >= 0; i-- {
+				if r := refreshes[i]; r.acceptanceID == acceptanceID && r.head == judged.String {
+					e.RelationshipID, e.Generation, e.HasGeneration, e.EventID = r.relationshipID, r.generation, true, r.eventID
+					break
+				}
+			}
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // recordedTime reads a recorded time; ok is false for text that is not a timestamp (such text still orders, by its bytes, below every timestamp).

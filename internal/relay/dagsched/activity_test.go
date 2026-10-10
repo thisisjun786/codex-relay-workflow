@@ -463,3 +463,117 @@ func TestCLIActivityReadsOnlyTheStore(t *testing.T) {
 		t.Errorf("no store: dag-ready exit %d %s, dag-activity exit %d %s", readyCode, readyOut, activityCode, activityOut)
 	}
 }
+
+// stampedRefresh records a base refresh, the way dag-base-refresh does, with a recorded time the test chooses and an event of its own; the row digests to its id, so a reader that checks the digest
+// reads it as valid. generation is the generation the refresh stands on.
+func (f *fixture) stampedRefresh(a accepted, seq int, generation int64, event, head, at string) string {
+	f.t.Helper()
+	revision := dig("revision refresh " + head)
+	id := refreshDigest(a.Acceptance.AcceptanceID, a.Acceptance.RelationshipID, generation, event, revision, head, "owner/repo", "dev", "tip", "{}", "[]")
+	f.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'owner/repo', 'dev', 'tip', '{}', '[]', 'parent', 0, ?)",
+		id, a.Acceptance.AcceptanceID, seq, a.Acceptance.RelationshipID, generation, event, revision, head, at)
+	return id
+}
+
+// stampedCheck records a merge check of an accepted pull request at a head, with a recorded time the test chooses.
+func (f *fixture) stampedCheck(a accepted, id string, seq int, head, at string) {
+	f.t.Helper()
+	body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
+	f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+		" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, '[]', 1, ?, 'test', ?)", id, a.Acceptance.AcceptanceID, seq, head, head, dig("evidence "+id), body, OutcomeEligible, at)
+}
+
+// Verification finding 1: the host's lifecycle observation of a child's thread is keyed by the task alone. It was recorded before a later generation was opened, and opening one records no activity, so
+// the entry must not name the generation the relationship stands on now: the generation is absent, and the same row prints the same before and after.
+func TestActivityLifecycleIdentityDoesNotMoveWithGeneration(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	forkJoinPlan(f, "p1")
+	a := f.acceptNode("p1", "research", acceptOpts{})
+	f.exec("INSERT OR REPLACE INTO recipient_lifecycle (task_id, runtime_status, deliverable, observed_at) VALUES ('child-research', 'active', 'yes', '2099-01-01T00:01:00.000000+00:00')")
+	before := f.activity("p1").node("research").Activity
+	if before == nil || before.Source != ActivityLifecycle || before.RecordedAt != "2099-01-01T00:01:00.000000+00:00" {
+		t.Fatalf("activity = %+v, want the lifecycle observation as the newest row", before)
+	}
+	if before.HasGeneration {
+		t.Errorf("the lifecycle observation names generation %d, but the store keys it by the task and cannot say which generation it was observed in", before.Generation)
+	}
+	f.exec("UPDATE relationships SET execution_generation = execution_generation + 1 WHERE relationship_id = ?", a.Acceptance.RelationshipID)
+	after := f.activity("p1").node("research").Activity
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("opening a generation moved a past observation: %+v -> %+v", before, after)
+	}
+	if got := nodeOfDecoded(t, f.activity("p1").decoded(t), "research")["activity"].(map[string]any)["execution_generation"]; got != nil {
+		t.Errorf("the printed generation of the lifecycle observation is %v, want null", got)
+	}
+}
+
+// Verification finding 2: a base refresh the acceptance stands on is the newest durable verification change when it is recorded after the acceptance, on the acceptance's own generation or a later one.
+// A row that does not digest to its id is not a refresh, and is not read.
+func TestActivityBaseRefreshIsTheNewestVerificationChange(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		generation int64
+	}{{"a later generation", 2}, {"the acceptance's own generation", 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.projectParent()
+			forkJoinPlan(f, "p1")
+			a := f.acceptNode("p1", "research", acceptOpts{})
+			if got := f.activity("p1").node("research").Evidence; got == nil || got.Source != EvidenceAcceptance {
+				t.Fatalf("evidence before the refresh = %+v, want the acceptance", got)
+			}
+			id := f.stampedRefresh(a, 1, tc.generation, "evt-refresh", "headrefresh1", "2099-01-01T00:02:00.000000+00:00")
+			e := f.activity("p1").node("research").Evidence
+			if e == nil || e.Label != LabelEvidence || e.Source != EvidenceBaseRefresh || e.Ref != id || e.RelationshipID != a.Acceptance.RelationshipID || !e.HasGeneration || e.Generation != tc.generation ||
+				e.EventID != "evt-refresh" || e.Change != "headrefresh1" || e.RecordedAt != "2099-01-01T00:02:00.000000+00:00" {
+				t.Fatalf("evidence after a base refresh = %+v, want the refresh %s: its relationship, generation %d, event, head and recorded time", e, id, tc.generation)
+			}
+			// a row written by hand under another content is not a refresh
+			f.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+				" VALUES ('dbr-forged', ?, 2, ?, ?, 'evt-forged', ?, 'headforged', 'owner/repo', 'dev', 'tip', '{}', '[]', 'parent', 0, '2099-02-01T00:00:00.000000+00:00')",
+				a.Acceptance.AcceptanceID, a.Acceptance.RelationshipID, tc.generation, dig("forged"))
+			if got := f.activity("p1").node("research").Evidence; !reflect.DeepEqual(got, e) {
+				t.Errorf("a refresh row that does not digest to its id changed the evidence: %+v -> %+v", e, got)
+			}
+		})
+	}
+}
+
+// Verification finding 3: a merge check judges the head the acceptance stood on when it was made, and the entry names the identity of that head: the acceptance's own before a base refresh, the
+// refresh's after, and no generation or event for a head the store cannot tie to either.
+func TestActivityMergeCheckNamesTheIdentityOfTheHeadItJudged(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	stagnatingPlan(f, "sp")
+	a := f.acceptNode("sp", "I", pinnedOpts)
+	own := a.Acceptance.HeadSHA
+	if own == "" {
+		t.Fatal("the fixture's acceptance holds no head")
+	}
+	evidence := func() *ActivityEntry { return f.activity("sp").node("I").Evidence }
+
+	f.stampedCheck(a, "mc-1", 1, own, "2099-01-01T00:01:00.000000+00:00")
+	e := evidence()
+	if e == nil || e.Source != EvidenceMergeCheck || e.Ref != "mc-1" || !e.HasGeneration || e.Generation != a.Acceptance.ExecutionGeneration || e.EventID != a.Event {
+		t.Fatalf("a check of the accepted head = %+v, want the acceptance's generation %d and event %s", e, a.Acceptance.ExecutionGeneration, a.Event)
+	}
+	f.stampedRefresh(a, 1, 2, "evt-refresh", "headrefresh1", "2099-01-01T00:02:00.000000+00:00")
+	f.stampedCheck(a, "mc-2", 2, "headrefresh1", "2099-01-01T00:03:00.000000+00:00")
+	e = evidence()
+	if e == nil || e.Source != EvidenceMergeCheck || e.Ref != "mc-2" || !e.HasGeneration || e.Generation != 2 || e.EventID != "evt-refresh" {
+		t.Fatalf("a check of the refreshed head = %+v, want the refresh's generation 2 and event evt-refresh", e)
+	}
+	// the earlier check keeps its own identity when it is the newest row again
+	f.exec("UPDATE dag_merge_checks SET recorded_at = '2099-01-01T00:04:00.000000+00:00' WHERE check_id = 'mc-1'")
+	e = evidence()
+	if e == nil || e.Ref != "mc-1" || !e.HasGeneration || e.Generation != a.Acceptance.ExecutionGeneration || e.EventID != a.Event {
+		t.Fatalf("a check made before the refresh = %+v, want the acceptance's identity, not the refresh's", e)
+	}
+	f.stampedCheck(a, "mc-3", 3, "headunknown", "2099-01-01T00:05:00.000000+00:00")
+	e = evidence()
+	if e == nil || e.Ref != "mc-3" || e.HasGeneration || e.EventID != "" || e.RelationshipID != a.Acceptance.RelationshipID {
+		t.Fatalf("a check of a head neither the acceptance nor a valid refresh names = %+v, want no generation and no event", e)
+	}
+}
