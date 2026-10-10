@@ -44,17 +44,35 @@ const (
 	GitHubPostMaxStdinBytes = 1 << 20
 )
 
-// GitHubPostAnswer is the component row's whole input policy: the guard's answer for the payload, or the
-// deny envelope when the payload is over the bound or its transport cannot be read.
-func GitHubPostAnswer(in io.Reader) string {
+// GitHubPostInput is the component row's whole input policy: the payload within the bound, read before the guard judges it
+// so the row can leave its invocation record first. over is a payload past the bound, which the guard refuses (see
+// GitHubPostJudge); ok is false when the read fails, which the guard refuses without observing or judging the partial input.
+func GitHubPostInput(in io.Reader) (raw string, over, ok bool) {
 	b, err := io.ReadAll(io.LimitReader(in, GitHubPostMaxStdinBytes+1))
 	if err != nil {
-		return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)
+		return "", false, false
 	}
 	if len(b) > GitHubPostMaxStdinBytes {
+		return "", true, true
+	}
+	return string(b), false, true
+}
+
+// GitHubPostJudge is the guard's answer for a payload GitHubPostInput read, or the deny envelope when it was over the bound.
+func GitHubPostJudge(raw string, over bool) string {
+	if over {
 		return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)
 	}
-	return HandleGitHubPostGuard(string(b))
+	return HandleGitHubPostGuard(raw)
+}
+
+// GitHubPostAnswer is the guard's answer for the payload: the two steps above in one. A read that fails is refused without judging partial input.
+func GitHubPostAnswer(in io.Reader) string {
+	raw, over, ok := GitHubPostInput(in)
+	if !ok {
+		return GitHubPostCancelledAnswer()
+	}
+	return GitHubPostJudge(raw, over)
 }
 
 // GitHubPostCancelledAnswer is the deny answer of a GitHub post guard cancelled before it judged the command. The command is

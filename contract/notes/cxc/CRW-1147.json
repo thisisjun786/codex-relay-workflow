@@ -1,0 +1,40 @@
+{
+  "issue": "CRW-1147",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli-help__map__dash_h",
+      "reason": "CRW-1147: an explicit help is answered before the venv check, the bootstrap and the uv probe, so the oracle's uv --version call does not happen (known-defects/CRW-1147.md).",
+      "remove": [
+        "calls/0"
+      ]
+    },
+    {
+      "id": "cli-help__map__dashdash_help",
+      "reason": "CRW-1147: an explicit help is answered before the venv check, the bootstrap and the uv probe, so the oracle's uv --version call does not happen (known-defects/CRW-1147.md).",
+      "remove": [
+        "calls/0"
+      ]
+    },
+    {
+      "id": "cli__map__codexclaw_python_runs_repomap_with_it",
+      "reason": "The Go runtime addresses the skill-owned script under CRW_SKILLS_DIR or CODEX_HOME/skills; the staged skill is outside the runtime/plugin package until cutover. CRW-1147: an explicit interpreter skips the uv probe, so the first run's uv call is gone; the bootstrap holds a flock on the venvs directory, which it creates (known-defects/CRW-1147.md).",
+      "set": {
+        "calls/0": "{\"cmd\":\"py-pinned\",\"argv\":[\"-B\",\"${CODEX_HOME}/skills/crw-repo-map/scripts/repomap.py\",\".\"],\"cwd\":\"${WS}\"}",
+        "calls/1": "{\"cmd\":\"python3\",\"argv\":[\"-m\",\"venv\",\"${CXC_HOME}/venvs/repomap\"],\"cwd\":\"${WS}\"}",
+        "calls/2": "{\"cmd\":\"uv\",\"argv\":[\"--version\"],\"cwd\":\"${WS}\"}",
+        "calls/3": "{\"cmd\":\"python3\",\"argv\":[\"-B\",\"${CODEX_HOME}/skills/crw-repo-map/scripts/repomap.py\",\".\"],\"cwd\":\"${WS}\"}",
+        "tree/cxc/venvs/type": "dir",
+        "tree/cxc/venvs/mode": "0700",
+        "tree/cxc/venvs/content": "",
+        "tree/cxc/venvs/form": "",
+        "tree/cxc/venvs/sha256": "",
+        "tree/cxc/venvs/size": "",
+        "tree/cxc/venvs/target": ""
+      },
+      "remove": [
+        "calls/4"
+      ]
+    }
+  ]
+}

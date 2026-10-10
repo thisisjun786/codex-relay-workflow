@@ -3,26 +3,5 @@
   "identical": [
     "hook__session-start-announcing-subagent-fallback__subagent_and_malformed_are_silent"
   ],
-  "intentionally-changed": [
-    {
-      "id": "hook__session-start-announcing-subagent-fallback__baseline_empty_workspace",
-      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call.",
-      "remove": ["calls/0"]
-    },
-    {
-      "id": "hook__session-start-announcing-subagent-fallback__aliases_verified_in_local_catalog",
-      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call.",
-      "remove": ["calls/0"]
-    },
-    {
-      "id": "hook__session-start-announcing-subagent-fallback__spawn_v1_card",
-      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call.",
-      "remove": ["calls/0"]
-    },
-    {
-      "id": "hook__session-start-announcing-subagent-fallback__fallback_configured_protocol_precedes_card",
-      "reason": "The existing global-only helper role store (I1) omits the oracle's project trust git ls-files call.",
-      "remove": ["calls/0"]
-    }
-  ]
+  "intentionally-changed": []
 }

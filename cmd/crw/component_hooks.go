@@ -72,7 +72,25 @@ func componentHooks() []componentHook {
 		// GitHub post guard: CRW's own protection (no CXC oracle), with its own stdin policy and answer.
 		{"pre-tool-use-guarding-github-post", "pre-tool-use", func(c invocation, in io.Reader) int {
 			done := make(chan string, 1)
-			go func() { done <- pabcdhook.GitHubPostAnswer(in) }()
+			go func() {
+				defer githubPostGuardReaderDone()
+				raw, over, ok := pabcdhook.GitHubPostInput(in)
+				if !ok {
+					done <- pabcdhook.GitHubPostCancelledAnswer()
+					return
+				}
+				// Input that arrives once the leg has been cancelled finds a leg that already answered the deny: nothing is recorded
+				// or judged for it (the answer here is the same deny, so which of the two reaches the select first does not matter).
+				if c.ctx.Err() != nil {
+					done <- pabcdhook.GitHubPostCancelledAnswer()
+					return
+				}
+				// Like every other leg, the record is left before the judgment; it is metadata-only and an over-bound payload leaves none.
+				if !over {
+					harness.RecordInvocation(raw, harness.Component, "pre-tool-use-github-post", os.LookupEnv)
+				}
+				done <- pabcdhook.GitHubPostJudge(raw, over)
+			}()
 			select {
 			case answer := <-done:
 				if answer != "" {
@@ -104,6 +122,10 @@ func componentHooks() []componentHook {
 		{"post-compact-injecting-bg-terminal-affordance.user-prompt-submit", "user-prompt-submit", aff("user-prompt-submit")},
 	}
 }
+
+// githubPostGuardReaderDone runs when the GitHub post guard's input goroutine has finished, recorded and judged or not; a test
+// waits on it instead of on a sleep.
+var githubPostGuardReaderDone = func() {}
 
 func runComponentHook(c invocation, in io.Reader, rows []componentHook) (bool, int) {
 	id := legArg(c.args)
