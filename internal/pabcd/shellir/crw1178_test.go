@@ -449,10 +449,12 @@ func TestCRW1178CacheTimeRoundedUpBySecondsAsDoubleIsRefused(t *testing.T) {
 	}
 }
 
-// CRW-1178 verification round 5 (P0): the shell opens the module run's own write redirections before the interpreter starts, so
-// "python3 -B -m unittest > stamp" truncates the source through its hard link stamp (size 0, time now) and can make a stale entry
-// recording that size and second current. Beside a stale entry, a write target of the run itself that exists and is a source (by
-// any name), has another link or cannot be inspected is refused; /dev/null, descriptor copies and new or unrelated files stay allowed.
+// CRW-1178 verification rounds 5 and 6 (P0): the shell opens the module run's own write redirections before the interpreter starts,
+// so "python3 -B -m unittest > stamp" truncates the source through its hard link stamp (size 0, time now) and can make a stale entry
+// recording that size and second current. A target reached through a directory link and '..' (../lnk/../sl, which the kernel
+// resolves after the link and a text clean does not) names the source by a symlink or a hard link that no path check of the reader
+// sees. Beside a stale entry, the run itself may write only to /dev/null and descriptor copies or closes; any file target is refused
+// with the route, a new log file included. With no stale entry skipped the same redirections stay allowed.
 func TestCRW1178RunRedirectThroughLinkBesideStaleCacheIsRefused(t *testing.T) {
 	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
 	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(cwd, "stamp")); err != nil {
@@ -464,6 +466,21 @@ func TestCRW1178RunRedirectThroughLinkBesideStaleCacheIsRefused(t *testing.T) {
 	other := t.TempDir()
 	alias := filepath.Join(other, "alias")
 	if err := os.Symlink(filepath.Join(cwd, "calc.py"), alias); err != nil {
+		t.Fatal(err)
+	}
+	// Outside the project, so the inventory never walks them: lnk -> ext/deep, ext/sl -> calc.py and ext/hard, a hard link of
+	// calc.py. From cwd, ../lnk/../sl is ext/sl for the kernel and <parent>/sl (missing) for a text clean.
+	parent := filepath.Dir(cwd)
+	if err := os.MkdirAll(filepath.Join(parent, "ext", "deep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(parent, "ext", "deep"), filepath.Join(parent, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(cwd, "calc.py"), filepath.Join(parent, "ext", "sl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(cwd, "calc.py"), filepath.Join(parent, "ext", "hard")); err != nil {
 		t.Fatal(err)
 	}
 	for _, cmd := range []string{
@@ -484,26 +501,56 @@ func TestCRW1178RunRedirectThroughLinkBesideStaleCacheIsRefused(t *testing.T) {
 		"timeout 60 python3 -B -m unittest > stamp",
 		"env python3 -B -m unittest 2> stamp",
 		"python3 -B -m unittest > \"$CRW1178_UNSET_TARGET\"",
+		// A symlink and a hard link of the source reached through a directory link and '..'.
+		"python3 -B -m unittest > ../lnk/../sl",
+		"python3 -B -m unittest 2> ../lnk/../sl",
+		"python3 -B -m unittest >> ../lnk/../sl",
+		"sleep 3; python3 -B -m unittest > ../lnk/../sl",
+		"sleep 3; python3 -B -m unittest 2> ../lnk/../sl",
+		"python3 -B -m unittest > ../lnk/../hard",
+		"python3 -B -m unittest 2> ../lnk/../hard",
+		"python3 -B -m unittest >> ../lnk/../hard",
+		"sleep 3; python3 -B -m unittest > ../lnk/../hard",
+		// Any other file: new or existing, in the project or not.
+		"python3 -B -m unittest > out.log 2>&1",
+		"python3 -B -m unittest >> notes.log",
+		"sleep 1; python3 -B -m unittest > out.log",
+		"python3 -B -m unittest 2> " + filepath.Join(other, "new.log"),
+		"{ python3 -B -m unittest; } > out.log",
 	} {
 		_, err := Analyze(cmd, cwd)
 		var u *Unreadable
 		if !errors.As(err, &u) {
-			t.Errorf("%s: a write through a source's link beside a stale cache was allowed: %v", cmd, err)
+			t.Errorf("%s: a write to a file beside a stale cache was allowed: %v", cmd, err)
 		} else if !strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "rewrite") && !strings.Contains(u.Reason, "rewritten") {
 			t.Errorf("%s: refused for another reason: %q", cmd, u.Reason)
+		} else if strings.Contains(u.Reason, "stale only until") && !strings.Contains(u.Reason, "separate command first; python -B") {
+			t.Errorf("%s: the reason lacks the route: %q", cmd, u.Reason)
 		}
 	}
 	for _, cmd := range []string{
-		"python3 -B -m unittest > out.log 2>&1",
 		"python3 -B -m unittest > /dev/null 2>&1",
 		"python3 -B -m unittest 2>&1 >/dev/null",
-		"python3 -B -m unittest >> notes.log",
-		"sleep 1; python3 -B -m unittest > out.log",
+		"python3 -B -m unittest 2>/dev/null",
 		"python3 -B -m unittest 2>&1 | tail -n 20",
+		"python3 -B -m unittest 1>&2",
+		"python3 -B -m unittest 2>&-",
+		"python3 -B -m unittest >&-",
 		"python3 -B -m unittest < notes.log",
 	} {
 		if _, err := Analyze(cmd, cwd); err != nil {
 			t.Errorf("%s: refused beside a stale cache: %v", cmd, err)
+		}
+	}
+	// No stale entry skipped: a log file of the run is as before.
+	fresh := crw1178Project(t, nil)
+	for _, cmd := range []string{
+		"python3 -B -m unittest > out.log 2>&1",
+		"sleep 1; python3 -B -m unittest 2> out.log",
+		"python3 -m unittest >> notes.log",
+	} {
+		if _, err := Analyze(cmd, fresh); err != nil {
+			t.Errorf("%s: refused with no cache: %v", cmd, err)
 		}
 	}
 }

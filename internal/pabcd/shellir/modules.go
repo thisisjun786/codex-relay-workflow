@@ -175,8 +175,14 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		// before the module, or beside it in a pipeline or a coprocess, could give a source (through any name of it, such as a
 		// hard link) the time and size the entry records, and so make it current: cp -p, a redirection, an archive, a program
 		// the reader does not know. Only commands known to change no file may (CRW-1178).
+		// The run's own write redirections are opened, and their targets truncated, by the shell before the interpreter compares an
+		// entry with its source, so they are judged the same way: no path check of the reader can tell that a file target is no name
+		// of a source (a hard link, a symlink reached through a directory link and '..'), so only /dev/null and descriptors may be.
 		if staleSkipped {
 			if why := staleCacheMutator(w.out[:before]); why != "" {
+				return true, staleCacheRefusal(why)
+			}
+			if why := staleCacheWrite(redirs); why != "" {
 				return true, staleCacheRefusal(why)
 			}
 			if ctx.Pipeline || ctx.Coprocess {
@@ -217,14 +223,6 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		}
 	}
 	files = unique
-	// The shell opens the run's own write redirections before the interpreter compares an entry with its source, so a target that
-	// is a source by any name (a hard link, a link outside the inventory) can give it the time and size a stale entry records, as an
-	// earlier command can (CRW-1178).
-	if staleSkipped {
-		if why := staleCacheOwnWrite(redirs, st.dir.Path, files); why != "" {
-			return true, staleCacheRefusal(why)
-		}
-	}
 	if module == "unittest" || module == "pytest" {
 		for _, file := range files {
 			resolved, err := filepath.EvalSymlinks(file)
@@ -434,45 +432,18 @@ func writingRedir(r Redir) bool {
 	return !(r.Target.Known && r.Target.Value == "/dev/null")
 }
 
-// staleCacheOwnWrite names the first write redirection of a module run beside a stale entry that could change a source: a target
-// the reader cannot name or inspect, one that exists and is not a regular file, has another link, or is one of the sources (any
-// name of it). A target that does not exist yet is a new file, which no source is; "" when there is none.
-func staleCacheOwnWrite(redirs []Redir, dir string, sources []string) string {
-	var infos []os.FileInfo
+// staleCacheWrite names the first redirection that may write to a file (anything but /dev/null and a descriptor copy or close), or
+// "". Beside a skipped stale entry every such target is refused, whatever it names now: a new or unrelated file by its spelling can
+// still be a source by another name once the shell resolves links and '..', or by the time the shell opens it.
+func staleCacheWrite(redirs []Redir) string {
 	for _, r := range redirs {
 		if !writingRedir(r) {
 			continue
 		}
-		what := r.Fd + r.Op + " " + r.Target.Value
 		if !r.Target.Known || r.Target.Value == "" {
 			return r.Fd + r.Op + " a file not known"
 		}
-		p := r.Target.Value
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(dir, p)
-		}
-		fi, err := os.Stat(p)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil || !fi.Mode().IsRegular() {
-			return what
-		}
-		if sys, ok := fi.Sys().(*syscall.Stat_t); !ok || sys.Nlink != 1 {
-			return what
-		}
-		if infos == nil {
-			for _, s := range sources {
-				if si, err := os.Stat(s); err == nil {
-					infos = append(infos, si)
-				}
-			}
-		}
-		for _, si := range infos {
-			if os.SameFile(fi, si) {
-				return what
-			}
-		}
+		return r.Fd + r.Op + " " + r.Target.Value
 	}
 	return ""
 }
@@ -491,10 +462,8 @@ var fileInert = map[string]bool{
 // that writes to anything but /dev/null or another descriptor.
 func staleCacheMutator(execs []Exec) string {
 	for _, e := range execs {
-		for _, r := range e.Redirs {
-			if writingRedir(r) {
-				return r.Op + " " + r.Target.Value
-			}
+		if why := staleCacheWrite(e.Redirs); why != "" {
+			return why
 		}
 		if e.Kind != KindCommand || e.Inline != nil || !e.Program.Known {
 			return "a program the reader cannot judge"
