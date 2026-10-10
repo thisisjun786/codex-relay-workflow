@@ -1,8 +1,6 @@
 package attest
 
 import (
-	"encoding/json"
-	"math"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -81,20 +79,4 @@ func isNumberedDoc(name string) bool {
 		}
 	}
 	return true
-}
-
-// jsNumber is a number in a template literal: encoding/json prints a float64 as ECMAScript does, bar NaN, Infinity and -0.
-func jsNumber(f float64) string {
-	switch {
-	case math.IsNaN(f):
-		return "NaN"
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	b, _ := json.Marshal(f)
-	return string(b)
 }

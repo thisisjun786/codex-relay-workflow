@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -218,7 +219,7 @@ func ReadConfig(env host.LookupEnv) (Config, error) {
 // writeRaw publishes the document: a 0600 temporary file beside the store, renamed over it, so a reader sees the old file or the new
 // one whole. The temporary file is removed whatever happens.
 func writeRaw(path string, doc *object, rename func(tmp, finalPath string) error) (err error) {
-	body, err := Stringify(doc, "  ")
+	body, err := jsnode.Stringify(doc, "  ")
 	if err != nil {
 		return err
 	}

@@ -24,11 +24,11 @@ package state
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -242,31 +242,4 @@ func MatchesDcloseRecovery(s State, closePhaseID string) bool {
 // Encode is JSON.stringify(s, null, 2) for a state ReadStateStrict or DefaultState built (a NaN or infinite counter, or a
 // negative zero, set by hand is an error or prints differently): the bytes the oracle publishes, without a trailing newline.
 // HTML is not escaped, and U+2028 and U+2029 are written literally.
-func Encode(s State) ([]byte, error) { return stringify(s, "  ") }
-
-// stringify is JSON.stringify(v, null, indent) with an empty indent for the compact form, for any value the oracle prints.
-func stringify(v any, indent string) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", indent)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	in, out := bytes.TrimSuffix(b.Bytes(), []byte("\n")), make([]byte, 0, b.Len())
-	// encoding/json always escapes U+2028 and U+2029, JSON.stringify never does. A backslash and the byte after it are copied
-	// together, so an escaped backslash before "u2028" stays text.
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
-}
+func Encode(s State) ([]byte, error) { return jsnode.Stringify(s, "  ") }

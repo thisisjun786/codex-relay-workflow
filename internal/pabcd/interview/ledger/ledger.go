@@ -3,12 +3,12 @@ package ledger
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -141,54 +141,22 @@ func alreadyRecorded(cwd, sessionID, eventID string) bool {
 
 // line is the row as JSON.stringify writes the oracle's object: its keys in construction order, then a line feed.
 func (e QaEvent) line() string {
-	members := [][2]string{{"ts", quote(e.TS)}, {"sessionId", quote(e.SessionID)}, {"turnId", quote(e.TurnID)}, {"event", quote(string(e.Event))},
-		{"questionId", quote(e.QuestionID)}, {"eventId", quote(e.EventID)}}
+	members := [][2]string{{"ts", jsnode.JSString(e.TS)}, {"sessionId", jsnode.JSString(e.SessionID)}, {"turnId", jsnode.JSString(e.TurnID)}, {"event", jsnode.JSString(string(e.Event))},
+		{"questionId", jsnode.JSString(e.QuestionID)}, {"eventId", jsnode.JSString(e.EventID)}}
 	if e.Event == QuestionAsked {
-		members = append(members, [2]string{"question", quote(e.Question)})
+		members = append(members, [2]string{"question", jsnode.JSString(e.Question)})
 	} else {
 		answers := make([]string, len(e.Answers))
 		for i, a := range e.Answers {
-			answers[i] = quote(a)
+			answers[i] = jsnode.JSString(a)
 		}
 		members = append(members, [2]string{"answers", "[" + strings.Join(answers, ",") + "]"})
 	}
 	parts := make([]string, len(members))
 	for i, m := range members {
-		parts[i] = quote(m[0]) + ":" + m[1]
+		parts[i] = jsnode.JSString(m[0]) + ":" + m[1]
 	}
 	return "{" + strings.Join(parts, ",") + "}\n"
-}
-
-// quote is JSON.stringify of a string (ECMAScript QuoteJSONString): quote, backslash and the five short controls escaped, the other
-// controls below U+0020 as lowercase \u00xx, everything else literal, U+007F, U+2028 and U+2029 too. An invalid UTF-8 byte is U+FFFD.
-func quote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"', '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\b':
-			b.WriteString("\\b")
-		case '\f':
-			b.WriteString("\\f")
-		case '\n':
-			b.WriteString("\\n")
-		case '\r':
-			b.WriteString("\\r")
-		case '\t':
-			b.WriteString("\\t")
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(&b, "\\u%04x", r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }
 
 // appendEvent appends the row to its session's ledger: the .crw directory, the interviews directory below it, then one write to a file

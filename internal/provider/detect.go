@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -100,54 +101,23 @@ func parseStatus(out string) (Status, bool) {
 
 // Line keeps JSON.stringify's insertion order and string/number spelling.
 func Line(s Status) string {
-	head := "{\"provider\":\"ocx\",\"mode\":" + quote(s.Mode)
+	head := "{\"provider\":\"ocx\",\"mode\":" + jsnode.JSString(s.Mode)
 	if s.Mode == "native" {
-		return head + ",\"reason\":" + quote(s.Reason) + "}"
+		return head + ",\"reason\":" + jsnode.JSString(s.Reason) + "}"
 	}
-	head += ",\"ocxPath\":" + quote(s.OcxPath)
+	head += ",\"ocxPath\":" + jsnode.JSString(s.OcxPath)
 	if s.Mode == "error" {
-		return head + ",\"reason\":" + quote(s.Reason) + "}"
+		return head + ",\"reason\":" + jsnode.JSString(s.Reason) + "}"
 	}
 	provider, port := "null", "null"
 	if s.DefaultProvider != nil {
-		provider = quote(*s.DefaultProvider)
+		provider = jsnode.JSString(*s.DefaultProvider)
 	}
 	if s.Port != nil {
 		n := *s.Port + 0 // JSON.stringify writes negative zero as zero.
 		if !math.IsInf(n, 0) && !math.IsNaN(n) {
-			b, _ := json.Marshal(n)
-			port = string(b)
+			port = jsnode.NumberString(n)
 		}
 	}
 	return head + ",\"running\":" + strconv.FormatBool(s.Running) + ",\"defaultProvider\":" + provider + ",\"port\":" + port + "}"
-}
-
-func quote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"', '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\b':
-			b.WriteString("\\b")
-		case '\f':
-			b.WriteString("\\f")
-		case '\n':
-			b.WriteString("\\n")
-		case '\r':
-			b.WriteString("\\r")
-		case '\t':
-			b.WriteString("\\t")
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(&b, "\\u%04x", r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }

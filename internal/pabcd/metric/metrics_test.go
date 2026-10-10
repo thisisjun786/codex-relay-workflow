@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -266,7 +267,7 @@ func TestWriteObjectiveKindOfAliasedSessionsAtOnceKeepsExactlyOneFile(t *testing
 			won = append(won, id)
 		}
 		raw, _ := os.ReadFile(objectiveKindPath(cwd, "a-b"))
-		if len(won) != 1 || !strings.Contains(string(raw), rowQuote(won[0])) {
+		if len(won) != 1 || !strings.Contains(string(raw), jsnode.JSString(won[0])) {
 			t.Fatalf("round %d: writes that succeeded: %q; kind file %s", round, won, raw)
 		}
 	}

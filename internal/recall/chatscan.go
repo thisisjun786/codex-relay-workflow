@@ -110,7 +110,7 @@ const maxChatContext = 200
 // :578). Every search path takes its numbers from here.
 func normalizeChatScanShared(shared chatScanShared) (chatScanShared, error) {
 	if math.IsNaN(shared.Limit) || math.IsInf(shared.Limit, 0) {
-		return shared, fmt.Errorf("--limit %s is not a finite number", memoryNumberText(shared.Limit))
+		return shared, fmt.Errorf("--limit %s is not a finite number", jsnode.NumberString(shared.Limit))
 	}
 	if math.IsNaN(shared.ContextN) {
 		return shared, errors.New("--context NaN is not a number")
@@ -302,7 +302,7 @@ func chatScanCutoff(now time.Time, days float64) (string, error) {
 	}
 	ms := float64(now.UnixMilli()) - days*86_400_000
 	if math.IsNaN(ms) || math.IsInf(ms, 0) || math.Abs(ms) > 8_640_000_000_000_000 {
-		return "", fmt.Errorf("--days %s is out of range: no date lies that many days before now", memoryNumberText(days))
+		return "", fmt.Errorf("--days %s is out of range: no date lies that many days before now", jsnode.NumberString(days))
 	}
 	d := time.UnixMilli(int64(math.Trunc(ms))).UTC()
 	if d.Year() < 0 || d.Year() > 9999 {

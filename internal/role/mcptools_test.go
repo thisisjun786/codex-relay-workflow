@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -40,7 +41,7 @@ func TestMCPToolOracle(t *testing.T) {
 	var oracleTools, globalTools []MCPTool
 	check(t, json.Unmarshal(fixture.Tools, &oracleTools))
 	check(t, json.Unmarshal([]byte(readText(t, "testdata/mcptools/tools-global.json")), &globalTools))
-	if got, want := string(must(Stringify(MCPTools(), ""))), string(must(Stringify(globalTools, ""))); got != want {
+	if got, want := string(must(jsnode.Stringify(MCPTools(), ""))), string(must(jsnode.Stringify(globalTools, ""))); got != want {
 		t.Fatalf("tool definitions differ from the snapshot:\n%s\nwant\n%s", got, want)
 	}
 	if len(oracleTools) != len(globalTools) {
@@ -49,9 +50,9 @@ func TestMCPToolOracle(t *testing.T) {
 	for i, tool := range oracleTools {
 		scrubbed := strings.NewReplacer(`"enum":["project","global"]`, `"enum":["global"]`,
 			"Project defaults to global, then original session.", "Only the global scope exists; a role with no override uses the original session.",
-			"inherit the next scope", "inherit the original session").Replace(string(must(Stringify(tool, ""))))
-		if scrubbed != string(must(Stringify(globalTools[i], ""))) {
-			t.Fatalf("tool %s: the snapshot changes more than the project scope:\n%s\n%s", tool.Name, scrubbed, must(Stringify(globalTools[i], "")))
+			"inherit the next scope", "inherit the original session").Replace(string(must(jsnode.Stringify(tool, ""))))
+		if scrubbed != string(must(jsnode.Stringify(globalTools[i], ""))) {
+			t.Fatalf("tool %s: the snapshot changes more than the project scope:\n%s\n%s", tool.Name, scrubbed, must(jsnode.Stringify(globalTools[i], "")))
 		}
 	}
 	for _, tool := range MCPTools() {
@@ -94,7 +95,7 @@ func TestMCPToolOracle(t *testing.T) {
 					// answers the unknown tool like any other (CRW-1120).
 					want := mcpToolErrorResult(t, "unknown tool: [object Object]")
 					check(t, err)
-					if g, w := string(must(Stringify(got, ""))), string(must(Stringify(want, ""))); g != w {
+					if g, w := string(must(jsnode.Stringify(got, ""))), string(must(jsnode.Stringify(want, ""))); g != w {
 						t.Fatalf("answer %d (%s):\n%s\nwant\n%s", i, a.Params, g, w)
 					}
 					continue
@@ -111,9 +112,9 @@ func TestMCPToolOracle(t *testing.T) {
 						// defaults to global; retain every other recorded byte.
 						body := must(parseObject([]byte(want.Content[0].Text)))
 						body.set("scope", ScopeGlobal)
-						want.Content[0].Text = string(must(Stringify(body, "")))
+						want.Content[0].Text = string(must(jsnode.Stringify(body, "")))
 					}
-					if g, w := string(must(Stringify(got, ""))), string(must(Stringify(want, ""))); g != w {
+					if g, w := string(must(jsnode.Stringify(got, ""))), string(must(jsnode.Stringify(want, ""))); g != w {
 						t.Fatalf("answer %d (%s):\n%s\nwant\n%s", i, a.Params, g, w)
 					}
 				}
@@ -250,7 +251,7 @@ func TestMCPToolTimeout(t *testing.T) {
 			Timeout MCPDecoratedSettings `json:"timeout"`
 		}
 		check(t, json.Unmarshal([]byte(readText(t, "testdata/mcptools/oracle.json")), &fixture))
-		if g, w := string(must(Stringify(got, ""))), string(must(Stringify(fixture.Timeout, ""))); g != w {
+		if g, w := string(must(jsnode.Stringify(got, ""))), string(must(jsnode.Stringify(fixture.Timeout, ""))); g != w {
 			t.Fatalf("timeout oracle:\n%s\nwant\n%s", g, w)
 		}
 		time.Sleep(time.Second)

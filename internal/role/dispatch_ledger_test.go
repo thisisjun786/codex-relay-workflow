@@ -12,6 +12,7 @@ import (
 	"testing"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -152,7 +153,7 @@ func TestDispatchLedgerBoundsAndIdentity(t *testing.T) {
 				ws := t.TempDir()
 				env, _ := home(t)
 				b := map[string]any{"action": "start", "role": "executor", "sessionId": "session-test", "dispatchId": "task-test", "pad": ""}
-				units := dispatchMaxInput - len(utf16.Encode([]rune(string(must(Stringify(b, "")))))) + extra
+				units := dispatchMaxInput - len(utf16.Encode([]rune(string(must(jsnode.Stringify(b, "")))))) + extra
 				pad := strings.Repeat("x", units)
 				if astral {
 					pad = strings.Repeat("😀", units/2) + strings.Repeat("x", units%2)
@@ -227,7 +228,7 @@ func TestDispatchLedgerStoredValidation(t *testing.T) {
 			var d map[string]any
 			check(t, json.Unmarshal(must(os.ReadFile(file)), &d))
 			tc.edit(d, d["attempts"].([]any)[0].(map[string]any))
-			before := must(Stringify(d, ""))
+			before := must(jsnode.Stringify(d, ""))
 			check(t, os.WriteFile(file, before, 0o600))
 			dispatchTestError(t, ws, env, map[string]any{"action": "status", "sessionId": "session-test", "dispatchId": "task-test"}, tc.want)
 			if string(must(os.ReadFile(file))) != string(before) {
@@ -246,8 +247,8 @@ func TestDispatchLedgerLegacyOrderAndGitRoot(t *testing.T) {
 	check(t, json.Unmarshal(d["attempts"], &list))
 	a := must(parseObject(list[0]))
 	a.remove("taskFailure")
-	d["attempts"] = must(Stringify([]object{a}, ""))
-	before := must(Stringify(d, ""))
+	d["attempts"] = must(jsnode.Stringify([]object{a}, ""))
+	before := must(jsnode.Stringify(d, ""))
 	check(t, os.WriteFile(file, before, 0o600))
 	got := dispatchTestCall(t, ws, env, map[string]any{"action": "status"})
 	if got.Attempts[0].TaskFailure != nil || string(must(os.ReadFile(file))) != string(before) {
@@ -309,7 +310,7 @@ func TestDispatchLedgerOracle(t *testing.T) {
 			for i, step := range c.Steps {
 				if config, ok := step.Input["_config"]; ok {
 					var patch RolePatch
-					check(t, json.Unmarshal(must(Stringify(config, "")), &patch))
+					check(t, json.Unmarshal(must(jsnode.Stringify(config, "")), &patch))
 					_, err := SetRole(env, c.Role, patch)
 					check(t, err)
 					continue
@@ -321,7 +322,7 @@ func TestDispatchLedgerOracle(t *testing.T) {
 					for k, v := range config {
 						r[k] = v
 					}
-					check(t, os.WriteFile(filepath.Join(dir, StoreFile), must(Stringify(d, "")), 0o600))
+					check(t, os.WriteFile(filepath.Join(dir, StoreFile), must(jsnode.Stringify(d, "")), 0o600))
 					continue
 				}
 				if edit, ok := step.Input["_edit"].(map[string]any); ok {
@@ -346,7 +347,7 @@ func TestDispatchLedgerOracle(t *testing.T) {
 						a["candidate"].(map[string]any)["foreign"] = "candidate-extra"
 						d["candidates"].([]any)[0].(map[string]any)["foreign"] = "root-candidate-extra"
 					}
-					check(t, os.WriteFile(file, must(Stringify(d, "")), 0o600))
+					check(t, os.WriteFile(file, must(jsnode.Stringify(d, "")), 0o600))
 					edited = true
 					continue
 				}
@@ -380,10 +381,10 @@ func TestDispatchLedgerOracle(t *testing.T) {
 					first = current
 				}
 				var value any
-				check(t, json.Unmarshal(must(Stringify(got, "")), &value))
+				check(t, json.Unmarshal(must(jsnode.Stringify(got, "")), &value))
 				value = dispatchTestNormalize(value, ids)
 				if !reflect.DeepEqual(value, step.Want) {
-					t.Fatalf("step %d:\ngot %s\nwant %s", i, must(Stringify(value, "")), must(Stringify(step.Want, "")))
+					t.Fatalf("step %d:\ngot %s\nwant %s", i, must(jsnode.Stringify(value, "")), must(jsnode.Stringify(step.Want, "")))
 				}
 			}
 			if changed[c.Name] != "" {
@@ -392,7 +393,7 @@ func TestDispatchLedgerOracle(t *testing.T) {
 			var ledger any
 			check(t, json.Unmarshal(must(os.ReadFile(file)), &ledger))
 			if !reflect.DeepEqual(dispatchTestNormalize(ledger, ids), c.Ledger) {
-				t.Fatalf("final ledger differs: %s", must(Stringify(ledger, "")))
+				t.Fatalf("final ledger differs: %s", must(jsnode.Stringify(ledger, "")))
 			}
 		})
 	}

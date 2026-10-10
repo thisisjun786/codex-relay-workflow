@@ -8,11 +8,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The Codex app creates one worktree per thread under <CODEX_HOME>/worktrees/<slot>/<repo>. This file is the Go
@@ -300,7 +300,7 @@ func markInjected(root *os.Root, base, sessionID, slot string) {
 	if err != nil {
 		return
 	}
-	body, err := role.Stringify(struct {
+	body, err := jsnode.Stringify(struct {
 		InjectedAt string `json:"injectedAt"`
 		Slot       string `json:"slot"`
 	}{time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), slot}, "")

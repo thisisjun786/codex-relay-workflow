@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // testdata/oracle-store.json holds what the CXC v0.2.40 oracle's store.ts answered (dist/store.js, global scope, CODEXCLAW_HOME in a
@@ -65,7 +67,7 @@ func oracleIntent(id string, i int, op recordedOp) recordedOp {
 		refusal := "mode \"model\" requires a non-empty model id"
 		op.Error, op.Result = &refusal, nil
 	case 1:
-		defaults := string(must(Stringify(DefaultConfig(), "")))
+		defaults := string(must(jsnode.Stringify(DefaultConfig(), "")))
 		op.Result = &defaults
 	}
 	return op
@@ -132,7 +134,7 @@ func TestOracleReplay(t *testing.T) {
 				case op.Error == nil && err != nil:
 					t.Fatalf("%s: error %v", at, err)
 				case op.Error == nil:
-					if text := must(Stringify(got, "")); string(text) != *op.Result {
+					if text := must(jsnode.Stringify(got, "")); string(text) != *op.Result {
 						t.Fatalf("%s: result\n%s\nwant\n%s", at, text, *op.Result)
 					}
 				}

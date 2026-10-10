@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
@@ -44,7 +45,7 @@ func finalGateReasons(plan *Goalplan, ctx *GoalplanValidationCtx) []string {
 	if markerPresent && finalGateDeclaredSchemaVersion(plan) < 2 {
 		declared := "none"
 		if plan.SchemaVersion != nil {
-			declared = finalGateJSNumber(*plan.SchemaVersion)
+			declared = jsnode.NumberString(*plan.SchemaVersion)
 		}
 		return []string{fmt.Sprintf("this plan was promoted to schemaVersion 2 (%s exists) but the plan file declares %s — restore \"schemaVersion\": 2 instead of downgrading", markerPath, declared)}
 	}
@@ -58,7 +59,7 @@ func finalGateReasons(plan *Goalplan, ctx *GoalplanValidationCtx) []string {
 	g := plan.FinalGate
 	if g == nil {
 		// No verb in this build opens a final_gate round, so say the true state and name the escape that exists.
-		out = append(out, fmt.Sprintf("schemaVersion %s requires an approved finalGate, and no command in this build opens a final-gate review round - either record the gate another way or declare schemaVersion 1, which new plans now use by default", finalGateJSNumber(version)))
+		out = append(out, fmt.Sprintf("schemaVersion %s requires an approved finalGate, and no command in this build opens a final-gate review round - either record the gate another way or declare schemaVersion 1, which new plans now use by default", jsnode.NumberString(version)))
 		return out
 	}
 	if g.Status != GateApproved {
@@ -249,11 +250,6 @@ func finalGateJSText(s string) string {
 	}
 	return s
 }
-
-// finalGateJSNumber is a JavaScript number as it prints in a template literal: JavaScript's Number::toString, which
-// switches to exponential notation at 1e21 and below 1e-6, where fixed notation would spell the schema version
-// differently from the oracle. It reuses the same-package formatter rather than a second one.
-func finalGateJSNumber(v float64) string { return steeringOpsJSNumberText(v) }
 
 // finalGateDeclaredSchemaVersion is plan.schemaVersion ?? 1.
 func finalGateDeclaredSchemaVersion(plan *Goalplan) float64 {

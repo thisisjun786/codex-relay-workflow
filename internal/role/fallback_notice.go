@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -44,7 +45,7 @@ func fallbackSessionNotice(env host.LookupEnv, render func() (string, error)) (s
 	if dispatchUTF16Len(context) > 4096 {
 		return "", sentinel("SessionStart dispatch context exceeds 4096 characters")
 	}
-	b, err := Stringify(object{{"hookSpecificOutput", object{{"hookEventName", "SessionStart"}, {"additionalContext", context}}}}, "")
+	b, err := jsnode.Stringify(object{{"hookSpecificOutput", object{{"hookEventName", "SessionStart"}, {"additionalContext", context}}}}, "")
 	if err != nil {
 		return "", err
 	}

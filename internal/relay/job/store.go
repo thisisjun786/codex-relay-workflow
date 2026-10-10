@@ -298,10 +298,7 @@ func value(v any, depth int) ([]byte, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return []byte("null"), nil
 		}
-		if v == 0 { // -0 prints as 0
-			return []byte("0"), nil
-		}
-		return json.Marshal(v) // ECMAScript's spelling of a number: 1e+21, 1e-7
+		return []byte(jsnode.NumberString(v)), nil // ECMAScript's spelling of a number: 1e+21, 1e-7, and -0 prints as 0
 	case []string:
 		items := make([]any, len(v))
 		for i, s := range v {
@@ -348,33 +345,12 @@ func array(items []any, depth int) ([]byte, error) {
 	return append(b, ']'), nil
 }
 
-// quote is JSON.stringify of a string: the quote, the backslash and the control characters escaped, everything else, U+2028 and U+2029
-// included, as it is. A string that is not UTF-8 is decoded as Node decodes its arguments.
+// quote is JSON.stringify of a string. A string that is not UTF-8 is decoded as Node decodes its arguments first.
 func quote(s string) string {
 	if !utf8.ValidString(s) {
 		s = jsnode.DecodeUTF8([]byte(s))
 	}
-	const hex, controls, letters = "0123456789abcdef", "\b\f\n\r\t", "bfnrt"
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case strings.ContainsRune(controls, r):
-			b.WriteByte('\\')
-			b.WriteByte(letters[strings.IndexRune(controls, r)])
-		case r < 0x20:
-			b.WriteString(`\u00`)
-			b.WriteByte(hex[r>>4])
-			b.WriteByte(hex[r&15])
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
+	return jsnode.JSString(s)
 }
 
 // ListRecordIDs is the names in BGDir that end in ".json" (a directory counts), the suffix cut, sorted by UTF-16 code unit as

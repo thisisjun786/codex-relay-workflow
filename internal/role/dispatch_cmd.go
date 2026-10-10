@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -38,7 +39,7 @@ func DispatchCommand(args []string, in io.Reader, out io.Writer, env host.Lookup
 			}
 			return 0
 		}
-		if encoded, err := Stringify(map[string]string{"error": "dispatch takes no arguments (got '" + args[0] + "'); send one JSON request on stdin, see crw role helper dispatch --help"}, ""); err == nil {
+		if encoded, err := jsnode.Stringify(map[string]string{"error": "dispatch takes no arguments (got '" + args[0] + "'); send one JSON request on stdin, see crw role helper dispatch --help"}, ""); err == nil {
 			fmt.Fprintln(out, string(encoded))
 		}
 		return 1
@@ -65,7 +66,7 @@ func DispatchCommand(args []string, in io.Reader, out io.Writer, env host.Lookup
 		answer = map[string]string{"error": err.Error()}
 		code = 1
 	}
-	encoded, err := Stringify(answer, "")
+	encoded, err := jsnode.Stringify(answer, "")
 	if err != nil {
 		return 1
 	}

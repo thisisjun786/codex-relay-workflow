@@ -14,7 +14,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // Limits of one command. Every remote read runs under the deadline of its source and of the whole command, and
@@ -299,7 +298,7 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 					Body     string `json:"body"`
 					Preamble string `json:"preamble"`
 				}{row, body, AdapterPreamble}
-				b, err := role.Stringify(value, "")
+				b, err := jsnode.Stringify(value, "")
 				if err != nil {
 					return 1, err
 				}

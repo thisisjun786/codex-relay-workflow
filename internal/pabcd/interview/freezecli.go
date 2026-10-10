@@ -4,7 +4,6 @@ package interview
 // the package this file reads and writes files: the plan under .crw/plan/<slug>/ and .crw/interview/freeze.json.
 
 import (
-	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -232,32 +231,6 @@ func readPrior(file string) (frozen []frozenEntry, planHash jsVal, ok bool) {
 	return frozen, jsOf(root, "planHash", -1), true
 }
 
-// stringify is JSON.stringify(v, null, 2): no HTML escaping, U+2028 and U+2029 written as themselves (encoding/json escapes them) and
-// no trailing newline.
-func stringify(v any) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	in, out := bytes.TrimSuffix(b.Bytes(), []byte("\n")), make([]byte, 0, b.Len())
-	for i := 0; i < len(in); i++ { // a backslash and the byte after it go together, so an escaped backslash before "u2028" stays text
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
-}
-
 // RunFreeze hashes the plan under .crw/plan/<slug>/, reports the earlier manifest's staleness and, unless it is a dry run, publishes the
 // new manifest atomically (crwdir.Publish: the oracle rewrites the file in place, so a crash could leave it truncated). The slug is the
 // session's, else the session id. It returns the summary the command prints.
@@ -299,7 +272,7 @@ func RunFreeze(args FreezeCliArgs, read SessionReader) (string, error) {
 		}
 	}
 	if !args.DryRun {
-		data, err := stringify(manifest)
+		data, err := jsnode.Stringify(manifest, "  ")
 		if err == nil {
 			_, err = crwdir.EnsureDir(args.Cwd)
 		}

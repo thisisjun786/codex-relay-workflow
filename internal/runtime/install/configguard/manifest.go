@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 const InstallManifestName = ".crw-install.json"
@@ -195,7 +195,7 @@ func manifestBytes(m *InstallManifest) ([]byte, error) {
 				if n == 0 {
 					n = 0
 				}
-				b, e := role.Stringify(n, "")
+				b, e := jsnode.Stringify(n, "")
 				if e != nil {
 					return nil, e
 				}

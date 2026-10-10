@@ -12,11 +12,11 @@ import (
 	"errors"
 	"os"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // SessionHookSessionStartPayload is what the harness hands SessionHookSessionStart: the
@@ -204,7 +204,7 @@ func sessionHookAnswer(event, context string) string {
 		Event   string `json:"hookEventName"`
 		Context string `json:"additionalContext"`
 	}
-	b, err := role.Stringify(struct {
+	b, err := jsnode.Stringify(struct {
 		Output output `json:"hookSpecificOutput"`
 	}{output{event, context}}, "")
 	if err != nil {

@@ -284,7 +284,7 @@ func (s *memorySearchState) memoryStage1Backfill(query string, hits []MemoryHit,
 	if len(hits) == 0 {
 		s.warnings = append(s.warnings, fmt.Sprintf("no memory artifacts matched — %d raw session message(s) shown instead (%s)", len(added), policy))
 	} else {
-		s.warnings = append(s.warnings, fmt.Sprintf("only %d memory artifact(s) matched, at or below the chat fallback threshold %s — %d raw session message(s) added after them (%s)", len(hits), memoryNumberText(threshold), len(added), policy))
+		s.warnings = append(s.warnings, fmt.Sprintf("only %d memory artifact(s) matched, at or below the chat fallback threshold %s — %d raw session message(s) added after them (%s)", len(hits), jsnode.NumberString(threshold), len(added), policy))
 	}
 	return append(hits[:len(hits):len(hits)], added...)
 }

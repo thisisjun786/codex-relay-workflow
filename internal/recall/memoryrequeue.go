@@ -87,7 +87,7 @@ func RequeueExhaustedMemoryJobs(home string, options ...RequeueOptions) RequeueR
 	if n := opts.Retries; n != nil && !math.IsNaN(*n) && !math.IsInf(*n, 0) && *n > 0 {
 		if *n < 1 {
 			// An allowance below one floors to zero: the backoff would be cleared and the row still not eligible (known-defects.md :617).
-			return emptyRequeue(MemoryStatusUnavailable, "--retries "+memoryNumberText(*n)+" must be a whole number of at least 1", nil, retries)
+			return emptyRequeue(MemoryStatusUnavailable, "--retries "+jsnode.NumberString(*n)+" must be a whole number of at least 1", nil, retries)
 		}
 		retries = math.Floor(*n)
 	}
@@ -381,7 +381,7 @@ func requeueCauseText(counts CauseCounts) string {
 	})
 	parts := make([]string, len(counts))
 	for i, pair := range counts {
-		parts[i] = pair.Cause + "=" + memoryNumberText(pair.Count)
+		parts[i] = pair.Cause + "=" + jsnode.NumberString(pair.Count)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -419,7 +419,7 @@ func FormatRequeue(r RequeueResult) string {
 		}
 	}
 	if r.Applied {
-		lines = append(lines, "  applied: "+memoryNumberText(r.Changed)+" row(s) given "+memoryNumberText(r.Retries)+" retries")
+		lines = append(lines, "  applied: "+jsnode.NumberString(r.Changed)+" row(s) given "+jsnode.NumberString(r.Retries)+" retries")
 	} else {
 		lines = append(lines, "  dry run — nothing written (pass --apply)")
 	}

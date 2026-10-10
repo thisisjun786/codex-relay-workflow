@@ -22,8 +22,8 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // Usage is cli.ts's usage under the CRW name table.
@@ -355,7 +355,7 @@ func runGH(ctx context.Context, file string, args []string) GHResult {
 
 func renderRows(rows []ScoredRow, asJSON bool) (string, error) {
 	if asJSON {
-		b, err := role.Stringify(rows, "  ")
+		b, err := jsnode.Stringify(rows, "  ")
 		return string(b), err
 	}
 	if len(rows) == 0 {

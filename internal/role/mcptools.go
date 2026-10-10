@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -43,7 +44,7 @@ type MCPToolResult struct {
 }
 
 func mcpToolResult(payload any) (MCPToolResult, error) {
-	b, err := Stringify(payload, "")
+	b, err := jsnode.Stringify(payload, "")
 	if err != nil {
 		return MCPToolResult{}, err
 	}

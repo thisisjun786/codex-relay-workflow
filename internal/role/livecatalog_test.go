@@ -16,6 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -360,7 +361,7 @@ func TestLiveCatalogReviewTypedCache(t *testing.T) {
 	at := "2026-01-01T00:00:00.000Z"
 	c := LiveCatalog{Catalog: Catalog{State: CatalogOcx, Entries: []CatalogEntry{{ID: "x", Source: ModelOcx, Label: "x", ReasoningEfforts: &want}}}, Status: "fresh", Source: ModelOcx, FetchedAt: &at, Message: "cached note"}
 	check(t, os.MkdirAll(filepath.Dir(path), 0700))
-	check(t, os.WriteFile(path, must(Stringify(map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": c}, "")), 0600))
+	check(t, os.WriteFile(path, must(jsnode.Stringify(map[string]any{"key": sourceKey(catalogEnv(o.Environ)), "catalog": c}, "")), 0600))
 	o.RunOcx = func([]string) (string, error) { t.Fatal("valid cache rejected"); return "", nil }
 	var r CatalogReader
 	got := liveRead(t, &r, o)
@@ -469,7 +470,7 @@ func TestLiveCatalogProcess(t *testing.T) {
 		var r CatalogReader
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		c := liveRead(t, &r, CatalogOptions{Environ: env, Now: func() time.Time { return now }, RunOcx: func([]string) (string, error) { return "", errors.New("cache not reused") }})
-		fmt.Print(string(must(Stringify(c, ""))))
+		fmt.Print(string(must(jsnode.Stringify(c, ""))))
 		os.Exit(0)
 	}
 	check(t, os.WriteFile(os.Getenv("CRW_LIVE_TEST_PID"), []byte(strconv.Itoa(os.Getpid())), 0600))

@@ -48,12 +48,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The budgets of the Stop loop (hook.ts:1403-1411). StopMaxBlocks bounds consecutive blocks at one
@@ -473,7 +473,7 @@ func stopSystemMessage(message string) string {
 }
 
 func stopMarshal(v any) string {
-	b, err := role.Stringify(v, "")
+	b, err := jsnode.Stringify(v, "")
 	if err != nil {
 		return ""
 	}

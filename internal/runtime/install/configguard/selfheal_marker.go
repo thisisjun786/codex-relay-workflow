@@ -9,8 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"golang.org/x/sys/unix"
 )
 
@@ -101,7 +101,7 @@ func selfHealMarkerObject(m *SelfHealMarker) (pyjson.Object, error) {
 			if n == 0 {
 				n = 0
 			}
-			b, err := role.Stringify(n, "")
+			b, err := jsnode.Stringify(n, "")
 			if err != nil {
 				return nil, err
 			}

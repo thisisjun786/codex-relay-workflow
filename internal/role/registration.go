@@ -130,7 +130,7 @@ func registrationRegister(role NativeRoleName, homes []string, fail func(registr
 }
 
 func registrationQuote(value string) string {
-	b, _ := Stringify(value, "") // a typed string is always serializable
+	b, _ := jsnode.Stringify(value, "") // a typed string is always serializable
 	return string(b)
 }
 func registrationDigest(value string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(value))) }

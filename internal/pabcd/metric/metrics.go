@@ -320,39 +320,8 @@ func metricLockWait(ctx context.Context, f *os.File) error {
 // infinities null), strings with U+2028 and HTML left as they are.
 func Encode(r Record) string {
 	return fmt.Sprintf("{\"ts\":%s,\"sessionId\":%s,\"workPhaseId\":%s,\"metricName\":%s,\"value\":%s,\"baseline\":%s,\"best\":%s,\"source\":%s}",
-		rowQuote(r.TS), rowQuote(r.SessionID), rowQuote(r.WorkPhaseID), rowQuote(r.MetricName), rowNumber(r.Value), rowNumber(r.Baseline),
-		rowNumber(r.Best), rowQuote(string(r.Source)))
-}
-
-// rowQuote is JSON.stringify of a string; an invalid UTF-8 byte is written as U+FFFD.
-func rowQuote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"', '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\b':
-			b.WriteString(`\b`)
-		case '\f':
-			b.WriteString(`\f`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(&b, `\u%04x`, r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
+		jsnode.JSString(r.TS), jsnode.JSString(r.SessionID), jsnode.JSString(r.WorkPhaseID), jsnode.JSString(r.MetricName), rowNumber(r.Value), rowNumber(r.Baseline),
+		rowNumber(r.Best), jsnode.JSString(string(r.Source)))
 }
 
 // rowNumber is JSON.stringify of a number; encoding/json spells a finite one as ES6 does, except that -0 is 0.
@@ -360,11 +329,7 @@ func rowNumber(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return "null"
 	}
-	if f == 0 {
-		return "0"
-	}
-	b, _ := json.Marshal(f)
-	return string(b)
+	return jsnode.NumberString(f)
 }
 
 // WriteObjectiveKind records a session's explicit kind (writeObjectiveKind): a temp file beside the kind file, renamed over it, holding
@@ -412,7 +377,7 @@ func writeObjectiveKind(ctx context.Context, cwd, sessionID string, kind Objecti
 	if owner, named := ledgerDoc(string(raw))["sessionId"].(string); named && (owner != sessionID || strings.ContainsRune(owner, utf8.RuneError)) {
 		return fmt.Errorf("%s holds the objective kind of session %q, not %q", finalPath, owner, sessionID)
 	}
-	body := fmt.Sprintf("{\n  \"sessionId\": %s,\n  \"kind\": %s,\n  \"updatedAt\": %s\n}", rowQuote(sessionID), rowQuote(string(kind)), rowQuote(now.UTC().Format(timestampLayout)))
+	body := fmt.Sprintf("{\n  \"sessionId\": %s,\n  \"kind\": %s,\n  \"updatedAt\": %s\n}", jsnode.JSString(sessionID), jsnode.JSString(string(kind)), jsnode.JSString(now.UTC().Format(timestampLayout)))
 	// The oracle's temp name, so a long id fails or fits as it does there; the lock keeps two writers from sharing it. It is created
 	// exclusively (the oracle's write follows a symlink at that name and truncates its target), so an entry already there is refused.
 	tmp := fmt.Sprintf("%s.%d.%d.tmp", finalPath, os.Getpid(), now.UnixMilli())

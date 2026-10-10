@@ -13,7 +13,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // CXC v0.2.40 (3c1459ac), agent-thread-permissions.ts:1-57,89-116,316-405.
@@ -272,7 +271,7 @@ func HandleAgentThreadSessionStartAdvisory(raw string, env host.LookupEnv) strin
 		Event   string `json:"hookEventName"`
 		Context string `json:"additionalContext"`
 	}
-	b, err := role.Stringify(struct {
+	b, err := jsnode.Stringify(struct {
 		Message string `json:"systemMessage"`
 		Output  output `json:"hookSpecificOutput"`
 	}{agentThreadUserAdvice, output{"SessionStart", agentThreadModelAdvice}}, "")

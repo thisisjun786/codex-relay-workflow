@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	jstext "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -16,7 +17,7 @@ import (
 // contract/schema/cxc/name-substitution.json): R32 turns "codexclaw" into "crw" and R33 turns
 // "$cxc-loop" into "$crw-loop", the rule internal/role/spawn/classify.go:27 applies to
 // RecurseDenyReason. Every other byte, and the order of the reasons, is the oracle's. The
-// schemaVersion is interpolated with finalGateJSNumber, the formatter finalgate.go already uses for
+// schemaVersion is interpolated with jsnode.NumberString, the formatter finalgate.go already uses for
 // the same field.
 //
 // Neither function has a caller yet: the "crw loop validate" verb that prints these reasons and the
@@ -33,7 +34,7 @@ func ValidateGoalplan(plan *Goalplan, ctx *GoalplanValidationCtx) GoalplanValida
 	if plan.SchemaVersion != nil && *plan.SchemaVersion > SupportedMaxSchemaVersion {
 		return GoalplanValidation{OK: false, Reasons: []string{fmt.Sprintf(
 			"schemaVersion %s is newer than this build supports (max %d) - upgrade crw before validating this plan",
-			finalGateJSNumber(*plan.SchemaVersion), SupportedMaxSchemaVersion)}}
+			jsnode.NumberString(*plan.SchemaVersion), SupportedMaxSchemaVersion)}}
 	}
 	reasons = append(reasons, GoalplanDefinitionIntegrityReasons(plan)...)
 	reasons = append(reasons, GoalplanDependencyCompletionReasons(plan)...)
@@ -83,7 +84,7 @@ func ValidateGoalplan(plan *Goalplan, ctx *GoalplanValidationCtx) GoalplanValida
 func ValidateGoalplanStructuralReasons(plan *Goalplan) []string {
 	reasons := []string{}
 	if plan.SchemaVersion != nil && *plan.SchemaVersion > SupportedMaxSchemaVersion {
-		reasons = append(reasons, fmt.Sprintf("schemaVersion %s is newer than this build supports", finalGateJSNumber(*plan.SchemaVersion)))
+		reasons = append(reasons, fmt.Sprintf("schemaVersion %s is newer than this build supports", jsnode.NumberString(*plan.SchemaVersion)))
 	}
 	reasons = append(reasons, GoalplanDefinitionIntegrityReasons(plan)...)
 	reasons = append(reasons, GoalplanDependencyCompletionReasons(plan)...)

@@ -3,9 +3,10 @@ package role
 import (
 	"bytes"
 	"encoding/json"
-	"math"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // jsString is String(value) of a parsed JSON value, which the oracle's messages print for a value of the wrong type; no raw is
@@ -36,16 +37,7 @@ func jsText(v any) (string, error) {
 		return strconv.FormatBool(v), nil
 	case json.Number:
 		f, _ := strconv.ParseFloat(string(v), 64) // out of range is an infinity, as it is in JavaScript
-		switch {
-		case math.IsInf(f, 1):
-			return "Infinity", nil
-		case math.IsInf(f, -1):
-			return "-Infinity", nil
-		case f == 0:
-			return "0", nil // -0 prints as 0
-		}
-		b, err := json.Marshal(f) // ECMAScript's spelling of a number: 1e+21, 1e-7
-		return string(b), err
+		return jsnode.NumberString(f), nil
 	case []any:
 		parts := make([]string, len(v))
 		for i, e := range v {

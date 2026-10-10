@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -75,7 +76,7 @@ func HookTrustIdentityHash(event string, matcher *string, handler map[string]any
 	normalized := map[string]any{
 		"type":    "command",
 		"command": command,
-		"timeout": json.Number(hookTrustIdentityJSNumber(timeout)),
+		"timeout": json.Number(jsnode.NumberString(timeout)),
 		"async":   async,
 	}
 	if hasStatus {
@@ -208,45 +209,6 @@ func hookTrustIdentityFloat(value any) (float64, bool) {
 	return 0, false
 }
 
-// hookTrustIdentityJSNumber is JavaScript's Number::toString (the spelling JSON.stringify
-// prints): the shortest round-trip digits Go and V8 both give, in the fixed notation below
-// 1e21 that JavaScript uses and the exponential one at or past it. The oracle's clamped
-// timeout is at least 1, so inside the identity only the fixed branch and an exponent of at
-// least two digits can occur; the other shapes are reachable through a refused type value.
-func hookTrustIdentityJSNumber(number float64) string {
-	switch {
-	case math.IsNaN(number):
-		return "NaN"
-	case math.IsInf(number, 1):
-		return "Infinity"
-	case math.IsInf(number, -1):
-		return "-Infinity"
-	case number == 0:
-		return "0"
-	case math.Abs(number) >= 1e21 || math.Abs(number) < 1e-6:
-		return hookTrustIdentityExponent(strconv.FormatFloat(number, 'e', -1, 64))
-	}
-	return strconv.FormatFloat(number, 'f', -1, 64)
-}
-
-// hookTrustIdentityExponent drops the leading zero Go writes for a one-digit exponent
-// ("1e-07" is JavaScript's "1e-7"); an exponent of two digits or more is already shared.
-func hookTrustIdentityExponent(text string) string {
-	index := strings.LastIndexByte(text, 'e')
-	if index < 0 {
-		return text
-	}
-	mantissa, exponent := text[:index+1], text[index+1:]
-	sign := ""
-	if len(exponent) > 0 && (exponent[0] == '+' || exponent[0] == '-') {
-		sign, exponent = exponent[:1], exponent[1:]
-	}
-	if len(exponent) > 1 && exponent[0] == '0' {
-		exponent = exponent[1:]
-	}
-	return mantissa + sign + exponent
-}
-
 // hookTrustIdentityJSString spells a JSON value the way JavaScript's String() does, the
 // spelling the oracle interpolates into its type refusal (hook-trust.ts:112). The second
 // result is false where that conversion throws: an object with an own toString member has no
@@ -288,7 +250,7 @@ func hookTrustIdentityJSString(value any) (string, bool) {
 		return strings.Join(parts, ","), true
 	}
 	if number, ok := hookTrustIdentityFloat(value); ok {
-		return hookTrustIdentityJSNumber(number), true
+		return jsnode.NumberString(number), true
 	}
 	return fmt.Sprintf("%v", value), true
 }

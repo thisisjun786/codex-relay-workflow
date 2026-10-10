@@ -268,25 +268,10 @@ func readMemoryStatus(db *RwDb, path string) (MemoryStatus, error) {
 	return s, nil
 }
 
-func memoryNumberText(n float64) string {
-	switch {
-	case math.IsNaN(n):
-		return "NaN"
-	case math.IsInf(n, 1):
-		return "Infinity"
-	case math.IsInf(n, -1):
-		return "-Infinity"
-	case n == 0:
-		return "0"
-	}
-	b, _ := json.Marshal(n) // encoding/json uses ECMAScript's finite number spelling.
-	return string(b)
-}
-
 func memoryStatusString(v any) string {
 	switch v := v.(type) {
 	case float64:
-		return memoryNumberText(v)
+		return jsnode.NumberString(v)
 	case []byte:
 		parts := make([]string, len(v))
 		for i, b := range v {
@@ -355,12 +340,12 @@ func memoryAgeLabel(at *float64, now float64) string {
 	}
 	seconds := math.Max(0, now-*at)
 	if seconds < 3600 {
-		return memoryNumberText(math.Floor(seconds/60)) + "m ago"
+		return jsnode.NumberString(math.Floor(seconds/60)) + "m ago"
 	}
 	if seconds < 86400 {
-		return memoryNumberText(math.Floor(seconds/3600)) + "h ago"
+		return jsnode.NumberString(math.Floor(seconds/3600)) + "h ago"
 	}
-	return memoryNumberText(math.Floor(seconds/86400)) + "d ago"
+	return jsnode.NumberString(math.Floor(seconds/86400)) + "d ago"
 }
 
 func memoryStatusNow(options []float64) float64 {
@@ -385,7 +370,7 @@ func FormatMemoryStatus(s MemoryStatus, now ...float64) string {
 		lines = append(lines, "  jobs: none recorded")
 	}
 	for _, job := range s.Jobs {
-		lines = append(lines, "  "+job.Kind+" "+job.Status+": "+memoryNumberText(job.Count))
+		lines = append(lines, "  "+job.Kind+" "+job.Status+": "+jsnode.NumberString(job.Count))
 	}
 	if s.lastSuccessUnreadable {
 		lines = append(lines, "  last success: unreadable (the store holds a time that is not a number)")
@@ -405,9 +390,9 @@ func FormatMemoryStatus(s MemoryStatus, now ...float64) string {
 		})
 		parts := make([]string, len(causes))
 		for i, cause := range causes {
-			parts[i] = cause.Cause + "=" + memoryNumberText(cause.Count)
+			parts[i] = cause.Cause + "=" + jsnode.NumberString(cause.Count)
 		}
-		lines = append(lines, "  exhausted (host will not retry): "+memoryNumberText(s.Exhausted)+" ["+strings.Join(parts, ", ")+"]")
+		lines = append(lines, "  exhausted (host will not retry): "+jsnode.NumberString(s.Exhausted)+" ["+strings.Join(parts, ", ")+"]")
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -438,7 +423,7 @@ func MemoryStatusNotice(s MemoryStatus, options ...float64) string {
 		parts = append(parts, "last successful extraction "+memoryAgeLabel(s.LastSuccessAt, now))
 	}
 	if s.Exhausted > 0 {
-		parts = append(parts, memoryNumberText(s.Exhausted)+" job(s) exhausted their retries")
+		parts = append(parts, jsnode.NumberString(s.Exhausted)+" job(s) exhausted their retries")
 	}
 	if len(parts) == 0 {
 		return ""

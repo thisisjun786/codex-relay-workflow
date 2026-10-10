@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -20,38 +20,6 @@ import (
 // own script; the Go runtime has none, every leg enters through the crw binary the plugin's hook
 // declarations name, so the record names the manifest that declares them.
 const Entrypoint = ".codex-plugin/plugin.json"
-
-// jsString is JSON.stringify of a string: quote, backslash and control characters are escaped,
-// every other character, U+2028 and U+2029 included, stands as it is.
-func jsString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"', '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\b':
-			b.WriteString(`\b`)
-		case '\f':
-			b.WriteString(`\f`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(&b, `\u%04x`, r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
 
 // metadata is hook-observation.mjs' test of a value that may name a session or an actor: a string of
 // 1 to 256 UTF-16 units without a control character or space.
@@ -124,7 +92,7 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 		if !ok || !metadata(s) || strings.ContainsRune(s, utf8.RuneError) {
 			return false
 		}
-		agent = jsString(s)
+		agent = jsnode.JSString(s)
 	} else if truthy(o["agent_type"]) {
 		return false // a child stamp without its identity never becomes a root record
 	}
@@ -170,9 +138,9 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 		return false
 	}
 	d := digest(string(data))
-	record := `{"schemaVersion":1,"sessionId":` + jsString(session) + `,"agentId":` + agent + `,"component":` + jsString(component) + `,"event":` + jsString(event) +
-		`,"observedAt":"` + time.Now().UTC().Format("2006-01-02T15:04:05.000Z") + `","pluginRoot":` + jsString(root) + `,"pluginVersion":` + jsString(version) +
-		`,"manifestDigest":"` + d + `","entrypoint":` + jsString(Entrypoint) + `,"entrypointDigest":"` + d + `","outcome":"invoked"}` + "\n"
+	record := `{"schemaVersion":1,"sessionId":` + jsnode.JSString(session) + `,"agentId":` + agent + `,"component":` + jsnode.JSString(component) + `,"event":` + jsnode.JSString(event) +
+		`,"observedAt":"` + time.Now().UTC().Format("2006-01-02T15:04:05.000Z") + `","pluginRoot":` + jsnode.JSString(root) + `,"pluginVersion":` + jsnode.JSString(version) +
+		`,"manifestDigest":"` + d + `","entrypoint":` + jsnode.JSString(Entrypoint) + `,"entrypointDigest":"` + d + `","outcome":"invoked"}` + "\n"
 	suffix := make([]byte, 16)
 	if _, err := rand.Read(suffix); err != nil {
 		return false
@@ -183,7 +151,7 @@ func RecordInvocation(raw, component, event string, env host.LookupEnv) (recorde
 		return false
 	}
 	_, werr := f.WriteString(record)
-	slot := digest("[" + jsString(component) + "," + jsString(event) + "," + jsString(Entrypoint) + "]")
+	slot := digest("[" + jsnode.JSString(component) + "," + jsnode.JSString(event) + "," + jsnode.JSString(Entrypoint) + "]")
 	if err := f.Close(); werr != nil || err != nil || os.Rename(tmp, filepath.Join(dir, slot+".json")) != nil {
 		_ = os.Remove(tmp)
 		return false

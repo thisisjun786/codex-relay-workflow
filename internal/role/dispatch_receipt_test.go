@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -243,7 +244,7 @@ func TestDispatchReceiptStatusIsALiteralString(t *testing.T) {
 			var d map[string]any
 			check(t, json.Unmarshal(must(os.ReadFile(file)), &d))
 			tc.edit(d, d["attempts"].([]any)[0].(map[string]any))
-			before := must(Stringify(d, ""))
+			before := must(jsnode.Stringify(d, ""))
 			check(t, os.WriteFile(file, before, 0o600))
 			for _, input := range []map[string]any{{"action": "status"}, {"action": "claim", "attemptId": start.AttemptID}} {
 				input["sessionId"], input["dispatchId"] = "session-test", "task-test"

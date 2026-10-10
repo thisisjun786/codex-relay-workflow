@@ -5,13 +5,11 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
@@ -166,34 +164,6 @@ func unquote(literal []byte) string {
 	return b.String()
 }
 
-// quote is JSON.stringify of a string: the quote, backslash and control characters escaped, a lone
-// surrogate as \udXXX, and nothing else (U+2028 and U+2029 stay raw).
-func quote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		switch k := strings.IndexRune(escaped, r); {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case k >= 0:
-			b.WriteByte('\\')
-			b.WriteByte(escapes[k])
-		case r < 0x20:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		case r == utf8.RuneError && size == 1 && s[i] == 0xED && i+2 < len(s) && s[i+1]&0xE0 == 0xA0 && s[i+2]&0xC0 == 0x80:
-			fmt.Fprintf(&b, `\u%04x`, 0xD000|rune(s[i+1]&0x3F)<<6|rune(s[i+2]&0x3F))
-			size = 3
-		default:
-			b.WriteString(s[i : i+size])
-		}
-		i += size
-	}
-	b.WriteByte('"')
-	return b.String()
-}
-
 // stringify is JSON.stringify(value, null, 2). Numbers go through encoding/json, which writes a
 // float64 as ECMAScript does; the parser has already turned -0 into 0 and an overflow into null.
 func stringify(v any, indent string) string {
@@ -204,7 +174,7 @@ func stringify(v any, indent string) string {
 	case object:
 		open, closing = "{", "}"
 		for _, m := range v {
-			parts = append(parts, inner+quote(m.key)+": "+stringify(m.value, inner))
+			parts = append(parts, inner+jsnode.JSString(m.key)+": "+stringify(m.value, inner))
 		}
 	case []any:
 		open, closing = "[", "]"
@@ -212,10 +182,9 @@ func stringify(v any, indent string) string {
 			parts = append(parts, inner+stringify(item, inner))
 		}
 	case string:
-		return quote(v)
+		return jsnode.JSString(v)
 	case float64:
-		number, _ := json.Marshal(v)
-		return string(number)
+		return jsnode.NumberString(v)
 	case bool:
 		return strconv.FormatBool(v)
 	default:

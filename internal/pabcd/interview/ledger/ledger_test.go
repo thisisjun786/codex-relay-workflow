@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -391,8 +392,8 @@ func TestSessionIDsThatSanitiseAlikeNoLongerShareOneLedger(t *testing.T) {
 }
 func TestRowTextFollowsJSONStringify(t *testing.T) {
 	// the escapes of a hazardous text are replayed against the oracle (capture_escapes); an invalid UTF-8 byte has no oracle value
-	wantEq(t, "invalid byte", quote("bad \xff byte"), "\"bad \ufffd byte\"")
-	wantEq(t, "literals", quote("\x7f\u2028\u2029\\u2028"), "\"\x7f\u2028\u2029\\\\u2028\"")
+	wantEq(t, "invalid byte", jsnode.JSString("bad \xff byte"), "\"bad \ufffd byte\"")
+	wantEq(t, "literals", jsnode.JSString("\x7f\u2028\u2029\\u2028"), "\"\x7f\u2028\u2029\\\\u2028\"")
 }
 func TestALoneSurrogateEscapeReadsAsTheReplacementCharacter(t *testing.T) {
 	// a Go string cannot hold one (documented limit): two ids that differ only in lone surrogates read as one

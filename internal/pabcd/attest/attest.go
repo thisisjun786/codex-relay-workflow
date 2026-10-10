@@ -251,7 +251,7 @@ func Validate(from, to state.Phase, att *Attestation) Result {
 		// failed gets none.
 		missing := len(reasons)
 		if att.ExitCode != nil && *att.ExitCode != 0 {
-			add(`C -> D requires a passing check, but the attestation reports exitCode %s. Fix the failure (orchestrate B) before advancing.`, jsNumber(*att.ExitCode))
+			add(`C -> D requires a passing check, but the attestation reports exitCode %s. Fix the failure (orchestrate B) before advancing.`, jsnode.NumberString(*att.ExitCode))
 		}
 		if missing > 0 && att.TestReceiptPath == "" {
 			add("C -> D on a goalplan-bound session ALSO requires \"testReceiptPath\" (CHECK-BINDING-01), produced by `crw pabcd receipt test -- <command>`. Supplying it now avoids another round trip.")
