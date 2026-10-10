@@ -72,6 +72,13 @@ func TestDanglingLinkProblemNamesPathOnceAndTarget(t *testing.T) {
 	if !strings.Contains(r.Problem, "symlink") || !strings.Contains(r.Problem, target) {
 		t.Fatalf("problem %q does not say symlink and name the target %q", r.Problem, target)
 	}
+	// The installer and hooks share the same file reader and diagnostic.
+	if _, err := ReadRaw(home); err == nil || err.Error() != r.Problem {
+		t.Fatalf("ReadRaw problem = %v, want %q", err, r.Problem)
+	}
+	if _, err := Load(home); err == nil || err.Error() != r.Problem {
+		t.Fatalf("Load problem = %v, want %q", err, r.Problem)
+	}
 }
 
 // A FIFO as the switch must not hold the hook: with no writer, and with a writer that never closes.

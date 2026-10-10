@@ -269,6 +269,10 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		return nil, e
 	}
 	m := &InstallManifest{Version: 2, ConfigPath: path, BackupPath: backup, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
+	if prior != nil {
+		// The switch section is not the activation's: it survives a re-activation as it was.
+		m.Switch = prior.Switch
+	}
 	for _, k := range DeclaredFeatures() {
 		key := string(k)
 		m.Flags[key] = FlagRecord{PriorEnabled: state[key]}

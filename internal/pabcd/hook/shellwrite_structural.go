@@ -29,9 +29,124 @@ func shellIRWriteNames(tok string) bool {
 	return false
 }
 
-// shellIRStructuralWriteUnknown reports a program that holds a file API and a write the reader cannot attribute to a literal
-// destination: a bare or unattached write name, a run-time name (getattr, __import__, eval, ...), or a computed subscript.
-func shellIRStructuralWriteUnknown(src string, python bool) bool {
+// shellIRPyPathCreateName names the pathlib methods that create a file or a directory at their receiver (CRW-951): Path.touch and
+// Path.mkdir. They are read like write_text: a Path(...) call receiver names its destination, any other receiver is unknown.
+func shellIRPyPathCreateName(tok string) bool { return tok == "touch" || tok == "mkdir" }
+
+// Computed pathlib creates follow CRW-951's protected-reference condition. The
+// memory root ends in memories; .codex and CODEX_HOME also name the protected area.
+// Decode literals with the existing reader so escaped path fragments count too.
+func shellIRPyProtectedReference(src string) bool {
+	for _, sp := range shellIRTokenSpans(src) {
+		if src[sp[0]:sp[1]] == "CODEX_HOME" {
+			return true
+		}
+	}
+	rs := shellVerbWithoutComments(src, true)
+	for i := 0; i < len(rs); i++ {
+		if rs[i] != '\'' && rs[i] != '"' {
+			continue
+		}
+		end := shellWriteTripleScanRegion(rs, i, true)
+		start := i
+		for start > 0 && strings.ContainsRune("rRuUbBfF", rs[start-1]) {
+			start--
+		}
+		if value, ok := shellVerbLiteral(rs[start:end]); ok && (strings.Contains(value, "memories") || strings.Contains(value, ".codex")) {
+			return true
+		}
+		i = end - 1
+	}
+	return false
+}
+
+// shellIRPyRunsText names the calls that run a string as a program or a command (exec, eval, compile, a subprocess or an os.system
+// call, runpy, timeit, an interactive console): a program that names one may run any string literal it holds.
+func shellIRPyRunsText(tok string) bool {
+	switch tok {
+	case "exec", "eval", "compile", "system", "subprocess", "run", "call", "check_call", "check_output", "getoutput",
+		"getstatusoutput", "runpy", "run_path", "run_module", "run_code", "interact", "timeit", "startfile", "Popen":
+		return true
+	}
+	return strings.HasPrefix(tok, "exec") || strings.HasPrefix(tok, "spawn") || strings.HasPrefix(tok, "popen") || strings.HasPrefix(tok, "posix_spawn")
+}
+
+// shellIRPyDataMask marks (by byte offset of src) the text of a Python program that is only data: a # comment, the body of a
+// string literal without an f in its prefix, and the literal text of an f-string (its doubled braces included); the replacement
+// fields of an f-string are program text and stay unmarked (an f-string the walk cannot read is code as a whole). The mask is built
+// first and then asked whether the program runs text: only a token outside that data (shellIRPyRunsText) switches the mask off
+// (nil, every offset is code), so the word exec in a string or a comment does not (CRW-951, E5 and E6). It is the same string and
+// comment reading as shellVerbWithoutComments and shellWriteTripleScanRegion.
+func shellIRPyDataMask(src string, spans [][2]int) []bool {
+	rs := []rune(src)
+	// range reports the original byte offsets, including one-byte invalid UTF-8
+	// decoded from a Python bytes literal; re-encoding RuneError loses those widths.
+	offs := make([]int, 0, len(rs)+1)
+	for i := range src {
+		offs = append(offs, i)
+	}
+	offs = append(offs, len(src))
+	mask := make([]bool, len(src)+1)
+	set := func(from, to int, v bool) {
+		for k := offs[from]; k < offs[to]; k++ {
+			mask[k] = v
+		}
+	}
+	// scan marks the data of rs[lo:hi]. A replacement field of an f-string is program text, but a string or a comment inside
+	// it is data again, and an f-string nested in it is read the same way (CRW-951, verifier round 2).
+	var scan func(lo, hi int)
+	scan = func(lo, hi int) {
+		for i := lo; i < hi; {
+			switch c := rs[i]; {
+			case c == '\'' || c == '"':
+				if shellWriteFStringPrefix(rs, i) {
+					end, fields, bad := shellWriteFStringRegion(rs, i, 0)
+					if end > hi {
+						end = hi
+					}
+					if !bad {
+						set(i, end, true)
+						for _, f := range fields {
+							set(f[0], f[1], false)
+							scan(f[0], f[1])
+						}
+					}
+					i = end
+					continue
+				}
+				end := shellWriteTripleScanRegion(rs, i, true)
+				if end > hi {
+					end = hi
+				}
+				set(i, end, true)
+				i = end
+			case c == '#':
+				end := i + 1
+				for end < hi && rs[end] != '\n' && rs[end] != '\r' {
+					end++
+				}
+				set(i, end, true)
+				i = end
+			default:
+				i++
+			}
+		}
+	}
+	scan(0, len(rs))
+	for _, sp := range spans {
+		if !mask[sp[0]] && shellIRPyRunsText(src[sp[0]:sp[1]]) {
+			return nil
+		}
+	}
+	return mask
+}
+
+// shellIRStructuralWriteUnknownFrom reports a write whose destination cannot be named in src[from:], read in the scope that
+// the text before it makes: the file APIs, imports and names of src[:from] are in scope, but only the tokens from from on are
+// judged, and the data mask (comment and string text, and whether the program runs text) is that of src[from:] alone, so an exec
+// or a string of the enclosing text never changes how the decoded program's own strings are read (CRW-951, verifier round 2).
+// protectDir prevents the computed-create relaxation in a protected or unknown effective directory.
+func shellIRStructuralWriteUnknownFrom(src string, from int, python, protectDir bool) bool {
 	spans := shellIRTokenSpans(src)
 	imports := shellIRFromImportsOf(src, python)
 	if !python {
@@ -54,10 +169,39 @@ func shellIRStructuralWriteUnknown(src string, python bool) bool {
 	if !api {
 		return false
 	}
+	var data []bool // Python source offsets that are comment or plain string text; nil when the program may run a string
+	if python {
+		part := src[from:]
+		partSpans := shellIRTokenSpans(part)
+		if m := shellIRPyDataMask(part, partSpans); m != nil {
+			data = make([]bool, len(src)+1)
+			copy(data[from:], m)
+		}
+	}
 	for _, sp := range spans {
+		if sp[0] < from {
+			continue
+		}
+		if from > 0 && data != nil && data[sp[0]] {
+			// In a decoded exec program (from > 0) every judged name in a comment or in string text the program never runs
+			// is data: print("p.write_text()") or a "getattr" string calls nothing. A top-level program keeps the dev reading
+			// of the write and run-time names; only touch and mkdir are masked there (CRW-951, verifier round 3).
+			continue
+		}
 		tok := src[sp[0]:sp[1]]
 		if shellIRRunTimeName(tok) {
 			return true
+		}
+		if python && shellIRPyPathCreateName(tok) {
+			// touch and mkdir create a file or a directory only as methods (Path(...).touch()); a bare name is no such call,
+			// and the text p.touch() in a comment or a string the program never runs is no call either.
+			if data != nil && data[sp[0]] {
+				continue
+			}
+			if shellIRPrevNonSpace(src, sp[0]) == '.' && (shellIRNextNonSpace(src, sp[1]) != '(' || shellIRPyUnattributedCall(src, sp, tok)) && (protectDir || shellIRPyProtectedReference(src)) {
+				return true
+			}
+			continue
 		}
 		if !shellIRWriteNames(tok) {
 			continue
@@ -74,6 +218,24 @@ func shellIRStructuralWriteUnknown(src string, python bool) bool {
 		if python && shellIRPyUnattributedCall(src, sp, tok) {
 			return true
 		}
+	}
+	if from > 0 && data != nil {
+		// The open-mode and computed-subscript checks read a decoded exec program's code alone too: an io.open("w") or an a[i]
+		// in its string or comment text is data (CRW-951, verifier round 3). A data [ is blanked so it opens no subscript.
+		code := make([][2]int, 0, len(spans))
+		for _, sp := range spans {
+			if sp[0] < from || !data[sp[0]] {
+				code = append(code, sp)
+			}
+		}
+		spans = code
+		b := []byte(src)
+		for i := from; i < len(b); i++ {
+			if b[i] == '[' && data[i] {
+				b[i] = ' '
+			}
+		}
+		src = string(b)
 	}
 	if python && shellIRPyModeOpenOnModule(src, spans) {
 		return true
@@ -152,6 +314,18 @@ func shellIRPyUnattributedCall(src string, sp [2]int, name string) bool {
 		}
 		recv := shellIRPyReceiverIdent(src, sp[0])
 		return !(recv == "shutil" && shellIRPyPlainModule(src, "shutil")) && !shellIRPyImportAlias(src, recv, "shutil")
+	case "touch":
+		return !shellIRPyPathCallReceiver(src, sp[0])
+	case "mkdir":
+		// os.mkdir(path) is a different call that this reader has never judged (CRW-951 scope: the pathlib methods only).
+		recv := shellIRPyReceiverIdent(src, sp[0])
+		if shellIRPyPathCallReceiver(src, sp[0]) {
+			return false
+		}
+		if recv == "os" {
+			return !shellIRPyPlainModule(src, "os")
+		}
+		return !shellIRPyImportAlias(src, recv, "os")
 	case "rename", "renames", "symlink", "link":
 		recv := shellIRPyReceiverIdent(src, sp[0])
 		return !shellIRPyPathCallReceiver(src, sp[0]) && !(recv == "os" && shellIRPyPlainModule(src, "os")) && !shellIRPyImportAlias(src, recv, "os")
@@ -506,25 +680,36 @@ func (f shellIRFromImports) calls(tok string) bool {
 	return f.local[tok]
 }
 
-// shellIRPyPlainModule reports that ident still names the module it is named for: every use of it is a plain import (import os,
-// shutil), or the receiver of a dot call. A parameter, an assignment, an alias or a loop target may rebind the name, so a call
-// on it is then not the module's function, and the reader's binding does not show it (CRW-900 post-evaluation d2).
+// shellIRPyModuleImport matches the statement prefix before a module name in an import list.
+// An "as" immediately before the name binds it to another module and does not match.
+var shellIRPyModuleImport = regexp.MustCompile(`^\s*import\s+(?:[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?\s*,\s*)*$`)
+
+// shellIRPyPlainModule proves the module binding for copy/rename calls and mkdir.
+// Every occurrence must bind the same module in an import or be a plain dot receiver.
+// Other uses may rebind it. Data text is not excused: a string may name the binding.
 func shellIRPyPlainModule(src, ident string) bool {
-	for _, sp := range shellIRTokenSpans(src) {
-		if src[sp[0]:sp[1]] != ident || shellIRNextNonSpace(src, sp[1]) == '.' {
+	// Explicit continuations belong to one logical import statement. A normal
+	// import may also follow the colon of a compound statement's header.
+	src = strings.NewReplacer("\\\r\n", "", "\\\n", "").Replace(src)
+	spans := shellIRTokenSpans(src)
+	seen := false
+	for _, sp := range spans {
+		if src[sp[0]:sp[1]] != ident {
 			continue
 		}
-		before := strings.TrimRight(src[:sp[0]], " \t")
-		if strings.HasSuffix(before, "import") && (len(before) == 6 || !worktreeDelIdentRune(rune(before[len(before)-7]))) {
+		if shellIRPrevNonSpace(src, sp[0]) == '.' {
+			return false // x.os is an attribute of something else, not the name
+		}
+		if shellIRNextNonSpace(src, sp[1]) == '.' {
+			// os.mkdir: but a dotted name in an import statement (import os.path) is also read below, so both are fine.
+			seen = true
 			continue
 		}
-		if strings.HasSuffix(before, ",") {
-			start := strings.LastIndexAny(before, ";\n\r:") + 1
-			if strings.HasPrefix(strings.TrimSpace(before[start:]), "import ") {
-				continue
-			}
+		start := strings.LastIndexAny(src[:sp[0]], ";\n\r:") + 1
+		if !shellIRPyModuleImport.MatchString(src[start:sp[0]]) {
+			return false
 		}
-		return false
+		seen = true
 	}
-	return true
+	return seen
 }
