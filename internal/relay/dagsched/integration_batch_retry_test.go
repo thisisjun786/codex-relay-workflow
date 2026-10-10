@@ -51,12 +51,18 @@ func retryPlanKit(t *testing.T, cFile string) *batchKit {
 // retryPlanKitEdges is the same plan with the given prerequisite edges (from, to) in its first revision.
 func retryPlanKitEdges(t *testing.T, cFile string, edges [][2]string) *batchKit {
 	t.Helper()
-	nodes := []batchNode{
+	return retryKitOf(t, []batchNode{
 		{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		{name: "b", files: map[string]string{"b.txt": "b\n"}},
 		{name: "c", files: map[string]string{cFile: "c\n"}},
 		{name: "d", files: map[string]string{"bad.txt": "bad\n"}},
-	}
+	}, edges)
+}
+
+// retryKitOf is a plan of the given nodes, each accepted at the commit of its files, with the prerequisite edges (from, to)
+// in its first revision.
+func retryKitOf(t *testing.T, nodes []batchNode, edges [][2]string) *batchKit {
+	t.Helper()
 	k := &batchKit{releaseKit: newReleaseKit(t), repo: newGitRepo(t), heads: map[string]string{}}
 	k.base = k.repo.git("rev-parse", "dev")
 	var changes []doc
@@ -81,8 +87,8 @@ func retryPlanKitEdges(t *testing.T, cFile string, edges [][2]string) *batchKit 
 		k.exec("INSERT INTO dag_verified_heads (event_id, relationship_id, execution_generation, verdict_turn_id, head_sha, recorded_by_task_id, recorded_at) VALUES (?,?,?,?,?,?,?)",
 			r.Event, r.Acceptance.RelationshipID, 1, "verdict-turn", k.heads[n.name], "parent", k.clock())
 	}
-	for _, n := range []string{"a", "b", "c", "d"} {
-		k.acceptByCommit(n)
+	for _, n := range nodes {
+		k.acceptByCommit(n.name)
 	}
 	return k
 }
@@ -332,4 +338,77 @@ func firstKey(set map[string]bool) string {
 		return k
 	}
 	return ""
+}
+
+// When the bisection removes every candidate, the retry merges on the start, and each merged candidate records its own merge
+// commit of the retry, an ancestor of the issued head, not a commit the settle loop made for a removed set: b is not proven
+// failing, a and c depend on b, d fails alone, and a, b and c pass together.
+func TestIntegrationBatchRetryOnNoSurvivorsRecordsTheRetriedMerges(t *testing.T) {
+	k := retryPlanKitEdges(t, "repair.txt", [][2]string{{"b", "a"}, {"b", "c"}})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,b,c" {
+		t.Fatalf("merged %v (split %v); want a, b and c", got, splitReasons(res))
+	}
+	if res.Verification.HeadCommit != res.NewHead {
+		t.Fatalf("the record names %s; the new head is %s", res.Verification.HeadCommit, res.NewHead)
+	}
+	for _, m := range res.Merged {
+		ok, err := commitIsAncestor(context.Background(), k.repo.path, m.MergeCommit, res.NewHead)
+		if err != nil || !ok {
+			t.Errorf("%s records merge %s, not an ancestor of the issued head %s (err %v)", m.NodeID, m.MergeCommit, res.NewHead, err)
+		}
+		if subject := k.repo.git("show", "-s", "--format=%s", m.MergeCommit); subject != "CRW-965: integrate "+m.NodeID {
+			t.Errorf("%s records the merge commit %q", m.NodeID, subject)
+		}
+	}
+}
+
+// A deferred candidate that the bisection cascades out is a prerequisite that stays out: d conflicts with a, so it is deferred,
+// and it depends on b, so it is excluded when b is not proven failing; c depends on b and on d, so it is not retried although b is.
+func TestIntegrationBatchRetryKeepsOutADependantOfAnExcludedDeferredCandidate(t *testing.T) {
+	k := retryKitOf(t, []batchNode{
+		{name: "a", files: map[string]string{"a.txt": "a\n", "shared.txt": "a\n"}},
+		{name: "b", files: map[string]string{"b.txt": "b\n"}},
+		{name: "c", files: map[string]string{"repair.txt": "c\n"}},
+		{name: "d", files: map[string]string{"shared.txt": "d\n"}},
+		{name: "e", files: map[string]string{"bad.txt": "e\n"}},
+	}, [][2]string{{"b", "c"}, {"b", "d"}, {"d", "c"}})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	got := splitReasons(res)
+	if got["d"] != "depends_on_b" {
+		t.Fatalf("split %v; want d depends_on_b", got)
+	}
+	for _, m := range res.Merged {
+		if m.NodeID == "c" {
+			t.Fatalf("merged %v (split %v); c must not merge while its prerequisite d stays out", mergedNodes(res), got)
+		}
+	}
+	if got["c"] == "" {
+		t.Fatalf("split %v; want c left out", got)
+	}
+}
+
+// A not_proven_failing candidate whose own prerequisite fails is not retried: b depends on d, b is removed first (node-id order)
+// as not proven failing, then d fails alone; a, b and c would pass together, but b must not land without d.
+func TestIntegrationBatchRetryKeepsOutANotProvenCandidateWhosePrerequisiteFails(t *testing.T) {
+	k := retryPlanKitEdges(t, "repair.txt", [][2]string{{"d", "b"}})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,c" {
+		t.Fatalf("merged %v (split %v); want a and c", got, splitReasons(res))
+	}
+	if got := splitReasons(res); got["d"] != "verification_failed" || got["b"] == "" {
+		t.Fatalf("split %v; want d verification_failed and b left out", got)
+	}
 }

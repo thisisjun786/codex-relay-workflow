@@ -684,9 +684,13 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 		}
 		kept = next
 	}
+	if len(kept) == 0 {
+		// no set verified: the commits of the last build belong to a removed set and name no merged candidate
+		commits = nil
+	}
 	// CRW-1026 (d3): the candidates the bisection left out as not_proven_failing are retried once on top of the verified survivors
 	if w.retryNotProven {
-		retry, ok, err := w.retryNotProvenSet(ctx, kept, commits, removed)
+		retry, ok, err := w.retryNotProvenSet(ctx, candidates, kept, commits, removed)
 		if err != nil {
 			return out, err
 		}
@@ -775,39 +779,57 @@ type retryOutcome struct {
 	retried []Candidate
 }
 
-// retryCandidates is the retry set, in node-id order: the not_proven_failing candidates the bisection removed, and each removed
-// dependant whose every removed prerequisite (by the plan edges, not by the reason stored when it was removed) is itself in the
-// set. A candidate with a prerequisite that stays out is not retried, and neither is anything that depends on it.
-func retryCandidates(removed []removedCandidate, successors map[string][]string) []Candidate {
+// retryCandidates is the retry set, in node-id order: of the candidates the bisection removed as not_proven_failing or as a
+// dependant of a removed candidate, each one whose every prerequisite in the batch (transitively, by the plan edges, not by the
+// reason stored when it was removed) is a survivor or itself in the set. A batch candidate that is neither, whether the bisection
+// removed it, a conflict deferred it or a cascade excluded it, stays out, and so does everything that depends on it.
+func retryCandidates(batch, survivors []Candidate, removed []removedCandidate, successors map[string][]string) []Candidate {
 	preds := map[string][]string{}
 	for from, tos := range successors {
 		for _, to := range tos {
 			preds[to] = append(preds[to], from)
 		}
 	}
-	gone := map[string]bool{}
-	in := map[string]bool{}
-	for _, r := range removed {
-		gone[r.NodeID] = true
-		if r.reason == "not_proven_failing" {
-			in[r.NodeID] = true
-		}
+	inBatch, survived := map[string]bool{}, map[string]bool{}
+	for _, c := range batch {
+		inBatch[c.NodeID] = true
 	}
+	for _, c := range survivors {
+		survived[c.NodeID] = true
+	}
+	// ancestors is every node a node depends on through the plan's edges, through nodes outside the batch too
+	ancestors := func(node string) []string {
+		seen := map[string]bool{}
+		queue := []string{node}
+		var out []string
+		for len(queue) > 0 {
+			next := queue[0]
+			queue = queue[1:]
+			for _, p := range preds[next] {
+				if !seen[p] {
+					seen[p] = true
+					out = append(out, p)
+					queue = append(queue, p)
+				}
+			}
+		}
+		return out
+	}
+	in := map[string]bool{}
 	for changed := true; changed; {
 		changed = false
 		for _, r := range removed {
-			if in[r.NodeID] || !strings.HasPrefix(r.reason, "depends_on_") {
+			if in[r.NodeID] || (r.reason != "not_proven_failing" && !strings.HasPrefix(r.reason, "depends_on_")) {
 				continue
 			}
-			waits, ready := false, true
-			for _, p := range preds[r.NodeID] {
-				if in[p] {
-					waits = true
-				} else if gone[p] {
+			ready := true
+			for _, p := range ancestors(r.NodeID) {
+				if inBatch[p] && !survived[p] && !in[p] {
 					ready = false
+					break
 				}
 			}
-			if waits && ready {
+			if ready {
 				in[r.NodeID] = true
 				changed = true
 			}
@@ -827,12 +849,12 @@ func retryCandidates(removed []removedCandidate, successors map[string][]string)
 // The survivors keep their verified commits: the retry merges on the survivors' head, and any other answer (a retry candidate
 // that no longer merges cleanly, a failing verification) resets the worktree to that head and answers false, so the branch,
 // the issued record and the merge commits stay the ones the survivors were verified at.
-func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, kept []Candidate, commits []string, removed []removedCandidate) (retryOutcome, bool, error) {
+func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, batch, kept []Candidate, commits []string, removed []removedCandidate) (retryOutcome, bool, error) {
 	edges, err := w.s.Successors(ctx, w.in.Plan)
 	if err != nil {
 		return retryOutcome{}, false, err
 	}
-	retry := retryCandidates(removed, edges)
+	retry := retryCandidates(batch, kept, removed, edges)
 	if len(retry) == 0 {
 		return retryOutcome{}, false, nil
 	}
@@ -845,7 +867,8 @@ func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, kept []Cand
 	} else if err := w.reset(ctx, survivors); err != nil {
 		return retryOutcome{}, false, err
 	}
-	all := append([]string{}, commits...)
+	// the survivors' merge commits, one per survivor; none when nothing survived
+	all := append([]string{}, commits[:len(kept)]...)
 	for _, c := range retry {
 		ok, commit, err := w.merge(ctx, c)
 		if err != nil {
