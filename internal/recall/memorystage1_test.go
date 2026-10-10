@@ -59,7 +59,7 @@ func TestMemoryStage1Oracle(t *testing.T) {
 	}
 	fixes := portFixed(t, "memorystage1")
 	for _, c := range cases {
-		if fix, ok := fixes[c.Name]; ok {
+		if fix, ok := fixes.lookup(c.Name); ok {
 			// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's answer in place of the recorded one.
 			var fixed struct {
 				Out   MemorySearchResult

@@ -68,10 +68,15 @@ func TestOracle(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[string]int{}
-	fixed := oracleQueryWordsPortFixed(t)
+	fixed, used := oracleQueryWordsPortFixed(t), map[string]bool{}
 	for _, c := range cases {
 		seen[c.Fn]++
 		if out, ok := fixed[oracleCaseKey(t, c)]; ok {
+			used[oracleCaseKey(t, c)] = true
+			var recorded, answer any
+			if json.Unmarshal(c.Out, &recorded) != nil || json.Unmarshal(out, &answer) != nil || reflect.DeepEqual(recorded, answer) {
+				t.Errorf("%s%s: the port-fixed entry is the recorded answer, not another one", c.Fn, c.In)
+			}
 			c.Out = out // port: fixed (CRW-1125, docs/port-cxc/known-defects/CRW-1125.md): the port's answer in place of the recorded oracle's
 		}
 		str, words := func() string { return arg[string](t, c, 0) }, func() []string { return arg[[]string](t, c, 0) }
@@ -157,6 +162,13 @@ func TestOracle(t *testing.T) {
 		}
 		if g := canon(t, got); !reflect.DeepEqual(g, want) {
 			t.Errorf("%s%s: got %v, oracle %v", c.Fn, c.In, g, want)
+		}
+	}
+	if !t.Failed() {
+		for key := range fixed {
+			if !used[key] {
+				t.Errorf("testdata/oracle-query-words-port-fixed.json: %s is no case of the recorded file", key)
+			}
 		}
 	}
 	if len(seen) != 18 || len(cases) < 3000 {

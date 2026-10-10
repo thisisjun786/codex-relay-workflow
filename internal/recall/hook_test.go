@@ -55,7 +55,7 @@ func TestRecallHookOracle(t *testing.T) {
 	fixes := portFixed(t, "hook")
 	for i, c := range corpus.Rows {
 		t.Run(fmt.Sprintf("%03d/%s", i, c.Kind), func(t *testing.T) {
-			if fix, ok := fixes[fmt.Sprint(i)]; ok {
+			if fix, ok := fixes.lookup(fmt.Sprint(i)); ok {
 				c.Out = fix // port: fixed (docs/port-cxc/known-defects/CRW-1131.md): the port's answer in place of the recorded one.
 			}
 			var got any

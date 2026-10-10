@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -219,13 +220,34 @@ func frontmatterValue(s string) *string {
 
 func isJSLineTerminator(r rune) bool { return r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' }
 
+// splitJSLines splits at every JavaScript line terminator: LF, CRLF, a lone CR, U+2028 and U+2029.
+func splitJSLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !isJSLineTerminator(r) {
+			i += size
+			continue
+		}
+		lines = append(lines, s[start:i])
+		if r == '\r' && i+1 < len(s) && s[i+1] == '\n' {
+			size++
+		}
+		i += size
+		start = i
+	}
+	return append(lines, s[start:])
+}
+
 // frontmatterKey is the value of a key among the leading key lines of a memory file, within its first 2,000 UTF-16 units: the lines from
 // the first one that are each a lower-case key (letters and underscores), a colon and the rest. The first line that is not such a line
 // (a blank line, a heading, a delimiter, any prose) ends them, so a key written in the body, a code example among others, names nothing
 // (known-defects.md :591). The value is on the line of its key, and a key with an empty value has none: a key with nothing after it does
-// not take the next line for its value, and it does not end the leading lines (known-defects.md :591, :592).
-func frontmatterKey(content, want string) *string {
-	for _, line := range text.SplitLines(memorySlice(content, 0, 2000)) {
+// not take the next line for its value, and it does not end the leading lines (known-defects.md :591, :592). The lines end where
+// split ends them.
+func frontmatterKey(content, want string, split func(string) []string) *string {
+	for _, line := range split(memorySlice(content, 0, 2000)) {
 		key, rest, colon := strings.Cut(line, ":")
 		if !colon || key == "" || !allBytes(key, func(b byte) bool { return isLower(b) || b == '_' }) {
 			return nil
@@ -239,11 +261,14 @@ func frontmatterKey(content, want string) *string {
 	return nil
 }
 
-// frontmatterThreadID is the thread_id of the leading key lines.
-func frontmatterThreadID(content string) *string { return frontmatterKey(content, "thread_id") }
+// frontmatterThreadID is the thread_id of the leading key lines. A line ends at any JavaScript line terminator, as the key was read
+// before the leading lines were bounded: a file written with CR, U+2028 or U+2029 line ends keeps its identity (known-defects.md :591).
+func frontmatterThreadID(content string) *string {
+	return frontmatterKey(content, "thread_id", splitJSLines)
+}
 
-// frontmatterCwd is the cwd of the leading key lines.
-func frontmatterCwd(content string) *string { return frontmatterKey(content, "cwd") }
+// frontmatterCwd is the cwd of the leading key lines, whose lines end at LF or CRLF as the cwd was read before.
+func frontmatterCwd(content string) *string { return frontmatterKey(content, "cwd", text.SplitLines) }
 
 type ParagraphChunk struct {
 	Text      string `json:"text"`

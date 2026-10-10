@@ -427,6 +427,65 @@ func TestSweep1128BodyKeysAreNoIdentity(t *testing.T) {
 	}
 }
 
+// :591 -- the leading key lines end at a line terminator of the text, as the identity key was found before: CR, U+2028 and U+2029 end a
+// line as LF does, so a memory file written with them keeps its thread_id (and the file/stage1 de-duplication it drives), while a key
+// after the first line that is no key line is still body.
+func TestSweep1128LeadingKeysEndAtAnyLineTerminator(t *testing.T) {
+	for _, sep := range []string{"\r", "\u2028", "\u2029", "\r\n", "\n"} {
+		in := "updated_at: 2026-10-10" + sep + "thread_id: t-" + "x" + sep + sep + "needle"
+		if got := frontmatterThreadID(in); got == nil || *got != "t-x" {
+			t.Errorf("%q: the leading thread_id is %v", in, got)
+		}
+		if got := frontmatterThreadID("intro" + sep + "thread_id: body"); got != nil {
+			t.Errorf("%q: a line after prose is the identity %q", sep, *got)
+		}
+		if got := frontmatterThreadID("a: 1" + sep + sep + "thread_id: body"); got != nil {
+			t.Errorf("%q: a key after a blank line is the identity %q", sep, *got)
+		}
+	}
+	home := sweepStage1Home(t, []any{"t", time.Now().Unix(), "zebra stage one memory", "s"})
+	writeRolloutTestFile(t, home, "memories/cr.md", "updated_at: 2026-10-10\rthread_id: t\r\rzebra from the file")
+	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Synonyms: memoryPtr(false)})
+	if err != nil || len(r.Hits) != 1 || r.Hits[0].Origin != "file" {
+		t.Fatalf("the CR separated thread_id did not suppress its stage1 row: %+v %v", r.Hits, err)
+	}
+}
+
+// :762 -- the root directory is a scope too: the text that names a path under it is inside it, and prose without a path is not.
+func TestSweep1128RootCwdScopeMatchesAbsolutePaths(t *testing.T) {
+	home := sweepMemoryHome(t, map[string]string{
+		"path.md":  "zebra in /proj/here\n",
+		"win.md":   "zebra in \\proj\\here\n",
+		"plain.md": "zebra and/or other prose, 1 / 2\n",
+	})
+	for _, cwd := range []string{"/", "//", "\\"} {
+		r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: memoryPtr(cwd), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, h := range r.Hits {
+			got = append(got, h.Relpath)
+		}
+		slices.Sort(got)
+		if want := []string{"path.md", "win.md"}; !slices.Equal(got, want) {
+			t.Errorf("--cwd-only %q: %v, want %v", cwd, got, want)
+		}
+	}
+	// Without --cwd-only the same mention earns the half boost and the prose does not.
+	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: memoryPtr("/"), ReadOriginUrl: func(string) string { return "" }})
+	if err != nil || len(r.Hits) != 3 {
+		t.Fatalf("%+v %v", r.Hits, err)
+	}
+	scores := map[string]float64{}
+	for _, h := range r.Hits {
+		scores[h.Relpath] = h.Score
+	}
+	if !(scores["path.md"] > scores["plain.md"]) {
+		t.Fatalf("the path mention earns no boost: %v", scores)
+	}
+}
+
 // :816 -- an empty thread id is no thread id.
 func TestSweep1128EmptyThreadIDIsAbsent(t *testing.T) {
 	now := time.Now().Unix()

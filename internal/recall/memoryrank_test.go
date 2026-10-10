@@ -277,7 +277,7 @@ func TestMemoryOracle(t *testing.T) {
 			continue
 		}
 		expected := c.Out
-		if fix, ok := fixes[strconv.Itoa(i)]; ok {
+		if fix, ok := fixes.lookup(strconv.Itoa(i)); ok {
 			expected = fix // port: fixed (docs/port-cxc/known-defects/CRW-1128.md)
 		}
 		if c.Classification != "" {

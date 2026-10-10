@@ -67,7 +67,7 @@ func TestMemoryRequeueOracle(t *testing.T) {
 	}
 	fixes := portFixed(t, "memoryrequeue")
 	for _, c := range oracle.Cases {
-		if fix, ok := fixes[c.ID]; ok {
+		if fix, ok := fixes.lookup(c.ID); ok {
 			// port: fixed (docs/port-cxc/known-defects/CRW-1131.md): the port's answer in place of the recorded one.
 			var fixed struct {
 				Result json.RawMessage

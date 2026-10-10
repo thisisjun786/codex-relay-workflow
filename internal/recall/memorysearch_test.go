@@ -110,7 +110,7 @@ func TestMemorySearchOracle(t *testing.T) {
 	fixes := portFixed(t, "memorysearch")
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			if fix, ok := fixes[c.Name]; ok {
+			if fix, ok := fixes.lookup(c.Name); ok {
 				// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's answer in place of the recorded one.
 				if err := json.Unmarshal(fix, &c.Out); err != nil {
 					t.Fatal(err)

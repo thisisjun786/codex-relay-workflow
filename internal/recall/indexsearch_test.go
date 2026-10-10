@@ -270,7 +270,7 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 			count++
 			t.Run(corpus.Name+"/"+c.Name+"/"+memoryNumberText(float64(i)), func(t *testing.T) {
 				key := corpus.Name + "/" + c.Name + "/" + memoryNumberText(float64(i))
-				if fix, ok := fixes[key]; ok {
+				if fix, ok := fixes.lookup(key); ok {
 					// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's answer in place of the recorded one.
 					var fixed struct {
 						Error string

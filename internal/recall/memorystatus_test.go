@@ -100,7 +100,7 @@ func TestMemoryStatusOracle(t *testing.T) {
 	}
 	fixes := portFixed(t, "memorystatus")
 	for _, c := range grid.Collect {
-		if fix, ok := fixes[c.ID]; ok {
+		if fix, ok := fixes.lookup(c.ID); ok {
 			// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's status and texts in place of the recorded ones.
 			var fixed struct {
 				Status   json.RawMessage
