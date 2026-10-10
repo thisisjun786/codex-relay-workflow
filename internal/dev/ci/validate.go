@@ -119,8 +119,15 @@ func localPath(target string) string {
 }
 
 // LinkErrors is every unfenced local Markdown link in the file root/name that does not resolve
-// to an existing path inside root. name is the path relative to root as reported.
+// to an existing path inside root, and, for a file the anchor check covers (anchorScope), every
+// link whose #fragment is neither a heading slug nor an explicit anchor of the file it leads to
+// (a link to the same file included). name is the path relative to root as reported.
 func LinkErrors(root, name string) ([]string, error) {
+	return linkErrors(root, name, map[string]map[string]bool{})
+}
+
+// linkErrors is LinkErrors with the anchors of the files already read kept in cache.
+func linkErrors(root, name string, cache map[string]map[string]bool) ([]string, error) {
 	path := filepath.Join(root, name)
 	text, err := readText(path)
 	if err != nil {
@@ -129,6 +136,7 @@ func LinkErrors(root, name string) ([]string, error) {
 	var errs []string
 	fence := ""
 	resolvedRoot := resolve(root)
+	checkAnchors := anchorScope(name)
 	for number, line := range lines(text) {
 		if marker := fenceMarker.FindStringSubmatch(strings.TrimLeft(line, " \t")); marker != nil {
 			delimiter := marker[1]
@@ -144,8 +152,15 @@ func LinkErrors(root, name string) ([]string, error) {
 		}
 		for _, match := range markdownLink.FindAllStringSubmatch(line, -1) {
 			target := strings.Trim(match[1], "<>")
+			fragment, hasFragment := fragmentOf(target)
 			local := localPath(target)
 			if local == "" {
+				if checkAnchors && hasFragment && strings.HasPrefix(target, "#") {
+					anchors, err := anchorsOf(cache, path)
+					if err == nil && !anchors[fragment] {
+						errs = append(errs, fmt.Sprintf("%s:%d: invalid anchor %s", name, number+1, target))
+					}
+				}
 				continue
 			}
 			destination := local
@@ -155,6 +170,15 @@ func LinkErrors(root, name string) ([]string, error) {
 			destination, err := filepath.EvalSymlinks(destination)
 			if err != nil || !isRelativeTo(destination, resolvedRoot) {
 				errs = append(errs, fmt.Sprintf("%s:%d: invalid local link %s", name, number+1, target))
+				continue
+			}
+			if checkAnchors && hasFragment && filepath.Ext(destination) == ".md" {
+				if info, err := os.Stat(destination); err == nil && info.Mode().IsRegular() {
+					anchors, err := anchorsOf(cache, destination)
+					if err == nil && !anchors[fragment] {
+						errs = append(errs, fmt.Sprintf("%s:%d: invalid anchor %s", name, number+1, target))
+					}
+				}
 			}
 		}
 	}
@@ -368,13 +392,14 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	names := sortedSet(strings.Split(string(out), "\x00"))
 	errs := pythonFileErrors(root, names)
 	count := 0
+	anchorCache := map[string]map[string]bool{}
 	for _, name := range names {
 		path := filepath.Join(root, name)
 		// The dispatch-cases data files and the refactor backlog fragments are generator inputs, not
 		// documents: their relative links are written for the generated document's directory, and that
 		// document is link-checked itself.
 		if filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) && !refactorBacklogFragment(name) {
-			found, err := LinkErrors(root, name)
+			found, err := linkErrors(root, name, anchorCache)
 			if err != nil {
 				errs = append(errs, name+": "+err.Error())
 				continue

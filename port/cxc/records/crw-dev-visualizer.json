@@ -188,6 +188,30 @@
       ]
     },
     {
+      "file": "reference/document-pdf.md",
+      "reason": "Point the three print-provenance.md links at the heading slugs GitHub generates: the headings carry a kramdown {#id} suffix that GitHub renders as text, so the fragments are chromium-probe-chromium-probe, cjk-typography-cjk-typography and report-writing-sources-report-writing.",
+      "hunks": [
+        {
+          "line": 97,
+          "old": [
+            "Probe: [print-provenance.md](print-provenance.md#chromium-probe).\n"
+          ],
+          "new": [
+            "Probe: [print-provenance.md](print-provenance.md#chromium-probe-chromium-probe).\n"
+          ]
+        },
+        {
+          "line": 135,
+          "old": [
+            "Findings are summarised in [print-provenance.md](print-provenance.md#cjk-typography).\n"
+          ],
+          "new": [
+            "Findings are summarised in [print-provenance.md](print-provenance.md#cjk-typography-cjk-typography).\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "reference/english-authoring.md",
       "reason": "Point locale examples at the renamed skill directory so they work independently of repository or installed plugin layout.",
       "hunks": [
@@ -296,6 +320,21 @@
           "new": [
             "node --test plugins/codexclaw/test/report-*.test.mjs\n",
             "node --test plugins/codexclaw/test/exhibit-contract.test.mjs plugins/codexclaw/test/visualizer-packaging.test.mjs\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "reference/report-writing.md",
+      "reason": "Point the three print-provenance.md links at the heading slugs GitHub generates: the headings carry a kramdown {#id} suffix that GitHub renders as text, so the fragments are chromium-probe-chromium-probe, cjk-typography-cjk-typography and report-writing-sources-report-writing.",
+      "hunks": [
+        {
+          "line": 12,
+          "old": [
+            "Sources inspected 2026-09-09 (summary: [print-provenance.md](print-provenance.md#report-writing)):\n"
+          ],
+          "new": [
+            "Sources inspected 2026-09-09 (summary: [print-provenance.md](print-provenance.md#report-writing-sources-report-writing)):\n"
           ]
         }
       ]
