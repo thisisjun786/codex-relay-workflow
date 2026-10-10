@@ -15,8 +15,9 @@
 // phrases anywhere in the tail, which a quote also matched; the window ends at the next user prompt, and a
 // hook that sees the compaction records it so the window outlives the tail, compaction_recovery.go,
 // docs/port-cxc/known-defects/CRW-1090.md). Every block goes through one counter:
-// three consecutive blocks at the same phase and work phase release (progress recharges the budget),
-// and 24 per user turn release for good, the second of them with a systemMessage. The counter is
+// three consecutive blocks at the same phase and work phase release, and the release holds for them
+// until progress or a new user turn recharges the budget (CRW-1086); 24 per user turn release for good,
+// the second of them with a systemMessage. The counter is
 // written before the block is answered, so a block the counter could not record is never answered.
 //
 // Differences from the oracle, all recorded in docs/port-cxc/known-defects/CRW-192.md: the counter is
@@ -26,7 +27,8 @@
 // blocking on a stale phase, a pause of the goal or a decision opened in that window releases too (the
 // goal, the goalplan wait and the payload's turn_id are judged again inside the lock), a cycle in flight whose bound goalplan waits only on open decisions releases as the idle path
 // does, and the friction advisory line is not ported (its ledger writer is a deprecated, unregistered
-// hook of the oracle, so no CRW store feeds it).
+// hook of the oracle, so no CRW store feeds it). docs/port-cxc/known-defects/CRW-1086.md: a spent
+// per-phase budget latches instead of recharging on the next Stop.
 package hook
 
 import (
@@ -217,6 +219,14 @@ const (
 
 // stopBump is bumpStopCounter (hook.ts:1497-1521) on a state read inside the lock: the state to write
 // and what the counter decided. The cursor and the total advance on every Stop, block or release.
+//
+// CRW-1086: a spent per-phase budget latches. The oracle cleared the phase, the work phase and the count
+// on the release, so the next Stop of the same turn read the cleared phase as a phase change and blocked
+// again; another Stop evaluator (bg-wake, a completion gate) that keeps the host turn alive then drew up to
+// 18 PABCD blocks out of the first 24 Stops. The release keeps the phase and the work phase it was judged
+// on and holds the count one past the budget, so every further Stop at them releases until real progress
+// (stopObserveProgress: a phase or work-phase change, an improving metric row, a new user turn) recharges
+// it. The total cap still clears the counter as the oracle does; the turn stamp ends it.
 func stopBump(cwd string, st state.State) (state.State, stopBumpOutcome) {
 	obs := stopObserveProgress(cwd, st)
 	nextCount := st.StopBlockCount + 1
@@ -226,23 +236,22 @@ func stopBump(cwd string, st state.State) (state.State, stopBumpOutcome) {
 	nextTotal := st.StopBlockTotal + 1
 	next := st
 	next.StopMetricCursor, next.StopBlockTotal = obs.metricCursor, nextTotal
-	if nextCount > StopMaxBlocks || nextTotal > StopMaxBlocksTotal {
-		totalCap := nextTotal > StopMaxBlocksTotal
+	if nextTotal > StopMaxBlocksTotal {
 		alreadyNotified := st.StopBlockCapNotified
 		next.StopBlockPhase, next.StopBlockWorkPhaseID, next.StopBlockCount = nil, nil, 0
-		if totalCap {
-			next.StopBlockCapNotified = true
-		}
-		switch {
-		case !totalCap:
-			return next, stopBumpPhaseCap
-		case alreadyNotified:
+		next.StopBlockCapNotified = true
+		if alreadyNotified {
 			return next, stopBumpTotalSilent
 		}
 		return next, stopBumpTotalCap
 	}
 	phase := st.Phase
-	next.StopBlockPhase, next.StopBlockWorkPhaseID, next.StopBlockCount = &phase, obs.workPhaseID, nextCount
+	next.StopBlockPhase, next.StopBlockWorkPhaseID = &phase, obs.workPhaseID
+	if nextCount > StopMaxBlocks {
+		next.StopBlockCount = StopMaxBlocks + 1 // spent: the latch the next Stop at this phase and work phase reads
+		return next, stopBumpPhaseCap
+	}
+	next.StopBlockCount = nextCount
 	return next, stopBumpBlock
 }
 
@@ -254,7 +263,9 @@ type stopProgress struct {
 
 // stopObserveProgress is observeProgress (hook.ts:1465-1490): did a phase transition, a work-phase
 // switch or a new, better metric row happen since the last Stop. Fail-open: an unreadable ledger or
-// goalplan is no progress.
+// goalplan is no progress. A new user turn is progress too (CRW-1086): UserPromptSubmit's turn stamp
+// resets the turn's total to 0 (prompt_submit.go) and nothing else does, so a total of 0 is the first
+// Stop of a new turn, which starts with a fresh per-phase budget.
 func stopObserveProgress(cwd string, st state.State) stopProgress {
 	improved := false
 	rows := metric.ReadObjectiveMetrics(cwd, st.SessionID)
@@ -269,7 +280,8 @@ func stopObserveProgress(cwd string, st state.State) stopProgress {
 	}
 	phaseChanged := st.StopBlockPhase == nil || *st.StopBlockPhase != st.Phase
 	workChanged := !stopSameText(st.StopBlockWorkPhaseID, workPhaseID)
-	return stopProgress{progressed: phaseChanged || workChanged || improved, metricCursor: cursor, workPhaseID: workPhaseID}
+	newTurn := st.StopBlockTotal == 0
+	return stopProgress{progressed: phaseChanged || workChanged || improved || newTurn, metricCursor: cursor, workPhaseID: workPhaseID}
 }
 
 func stopSameText(a, b *string) bool {
