@@ -3,8 +3,9 @@ package hook
 // ledger_outbox.go is the one place the hook and the orchestrate CLI drain a session's pending transition-ledger events
 // (CRW-1097, state/outbox.go): every writer that records a transition prepares its row as a pending event before it publishes the
 // state and drains it afterwards. Every holder of the session lock first judges what an earlier writer left (state.JudgeLedgerOutbox,
-// called by the lock itself: published or never published, and the verdict is kept), so no write of the session, the memory,
-// scan, evidence and idle-edit writers included, can be mistaken for an event's transition; the prompt hook, the Stop and
+// called by the lock itself: published or never published, and the verdict is kept; a verdict that cannot be kept refuses the
+// holder), so no write of the session, the memory, scan, evidence and idle-edit writers included, can be mistaken for an event's
+// transition; the prompt hook, the Stop and
 // PostCompact hooks and every orchestrate command then drain it, so a row whose writer died or whose append failed is recorded by
 // the next one, exactly once. Status only reports the pending count.
 

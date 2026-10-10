@@ -481,36 +481,53 @@ func ledgerEventPublished(ev LedgerEvent, current State, currentDigest string) b
 	return current.UpdatedAt != ev.PreUpdatedAt
 }
 
+// ErrLedgerJudgment is what WithSessionLock answers, without running its callback, when a pending ledger event of the session
+// could not be judged or its verdict could not be kept.
+var ErrLedgerJudgment = errors.New("a pending transition-ledger event of the session could not be judged and its verdict kept, so nothing was changed")
+
 // JudgeLedgerOutbox settles, for every pending event of the session that no judgement has reached, whether its transition was
 // published: a published one is recorded as such in its file, one that was not is dropped. It writes no ledger row and runs no
 // followup. WithSessionLock calls it as soon as the lock is held, before the caller changes anything, so the state it judges from is
 // the one the event's writer left; any writer of the session, drained or not (memory grants, scans, evidence, Stop, PostCompact),
-// therefore leaves a verdict behind it and never a state that a later drain would mistake for the transition's. A state that cannot
-// be read leaves the events for a later drain. Best effort: a verdict that cannot be written is judged again.
-func JudgeLedgerOutbox(cwd, sessionID string) {
-	if _, err := os.Stat(ledgerOutboxDir(cwd, sessionID)); err != nil {
-		return
+// therefore leaves a verdict behind it and never a state that a later drain would mistake for the transition's. An outbox that cannot
+// be read, a verdict that cannot be written and an event that cannot be removed are answered as ErrLedgerJudgment, and the lock then
+// refuses its caller: a write after a verdict that was not kept could make a published transition read as never published, or the
+// reverse. A session state that cannot be read leaves the events for a later drain and is no refusal: every writer of the session
+// refuses to write over such a state itself (CRW-646), so the state the events are judged from stays the one their writer left.
+func JudgeLedgerOutbox(cwd, sessionID string) error {
+	if _, err := os.Stat(ledgerOutboxDir(cwd, sessionID)); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("%w: %w", ErrLedgerJudgment, err)
 	}
 	events, _, err := PendingLedgerEvents(cwd, sessionID)
-	if err != nil || len(events) == 0 {
-		return
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrLedgerJudgment, err)
+	}
+	if len(events) == 0 {
+		return nil
 	}
 	current, unreadable := ReadStateStrict(cwd, sessionID)
 	if unreadable {
-		return
+		return nil
 	}
 	digest := stateDigest(current)
+	var failed error
 	for _, ev := range events {
 		if ev.Published || ev.RowRecorded {
 			continue
 		}
 		if ledgerEventPublished(ev, current, digest) {
 			ev.Published = true
-			_ = writeLedgerEvent(cwd, ev)
+			failed = cmpErr(failed, writeLedgerEvent(cwd, ev))
 			continue
 		}
-		_ = AbortLedgerEvent(cwd, ev)
+		failed = cmpErr(failed, AbortLedgerEvent(cwd, ev))
 	}
+	if failed != nil {
+		return fmt.Errorf("%w: %w", ErrLedgerJudgment, failed)
+	}
+	return nil
 }
 
 // ledgerFindLine reports whether the exact line stands in the transition ledger at or after offset, and the offset just after the

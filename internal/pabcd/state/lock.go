@@ -14,6 +14,8 @@ import (
 // judge a lock stale can enter together and lose a verdict. Acquisition instead gives up after about 250 ms and returns the
 // error of the last create (errors.Is(err, fs.ErrExist)), so a lock left by a dead process costs a denied completion, visible
 // and recoverable, and a stale .lock file is removed by hand. The lock is released by path, errors ignored, also when fn panics.
+// Once held, the pending ledger events of the session are judged first (JudgeLedgerOutbox); a verdict that cannot be kept is
+// answered as ErrLedgerJudgment and fn does not run (CRW-1097).
 func WithSessionLock(cwd, sessionID string, fn func() error) error {
 	return WithSessionLockContext(context.Background(), cwd, sessionID, fn)
 }
@@ -104,7 +106,10 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 	}
 	defer func() { _ = removeFile(lockPath) }()
 	// CRW-1097: an event an earlier writer of the session left pending is judged now, from the state that writer left, before this
-	// holder changes anything, so no later drain mistakes this holder's write for the event's transition.
-	JudgeLedgerOutbox(cwd, sessionID)
+	// holder changes anything, so no later drain mistakes this holder's write for the event's transition. A verdict that could not be
+	// kept refuses the holder: fn does not run, and the next holder judges again.
+	if err := JudgeLedgerOutbox(cwd, sessionID); err != nil {
+		return err
+	}
 	return fn()
 }
