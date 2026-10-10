@@ -306,37 +306,71 @@ func inventoryMapErrors(root string, m inventoryMap, ids []string, registry []ro
 				fail(key, "sameAs row %s is not done", other)
 			}
 		}
+		sameAsDone = sameAsDone && sameAsEvidence(m, registry, key, map[string]bool{key: true})
 		if row.Disposition == "keep" {
 			continue
 		}
-		registered := false
-		for _, entry := range registry {
-			if !slices.Contains(row.Check, entry.Test) || slices.Contains(notEvidenceTests, entry.Test) {
-				continue
-			}
-			if len(entry.Rows) > 0 && !slices.Contains(entry.Rows, key) {
-				continue // the test proves other rows, not this one
-			}
-			if len(entry.Rows) > 0 && len(row.Paths) == 0 {
-				registered = true
-			}
-			for _, read := range entry.Reads {
-				for _, path := range row.Paths {
-					registered = registered || covers(read, path)
-				}
-			}
-		}
-		asserted := false
-		for _, assert := range row.Assert {
-			asserted = asserted || !assert.Guard
-		}
-		if !registered && !asserted && !sameAsDone {
+		if !ownEvidence(key, row, registry) && !sameAsDone {
 			fail(key, "a done %s row needs evidence: a check test registered in rowTestReads with one of its paths, "+
-				"a non-guard assert, or sameAs rows that are all done", row.Disposition)
+				"a non-guard assert, or sameAs rows that are all done and end in such evidence", row.Disposition)
 		}
 	}
 	errs = append(errs, descriptionTableErrors(m)...)
 	return errs
+}
+
+// ownEvidence reports whether the done fix, split or delete row key has evidence of its own: a check
+// test registered in rowTestReads for one of its paths (or for the row), or a non-guard assert.
+func ownEvidence(key string, row inventoryRow, registry []rowTestRead) bool {
+	for _, assert := range row.Assert {
+		if !assert.Guard {
+			return true
+		}
+	}
+	for _, entry := range registry {
+		if !slices.Contains(row.Check, entry.Test) || slices.Contains(notEvidenceTests, entry.Test) {
+			continue
+		}
+		if len(entry.Rows) > 0 && !slices.Contains(entry.Rows, key) {
+			continue // the test proves other rows, not this one
+		}
+		if len(entry.Rows) > 0 && len(row.Paths) == 0 {
+			return true
+		}
+		for _, read := range entry.Reads {
+			for _, path := range row.Paths {
+				if covers(read, path) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// sameAsEvidence reports whether every sameAs row of the row key is done and ends, through its own
+// sameAs rows, in a row with evidence of its own (ownEvidence) or a keep row: rows that name each
+// other certify nothing. visiting holds the rows on the chain, so a cycle is no evidence.
+func sameAsEvidence(m inventoryMap, registry []rowTestRead, key string, visiting map[string]bool) bool {
+	for _, name := range m.Rows[key].SameAs {
+		other, ok := m.Rows[name]
+		if !ok || other.Status != "done" || visiting[name] {
+			return false
+		}
+		if other.Disposition == "keep" || ownEvidence(name, other, registry) {
+			continue
+		}
+		if len(other.SameAs) == 0 {
+			return false
+		}
+		visiting[name] = true
+		ok = sameAsEvidence(m, registry, name, visiting)
+		delete(visiting, name)
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // relativePath is the error of a path that is not a plain repository-relative path.
@@ -504,6 +538,10 @@ func TestSkillInventoryMapComplete(t *testing.T) {
 		same := fixtureRow("done", func(r *inventoryRow) { r.SameAs = []string{"collisions[1]"} })
 		check("sameAs done", map[string]inventoryRow{"collisions[0]": same, "collisions[1]": asserted}, ids, registry, false)
 		check("sameAs open", map[string]inventoryRow{"collisions[0]": same, "collisions[1]": open(nil)}, ids, registry, false, "sameAs row collisions[1] is not done")
+		// Rows that name each other certify nothing: a sameAs chain ends in a row with evidence of its own.
+		other := fixtureRow("done", func(r *inventoryRow) { r.SameAs = []string{"collisions[0]"} })
+		check("sameAs cycle", map[string]inventoryRow{"collisions[0]": same, "collisions[1]": other}, ids, registry, false,
+			"collisions[0]: a done fix row needs evidence", "collisions[1]: a done fix row needs evidence")
 		keep := fixtureRow("done", func(r *inventoryRow) { r.Disposition, r.Reason = "keep", "nothing to do" })
 		check("keep", map[string]inventoryRow{"collisions[0]": keep, "collisions[1]": open(nil)}, ids, registry, false)
 	})

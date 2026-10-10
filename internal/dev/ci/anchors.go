@@ -47,10 +47,15 @@ func anchorChecked(name string) bool {
 	return filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) && !refactorBacklogFragment(name)
 }
 
-// anchorSlug is the GitHub slug of one heading's text, before a repeated slug gets its number.
-func anchorSlug(heading string) string {
+// anchorSlug is the GitHub slug of one heading's text, before a repeated slug gets its number; no
+// link reference definition is known to it.
+func anchorSlug(heading string) string { return slugOf(heading, nil) }
+
+// slugOf is anchorSlug with the labels of the link reference definitions of the document (see
+// referenceLabels): a reference link to one of them renders as its text.
+func slugOf(heading string, definitions map[string]bool) string {
 	var slug strings.Builder
-	for _, r := range strings.ToLower(headingText(heading)) {
+	for _, r := range strings.ToLower(headingText(heading, definitions)) {
 		switch {
 		case r == ' ':
 			slug.WriteByte('-')
@@ -64,8 +69,8 @@ func anchorSlug(heading string) string {
 // headingText is the text a heading renders: link and image markup reduced to their text, code
 // spans unquoted, HTML tags dropped, emphasis that CommonMark pairs unmarked, backslash escapes
 // resolved and entities decoded.
-func headingText(heading string) string {
-	return strings.TrimSpace(renderInline(heading))
+func headingText(heading string, definitions map[string]bool) string {
+	return strings.TrimSpace(renderInline(heading, definitions))
 }
 
 // inlineToken is a run of rendered text, or (char != 0) a run of emphasis delimiters not yet resolved.
@@ -84,8 +89,8 @@ func isFlankPunct(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r
 
 // renderInline is the text of the inline Markdown s: CommonMark's inline rules for code spans,
 // escapes, entities, links, images, raw HTML and emphasis, which is all a heading's slug depends on.
-func renderInline(s string) string {
-	tokens := inlineTokens([]rune(s))
+func renderInline(s string, definitions map[string]bool) string {
+	tokens := inlineTokens([]rune(s), definitions)
 	pairEmphasis(tokens)
 	var out strings.Builder
 	for _, token := range tokens {
@@ -96,6 +101,34 @@ func renderInline(s string) string {
 		}
 	}
 	return out.String()
+}
+
+// normalizeLabel is a link label as CommonMark matches it: white space runs collapsed, case folded.
+func normalizeLabel(label string) string {
+	return strings.ToLower(strings.Join(strings.Fields(label), " "))
+}
+
+var linkDefinition = regexp.MustCompile(`^ {0,3}\[((?:[^\[\]\\]|\\.)+)\]:[ \t]*\S`)
+
+// referenceLabels is the normalized labels of the link reference definitions that open the
+// paragraphs of the document: lines of the form [label]: destination.
+func referenceLabels(blocks []inlineBlock) map[string]bool {
+	labels := map[string]bool{}
+	for _, block := range blocks {
+		if block.isHeading {
+			continue
+		}
+		for _, line := range block.lines {
+			match := linkDefinition.FindStringSubmatch(line.text)
+			if match == nil {
+				break
+			}
+			if label := normalizeLabel(match[1]); label != "" {
+				labels[label] = true
+			}
+		}
+	}
+	return labels
 }
 
 // matchingBracket is the index of the ']' that closes the '[' at runes[open], or -1.
@@ -159,7 +192,7 @@ func codeSpanEnd(runes []rune, i, n int) (end int, content string, ok bool) {
 	return 0, "", false
 }
 
-func inlineTokens(runes []rune) []inlineToken {
+func inlineTokens(runes []rune, definitions map[string]bool) []inlineToken {
 	var tokens []inlineToken
 	var literal strings.Builder
 	flush := func() {
@@ -208,9 +241,23 @@ func inlineTokens(runes []rune) []inlineToken {
 			}
 			if closing := matchingBracket(runes, open); closing > 0 && closing+1 < len(runes) && runes[closing+1] == '(' {
 				if end := matchingParenthesis(runes, closing+1); end > 0 {
-					literal.WriteString(renderInline(string(runes[open+1 : closing])))
+					literal.WriteString(renderInline(string(runes[open+1:closing]), definitions))
 					i = end + 1
 					continue
+				}
+			} else if closing > 0 && closing+1 < len(runes) && runes[closing+1] == '[' {
+				// A full or collapsed reference link: [text][label] or [text][] with a definition of
+				// the label; the label is no part of the rendered text.
+				if end := matchingBracket(runes, closing+1); end > 0 {
+					label := string(runes[closing+2 : end])
+					if label == "" {
+						label = string(runes[open+1 : closing])
+					}
+					if definitions[normalizeLabel(label)] {
+						literal.WriteString(renderInline(string(runes[open+1:closing]), definitions))
+						i = end + 1
+						continue
+					}
 				}
 			}
 			literal.WriteRune(r)
@@ -326,9 +373,20 @@ func maskCodeSpans(text string) string {
 	return string(b)
 }
 
-// htmlAnchors is the id and name attribute values of the HTML elements opening in text, which holds no
-// code (maskCodeSpans). An attribute whose name only ends in id (data-id) is not one.
-func htmlAnchors(text string) []string {
+var (
+	htmlComment     = regexp.MustCompile(`(?s)<!--.*?-->`)
+	htmlOpenComment = regexp.MustCompile(`(?s)<!--.*$`)
+)
+
+// htmlAnchors is the id and name attribute values (character references decoded, as the browser reads
+// them) of the HTML elements opening in text, which holds no code (maskCodeSpans). An attribute whose
+// name only ends in id (data-id) is not one, and an HTML comment holds no element; in a raw HTML block
+// (block set) a comment that is never closed runs to the end of the block.
+func htmlAnchors(text string, block bool) []string {
+	text = htmlComment.ReplaceAllString(text, " ")
+	if block {
+		text = htmlOpenComment.ReplaceAllString(text, " ")
+	}
 	var found []string
 	for _, tag := range htmlOpenTag.FindAllString(text, -1) {
 		name := strings.IndexAny(tag, " \t/>")
@@ -336,7 +394,7 @@ func htmlAnchors(text string) []string {
 			if key := strings.ToLower(attribute[1]); key != "id" && key != "name" {
 				continue
 			}
-			if value := attribute[2] + attribute[3] + attribute[4]; value != "" {
+			if value := html.UnescapeString(attribute[2] + attribute[3] + attribute[4]); value != "" {
 				found = append(found, value)
 			}
 		}
@@ -486,7 +544,7 @@ func (b inlineBlock) joined() string {
 // paragraphs and headings in order, and the lines of its raw HTML blocks whose elements are rendered.
 type markdownDocument struct {
 	blocks []inlineBlock
-	html   []sourceLine
+	html   [][]string // the lines of each raw HTML block whose elements are rendered
 }
 
 // blockContainer is an open block quote or list item; a list item's content starts width columns
@@ -571,7 +629,7 @@ func parseMarkdown(text string) markdownDocument {
 				continue
 			}
 			if block.anchors {
-				doc.html = append(doc.html, sourceLine{number, rest})
+				doc.html[len(doc.html)-1] = append(doc.html[len(doc.html)-1], rest)
 			}
 			if block.end != nil && block.end.MatchString(rest) {
 				html = -1
@@ -633,7 +691,7 @@ func parseMarkdown(text string) markdownDocument {
 			html = htmlBlockStart(line, false)
 			block := htmlBlockTypes[html]
 			if block.anchors {
-				doc.html = append(doc.html, sourceLine{number, line})
+				doc.html = append(doc.html, []string{line})
 			}
 			if block.end != nil && block.end.MatchString(line) {
 				html = -1
@@ -657,8 +715,10 @@ func parseMarkdown(text string) markdownDocument {
 func markdownAnchors(text string) map[string]bool {
 	anchors := map[string]bool{}
 	occurrences := map[string]int{}
+	doc := parseMarkdown(text)
+	definitions := referenceLabels(doc.blocks)
 	addHeading := func(heading string) {
-		original := anchorSlug(heading)
+		original := slugOf(heading, definitions)
 		slug := original
 		for {
 			if _, used := occurrences[slug]; !used {
@@ -670,17 +730,16 @@ func markdownAnchors(text string) map[string]bool {
 		occurrences[slug] = 0
 		anchors[slug] = true
 	}
-	doc := parseMarkdown(text)
 	for _, block := range doc.blocks {
 		if block.isHeading {
 			addHeading(block.heading)
 		}
-		for _, name := range htmlAnchors(maskCodeSpans(block.joined())) {
+		for _, name := range htmlAnchors(maskCodeSpans(block.joined()), false) {
 			anchors[name] = true
 		}
 	}
-	for _, line := range doc.html {
-		for _, name := range htmlAnchors(line.text) {
+	for _, lines := range doc.html {
+		for _, name := range htmlAnchors(strings.Join(lines, "\n"), true) {
 			anchors[name] = true
 		}
 	}

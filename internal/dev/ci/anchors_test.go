@@ -87,6 +87,37 @@ func TestMarkdownAnchorsBlocks(t *testing.T) {
 	has("## Title <a id=\"in-heading\"></a>\n", []string{"in-heading", "title"}, nil)
 }
 
+// A full or collapsed reference link in a heading renders as its text, whatever the label of its
+// definition; an undefined label stays literal text. An attribute value is read with its character
+// references decoded, and an HTML comment holds no element.
+func TestMarkdownAnchorsReferencesEntitiesComments(t *testing.T) {
+	has := func(text string, want []string, unwanted []string) {
+		t.Helper()
+		anchors := markdownAnchors(text)
+		for _, name := range want {
+			if !anchors[name] {
+				t.Errorf("%q: anchor %q missing from %v", text, name, anchors)
+			}
+		}
+		for _, name := range unwanted {
+			if anchors[name] {
+				t.Errorf("%q: anchor %q must not exist: %v", text, name, anchors)
+			}
+		}
+	}
+	has("## [Install][guide]\n\n[guide]: https://example.invalid/\n", []string{"install"}, []string{"installguide"})
+	has("## [Install][Guide Label] now\n\n[guide  label]: <https://example.invalid/> \"t\"\n", []string{"install-now"}, nil)
+	has("## [Install][] now\n\n[install]: https://example.invalid/\n", []string{"install-now"}, nil)
+	has("## [Install] now\n\n[install]: https://example.invalid/\n", []string{"install-now"}, nil)
+	has("## ![Logo][img] here\n\n[img]: logo.png\n", []string{"logo-here"}, nil)
+	has("## [Install][undefined]\n", []string{"installundefined"}, []string{"install"})
+	has("<a id=\"real&#45;target\"></a>\n<a name='x&amp;y'></a> <b id=a&#x2d;b></b>\n", []string{"real-target", "x&y", "a-b"}, []string{"real&#45;target"})
+	has("<div>\n<!-- <a id=\"gone\"></a> -->\n<a id=\"kept\"></a>\n</div>\n", []string{"kept"}, []string{"gone"})
+	has("<div>\n<!--\n<a id=\"gone\"></a>\n-->\n<a id=\"kept\"></a>\n</div>\n", []string{"kept"}, []string{"gone"})
+	has("<div>\n<!-- never closed <a id=\"gone\"></a>\n</div>\n", nil, []string{"gone"})
+	has("Text <!-- <a id=\"gone\"></a> --> <a id=\"kept\"></a>\n", []string{"kept"}, []string{"gone"})
+}
+
 // A list marker needs a space, a tab or the line end after it, the content of a list item and of a
 // block quote is read as blocks of its own, raw HTML blocks hold no Markdown, and a code span runs
 // over the lines of its paragraph.
