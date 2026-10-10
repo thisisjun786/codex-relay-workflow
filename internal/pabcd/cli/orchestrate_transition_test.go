@@ -22,6 +22,8 @@ func orchestrateTransitionRoot(t *testing.T) string {
 	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
 		t.Setenv(name, t.TempDir())
 	}
+	// CRW-1179: entering I reads the host goals database, so the run never reads the machine's own.
+	t.Setenv("CODEX_SQLITE_HOME", t.TempDir())
 	return t.TempDir()
 }
 

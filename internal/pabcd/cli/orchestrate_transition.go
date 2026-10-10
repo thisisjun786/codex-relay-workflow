@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
@@ -563,6 +565,32 @@ func orchestrateCommitRunContext(ctx context.Context, a OrchestrateCliArgs, sess
 	return out, nil
 }
 
+// orchestrateTransitionGoalStatus is the host goal status of the session's thread, read from the goals database
+// the hooks read (CODEX_SQLITE_HOME, else CODEX_HOME, else the account home). A path that cannot be resolved is
+// unreadable, which suppresses the Interview as it does for the hooks.
+func orchestrateTransitionGoalStatus(sessionID string) host.GoalStatus {
+	path, err := host.GoalsDBPath(os.LookupEnv)
+	if err != nil {
+		return host.GoalUnreadable
+	}
+	return host.GoalActiveStatus(sessionID, path)
+}
+
+// orchestrateTransitionGoalRefusal is the refusal of an entry to I while goal mode owns the thread: it names the
+// goal-mode next command (P to start a cycle from rest, the current phase otherwise).
+func orchestrateTransitionGoalRefusal(verb fsm.OrchestrateVerb, cur state.State, sessionID string, status host.GoalStatus) CliResult {
+	why := "an active host goal owns this session"
+	if status == host.GoalUnreadable {
+		why = "the host goals database cannot be read, so an active host goal is assumed"
+	}
+	next := "Continue the " + string(cur.Phase) + " phase of the current cycle."
+	if cur.Phase == state.PhaseIdle {
+		next = "Goal mode is PABCD-only: start the cycle with `crw pabcd orchestrate P --session " + sessionID + "`."
+	}
+	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) +
+		"; the Interview (I) is HITL-only and never runs while a host goal is active: " + why + ". " + next + " Nothing was written."}
+}
+
 // orchestrateTransitionApply is the ported body, run while the caller holds the session lock.
 func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
 	cwd, verb := a.Cwd, a.Verb
@@ -614,6 +642,15 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 
 	// A phase verb: agent-gated through the un-weakened transition(), validated before any write.
 	to := state.Phase(verb)
+	// CRW-1179: an active host goal owns the thread, and the Interview never fires under it (crw-pabcd, crw-loop). The
+	// UserPromptSubmit hook already withholds the I directive and the chat command; this is the same firewall on the
+	// CLI entry, so an agent cannot enter I by running the command and then climb out by override. An unreadable goals
+	// database fails closed, as every other goal-mode reader does. Only entering I is judged: leaving it is never refused.
+	if to == state.PhaseI && cur.Phase != state.PhaseI {
+		if status := orchestrateTransitionGoalStatus(sessionID); host.SuppressesInterview(status) {
+			return orchestrateTransitionGoalRefusal(verb, cur, sessionID, status), nil
+		}
+	}
 	if _, err := session.Resolve(cwd, sessionID); err != nil {
 		return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": SOURCE-ROOT: " + err.Error()}, nil
 	}
