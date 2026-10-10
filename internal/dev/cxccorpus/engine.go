@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // Epoch is the frozen clock of a recording: the oracle's fake-clock preload starts every Node
@@ -92,6 +94,10 @@ func (c *Case) Expand(text string) string {
 // base environment of every process of the case (nothing is inherited). homeVar names the variable
 // that points at the CXC home root. A partial Case comes back with its error, to be removed.
 func NewCase(scratch, homeVar string, g Given) (*Case, error) {
+	// a case is the isolated tree of a run, and never lies in the account's real home (CRW-1186)
+	if err := homeguard.Refuse(scratch); err != nil {
+		return nil, err
+	}
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		return nil, err

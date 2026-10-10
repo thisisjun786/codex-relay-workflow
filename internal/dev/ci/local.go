@@ -21,6 +21,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // CRW-964: `crw-dev ci local`. It runs the local step table in a clean worktree of the
@@ -725,6 +727,9 @@ func localWorkRoot(opts localOptions) (string, error) {
 		return "", fmt.Errorf("the work root %q is not absolute", root)
 	}
 	root = filepath.Clean(root)
+	if err := homeguard.Refuse(root); err != nil {
+		return "", fmt.Errorf("the work root: %w", err)
+	}
 	for _, banned := range localBannedRoots(opts) {
 		if banned == "" {
 			continue

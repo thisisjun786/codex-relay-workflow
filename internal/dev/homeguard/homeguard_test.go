@@ -1,9 +1,11 @@
-//go:build dev
-
 package homeguard
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -137,5 +139,51 @@ func TestGuardFailsWhenTheRealSwitchFileChanged(t *testing.T) {
 	}
 	if err := cleanup(); err == nil || !strings.Contains(err.Error(), "hook switch") {
 		t.Fatalf("a switch file that appeared while the tests ran is not reported: %v", err)
+	}
+}
+
+// The read-only harnesses write nothing, so they have no destination to refuse (CRW-1186): this
+// holds them to it. A writer added to one of them must call Refuse for its destination and move out of this list.
+func TestReadOnlyHarnessesCallNoWriter(t *testing.T) {
+	writers := map[string]bool{"WriteFile": true, "Create": true, "CreateTemp": true, "Mkdir": true, "MkdirAll": true, "MkdirTemp": true,
+		"Rename": true, "Remove": true, "RemoveAll": true, "Symlink": true, "Link": true, "Chmod": true, "Chtimes": true, "Truncate": true, "Lchown": true, "Chown": true}
+	for _, dir := range []string{"../stopevents", "../trialledger"} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("%s: %v (%d files)", dir, err, len(files))
+		}
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") {
+				continue
+			}
+			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ast.Inspect(parsed, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkg, ok := sel.X.(*ast.Ident)
+				if !ok || pkg.Name != "os" {
+					return true
+				}
+				if writers[sel.Sel.Name] {
+					t.Errorf("%s calls os.%s: a writer needs homeguard.Refuse", file, sel.Sel.Name)
+				}
+				if sel.Sel.Name == "OpenFile" && len(call.Args) > 1 {
+					flags := types.ExprString(call.Args[1])
+					if !strings.Contains(flags, "O_RDONLY") || strings.Contains(flags, "O_WRONLY") || strings.Contains(flags, "O_RDWR") || strings.Contains(flags, "O_CREATE") {
+						t.Errorf("%s calls os.OpenFile(%s): not a read", file, flags)
+					}
+				}
+				return true
+			})
+		}
 	}
 }

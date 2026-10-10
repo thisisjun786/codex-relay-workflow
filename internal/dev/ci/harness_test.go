@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -20,7 +21,7 @@ import (
 var crwDev string
 
 func TestMain(m *testing.M) {
-	testsupport.Main(m, func(string) (cleanup func() error, err error) {
+	testsupport.Main(m, homeguard.RefuseAccountHome, func(string) (cleanup func() error, err error) {
 		crwDev, err = testsupport.CRWDevPath()
 		return nil, err
 	})

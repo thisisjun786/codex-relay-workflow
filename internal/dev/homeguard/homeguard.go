@@ -1,5 +1,3 @@
-//go:build dev
-
 // Package homeguard keeps the dev harnesses out of the account's real homes (CRW-1186). A harness
 // builds its own homes under a case root or a scratch directory and never writes the account's:
 // <account home>/.codex, <account home>/.crw and <account home>/.local/share/crw-runtime, where the

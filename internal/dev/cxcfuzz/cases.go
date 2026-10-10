@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // Case is one pinned replay case: an input, both sides' answers, and the tag that says how it is
@@ -51,6 +53,9 @@ func LoadCases(dir string) ([]Case, error) {
 
 // SaveCases writes a target's cases.
 func SaveCases(dir string, cases []Case) error {
+	if err := homeguard.Refuse(dir); err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(cases, "", "  ")
 	if err != nil {
 		return err
@@ -70,7 +75,7 @@ func CheckCase(target Target, c Case) (problem string) {
 	if err != nil {
 		return fmt.Sprintf("the input is not JSON: %v", err)
 	}
-	root, err := os.MkdirTemp("", "cxcfuzz-case-")
+	root, err := MkdirTempRoot("cxcfuzz-case-")
 	if err != nil {
 		return err.Error()
 	}
