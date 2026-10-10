@@ -24,6 +24,9 @@ import (
 // kept out of the measure; a quadratic read takes 4096 times, 17.5 s against about 25 ms with the repeated-key
 // index of pyjson switched off). The 30 s on the whole read is only the hang guard (a wall clock, since a hang is
 // what it catches); the 26 s of the quadratic read is under it, so it does not tell the two apart, the ratio does.
+// Off Linux no thread CPU clock is read (processorClock is false), so the ratio is not asserted there at all: a ratio
+// of two wall-clock spans is what a descheduled run inflates (a 2 ms small read against a 2 s large one fails a linear
+// read at 600 times). The measurement is logged there, and the document's fields and the hang guard are still asserted.
 // The document's fields are asserted whatever the time.
 func TestFrozenDocumentIsReadInTimeProportionalToItsLength(t *testing.T) {
 	// Serial: the measures share the host's caches with other running tests otherwise.
@@ -69,11 +72,11 @@ func TestFrozenDocumentIsReadInTimeProportionalToItsLength(t *testing.T) {
 	smallText, text := document(small), document(keys)
 	smallest, _ := best(smallText, 5, 0)
 	processor, wall := best(text, 3, ratio*smallest)
-	t.Logf("%d keys took %v of processor time (%v at most on the clock), %d keys %v", keys, processor, wall, small, smallest)
+	t.Logf("%d keys took %v of processor time (%v at most on the clock; a wall-clock span, not asserted, where processorClock is false), %d keys %v", keys, processor, wall, small, smallest)
 	if wall > 30*time.Second {
 		t.Fatalf("a %d-key frozen document took %s on the clock to read, past the hang guard", keys, wall)
 	}
-	if processor > ratio*smallest {
+	if processorClock && processor > ratio*smallest {
 		t.Fatalf("a %d-key frozen document took %s of processor time to read and a %d-key one %s: more than %d times as long for 64 times the keys, so a key is looked for among those before it", keys, processor, small, smallest, ratio)
 	}
 	object, err := decodePythonJSON(text)

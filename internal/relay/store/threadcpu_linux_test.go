@@ -10,6 +10,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// processorClock says whether threadCPU reads the thread's processor time (it does on Linux), so the frozen-document test
+// asserts its ratio.
+const processorClock = true
+
 // threadCPU is the processor time the calling thread has used. It does not count the time the thread is descheduled, so a
 // host under load stretches it far less than a wall clock; the caller keeps the goroutine on its thread.
 func threadCPU(tb testing.TB) time.Duration {
