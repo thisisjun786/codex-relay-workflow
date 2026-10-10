@@ -88,22 +88,27 @@ func catalogEnv(environ []string) host.LookupEnv {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 
-// sourceKey names the source a cached or pending catalog belongs to: what the reader resolves from the
-// environment, not the raw variables alone (CRW-1132; the oracle hashed CODEX_HOME, the catalog path,
-// PATH and OPENCODEX_HOME as written, so a shared CRW_HOME with another HOME merged two native homes).
-// The native side is the Codex home and the catalog file chosen from it, which HOME decides while
-// CODEX_HOME is unset or a configured path starts with "~/". The OCX side is the executable PATH finds
-// and the OPENCODEX_HOME it runs with, or, while that is blank, the HOME it falls back to. The raw
-// variables stay in the key, so anything that changed before still changes it. The project directory
-// is not part of the key. A path is keyed as the file the reader opens: a relative one is read from the
-// process directory, so the same relative text in another directory is another source.
-func sourceKey(env host.LookupEnv) string {
-	p, ok := env("PATH")
-	if !ok {
-		p, _ = env("Path")
+// catalogSource is the source one request discovers from, resolved once when the request starts: the
+// process directory relative paths are read from, the native home and the native catalog file chosen
+// from it, the OCX executable PATH finds (or why none is found) and the OPENCODEX_HOME it runs with, or,
+// while that is blank, the HOME it falls back to. The key names this snapshot, and the discovery reads
+// that native file and runs that executable, so a configuration or PATH that changes while the request
+// discovers cannot put another source's list under this key (CRW-1132).
+type catalogSource struct {
+	dir        string
+	nativeHome string
+	nativePath string
+	ocxExe     string
+	ocxErr     error
+	ocxHome    string
+}
+
+func resolveCatalogSource(env host.LookupEnv) catalogSource {
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = ""
 	}
 	h, _ := env("CODEX_HOME")
-	cache, _ := env("CODEX_MODELS_CACHE_PATH")
 	ocx, _ := env("OPENCODEX_HOME")
 	userHome, _ := host.Home(env)
 	nativeHome := ""
@@ -116,22 +121,43 @@ func sourceKey(env host.LookupEnv) string {
 	if text.Trim(ocxHome) == "" {
 		ocxHome = userHome
 	}
-	ocxExe, _ := ocxExecutable(env)
-	b, _ := Stringify([]string{h, cache, p, ocx, absolute(nativeHome), absolute(NativeCatalogPath(env)), ocxExe, absolute(ocxHome)}, "")
+	s := catalogSource{dir: dir, nativeHome: inDir(dir, nativeHome), nativePath: inDir(dir, NativeCatalogPath(env)), ocxHome: inDir(dir, ocxHome)}
+	s.ocxExe, s.ocxErr = ocxExecutable(env, dir)
+	return s
+}
+
+// sourceKey names the source a cached or pending catalog belongs to: what the reader resolves from the
+// environment, not the raw variables alone (CRW-1132; the oracle hashed CODEX_HOME, the catalog path,
+// PATH and OPENCODEX_HOME as written, so a shared CRW_HOME with another HOME merged two native homes).
+// The raw variables stay in the key, so anything that changed before still changes it. The project
+// directory is not part of the key. A path is keyed as the file the reader opens: a relative one is read
+// from the process directory, so the same relative text in another directory is another source.
+func sourceKey(env host.LookupEnv) string {
+	return resolveCatalogSource(env).key(env)
+}
+
+func (s catalogSource) key(env host.LookupEnv) string {
+	p, ok := env("PATH")
+	if !ok {
+		p, _ = env("Path")
+	}
+	h, _ := env("CODEX_HOME")
+	cache, _ := env("CODEX_MODELS_CACHE_PATH")
+	ocx, _ := env("OPENCODEX_HOME")
+	b, _ := Stringify([]string{h, cache, p, ocx, s.nativeHome, s.nativePath, s.ocxExe, s.ocxHome}, "")
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 
-// absolute is a path resolved against the process directory, as the readers resolve it; an empty path
-// stays empty, and a path that cannot be resolved stays as written.
-func absolute(p string) string {
-	if p == "" {
-		return ""
+// inDir is a relative path prefixed with the process directory as written, without lexical cleaning, so
+// it names the file the kernel opens for the relative path: a symbolic link followed by ".." resolves
+// to the link target's parent, which a lexical cleaning would replace with the link's own directory. An
+// absolute or empty path, or one with no known directory, stays as written.
+func inDir(dir, p string) string {
+	if p == "" || dir == "" || filepath.IsAbs(p) {
+		return p
 	}
-	if abs, err := filepath.Abs(p); err == nil {
-		return abs
-	}
-	return p
+	return strings.TrimSuffix(dir, string(os.PathSeparator)) + string(os.PathSeparator) + p
 }
 
 // ReadCatalog ports ts:83-119. Only failure to resolve the user's home escapes
@@ -146,7 +172,8 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	if err != nil {
 		return LiveCatalog{}, err
 	}
-	path, key := filepath.Join(filepath.Dir(store), "model-catalog.json"), sourceKey(env)
+	src := resolveCatalogSource(env)
+	path, key := filepath.Join(filepath.Dir(store), "model-catalog.json"), src.key(env)
 	now := o.Now
 	if now == nil {
 		now = time.Now
@@ -169,7 +196,7 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	}
 	r.pending[pendingKey] = q
 	r.mu.Unlock()
-	c := queryCatalog(path, key, environ, env, now, o, cached)
+	c := queryCatalog(path, key, src, environ, env, now, o, cached)
 	r.mu.Lock()
 	q.catalog = c
 	delete(r.pending, pendingKey)
@@ -178,10 +205,10 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	return c, nil
 }
 
-func queryCatalog(path, key string, environ []string, env host.LookupEnv, now func() time.Time, o CatalogOptions, cached *LiveCatalog) LiveCatalog {
+func queryCatalog(path, key string, src catalogSource, environ []string, env host.LookupEnv, now func() time.Time, o CatalogOptions, cached *LiveCatalog) LiveCatalog {
 	run := o.RunOcx
 	if run == nil {
-		run = RunOcxModels
+		run = func(environ []string) (string, error) { return runOcx(src, environ) }
 	}
 	stdout, err := run(environ)
 	source := ModelOcx
@@ -193,7 +220,7 @@ func queryCatalog(path, key string, environ []string, env host.LookupEnv, now fu
 		source = ModelNative
 		read := o.ReadNative
 		if read == nil {
-			read = ReadNativeCatalog
+			read = func(host.LookupEnv) []CatalogEntry { return readNativeCatalogAt(src.nativePath) }
 		}
 		entries = read(env)
 		err = nil
@@ -420,16 +447,27 @@ func (b *catalogOutput) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
-// ocxExecutable searches the supplied POSIX PATH (including relative/empty
-// elements); denied candidates are skipped, with EACCES retained at exhaustion.
-func ocxExecutable(env host.LookupEnv) (string, error) {
+// ocxExecutable searches the supplied POSIX PATH (including relative/empty elements) from the process
+// directory dir; denied candidates are skipped, with EACCES retained at exhaustion. Each candidate is the PATH element and
+// "ocx" joined as execvp joins them, without lexical cleaning, and a relative one is prefixed with dir
+// as written (inDir), so the file tested is the file the kernel executes and the one returned.
+func ocxExecutable(env host.LookupEnv, dir string) (string, error) {
 	path, set := env("PATH")
 	if !set {
 		path = "/bin:/usr/bin"
 	}
 	var denied, missing error
-	for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
-		candidate := filepath.Join(dir, "ocx")
+	for _, element := range strings.Split(path, string(os.PathListSeparator)) {
+		candidate := "ocx"
+		if element != "" {
+			candidate = strings.TrimSuffix(element, "/") + "/ocx"
+		}
+		candidate = inDir(dir, candidate)
+		if !filepath.IsAbs(candidate) {
+			// No process directory is known to name a relative candidate by.
+			missing = &os.PathError{Op: "exec", Path: candidate, Err: os.ErrNotExist}
+			continue
+		}
 		info, err := os.Stat(candidate)
 		if errors.Is(err, os.ErrPermission) {
 			denied = err
@@ -446,7 +484,7 @@ func ocxExecutable(env host.LookupEnv) (string, error) {
 			denied = &os.PathError{Op: "exec", Path: candidate, Err: os.ErrPermission}
 			continue
 		}
-		return filepath.Abs(candidate)
+		return candidate, nil
 	}
 	if denied != nil {
 		return "", denied
@@ -463,17 +501,23 @@ func RunOcxModels(environ []string) (string, error) {
 	if environ == nil {
 		environ = os.Environ()
 	}
-	file, err := ocxExecutable(catalogEnv(environ))
-	if err != nil {
-		return "", err
+	return runOcx(resolveCatalogSource(catalogEnv(environ)), environ)
+}
+
+// runOcx runs the executable the request's source resolved, from the process directory that source was
+// resolved in, so relative OPENCODEX_HOME and HOME values name the homes its key names.
+func runOcx(src catalogSource, environ []string) (string, error) {
+	if src.ocxErr != nil {
+		return "", src.ocxErr
 	}
+	file := src.ocxExe
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	out, stderr := &catalogOutput{cancel: cancel}, &catalogOutput{cancel: cancel}
 	cmd := exec.CommandContext(ctx, file, "models", "live", "--json")
-	cmd.Env, cmd.Stdout, cmd.Stderr = environ, out, stderr
+	cmd.Env, cmd.Stdout, cmd.Stderr, cmd.Dir = environ, out, stderr, src.dir
 	cmd.WaitDelay = 2 * time.Second
-	err = cmd.Run()
+	err := cmd.Run()
 	if out.overflow || stderr.overflow {
 		return "", sentinel("OCX output exceeded 4 MiB")
 	}

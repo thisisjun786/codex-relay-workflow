@@ -214,7 +214,11 @@ func reasoningEfforts(raw json.RawMessage) *[]string {
 
 // ReadNativeCatalog returns nil for unavailable and a non-nil empty slice for an empty catalog.
 func ReadNativeCatalog(env host.LookupEnv) []CatalogEntry {
-	p := NativeCatalogPath(env)
+	return readNativeCatalogAt(NativeCatalogPath(env))
+}
+
+// readNativeCatalogAt is ReadNativeCatalog of the catalog file p already chosen; an empty p is unavailable.
+func readNativeCatalogAt(p string) []CatalogEntry {
 	if p == "" {
 		return nil
 	}
