@@ -2,6 +2,9 @@ package manage
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +42,11 @@ type CapacityReport struct {
 	Actions  CapacityActions  `json:"actions"`
 	Child429 CapacityChild429 `json:"child_429"`
 	Plans    []CapacityPlan   `json:"plans"`
+
+	// stateStamp names the generation of the capacity state the judgement was made on (see
+	// capacityLoadState). It is not part of the document; the pump keeps it beside an alert so a
+	// retry of the same judgement is told from a later alert over another state.
+	stateStamp string
 }
 
 type CapacityLane struct {
@@ -139,15 +147,28 @@ type capacityPlanState struct {
 
 type capacityState struct {
 	Plans map[string]capacityPlanState `json:"plans"`
-	// Version counts the writes of the file. A commit is made against the version its evaluation
-	// read and is refused when the file has moved since, so a late commit never overwrites a state
-	// the command line or another evaluation saved in between.
-	Version int `json:"version"`
+	// Version counts the writes of the file and Revision is a random token drawn anew for every
+	// write. A commit is made against the stamp (capacityLoadState) its evaluation read and is
+	// refused when the file has moved since, so a late commit never overwrites a state the command
+	// line or another evaluation saved in between. The version alone would not do: a file that is
+	// lost and written again from nothing counts from 1 again, and only the revision tells the two
+	// generations apart.
+	Version  int    `json:"version"`
+	Revision string `json:"revision,omitempty"`
 }
 
 // errCapacityStateMoved is a commit refused because the state file changed after the evaluation
 // read it. The alerted state is left as the newer writer saved it and the caller evaluates again.
 var errCapacityStateMoved = errors.New("capacity: the state changed since it was evaluated")
+
+// errCapacityStateBusy is a commit refused because another writer held the state's lock for longer
+// than capacityLockWait. Nothing is written and the caller's next evaluation repeats the commit.
+var errCapacityStateBusy = errors.New("capacity: the state is locked by another writer")
+
+// capacityLockWait bounds how long a commit waits for the state's lock. A writer holds it for one
+// small file write, so a longer hold is a writer that stopped, and the commit gives up rather than
+// holding up its caller (the pump's round, whose other sources and deliveries come after it).
+const capacityLockWait = 200 * time.Millisecond
 
 func capacityPick[T any](value *T, fallback T) T {
 	if value == nil {
@@ -189,10 +210,10 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 			return ev.Report, nil
 		}
 		// A state that moved under the evaluation (another run saved first) is judged again from the
-		// newer state rather than overwritten.
+		// newer state rather than overwritten, and so is one whose lock another writer held.
 		if err := ev.Commit(); err == nil {
 			return ev.Report, nil
-		} else if !errors.Is(err, errCapacityStateMoved) || attempt == capacityCommitAttempts {
+		} else if !(errors.Is(err, errCapacityStateMoved) || errors.Is(err, errCapacityStateBusy)) || attempt == capacityCommitAttempts {
 			return CapacityReport{}, err
 		}
 	}
@@ -206,7 +227,7 @@ const capacityCommitAttempts = 3
 type capacityEvaluation struct {
 	Report    CapacityReport
 	statePath string
-	base      int
+	base      string
 	next      capacityState
 }
 
@@ -214,8 +235,9 @@ type capacityEvaluation struct {
 // elsewhere first (the pump's pending events) evaluates, records the alert, and only then commits;
 // an evaluation that is never committed leaves the state as it was, so the next evaluation judges
 // the same alert under the same epoch (CapacityPlan.AlertEpoch) and converges on the same event.
-// The write is made under the state's lock and only if the file is still at the version the
-// evaluation read; otherwise it is refused with errCapacityStateMoved and nothing is written.
+// The write is made under the state's lock and only if the file is still the generation the
+// evaluation read; otherwise it is refused with errCapacityStateMoved and nothing is written. A lock
+// held by another writer past capacityLockWait refuses it with errCapacityStateBusy.
 func (ev capacityEvaluation) Commit() error {
 	return capacityCommitState(ev.statePath, ev.base, ev.next)
 }
@@ -251,7 +273,8 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 	}
 
 	statePath := crwconfig.JoinRoot(cfg.StateDir, capacityStateFile)
-	previous := capacityReadState(statePath)
+	previous, stamp := capacityLoadState(statePath)
+	report.stateStamp = stamp
 	next := capacityState{Plans: map[string]capacityPlanState{}}
 	// With no configured plan there is nothing to read from the relay, so a host whose relay state
 	// cannot be resolved still gets an empty judgement rather than a read failure.
@@ -311,7 +334,7 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 		}
 		report.Plans = append(report.Plans, plan)
 	}
-	return capacityEvaluation{Report: report, statePath: statePath, base: previous.Version, next: next}, nil
+	return capacityEvaluation{Report: report, statePath: statePath, base: stamp, next: next}, nil
 }
 
 // capacityPersist records this run's waiting set and reports how long it has waited and whether the
@@ -372,21 +395,40 @@ func capacityJudge(plan CapacityPlan, limits CapacityLimits, lane *int, incident
 }
 
 func capacityReadState(path string) capacityState {
+	state, _ := capacityLoadState(path)
+	return state
+}
+
+// capacityLoadState reads the state and the stamp of the file's generation: "absent" for no file,
+// the version and the revision for a state, a digest of the content for a file that cannot be
+// decoded (an evaluation that read it may replace it, any other may not), and a stamp no commit
+// matches for a file that cannot be read. An absent or undecodable file reads as the empty state.
+func capacityLoadState(path string) (capacityState, string) {
 	state := capacityState{Plans: map[string]capacityPlanState{}}
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return state, capacityStampAbsent
+	}
 	if err != nil {
-		return state
+		return state, capacityStampUnreadable
 	}
 	var stored capacityState
 	if err := json.Unmarshal(data, &stored); err != nil || stored.Plans == nil {
-		return state
+		sum := sha256.Sum256(data)
+		return state, "undecodable:" + hex.EncodeToString(sum[:])
 	}
-	return stored
+	return stored, fmt.Sprintf("%d/%s", stored.Version, stored.Revision)
 }
 
-// capacityCommitState writes next as the version after base, under an exclusive lock on the state's
-// lock file, and refuses when the file is no longer at base.
-func capacityCommitState(path string, base int, next capacityState) error {
+const (
+	capacityStampAbsent     = "absent"
+	capacityStampUnreadable = "unreadable"
+)
+
+// capacityCommitState writes next as the generation after base, under an exclusive lock on the
+// state's lock file, and refuses when the file is no longer the generation base names or cannot be
+// read. The lock is waited for at most capacityLockWait.
+func capacityCommitState(path string, base string, next capacityState) error {
 	if err := os.MkdirAll(rootDir(path), 0o755); err != nil {
 		return err
 	}
@@ -395,15 +437,39 @@ func capacityCommitState(path string, base int, next capacityState) error {
 		return err
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := capacityLock(int(lock.Fd()), capacityLockWait); err != nil {
 		return err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	if capacityReadState(path).Version != base {
+	current, stamp := capacityLoadState(path)
+	if stamp == capacityStampUnreadable || stamp != base {
 		return errCapacityStateMoved
 	}
-	next.Version = base + 1
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return err
+	}
+	next.Version, next.Revision = current.Version+1, hex.EncodeToString(token)
 	return capacityWriteState(path, next)
+}
+
+// capacityLock takes the exclusive lock on fd without blocking, trying again until wait has passed;
+// a lock still held then is errCapacityStateBusy.
+func capacityLock(fd int, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return errCapacityStateBusy
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func capacityWriteState(path string, state capacityState) error {

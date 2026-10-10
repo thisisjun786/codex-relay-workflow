@@ -256,17 +256,21 @@ func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 
 // pumpSignalCapacityRecord is what the pump keeps, under its own Cursors and in the same write as
 // the pending events, about the last alert event it made for a plan: the epoch the capacity state
-// had when the alert was judged (Base), the epoch put in the event id (Epoch), the waiting set
-// (Waiting) and whether the alerted state was committed afterwards (Committed).
+// had when the alert was judged (Base), the generation of the capacity state file it was judged on
+// (State, see capacityLoadState), the epoch put in the event id (Epoch), the waiting set (Waiting)
+// and whether the alert is settled (Committed): its alerted state was committed, or the record was
+// superseded because the plan left the settings.
 //
 // The capacity state file alone cannot give an event id that is stable and also never reused: a
 // plan removed from the settings and added again, or a state file that is gone, restarts its epoch
 // at 1 and would rebuild the id of an alert already sent, which the sent set then swallows. The
-// record is what keeps the id apart. A judgement repeated over an uncommitted record (same base,
-// same waiting set) reuses its epoch, so a lost commit converges on the same id; any other alert
+// record is what keeps the id apart. Only a retry of the same judgement reuses its epoch: an
+// unsettled record, the same state file generation (no commit of any kind was made since), the same
+// base and the same waiting set. That is how a lost commit converges on the same id. Any other alert
 // takes an epoch above the record's, so the epoch of a plan's events only grows.
 type pumpSignalCapacityRecord struct {
 	Base      int    `json:"base"`
+	State     string `json:"state"`
 	Epoch     int    `json:"epoch"`
 	Waiting   string `json:"waiting"`
 	Committed bool   `json:"committed"`
@@ -293,18 +297,39 @@ func pumpSignalWaitingHash(waiting []string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep.
-func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan) (int, pumpSignalCapacityRecord) {
+// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep. state
+// is the generation of the capacity state the report was judged on.
+func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan, state string) (int, pumpSignalCapacityRecord) {
 	base, hash := plan.AlertEpoch-1, pumpSignalWaitingHash(plan.Waiting)
 	epoch := plan.AlertEpoch
 	if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok {
-		if !rec.Committed && rec.Base == base && rec.Waiting == hash {
+		if !rec.Committed && rec.State == state && rec.Base == base && rec.Waiting == hash {
 			epoch = rec.Epoch
 		} else if rec.Epoch >= epoch {
 			epoch = rec.Epoch + 1
 		}
 	}
-	return epoch, pumpSignalCapacityRecord{Base: base, Epoch: epoch, Waiting: hash}
+	return epoch, pumpSignalCapacityRecord{Base: base, State: state, Epoch: epoch, Waiting: hash}
+}
+
+// pumpSignalCapacitySupersede settles the record of every plan the report no longer judges: a plan
+// that left the settings ends its alert generation, so when it is registered again its next alert
+// takes a new epoch rather than the uncommitted one of its last alert.
+func pumpSignalCapacitySupersede(st *pumpState, report CapacityReport) {
+	judged := map[string]bool{}
+	for _, plan := range report.Plans {
+		judged[plan.Plan] = true
+	}
+	for key := range st.Cursors {
+		name, ok := strings.CutPrefix(key, pumpSignalCapacityEpochPrefix)
+		if !ok || judged[name] {
+			continue
+		}
+		if rec, ok := pumpSignalCapacityLoad(st, name); ok && !rec.Committed {
+			rec.Committed = true
+			pumpSignalCapacityStore(st, name, rec)
+		}
+	}
 }
 
 // pumpSignalCapacityID is the id of one alert: the plan, its event epoch and the waiting set. The
@@ -355,13 +380,14 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 		return pumpSignalUnmeasured(cfg, pumpSignalCapacityName, err)
 	}
 	st.Cursors[pumpSignalCapacityReadKey] = strconv.FormatInt(now.Unix(), 10)
+	pumpSignalCapacitySupersede(st, report)
 	res := pumpSourceResult{Status: pumpSourceOK}
 	var alerted []string
 	for _, plan := range report.Plans {
 		if !plan.Alert {
 			continue
 		}
-		epoch, rec := pumpSignalCapacityEpoch(st, plan)
+		epoch, rec := pumpSignalCapacityEpoch(st, plan, report.stateStamp)
 		pumpSignalCapacityStore(st, plan.Plan, rec)
 		alerted = append(alerted, plan.Plan)
 		res.Events = append(res.Events, pumpEvent{ID: pumpSignalCapacityID(plan, epoch), Kind: pumpKindLow, Text: pumpSignalCapacityText(plan)})
