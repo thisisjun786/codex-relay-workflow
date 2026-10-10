@@ -33,8 +33,9 @@ const switchUsage = "Usage:\n" +
 	"section of $CODEX_HOME/.crw-install.json, config.toml and each role file it replaces are copied to a\n" +
 	"timestamped .crw-<ts>.bak before they change, and a step that fails undoes the steps before it.\n" +
 	"`switch cxc` is the emergency stop of the ported hooks: it turns them off and puts back, byte for byte,\n" +
-	"only what the switch recorded as changed. It does not re-activate CXC. `features disable` does not touch\n" +
-	"the switch.\n"
+	"only what the switch recorded as changed. It never installs CXC. A CXC plugin entry that `switch crw`\n" +
+	"turned off from enabled = true is put back as it was, so on a home that still holds one the plugin\n" +
+	"comes back on, with the CXC role files the switch replaced. `features disable` does not touch the switch.\n"
 
 // The four states status reports.
 const (
@@ -220,7 +221,11 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 	if status.Switch.Active != "" {
 		fmt.Fprintf(stdout, "switch.json: active=%s changedAt=%s by=%s\n", status.Switch.Active, status.Switch.ChangedAt, status.Switch.By)
 		if status.Switch.Active == "cxc" {
-			fmt.Fprintln(stdout, "  active=cxc is the emergency stop: the ported CRW hooks are off. It does not mean CXC is active.")
+			if cxc := status.Plugins["codexclaw"]; cxc.Enabled {
+				fmt.Fprintf(stdout, "  active=cxc is the emergency stop: the ported CRW hooks are off. The CXC plugin %s is enabled in config.toml, so CXC is on.\n", cxc.Key)
+			} else {
+				fmt.Fprintln(stdout, "  active=cxc is the emergency stop: the ported CRW hooks are off. No CXC plugin is enabled.")
+			}
 		}
 	} else if status.Switch.Error != "" {
 		fmt.Fprintf(stdout, "switch.json: %s\n", status.Switch.Error)
@@ -259,7 +264,7 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 	}
 	if status.State == switchStateConflict {
 		// Human text only: the Notes of the JSON document keep their wording.
-		fmt.Fprintln(stdout, "note: `crw install switch cxc` is the emergency stop: it turns the ported CRW hooks off; it does not re-activate CXC")
+		fmt.Fprintln(stdout, "note: `crw install switch cxc` is the emergency stop: it turns the ported CRW hooks off, and a CXC plugin that is on stays on; `crw install switch crw` turns it off")
 	}
 	return OK
 }

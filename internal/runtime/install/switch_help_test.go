@@ -25,7 +25,12 @@ func TestInstallSwitchHelpDescribesCXCAsTheEmergencyStop(t *testing.T) {
 			t.Errorf("switch --help still contains %q:\n%s", banned, help)
 		}
 	}
-	for _, want := range []string{"emergency", "hooks", "when one is missing", "is left as it is", "only what the switch recorded"} {
+	// The restore puts a recorded `enabled = true` of a remaining CXC plugin back (CRW-1256 evaluation d1),
+	// so the help must not promise that switch cxc never turns CXC on.
+	if strings.Contains(help, "does not re-activate CXC") {
+		t.Errorf("switch --help promises that switch cxc does not re-activate CXC, but the restore can turn a remaining CXC plugin on:\n%s", help)
+	}
+	for _, want := range []string{"emergency", "hooks", "when one is missing", "is left as it is", "only what the switch recorded", "never installs CXC", "comes back on"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("switch --help lacks %q:\n%s", want, help)
 		}
@@ -67,6 +72,10 @@ func TestInstallSwitchStatusConflictKeepsJSONNoteAndExplainsEmergencyStopInText(
 	if strings.Contains(out, "return to CXC") || !strings.Contains(out, "emergency stop") || !strings.Contains(out, "hooks off") {
 		t.Fatalf("human status lacks the emergency-stop explanation:\n%s", out)
 	}
+	// The CXC plugin is on in this home, and switch cxc leaves it on.
+	if strings.Contains(out, "does not re-activate CXC") || !strings.Contains(out, "a CXC plugin that is on stays on") {
+		t.Fatalf("the conflict note must say a CXC plugin that is on stays on:\n%s", out)
+	}
 }
 
 // With the CXC plugin gone, active=cxc is the common emergency state; the human status says what it means
@@ -97,4 +106,38 @@ func TestInstallSwitchStatusActiveCXCExplainsHooksOffInText(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "emergency stop") {
 		t.Fatalf("switch cxc text lacks the explanation (exit %d):\n%s", code, out)
 	}
+}
+
+// CRW-1256 evaluation d1: on a home that still has a CXC plugin entry (enabled = true), `switch crw` records
+// the line and turns the plugin off, and `switch cxc` puts the recorded line back, so CXC is on again. The
+// human text of that round trip must say so and must not say that CXC is not active.
+func TestInstallSwitchLegacyRoundTripTextSaysTheCXCPluginIsOnAgain(t *testing.T) {
+	h := newSwitchHome(t, switchConfig)
+	if code, _, errOut := h.run("crw"); code != 0 {
+		t.Fatalf("switch crw: exit %d stderr=%q", code, errOut)
+	}
+	code, out, errOut := h.run("cxc")
+	if code != 0 || errOut != "" {
+		t.Fatalf("switch cxc: exit %d stderr=%q", code, errOut)
+	}
+	if s := h.status(); s.State != "cxc" || s.Switch.Active != "cxc" || !s.Plugins["codexclaw"].Enabled {
+		t.Fatalf("status after the round trip = %+v, want state cxc with the CXC plugin enabled", s)
+	}
+	for _, text := range []string{out, h.mustRun("status")} {
+		if strings.Contains(text, "does not mean CXC is active") || strings.Contains(text, "does not re-activate CXC") {
+			t.Fatalf("the text says CXC is not active while the CXC plugin is enabled:\n%s", text)
+		}
+		if !strings.Contains(text, "emergency stop") || !strings.Contains(text, "hooks are off") || !strings.Contains(text, "The CXC plugin codexclaw@codexclaw is enabled") {
+			t.Fatalf("the text lacks the emergency stop with the enabled CXC plugin:\n%s", text)
+		}
+	}
+}
+
+func (h *switchHome) mustRun(args ...string) string {
+	h.t.Helper()
+	code, out, errOut := h.run(args...)
+	if code != 0 || errOut != "" {
+		h.t.Fatalf("switch %v: exit %d stderr=%q", args, code, errOut)
+	}
+	return out
 }
