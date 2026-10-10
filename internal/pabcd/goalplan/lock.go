@@ -324,7 +324,7 @@ func writeLockOwner(lock *os.File, dir string, now func() string) {
 		return
 	}
 	defer file.Close()
-	_, _ = fmt.Fprintf(file, "{\"pid\":%d,\"acquiredAt\":%s}\n", os.Getpid(), quote(now()))
+	_, _ = fmt.Fprintf(file, "{\"pid\":%d,\"acquiredAt\":%s}\n", os.Getpid(), jsnode.JSString(now()))
 }
 
 // GoalplanLockHolder is what a waiter can learn about slug's goalplan write lock. The four answers

@@ -3,6 +3,7 @@ package jsnode
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -12,47 +13,63 @@ import (
 // spelled with, whether pyjson.CodePoint read it from WTF-8 or from a surrogateescape byte, as the JS reading leaves it. The data is
 // Go's: a character assigned after the Unicode version of Go's tables or of the oracle's runtime may differ.
 func Lower(s string) string {
-	type unit struct {
-		r         rune
-		off, size int
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
 	}
-	units := make([]unit, 0, len(s))
-	rs := make([]rune, 0, len(s))
-	for i := 0; i < len(s); {
-		r, n := pyjson.CodePoint(s, i)
-		units, rs = append(units, unit{r, i, n}), append(rs, r)
-		i += n
+	if ascii {
+		return strings.ToLower(s)
 	}
 	var b strings.Builder
-	for i, u := range units {
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, n := pyjson.CodePoint(s, i)
 		switch {
-		case pyjson.IsSurrogate(u.r):
-			b.WriteString(s[u.off : u.off+u.size])
-		case u.r == 0x130:
+		case pyjson.IsSurrogate(r):
+			b.WriteString(s[i : i+n])
+		case r == 0x130:
 			b.WriteString("i\u0307")
-		case u.r == 0x3a3 && finalSigma(rs, i):
+		case r == 0x3a3 && finalSigma(s, i, n):
 			b.WriteRune(0x3c2)
 		default:
-			b.WriteRune(unicode.ToLower(u.r))
+			b.WriteRune(unicode.ToLower(r))
 		}
+		i += n
 	}
 	return b.String()
 }
 
-// finalSigma: a cased letter precedes rs[i] (skipping case-ignorable characters) and none follows it (likewise).
-func finalSigma(rs []rune, i int) bool {
-	j := i - 1
-	for j >= 0 && caseIgnorable(rs[j]) {
-		j--
+// finalSigma: a cased letter precedes the sigma that spans s[i:i+n] (skipping case-ignorable characters) and none follows it
+// (likewise). The text before it is read backwards, which agrees with the forward reading for every class this decides on: a byte of a
+// lone surrogate or of invalid UTF-8 reads as a character that is neither cased nor case-ignorable either way.
+func finalSigma(s string, i, n int) bool {
+	j := i
+	for {
+		if j == 0 {
+			return false
+		}
+		r, size := utf8.DecodeLastRuneInString(s[:j])
+		j -= size
+		if caseIgnorable(r) {
+			continue
+		}
+		if !cased(r) {
+			return false
+		}
+		break
 	}
-	if j < 0 || !cased(rs[j]) {
-		return false
+	for k := i + n; k < len(s); {
+		r, size := pyjson.CodePoint(s, k)
+		k += size
+		if caseIgnorable(r) {
+			continue
+		}
+		return !cased(r)
 	}
-	k := i + 1
-	for k < len(rs) && caseIgnorable(rs[k]) {
-		k++
-	}
-	return k == len(rs) || !cased(rs[k])
+	return true
 }
 
 // cased is the Unicode Cased property: Lowercase, Uppercase and titlecase letters.

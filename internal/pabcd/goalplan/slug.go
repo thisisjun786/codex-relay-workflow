@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
@@ -27,7 +28,7 @@ func ValidateGoalplanSlug(slug string) (string, error) {
 		ok = alnum(slug[i]) || slug[i] == '.' || slug[i] == '_' || slug[i] == '-'
 	}
 	if !ok {
-		return "", errors.New("invalid goalplan slug: " + quote(slug))
+		return "", errors.New("invalid goalplan slug: " + jsnode.JSString(slug))
 	}
 	return slug, nil
 }
