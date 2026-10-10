@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"syscall"
 	"time"
 )
 
@@ -196,4 +197,98 @@ func managedSpawnSameCandidate(a, b DispatchCandidate) bool {
 		eb = &v
 	}
 	return same(a.Model, b.Model) && same(ea, eb)
+}
+
+// ManagedSpawnBinding is what one managed spawn was issued under (CRW-1122): the dispatch source line, the canonical dispatch root
+// and the device and inode of the directory it named, the session, dispatch and attempt, the dispatch's role, the attempt's candidate
+// and the native tool call it was issued to. The spawn hook records it with the answer of the event, and a replay of that answer is
+// given again only while VerifyManagedSpawnReplay finds the same binding.
+type ManagedSpawnBinding struct {
+	Source    string      `json:"source"`
+	Root      string      `json:"root"`
+	RootDev   uint64      `json:"rootDev"`
+	RootIno   uint64      `json:"rootIno"`
+	Session   string      `json:"session"`
+	Dispatch  string      `json:"dispatch"`
+	Attempt   string      `json:"attempt"`
+	Role      RoleName    `json:"role"`
+	Model     *string     `json:"model"`
+	Effort    *EffortName `json:"effort"`
+	ToolUseID string      `json:"toolUseId"`
+}
+
+// Binding is the binding of the attempt sel previewed, issued to the native call toolUseID from the source line source; false when sel
+// holds no preview of a root.
+func (sel *ManagedSpawnSelection) Binding(source, toolUseID string) (ManagedSpawnBinding, bool) {
+	if sel == nil || sel.root == "" || sel.rootInfo == nil {
+		return ManagedSpawnBinding{}, false
+	}
+	dev, ino, ok := managedSpawnFileID(sel.rootInfo)
+	if !ok {
+		return ManagedSpawnBinding{}, false
+	}
+	return ManagedSpawnBinding{Source: source, Root: sel.root, RootDev: dev, RootIno: ino, Session: sel.session, Dispatch: sel.dispatch,
+		Attempt: sel.attempt, Role: sel.Role, Model: sel.Candidate.Model, Effort: sel.Candidate.Effort, ToolUseID: toolUseID}, true
+}
+
+// managedSpawnFileID is the device and inode of info.
+func managedSpawnFileID(info os.FileInfo) (dev, ino uint64, ok bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, false
+	}
+	return uint64(st.Dev), uint64(st.Ino), true // Dev is an int32 on darwin
+}
+
+// errManagedSpawnReplay is the refusal of a replay whose binding no longer holds; the event is reconciled, never issued again.
+var errManagedSpawnReplay = errors.New("the recorded answer's managed attempt is no longer the one it was issued for; inspect the dispatch status and reconcile before retry")
+
+// VerifyManagedSpawnReplay reports whether the managed spawn b was issued under still holds for session in cwd, before the recorded
+// answer of its event is given again (CRW-1122): the dispatch root cwd resolves to now is the same canonical path and the same
+// directory (device and inode), and, read under the record's lock through the directory pinned below that root, the record's
+// current attempt is b's attempt, claimed, of an active dispatch with b's role and candidate, and issued to b's native call. Anything
+// else, or anything that cannot be read, is an error: the replay is refused rather than allowed on doubt. Nothing is written but
+// the record's lock.
+func VerifyManagedSpawnReplay(cwd, session string, b ManagedSpawnBinding) error {
+	if b.Root == "" || b.ToolUseID == "" || b.Session == "" || b.Session != session {
+		return errManagedSpawnReplay
+	}
+	for _, field := range []struct{ value, name string }{{b.Session, "sessionId"}, {b.Dispatch, "dispatchId"}, {b.Attempt, "attemptId"}} {
+		if _, err := dispatchID(field.value, field.name); err != nil {
+			return err
+		}
+	}
+	root, err := dispatchRoot(cwd)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	if dev, ino, ok := managedSpawnFileID(info); root != b.Root || !ok || dev != b.RootDev || ino != b.RootIno {
+		return errManagedSpawnReplay
+	}
+	dir, err := dispatchDirectoryOf(root, info, b.Session, nil)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	name := b.Dispatch + ".json"
+	release, err := dir.lock(name)
+	if err != nil {
+		return err
+	}
+	defer release()
+	d, err := dispatchPinnedRead(dir, name, b.Session, b.Dispatch)
+	if err != nil {
+		return err
+	}
+	a := d.Attempts[len(d.Attempts)-1]
+	if a.ID != b.Attempt || !a.Claimed || !dispatchIs(a.Status, "claimed") || !dispatchIs(d.Status, "active") || d.Role != b.Role ||
+		!managedSpawnSameCandidate(a.Candidate, DispatchCandidate{Model: b.Model, Effort: b.Effort}) ||
+		!a.SpawnIssued || a.ToolUseID == nil || *a.ToolUseID != b.ToolUseID {
+		return errManagedSpawnReplay
+	}
+	return nil
 }

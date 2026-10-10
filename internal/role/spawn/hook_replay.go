@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -89,8 +90,25 @@ func spawnHookReplayKind(obj map[string]any) string {
 	return "root"
 }
 
-// spawnHookReplayed is a recorded answer with the managed dispatch source its event was issued for ("" for a direct spawn).
-type spawnHookReplayed struct{ answer, source string }
+// spawnHookReplayed is a recorded answer with the managed binding its event was issued under ("" for a direct spawn).
+type spawnHookReplayed struct{ answer, binding string }
+
+// spawnHookReplayBinding is the record line of a managed spawn's binding (role.ManagedSpawnBinding as one line of JSON), "" for a
+// direct spawn. A managed spawn whose binding cannot be written records a line no replay accepts, so its replay is refused.
+func spawnHookReplayBinding(managed *role.ManagedSpawnSelection, source, toolUseID string) string {
+	if managed == nil {
+		return ""
+	}
+	binding, ok := managed.Binding(source, toolUseID)
+	if !ok {
+		return "unbound"
+	}
+	data, err := json.Marshal(binding)
+	if err != nil {
+		return "unbound"
+	}
+	return string(data)
+}
 
 // spawnHookReplayLookup is the recorded answer of the event toolUseID in the key directory of obj's grant scope when the event's
 // tool_input (as JSON.stringify writes it) is the input that event was first given or the updatedInput of its recorded answer.
@@ -120,7 +138,7 @@ func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string)
 	if !ok || string(kind) != spawnHookReplayKind(obj) {
 		return spawnHookReplayed{}, false
 	}
-	source, data, ok := bytes.Cut(data, []byte("\n"))
+	binding, data, ok := bytes.Cut(data, []byte("\n"))
 	if !ok {
 		return spawnHookReplayed{}, false
 	}
@@ -129,26 +147,36 @@ func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string)
 		return spawnHookReplayed{}, false
 	}
 	if string(first) == input || spawnHookReplayUpdated(string(answer)) == input {
-		return spawnHookReplayed{answer: string(answer), source: string(source)}, true
+		return spawnHookReplayed{answer: string(answer), binding: string(binding)}, true
 	}
 	return spawnHookReplayed{}, false
 }
 
 // spawnHookReplayCurrent is the recorded answer when it still holds, else the deny the event gets now. The packet and the grant of
-// the answer are kept, but the permission to run is the current one: the managed attempt the event was issued for must still be the
-// claimed, current attempt of an active dispatch (an attempt issued to this very call stays issuable to it), and the final gate's
-// prerequisites must still be in place for the packet the answer carries (CRW-1122; the lookup used to return before either check).
-func spawnHookReplayCurrent(r spawnHookReplayed, sessionID, cwd string) string {
-	if r.source != "" {
-		sel, err := role.NewManagedSpawnResolver(cwd).Preview(sessionID, r.source)
-		if err == nil && sel == nil {
-			err = errors.New("invalid managed dispatch marker")
+// the answer are kept, but the permission to run is the current one (CRW-1122; the lookup used to return before any check):
+//   - a managed answer is given again only under the binding it was issued with: the same physical dispatch root, and the record's
+//     current, claimed attempt of an active dispatch with the same role and candidate, issued to this very native call
+//     (role.VerifyManagedSpawnReplay). A binding that cannot be read or does not hold refuses the replay; nothing is issued again;
+//   - the final gate's prerequisites must still be in place for the packet the answer carries, read with the first delivery's
+//     precedence of the message over the items (spawnHookPacketText); v2 is whether the event is a v2 spawn.
+func spawnHookReplayCurrent(r spawnHookReplayed, sessionID, cwd string, v2 bool) string {
+	if r.binding != "" {
+		var binding role.ManagedSpawnBinding
+		dec := json.NewDecoder(strings.NewReader(r.binding))
+		dec.DisallowUnknownFields()
+		err := dec.Decode(&binding)
+		if err == nil && dec.More() {
+			err = errors.New("trailing data")
 		}
 		if err != nil {
+			return DenyEnvelope("managed dispatch: the recorded answer's dispatch binding cannot be read; inspect the dispatch status and reconcile before retry")
+		}
+		if err := role.VerifyManagedSpawnReplay(cwd, sessionID, binding); err != nil {
 			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
 		}
 	}
-	if gate := CheckFinalGatePrereqs(spawnHookReplayPacket(r.answer), sessionID, cwd, nil); !gate.OK {
+	updated, v2 := spawnHookReplayInput(r.answer, v2)
+	if gate := CheckFinalGatePrereqs(spawnHookPacketText(updated, v2), sessionID, cwd, nil); !gate.OK {
 		reason := gate.Reason
 		if reason == "" {
 			reason = "final gate prerequisites are missing"
@@ -158,32 +186,17 @@ func spawnHookReplayCurrent(r spawnHookReplayed, sessionID, cwd string) string {
 	return r.answer
 }
 
-// spawnHookReplayPacket is the text of the packet an allow answer carries, the text the final gate judges: its text items joined by
-// a blank line, or its message.
-func spawnHookReplayPacket(answer string) string {
+// spawnHookReplayInput is the updatedInput of a recorded allow answer (nil for none), and whether it is read as a v2 spawn: v2, or an
+// input with the v2 fields, as the first delivery classified the input it was given.
+func spawnHookReplayInput(answer string, v2 bool) (pyjson.Object, bool) {
 	v, err := pyjson.Loads(answer, pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
-		return ""
+		return nil, v2
 	}
 	o, _ := v.(pyjson.Object)
 	out, _ := o.Get("hookSpecificOutput").(pyjson.Object)
-	updated, ok := out.Get("updatedInput").(pyjson.Object)
-	if !ok {
-		return ""
-	}
-	if items, ok := updated.Get("items").([]any); ok {
-		var texts []string
-		for _, item := range items {
-			if o, ok := item.(pyjson.Object); ok && o.Get("type") == "text" {
-				if text, ok := o.Get("text").(string); ok {
-					texts = append(texts, text)
-				}
-			}
-		}
-		return strings.Join(texts, "\n\n")
-	}
-	message, _ := updated.Get("message").(string)
-	return message
+	updated, _ := out.Get("updatedInput").(pyjson.Object)
+	return updated, v2 || IsV2SpawnInput(spawnHookView(updated))
 }
 
 // spawnHookReplayUpdated is the updatedInput of a recorded allow answer as JSON.stringify writes it, or "".
@@ -202,10 +215,10 @@ func spawnHookReplayUpdated(answer string) string {
 }
 
 // spawnHookReplayRecord writes the answer of the event toolUseID, which minted a grant in obj's scope or spent one: the kind of its
-// spawner, the managed dispatch source line it was issued for (empty for a direct spawn), the event's input as JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
+// spawner, the managed binding it was issued under (spawnHookReplayBinding: one line, empty for a direct spawn), the event's input as JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
 // record holds no digest or clock, so it is the same text for the same event. A record that exists is kept, and a record that
 // cannot be written is skipped: the event then only loses the replay.
-func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, source, input, answer string) {
+func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, binding, input, answer string) {
 	key, ok := spawnGrantKey(obj)
 	if !ok {
 		return
@@ -224,7 +237,7 @@ func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, source, input
 	if err != nil {
 		return
 	}
-	_, err = file.WriteString(spawnHookReplayKind(obj) + "\n" + source + "\n" + input + "\n" + answer)
+	_, err = file.WriteString(spawnHookReplayKind(obj) + "\n" + binding + "\n" + input + "\n" + answer)
 	if closeErr := file.Close(); err == nil && closeErr == nil && dir.Rename(tmp, name) == nil {
 		return // published whole, so a reader never sees a partial answer
 	}

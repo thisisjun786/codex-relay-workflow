@@ -112,37 +112,25 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	if a.toolUseID != nil && *a.toolUseID != "" && !spawnHookRouteDeep(toolInput) {
 		a.inputText = spawnHookRouteStringify(toolInput)
 		tool := *a.toolUseID
-		// The record holds the managed dispatch source the event was issued for, read when the answer is recorded.
-		record = func(answer string) { spawnHookReplayRecord(obj, tmpRoot, tool, a.dispatchSource, a.inputText, answer) }
+		// The record holds the managed binding the event was issued under (root, record, role, candidate and native call), read when
+		// the answer is recorded, so a replay is checked against it (CRW-1122).
+		record = func(answer string) {
+			spawnHookReplayRecord(obj, tmpRoot, tool, spawnHookReplayBinding(a.managed, a.dispatchSource, tool), a.inputText, answer)
+		}
 		if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
-			return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj)))
+			return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj), a.v2Spawn))
 		}
 	}
 
 	// Project only the caller's text, never attachment metadata (:870-880). A null message is no message, so the items are read
 	// (CRW-1114; the oracle counted a null member as present and left valid items unguarded).
-	if value, hasMessage := toolInput.Lookup("message"); !a.v2Spawn && (!hasMessage || value == nil) {
-		a.itemInput, _ = toolInput.Get("items").([]any)
-	}
 	var records []pyjson.Object
-	a.validItems = len(a.itemInput) > 0
-	for _, raw := range a.itemInput {
-		item, ok := spawnHookRecord(raw)
-		kind, typed := item.Get("type").(string)
-		_, texted := item.Get("text").(string)
-		if !ok || !typed || (kind == "text" && !texted) {
-			a.validItems = false
-			break
-		}
-		records = append(records, item)
-	}
+	a.itemInput, records, a.validItems = spawnHookPacketItems(toolInput, a.v2Spawn)
 	message, isString := toolInput.Get("message").(string)
 	outgoing := message
 	if a.validItems {
-		a.itemInput = make([]any, len(records))
 		var texts []string
-		for i, item := range records {
-			a.itemInput[i] = item
+		for _, item := range records {
 			if item.Get("type") == "text" {
 				a.textItems = append(a.textItems, item)
 				texts = append(texts, item.Get("text").(string))
@@ -173,7 +161,7 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 			if release != nil {
 				commit.unlock = release
 				if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
-					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj)))
+					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj), a.v2Spawn))
 				}
 			}
 		}
@@ -248,7 +236,7 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 			if release != nil {
 				commit.unlock = release
 				if replayed, ok := spawnHookReplayLookup(obj, tmpRoot, *a.toolUseID, a.inputText); ok {
-					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj)))
+					return stop(spawnHookReplayCurrent(replayed, a.sessionID, spawnHookReplayCwd(obj), a.v2Spawn))
 				}
 			}
 		}
@@ -367,6 +355,51 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		return stop(deny)
 	}
 	return a, "", false
+}
+
+// spawnHookPacketItems is the item projection of a spawn's tool_input (:870-880): the items of a v1 spawn whose message is absent or
+// null (raw, as the input holds them), and, when they are valid (non-empty, each an object with a string type and, for a text item,
+// a string text), the items as records and true. A v2 spawn and a v1 spawn with a message have no items. The first delivery and the
+// replay of an event (spawnHookPacketText) read the packet through this one projection, so they judge the same text (CRW-1122).
+func spawnHookPacketItems(toolInput pyjson.Object, v2 bool) ([]any, []pyjson.Object, bool) {
+	var raw []any
+	if value, hasMessage := toolInput.Lookup("message"); !v2 && (!hasMessage || value == nil) {
+		raw, _ = toolInput.Get("items").([]any)
+	}
+	records := make([]pyjson.Object, 0, len(raw))
+	for _, v := range raw {
+		item, ok := spawnHookRecord(v)
+		kind, typed := item.Get("type").(string)
+		_, texted := item.Get("text").(string)
+		if !ok || !typed || (kind == "text" && !texted) {
+			return raw, nil, false
+		}
+		records = append(records, item)
+	}
+	if len(records) == 0 {
+		return raw, nil, false
+	}
+	items := make([]any, len(records))
+	for i, item := range records {
+		items[i] = item
+	}
+	return items, records, true
+}
+
+// spawnHookPacketText is the text the final gate judges for a spawn's tool_input: its valid items' text joined by a blank line
+// (spawnHookPacketItems), else its message ("" when that is not a string).
+func spawnHookPacketText(toolInput pyjson.Object, v2 bool) string {
+	if _, records, valid := spawnHookPacketItems(toolInput, v2); valid {
+		var texts []string
+		for _, item := range records {
+			if item.Get("type") == "text" {
+				texts = append(texts, item.Get("text").(string))
+			}
+		}
+		return strings.Join(texts, "\n\n")
+	}
+	message, _ := toolInput.Get("message").(string)
+	return message
 }
 
 // spawnHookPromptForms are the spellings a role's prompt override can have in a message that carries the hook's earlier answer: as it
