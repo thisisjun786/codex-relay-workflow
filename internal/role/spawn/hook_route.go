@@ -44,6 +44,11 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	}
 	commit := &spawnHookCommit{}
 	defer func() {
+		if commit.unlock != nil {
+			commit.unlock() // the event's lock is held until its answer is recorded
+		}
+	}()
+	defer func() {
 		if recover() != nil {
 			switch out = ""; {
 			case commit.issued:
@@ -408,6 +413,9 @@ func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 var spawnHookDeepReason = "the spawn's tool_input nests deeper than " + strconv.Itoa(spawnHookRouteMaxDepth) +
 	" levels, so the managed candidate cannot be applied; remove the deeply nested fields and spawn again"
 
+// spawnHookBusyReason answers a root spawn event whose lock another delivery of the same event keeps: nothing is minted for it.
+const spawnHookBusyReason = "crw: another delivery of this spawn call is still being answered; try again"
+
 // spawnHookReconcileReason answers a spawn whose managed attempt was issued when the hook then failed to give its answer: the
 // attempt is recorded as issued to this native call, so it is neither retried nor spawned again here.
 const spawnHookReconcileReason = "managed dispatch: the attempt was issued but the hook could not answer; inspect the dispatch status and reconcile before retry"
@@ -415,9 +423,10 @@ const spawnHookReconcileReason = "managed dispatch: the attempt was issued but t
 // spawnHookCommit is what a hook run has committed, shared by RunSpawnAttachHook and the route so a failure after a commit is
 // answered as an unknown outcome and never as an allow of the caller's own input.
 type spawnHookCommit struct {
-	subagent bool // the spawner is a subagent, so nothing may let it through without its grant
-	granted  bool // the subagent's grant is spent
-	issued   bool // the managed attempt is issued
+	subagent bool   // the spawner is a subagent, so nothing may let it through without its grant
+	granted  bool   // the subagent's grant is spent
+	issued   bool   // the managed attempt is issued
+	unlock   func() // releases the lock of the event, when this run holds it (CRW-1121)
 }
 
 // spawnHookRouteSettings is :999-1016: the trimmed promptOverride, which no fork restricts, and the model and effort to inject, which

@@ -210,6 +210,20 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	var minted string
 	if _, _, resolved := spawnGrantScope(obj); resolved && !spawnedBySubagent && strings.Contains(message, SubspawnToken) {
 		_ = os.MkdirAll(tmpRoot, 0o700)
+		// Deliveries of one event that passed the lookup together are serialized here: the lock is held until the answer is recorded, and
+		// the delivery that gets it second finds the first's record, so one event mints one grant (CRW-1121).
+		if a.inputText != "" {
+			release, err := spawnHookEventLock(obj, tmpRoot, *a.toolUseID, true)
+			if errors.Is(err, errSpawnHookEventBusy) {
+				return stop(DenyEnvelope(spawnHookBusyReason))
+			}
+			if release != nil {
+				commit.unlock = release
+				if answer, ok := spawnHookReplayLookup(obj, tmpRoot, *a.toolUseID, a.inputText); ok {
+					return stop(answer)
+				}
+			}
+		}
 		minted, _ = MintRecursionGrant(obj, tmpRoot, now)
 	}
 	if minted != "" && a.inputText != "" {
