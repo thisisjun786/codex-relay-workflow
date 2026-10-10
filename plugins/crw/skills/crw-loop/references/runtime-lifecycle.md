@@ -47,11 +47,8 @@ at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), except that a re
 project or a coordination gets a short scope pointer instead (crw-run for the project parent,
 crw-loop only for an explicit implementation of a task in this session; the pointer arms
 nothing), and an active goal
-with no in-flight cycle gets the Stop-time block naming the honest exits and the arming command
-(GOAL-IDLE-CONTINUE-01; without a resolvable git source identity the block says why the
-next work-phase cannot be armed instead of offering the command, and a session the relay
-registry verifies as a project parent or a supervisor gets no such block, no loop pointer at
-SessionStart and none after a compaction) — but neither companion moves a phase for you; the commands
+with no in-flight cycle gets the Stop-time block naming the arming command
+(GOAL-IDLE-CONTINUE-01) — but neither companion moves a phase for you; the commands
 remain yours to run.
 
 ## Completion gate (GOAL-COMPLETE-GATE-01, shipped)
