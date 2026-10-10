@@ -245,3 +245,66 @@ func TestNativeBelowReadableNonRepositoryGitMarkerStillBinds(t *testing.T) {
 		t.Fatalf("native directory below non-repository .git markers: %q, %v", root, err)
 	}
 }
+
+// CRW-1135: git's answer for a readable .git file whose Git directory is missing echoes that path, so a path that
+// spells git's discovery message does not make it the discovery message. The native directory is a repository git
+// could not read: binding an unrelated repository is refused and writes nothing.
+func TestNativeGitdirPathSpellingTheDiscoveryMessageIsUnknown(t *testing.T) {
+	for _, spelled := range []string{"not a git repository (or any of the parent directories)", "not a git repository (or any parent up to mount point /)"} {
+		t.Run(spelled, func(t *testing.T) {
+			base := hermetic(t)
+			other := newRepo(t, base, "other")
+			native := filepath.Join(base, "native")
+			must(t, os.Mkdir(native, 0o755))
+			must(t, os.WriteFile(filepath.Join(native, ".git"), []byte("gitdir: "+filepath.Join(base, spelled, "missing")+"\n"), 0o644))
+			if root, err := Bind(native, "s1", other); err != unknownNative {
+				t.Fatalf("bind from a worktree whose Git directory is missing: %q, %v", root, err)
+			}
+			if _, err := os.Lstat(filepath.Join(native, ".crw", "sources", "s1.json")); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("a binding was written: %v", err)
+			}
+		})
+	}
+}
+
+// CRW-1135: a file named HEAD that git could not read is not unreadable Git metadata unless the directory looks like
+// a repository (git checks objects and refs before HEAD): a native directory in no repository, with such a file in
+// it or in an ancestor, is outside every repository and binds, and an existing binding resolves. A bare repository
+// whose HEAD is unreadable still makes the answer unknown.
+func TestNativeUnreadableStrayHeadFileIsNotARepository(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	for _, where := range []string{"", "sub"} {
+		t.Run("stray HEAD "+where, func(t *testing.T) {
+			base := hermetic(t)
+			plain := filepath.Join(base, "plain")
+			native := filepath.Join(plain, where)
+			must(t, os.MkdirAll(native, 0o755))
+			head := filepath.Join(plain, "HEAD")
+			must(t, os.WriteFile(head, []byte("not git\n"), 0o644))
+			must(t, os.Chmod(head, 0))
+			t.Cleanup(func() { _ = os.Chmod(head, 0o644) })
+			other := newRepo(t, base, "other")
+			if root, err := Bind(native, "s1", other); err != nil || root != other {
+				t.Fatalf("bind from a directory with an unreadable file named HEAD: %q, %v", root, err)
+			}
+			if got, err := Resolve(native, "s1"); err != nil || got != other {
+				t.Fatalf("resolve: %q, %v", got, err)
+			}
+		})
+	}
+	t.Run("bare repository", func(t *testing.T) {
+		base := hermetic(t)
+		bare := filepath.Join(base, "bare.git")
+		must(t, os.Mkdir(bare, 0o755))
+		gitIn(t, bare, "init", "-q", "--bare", ".")
+		other := newRepo(t, base, "other")
+		head := filepath.Join(bare, "HEAD")
+		must(t, os.Chmod(head, 0))
+		t.Cleanup(func() { _ = os.Chmod(head, 0o644) })
+		if root, err := Bind(bare, "s1", other); err != unknownNative {
+			t.Fatalf("bind from a bare repository whose HEAD is unreadable: %q, %v", root, err)
+		}
+	})
+}

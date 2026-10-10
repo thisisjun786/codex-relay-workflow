@@ -9,9 +9,10 @@ import (
 	"testing"
 )
 
-// CRW-1135: the capture runs no program of the repository's (the probe policy reaches git through the environment,
-// so its argument list stays the oracle's) and no inherited routing variable reaches it.
-func TestCaptureRunsNoRepositoryProgramAndIgnoresInheritedRouting(t *testing.T) {
+// CRW-1135: the capture runs no fsmonitor program of the repository's (hooks are at the null device too; clean and
+// process filters are not disabled and stay out of this test), the probe policy reaching git through the environment
+// so its argument list stays the oracle's, and no inherited routing variable reaches it.
+func TestCaptureRunsNoFsmonitorAndIgnoresInheritedRouting(t *testing.T) {
 	base := hermetic(t)
 	root := newRepo(t, base)
 	marker := filepath.Join(base, "fsmonitor-ran")

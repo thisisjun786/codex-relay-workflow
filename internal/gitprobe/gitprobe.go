@@ -46,7 +46,9 @@ func IsRouting(name string) bool {
 
 // GlobalOptions are the options a probe passes before its command: no optional locks (a probe never refreshes
 // the index), no replacement objects, hooks pointed at the null device, no submodule recursion and no file
-// system monitor, so a probe runs no program of the repository's.
+// system monitor, so a probe runs none of the repository's hooks and no fsmonitor program. Clean, smudge and process
+// filters are not disabled here: a status that rehashes a file runs the repository's configured clean filter, as on
+// dev (a caller that must not run them, the bridge's Checkout and Inspect, sets them off itself).
 func GlobalOptions() []string {
 	return []string{"--no-optional-locks", "--no-replace-objects", "-c", "core.hooksPath=" + os.DevNull, "-c", "submodule.recurse=false", "-c", "core.fsmonitor=false"}
 }

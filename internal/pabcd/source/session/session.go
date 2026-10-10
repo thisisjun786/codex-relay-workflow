@@ -197,13 +197,21 @@ func unreadableGitMarker(cwd string) bool {
 	}
 }
 
-// unreadableGitDir reports whether git could not check gitDir as a Git directory: its HEAD exists but cannot be read,
-// or its objects or refs exist but cannot be entered, or one of them cannot even be looked up.
+// unreadableGitDir reports whether git could not check gitDir as a Git directory: it looks like one (HEAD, objects and
+// refs all exist, or cannot even be looked up) and its HEAD cannot be read or its objects or refs cannot be entered.
+// git tests objects and refs before HEAD, so a directory without them is no Git directory whatever its HEAD is: an
+// unrelated file named HEAD that cannot be read is not unreadable Git metadata (CRW-1135).
 func unreadableGitDir(gitDir string) bool {
-	for _, entry := range []struct {
+	entries := []struct {
 		name string
 		mode uint32
-	}{{"HEAD", 4}, {"objects", 1}, {"refs", 1}} { // R_OK, X_OK
+	}{{"HEAD", 4}, {"objects", 1}, {"refs", 1}} // R_OK, X_OK
+	for _, entry := range entries {
+		if _, err := os.Lstat(filepath.Join(gitDir, entry.name)); absent(err) {
+			return false
+		}
+	}
+	for _, entry := range entries {
 		if err := syscall.Access(filepath.Join(gitDir, entry.name), entry.mode); err != nil && !absent(err) {
 			return true
 		}

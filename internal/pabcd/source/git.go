@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,19 +53,24 @@ type ExitError struct {
 func (e *ExitError) Error() string { return "git exited with status " + strconv.Itoa(e.Code) }
 
 // NotARepository is true only when git ran and said the directory is in no repository: exit status 128 with the
-// C locale's discovery answer, "not a git repository (or any of the parent directories): .git" or, at a file
-// system boundary, "not a git repository (or any parent up to mount point /)" (a probe that asks for it sets
-// LC_ALL=C). "not a git repository: <gitdir>" is not that answer: it is
-// a repository whose Git directory git could not read or accept. A git that could not start, was stopped by the
-// time limit, went over the output limit or failed for another reason is not that answer either.
+// C locale's discovery answer as the whole of its fatal message, "fatal: not a git repository (or any of the parent
+// directories): .git" or, at a file system boundary, "fatal: not a git repository (or any parent up to mount point
+// /)" with its "Stopping at filesystem boundary" line (a probe that asks for it sets LC_ALL=C). Only "warning:" lines
+// may come before it. The answer is matched whole, not as a substring of stderr, because "not a git repository:
+// <gitdir>", which git prints for a repository whose Git directory it could not read, echoes a path that can spell
+// the discovery message (CRW-1135). A git that could not start, was stopped by the time limit, went over the output
+// limit or failed for another reason is not that answer either.
 func NotARepository(err error) bool {
 	var exit *ExitError
 	if !errors.As(err, &exit) || exit.Code != 128 {
 		return false
 	}
-	return strings.Contains(exit.Stderr, "not a git repository (or any of the parent directories)") ||
-		strings.Contains(exit.Stderr, "not a git repository (or any parent up to mount point")
+	return discoveryAnswer.MatchString(exit.Stderr)
 }
+
+var discoveryAnswer = regexp.MustCompile(`\A(?:warning: [^\n]*\n)*fatal: not a git repository ` +
+	`(?:\(or any of the parent directories\): \.git|\(or any parent up to mount point [^\n]*\)` +
+	`(?:\nStopping at filesystem boundary \(GIT_DISCOVERY_ACROSS_FILESYSTEM not set\)\.)?)\n?\z`)
 
 // captureTimeout bounds the identity capture's status, which reads the whole tree (and runs its clean filters);
 // a probe of the session binding is bound by gitprobe.Timeout.

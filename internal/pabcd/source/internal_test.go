@@ -65,6 +65,26 @@ func TestRunOutputLimit(t *testing.T) {
 	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any parent up to mount point /m)' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
 		t.Fatalf("mount point variant: %v", err)
 	}
+	if _, err := runBounded("", "sh", []string{"-c", "echo 'fatal: not a git repository (or any parent up to mount point /m)' >&2; echo 'Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
+		t.Fatalf("mount point variant with git's boundary line: %v", err)
+	}
+	if _, err := runBounded("", "sh", []string{"-c", "echo \"warning: unable to access '/h/.config/git/attributes': Permission denied\" >&2; echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128"}, nil, 1<<20, time.Minute); !NotARepository(err) {
+		t.Fatalf("a warning before the discovery message: %v", err)
+	}
+	// CRW-1135: the answer is git's whole discovery message, not a substring of any stderr: a path echoed by the
+	// unreadable-Git-directory message, or another line beside the message, is not the answer.
+	for _, script := range []string{
+		"echo 'fatal: not a git repository: /b/not a git repository (or any of the parent directories)/x' >&2; exit 128",
+		"echo 'fatal: not a git repository: /b/not a git repository (or any parent up to mount point /)/x' >&2; exit 128",
+		"echo 'fatal: not a git repository: /b' >&2; echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128",
+		"echo 'fatal: not a git repository (or any of the parent directories): .git/worktrees/w' >&2; exit 128",
+		"echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; echo 'fatal: bad' >&2; exit 128",
+		"echo 'hint: x' >&2; echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 128",
+	} {
+		if _, err := runBounded("", "sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
+			t.Errorf("%s: %v is not git's discovery answer", script, err)
+		}
+	}
 	for _, script := range []string{"echo 'fatal: not a git repository: /r/.git/worktrees/w' >&2; exit 128", "echo 'fatal: detected dubious ownership' >&2; exit 128", "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2; exit 1"} {
 		if _, err := runBounded("", "sh", []string{"-c", script}, nil, 1<<20, time.Minute); err == nil || NotARepository(err) {
 			t.Errorf("%s: %v is not the not-a-repository answer", script, err)
