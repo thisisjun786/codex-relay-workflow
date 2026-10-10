@@ -88,7 +88,7 @@ func Test33StalledEntryKeepsThePrescanRow(t *testing.T) {
 		pad   int
 	}{{"pipe", pipeInput, 0}, {"prefilled_5MiB_file", fileInput, 5 << 20}} {
 		t.Run(c.name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, hookTestBudget)
 			t.Setenv("CODEX_HOME", home)
 			raw := []byte(payload)
 			if c.pad > 0 {
@@ -110,7 +110,7 @@ func Test33StalledEntryKeepsThePrescanRow(t *testing.T) {
 // dial timeout: the post-claim ETIMEDOUT shape instead of the pre-scan ENOENT row
 // (and, with a live peer, guard_unreachable instead of its answer).
 func Test33StalledDialStillConnects(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	t.Setenv("CODEX_HOME", home)
 	input := pipeInput(t, []byte(`{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"done","transcript_path":"/must-not-be-read"}`))
 	synctest.Test(t, func(t *testing.T) {
@@ -128,7 +128,7 @@ func Test33StalledDialStillConnects(t *testing.T) {
 // The stall must not release a turn the guard holds: Python, which has no startup
 // allocation, delivers the block, and so must the native hook.
 func Test33StalledEntryStillHolds(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	t.Setenv("CODEX_HOME", home)
 	done, _ := fakeControl(t, home, func(conn net.Conn) error {
 		if _, err := readFrame(conn); err != nil {
@@ -155,7 +155,7 @@ func Test33StalledEntryStillHolds(t *testing.T) {
 // cannot depend on scheduling; the bound on the wait only reports a hook that no
 // longer releases (it would otherwise wait for the work deadline).
 func Test33LateInputOnADescriptorIsReleased(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	t.Setenv("CODEX_HOME", home)
 	reader, writer, err := os.Pipe()
 	if err != nil {

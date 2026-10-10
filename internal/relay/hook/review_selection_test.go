@@ -27,7 +27,7 @@ type reviewSelectionFixture struct {
 // (testdata/fixtures/review-selection-<name>), the fixture's environment what prepare set in it.
 func prepareSelection(t *testing.T, name string) (string, reviewSelectionFixture, *fixtureNames) {
 	t.Helper()
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	environ := os.Environ()
 	_, names := layFixture(t, "review-selection-"+name, home, "app.sock", "other.sock", "link/app.sock", "real/app.sock")
 	raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))
@@ -51,7 +51,7 @@ func Test33ReviewD6(t *testing.T) {
 	for _, name := range []string{"wrong_socket", "ambiguous", "unidentified", "override"} {
 		t.Run(name, func(t *testing.T) {
 			home, f, names := prepareSelection(t, name)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if err := os.MkdirAll(f.State, 0700); err != nil {
 				t.Fatal(err)
@@ -176,7 +176,7 @@ func Test33ReviewD8(t *testing.T) {
 			if !filepath.IsAbs(path) {
 				t.Fatal(path)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if err := os.MkdirAll(path, 0700); err != nil {
 				t.Fatal(err)

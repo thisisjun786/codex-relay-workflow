@@ -27,7 +27,7 @@ import (
 func Test30StopOwnerReadCreatesNothing(t *testing.T) {
 	for _, name := range []string{"no-wal", "live-wal-owner", "wal-without-index"} {
 		t.Run(name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, hookTestBudget)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			path := filepath.Join(home, "state", "relay.sqlite3")

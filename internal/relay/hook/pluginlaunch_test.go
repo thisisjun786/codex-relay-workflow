@@ -156,7 +156,7 @@ func TestPluginLaunch_double_registration_evaluates_the_Stop_once(t *testing.T) 
 		"established identity":   establishedStop(t),
 	} {
 		t.Run(name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, pluginTestBudget)
 			stop := countingControl(t, home)
 			for _, args := range [][]string{{"hook"}, plugin} {
 				if code, stdout, stderr := runHookWith(t, home, payload(home), args...); code != 0 || stdout != "" || stderr != "" {
@@ -190,7 +190,7 @@ func TestPluginLaunch_plugin_owned_settings_beside_a_hook_file_entry_evaluate_th
 		"established identity":   {establishedStop(t), 1, []any{"duplicate_invocation", "guard_answered"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, pluginTestBudget)
 			withOwner(t, home, "plugin")
 			stop := countingControl(t, home)
 			for _, args := range [][]string{{"hook"}, plugin} {
@@ -262,7 +262,7 @@ func TestPluginLaunch_stands_down_unless_the_plugin_owns_the_settings(t *testing
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, pluginTestBudget)
 			change(t, home)
 			stop := countingControl(t, home)
 			code, stdout, stderr := runHook(t, home, "hook", "--plugin-launch")
@@ -299,7 +299,7 @@ func withVersion(t *testing.T, home string, version any, present bool) {
 
 // Settings the plugin owns are evaluated under --plugin-launch exactly as without the flag.
 func TestPluginLaunch_evaluates_settings_the_plugin_owns(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, pluginTestBudget)
 	withOwner(t, home, "plugin")
 	stop := countingControl(t, home)
 	code, stdout, stderr := runHook(t, home, "hook", "--plugin-launch")
@@ -319,7 +319,7 @@ func TestPluginLaunch_evaluates_settings_the_plugin_owns(t *testing.T) {
 // and a hook given any other argument - a settings path, as the retired entry forms passed one -
 // releases the Stop in silence, asking nothing and journalling nothing.
 func TestPluginLaunch_reads_only_the_codex_home_settings(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, pluginTestBudget)
 	withOwner(t, home, "plugin")
 	elsewhere := filepath.Join(home, "elsewhere.json")
 	raw, err := os.ReadFile(filepath.Join(home, ConfigName))

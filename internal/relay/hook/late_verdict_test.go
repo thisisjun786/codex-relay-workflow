@@ -36,7 +36,7 @@ func (c *journalDeadline) Err() error {
 func Test33LateVerdictPython(t *testing.T) {
 	for _, edge := range []string{"bookkeeping", "guard_timeout"} {
 		t.Run(edge, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, hookTestBudget)
 			t.Setenv("CODEX_HOME", home)
 			lateVerdictFixture(t, home)
 			payload, err := os.ReadFile(filepath.Join(home, "stop.json"))
@@ -92,7 +92,7 @@ func Test33LateVerdictPython(t *testing.T) {
 				if attempt == 0 && edge == "bookkeeping" {
 					select {
 					case <-wrote:
-					case <-time.After(10 * time.Second):
+					case <-time.After(time.Minute):
 						t.Fatal("journal write not reached")
 					}
 				}

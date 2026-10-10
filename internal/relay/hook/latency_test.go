@@ -17,7 +17,7 @@ func Test33LatencyAcceptance(t *testing.T) {
 	if os.Getenv("CRW_HOOK_LATENCY") != "1" {
 		t.Skip("set CRW_HOOK_LATENCY=1 on an idle host")
 	}
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	_ = binary(t)
 	samples := []float64{}
 	for range 20 {

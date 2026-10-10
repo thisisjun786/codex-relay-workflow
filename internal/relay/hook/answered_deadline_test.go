@@ -28,7 +28,7 @@ func (w *gatedAnswer) Write(p []byte) (int, error) {
 func (w *gatedAnswer) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
 
 func Test33AnsweredDeadlinePython(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	t.Setenv("CODEX_HOME", home)
 	lateVerdictFixture(t, home)
 	payload, err := os.ReadFile(filepath.Join(home, "stop.json"))
@@ -58,7 +58,7 @@ func Test33AnsweredDeadlinePython(t *testing.T) {
 		}()
 		select {
 		case <-writer.started:
-		case <-time.After(10 * time.Second):
+		case <-time.After(time.Minute):
 			t.Fatal("accepted block never reached stdout")
 		}
 		// Drain runnable work without timing luck. The old bounded write leaves

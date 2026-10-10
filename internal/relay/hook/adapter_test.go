@@ -19,6 +19,15 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
+// hookTestBudget is the hook's time budget in the tests that do not test the budget. It covers the
+// guard's real work (store opens, journal writes, a built binary's start), so a loaded host must not
+// be able to spend it (CRW-1161); the tests of the budget itself pass their own small one.
+const hookTestBudget = 120.0
+
+// pluginTestBudget is the most a plugin-owned configuration may carry (the doctor and the launch
+// refuse a budget over 7 seconds when the owner is the plugin).
+const pluginTestBudget = 7.0
+
 func hookHome(t *testing.T, budget float64) string {
 	t.Helper()
 	home, err := os.MkdirTemp("", "h33-")
@@ -54,7 +63,7 @@ func hookCommand(t *testing.T, home, payload string) *exec.Cmd {
 	t.Helper()
 	// The first caller builds the binary; the timeout is for the hook, not the build.
 	built := binary(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, built, "hook")
 	cmd.Env = hookEnv(home)
@@ -123,7 +132,7 @@ func awaitHost(t *testing.T, done <-chan error) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(time.Minute):
 		t.Fatal("fake host did not finish")
 	}
 }
@@ -136,7 +145,7 @@ func Test33HookHappyAndInvalid(t *testing.T) {
 		{"refused", `{"error":"refused","reason":"ownership"}`, "guard_refused", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, hookTestBudget)
 			done, _ := fakeControl(t, home, func(conn net.Conn) error {
 				request, err := readFrame(conn)
 				if err != nil {
@@ -166,7 +175,7 @@ func Test33HookHappyAndInvalid(t *testing.T) {
 func Test33HookFailures(t *testing.T) {
 	for _, c := range []struct{ name, input string }{{"missing", "{}"}, {"unreadable", "{}"}, {"malformed", "not json"}} {
 		t.Run(c.name, func(t *testing.T) {
-			home := hookHome(t, 5)
+			home := hookHome(t, hookTestBudget)
 			if c.name == "missing" {
 				if err := os.Remove(filepath.Join(home, ConfigName)); err != nil {
 					t.Fatal(err)
@@ -194,7 +203,7 @@ func Test33HookFailures(t *testing.T) {
 	}
 }
 func Test33HookNoSocketJournalOnly(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	payload := `{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"done","transcript_path":"/must-not-be-read"}`
 	cmd := hookCommand(t, home, payload)
 	start := time.Now()
@@ -278,7 +287,7 @@ func Test33HookSlowGuardDeadline(t *testing.T) {
 	})
 }
 func Test33RecoveredGuardPanic(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	t.Setenv("CODEX_HOME", home)
 	done, _ := fakeControl(t, home, func(conn net.Conn) error { _, err := io.Copy(io.Discard, conn); return err })
 	var stdout bytes.Buffer
@@ -290,7 +299,7 @@ func Test33RecoveredGuardPanic(t *testing.T) {
 	}
 }
 func Test33ClaimWithoutOutcomeNeverReplayed(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	config, failed, _ := ReadSettings(context.Background(), filepath.Join(home, ConfigName))
 	if failed != "" {
 		t.Fatal(failed)

@@ -25,7 +25,7 @@ func Test33UnreachableErrnos(t *testing.T) {
 	}
 }
 func Test33RefusedSocketJournal(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	path := filepath.Join(home, "state/control.sock")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func Test33RefusedSocketJournal(t *testing.T) {
 	}
 }
 func Test33UnreachableNoJournalPolicy(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	path := filepath.Join(home, ConfigName)
 	config, failure, _ := ReadSettings(context.Background(), path)
 	if failure != "" {
@@ -66,7 +66,7 @@ func Test33UnreachableNoJournalPolicy(t *testing.T) {
 	}
 }
 func Test33UnreachableJournalFailureReleases(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	writeTest(t, filepath.Join(home, "journal"), []byte("not a directory"))
 	start := time.Now()
 	out, err := hookCommand(t, home, `{}`).CombinedOutput()

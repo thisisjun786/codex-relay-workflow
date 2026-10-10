@@ -35,7 +35,7 @@ type review struct {
 // reviewPython runs review_parity.py group id.
 func reviewPython(t *testing.T, id string) {
 	t.Helper()
-	base := hookHome(t, 5)
+	base := hookHome(t, hookTestBudget)
 	r := &review{t: t, base: base}
 	switch id {
 	case "D1", "D2":
@@ -85,7 +85,7 @@ func (r *review) setup(name string) reviewHome {
 	writeTest(t, filepath.Join(home, "relay"), []byte("#!/bin/sh\nexit 0\n"))
 	cfg := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "relay")},
 		{Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "dbPath", Value: filepath.Join(home, "state/relay.sqlite3")},
-		{Key: "timeoutSeconds", Value: int64(5)}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
+		{Key: "timeoutSeconds", Value: int64(hookTestBudget)}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
 	writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(cfg, pyjson.Options{})))
 	transcript := filepath.Join(home, "transcript.jsonl")
 	writeTest(t, transcript, []byte(`{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "t"}}`+"\n"+
@@ -189,7 +189,7 @@ func (r *review) peer(path string, response Object) (stop func()) {
 
 func serveReviewPeer(conn net.Conn, response Object) error {
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(time.Minute)); err != nil {
 		return err
 	}
 	reader := bufio.NewReader(conn)

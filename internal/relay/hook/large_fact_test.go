@@ -22,7 +22,7 @@ import (
 // as Python's guard verdict and records. The owned hook evaluates in-process, so the control
 // socket sees no request.
 func Test33LargeFactHookPython(t *testing.T) {
-	home := hookHome(t, 5)
+	home := hookHome(t, hookTestBudget)
 	built := binary(t) // built before the timeout starts, which is for the hook
 	layFixture(t, "large-fact", home)
 	listener, err := net.Listen("unix", filepath.Join(home, "state", "control.sock"))
@@ -38,7 +38,7 @@ func Test33LargeFactHookPython(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		if err = conn.SetDeadline(time.Now().Add(time.Minute)); err != nil {
 			served <- err
 			return
 		}
