@@ -159,3 +159,91 @@ func TestCompactLongAfterTheResumeIsNotThePair(t *testing.T) {
 		t.Fatal("a stale mark was left behind")
 	}
 }
+
+// CRW-1180 (verification P1): the pair is a resume and the compaction of its own turn. The first user prompt after the resume belongs to
+// that turn (a second hook call for it too); a prompt of another turn ends the pair, and the window does not make a later turn one.
+func TestUserPromptOfALaterTurnEndsThePair(t *testing.T) {
+	env := envFor(t.TempDir())
+	paired := func() bool { return CompactRepeatsResume(env, "s", "leg", "a", "") }
+	RecordResume(env, "s", "leg", "a", "")
+	NoteUserPrompt(env, "s", "t1")
+	NoteUserPrompt(env, "s", "t1")
+	if !paired() {
+		t.Fatal("the prompt of the resume's own turn ended the pair")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	NoteUserPrompt(env, "s", "t1")
+	NoteUserPrompt(env, "s", "t2")
+	if paired() {
+		t.Fatal("a compact after a prompt of a later turn was taken for the pair")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	NoteUserPrompt(env, "s", "")
+	NoteUserPrompt(env, "s", "")
+	if paired() {
+		t.Fatal("two prompts without turn ids left the pair open")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	NoteUserPrompt(env, "other", "t1")
+	NoteUserPrompt(env, "other", "t2")
+	NoteUserPrompt(env, "", "t3")
+	if !paired() {
+		t.Fatal("another session's prompts ended the pair")
+	}
+	// The count keeps the resume's time: the window runs from the resume, not from the prompt.
+	RecordResume(env, "s", "leg", "a", "")
+	path := slot(env, "s", "leg") + resumeSuffix
+	old := time.Now().Add(-2 * PairWindow)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	NoteUserPrompt(env, "s", "t1")
+	if st, err := os.Lstat(path); err != nil || time.Since(st.ModTime()) < PairWindow {
+		t.Fatalf("a prompt moved the resume's time: %v", err)
+	}
+	if paired() {
+		t.Fatal("a stale pair was taken after a prompt")
+	}
+	// A mark that is not one of ours is no pair, and a prompt removes it.
+	RecordResume(env, "s", "leg", "a", "")
+	if err := os.WriteFile(path, []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	NoteUserPrompt(env, "s", "t1")
+	if _, err := os.Lstat(path); err == nil {
+		t.Fatal("a corrupt mark survived a prompt")
+	}
+}
+
+// A resume that gave only a part of the text (the session binding and the banner) leaves a pair of the part: the compact of its turn
+// may leave exactly that part out.
+func TestAShortResumeLeavesAPairOfThePart(t *testing.T) {
+	env := envFor(t.TempDir())
+	Record(env, "s", "leg", "a", "")
+	RecordResumePart(env, "s", "leg", "binding")
+	if kind, part := TakePair(env, "s", "leg", "b", ""); kind != PairNone || part != "" {
+		t.Fatal("a pair was taken for other text")
+	}
+	kind, part := TakePair(env, "s", "leg", "a", "")
+	if kind != PairPart || part != PartDigest("binding") || part == "" {
+		t.Fatalf("pair = %v %q", kind, part)
+	}
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("a part pair was taken twice")
+	}
+	if CompactRepeatsResume(env, "s", "leg", "a", "") {
+		t.Fatal("a part pair silenced a compact")
+	}
+	RecordResumePart(env, "s", "leg", "")
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("a resume that gave nothing left a pair")
+	}
+	// Begin ends a pair for any start that does not take it, whatever the hook says next.
+	RecordResume(env, "s", "leg", "a", "")
+	if kind, _ := Begin(env, "s", "clear", "leg", "", ""); kind != PairNone {
+		t.Fatal("a clear took the pair")
+	}
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("a clear that said nothing left the pair open")
+	}
+}

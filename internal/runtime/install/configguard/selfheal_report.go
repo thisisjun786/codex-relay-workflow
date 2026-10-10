@@ -210,13 +210,11 @@ func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env
 		// The probe was cancelled while it ran: nothing is rendered or written after cancellation.
 		return harness.Interrupted
 	}
-	if additional == "" {
-		return 0
-	}
 	// CRW-1180: the compact start right after a resume that gave this very warning, in the same turn, adds nothing: Codex keeps the
 	// resume's output after the compaction record, so saying it again stacks the warning twice. The warning is live state, so a resume
-	// always says it.
-	if guidancerecord.SilentCompact(env, raw, selfHealReportLeg, additional) {
+	// always says it. Every start ends a pair a resume left open, also the one that has no warning to say (the flag was on at that
+	// clear or startup), so a later compact does not take that resume for its pair.
+	if guidancerecord.SilentCompact(env, raw, selfHealReportLeg, additional) || additional == "" {
 		return 0
 	}
 	answer := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":` +

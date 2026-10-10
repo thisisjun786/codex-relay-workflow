@@ -423,6 +423,37 @@ func TestSelfHealReportCompactRightAfterAResumeDoesNotRepeatTheWarning(t *testin
 	}
 }
 
+// CRW-1180 (verification P1): a start that has no warning to say still begins a new generation, so the compact that follows it does not
+// take an earlier resume for its pair. The flag is off at a resume, on at a clear (silent), and off again at the compact.
+func TestSelfHealReportSilentStartEndsTheResumePair(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	warning := selfHealReportEnvelopePrefix + pyjson.Dumps(selfHealReportWarning, pyjson.Options{Compact: true, Unicode: true}) + "}}\n"
+	for _, source := range []string{"clear", "startup", "compact", "resume"} {
+		session := "s-" + source
+		start := func(source string) string {
+			t.Helper()
+			out, code := selfHealReportRun(t, home, "{\"hook_event_name\":\"SessionStart\",\"session_id\":\""+session+"\",\"cwd\":\"/ws\",\"source\":\""+source+"\"}")
+			if code != 0 {
+				t.Fatalf("exit = %d", code)
+			}
+			return out
+		}
+		selfHealReportFakeCodex(t, selfHealReportSoftOff)
+		if got := start("resume"); got != warning {
+			t.Fatalf("%s: resume = %q", source, got)
+		}
+		selfHealReportFakeCodex(t, selfHealReportSoftOn)
+		if got := start(source); got != "" {
+			t.Fatalf("%s: start with the flag on = %q", source, got)
+		}
+		selfHealReportFakeCodex(t, selfHealReportSoftOff)
+		if got := start("compact"); got != warning {
+			t.Fatalf("%s: compact after a silent start lost the warning: %q", source, got)
+		}
+	}
+}
+
 // TestSelfHealReportOffSoftKeyWritesNothing is the criterion's letter: a listing of CODEX_HOME
 // before and after the warning is equal.
 func TestSelfHealReportOffSoftKeyWritesNothing(t *testing.T) {

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 )
 
 func TestFallbackNoticeOracleAndRepeatedStartup(t *testing.T) {
@@ -259,5 +261,27 @@ func TestFallbackNoticeHookCompactAfterAWholeResumeAnswerIsSilentOnce(t *testing
 	run(`{"session_id":"d","source":"resume"}`)
 	if got := run(`{"session_id":"e","source":"compact"}`); got == "" {
 		t.Error("another session's compact was silenced")
+	}
+}
+
+// CRW-1180 (verification P1): a compact in a turn after the resume's is a compaction of its own and says the notice again; the prompts
+// the cxc-ops user-prompt hook notes (guidancerecord.NoteUserPrompt) end the pair.
+func TestFallbackNoticeHookCompactInALaterTurnSaysTheNotice(t *testing.T) {
+	_, env := fallbackTestEnv(t)
+	run := func(raw string) string {
+		var out strings.Builder
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), &out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return out.String()
+	}
+	whole := run(`{"session_id":"s"}`)
+	if got := run(`{"session_id":"n","source":"resume"}`); got != whole {
+		t.Fatalf("resume of a session never given the notice answered %q", got)
+	}
+	guidancerecord.NoteUserPrompt(env, "n", "turn-1")
+	guidancerecord.NoteUserPrompt(env, "n", "turn-2")
+	if got := run(`{"session_id":"n","source":"compact"}`); got != whole {
+		t.Errorf("compact in a later turn answered %q, want the notice", got)
 	}
 }

@@ -108,14 +108,13 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if err != nil {
 		return 0
 	}
-	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
-		// This resume gave nothing: a pair an earlier resume left open no longer describes what the context holds.
-		guidancerecord.ClearResume(env, session, fallbackNoticeLeg)
+	// CRW-1180: the compact start right after a resume that gave this notice, in the same turn, adds nothing: Codex keeps the resume's
+	// output after the compaction record, so saying it again stacks the notice twice. Every other start, whether or not it says
+	// anything, ends a pair a resume left open (a resume that gave nothing because the session holds the notice already included).
+	if kind, _ := guidancerecord.Begin(env, session, source, fallbackNoticeLeg, answer, ""); kind == guidancerecord.PairWhole {
 		return 0
 	}
-	// CRW-1180: the compact start right after a resume that gave this notice, in the same turn, adds nothing: Codex keeps the resume's
-	// output after the compaction record, so saying it again stacks the notice twice.
-	if source == "compact" && guidancerecord.CompactRepeatsResume(env, session, fallbackNoticeLeg, answer, "") {
+	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
 		return 0
 	}
 	n, werr := io.WriteString(out, answer)
