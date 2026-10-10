@@ -91,7 +91,7 @@ func spawnGrantWrite(dir *os.Root, nonce string, now time.Time) bool {
 }
 
 func spawnGrantConsume(obj map[string]any, message, tmpRoot string, uid int, now time.Time) bool {
-	claim, ok := spawnGrantCheck(obj, message, tmpRoot, uid, now, "")
+	claim, ok := spawnGrantCheck(obj, message, tmpRoot, uid, now, "", "")
 	if !ok || !claim.reserve(now) {
 		return false
 	}
@@ -102,15 +102,17 @@ func spawnGrantConsume(obj map[string]any, message, tmpRoot string, uid int, now
 // spawnGrantClaim is a grant a spawn may use, checked without being spent (CRW-1118). The hook checks it first, runs every
 // refusal it can meet, and only then reserves it (a rename, so of two calls only one gets it) and commits it with the
 // rest of its answer; a refusal after the check leaves the grant to the corrected retry. With the native tool use id the
-// reservation and the spent record are bound to that call: a second delivery of the same call finds its own record and gets
-// the same answer, while another call finds nothing to use. Without one, the reservation has a name of its own and the
-// spent grant is removed.
+// reservation and the spent record are bound to that call and to the input it was made with: the hook records the call's input and
+// answer when it spends the grant (hook_replay.go), so a second delivery of the same call gets that answer before it comes here,
+// while a delivery of that id with another input, or another call, finds nothing to use. A reservation a delivery left behind is
+// finished only by the call and the input it was made for (the input is written beside it before the rename). Without a tool use id,
+// the reservation has a name of its own and the spent grant is removed.
 type spawnGrantClaim struct {
 	tmpRoot, key, nonce string
 	uid                 int
 	tag                 string // the call's tag: a digest of the tool use id, or a unique name for a call without one
 	bound               bool   // the tag is the call's tool use id, so its records are found again
-	replay              bool   // this call already spent the grant: its spent record is there
+	input               string // the call's tool_input as JSON.stringify writes it, "" when it has none to record
 	held                string // the reservation this claim holds, once reserved
 	committed           bool
 }
@@ -132,10 +134,14 @@ func (c *spawnGrantClaim) reservedName() string {
 }
 func (c *spawnGrantClaim) spentName() string { return spawnGrantFile(c.nonce) + ".used-" + c.tag }
 
-// spawnGrantCheck finds the grant the message names for this call without spending it: this call's spent record (a
-// replay), this call's reservation left by a delivery that stopped before it committed, or an unexpired grant. It reads
-// without a lock and decides nothing on its own: reserve is the step two calls cannot both pass.
-func spawnGrantCheck(obj map[string]any, message, tmpRoot string, uid int, now time.Time, toolUseID string) (*spawnGrantClaim, bool) {
+// inputName is the record of the input a reservation was made for.
+func (c *spawnGrantClaim) inputName() string { return spawnGrantFile(c.nonce) + ".input-" + c.tag }
+
+// spawnGrantCheck finds the grant the message names for this call without spending it: this call's reservation left by a delivery
+// that stopped before it committed (for the input it was made for), or an unexpired grant. It reads without a lock and decides
+// nothing on its own: reserve is the step two calls cannot both pass. input is the call's tool_input as JSON.stringify writes it, ""
+// for none. A call that spent its grant is answered before this, from its record; here its spent grant authorizes nothing.
+func spawnGrantCheck(obj map[string]any, message, tmpRoot string, uid int, now time.Time, toolUseID, input string) (*spawnGrantClaim, bool) {
 	nonce, ok := spawnGrantOnlyMarker(message)
 	if !ok {
 		return nil, false
@@ -149,17 +155,16 @@ func spawnGrantCheck(obj map[string]any, message, tmpRoot string, uid int, now t
 		return nil, false
 	}
 	defer dir.Close()
-	c := &spawnGrantClaim{tmpRoot: tmpRoot, key: key, nonce: nonce, uid: uid}
+	c := &spawnGrantClaim{tmpRoot: tmpRoot, key: key, nonce: nonce, uid: uid, input: input}
 	c.tag, c.bound = spawnGrantTag(toolUseID)
-	if c.bound {
-		if spawnGrantRegular(dir, c.spentName()) {
-			c.replay = true
-			return c, true
+	if c.bound && spawnGrantRegular(dir, c.reservedName()) {
+		// The reservation belongs to this call, for the input recorded beside it: no record, or another input, is a reservation nobody
+		// can say what it was made for, and it stays where it is.
+		if recorded, ok := spawnGrantReadInput(dir, c.inputName()); !ok || input == "" || recorded != input {
+			return nil, false
 		}
-		if spawnGrantRegular(dir, c.reservedName()) {
-			c.held = c.reservedName()
-			return c, true
-		}
+		c.held = c.reservedName()
+		return c, true
 	}
 	if spawnGrantUnexpired(dir, spawnGrantFile(nonce), now) {
 		return c, true
@@ -173,10 +178,28 @@ func spawnGrantCheck(obj map[string]any, message, tmpRoot string, uid int, now t
 	return nil, false
 }
 
-// reserve takes the grant for this call: a rename of the grant file to the call's reservation, which only one call can
-// make, followed by a second check of the file it renamed. A replay and a reservation this call already holds pass.
+// spawnGrantReadInput reads the input a reservation was made for.
+func spawnGrantReadInput(dir *os.Root, name string) (string, bool) {
+	if !spawnGrantRegular(dir, name) {
+		return "", false
+	}
+	file, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > spawnHookReplayMax {
+		return "", false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, spawnHookReplayMax+1))
+	return string(data), err == nil
+}
+
+// reserve takes the grant for this call: the input it is taken for is recorded beside it, then a rename of the grant file to the
+// call's reservation, which only one call can make, followed by a second check of the file it renamed. A reservation this call
+// already holds passes.
 func (c *spawnGrantClaim) reserve(now time.Time) bool {
-	if c.replay || c.held != "" {
+	if c.held != "" {
 		return true
 	}
 	dir := spawnGrantOpen(c.tmpRoot, c.uid, c.key, false)
@@ -185,21 +208,46 @@ func (c *spawnGrantClaim) reserve(now time.Time) bool {
 	}
 	defer dir.Close()
 	name := c.reservedName()
+	recorded := false
+	if c.bound && c.input != "" {
+		recorded = spawnGrantWriteInput(dir, c.inputName(), c.input)
+	}
 	if dir.Rename(spawnGrantFile(c.nonce), name) != nil {
+		if recorded {
+			_ = dir.Remove(c.inputName())
+		}
 		return false
 	}
 	if !spawnGrantUnexpired(dir, name, now) {
 		_ = dir.Remove(name)
+		if recorded {
+			_ = dir.Remove(c.inputName())
+		}
 		return false
 	}
 	c.held = name
 	return true
 }
 
+// spawnGrantWriteInput writes the input of a reservation whole, replacing a record of an earlier try of the same call.
+func spawnGrantWriteInput(dir *os.Root, name, input string) bool {
+	tmp := name + ".tmp"
+	file, err := dir.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return false
+	}
+	_, err = file.WriteString(input)
+	if closeErr := file.Close(); err == nil && closeErr == nil && dir.Rename(tmp, name) == nil {
+		return true
+	}
+	_ = dir.Remove(tmp)
+	return false
+}
+
 // commit spends the reserved grant: the reservation becomes this call's spent record, or is removed for a call without a
 // tool use id. Once committed, nothing gives the grant back: a lost answer is an unknown outcome, not a new capability.
 func (c *spawnGrantClaim) commit() {
-	if c.replay || c.held == "" || c.committed {
+	if c.held == "" || c.committed {
 		return
 	}
 	c.committed = true
@@ -208,6 +256,7 @@ func (c *spawnGrantClaim) commit() {
 		return
 	}
 	defer dir.Close()
+	_ = dir.Remove(c.inputName())
 	if c.bound && dir.Rename(c.held, c.spentName()) == nil {
 		return
 	}
@@ -217,7 +266,7 @@ func (c *spawnGrantClaim) commit() {
 // release gives back a grant this call reserved and did not commit, for a refusal met after the reservation (a managed
 // issuance the ledger refused): the grant file returns under its own name for the corrected retry.
 func (c *spawnGrantClaim) release() {
-	if c.replay || c.held == "" || c.committed {
+	if c.held == "" || c.committed {
 		return
 	}
 	dir := spawnGrantOpen(c.tmpRoot, c.uid, c.key, false)
@@ -226,6 +275,7 @@ func (c *spawnGrantClaim) release() {
 	}
 	defer dir.Close()
 	if dir.Rename(c.held, spawnGrantFile(c.nonce)) == nil {
+		_ = dir.Remove(c.inputName())
 		c.held = ""
 	}
 }

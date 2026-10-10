@@ -79,6 +79,15 @@ func spawnHookReplayName(toolUseID string) string {
 	return "event-" + tag
 }
 
+// spawnHookReplayKind is the first line of a record: who spawned, so a subagent never reads the answer of a root event (which carries
+// the grant that event minted) and a root event never reads the answer of a subagent's.
+func spawnHookReplayKind(obj map[string]any) string {
+	if IsSubagentSpawner(obj) {
+		return "subagent"
+	}
+	return "root"
+}
+
 // spawnHookReplayLookup is the recorded answer of the event toolUseID in the key directory of obj's grant scope when the event's
 // tool_input (as JSON.stringify writes it) is the input that event was first given or the updatedInput of its recorded answer.
 func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string) (string, bool) {
@@ -101,6 +110,10 @@ func spawnHookReplayLookup(obj map[string]any, tmpRoot, toolUseID, input string)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, spawnHookReplayMax+1))
 	if err != nil {
+		return "", false
+	}
+	kind, data, ok := bytes.Cut(data, []byte("\n"))
+	if !ok || string(kind) != spawnHookReplayKind(obj) {
 		return "", false
 	}
 	first, answer, ok := bytes.Cut(data, []byte("\n"))
@@ -128,8 +141,8 @@ func spawnHookReplayUpdated(answer string) string {
 	return spawnHookRouteStringify(updated)
 }
 
-// spawnHookReplayRecord writes the answer of the event toolUseID, which minted a grant in obj's scope: the event's input as
-// JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
+// spawnHookReplayRecord writes the answer of the event toolUseID, which minted a grant in obj's scope or spent one: the kind of its
+// spawner, the event's input as JSON.stringify writes it (one line: the writer escapes every line break), then the answer as written, published by a rename. The
 // record holds no digest or clock, so it is the same text for the same event. A record that exists is kept, and a record that
 // cannot be written is skipped: the event then only loses the replay.
 func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, input, answer string) {
@@ -151,7 +164,7 @@ func spawnHookReplayRecord(obj map[string]any, tmpRoot, toolUseID, input, answer
 	if err != nil {
 		return
 	}
-	_, err = file.WriteString(input + "\n" + answer)
+	_, err = file.WriteString(spawnHookReplayKind(obj) + "\n" + input + "\n" + answer)
 	if closeErr := file.Close(); err == nil && closeErr == nil && dir.Rename(tmp, name) == nil {
 		return // published whole, so a reader never sees a partial answer
 	}

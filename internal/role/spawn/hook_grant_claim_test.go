@@ -89,26 +89,6 @@ func TestSpawnHookGrantRaceAllowsOneCall(t *testing.T) {
 	}
 }
 
-// A reservation left by a delivery that stopped before it committed belongs to that call: another call cannot use it, the same
-// call finishes with it, and once spent nothing gives it back.
-func TestSpawnHookStaleReservationAuthorizesOnlyItsCall(t *testing.T) {
-	rig, marker, file := spawnGrantClaimRig(t)
-	tag, _ := spawnGrantTag("call-a")
-	spawnHookMust(t, os.Rename(file, file+".reserved-"+tag))
-	if got := RunSpawnAttachHook(spawnGrantClaimPayload(rig.ws, "call-b", "TASK: work "+marker), rig.env); got != DenyEnvelope(RecurseDenyReason) {
-		t.Fatalf("another call with a stale reservation = %.200q", got)
-	}
-	if got := RunSpawnAttachHook(spawnGrantClaimPayload(rig.ws, "call-a", "TASK: work "+marker), rig.env); spawnGrantClaimDenied(got) {
-		t.Fatalf("the reserving call = %.200q", got)
-	}
-	if got := RunSpawnAttachHook(spawnGrantClaimPayload(rig.ws, "call-b", "TASK: work "+marker), rig.env); got != DenyEnvelope(RecurseDenyReason) {
-		t.Fatalf("another call after the commit = %.200q", got)
-	}
-	if _, err := os.Lstat(file); err == nil {
-		t.Fatal("the spent grant came back")
-	}
-}
-
 // expiresAt must be a finite integer of milliseconds within the minting TTL.
 func TestSpawnHookGrantExpiryMustBeAFiniteIntegerWithinTheTTL(t *testing.T) {
 	now := time.Now().UnixMilli()

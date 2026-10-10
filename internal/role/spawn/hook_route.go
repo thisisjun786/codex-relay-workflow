@@ -401,6 +401,11 @@ func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 		}
 	}
 	if a.grant != nil {
+		// The call's input and answer are recorded before its grant is spent: a delivery that stopped between the two finds the
+		// record and returns the answer, and one that never got there finds the reservation, held for this input (CRW-1118).
+		if a.record != nil {
+			a.record(answer)
+		}
 		a.grant.commit()
 		if a.commit != nil {
 			a.commit.granted = true

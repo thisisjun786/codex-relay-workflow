@@ -54,6 +54,7 @@ type spawnHookAssembly struct {
 	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
 	commit             *spawnHookCommit            // what this run has committed, shared with RunSpawnAttachHook
 	grant              *spawnGrantClaim            // a subagent's checked grant, spent by finish
+	record             func(answer string)         // records the answer of the call that spends grant, before the grant is spent, or nil
 	inputText          string                      // tool_input as JSON.stringify writes it, for the event's replay record
 	replay             func(answer string)         // records the answer of an event that minted a grant, or nil
 	settings           role.SettingsSnapshot       // the event's one read of the helper role settings
@@ -74,12 +75,14 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 // still spends a subagent's grant (spawnHookAssembly.finish), so a one-time grant never survives a spawn it let through.
 func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawnHookCommit) (spawnHookAssembly, string, bool) {
 	var grant *spawnGrantClaim
+	var record func(answer string) // set once the event's input is known: the subagent's spend of a grant is recorded with its answer
 	stop := func(deny string) (spawnHookAssembly, string, bool) {
 		if deny == "" && grant != nil {
-			deny = spawnHookAssembly{grant: grant, commit: commit}.finish("", env)
+			deny = spawnHookAssembly{grant: grant, commit: commit, record: record}.finish("", env)
 		}
 		return spawnHookAssembly{}, deny, true
 	}
+	tmpRoot, now := spawnHookTmpDir(env), time.Now()
 	if event, _ := obj["hook_event_name"].(string); event != "PreToolUse" || !IsSpawnToolName(obj["tool_name"]) {
 		return stop("")
 	}
@@ -96,10 +99,13 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		a.toolUseID = &id
 	}
 	// The same event applied again to its own input or to the input it answered with gets its recorded answer, so a minted grant is
-	// kept and none is minted again (CRW-1121). Only a root spawn mints; a tool_input too deep to digest has no record.
-	if a.toolUseID != nil && *a.toolUseID != "" && !IsSubagentSpawner(obj) && !spawnHookRouteDeep(toolInput) {
+	// kept and none is minted again, and a subagent's spent grant answers the call that spent it, never another input (CRW-1121,
+	// CRW-1118). A tool_input too deep to digest has no record.
+	if a.toolUseID != nil && *a.toolUseID != "" && !spawnHookRouteDeep(toolInput) {
 		a.inputText = spawnHookRouteStringify(toolInput)
-		if answer, ok := spawnHookReplayLookup(obj, spawnHookTmpDir(env), *a.toolUseID, a.inputText); ok {
+		tool := *a.toolUseID
+		record = func(answer string) { spawnHookReplayRecord(obj, tmpRoot, tool, a.inputText, answer) }
+		if answer, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
 			return stop(answer)
 		}
 	}
@@ -141,7 +147,6 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	// a failed grant check never lets a subagent recurse (known-defects, security). The grant is only checked here and spent with
 	// the answer, after every other refusal, so a refused spawn leaves it to the corrected retry (CRW-1118; the oracle spent it
 	// first).
-	tmpRoot, now := spawnHookTmpDir(env), time.Now()
 	spawnedBySubagent := IsSubagentSpawner(obj)
 	if spawnedBySubagent {
 		commit.subagent = true
@@ -149,11 +154,25 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		if a.toolUseID != nil {
 			tool = *a.toolUseID
 		}
-		claim, ok := spawnGrantCheck(obj, outgoing, tmpRoot, os.Getuid(), now, tool)
+		// Deliveries of one call are serialized from here to the end of the answer, so of two that carry the grant one spends it and
+		// the other finds the record of that spend.
+		if _, marked := spawnGrantOnlyMarker(outgoing); marked && a.inputText != "" {
+			release, err := spawnHookEventLock(obj, tmpRoot, tool, false)
+			if errors.Is(err, errSpawnHookEventBusy) {
+				return stop(DenyEnvelope(RecurseDenyReason))
+			}
+			if release != nil {
+				commit.unlock = release
+				if answer, ok := spawnHookReplayLookup(obj, tmpRoot, tool, a.inputText); ok {
+					return stop(answer)
+				}
+			}
+		}
+		claim, ok := spawnGrantCheck(obj, outgoing, tmpRoot, os.Getuid(), now, tool, a.inputText)
 		if !ok {
 			return stop(DenyEnvelope(RecurseDenyReason))
 		}
-		grant, a.grant = claim, claim
+		grant, a.grant, a.record = claim, claim, record
 	}
 
 	if a.validItems {
@@ -227,7 +246,7 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		minted, _ = MintRecursionGrant(obj, tmpRoot, now)
 	}
 	if minted != "" && a.inputText != "" {
-		a.replay = func(answer string) { spawnHookReplayRecord(obj, tmpRoot, *a.toolUseID, a.inputText, answer) }
+		a.replay = record
 	}
 
 	// Each text item is normalized on its own, so an attachment boundary never joins fences, links or mentions (:913-918).
