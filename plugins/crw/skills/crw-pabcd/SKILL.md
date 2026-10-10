@@ -41,22 +41,34 @@ Two distinct things, do not conflate them:
   시작해줘` and `Use crw-pabcd to start the interview` (P, P, I) and for `Start pabcd
   phase i` (I), and finds none for `Start pabcd phase`, a bare `인터뷰 먼저 해줘`,
   `interview me first` or `pabcd로 인터뷰 해줘` (no request verb or no phase pattern).
-  What the hook injects is the handler's answer, which depends on the session:
-  - In a session that has not armed PABCD, the loop-arm check runs before the hint.
-    A clause with a loop mode (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` /
-    `ipabcd` word (not the one inside `crw-pabcd`) plus an action word makes the hook
-    answer the arming mandate (ORCH-MANDATE-01) instead of any phase hint. In a fresh
-    session `pabcd로 시작해줘`, `pabcd로 인터뷰 해줘`, `Start pabcd phase` and `Start
-    pabcd phase i` therefore get the mandate; `Use crw-pabcd` and `Use crw-pabcd to
-    start the interview` get a phase hint; `인터뷰 먼저 해줘` and `interview me first`
-    get nothing.
-  - A phase hint is the phase directive plus the trigger-authority note. A P hint is
-    delivered as the interview directive under the default interview-entry policy
-    (`new-unit`: not once a cycle is running), and an I hint is dropped while a goal
-    is active.
+  What the hook injects is the handler's answer, which depends on the session. The
+  handler applies these in order:
+  1. Goal mode: while the session has an active goal, or the goals database cannot be
+     read (fail closed), an I hint is dropped (the hook answers nothing), and a P hint
+     is not promoted to the interview (step 3 then gives the plain P directive). This
+     runs before the loop-arm check, so a dropped I hint never reaches the mandate.
+  2. Loop-arm: in a session that has not armed PABCD, a clause with a loop mode
+     (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` / `ipabcd` word (not the one
+     inside `crw-pabcd`) plus an action word makes the hook answer the arming mandate
+     (ORCH-MANDATE-01) instead of any phase hint, including a P hint.
+  3. Phase hint: the phase directive plus the trigger-authority note. A P hint is
+     delivered as the interview directive under the default interview-entry policy
+     (`new-unit`: not once a cycle is running; `always` also inside a cycle; `off`
+     never) unless step 1 applies.
+  - Without a goal, in a fresh un-armed session: `pabcd로 시작해줘`, `pabcd로 인터뷰
+    해줘`, `Start pabcd phase` and `Start pabcd phase i` get the mandate; `Use
+    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the
+    interview directive for both); `인터뷰 먼저 해줘` and `interview me first` get
+    nothing.
+  - With an active goal, in a fresh un-armed session: `Use crw-pabcd` gets the plain P
+    directive (not the interview); `Use crw-pabcd to start the interview` and `Start
+    pabcd phase i` get nothing (the I hint is dropped before the loop-arm check);
+    `pabcd로 시작해줘`, `pabcd로 인터뷰 해줘` and `Start pabcd phase` still get the
+    mandate; `인터뷰 먼저 해줘` and `interview me first` get nothing.
   - In a session that already armed PABCD, a prompt without any hint can still get the
     current phase directive or stage header re-injected, unless the transcript tail
-    already carries the stage marker or shows context pressure.
+    already carries the stage marker or shows context pressure; in phase I under an
+    active goal nothing is re-injected.
   Natural hints never enter or advance a phase. A line-anchored `orchestrate i`
   command instead takes the existing explicit-command parser path.
 - **Agent judgment (broad):** for unclear requirements phrased otherwise, select
