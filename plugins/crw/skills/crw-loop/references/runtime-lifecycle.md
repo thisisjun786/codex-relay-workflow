@@ -43,7 +43,10 @@ for EVERY loop entry or re-entry:
 Work performed outside the FSM does not count as loop progress: re-enter and attest
 it before building on it. Runtime companions (shipped): a loop/goalplan/
 continue-until-done request hitting an UN-ARMED FSM gets the arming mandate injected
-at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), and an active goal
+at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), except that a request naming a
+project or a coordination gets a short scope pointer instead (crw-run for the project parent,
+crw-loop only for an explicit implementation of a task in this session; the pointer arms
+nothing), and an active goal
 with no in-flight cycle gets the Stop-time block naming the arming command
 (GOAL-IDLE-CONTINUE-01) — but neither companion moves a phase for you; the commands
 remain yours to run.

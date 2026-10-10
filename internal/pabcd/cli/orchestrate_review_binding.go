@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strconv"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/review"
@@ -84,6 +86,19 @@ func orchestrateReviewBindingCheckPlan(plan *goalplan.Goalplan, cur state.State,
 		if attested := a.Attest.AuditVerdict; attested != "" && attested != string(round.Lane.Verdict) {
 			return orchestrateReviewBindingRefuse(cur, a.Verb, sessionID,
 				`you attested "`+attested+`" but the reviewer recorded "`+string(round.Lane.Verdict)+`"`)
+		}
+		// CRW-1116 (port: fixed). A reviewer that answered GO-WITH-FIXES (blockers=N) left N unresolved blockers, and the attest of
+		// this edge is where each gets its disposition: folded into the plan or rebutted with the reason. The oracle never saw the
+		// count, so the attest's near-pass needed only a nonempty auditResidual. A recorded count asks for auditBlockers, one
+		// structured entry per blocker ({blocker, disposition: folded|rebutted, reason}). The form is checked, never the prose:
+		// auditResidual stays the main agent's own words in any language, and whether a reason is sound is its judgment. The
+		// near-pass itself stays allowed (AUDIT-LOOP-01), and a round with no recorded verdict or a bare verdict (no count) asks
+		// for nothing more (LEAN-REVIEW-01).
+		if round.Lane.Blockers > 0 && round.Lane.Verdict == goalplan.VerdictNearPass && !a.Attest.DisposesBlockers(round.Lane.Blockers) {
+			return orchestrateReviewBindingRefuse(cur, a.Verb, sessionID,
+				"round "+round.RoundID+" recorded GO-WITH-FIXES (blockers="+strconv.Itoa(round.Lane.Blockers)+
+					`), so the attest must carry "auditBlockers": one entry per blocker 1..`+strconv.Itoa(round.Lane.Blockers)+
+					` as {"blocker":<n>,"disposition":"folded"|"rebutted","reason":"<why>"}, each blocker folded into the plan or rebutted with the reason`)
 		}
 	}
 	return nil
