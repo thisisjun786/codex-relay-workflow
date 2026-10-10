@@ -24,12 +24,14 @@ var localToolNames = []string{"go", "node", "gitleaks", "staticcheck"}
 var goVersionLine = regexp.MustCompile(`(?m)^go version go([0-9][^\s]*)`)
 
 // localToolPinsFrom reads the pinned versions from the verified tree, through the reader the judge uses
-// (dagsched.DeclaredToolchainPins), so the record names exactly the pins the judge requires of that commit: a go.mod in any
-// spelling the go command reads and a scan_version in any shell spelling. A pin the tree does not carry is left empty rather
-// than guessed; a declaration the reader cannot read is an error, since a record that pinned less than the commit declares
-// would be refused.
+// (dagsched.DeclaredToolPins), so the record names exactly the pins the judge requires of that commit: a go.mod in any
+// spelling the go command reads, a scan_version in any shell spelling and the node-version of every setup-node step of ci.yml
+// (CRW-1191). The writer has no reader of its own for any of them: a pin the judge reads and the writer left out is a record
+// the judge refuses. A pin the tree does not carry is left out rather than guessed (a tree without a setup-node step has no
+// node pin); a declaration the reader cannot read is an error, since a record that pinned less than the commit declares would
+// be refused.
 func localToolPinsFrom(read func(path string) ([]byte, error)) (map[string]string, error) {
-	return dagsched.DeclaredToolchainPins(func(path string) ([]byte, bool, error) {
+	return dagsched.DeclaredToolPins(func(path string) ([]byte, bool, error) {
 		data, err := read(path)
 		if err != nil {
 			return nil, false, nil
@@ -206,8 +208,9 @@ func localProbeEnv(home, pathEnv string) []string {
 	return env
 }
 
-// localPinsAt reads the pins a commit names, the tools' and every setup-node pin of its ci.yml, through
-// read, which takes a path inside the commit.
+// localPinsAt reads the pins a commit names, through read, which takes a path inside the commit: the tools' pins as the record
+// writer takes them (localToolPinsFrom, node included) and the parsed jobs of its ci.yml, which the per-job node comparison
+// reads.
 func localPinsAt(read func(path string) ([]byte, error)) (map[string]string, []workflowJob, error) {
 	pins, err := localToolPinsFrom(read)
 	if err != nil {
@@ -220,17 +223,6 @@ func localPinsAt(read func(path string) ([]byte, error)) (map[string]string, []w
 	jobs, err := parseWorkflow(string(data))
 	if err != nil {
 		return nil, nil, err
-	}
-	var nodePins []string
-	for _, job := range jobs {
-		for _, step := range job.steps {
-			if step.nodeVersion != "" {
-				nodePins = append(nodePins, step.nodeVersion)
-			}
-		}
-	}
-	if nodes := localSortedUnique(nodePins); len(nodes) > 0 {
-		pins["node"] = strings.Join(nodes, ",")
 	}
 	return pins, jobs, nil
 }
