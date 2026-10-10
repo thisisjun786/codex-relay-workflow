@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
@@ -650,5 +651,117 @@ func TestActivityTurnObservationNamesAGenerationOnlyWhenOneTiesIt(t *testing.T) 
 	}
 	if got := nodeOfDecoded(t, f.activity("p1").decoded(t), "design")["activity"].(map[string]any)["execution_generation"]; got != nil {
 		t.Errorf("the printed generation of the ambiguous turn observation is %v, want null", got)
+	}
+}
+
+// Evaluation d1: a poll row keeps the status of its newest attempt and the time of its newest successful one. When the newest attempt failed, the status is not the one observed at that time, so the
+// entry keeps the time of the successful poll (the child answered then) and states no status.
+func TestActivityPollNeverPairsAStatusWithAnotherAttemptsTime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  any
+		pollErr any
+		want    string
+	}{
+		{"a successful poll", "inProgress", nil, "inProgress"},
+		{"the turn absent at a later attempt", "absent", "str: the host reports this turn absent", ""},
+		{"a transport error at a later attempt", nil, "Exception: connection reset", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.projectParent()
+			forkJoinPlan(f, "p1")
+			a := f.acceptNode("p1", "research", acceptOpts{})
+			f.exec("INSERT OR REPLACE INTO poll_observations (relationship_id, execution_generation, turn_id, last_status, last_polled_at, last_attempt_at, last_error) VALUES (?, 1, 'turn-p', ?, ?, ?, ?)",
+				a.Acceptance.RelationshipID, tc.status, "2099-01-01T00:00:00.000000+00:00", "2099-01-01T00:05:00.000000+00:00", tc.pollErr)
+			e := f.activity("p1").node("research").Activity
+			if e == nil || e.Source != ActivityPoll || e.RecordedAt != "2099-01-01T00:00:00.000000+00:00" || e.Ref != "turn-p" {
+				t.Fatalf("activity = %+v, want the poll recorded at the time of the successful attempt", e)
+			}
+			if e.Change != tc.want {
+				t.Errorf("the poll entry prints status %q, want %q: the stored status belongs to the attempt at 2099-01-01T00:05:00, not to the poll at 2099-01-01T00:00:00", e.Change, tc.want)
+			}
+		})
+	}
+}
+
+// premergeEvidenceScenario is the refresh scenario with its base refreshed to the head the pull request shows now (generation 2, its own event) and a pre-merge record stored for accepted at a late time.
+func premergeEvidenceScenario(t *testing.T, accepted func(s *refreshScenario) string) *refreshScenario {
+	t.Helper()
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	head := accepted(s)
+	raw := premergeAt(s.sched, context.Background(), "g", "I", head)
+	digest, err := premerge.Digest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.exec("INSERT INTO dag_acceptance_premerge (acceptance_id, record_digest, record_json, evaluated_head, accepted_head, recorded_by, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
+		s.accepted.Acceptance.AcceptanceID, digest, string(raw), head, head, "parent", 0, "2099-01-01T00:00:00.000000+00:00")
+	return s
+}
+
+// Evaluation d2: the first pre-merge record of an acceptance, attached after a base refresh, is stored for the refreshed head. The entry takes the identity of the head the record was stored for: the
+// refresh's generation and event for the refreshed head, the acceptance's own for its own head, and none for a head neither names.
+func TestActivityPremergeRecordNamesTheIdentityOfItsHead(t *testing.T) {
+	t.Run("the refreshed head", func(t *testing.T) {
+		s := premergeEvidenceScenario(t, func(s *refreshScenario) string { return s.head })
+		e := s.activity("g").node("I").Evidence
+		if e == nil || e.Source != EvidencePremerge || e.Change != s.head {
+			t.Fatalf("evidence = %+v, want the pre-merge record of the refreshed head", e)
+		}
+		if !e.HasGeneration || e.Generation != 2 || e.EventID != s.event2 || e.RelationshipID != s.rid {
+			t.Errorf("the record of the refreshed head names relationship %s generation %d (%v) event %s, want generation 2 and the refresh's event %s", e.RelationshipID, e.Generation, e.HasGeneration, e.EventID, s.event2)
+		}
+	})
+	t.Run("the head of the acceptance", func(t *testing.T) {
+		s := premergeEvidenceScenario(t, func(s *refreshScenario) string { return s.h1 })
+		e := s.activity("g").node("I").Evidence
+		if e == nil || e.Source != EvidencePremerge || !e.HasGeneration || e.Generation != 1 || e.EventID != s.accepted.Event {
+			t.Errorf("the record of the accepted head = %+v, want the acceptance's generation 1 and event %s", e, s.accepted.Event)
+		}
+	})
+	t.Run("a head neither names", func(t *testing.T) {
+		s := premergeEvidenceScenario(t, func(*refreshScenario) string { return "headunknown" })
+		e := s.activity("g").node("I").Evidence
+		if e == nil || e.Source != EvidencePremerge || e.HasGeneration || e.EventID != "" || e.RelationshipID != s.rid {
+			t.Errorf("the record of an unnamed head = %+v, want no generation and no event", e)
+		}
+	})
+}
+
+// Evaluation d3: the pre-merge record a re-validation was judged on (dag_revalidation_premerge) is the record integration reads once the criteria were re-registered, and is stored after the
+// re-validation row itself. It is evidence, the newest here, and names the identity of the head it was stored for.
+func TestActivityRevalidationPremergeRecordIsEvidence(t *testing.T) {
+	s := newRefreshScenario(t)
+	s.openGeneration()
+	s.refreshBase()
+	if _, err := s.record("shared.json"); err != nil {
+		t.Fatal(err)
+	}
+	other := dig("the second edition of I's criteria after the refresh")
+	s.rvReregister("g", "I", "g-r3", s.rid, other, nil)
+	s.rvRule(s.rid, "verified", other, rvVerified())
+	res, err := s.accept("g", "I", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, Premerge: premergeAt(s.sched, context.Background(), "g", "I", s.head)})
+	if err != nil || !res.Revalidated {
+		t.Fatalf("revalidation = %+v %v", res, err)
+	}
+	s.exec("UPDATE dag_acceptance_revalidations SET revalidated_at = '2099-01-01T00:00:00.000000+00:00' WHERE acceptance_id = ?", res.AcceptanceID)
+	s.exec("DROP TRIGGER dag_revalidation_premerge_no_update")
+	s.exec("UPDATE dag_revalidation_premerge SET recorded_at = '2099-01-01T00:00:01.000000+00:00' WHERE acceptance_id = ?", res.AcceptanceID)
+	var digest, evaluated string
+	if err := s.s.DB.QueryRow("SELECT record_digest, evaluated_head FROM dag_revalidation_premerge WHERE acceptance_id = ?", res.AcceptanceID).Scan(&digest, &evaluated); err != nil {
+		t.Fatal(err)
+	}
+	e := s.activity("g").node("I").Evidence
+	if e == nil || e.Source != EvidenceRevalidationPremerge || e.RecordedAt != "2099-01-01T00:00:01.000000+00:00" || e.Ref != digest || e.Change != evaluated {
+		t.Fatalf("evidence = %+v, want the re-validation's pre-merge record %s of head %s recorded after the re-validation", e, digest, evaluated)
+	}
+	if !e.HasGeneration || e.Generation != 2 || e.EventID != s.event2 {
+		t.Errorf("the record of the refreshed head names generation %d (%v) and event %s, want the refresh's generation 2 and event %s", e.Generation, e.HasGeneration, e.EventID, s.event2)
 	}
 }

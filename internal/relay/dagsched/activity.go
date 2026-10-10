@@ -37,14 +37,15 @@ const (
 
 // The sources of an evidence entry, as the entry names them.
 const (
-	EvidenceVerdict            = "verdict"
-	EvidenceVerifiedHead       = "verified_head"
-	EvidenceAcceptance         = "acceptance"
-	EvidenceBaseRefresh        = "base_refresh"
-	EvidenceRevalidation       = "revalidation"
-	EvidenceMergeCheck         = "merge_check"
-	EvidenceCommitVerification = "commit_verification"
-	EvidencePremerge           = "premerge_record"
+	EvidenceVerdict              = "verdict"
+	EvidenceVerifiedHead         = "verified_head"
+	EvidenceAcceptance           = "acceptance"
+	EvidenceBaseRefresh          = "base_refresh"
+	EvidenceRevalidation         = "revalidation"
+	EvidenceMergeCheck           = "merge_check"
+	EvidenceCommitVerification   = "commit_verification"
+	EvidencePremerge             = "premerge_record"
+	EvidenceRevalidationPremerge = "revalidation_premerge"
 )
 
 // The sources of an activity entry.
@@ -260,13 +261,18 @@ var evidenceSources = []entrySource{
 	{"dag_acceptance_revalidations", EvidenceRevalidation, "SELECT COALESCE(e.relationship_id, a.relationship_id), e.execution_generation, r.event_id, r.revalidation_id, r.criteria_set_digest, r.revalidated_at FROM dag_acceptance_revalidations r JOIN dag_acceptances a ON a.acceptance_id = r.acceptance_id LEFT JOIN events e ON e.event_id = r.event_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
 	{table: "dag_merge_checks", source: EvidenceMergeCheck, by: byNode, read: mergeCheckEntries},
 	{"dag_acceptance_verifications", EvidenceCommitVerification, "SELECT a.relationship_id, a.execution_generation, a.event_id, v.record_digest, v.head_commit, v.recorded_at FROM dag_acceptance_verifications v JOIN dag_acceptances a ON a.acceptance_id = v.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
-	{"dag_acceptance_premerge", EvidencePremerge, "SELECT a.relationship_id, a.execution_generation, a.event_id, p.record_digest, p.evaluated_head, p.recorded_at FROM dag_acceptance_premerge p JOIN dag_acceptances a ON a.acceptance_id = p.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
+	// A pre-merge record is stored for the head the stand was on (accepted_head): the entry takes the identity of that head, as a merge check does. The re-validation's record is the one integration
+	// reads once the criteria were re-registered, and is stored after the re-validation row itself.
+	{table: "dag_acceptance_premerge", source: EvidencePremerge, by: byNode, read: premergeEntriesOf("dag_acceptance_premerge")},
+	{table: "dag_revalidation_premerge", source: EvidenceRevalidationPremerge, by: byNode, read: premergeEntriesOf("dag_revalidation_premerge")},
 }
 
 var activitySources = []entrySource{
 	{"events", ActivityChildEvent, "SELECT relationship_id, execution_generation, event_id, turn_id, outcome, last_seen_at FROM events WHERE producer = 'child' AND relationship_id IN (%s)", byRelationships, nil},
 	{"generation_turns", ActivityTurnAdmitted, "SELECT relationship_id, execution_generation, NULL, turn_id, evidence, admitted_at FROM generation_turns WHERE relationship_id IN (%s)", byRelationships, nil},
-	{"poll_observations", ActivityPoll, "SELECT relationship_id, execution_generation, NULL, turn_id, last_status, last_polled_at FROM poll_observations WHERE last_polled_at IS NOT NULL AND relationship_id IN (%s)", byRelationships, nil},
+	// A poll row keeps the status of the newest attempt and the time of the newest successful one: when that attempt failed (the turn absent, a transport error) the status is not the one observed at
+	// the printed time, so the entry keeps the time (the child answered then) and states no status.
+	{"poll_observations", ActivityPoll, "SELECT relationship_id, execution_generation, NULL, turn_id, CASE WHEN last_error IS NULL THEN last_status END, last_polled_at FROM poll_observations WHERE last_polled_at IS NOT NULL AND relationship_id IN (%s)", byRelationships, nil},
 	// An observation is keyed by the turn, and one turn may be admitted under several generations: it names the generation of its stored event, else the one generation that admitted the turn, else none.
 	{"observations", ActivityTurnObservation, "SELECT o.relationship_id, COALESCE((SELECT e.execution_generation FROM events e WHERE e.event_id = o.event_id AND e.relationship_id = o.relationship_id), (SELECT CASE WHEN COUNT(DISTINCT g.execution_generation) = 1 THEN MIN(g.execution_generation) END FROM generation_turns g WHERE g.relationship_id = o.relationship_id AND g.turn_id = o.turn_id)), o.event_id, o.turn_id, o.terminal_status, o.observed_at FROM observations o WHERE o.relationship_id IN (%s)", byRelationships, nil},
 	{"recipient_lifecycle", ActivityLifecycle, "SELECT r.relationship_id, NULL, NULL, l.task_id, l.runtime_status, l.observed_at FROM recipient_lifecycle l JOIN relationships r ON r.child_task_id = l.task_id WHERE r.relationship_id IN (%s)", byRelationships, nil},
@@ -440,6 +446,74 @@ func mergeCheckEntries(ctx context.Context, tables *tableSet, plan, node string)
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// headIdentity is the generation and event a head is tied to for an acceptance: the acceptance's own when the head is the one it was accepted at, the refresh's when it is the head of a valid base
+// refresh of the acceptance. A head that neither names, or that more than one execution names, is tied to none: the store cannot say which execution it belongs to.
+func headIdentity(head, ownHead string, own refreshRow, refreshes []refreshRow) (generation int64, event string, ok bool) {
+	type identity struct {
+		generation int64
+		event      string
+	}
+	var found []identity
+	add := func(i identity) {
+		for _, f := range found {
+			if f == i {
+				return
+			}
+		}
+		found = append(found, i)
+	}
+	if head == ownHead {
+		add(identity{own.generation, own.eventID})
+	}
+	for _, r := range refreshes {
+		if r.acceptanceID == own.acceptanceID && r.head == head {
+			add(identity{r.generation, r.eventID})
+		}
+	}
+	if len(found) != 1 {
+		return 0, "", false
+	}
+	return found[0].generation, found[0].event, true
+}
+
+// premergeEntriesOf are the node's pre-merge records of one table as evidence. A record names the identity of the head it was stored for (accepted_head), resolved against the acceptance and its
+// valid base refreshes; a record of a head they do not name uniquely has no generation and no event.
+func premergeEntriesOf(table string) func(ctx context.Context, tables *tableSet, plan, node string) ([]ActivityEntry, error) {
+	return func(ctx context.Context, tables *tableSet, plan, node string) ([]ActivityEntry, error) {
+		if ok, err := tables.has(ctx, "dag_acceptances"); err != nil || !ok {
+			return nil, err
+		}
+		refreshes, err := validRefreshes(ctx, tables, plan, node)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := tables.q.QueryContext(ctx, "SELECT a.acceptance_id, a.relationship_id, a.execution_generation, a.event_id, a.head_sha, p.accepted_head, p.record_digest, p.evaluated_head, p.recorded_at FROM "+table+" p"+
+			" JOIN dag_acceptances a ON a.acceptance_id = p.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", plan, node)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []ActivityEntry
+		for rows.Next() {
+			var acceptanceID, relationship, event, ownHead, acceptedHead, digest, evaluated string
+			var generation int64
+			var at sql.NullString
+			if err := rows.Scan(&acceptanceID, &relationship, &generation, &event, &ownHead, &acceptedHead, &digest, &evaluated, &at); err != nil {
+				return nil, err
+			}
+			if at.String == "" {
+				continue
+			}
+			e := ActivityEntry{RelationshipID: relationship, Ref: digest, Change: evaluated, RecordedAt: at.String}
+			if g, ev, ok := headIdentity(acceptedHead, ownHead, refreshRow{acceptanceID: acceptanceID, generation: generation, eventID: event}, refreshes); ok {
+				e.Generation, e.HasGeneration, e.EventID = g, true, ev
+			}
+			out = append(out, e)
+		}
+		return out, rows.Err()
+	}
 }
 
 // recordedTime reads a recorded time; ok is false for text that is not a timestamp (such text still orders, by its bytes, below every timestamp).

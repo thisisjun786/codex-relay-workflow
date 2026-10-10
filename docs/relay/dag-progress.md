@@ -260,15 +260,18 @@ acceptance, a record digest, the child's thread), `change` (what the row says: a
 | `evidence` | `merge_check` | `dag_merge_checks` | `recorded_at` |
 | `evidence` | `commit_verification` | `dag_acceptance_verifications` | `recorded_at` |
 | `evidence` | `premerge_record` | `dag_acceptance_premerge` | `recorded_at` |
+| `evidence` | `revalidation_premerge` | `dag_revalidation_premerge` (the record a re-validation was judged on, the one integration reads once the criteria were re-registered) | `recorded_at` |
 | `activity` | `child_event` | `events` produced by the child | `last_seen_at` |
 | `activity` | `turn_admitted` | `generation_turns` | `admitted_at` |
-| `activity` | `poll` | `poll_observations` | `last_polled_at` |
+| `activity` | `poll` | `poll_observations` (only a poll that read the turn) | `last_polled_at` |
 | `activity` | `turn_observation` | `observations` | `observed_at` |
 | `activity` | `child_lifecycle` | `recipient_lifecycle` of the child's thread | `observed_at` |
 
 A `base_refresh` entry carries the refresh's own relationship, generation, event and `ref` (the refresh id), and `change` is the head the acceptance then stood on. A `revalidation` entry carries the relationship and generation of the event it was ruled on (after a base refresh, the refreshed generation), not those of the acceptance. A `merge_check` entry carries the identity of
 the head the check judged (`dag_merge_checks.head_sha`): the acceptance's generation and event when that is the accepted head, the refresh's when it is the head of a valid base refresh, and no generation
 and no event for a head neither names.
+
+A `poll` entry is the time of the newest poll that read the turn (`last_polled_at`). The row keeps the status of the newest attempt, so when that attempt failed (the host reported the turn absent, a transport error) the status is not the one observed at that time: the entry keeps the time and its `change` is null. A `premerge_record` or `revalidation_premerge` entry carries the identity of the head the record was stored for (`accepted_head`, with `change` the head it evaluated): the acceptance's generation and event when that is the accepted head, the refresh's when it is the head of a valid base refresh of the acceptance, and no generation and no event for a head neither names, or that more than one execution names.
 
 A store that lacks one of these tables (a store that predates it) is answered without it.
 
