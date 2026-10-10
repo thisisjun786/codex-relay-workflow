@@ -7,7 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
+
+// logRootSelection is the store directory <home>/state, as the linux-only helpers name it.
+func logRootSelection(home string) store.StateSelection {
+	return store.StateSelection{Path: filepath.Join(home, "state")}
+}
 
 // CRW-958 round 2: a log_root the configuration file names moves the relay service's daemon log, the
 // file the launched daemon writes, the journal notes and the tail a failed start reports: the log is
@@ -23,7 +30,7 @@ func TestServiceLogFollowsTheConfiguredLogRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CRW_CONFIG", config)
-	selection := storeSelection(home)
+	selection := logRootSelection(home)
 	s, err := New(context.Background(), selection, home+"/socket")
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +64,7 @@ func TestServiceLogFollowsTheConfiguredLogRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := filepath.Join(home, "other")
-	s, err = New(context.Background(), storeSelection(other), other+"/socket")
+	s, err = New(context.Background(), logRootSelection(other), other+"/socket")
 	if err != nil {
 		t.Fatal(err)
 	}
