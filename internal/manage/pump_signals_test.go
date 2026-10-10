@@ -839,3 +839,26 @@ func TestPumpSignalAuditTextCapsDefects(t *testing.T) {
 		t.Fatalf("text = %q", text)
 	}
 }
+
+// Two alerting plans and two audit lines in one run are four events with four distinct ids, and the
+// capacity commit runs once after all of them are saved.
+func TestPumpSignalTwoPlansAndTwoAuditLinesInOneRun(t *testing.T) {
+	f := pumpSignalTestFixture(t, pumpSignalCapacitySource{}, pumpSignalAuditSource{})
+	capFake := pumpSignalTestCapacity(t)
+	capFake.report = CapacityReport{Plans: []CapacityPlan{
+		pumpSignalPlan("p1", 1, []string{"CRW-1"}, "CRW-1"),
+		pumpSignalPlan("p2", 1, []string{"CRW-2"}, "CRW-2"),
+	}}
+	pumpSignalTestWriteAlerts(t, f, pumpSignalTestAlertA+"\n"+pumpSignalTestAlertA+"\n")
+	var durable int
+	capFake.onCommit = func() { durable = len(pumpTestReadState(t, f.cfg).Pending) }
+	st := f.round()
+	ids := map[string]bool{}
+	for _, ev := range st.Pending {
+		ids[ev.ID] = true
+	}
+	if len(st.Pending) != 4 || len(ids) != 4 || durable != 4 || capFake.commits != 1 {
+		t.Fatalf("pending %v, durable at commit %d, commits %d; want four distinct events saved before one commit",
+			pumpSignalIDs(st.Pending), durable, capFake.commits)
+	}
+}
