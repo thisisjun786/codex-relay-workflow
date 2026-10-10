@@ -181,9 +181,15 @@ func lowerSources(r rune) []rune {
 				}
 			}
 		}
-		caseSources['i'] = append(caseSources['i'], 0x130) // İ lowers to i and a combining dot above
-		caseSources[0x307] = append(caseSources[0x307], 0x130)
-		caseSources[0x3c2] = append(caseSources[0x3c2], 0x3a3) // a capital sigma ending a word lowers to the final form
+		// Each source is listed once: a rune that the case table already maps (İ to i) is not added again.
+		add := func(lower, source rune) {
+			if !slices.Contains(caseSources[lower], source) {
+				caseSources[lower] = append(caseSources[lower], source)
+			}
+		}
+		add('i', 0x130) // İ lowers to i and a combining dot above
+		add(0x307, 0x130)
+		add(0x3c2, 0x3a3) // a capital sigma ending a word lowers to the final form
 	})
 	return caseSources[r]
 }
@@ -193,16 +199,29 @@ func lowerSources(r rune) []rune {
 // lists the upper-case ASCII spellings, for a case-sensitive lookup. ok is false when there would be more than limit of them.
 func wordSpellings(word string, withASCIICase bool, limit int) (out []string, ok bool) {
 	runes := []rune(word)
-	options := make([][]rune, len(runes))
+	var options [][]string
 	total := 1
-	for i, r := range runes {
-		options[i] = []rune{r}
-		for _, source := range lowerSources(r) {
+	for i := 0; i < len(runes); i++ {
+		choices := []string{string(runes[i])}
+		for _, source := range lowerSources(runes[i]) {
 			if source >= 0x80 || withASCIICase {
-				options[i] = append(options[i], source)
+				choices = append(choices, string(source))
 			}
 		}
-		if total *= len(options[i]); total > limit {
+		if runes[i] == 'i' && i+1 < len(runes) && runes[i+1] == 0x307 {
+			// An i with a combining dot above is what İ lowers to as a whole: besides the spellings of its two letters, the pair is also
+			// looked up as that one letter, wherever it stands in the word.
+			var pair []string
+			for _, first := range choices {
+				for _, second := range append([]string{"\u0307"}, mapRunes(lowerSources(0x307))...) {
+					pair = append(pair, first+second)
+				}
+			}
+			choices = append(pair, "\u0130")
+			i++
+		}
+		options = append(options, choices)
+		if total *= len(choices); total > limit {
 			return nil, false
 		}
 	}
@@ -211,13 +230,10 @@ func wordSpellings(word string, withASCIICase bool, limit int) (out []string, ok
 		next := make([]string, 0, len(spellings)*len(choices))
 		for _, prefix := range spellings {
 			for _, c := range choices {
-				next = append(next, prefix+string(c))
+				next = append(next, prefix+c)
 			}
 		}
 		spellings = next
-	}
-	if len(runes) == 2 && Lower("\u0130") == word {
-		spellings = append(spellings, "\u0130")
 	}
 	for _, spelling := range spellings {
 		if asciiLower(spelling) == word || slices.Contains(out, spelling) {
@@ -228,6 +244,14 @@ func wordSpellings(word string, withASCIICase bool, limit int) (out []string, ok
 		}
 	}
 	return out, true
+}
+
+func mapRunes(runes []rune) []string {
+	out := make([]string, len(runes))
+	for i, r := range runes {
+		out[i] = string(r)
+	}
+	return out
 }
 
 // shortWordSpellings are the case-sensitive spellings to look up beside the ASCII LIKE for a word of one or two letters.

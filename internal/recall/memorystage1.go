@@ -130,7 +130,9 @@ func memoryStage1Where(plan MatchPlan) (string, []any) {
 	}
 	params, conditions := []any{}, []string{}
 	for _, group := range groups {
-		members, folded := []string{}, true
+		// The group's bindings are kept apart until the group is known to be filtered in SQL: a group left to the final predicate adds
+		// no binding, so every placeholder of the statement has a value and every value a placeholder.
+		members, bound, folded := []string{}, []any{}, true
 		for _, word := range group {
 			// SQLite folds ASCII only: the word is also looked up in each spelling of its letters that SQL cannot fold (Ü for ü), so
 			// the prefilter never cuts off a row the final predicate accepts; a word with too many spellings leaves the group to the
@@ -138,17 +140,18 @@ func memoryStage1Where(plan MatchPlan) (string, []any) {
 			spellings, ok := wordSpellings(word.Text, false, 16)
 			if !ok {
 				folded = false
-				continue
+				break
 			}
 			for _, spelling := range append([]string{word.Text}, spellings...) {
-				params = append(params, "%"+spelling+"%")
-				n := strconv.Itoa(len(params))
+				bound = append(bound, "%"+spelling+"%")
+				n := strconv.Itoa(len(params) + len(bound))
 				members = append(members, "(lower(raw_memory) LIKE ?"+n+" OR lower(rollout_summary) LIKE ?"+n+")")
 			}
 		}
 		condition := "1"
 		if len(members) != 0 && folded {
 			condition = "(" + strings.Join(members, " OR ") + ")"
+			params = append(params, bound...)
 		}
 		conditions = append(conditions, condition)
 	}

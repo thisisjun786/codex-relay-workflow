@@ -292,6 +292,88 @@ func TestSweep1128Stage1PrefilterFoldsUnicode(t *testing.T) {
 	}
 }
 
+// :814 -- a query whose default synonym group has more spellings than the prefilter lists is left to the final predicate, and the
+// search reads the store all the same.
+func TestSweep1128Stage1ManySpellingsGroupIsLeftToTheFinalPredicate(t *testing.T) {
+	now := time.Now().Unix()
+	home := sweepStage1Home(t, []any{"t1", now, "verify skill session initial", "s"}, []any{"t2", now, "plain row", "s"})
+	for _, query := range []string{"verify", "verification", "initial verification"} {
+		r, err := SearchMemory(query, MemorySearchOptions{Home: &home})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range r.Warnings {
+			if strings.Contains(w, "unreadable") {
+				t.Errorf("%q: the store was reported unreadable: %q", query, w)
+			}
+		}
+		if len(r.Hits) != 1 || r.Hits[0].Relpath != "stage1_outputs/t1" {
+			t.Errorf("%q: %+v", query, r.Hits)
+		}
+	}
+	// The spellings of a letter are listed once each.
+	if got := lowerSources('i'); !slices.Equal(got, []rune{'I', 0x130}) {
+		t.Errorf("sources of i: %q", got)
+	}
+}
+
+// :814 -- a letter whose lower case is longer than itself (İ lowers to i and a combining dot) is found wherever it stands in the query.
+func TestSweep1128Stage1PrefilterFoldsExpandedLowerCase(t *testing.T) {
+	now := time.Now().Unix()
+	home := sweepStage1Home(t, []any{"t1", now, "İstanbul trip", "s"}, []any{"t2", now, "a day in İstanbul now", "s"}, []any{"t3", now, "xİy marks", "s"}, []any{"t4", now, "plain row", "s"})
+	for query, want := range map[string][]string{
+		"İstanbul":       {"stage1_outputs/t1", "stage1_outputs/t2"},
+		"istanbul":       nil, // an ASCII i is not an İ
+		"xİy":            {"stage1_outputs/t3"},
+		"x":              {"stage1_outputs/t3"},
+		"i\u0307stanbul": {"stage1_outputs/t1", "stage1_outputs/t2"},
+	} {
+		r, err := SearchMemory(query, MemorySearchOptions{Home: &home, Synonyms: memoryPtr(false)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, h := range r.Hits {
+			if h.Origin == "stage1" {
+				got = append(got, h.Relpath)
+			}
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("%q: %v, want %v (warnings %q)", query, got, want, r.Warnings)
+		}
+	}
+}
+
+// :762 -- a quoted path is read to its closing quote: a quoted path that goes on past the working directory is another directory.
+func TestSweep1128QuotedPathWithSpacesIsOneWholePath(t *testing.T) {
+	home := sweepMemoryHome(t, map[string]string{
+		"adjacent.md": "zebra in \"/proj/here adjacent\"\n",
+		"sub.md":      "zebra in \"/proj/here/sub dir/file\" today\n",
+		"exact.md":    "zebra in '/proj/here' today\n",
+		"open.md":     "zebra in \"/proj/here and then some\n",
+	})
+	r, err := SearchMemory("zebra", MemorySearchOptions{Home: &home, Cwd: memoryPtr("/proj/here"), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range r.Hits {
+		got = append(got, h.Relpath)
+	}
+	slices.Sort(got)
+	if want := []string{"exact.md", "open.md", "sub.md"}; !slices.Equal(got, want) {
+		t.Fatalf("memories inside /proj/here: %v, want %v", got, want)
+	}
+	// The same rule serves the stage1 rows.
+	now := time.Now().Unix()
+	stage := sweepStage1Home(t, []any{"t1", now, "zebra in \"/proj/here adjacent\"", "s"}, []any{"t2", now, "zebra in \"/proj/here\"", "s"})
+	r, err = SearchMemory("zebra", MemorySearchOptions{Home: &stage, Synonyms: memoryPtr(false), Cwd: memoryPtr("/proj/here"), CwdOnly: true, ReadOriginUrl: func(string) string { return "" }})
+	if err != nil || len(r.Hits) != 1 || r.Hits[0].Relpath != "stage1_outputs/t2" {
+		t.Fatalf("%+v %v", r.Hits, err)
+	}
+}
+
 // :816 -- an empty thread id is no thread id.
 func TestSweep1128EmptyThreadIDIsAbsent(t *testing.T) {
 	now := time.Now().Unix()

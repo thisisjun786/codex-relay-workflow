@@ -108,7 +108,16 @@ func mentionsPath(lowerText, prefix string) bool {
 		}
 		start, end := from+i, from+i+len(prefix)
 		from = start + 1
-		if before, _ := utf8.DecodeLastRuneInString(lowerText[:start]); start > 0 && isPathRune(before) {
+		before, _ := utf8.DecodeLastRuneInString(lowerText[:start])
+		if start > 0 && isPathRune(before) {
+			continue
+		}
+		if quoted, closed := quotedPath(lowerText, start, before); closed {
+			// A quoted path is the text to its closing quote, spaces included: it is this directory, or inside it.
+			if quoted == prefix || strings.HasPrefix(quoted, prefix) && (strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") ||
+				quoted[len(prefix)] == '/' || quoted[len(prefix)] == '\\') {
+				return true
+			}
 			continue
 		}
 		if end == len(lowerText) {
@@ -128,6 +137,20 @@ func mentionsPath(lowerText, prefix string) bool {
 		}
 	}
 	return false
+}
+
+// quotedPath is the text from start to the quote that closes the one just before it, on the same line; closed is false when the path is
+// not quoted or the quote is never closed.
+func quotedPath(lowerText string, start int, before rune) (quoted string, closed bool) {
+	if start == 0 || before != '"' && before != '\'' && before != '`' {
+		return "", false
+	}
+	rest := lowerText[start:]
+	end := strings.IndexRune(rest, before)
+	if end < 0 || strings.ContainsAny(rest[:end], "\r\n") {
+		return "", false
+	}
+	return rest[:end], true
 }
 
 type memorySearchState struct {
