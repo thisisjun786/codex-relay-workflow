@@ -42,25 +42,35 @@ func scalar(value string) (string, error) {
 	return value, nil
 }
 
+// frontmatterFields is the name and description fields of a SKILL.md frontmatter.
+func frontmatterFields(text string) (map[string]string, error) {
+	parts := strings.SplitN(text, "---", 3)
+	if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" {
+		return nil, errors.New("missing frontmatter")
+	}
+	fields := map[string]string{}
+	for _, line := range lines(strings.TrimSpace(parts[1])) {
+		key, value, found := strings.Cut(line, ":")
+		if _, seen := fields[key]; !found || (key != "name" && key != "description") || seen {
+			return nil, errors.New("expected one name and one description field")
+		}
+		var err error
+		if fields[key], err = scalar(value); err != nil {
+			return nil, err
+		}
+	}
+	return fields, nil
+}
+
 // SkillMetadata checks a skill's SKILL.md frontmatter and its agents/openai.yaml.
 func SkillMetadata(path string) error {
 	text, err := readText(path)
 	if err != nil {
 		return err
 	}
-	parts := strings.SplitN(text, "---", 3)
-	if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" {
-		return errors.New("missing frontmatter")
-	}
-	fields := map[string]string{}
-	for _, line := range lines(strings.TrimSpace(parts[1])) {
-		key, value, found := strings.Cut(line, ":")
-		if _, seen := fields[key]; !found || (key != "name" && key != "description") || seen {
-			return errors.New("expected one name and one description field")
-		}
-		if fields[key], err = scalar(value); err != nil {
-			return err
-		}
+	fields, err := frontmatterFields(text)
+	if err != nil {
+		return err
 	}
 	dir := filepath.Dir(path)
 	name, hasName := fields["name"]
@@ -366,9 +376,10 @@ func goModTidyCheck(root string) (errs []string, note string) {
 	return []string{"go mod tidy -diff: " + strings.TrimSpace(stderr.String())}, ""
 }
 
-// Validate is `crw-dev ci validate`: skill metadata, local link paths, no Python outside skill assets,
-// the generated case sections of the dispatch-verification reference matching their data files, no
-// blob over 2 MiB brought into the history, and go.mod and go.sum as go mod tidy writes them.
+// Validate is `crw-dev ci validate`: skill metadata, local link paths and, for the documents under
+// plugins/crw/skills and docs, link anchors, the base rule of the skill inventory map, no Python outside
+// skill assets, the generated case sections of the dispatch-verification reference matching their data
+// files, no blob over 2 MiB brought into the history, and go.mod and go.sum as go mod tidy writes them.
 func Validate(args []string, stdout, stderr io.Writer) int {
 	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, that Python sits only in skill assets, "+
 		"that no blob over 2 MiB comes into the history (BLOB_RANGE_BASE and GITHUB_EVENT_NAME give the range; see docs/CI.md), "+
@@ -398,7 +409,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 		// The dispatch-cases data files and the refactor backlog fragments are generator inputs, not
 		// documents: their relative links are written for the generated document's directory, and that
 		// document is link-checked itself.
-		if filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) && !refactorBacklogFragment(name) {
+		if anchorChecked(name) {
 			found, err := linkErrors(root, name, anchorCache)
 			if err != nil {
 				errs = append(errs, name+": "+err.Error())
@@ -416,6 +427,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	}
 	_, fidelity := skillport.Check(root, nil)
 	errs = append(errs, fidelity...)
+	errs = append(errs, InventoryBaseErrors(root)...)
 	if err := dispatchCasesVerify(root); err != nil {
 		errs = append(errs, err.Error())
 	}

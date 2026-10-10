@@ -142,3 +142,20 @@ func TestAnchorsCheckedInGeneratedDispatchDoc(t *testing.T) {
 	}
 	expectEqual(t, "checked-in document", found, []string(nil))
 }
+
+// crw-dev ci validate runs the anchor check on the documents in scope, and leaves the others alone.
+func TestValidateRefusesABrokenAnchor(t *testing.T) {
+	r := validateRepo(t)
+	r.write("docs/target.md", "# Target\n\n## Same\n\n## Same\n")
+	r.write("docs/source.md", "[a](target.md#target) [b](target.md#same-1) [c](#own)\n\n## Own\n")
+	r.write("README.md", "[outside the scope](docs/target.md#nowhere)\n")
+	if got := validate(t, r); got.code != 0 || !strings.HasPrefix(got.stdout, validated) || got.stderr != "" {
+		t.Fatalf("valid anchors: %+v", got)
+	}
+	r.write("docs/source.md", "[a](target.md#target) [b](target.md#same-2) [c](#own)\n\n## Own\n")
+	r.write("plugins/crw/skills/example/references/x.md", "[d](../../../../../docs/target.md#gone)\n")
+	got := validate(t, r)
+	want := "docs/source.md:1: invalid anchor target.md#same-2\n" +
+		"plugins/crw/skills/example/references/x.md:1: invalid anchor ../../../../../docs/target.md#gone\n"
+	expectEqual(t, "broken anchors", got, result{1, "", want})
+}
