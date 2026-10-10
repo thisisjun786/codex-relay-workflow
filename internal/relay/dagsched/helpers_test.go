@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
@@ -51,7 +52,11 @@ func newFixtureAt(t *testing.T, path string) *fixture { return newFixtureOn(t, p
 // newFixtureOn is a fixture over a store created for an App Server socket (a store a real adapter serves must record the socket it serves).
 func newFixtureOn(t *testing.T, path, socket string) *fixture {
 	t.Helper()
-	testsupport.Create(t, path, socket, "go")
+	if socket == "" {
+		copyStoreTemplate(t, path)
+	} else {
+		testsupport.Create(t, path, socket, "go")
+	}
 	s, err := store.Open(context.Background(), path, socket)
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +66,81 @@ func newFixtureOn(t *testing.T, path, socket string) *fixture {
 	f.repo = &dag.Repo{Store: s, Now: f.clock}
 	f.sched = &Scheduler{Store: s, Now: f.clock}
 	return f
+}
+
+// The store template: a go-owned fenced store with no socket, already opened once by this version, so its additive DAG zone and its
+// history indexes are installed and its schema_meta is seeded. Building one costs a few hundred statement parses (the frozen schema's
+// fence, the zone's DDL), which dominated the package's run time when every test paid it; a fixture without a socket is instead a byte
+// copy of the template, re-homed to its own directory (testsupport.Rehome: the copy's physical identity and control socket), and the
+// store.Open that follows finds nothing to install. A copy is a store the test owns alone: the template itself is never opened again.
+var (
+	templateRoot string // the isolation root of the test process (TestMain), which removes it with everything under it
+	templateOnce sync.Once
+	templateErr  error
+)
+
+// storeTemplate is the directory holding the template, built by the first fixture that asks (under that fixture's t; a failure fails
+// that test and every later one reads templateErr).
+func storeTemplate(t *testing.T) (string, error) {
+	t.Helper()
+	dir := filepath.Join(templateRoot, "store-template")
+	templateOnce.Do(func() {
+		path := filepath.Join(dir, "relay.sqlite3")
+		testsupport.Create(t, path, "", "go")
+		s, err := store.Open(context.Background(), path, "")
+		if err != nil {
+			templateErr = err
+			return
+		}
+		templateErr = s.Close()
+	})
+	return dir, templateErr
+}
+
+// copyStoreTemplate puts a copy of the store template at path (nothing may exist there) and re-homes its mirror the way
+// testsupport.Rehome does (the copy's physical identity and control socket; owner, epoch, phase and store id stay the template's), but
+// without Rehome's three read-only connections: every connection parses the whole schema, and the store.Open that follows validates
+// the mirror against the durable stamp all the same.
+func copyStoreTemplate(t *testing.T, path string) {
+	t.Helper()
+	dir, err := storeTemplate(t)
+	if err != nil {
+		t.Fatalf("store template: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"relay.sqlite3", "write-gate.lock", "takeover.lock"} {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(filepath.Dir(path), name)
+		if name == "relay.sqlite3" {
+			target = path
+		}
+		if err := os.WriteFile(target, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "takeover.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record ownership.Record
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Database, err = ownership.Physical(path); err != nil {
+		t.Fatal(err)
+	}
+	record.RelayRPCSocket = filepath.Join(filepath.Dir(record.Database.RealPath), "control.sock")
+	if err := ownership.Publish(record.Database.RealPath, record, nil); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (f *fixture) clock() string {

@@ -13,6 +13,7 @@ import (
 // other values is still reusable here, while a record without the member is refused. The tool versions are judged against
 // the pins the verified commit declares (CRW-1026); the kit's tree declares none.
 func TestVerificationRecordIsJudgedByItsKeysNotByEnvironmentValues(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	ctx := context.Background()
 	keys, err := CommitVerificationKeys(ctx, k.repo.path, k.head)

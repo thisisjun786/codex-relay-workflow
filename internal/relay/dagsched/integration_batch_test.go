@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -106,14 +107,25 @@ func writeStubVerifier(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CRW_TEST_RECORD_HELPER", "1")
-	t.Setenv("CRW_TEST_HELPER_BIN", bin)
+	// The helper's two variables live in the script, not in this process's environment (t.Setenv is process-wide and forbids
+	// t.Parallel): the verifier the batch runs sees exactly the variables it saw when they were set here.
 	script := filepath.Join(t.TempDir(), "verify.sh")
-	body := "#!/bin/sh\nif [ -e bad.txt ]; then\n  echo 'bad.txt is present: the merged tree fails' >&2\n  exit 1\nfi\nexec \"$CRW_TEST_HELPER_BIN\" -test.run='^TestVerifyRecordHelper$' -test.count=1\n"
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+	body := "#!/bin/sh\nCRW_TEST_RECORD_HELPER=1\nCRW_TEST_HELPER_BIN='" + strings.ReplaceAll(bin, "'", `'\''`) + "'\nexport CRW_TEST_RECORD_HELPER CRW_TEST_HELPER_BIN\nif [ -e bad.txt ]; then\n  echo 'bad.txt is present: the merged tree fails' >&2\n  exit 1\nfi\nexec \"$CRW_TEST_HELPER_BIN\" -test.run='^TestVerifyRecordHelper$' -test.count=1\n"
+	writeExecutable(t, script, body)
+	return script
+}
+
+// writeExecutable writes an executable file that a test then runs. The write holds syscall.ForkLock for reading, so no other test's fork
+// can hold the write descriptor open when this one execs the file: Linux refuses such an exec with ETXTBSY, which is what keeps the stand-ins
+// of tests that run beside others from flaking.
+func writeExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, []byte(body), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		t.Fatal(err)
 	}
-	return script
 }
 
 // stubVerifier runs the verify script in the directory the batch names, with the batch's environment added.
@@ -174,6 +186,7 @@ func countStage(rows []store.IntegrationStageRow, stage string) int {
 // the ordinary test run skips it. It seals the record of the worktree's merged commit, naming the base's tree instead when
 // CRW_TEST_WRONG_TREE is set, the case where the verifier was given a tree other than the merged one.
 func TestVerifyRecordHelper(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("CRW_TEST_RECORD_HELPER") != "1" {
 		t.Skip("the verification stub's record writer")
 	}
@@ -215,6 +228,7 @@ func TestVerifyRecordHelper(t *testing.T) {
 // c2 (the evaluation's d11): the merged tree is verified where it is merged. Two clean candidates integrate, both are
 // marked, and the branch is created by the batch (create-only, from nothing).
 func TestIntegrationBatchIntegratesAndMarksEveryCandidate(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	k.acceptByCommit("a")
 	k.acceptByCommit("b")
@@ -241,6 +255,7 @@ func TestIntegrationBatchIntegratesAndMarksEveryCandidate(t *testing.T) {
 // c2: one failing candidate among several is isolated and the others integrate. The stub fails the merged tree that
 // holds bad.txt, so the batch bisects to bad and leaves only it out.
 func TestIntegrationBatchIsolatesTheFailingCandidate(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "bad", files: map[string]string{"bad.txt": "bad\n"}},
 		batchNode{name: "c", files: map[string]string{"c.txt": "c\n"}})
@@ -265,6 +280,7 @@ func TestIntegrationBatchIsolatesTheFailingCandidate(t *testing.T) {
 
 // c2: a candidate that conflicted only with the candidate that was removed integrates on the retry.
 func TestIntegrationBatchRetriesACandidateThatOnlyConflictedWithTheRemovedOne(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n", "bad.txt": "bad\n", "shared.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n", "shared.txt": "b\n"}})
 	k.acceptByCommit("a")
@@ -284,6 +300,7 @@ func TestIntegrationBatchRetriesACandidateThatOnlyConflictedWithTheRemovedOne(t 
 // c3: the expected-head guard. The branch moved between the batch's read and its update, so the update is refused, the
 // branch keeps the value the other writer gave it, and no ref_moved stage is written.
 func TestIntegrationBatchRefusesAHeadThatMovedUnderIt(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	other := k.repo.git("rev-parse", "dev")
@@ -330,6 +347,7 @@ func TestIntegrationBatchRefusesARecordOfAnotherTree(t *testing.T) {
 
 // D-B: the integration is parent-only. A candidate of another relationship's parent is refused and nothing is written.
 func TestIntegrationBatchRefusesANonParentActor(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	in := k.batchIn()
@@ -348,6 +366,7 @@ func TestIntegrationBatchRefusesANonParentActor(t *testing.T) {
 // D-D: a candidate whose spec changed after its acceptance is stale, so the batch leaves it out of the candidates and
 // merges the rest. The stale node is not a refusal of the batch: it is not ready.
 func TestIntegrationBatchLeavesOutAStaleCandidate(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	k.acceptByCommit("a")
 	k.acceptByCommit("b")
@@ -364,6 +383,7 @@ func TestIntegrationBatchLeavesOutAStaleCandidate(t *testing.T) {
 // D-B: the batch goes through the coordinator-epoch fence dag-accept uses. A session that holds another epoch is refused
 // before anything is read or written.
 func TestIntegrationBatchRefusesAStaleEpoch(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	k.sched.ExpectedEpoch = 7
@@ -380,6 +400,7 @@ func TestIntegrationBatchRefusesAStaleEpoch(t *testing.T) {
 // completes it from the frozen row without an error. The candidate is made stale between the verification and the
 // mark, so its mark is refused; restoring it lets the completion write the mark.
 func TestIntegrationBatchCompletesAPendingMarkFromItsFrozenRow(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	deps := IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef, AfterMove: func(context.Context) error {

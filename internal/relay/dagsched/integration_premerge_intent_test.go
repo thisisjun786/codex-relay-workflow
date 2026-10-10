@@ -33,6 +33,7 @@ func premergeIntentDetail(t *testing.T, k *batchKit, batch string) map[string]st
 }
 
 func TestPremergeIntentFreezesTheDigestAndAReRunDoesNotReuseIt(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()

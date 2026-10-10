@@ -34,6 +34,7 @@ func (k *commitAcceptKit) freshRecord(tree, job string) string {
 // CRW-965 (parent decision, D3): a fresh record for the same head and tree is the same output. The replay proceeds on the
 // head and tree the verification row stores; the file bytes are not compared.
 func TestCommitAcceptanceReplaysOnAFreshRecordOfTheSameTree(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
 	if _, err := k.acceptCommit(k.record(k.treeOf(k.head), "pass", nil)); err != nil {
