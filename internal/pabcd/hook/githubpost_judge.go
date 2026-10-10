@@ -494,14 +494,21 @@ func githubPostInlineNamesPost(src string) bool {
 	return false
 }
 
-var githubPostWordRe = regexp.MustCompile(`(?:^|[^a-z0-9_.-])gh(?:$|[^a-z0-9_-])`)
+// githubPostWordSplit splits a text into shell words, roughly: at blanks, operators, substitutions, redirections and assignments.
+var githubPostWordSplit = regexp.MustCompile("[\\s;&|()<>`$={},]+")
 
-// githubPostSpellsPost is whether a text spells a gh command, for the wording of a refusal only (never a decision): the word gh
-// as the shell reads words, quotes and backslashes deleted first, so g""h is gh, but gh inside a path or a name (high_priority,
-// tests/ghost) is not. The decision a text gets is made by the rules above; this says only whether the refusal is about a post.
+// githubPostSpellsPost is whether a text spells a gh command, for the wording of a refusal only (never a decision): a shell word,
+// quotes and backslashes deleted first (so g""h is gh), that is gh or a path whose last component is gh (/usr/bin/gh, ./gh). The
+// letters gh inside a word (high_priority, tests/ghost) or a file named after it (missing/gh.sh, tests/gh.py, the module tests.gh)
+// are no gh command. The decision a text gets is made by the rules above; this says only whether the refusal is about a post.
 func githubPostSpellsPost(src string) bool {
 	lower := strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(src))
-	return githubPostWordRe.MatchString(lower)
+	for _, word := range githubPostWordSplit.Split(lower, -1) {
+		if word == "gh" || strings.HasSuffix(word, "/gh") {
+			return true
+		}
+	}
+	return false
 }
 
 // githubPostReadScript reads a script file of at most 1 MiB; a path that is not a regular file is refused.

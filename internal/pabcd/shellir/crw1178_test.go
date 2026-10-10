@@ -37,13 +37,15 @@ func crw1178Project(t *testing.T, pyc map[string][]byte) string {
 	return cwd
 }
 
-// CRW-1178 (S2R2-F1): the first python -m unittest creates __pycache__, and every later run was refused. The interpreter runs the
-// .py beside the cache, which the reader already reads, so a cache of a readable source is no reason to refuse.
-func TestCRW1178PycacheOfReadableSourceIsNotRefused(t *testing.T) {
+// CRW-1178 (S2R2-F1): the first python -m unittest creates __pycache__, and every later run was refused. A stale timestamp entry
+// (its recorded time and size disagree with the source, as here) is discarded: the interpreter runs the .py beside it, which the
+// reader already reads, so it is no reason to refuse. An entry that agrees with its source is refused (see
+// TestCRW1178CacheThatMatchesItsSourceIsRefused).
+func TestCRW1178StaleCacheOfReadableSourceIsNotRefused(t *testing.T) {
 	cache := map[string][]byte{
 		"__pycache__/calc.cpython-312.pyc":       append(pycHeader(0), "code"...),
 		"__pycache__/test_calc.cpython-312.pyc":  append(pycHeader(0), "code"...),
-		"__pycache__/calc.cpython-312.opt-1.pyc": append(pycHeader(3), "code"...),
+		"__pycache__/calc.cpython-312.opt-1.pyc": append(pycHeader(0), "code"...),
 	}
 	for _, cmd := range []string{
 		"python3 -m unittest",
@@ -144,5 +146,83 @@ func TestCRW1178WalkErrorNamesThePath(t *testing.T) {
 	var u *Unreadable
 	if !errors.As(err, &u) || !strings.Contains(u.Reason, "sub/blocked_tests") || strings.Contains(u.Reason, cwd) {
 		t.Errorf("reason: %v", err)
+	}
+}
+
+// matchingPycHeader is the timestamp header Python writes for source when it compiles it: the cache the interpreter loads instead
+// of the source while both still agree.
+func matchingPycHeader(t *testing.T, source string) []byte {
+	t.Helper()
+	fi, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := pycHeader(0)
+	binary.LittleEndian.PutUint32(h[8:], uint32(fi.ModTime().Unix()))
+	binary.LittleEndian.PutUint32(h[12:], uint32(fi.Size()))
+	return h
+}
+
+// A cache entry whose header still agrees with its source is what the interpreter runs, not the source: its code is not read, so
+// it is refused, with the file and a route that leaves no cache to load. Only a stale entry, which the interpreter discards and
+// recompiles from the source the reader read, is skipped. A hash-based entry is refused whatever its hash.
+func TestCRW1178CacheThatMatchesItsSourceIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		header func(t *testing.T, cwd string) []byte
+	}{
+		{"timestamp entry that matches", func(t *testing.T, cwd string) []byte { return matchingPycHeader(t, filepath.Join(cwd, "calc.py")) }},
+		{"checked hash entry", func(*testing.T, string) []byte { return pycHeader(3) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := crw1178Project(t, nil)
+			if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(cwd, "__pycache__", "calc.cpython-312.pyc"), append(c.header(t, cwd), "code"...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, cmd := range []string{"python3 -m unittest", "python3 -B -m unittest", "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest"} {
+				_, err := Analyze(cmd, cwd)
+				var u *Unreadable
+				if !errors.As(err, &u) {
+					t.Fatalf("%s: a cache the interpreter runs instead of the source was allowed: %v", cmd, err)
+				}
+				if !strings.Contains(u.Reason, "__pycache__/calc.cpython-312.pyc") || !strings.Contains(u.Reason, "-B") {
+					t.Errorf("%s: the reason lacks the file or the route: %q", cmd, u.Reason)
+				}
+			}
+		})
+	}
+	// A stale entry (the source changed after it was written) is discarded by the interpreter and is skipped.
+	cwd := crw1178Project(t, nil)
+	src := filepath.Join(cwd, "calc.py")
+	h := matchingPycHeader(t, src)
+	binary.LittleEndian.PutUint32(h[12:], binary.LittleEndian.Uint32(h[12:])+1)
+	if err := os.MkdirAll(filepath.Join(cwd, "__pycache__"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "__pycache__", "calc.cpython-312.pyc"), append(h, "code"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Analyze("python3 -m unittest", cwd); err != nil {
+		t.Errorf("a stale cache entry (size differs) was refused: %v", err)
+	}
+}
+
+// A command that changes a source's time or brings in a cache before the run could make a stale entry current after it was judged.
+func TestCRW1178SameCommandCannotRefreshACache(t *testing.T) {
+	cwd := crw1178Project(t, map[string][]byte{"__pycache__/calc.cpython-312.pyc": append(pycHeader(0), "code"...)})
+	for _, cmd := range []string{
+		"touch -d @0 calc.py && python3 -m unittest",
+		"touch -r ref calc.py; python3 -B -m unittest",
+		"cp -r /elsewhere/cache __pycache__ && python3 -m unittest",
+		"mv /elsewhere/__pycache__ pkg/ && python3 -m pytest",
+	} {
+		_, err := Analyze(cmd, cwd)
+		var u *Unreadable
+		if !errors.As(err, &u) || !strings.Contains(u.Reason, "rewritten") {
+			t.Errorf("%s: not refused as a rewrite of module imports: %v", cmd, err)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package hook
 import (
 	"encoding/binary"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,8 +11,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// crw1178Cache lays out a two-file project the way a first python3 -m unittest leaves it: a __pycache__ holding the Python-written
-// entries of both sources.
+// crw1178Cache lays out a two-file project with a __pycache__ holding stale timestamp entries of both sources (recorded time and
+// size zero), the way an earlier run leaves it once the sources were edited: the interpreter discards them and runs the sources.
 func crw1178Cache(t *testing.T, cwd string) {
 	t.Helper()
 	header := make([]byte, 16)
@@ -30,7 +31,8 @@ func crw1178Cache(t *testing.T, cwd string) {
 	}
 }
 
-// CRW-1178 (S2R2-F1): a routine test run is not refused by either guard because an earlier run left a __pycache__.
+// CRW-1178 (S2R2-F1): a routine test run is not refused by either guard because an earlier run left a stale __pycache__. A cache
+// that still agrees with its source is refused (TestCRW1178MatchingCacheRunsUnreadCode).
 func TestCRW1178RepeatedTestRunIsNotRefused(t *testing.T) {
 	cwd, _, env := gateScene(t)
 	crw1178Cache(t, cwd)
@@ -268,6 +270,112 @@ func TestCRW1178WalkErrorNamesTheDirectory(t *testing.T) {
 	for _, r := range []string{mem, gh} {
 		if !strings.Contains(r, "blocked_tests") || strings.Contains(r, cwd) {
 			t.Errorf("the reason must name the directory relative to the project: %s", r)
+		}
+	}
+}
+
+// A cache entry that Python itself would load (its header agrees with the source) runs code the reader never read, so both guards
+// refuse the run, with the file and the route. The cache here is real: Python writes the header for the source, and the code only
+// writes a file under the memories root; running the command afterwards shows the interpreter runs that code instead of the source.
+// The route the refusal names (remove the cache, then run with -B) is allowed and stays allowed on repeated runs.
+func TestCRW1178MatchingCacheRunsUnreadCode(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	for _, mode := range []string{"timestamp", "checked-hash"} {
+		t.Run(mode, func(t *testing.T) {
+			cwd, root, env := gateScene(t)
+			marker := filepath.Join(root, "n.md")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			setup := `import importlib.util,marshal,pathlib,struct,sys
+cwd=pathlib.Path(sys.argv[1]);marker=sys.argv[2];mode=sys.argv[3]
+p=cwd/'test_calc.py';src=b'x = 1\n';p.write_bytes(src)
+cache=pathlib.Path(importlib.util.cache_from_source(str(p)));cache.parent.mkdir()
+code=compile('open('+repr(marker)+', "w").write("cache executed")\nimport unittest\nclass TestCache(unittest.TestCase):\n def test_ok(self): pass\n',str(p),'exec')
+if mode=='timestamp':
+ s=p.stat();header=importlib.util.MAGIC_NUMBER+struct.pack('<III',0,int(s.st_mtime)&0xffffffff,s.st_size&0xffffffff)
+else:
+ header=importlib.util.MAGIC_NUMBER+struct.pack('<I',3)+importlib.util.source_hash(src)
+cache.write_bytes(header+marshal.dumps(code))
+`
+			if out, err := exec.Command(python, "-I", "-c", setup, cwd, marker, mode).CombinedOutput(); err != nil {
+				t.Fatalf("setup: %v %s", err, out)
+			}
+			for _, cmd := range []string{"python3 -B -m unittest", "python3 -m unittest", "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest"} {
+				mem := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, cmd), env))
+				gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
+				for _, r := range []string{mem, gh} {
+					if !strings.Contains(r, "test_calc") || !strings.Contains(r, "-B") {
+						t.Errorf("%s: the reason lacks the file or the route: %s", cmd, r)
+					}
+				}
+			}
+			// The premise: the interpreter runs the cached code, not the source the reader read.
+			run := exec.Command(python, "-B", "-m", "unittest")
+			run.Dir = cwd
+			run.Env = []string{"HOME=" + filepath.Dir(root), "PATH=/usr/bin:/bin", "TZ=UTC"}
+			if out, err := run.CombinedOutput(); err != nil {
+				t.Logf("unittest: %v %s", err, out)
+			}
+			if b, err := os.ReadFile(marker); err != nil || string(b) != "cache executed" {
+				t.Fatalf("the cache did not run, so this test proves nothing: %v %q", err, b)
+			}
+			// The route: removing the cache is allowed, and -B runs leave none to load.
+			rm := "rm -rf __pycache__"
+			if out := HandleMemoryWriteGate(gateBash(t, cwd, rm), env); out != "" {
+				t.Errorf("memory gate refused the route %q: %s", rm, out)
+			}
+			if out := HandleGitHubPostGuard(gateBash(t, cwd, rm)); out != "" {
+				t.Errorf("GitHub guard refused the route %q: %s", rm, out)
+			}
+			if err := os.RemoveAll(filepath.Join(cwd, "__pycache__")); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if out := HandleMemoryWriteGate(gateBash(t, cwd, "python3 -B -m unittest"), env); out != "" {
+					t.Errorf("run %d after removing the cache: %s", i, out)
+				}
+				run := exec.Command(python, "-B", "-m", "unittest")
+				run.Dir = cwd
+				run.Env = []string{"HOME=" + filepath.Dir(root), "PATH=/usr/bin:/bin", "TZ=UTC"}
+				_, _ = run.CombinedOutput()
+				if _, err := os.Stat(filepath.Join(cwd, "__pycache__")); !os.IsNotExist(err) {
+					t.Fatalf("a -B run wrote a cache: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// The word gh is a mention of a post only as a command word or a path whose last component is gh; a file named gh.sh, gh.py or a
+// module tests.gh is not.
+func TestCRW1178GhInAFileNameIsNoGithubPost(t *testing.T) {
+	cwd, _, _ := gateScene(t)
+	for _, cmd := range []string{"bash missing/gh.sh", "\"$FOO\" tests/gh.py", "\"$FOO\" gh.sh", "\"$FOO\" --file=gh.txt"} {
+		crw1178ReaderWording(t, githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd))))
+	}
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{"gh pr comment 1", true},
+		{"/usr/bin/gh pr comment 1", true},
+		{"./gh pr comment 1", true},
+		{`g""h pr comment 1`, true},
+		{"x=$(gh api user)", true},
+		{"a; gh issue comment 2", true},
+		{"a|gh pr comment 1", true},
+		{"bash missing/gh.sh", false},
+		{"python3 tests/gh.py", false},
+		{"python3 -m unittest tests.gh", false},
+		{"high_priority ghost", false},
+		{"cat gh-notes.md", false},
+	} {
+		if got := githubPostSpellsPost(c.text); got != c.want {
+			t.Errorf("githubPostSpellsPost(%q) = %v, want %v", c.text, got, c.want)
 		}
 	}
 }

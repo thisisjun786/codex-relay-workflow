@@ -1,6 +1,7 @@
 package shellir
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
 	"io/fs"
@@ -141,9 +142,9 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			}
 			n := d.Name()
 			if strings.HasSuffix(n, ".pyc") {
-				// Python writes a cache entry beside the source it compiled and runs the source when the entry is stale.
-				// Only an entry of a source this walk reads is skipped; compiled code with no such source, at the
-				// sourceless import path or in a cache of nothing, is code the reader does not see (CRW-1178).
+				// Python writes a cache entry beside the source it compiled and loads it instead of the source while the
+				// two agree. Only a stale entry of a source this walk reads is skipped; any other compiled code is code
+				// the reader does not see (CRW-1178).
 				if why := pycacheEntryRefusal(p); why != "" {
 					return unreadablef("module imports compiled code that is not read (%s: %s)", rel, why)
 				}
@@ -239,10 +240,12 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	return true, nil
 }
 
-// pycacheEntryRefusal says why a .pyc file is compiled code the reader does not cover, or "" when it is the cache entry of a source
-// the inventory reads. An entry lives in a __pycache__ directory, is named <module>.<tag>[.opt-N].pyc, and belongs to
-// <module>.py in the directory above; the interpreter runs that source whenever the entry is stale, and a hash-based entry marked
-// unchecked is run without the source being consulted, so it is refused with the rest.
+// pycacheEntryRefusal says why a .pyc file is compiled code the reader does not cover, or "" when the interpreter will not run it. An
+// entry lives in a __pycache__ directory, is named <module>.<tag>[.opt-N].pyc, and belongs to <module>.py in the directory above.
+// Python loads an entry instead of that source whenever the entry's header agrees with the source, and then runs code the reader
+// never read: the header is no proof the code was compiled from the source. So only a stale timestamp entry (its recorded
+// modification time or size differs from the source's), which the interpreter discards and recompiles from the source the inventory
+// reads, is skipped. A hash-based entry is refused whatever its hash, as is an entry that agrees with its source (CRW-1178).
 func pycacheEntryRefusal(p string) string {
 	dir, name := filepath.Split(strings.TrimSuffix(p, "/"))
 	dir = strings.TrimSuffix(dir, "/")
@@ -270,12 +273,32 @@ func pycacheEntryRefusal(p string) string {
 	if _, err := io.ReadFull(f, header[:]); err != nil {
 		return "header is too short"
 	}
-	// Flags (little endian, after the magic number): 0 is checked by modification time and size, 3 by the hash of the
-	// source. 1 is a hash that is never checked against the source.
-	if flags := uint32(header[4]) | uint32(header[5])<<8 | uint32(header[6])<<16 | uint32(header[7])<<24; flags != 0 && flags != 3 {
-		return "not validated against its source"
+	// Little endian after the magic number: flags, then for flags 0 the source's modification time in whole seconds and its size,
+	// each truncated to 32 bits. Any other flags is a hash-based entry (or one Python rejects), which this reader does not check.
+	route := "; remove __pycache__ and run python with -B"
+	if binary.LittleEndian.Uint32(header[4:8]) != 0 {
+		return "a hash-based cache entry may run instead of " + stem + ".py" + route
 	}
-	return ""
+	if pycacheStale(header[8:16], source) {
+		return ""
+	}
+	return "this cache entry runs instead of " + stem + ".py, and its code is not read" + route
+}
+
+// pycacheStale is whether a timestamp header (modification time and size, 32 bits each) disagrees with the source, so that the
+// interpreter discards the entry. Python compares int(st_mtime), truncated toward zero, and st_size; both the floor and the
+// truncated second count as agreeing, so a time before 1970 cannot pass as stale.
+func pycacheStale(stamp []byte, source os.FileInfo) bool {
+	mtime, size := binary.LittleEndian.Uint32(stamp[0:4]), binary.LittleEndian.Uint32(stamp[4:8])
+	if size != uint32(source.Size()) {
+		return true
+	}
+	t := source.ModTime()
+	floor, trunc := t.Unix(), t.Unix()
+	if floor < 0 && t.Nanosecond() > 0 {
+		trunc++
+	}
+	return mtime != uint32(floor) && mtime != uint32(trunc)
 }
 
 // walkErrorWhat names what failed in a directory walk: the operation, the cause and the file or directory it failed on, relative to the
@@ -399,7 +422,7 @@ func (w *walker) moduleImportsClear(st *state) error {
 		}
 	}
 	codePath := func(v string) bool {
-		return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)]
+		return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)] || strings.Contains(v, "__pycache__")
 	}
 	for _, e := range w.out {
 		if e.Kind == KindScriptFile || e.Inline != nil || e.Name == "tar" || e.Name == "unzip" {
@@ -411,7 +434,7 @@ func (w *walker) moduleImportsClear(st *state) error {
 			}
 		}
 		switch e.Name {
-		case "cp", "mv", "ln", "install", "tee", "dd", "curl", "wget":
+		case "cp", "mv", "ln", "install", "tee", "dd", "curl", "wget", "touch":
 			for _, a := range e.Args {
 				if !a.Known || codePath(strings.TrimPrefix(a.Value, "of=")) {
 					return unreadablef("module import may be rewritten")
