@@ -1,0 +1,83 @@
+package integrator
+
+import (
+	"context"
+)
+
+// DryEntry is one pending head as the dry run sees it.
+type DryEntry struct {
+	Entry
+	// InCheckout says the commit exists in the checkout; AlreadyInDev says it is an ancestor of
+	// the local remote-tracking ref (not fetched, so as of the last fetch).
+	InCheckout   bool   `json:"in_checkout"`
+	AlreadyInDev bool   `json:"already_in_dev"`
+	Gate         string `json:"gate,omitempty"`
+	Retried      bool   `json:"retried"`
+}
+
+// DryReport is what a dry run reports.
+type DryReport struct {
+	Stop     bool       `json:"stop_file"`
+	Lock     string     `json:"lock"`
+	Base     string     `json:"base"`
+	SoloLeft int        `json:"solo_left"`
+	Entries  []DryEntry `json:"entries"`
+	Ignored  []string   `json:"ignored,omitempty"`
+	// Plan is the specs the next pass would hand to one integration run, in order, when every
+	// gate passes (the gate is only consulted with withGate).
+	Plan []string `json:"plan"`
+	// BatchRetried says a retry marker exists for the planned batch.
+	BatchRetried bool `json:"batch_retried"`
+}
+
+// DryRun reads the queue and the checkout and changes nothing: no directory is made, no file
+// moved, no lock taken (it is only probed), no fetch. The gate command runs only with
+// withGate, because a gate may fetch on its own.
+func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
+	rep := DryReport{Lock: lockState(r.Cfg.LockFile), SoloLeft: r.soloLeft()}
+	rep.Stop = fileExists(r.qpath(fileStop))
+	entries, ignored, err := r.listPending()
+	if err != nil {
+		return rep, err
+	}
+	rep.Ignored = ignored
+	if base, rc, err := r.gitRO(ctx, r.Cfg.Checkout, "rev-parse", "--verify", "-q", r.Cfg.remoteRef()); err == nil && rc == 0 {
+		rep.Base = base
+	}
+	var planned []Entry
+	for _, e := range entries {
+		d := DryEntry{Entry: e}
+		if prev, err := readHead(r.qpath(dirRetried, e.Name)); err == nil && prev == e.Head {
+			d.Retried = true
+		}
+		pass := true
+		if e.HeadOK {
+			if _, rc, err := r.gitRO(ctx, r.Cfg.Checkout, "cat-file", "-e", e.Head+"^{commit}"); err == nil && rc == 0 {
+				d.InCheckout = true
+				if rep.Base != "" {
+					if _, rc, err := r.gitRO(ctx, r.Cfg.Checkout, "merge-base", "--is-ancestor", e.Head, rep.Base); err == nil && rc == 0 {
+						d.AlreadyInDev = true
+					}
+				}
+			}
+		} else {
+			pass = false
+		}
+		if withGate && e.HeadOK {
+			note, ok := r.gate(ctx, e)
+			d.Gate = note
+			pass = ok
+		}
+		rep.Entries = append(rep.Entries, d)
+		if pass && (rep.SoloLeft == 0 || len(planned) == 0) {
+			planned = append(planned, e)
+		}
+	}
+	for _, e := range planned {
+		rep.Plan = append(rep.Plan, e.Spec())
+	}
+	if len(planned) > 1 {
+		rep.BatchRetried = fileExists(r.batchMarker(planned))
+	}
+	return rep, nil
+}
