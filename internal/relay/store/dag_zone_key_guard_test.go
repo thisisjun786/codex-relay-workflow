@@ -556,6 +556,7 @@ func TestDAGZoneRefusesAnInsertOrReplaceOfAStoredKey(t *testing.T) {
 						t.Fatal(err)
 					}
 					_, err = tx.Exec(statement)
+					inTx := zoneTableContents(t, tx, g.table)
 					_ = tx.Rollback()
 					if which.want {
 						if err == nil || !strings.Contains(err.Error(), g.message()) {
@@ -564,12 +565,24 @@ func TestDAGZoneRefusesAnInsertOrReplaceOfAStoredKey(t *testing.T) {
 					} else if err != nil {
 						t.Fatalf("%s: %s: %v; the red case is a REPLACE that succeeds", which.name, statement, err)
 					}
+					zoneCheckStatementEffect(t, which.name+": "+statement, before, inTx, err == nil)
 					if after := zoneTableContents(t, db, g.table); !slices.Equal(before, after) {
 						t.Fatalf("%s: the table changed over a refused or rolled-back REPLACE:\n%q\n%q", which.name, before, after)
 					}
 				}
 			})
 		}
+	}
+}
+
+// zoneCheckStatementEffect compares the table as a refused statement left it, read inside its transaction
+// before the rollback, with the table as it was: the statement itself must have changed no row, which a
+// comparison made after the caller's rollback cannot show. An accepted statement (the old zone's REPLACE)
+// may change the table, or leave it equal when it repeats the whole row, so nothing is required of it.
+func zoneCheckStatementEffect(t *testing.T, what string, before, inTx []string, accepted bool) {
+	t.Helper()
+	if !accepted && !slices.Equal(before, inTx) {
+		t.Fatalf("%s: the refused statement changed the table before the rollback:\n%q\n%q", what, before, inTx)
 	}
 }
 
@@ -1100,6 +1113,7 @@ func TestDAGZoneKeyGuardsRefuseAnOutboxReplaceWithANullAttempts(t *testing.T) {
 					t.Fatal(err)
 				}
 				_, err = tx.Exec(withNullAttempts(c.replace))
+				inTx := zoneTableContents(t, tx, "dag_summary_outbox")
 				_ = tx.Rollback()
 				orderRefusal := strings.Contains(c.want, "next sequence number")
 				switch {
@@ -1112,6 +1126,7 @@ func TestDAGZoneKeyGuardsRefuseAnOutboxReplaceWithANullAttempts(t *testing.T) {
 						t.Fatalf("%s: %v; want %q", which.name, err, c.want)
 					}
 				}
+				zoneCheckStatementEffect(t, which.name+": "+c.name, before, inTx, err == nil)
 				if after := zoneTableContents(t, db, "dag_summary_outbox"); !slices.Equal(before, after) {
 					t.Fatalf("%s: the table changed:\n%q\n%q", which.name, before, after)
 				}
@@ -1172,7 +1187,9 @@ func TestDAGZoneRefusesAnInsertOrReplaceOfAStoredRowid(t *testing.T) {
 							t.Fatal(err)
 						}
 						_, err = tx.Exec(statement)
+						inTx := zoneTableContents(t, tx, table)
 						_ = tx.Rollback()
+						zoneCheckStatementEffect(t, which.name+": "+statement, before, inTx, err == nil)
 						switch {
 						case verb == "INSERT OR REPLACE" && !which.want:
 							if err != nil {
