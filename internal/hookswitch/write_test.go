@@ -572,6 +572,61 @@ func TestRestoreSyncsTheSwitchDirectoryAndReportsAFailure(t *testing.T) {
 	})
 }
 
+// d2: when the exchange of a directory restore has succeeded and the backup name cannot be removed
+// afterwards, the restore already done is still synced, and both failures are returned.
+func TestRestoreOfADirectorySyncsWhenTheBackupCannotBeRemoved(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not stop root from removing the backup")
+	}
+	run := func(t *testing.T, syncErr error) (error, []string) {
+		home, file := switchDir(t)
+		brokenEntries["directory"](t, home, file)
+		a, err := KeepAside(home, "r3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Write(home, State{Active: CRW, ChangedAt: "a", By: "b"}); err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Dir(file)
+		wasExchange, wasSync := exchange, syncDir
+		t.Cleanup(func() { exchange, syncDir = wasExchange, wasSync; _ = os.Chmod(parent, 0o700) })
+		exchange = func(x, y string) error {
+			if err := wasExchange(x, y); err != nil {
+				return err
+			}
+			// The removal of the backup name that follows the exchange fails.
+			return os.Chmod(parent, 0o500)
+		}
+		var synced []string
+		syncDir = func(dir string) error { synced = append(synced, dir); return syncErr }
+		err = a.Restore()
+		if info, serr := os.Stat(file); serr != nil || !info.IsDir() {
+			t.Fatalf("the directory was not restored: %v, %v", info, serr)
+		}
+		return err, synced
+	}
+	t.Run("sync succeeds", func(t *testing.T) {
+		err, synced := run(t, nil)
+		if !errors.Is(err, syscall.EACCES) || errors.Is(err, ErrNotDurable) {
+			t.Fatalf("Restore = %v, want the removal failure only", err)
+		}
+		if len(synced) != 1 {
+			t.Fatalf("directory syncs = %v, want one", synced)
+		}
+	})
+	t.Run("sync fails too", func(t *testing.T) {
+		injected := &os.PathError{Op: "sync", Path: "dir", Err: syscall.EIO}
+		err, synced := run(t, injected)
+		if !errors.Is(err, syscall.EACCES) || !errors.Is(err, ErrNotDurable) || !errors.Is(err, injected) {
+			t.Fatalf("Restore = %v, want both the removal failure and ErrNotDurable wrapping %v", err, injected)
+		}
+		if len(synced) != 1 {
+			t.Fatalf("directory syncs = %v, want one", synced)
+		}
+	})
+}
+
 // Remove undoes a first publication; it is synced like the publication.
 func TestRemoveSyncsTheSwitchDirectory(t *testing.T) {
 	home := t.TempDir()

@@ -241,37 +241,45 @@ func swapDirectoryForPlaceholder(path, keep string) error {
 
 // Restore puts the entry back where it was, over whatever was published since, and syncs the
 // switch directory: the undo of a publication is as durable as the publication. A failed sync is
-// ErrNotDurable (the entry is back; a power loss may still bring the replacement back).
+// ErrNotDurable (the entry is back; a power loss may still bring the replacement back). When the
+// entry is back but the backup name cannot be removed afterwards, the switch directory is synced
+// all the same (the restore is done and must be durable) and both errors are returned, joined.
 func (a *Aside) Restore() error {
 	path := Path(a.home)
-	if err := a.put(path); err != nil {
+	cleanup, err := a.put(path)
+	if err != nil {
 		return err
 	}
-	return syncAfter(path, "is restored")
+	return errors.Join(syncAfter(path, "is restored"), cleanup)
 }
 
-func (a *Aside) put(path string) error {
+// put restores the entry. The first result is the failure to remove the backup name after the
+// entry was already restored (the restore itself stands); the second is a failed restore.
+func (a *Aside) put(path string) (cleanup, err error) {
 	if a.dir {
 		// The path holds the placeholder or the published file: swap it for the directory, then
 		// drop it from the backup name. The path is never empty.
 		if _, err := os.Lstat(path); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
-				return err
+				return nil, err
 			}
-			return os.Rename(a.Path, path)
+			return nil, os.Rename(a.Path, path)
 		}
 		if err := exchange(path, a.Path); err != nil {
-			return err
+			return nil, err
 		}
-		return os.Remove(a.Path)
+		if err := os.Remove(a.Path); err != nil {
+			return fmt.Errorf("the switch is restored but the backup %s was not removed: %w", a.Path, err), nil
+		}
+		return nil, nil
 	}
 	// Nothing was published: both names are the one entry, and a rename between them does nothing.
 	pi, perr := os.Lstat(path)
 	ai, aerr := os.Lstat(a.Path)
 	if perr == nil && aerr == nil && os.SameFile(pi, ai) {
-		return os.Remove(a.Path)
+		return nil, os.Remove(a.Path)
 	}
-	return os.Rename(a.Path, path)
+	return nil, os.Rename(a.Path, path)
 }
 
 // Remove deletes the switch file and syncs the switch directory (ErrNotDurable when that fails); an
