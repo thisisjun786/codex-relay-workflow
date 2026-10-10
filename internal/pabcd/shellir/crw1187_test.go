@@ -32,7 +32,22 @@ func crw1187Project(t *testing.T, testSource string, more map[string]string) str
 
 func crw1187Reason(t *testing.T, cmd, cwd string) string {
 	t.Helper()
+	// -P keeps PYTHONPATH, so a run with it is judged with an environment that is known and holds none of the PYTHON* variables; a
+	// reading that is given no environment proves nothing for -P (TestCRW1187FixRound1NoEnvironmentProvesNothingForP).
+	if strings.Contains(cmd, " -P") || strings.Contains(cmd, " -IP") || strings.Contains(cmd, " -EP") {
+		return crw1187ReasonEnv(t, cmd, cwd, func(string) (string, bool) { return "", false })
+	}
 	_, err := Analyze(cmd, cwd)
+	var u *Unreadable
+	if !errors.As(err, &u) {
+		return ""
+	}
+	return u.Reason
+}
+
+func crw1187ReasonEnv(t *testing.T, cmd, cwd string, lookup func(string) (string, bool)) string {
+	t.Helper()
+	_, err := AnalyzeEnv(cmd, cwd, lookup)
 	var u *Unreadable
 	if !errors.As(err, &u) {
 		return ""

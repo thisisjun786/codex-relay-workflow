@@ -425,7 +425,8 @@ type moduleRun struct{ first, end int }
 
 // moduleSafePath is whether the run starts with no entry for the working directory in sys.path: -I, or -P with PYTHONPATH proven unset
 // or empty (-P alone keeps PYTHONPATH, which may name the directory; a text that spells the name or may build a variable name at run
-// time proves nothing). The python -m of json.tool and py_compile then imports nothing from the directory.
+// time proves nothing; neither does a reading that is given no environment). The python -m of json.tool and py_compile then imports
+// nothing from the directory.
 func (w *walker) moduleSafePath(args []Word, assigns []Assign, st *state) bool {
 	isolated, noPath := false, false
 	for _, a := range args {
@@ -441,10 +442,13 @@ func (w *walker) moduleSafePath(args []Word, assigns []Assign, st *state) bool {
 	if !noPath || w.pythonPathNamed || w.prefixUnknown || moduleAssigned("PYTHONPATH", assigns) {
 		return false
 	}
-	if st.lookup != nil {
-		if v, ok := st.lookup("PYTHONPATH"); ok && v != "" {
-			return false
-		}
+	if st.lookup == nil {
+		// No environment is known, so PYTHONPATH may name the directory: -P alone proves nothing (the guard that is given none answers
+		// with -I, or runs the module in the directory it checked).
+		return false
+	}
+	if v, ok := st.lookup("PYTHONPATH"); ok && v != "" {
+		return false
 	}
 	return true
 }
@@ -456,12 +460,19 @@ func (w *walker) moduleSafePath(args []Word, assigns []Assign, st *state) bool {
 // (stdlibShadowName), unless the run leaves the working directory out of sys.path (moduleSafePath).
 func (w *walker) moduleImportsClear(module string, flags []Word, assigns []Assign, st *state) error {
 	names := moduleFixedNames
-	broad := (module == "json.tool" || module == "py_compile") && !w.moduleSafePath(flags, assigns, st)
+	reads := module == "json.tool" || module == "py_compile"
+	broad := reads && !w.moduleSafePath(flags, assigns, st)
+	// A run of json.tool or py_compile that leaves the directory out of sys.path imports nothing from it, whatever the names in it are
+	// (the fixed names of the list included); the writer check below still applies (CRW-1187).
+	isolated := reads && !broad
 	entries, err := os.ReadDir(st.dir.Path)
 	if err != nil {
 		return unreadablef("module import directory cannot be read")
 	}
 	for _, e := range entries {
+		if isolated {
+			break
+		}
 		base := strings.SplitN(e.Name(), ".", 2)[0]
 		if !names[base] && !(broad && stdlibShadowName(base)) {
 			continue
@@ -520,8 +531,33 @@ func moduleWriterRefusal(e Exec) error {
 				return unreadablef("module import may be rewritten")
 			}
 		}
+	case "uniq", "split", "csplit", "patch", "rsync", "gzip", "bzip2", "xz", "zstd", "zip", "sed":
+		// programs that write a file an operand names (the output of uniq, a piece of split, a patched or compressed file): refused
+		// when an operand they are given is a code path. An operand the reader cannot evaluate is not held against them.
+		for _, a := range e.Args {
+			if a.Known && moduleCodePath(a.Value) {
+				return unreadablef("module import may be rewritten")
+			}
+		}
+	case "sort":
+		// sort writes the file of -o/--output, in any of the spellings getopt_long accepts (the reading the write gate uses).
+		for _, d := range SortOutputDests(e.Args, moduleWordText, moduleUnknownWord) {
+			if d == moduleUnknownWord || moduleCodePath(d) {
+				return unreadablef("module import may be rewritten")
+			}
+		}
 	}
 	return nil
+}
+
+// moduleUnknownWord marks a word the reader cannot evaluate in a destination list; moduleWordText is a word's text or that mark.
+const moduleUnknownWord = "\x00unknown"
+
+func moduleWordText(w Word) string {
+	if !w.Known || strings.Contains(w.Value, "%") {
+		return moduleUnknownWord
+	}
+	return w.Value
 }
 
 // writersBesideModules refuses a record that runs at the same time as a module run and may write module imports: a background job or a

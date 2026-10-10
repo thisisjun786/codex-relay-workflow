@@ -20,7 +20,21 @@ type memoryShellAnalysis struct {
 }
 
 func newMemoryShellAnalysis(command, dir string, lookup host.LookupEnv) *memoryShellAnalysis {
-	return &memoryShellAnalysis{cached: true, command: command, dir: dir, lookup: lookup, env: shellir.AnalyzeEnvProvenDirectory, plain: shellir.Analyze, noDir: shellir.AnalyzeNoDir}
+	return &memoryShellAnalysis{cached: true, command: command, dir: dir, lookup: lookup, env: shellir.AnalyzeEnvProvenDirectory, plain: memoryPlainReading(lookup), noDir: shellir.AnalyzeNoDir}
+}
+
+// memoryPlainReading is the reading of the gate that knows no variable of the session's environment, except PYTHONPATH: a run of
+// python -P keeps it, and a reading that does not know it cannot say the working directory is off the import path (CRW-1187), so the
+// same run would be refused here and allowed with the environment. Every other variable stays unknown, as in shellir.Analyze.
+func memoryPlainReading(lookup host.LookupEnv) func(string, string) (shellir.Result, error) {
+	return func(command, dir string) (shellir.Result, error) {
+		return shellir.AnalyzeEnv(command, dir, func(name string) (string, bool) {
+			if name == "PYTHONPATH" && lookup != nil {
+				return lookup(name)
+			}
+			return "", false
+		})
+	}
 }
 
 type memoryAnalysisResult struct {

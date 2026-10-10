@@ -33,10 +33,30 @@ var (
 )
 
 // moduleSourceRefusal is "" for a source whose imports stay in the inventory, else what the source does, in a few words.
+//
+// The source is read as the interpreter's tokenizer would split it before any scan (pyLex): strings and comments are told apart from
+// code, an explicit line join is a space, and a name Python would fold to another (a non-ASCII identifier is normalized to NFKC) is
+// refused where it stands in code. The scans below run on the text as written and on the text without its comments and line joins; the
+// statements the aliases of sys, importlib and builtins are collected from are the lexer's (CRW-1187).
 func moduleSourceRefusal(src string) string {
+	lexed := pyLex(src)
+	if lexed.nonASCIICode {
+		return "uses a name with non-ASCII characters outside a string, which Python folds to other names (sys can be written as another spelling)"
+	}
+	if what := moduleSourceRefusalOf(src, lexed.stmts); what != "" {
+		return what
+	}
+	if lexed.view != src {
+		return moduleSourceRefusalOf(lexed.view, lexed.stmts)
+	}
+	return ""
+}
+
+// moduleSourceRefusalOf is the scans of moduleSourceRefusal on one text, with the statements of the source.
+func moduleSourceRefusalOf(src string, stmts []string) string {
 	// aliases maps each name the source gives to sys, importlib or builtins to the module (import sys as s, import importlib).
 	aliases := map[string]string{"sys": "sys", "importlib": "importlib", "builtins": "builtins"}
-	for _, stmt := range pyStatements(src) {
+	for _, stmt := range stmts {
 		if what := pyImportStatement(stmt, aliases); what != "" {
 			return what
 		}
@@ -93,42 +113,122 @@ func moduleSourceRefusal(src string) string {
 	return ""
 }
 
-// pyStatements splits a Python source into its logical statements: physical lines joined by a backslash or by an open bracket, then
-// split at semicolons. The text of strings and comments is kept as it is (a quote is not tracked), so a statement may be cut or joined
-// wrongly by a bracket in a string; that only moves where an import statement is seen, and the token scans above read the whole text.
-func pyStatements(src string) []string {
-	var out []string
-	var cur strings.Builder
+// pyLexed is a Python source split the way the tokenizer sees it.
+type pyLexed struct {
+	// stmts are the logical statements: split at a newline, a semicolon or a colon outside every string and bracket (so the statement
+	// that follows a compound header, "if x: import sys as s", is a statement of its own), with comments removed and a line join read
+	// as one space. The text of a string stays in its statement.
+	stmts []string
+	// view is the source without its comments, with each explicit line join (a backslash before a line end) read as one space.
+	view string
+	// nonASCIICode is whether a character outside ASCII stands in code (outside a string and a comment).
+	nonASCIICode bool
+}
+
+// pyLex reads a Python source: strings (single, double and triple quoted, with any prefix, a backslash keeping the next character in
+// the string, as in raw strings too), comments, explicit line joins, brackets. A single-quoted string that meets a line end ends
+// there (the interpreter refuses such a source, and nothing runs). It does not parse Python: an unbalanced source gives statements that
+// are cut where a bracket count says, and that only moves where an import statement is seen; the scans read the whole text as well.
+func pyLex(src string) pyLexed {
+	var out pyLexed
+	var view, cur strings.Builder
 	depth := 0
 	flush := func() {
-		for _, part := range strings.Split(cur.String(), ";") {
-			if s := strings.TrimSpace(part); s != "" {
-				out = append(out, s)
-			}
+		if s := strings.TrimSpace(cur.String()); s != "" {
+			out.stmts = append(out.stmts, s)
 		}
 		cur.Reset()
 	}
-	for _, line := range strings.Split(src, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if i := strings.Index(line, "#"); i >= 0 && depth == 0 && !strings.ContainsAny(line[:i], `"'`) {
-			line = line[:i]
-		}
-		cont := strings.HasSuffix(line, "\\")
-		if cont {
-			line = strings.TrimSuffix(line, "\\")
-		}
-		cur.WriteString(line)
-		cur.WriteByte(' ')
-		depth += strings.Count(line, "(") + strings.Count(line, "[") + strings.Count(line, "{")
-		depth -= strings.Count(line, ")") + strings.Count(line, "]") + strings.Count(line, "}")
-		if depth < 0 {
-			depth = 0
-		}
-		if !cont && depth == 0 {
+	put := func(b byte) {
+		view.WriteByte(b)
+		cur.WriteByte(b)
+	}
+	n := len(src)
+	i := 0
+	if strings.HasPrefix(src, "\xef\xbb\xbf") {
+		i = 3 // a byte order mark is no name
+	}
+	for i < n {
+		c := src[i]
+		switch {
+		case c == '#':
+			for i < n && src[i] != '\n' {
+				i++
+			}
+		case c == '\\' && i+1 < n && (src[i+1] == '\n' || (src[i+1] == '\r' && i+2 < n && src[i+2] == '\n')):
+			if src[i+1] == '\r' {
+				i++
+			}
+			i += 2
+			put(' ')
+		case c == '\'' || c == '"':
+			quote := c
+			triple := i+2 < n && src[i+1] == quote && src[i+2] == quote
+			width := 1
+			if triple {
+				width = 3
+			}
+			for k := 0; k < width; k++ {
+				put(quote)
+			}
+			i += width
+			for i < n {
+				d := src[i]
+				if d == '\\' && i+1 < n {
+					put(d)
+					put(src[i+1])
+					i += 2
+					continue
+				}
+				if d == quote && (!triple || (i+2 < n && src[i+1] == quote && src[i+2] == quote)) {
+					for k := 0; k < width; k++ {
+						put(quote)
+					}
+					i += width
+					break
+				}
+				if d == '\n' && !triple {
+					break
+				}
+				put(d)
+				i++
+			}
+		case c == '(' || c == '[' || c == '{':
+			depth++
+			put(c)
+			i++
+		case c == ')' || c == ']' || c == '}':
+			if depth > 0 {
+				depth--
+			}
+			put(c)
+			i++
+		case c == '\n':
+			view.WriteByte(c)
+			if depth == 0 {
+				flush()
+			} else {
+				cur.WriteByte(' ')
+			}
+			i++
+		case c == ';' && depth == 0:
+			view.WriteByte(c)
 			flush()
+			i++
+		case c == ':' && depth == 0 && !(i+1 < n && src[i+1] == '='):
+			view.WriteByte(c)
+			flush()
+			i++
+		default:
+			if c >= 0x80 {
+				out.nonASCIICode = true
+			}
+			put(c)
+			i++
 		}
 	}
 	flush()
+	out.view = view.String()
 	return out
 }
 

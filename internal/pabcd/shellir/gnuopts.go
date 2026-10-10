@@ -301,3 +301,71 @@ func (pa *SedArgs) apply(name, key string, val Word, spelled string) error {
 	}
 	return nil
 }
+
+// SortOutputDests returns the file sort writes with -o (plain turns a word into its text, or into unknown for a word the reader cannot
+// evaluate), read the way getopt_long reads sort's command line: the separate,
+// attached and long forms (-o FILE, -oFILE, -ro FILE, --output FILE, --output=FILE), and --output spelled as any prefix GNU
+// accepts (--o, --ou, ... are --output: no other option of sort begins with o). The value of every other option that takes
+// one is skipped, so a value that looks like -o is no output. An option that is no option of sort, or a prefix that is
+// ambiguous, makes sort stop before it writes: no destination.
+func SortOutputDests(args []Word, plain func(Word) string, unknown string) []string {
+	var out []string
+	longs := SortLongOptions()
+	for i := 0; i < len(args); i++ {
+		v := plain(args[i])
+		switch {
+		case v == unknown:
+			out = append(out, v)
+		case v == "--":
+			return out
+		case strings.HasPrefix(v, "--"):
+			name, attached, hasValue := strings.Cut(v[2:], "=")
+			opt, match := MatchLongOption(longs, name)
+			if match != LongFound || opt.Arg == OptionNoArg {
+				continue
+			}
+			value, taken := attached, hasValue
+			if opt.Arg == OptionRequiredArg && !hasValue {
+				if i+1 < len(args) {
+					i++
+					value, taken = plain(args[i]), true
+					if value == unknown && opt.Key != "o" {
+						// The value of another option is a word the reader cannot evaluate; it may split into more words
+						// (-k $K with K='1 -o FILE'), so the output file is not proven.
+						out = append(out, value)
+					}
+				} else if opt.Key == "o" {
+					out = append(out, unknown)
+				}
+			}
+			if taken && opt.Key == "o" {
+				out = append(out, value)
+			}
+		case strings.HasPrefix(v, "-") && len(v) > 1:
+			for j := 1; j < len(v); j++ {
+				if !strings.ContainsRune(SortShortValueOptions, rune(v[j])) {
+					continue
+				}
+				value := v[j+1:]
+				if value == "" {
+					if i+1 >= len(args) {
+						if v[j] == 'o' {
+							out = append(out, unknown)
+						}
+						break
+					}
+					i++
+					value = plain(args[i])
+					if value == unknown && v[j] != 'o' {
+						out = append(out, value) // may split into more words, -o among them
+					}
+				}
+				if v[j] == 'o' {
+					out = append(out, value)
+				}
+				break // the rest of the word, or the next word, is this option's value
+			}
+		}
+	}
+	return out
+}
