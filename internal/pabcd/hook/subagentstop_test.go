@@ -1,17 +1,23 @@
 package hook_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	_ "unsafe" // go:linkname, for the lock's give-up seam
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -306,14 +312,21 @@ func TestSubagentStopPersistenceFailuresAndCorruptCounter(t *testing.T) {
 }
 
 // Two agents that stop at the same moment each record their terminal verdict under the session lock:
-// neither verdict is lost. The lock's wait budget is the oracle's (about 250 ms, state.WithSessionLock),
-// so a holder the host has not scheduled for that long makes the other stop give up, which the product
-// answers with a stop that records nothing, raises the corruption sentinel (unverifiedCorrupt) and, if
-// that lock gives up too, writes the unrecordable marker. That give-up is a property of the host's load,
-// not of the lock, and it always leaves one of those two traces. The case therefore reruns a stop whose
-// verdict is absent only while a trace of a give-up exists; an absent verdict with no give-up trace is a
-// verdict a committed write lost (a lost update), and fails at once (CRW-1172). Any other failure (an
-// error, a blocked stop) fails at once as well.
+// neither verdict is lost. Each stop runs in a process of its own, as a hook does, and the two are
+// released together. The lock's wait budget is the oracle's (about 250 ms, state.WithSessionLock), so a
+// holder the host has not scheduled for that long makes the other stop's commit give up before it runs:
+// that stop records nothing, raises the corruption sentinel (unverifiedCorrupt) or, when the sentinel's
+// lock gives up as well, writes the unrecordable marker. That give-up is a property of the host's load,
+// not of the lock, so the case reruns such a stop (CRW-1172). Whether the commit gave up is observed per
+// call, never read from the session: the child counts its own acquisition give-ups through the lock's
+// give-up seam (state.sessionLockBeforeGiveUp), and a stop's lock calls are the commit's, then the
+// sentinel's only if the commit failed. Two give-ups are both tiers giving up; one give-up without a
+// marker of this agent's written by this call is the commit giving up and the sentinel recording; one
+// give-up with this call's marker is a commit that held the lock and failed while the sentinel gave up;
+// none is a commit that held the lock. Only the first two are rerun. A stop that returns without its
+// verdict after its commit held the lock (a write that failed, or a verdict another commit overwrote)
+// fails at once, whatever the other agent's stops left in the session; so does an error or a blocked
+// stop, and the final read still requires both verdicts.
 func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 	cwd := subagentStopWorkspace(t)
 	agents := []string{"racer-a", "racer-b"}
@@ -330,39 +343,78 @@ func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 		}
 		return false
 	}
-	gaveUp := func() bool {
-		return state.ReadState(cwd, "s1").UnverifiedCorrupt || evidence.UnrecordableVerdictStatus(cwd, "s1").Present
+	markers := func(agent string) int {
+		entries, _ := os.ReadDir(filepath.Join(cwd, crwdir.DirName, evidence.UnrecordableSubdir))
+		prefix := state.SanitizeKey("s1") + "-" + state.SanitizeKey(agent) + "-"
+		n := 0
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), prefix) {
+				n++
+			}
+		}
+		return n
 	}
-	const gaveUpLimit = 50
-	var wg sync.WaitGroup
-	errors := make(chan error, len(agents))
+	const rerunLimit = 50
+	payloads := make(map[string][]byte, len(agents))
 	for _, agent := range agents {
 		raw, err := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": cwd, "session_id": "s1", "agent_type": "executor", "agent_id": agent})
 		if err != nil {
 			t.Fatal(err)
 		}
+		payloads[agent] = raw
+	}
+	first := make(map[string]*subagentStopChild, len(agents))
+	for _, agent := range agents {
+		child, err := subagentStopSpawn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		first[agent] = child
+	}
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	errors := make(chan error, len(agents))
+	for _, agent := range agents {
+		raw, child := payloads[agent], first[agent]
 		wg.Go(func() {
-			for attempt := 0; attempt <= gaveUpLimit; attempt++ {
-				out, err := subagentStopInvoke(raw)
+			for attempt := 0; attempt <= rerunLimit; attempt++ {
+				if attempt == 0 {
+					<-release
+				} else {
+					var err error
+					if child, err = subagentStopSpawn(); err != nil {
+						errors <- err
+						return
+					}
+				}
+				before := markers(agent)
+				result, err := child.stop(raw)
 				if err != nil {
-					errors <- err
+					errors <- fmt.Errorf("%s: %w", agent, err)
 					return
 				}
-				if out != "" {
-					errors <- fmt.Errorf("terminal stop blocked: %s", out)
+				if result.Code != 0 || result.Stderr != "" {
+					errors <- fmt.Errorf("%s: exit=%d stderr=%s", agent, result.Code, result.Stderr)
+					return
+				}
+				if result.Out != "" {
+					errors <- fmt.Errorf("%s: terminal stop blocked: %s", agent, result.Out)
 					return
 				}
 				if recorded(agent) {
 					return
 				}
-				if !gaveUp() {
-					errors <- fmt.Errorf("%s: the stop returned without its verdict and no lock give-up left a trace: a recorded verdict was lost", agent)
+				marked := markers(agent) > before
+				if commitGaveUp := result.GiveUps == 2 || result.GiveUps == 1 && !marked; !commitGaveUp {
+					errors <- fmt.Errorf("%s: the stop returned without its verdict although its commit held the lock (lock give-ups %d, marker written %t): the commit failed or a committed verdict was lost", agent, result.GiveUps, marked)
 					return
 				}
+				t.Logf("%s: stop %d gave up its commit lock (lock give-ups %d, marker written %t); rerun", agent, attempt+1, result.GiveUps, marked)
 			}
-			errors <- fmt.Errorf("%s: the verdict was not recorded after %d stops", agent, gaveUpLimit+1)
+			errors <- fmt.Errorf("%s: the verdict was not recorded after %d stops whose commit lock gave up", agent, rerunLimit+1)
 		})
 	}
+	close(release)
 	wg.Wait()
 	close(errors)
 	for err := range errors {
@@ -371,6 +423,100 @@ func TestSubagentStopConcurrentTerminalVerdicts(t *testing.T) {
 	if entries := state.ReadState(cwd, "s1").UnverifiedSubagents; len(entries) != 2 {
 		t.Fatalf("lost verdict: %+v", entries)
 	}
+}
+
+// subagentStopLockGiveUp is state.sessionLockBeforeGiveUp, the seam that runs on every session-lock
+// acquisition that gives up, immediately before the give-up is returned. Only the child process of
+// TestSubagentStopConcurrentTerminalVerdicts sets it; production and every other test leave it nil.
+//
+//go:linkname subagentStopLockGiveUp github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state.sessionLockBeforeGiveUp
+var subagentStopLockGiveUp func()
+
+const subagentStopChildEnv = "CRW_SUBAGENT_STOP_CHILD"
+
+// subagentStopChildResult is what one stop in a child process answered and how many of its session-lock
+// acquisitions gave up.
+type subagentStopChildResult struct {
+	Code    int    `json:"code"`
+	Out     string `json:"out"`
+	Stderr  string `json:"stderr"`
+	GiveUps int    `json:"giveUps"`
+}
+
+// TestSubagentStopTerminalStopProcess is the child process of TestSubagentStopConcurrentTerminalVerdicts:
+// it says ready, waits for its payload on stdin, runs one subagent-stop through the registered leg and
+// prints the result, its own lock give-ups included, as one JSON line.
+func TestSubagentStopTerminalStopProcess(t *testing.T) {
+	if os.Getenv(subagentStopChildEnv) == "" {
+		t.Skip("child process of TestSubagentStopConcurrentTerminalVerdicts")
+	}
+	var giveUps atomic.Int32
+	subagentStopLockGiveUp = func() { giveUps.Add(1) }
+	if _, err := os.Stdout.WriteString("ready\n"); err != nil {
+		os.Exit(70)
+	}
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(70)
+	}
+	var out, stderr bytes.Buffer
+	code := harness.Hook(context.Background(), []string{"subagent-stop", "--leg", "subagent-stop-verifying-evidence"},
+		bytes.NewReader(raw), &out, &stderr, os.LookupEnv, harness.Legs())
+	line, err := json.Marshal(subagentStopChildResult{Code: code, Out: out.String(), Stderr: stderr.String(), GiveUps: int(giveUps.Load())})
+	if err != nil {
+		os.Exit(70)
+	}
+	if _, err := os.Stdout.Write(append(line, '\n')); err != nil {
+		os.Exit(70)
+	}
+	os.Exit(0)
+}
+
+// subagentStopChild is a started child process that has said it is ready and waits for its payload.
+type subagentStopChild struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+	stderr *bytes.Buffer
+}
+
+func subagentStopSpawn() (*subagentStopChild, error) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSubagentStopTerminalStopProcess$")
+	cmd.Env = append(os.Environ(), subagentStopChildEnv+"=1")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	child := &subagentStopChild{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stderr: &bytes.Buffer{}}
+	cmd.Stderr = child.stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	if line, err := child.stdout.ReadString('\n'); err != nil || line != "ready\n" {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("child not ready: %q %v; stderr %s", line, err, child.stderr)
+	}
+	return child, nil
+}
+
+// stop hands the child its payload and returns the one result line it prints.
+func (c *subagentStopChild) stop(raw []byte) (subagentStopChildResult, error) {
+	var result subagentStopChildResult
+	_, werr := c.stdin.Write(raw)
+	cerr := c.stdin.Close()
+	line, rerr := c.stdout.ReadString('\n')
+	if err := c.cmd.Wait(); err != nil || werr != nil || cerr != nil || rerr != nil {
+		return result, fmt.Errorf("child failed: wait=%v write=%v close=%v read=%v; stdout %q stderr %s", err, werr, cerr, rerr, line, c.stderr)
+	}
+	if err := json.Unmarshal([]byte(line), &result); err != nil {
+		return result, fmt.Errorf("child result %q: %w", line, err)
+	}
+	return result, nil
 }
 
 func TestSubagentStopInternalErrorAndDirectPolicy(t *testing.T) {
