@@ -17,6 +17,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -33,6 +35,33 @@ import (
 func cliPublishedIsolatedHome(t *testing.T) {
 	t.Helper()
 	testsupport.SandboxAccountHomes(t)
+}
+
+// cliPublishedWatchSeededHomes watches the homes the environment names now. The workspace seeds of the scan
+// record and review-round cases repoint HOME, CODEX_HOME and CRW_HOME after cliPublishedIsolatedHome, so the
+// directories that sandbox captured are no longer the ones the command under test reads or writes; a
+// write into the replaced homes would go unseen. The seeds' fixtures are in place when this runs.
+func cliPublishedWatchSeededHomes(t *testing.T) *testsupport.AccountHomes {
+	t.Helper()
+	return testsupport.WatchAccountHomes(t, os.Getenv("HOME"), os.Getenv("CODEX_HOME"), os.Getenv("CRW_HOME"))
+}
+
+// cliPublishedScanWorkspace is scanRecordWorkspace with the homes it installed watched.
+func cliPublishedScanWorkspace(t *testing.T) string {
+	t.Helper()
+	cliPublishedIsolatedHome(t)
+	cwd := scanRecordWorkspace(t)
+	cliPublishedWatchSeededHomes(t)
+	return cwd
+}
+
+// cliPublishedReviewRoundSeed is reviewRoundRunSeed with the homes it installed watched.
+func cliPublishedReviewRoundSeed(t *testing.T) string {
+	t.Helper()
+	cliPublishedIsolatedHome(t)
+	cwd := reviewRoundRunSeed(t)
+	cliPublishedWatchSeededHomes(t)
+	return cwd
 }
 
 // cliPublishedStateWrite is the state seam: it publishes through the real writer and then reports
@@ -124,8 +153,7 @@ func TestPublishedCallersMemoryAllowWriteKeepsPrePublicationFailure(t *testing.T
 // success with the warning appended, and writes exactly one round and one ledger row. On dev the
 // write error is reported as a failure and a retry appends a second row.
 func TestPublishedCallersScanRecordReportsThePublishedRound(t *testing.T) {
-	cliPublishedIsolatedHome(t)
-	cwd := scanRecordWorkspace(t)
+	cwd := cliPublishedScanWorkspace(t)
 	a := *ParseScanCliArgs([]string{"record", "--session", "s1", "--known", "goal=fact"}, cwd).Args
 	res := cliPublishedScanRecordRun(a, state.AppendInterviewEvent, cliPublishedStateWrite())
 	if res.Code != 0 {
@@ -147,8 +175,7 @@ func TestPublishedCallersScanRecordReportsThePublishedRound(t *testing.T) {
 }
 
 func TestPublishedCallersScanRecordKeepsPrePublicationFailure(t *testing.T) {
-	cliPublishedIsolatedHome(t)
-	cwd := scanRecordWorkspace(t)
+	cwd := cliPublishedScanWorkspace(t)
 	a := *ParseScanCliArgs([]string{"record", "--session", "s1"}, cwd).Args
 	res := cliPublishedScanRecordRun(a, state.AppendInterviewEvent, cliPublishedPlainWrite())
 	if res.Code != 1 || !strings.HasPrefix(res.Output, "scan record failed: ") {
@@ -180,8 +207,7 @@ func TestPublishedCallersMemoryCountsAWrappedPublishedError(t *testing.T) {
 // with the warning appended, and leaves the round in flight. On dev the error is returned and the
 // packet is never rendered.
 func TestPublishedCallersReviewRoundOpenReportsThePublishedPlan(t *testing.T) {
-	cliPublishedIsolatedHome(t)
-	cwd := reviewRoundRunSeed(t)
+	cwd := cliPublishedReviewRoundSeed(t)
 	res, err := RunReviewRoundCli(*ParseReviewRoundCliArgs([]string{"open", "--session", "rb", "--plan-path", reviewRoundRunDoc}, cwd).Args,
 		&ReviewRoundRunOptions{WriteGoalplan: cliPublishedGoalplanWrite()})
 	if err != nil {
@@ -205,8 +231,7 @@ func TestPublishedCallersReviewRoundOpenReportsThePublishedPlan(t *testing.T) {
 // The abort side: a published plan write answers the existing success with the warning appended
 // and the round is closed.
 func TestPublishedCallersReviewRoundAbortReportsThePublishedPlan(t *testing.T) {
-	cliPublishedIsolatedHome(t)
-	cwd := reviewRoundRunSeed(t)
+	cwd := cliPublishedReviewRoundSeed(t)
 	if res := reviewRoundRunOpenDoc(t, cwd); res.Code != 0 {
 		t.Fatalf("seed open: %+v", res)
 	}
@@ -231,8 +256,7 @@ func TestPublishedCallersReviewRoundAbortReportsThePublishedPlan(t *testing.T) {
 func TestPublishedCallersReviewRoundKeepsPreRenameFailure(t *testing.T) {
 	for _, verb := range []string{"open", "abort"} {
 		t.Run(verb, func(t *testing.T) {
-			cliPublishedIsolatedHome(t)
-			cwd := reviewRoundRunSeed(t)
+			cwd := cliPublishedReviewRoundSeed(t)
 			argv := []string{"open", "--session", "rb", "--plan-path", reviewRoundRunDoc}
 			if verb == "abort" {
 				if res := reviewRoundRunOpenDoc(t, cwd); res.Code != 0 {
@@ -265,7 +289,38 @@ func TestPublishedCallersDefaultSeamsAreTheRealWriters(t *testing.T) {
 		t.Fatalf("RunMemoryCLI: %d %q", code, out)
 	}
 	cwd2 := reviewRoundRunSeed(t)
+	cliPublishedWatchSeededHomes(t)
 	if res := reviewRoundRunDo(t, cwd2, "open", "--session", "rb", "--plan-path", reviewRoundRunDoc); res.Code != 0 || strings.Contains(res.Output, "published but") {
 		t.Fatalf("open with a nil seam: %+v", res)
+	}
+}
+
+// CRW-1171: the watcher the seeds' wrappers register follows the homes the seed installed, not the ones the
+// sandbox captured before the seed replaced them. A file created in a seeded home after the seed is reported;
+// without the watcher it went unseen (the sandbox's own directories are unused by then).
+func TestPublishedCallersWatchTheHomesTheSeedsInstall(t *testing.T) {
+	for name, seed := range map[string]func(*testing.T) string{
+		"scan record":  scanRecordWorkspace,
+		"review round": reviewRoundRunSeed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cliPublishedIsolatedHome(t)
+			seed(t)
+			h := cliPublishedWatchSeededHomes(t)
+			for _, home := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
+				stray := filepath.Join(os.Getenv(home), "stray")
+				if err := os.WriteFile(stray, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var got string
+				h.Verify(func(msg string) { got = msg })
+				if got == "" {
+					t.Errorf("a file created in the seeded %s was not reported", home)
+				}
+				if err := os.Remove(stray); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
 	}
 }
