@@ -39,6 +39,7 @@ package hook
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"regexp"
@@ -106,8 +107,11 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	inFlight := st.OrchestrationActive && st.Phase != state.PhaseIdle
 
 	if !inFlight {
-		if !goalActive || st.StopBlockCapNotified {
+		if !goalActive {
 			return StopAnswer{}
+		}
+		if st.StopBlockCapNotified {
+			return stopCapped(p, lock)
 		}
 		plan := stopSafeReadBoundGoalplan(p.Cwd, st.Slug)
 		if plan == nil || goalplan.RemainingWorkAwaitsDecisions(plan) {
@@ -126,9 +130,10 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if !goalActive {
 		return StopAnswer{Context: stopRenderAdvisory(p.Cwd, st.Phase, p.SessionID, st.Slug)}
 	}
-	// CRW-1091: the turn's total cap was announced, so the turn's Stop loop is over; nothing is read or written.
+	// CRW-1091: the turn's total cap was announced, so the turn's Stop loop is over; no plan or ledger is read for it and the
+	// counter is not written (only a pending ledger event is finished, stopCapped).
 	if st.StopBlockCapNotified {
-		return StopAnswer{}
+		return stopCapped(p, lock)
 	}
 	// A bound plan whose remaining work waits only on open decisions is waiting on the user: no block.
 	if plan := stopSafeReadBoundGoalplan(p.Cwd, st.Slug); plan != nil && goalplan.RemainingWorkAwaitsDecisions(plan) {
@@ -140,9 +145,9 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	// The goal session's render advisory follows its block.
 	renderAdvisory := stopRenderAdvisory(p.Cwd, st.Phase, p.SessionID, st.Slug)
 	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State, next *state.State, snap stopSnapshot) string {
-		// CRW-1088: one evaluation window asks for divergence once; the window it was asked for is written with the counter.
-		if plateau, window := stopObjectivePlateau(p.Cwd, fresh, snap); plateau.Flat && !stopSameText(fresh.StopDivergenceWindow, &window) {
-			next.StopDivergenceWindow = &window
+		// CRW-1088: one evaluation window of a series (metric and work phase) asks for divergence once; the window it was asked for is written with the counter.
+		if plateau, series, rows := stopObjectivePlateau(p.Cwd, fresh, snap); plateau.Flat && fresh.StopDivergenceWindows[series] != rows {
+			next.StopDivergenceWindows = stopWithWindow(fresh.StopDivergenceWindows, series, rows)
 			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID, renderAdvisory)
 		}
 		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(fresh.Slug, snap.plan), p.SessionID, platform, env)
@@ -151,6 +156,20 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		}
 		return stopEnvelope(reason)
 	})
+}
+
+// stopCapped is a Stop of a turn whose total cap was announced: it answers nothing and writes no counter. A Stop is still a writer of the
+// session that finishes what an earlier one left pending (CRW-1097: a ledger row of a published transition, a plan-audit cleanup), so
+// when the session has an outbox the lock is taken and the drain runs, as it ran in every Stop before the cap fast path. A session
+// without one reads and locks nothing.
+func stopCapped(p StopPayload, lock func(cwd, sessionID string, fn func() error) error) StopAnswer {
+	if state.LedgerOutboxPresent(p.Cwd, p.SessionID) {
+		_ = lock(p.Cwd, p.SessionID, func() error {
+			DrainSessionLedger(p.Cwd, p.SessionID)
+			return nil
+		})
+	}
+	return StopAnswer{}
 }
 
 // stopWriteState is the counter write, a variable so that a test can fail it before and after the publication
@@ -311,7 +330,9 @@ func stopObserveProgress(st state.State, snap stopSnapshot) stopProgress {
 	rows := snap.rows
 	// High-water: a hand-truncated ledger must not let restored rows replay as new observations.
 	cursor := math.Max(st.StopMetricCursor, float64(len(rows)))
-	var workPhaseID *string
+	// CRW-1086: a bound goalplan that cannot be read says nothing about the active work phase, so the one recorded stands; read as
+	// no work phase it was a switch away and, when the plan read again, a switch back, and each recharged a spent budget.
+	workPhaseID := st.StopBlockWorkPhaseID
 	if snap.plan != nil {
 		workPhaseID = goalplan.EffectiveActiveWorkPhaseID(snap.plan)
 	}
@@ -366,34 +387,48 @@ func stopSafeReadBoundGoalplan(cwd, slug string) *goalplan.Goalplan {
 var stopSlugPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // stopObjectivePlateau is objectivePlateau (hook.ts:1773-1782): flat only for a maximize objective. The
-// second result names the evaluation window judged (its metric, work phase and row count), which a new
-// row of that metric and work phase changes.
+// second and third results name the evaluation window judged: its series (the latest row's metric and work phase) and the
+// number of rows of that series, which a new row of the series changes.
 //
 // CRW-1088: with a bound goalplan the window is the active work phase's. The oracle judged the latest
 // ledger row's work phase, so two flat rows of a finished wp-old redirected wp-new to re-plan before wp-new
 // had any evaluation. Rows recorded for another work phase are left out; rows recorded without one (the
 // default work phase, what `metric record` writes without --work-phase) keep the legacy scope, as every
 // row does for a session without a bound goalplan.
-func stopObjectivePlateau(cwd string, st state.State, snap stopSnapshot) (metric.PlateauCheck, string) {
+func stopObjectivePlateau(cwd string, st state.State, snap stopSnapshot) (metric.PlateauCheck, string, float64) {
 	rows := snap.rows
 	none := metric.PlateauCheck{Values: []float64{}}
 	if metric.InferObjectiveKind(cwd, st.SessionID, rows) != metric.Maximize {
-		return none, ""
+		return none, "", 0
 	}
 	if snap.plan != nil {
 		rows, _ = stopScopeRows(rows, 0, goalplan.EffectiveActiveWorkPhaseID(snap.plan))
 	}
 	plateau := metric.PlateauOf(rows, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
 	if len(rows) == 0 {
-		return plateau, ""
+		return plateau, "", 0
 	}
-	latest, series := rows[len(rows)-1], 0
+	latest, count := rows[len(rows)-1], 0
 	for _, r := range rows {
 		if r.MetricName == latest.MetricName && r.WorkPhaseID == latest.WorkPhaseID {
-			series++
+			count++
 		}
 	}
-	return plateau, fmt.Sprintf("%s#%d@%s", latest.MetricName, series, latest.WorkPhaseID)
+	return plateau, latest.MetricName + "@" + latest.WorkPhaseID, float64(count)
+}
+
+// stopMaxDivergenceWindows bounds the series a state remembers; past it the oldest knowledge is dropped as a whole, which costs one
+// repeated request for a window, never a missed one.
+const stopMaxDivergenceWindows = 64
+
+// stopWithWindow is windows with series answered at rows, as a copy: the state the lock read is not changed.
+func stopWithWindow(windows map[string]float64, series string, rows float64) map[string]float64 {
+	out := make(map[string]float64, len(windows)+1)
+	if len(windows) < stopMaxDivergenceWindows {
+		maps.Copy(out, windows)
+	}
+	out[series] = rows
+	return out
 }
 
 // stopEnvelope is `${JSON.stringify({decision:"block",reason})}\n`.

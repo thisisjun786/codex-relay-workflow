@@ -101,7 +101,7 @@ func restore(sessionID string, raw []byte, now time.Time) (State, bool) {
 	s.StopBlockTotal = count(m["stopBlockTotal"])
 	s.StopBlockTurnID = nonEmpty(m["stopBlockTurnId"])
 	s.StopBlockCapNotified = m["stopBlockCapNotified"] == true
-	s.StopDivergenceWindow = nonEmpty(m["stopDivergenceWindow"])
+	s.StopDivergenceWindows = divergenceWindows(m["stopDivergenceWindows"])
 	s.LoopArmSeen = m["loopArmSeen"] == true
 	s.IdleEditNudges = count(m["idleEditNudges"])
 	s.MemoryWriteRequested = m["memoryWriteRequested"] == true
@@ -148,6 +148,24 @@ func nonEmpty(v any) *string {
 		return &s
 	}
 	return nil
+}
+
+// divergenceWindows is v as the per-series window counts, keeping the entries that are a non-empty key and a positive count; nil when none.
+func divergenceWindows(v any) map[string]float64 {
+	raw, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var out map[string]float64
+	for k, w := range raw {
+		if n := count(w); k != "" && n > 0 {
+			if out == nil {
+				out = map[string]float64{}
+			}
+			out[k] = n
+		}
+	}
+	return out
 }
 
 // phaseOf is v as one of the phases, else null.

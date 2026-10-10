@@ -170,6 +170,19 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			}
 		}
 	}
+	// CRW-1086: a prompt whose payload carries no turn_id is a user turn too (the payload parser accepts it), but it has nothing to
+	// stamp. It still ends the turn the Stop budget was counted for: the turn's total, an announced cap and the stamp of the earlier
+	// turn are cleared, so the next Stop is the first of a new turn and starts a fresh per-phase budget. The oracle left them standing,
+	// so a turn-id-less host never got its total cap back. A state with nothing of the kind to clear is not rewritten.
+	if turn == "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTotal != 0 || current.StopBlockCapNotified || current.StopBlockTurnID != nil) {
+		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+			if fresh.StopBlockTotal == 0 && !fresh.StopBlockCapNotified && fresh.StopBlockTurnID == nil {
+				return false
+			}
+			fresh.StopBlockTotal, fresh.StopBlockTurnID, fresh.StopBlockCapNotified = 0, nil, false
+			return true
+		})
+	}
 	if turn != "" && slices.Contains(current.InjectedTurns, turn) {
 		return ""
 	}
