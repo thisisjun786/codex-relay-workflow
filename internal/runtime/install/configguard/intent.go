@@ -21,21 +21,24 @@ import (
 // one transaction (CRW-1153). Before the first effect an intent is published beside the manifest: the records the change
 // starts from, the config file it is about, and each planned effect, marked attempted before it runs. The manifest is
 // committed from what was verified and the intent removed. A command that stops between those steps (a failed publication,
-// a hard flag failure, a kill) leaves the intent, and the next explicit command (enable, disable, config set, unset) recovers
-// it under the config lock before it does anything else: it records the ownership of every attempted effect that is PROVEN
-// to be crw's, and of nothing else. An attempted marker proves only that the effect was about to run: a command stopped
-// before the effect, and a user who then made the same change, look alike. The proof is therefore the file itself (below), and
-// an effect that is in place without it is left unrecorded and reported. Recovery reverts nothing, so a user's edit made since
-// is never undone or adopted; the self-heal hook never recovers, it only reads.
+// a hard flag failure, a kill) leaves the intent, and the next explicit command (enable, disable, config set, unset, release)
+// recovers it under the config lock before it does anything else: it records the ownership of every attempted effect that is
+// PROVEN to be crw's, and of nothing else. An attempted marker proves only that the effect was about to run: a command stopped
+// before the effect, and a user who then made the same change, look alike. Recovery reverts nothing, so a user's edit made
+// since is never undone or adopted; the self-heal hook never recovers, it only reads.
 //
 // The proof is a done record. An effect is marked done, and the intent published again, after the effect ran: a flag when its
-// runner returned, a key when its config.toml publication is in place. A stop before that record leaves the effect attempted
-// but not done, and a recovery records nothing for it: it cannot tell crw's change from the same change made later by the user,
-// and a record of a change crw did not make would have the deactivation undo the user's setting. The cost is the other way
-// round and small: a kill in the instant between an effect and its done record leaves that effect unrecorded and reported, and
-// the user's own copy of it stays as it is. A flag is also required to have changed config.toml (PreHash, the fingerprint of the
-// file when it was attempted, differs from PostHash, the fingerprint when its runner returned): a runner that exited 0 and
-// changed nothing proves nothing about a flag the user enables later.
+// runner returned, a key when its config.toml publication is in place. The done record of a flag carries the flag's own state
+// in config.toml before and after crw's run (PreOn, PostOn): the flag is crw's only when its run turned it on there, and a run
+// that left it off (whatever else it rewrote) proves that a flag on later is the user's. A changed fingerprint of the whole file
+// is no proof of a flag.
+//
+// An effect that is in place but neither proven crw's nor proven the user's (attempted, but the stop came before its done
+// record; or about a file config.toml no longer resolves to) is never recorded as crw's, because a record of a change crw did
+// not make would have the deactivation or unset undo the user's setting, and it is never forgotten either: it is kept as a
+// pending entry of the intent, carried from intent to intent and reported by every command, until it is resolved. It is
+// resolved when it is no longer in place (the flag is off, the key no longer holds the value crw was writing), by 'crw install
+// config unset <key> --release' for a key, or by removing the intent file, which every report names.
 
 // InstallIntentName is the intent file beside the install manifest.
 const InstallIntentName = ".crw-install.intent.json"
@@ -48,18 +51,6 @@ const configAbsent = "absent"
 func fingerprintBytes(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
-}
-
-// configFingerprint answers the fingerprint of the file path names.
-func configFingerprint(path string) (string, error) {
-	b, exists, err := activationReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	if !exists {
-		return configAbsent, nil
-	}
-	return fingerprintBytes(b), nil
 }
 
 // The kinds of effect an intent records.
@@ -86,6 +77,13 @@ type intentEffect struct {
 	Done     bool   `json:"done,omitempty"`
 	PreHash  string `json:"preHash,omitempty"`
 	PostHash string `json:"postHash,omitempty"`
+	// PreOn and PostOn are a flag's own state in config.toml when it was attempted and when its runner returned; nil when the
+	// file holds it in a form crw does not read.
+	PreOn  *bool `json:"preOn,omitempty"`
+	PostOn *bool `json:"postOn,omitempty"`
+	// Target is the file the effect was about: the file config.toml resolved to when the effect ended (the CLI may replace
+	// config.toml itself, CRW-1144), the intent's Target when it did not end, and for a pending entry the file it is kept for.
+	Target string `json:"target,omitempty"`
 }
 
 type installIntent struct {
@@ -97,6 +95,9 @@ type installIntent struct {
 	// Base is the install manifest the change starts from, as bytes; empty when there was none.
 	Base    []byte         `json:"base"`
 	Effects []intentEffect `json:"effects"`
+	// Pending are effects an earlier recovery found in place but could not attribute to crw or to the user: they are kept,
+	// carried from intent to intent, until they are resolved (see the top of this file).
+	Pending []intentEffect `json:"pending,omitempty"`
 	home    string
 }
 
@@ -194,6 +195,19 @@ func newIntent(home, op, path string, base *InstallManifest) (*installIntent, er
 	if target, ok := configLockPathsRealPath(path); ok {
 		in.Target = target
 	}
+	// The pending entries an earlier recovery kept are carried (the recovery ran under the same lock, so the intent on disk
+	// holds nothing else).
+	raw, exists, err := activationReadFile(intentPath(home))
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		var old installIntent
+		if err := json.Unmarshal(raw, &old); err != nil {
+			return nil, fmt.Errorf("%s cannot be read, so nothing was changed: %w", intentPath(home), err)
+		}
+		in.Pending = old.Pending
+	}
 	if base != nil {
 		b, err := manifestBytes(base)
 		if err != nil {
@@ -228,9 +242,12 @@ func (in *installIntent) publish(step string) error {
 	return nil
 }
 
-// abandon removes an intent no effect depends on. It is best effort: a leftover intent without an attempted effect records
-// nothing.
-func (in *installIntent) abandon() { _ = os.Remove(intentPath(in.home)) }
+// abandon removes an intent no effect depends on, keeping the pending entries it carries. It is best effort: a leftover
+// intent without an attempted effect records nothing.
+func (in *installIntent) abandon() {
+	var ignored error
+	_ = in.close(&ignored)
+}
 
 // attempt marks effect i attempted and publishes the intent before the effect runs. An intent that could not be made durable
 // leaves the effect unattempted: it does not run. A publication that failed only its directory sync is in place, so the file
@@ -272,15 +289,30 @@ func (in *installIntent) rewrite() error {
 	return nil
 }
 
-// closeIntent removes the intent once the manifest that records its effects is committed.
-func closeIntent(home string, unsynced *error) error {
+// close ends the intent once the manifest that records its effects is committed: it is removed, or, when it carries pending
+// entries, replaced by an intent that holds only those.
+func (in *installIntent) close(unsynced *error) error {
 	if err := txStep("intent-close"); err != nil {
 		return err
 	}
-	if err := os.Remove(intentPath(home)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if len(in.Pending) > 0 {
+		rest := installIntent{Version: 1, Op: "pending", ConfigPath: in.ConfigPath, Target: in.Target, Effects: []intentEffect{}, Pending: in.Pending}
+		b, err := json.MarshalIndent(rest, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := activationCrwdirPublish(intentPath(in.home), append(b, '\n')); err != nil {
+			if !crwdir.Published(err) {
+				return err
+			}
+			*unsynced = errors.Join(*unsynced, fmt.Errorf("%s: %w", intentPath(in.home), err))
+		}
+		return nil
+	}
+	if err := os.Remove(intentPath(in.home)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := crwdir.SyncDir(home); err != nil {
+	if err := crwdir.SyncDir(in.home); err != nil {
 		*unsynced = errors.Join(*unsynced, err)
 	}
 	return nil
@@ -288,15 +320,15 @@ func closeIntent(home string, unsynced *error) error {
 
 // commitManifest publishes m as the install manifest and closes the intent. A manifest that cannot be published leaves the
 // intent for the next explicit command to record.
-func commitManifest(home string, m *InstallManifest, unsynced *error) error {
+func commitManifest(in *installIntent, m *InstallManifest, unsynced *error) error {
 	b, err := manifestBytes(m)
 	if err != nil {
 		return err
 	}
-	if err := txPublish("manifest", manifestPath(home), b, unsynced); err != nil {
-		return fmt.Errorf("the change is in place but its ownership record could not be written (%w); the interrupted change is kept in %s, and the next 'crw install features enable' or 'disable' or 'crw install config' change records it", err, intentPath(home))
+	if err := txPublish("manifest", manifestPath(in.home), b, unsynced); err != nil {
+		return fmt.Errorf("the change is in place but its ownership record could not be written (%w); the interrupted change is kept in %s, and the next 'crw install features enable' or 'disable' or 'crw install config' change records it", err, intentPath(in.home))
 	}
-	return closeIntent(home, unsynced)
+	return in.close(unsynced)
 }
 
 // pendingIntentConfig answers the config file a pending intent is about, "" when there is none.
@@ -313,18 +345,14 @@ func pendingIntentConfig(home string) (string, error) {
 }
 
 // recoverIntent records an interrupted change before an explicit command does anything else (CRW-1153). The caller holds the
-// config lock for path. It answers what it recorded, for the command to report. An intent about another config file, an
-// intent that cannot be read, a manifest that cannot be read, a config.toml that does not decode, or flags whose state cannot
-// be read are refused, and the intent is kept. An effect that is in place but not proven to be crw's (see the top of this
-// file) is not recorded; it is reported.
+// config lock for path. It answers what it recorded and what it keeps pending, for the command to report. An intent about
+// another config file, an intent that cannot be read, a manifest that cannot be read, a config.toml that does not decode, or
+// flags whose state cannot be read are refused, and the intent is kept. An effect that is in place but not proven crw's or the
+// user's (see the top of this file) is kept pending.
 func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
-	raw, exists, err := activationReadFile(intentPath(home))
-	if err != nil || !exists {
+	in, err := readPending(home)
+	if err != nil || in == nil {
 		return nil, err
-	}
-	var in installIntent
-	if err := json.Unmarshal(raw, &in); err != nil || in.Version != 1 {
-		return nil, fmt.Errorf("an interrupted crw change left %s, which crw cannot read; nothing was changed. Inspect it, then remove it to continue", intentPath(home))
 	}
 	if !activationCarries(&InstallManifest{ConfigPath: in.ConfigPath}, path) {
 		return nil, fmt.Errorf("an interrupted crw change in %s is about %s, not %s; nothing was changed", intentPath(home), in.ConfigPath, path)
@@ -334,8 +362,9 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 	if _, err := readOwnedManifest(home); err != nil {
 		return nil, fmt.Errorf("an interrupted crw change is pending in %s: %w", intentPath(home), err)
 	}
+	attempted := slices.ContainsFunc(in.Effects, func(e intentEffect) bool { return e.Attempted })
 	m := &InstallManifest{Version: 2, ConfigPath: in.ConfigPath, Flags: map[string]FlagRecord{}, TableKeys: map[string]TableKeyRecord{}}
-	if len(in.Base) > 0 {
+	if attempted && len(in.Base) > 0 {
 		if m = parseInstallManifest(string(in.Base)); m == nil {
 			return nil, fmt.Errorf("an interrupted crw change in %s holds records crw cannot read; nothing was changed", intentPath(home))
 		}
@@ -344,7 +373,6 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	attempted := slices.ContainsFunc(in.Effects, func(e intentEffect) bool { return e.Attempted })
 	// What an attempted effect did is read from config.toml: a file that does not decode cannot be read, and recording over it
 	// would drop the evidence before the user has fixed the file (CRW-1141). The intent is kept.
 	if attempted {
@@ -356,13 +384,66 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 	if fileExists {
 		current = fingerprintBytes(content)
 	}
-	sameFile := true
-	if target, ok := configLockPathsRealPath(path); ok && in.Target != "" {
-		sameFile = target == in.Target
+	target, _ := configLockPathsRealPath(path)
+	// onFile reports whether config.toml is still the file an effect was about.
+	onFile := func(about string) bool { return about == "" || target == "" || target == about }
+	sameFile := onFile(in.Target)
+	// effectFile reports whether config.toml is still the file effect e ended on.
+	effectFile := func(e intentEffect) bool {
+		if e.Target != "" {
+			return onFile(e.Target)
+		}
+		return sameFile
+	}
+	var flags map[string]FeatureState
+	flagOn := func(name string) (bool, error) {
+		if flags == nil {
+			if flags, err = ReadFeatureStates(run); err != nil {
+				return false, fmt.Errorf("an interrupted crw change is pending in %s, and the flags it may have changed cannot be read (%w); nothing was changed", intentPath(home), err)
+			}
+		}
+		return flags[name] == FeatureEnabled, nil
+	}
+	keyInPlace := func(e intentEffect) bool {
+		live, editable := semanticRaw(string(content), e.Table, e.Key)
+		return editable && live != nil && (tomledit.SameValue(*live, e.Applied) || *live == e.Applied)
+	}
+	var recorded []string
+	var pending []intentEffect
+	keep := func(e intentEffect, why string) {
+		if e.Target == "" {
+			e.Target = in.Target
+		}
+		if slices.ContainsFunc(pending, func(p intentEffect) bool { return p.Kind == e.Kind && p.Name == e.Name && p.Target == e.Target }) {
+			return
+		}
+		e.Attempted, e.Done = false, false
+		pending = append(pending, e)
+		recorded = append(recorded, fmt.Sprintf("%s (%s; kept pending in %s until it is resolved: crw does not treat it as its own)", e.Name, why, intentPath(home)))
+	}
+	// The pending entries an earlier recovery kept stay until they are no longer in place. One about another file, and a flag
+	// a command that cannot read the flags meets, cannot be checked and stays.
+	for _, e := range in.Pending {
+		switch {
+		case !onFile(e.Target):
+			keep(e, "it was about "+e.Target+", which config.toml no longer names")
+		case e.Kind == intentKey:
+			if keyInPlace(e) {
+				keep(e, "set, but not shown to be crw's")
+			}
+		case e.Kind == intentFlag && run == nil:
+			keep(e, "it may be on, but not shown to be crw's")
+		case e.Kind == intentFlag:
+			on, err := flagOn(e.Name)
+			if err != nil {
+				return nil, err
+			}
+			if on {
+				keep(e, "on, but not shown to be crw's")
+			}
+		}
 	}
 	proof := intentProof(in.Effects, current)
-	var flags map[string]FeatureState
-	var recorded []string
 	for i, e := range in.Effects {
 		if !e.Attempted {
 			continue
@@ -376,43 +457,46 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 			if run == nil {
 				return nil, fmt.Errorf("an interrupted 'crw install features enable' is pending in %s; run 'crw install features enable' or 'disable' first, which can read the flags it changed. Nothing was changed", intentPath(home))
 			}
-			if flags == nil {
-				if flags, err = ReadFeatureStates(run); err != nil {
-					return nil, fmt.Errorf("an interrupted crw change is pending in %s, and the flags it may have changed cannot be read (%w); nothing was changed", intentPath(home), err)
+			on, err := flagOn(e.Name)
+			if err != nil {
+				return nil, err
+			}
+			switch {
+			case !on:
+				continue
+			case !effectFile(e):
+				keep(e, "on in the file config.toml names now, but the interrupted change was about another file")
+			case proof.flag[i]:
+				f.EnabledByCodexclaw, f.EnableFailed, f.Failure = true, false, nil
+				m.Flags[e.Name] = f
+				if !slices.Contains(m.flagOrder, e.Name) {
+					m.flagOrder = append(m.flagOrder, e.Name)
 				}
+				recorded = append(recorded, e.Name)
+			case proof.notFlag[i]:
+				recorded = append(recorded, e.Name+" (on, but crw's run left it off, so it is the user's and left unrecorded)")
+			default:
+				keep(e, "on, but not shown to be crw's")
 			}
-			if flags[e.Name] != FeatureEnabled {
-				continue
-			}
-			if !proof.flag[i] {
-				recorded = append(recorded, e.Name+" (on, but not shown to be crw's, so left unrecorded)")
-				continue
-			}
-			f.EnabledByCodexclaw, f.EnableFailed, f.Failure = true, false, nil
-			m.Flags[e.Name] = f
-			if !slices.Contains(m.flagOrder, e.Name) {
-				m.flagOrder = append(m.flagOrder, e.Name)
-			}
-			recorded = append(recorded, e.Name)
 		case intentKey:
-			live, editable := semanticRaw(string(content), e.Table, e.Key)
-			if !editable || live == nil || !tomledit.SameValue(*live, e.Applied) && *live != e.Applied {
+			if !keyInPlace(e) {
 				continue
 			}
-			if !proof.key[i] || !sameFile {
+			switch {
+			case !effectFile(e):
+				keep(e, "set in the file config.toml names now, but the interrupted change was about another file")
+			case !proof.key[i]:
+				keep(e, "set, but not shown to be crw's")
+			default:
+				owned := e.Owned || e.Prior == nil || !tomledit.SameValue(*e.Prior, e.Applied) && *e.Prior != e.Applied
 				if _, ok := m.TableKeys[e.Name]; !ok {
-					recorded = append(recorded, e.Name+" (set, but not shown to be crw's, so left unrecorded)")
+					m.tableOrder = append(m.tableOrder, e.Name)
 				}
-				continue
+				m.TableKeys[e.Name] = TableKeyRecord{e.Table, e.Key, e.Prior, e.Applied, owned}
+				recorded = append(recorded, e.Name)
 			}
-			owned := e.Owned || e.Prior == nil || !tomledit.SameValue(*e.Prior, e.Applied) && *e.Prior != e.Applied
-			if _, ok := m.TableKeys[e.Name]; !ok {
-				m.tableOrder = append(m.tableOrder, e.Name)
-			}
-			m.TableKeys[e.Name] = TableKeyRecord{e.Table, e.Key, e.Prior, e.Applied, owned}
-			recorded = append(recorded, e.Name)
 		case intentRestore:
-			if !sameFile {
+			if !effectFile(e) {
 				continue
 			}
 			live, editable := semanticRaw(string(content), e.Table, e.Key)
@@ -423,13 +507,19 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 			}
 		}
 	}
-	// The drift baseline moves to the file as it is only when the file is what the chain of crw's own effects ended in; a
-	// file that changed since keeps the baseline of the records before (CRW-1141).
-	if proof.end && fileExists {
-		m.PostActivateHash = &current
-	}
+	in.Pending = pending
 	var unsynced error
-	if err := commitManifest(home, m, &unsynced); err != nil {
+	if attempted {
+		// The drift baseline moves to the file as it is only when the file is what the chain of crw's own effects ended in; a
+		// file that changed since, or another file, keeps the baseline of the records before (CRW-1141).
+		if proof.end && fileExists && effectFile(in.Effects[proof.last]) {
+			m.PostActivateHash = &current
+		}
+		if err := commitManifest(in, m, &unsynced); err != nil {
+			return nil, err
+		}
+	} else if err := in.close(&unsynced); err != nil {
+		// An intent without an attempted effect changed nothing: it is closed, keeping what is still pending.
 		return nil, err
 	}
 	if unsynced != nil {
@@ -440,14 +530,18 @@ func recoverIntent(home, path string, run CodexRunner) ([]string, error) {
 
 // intentProofs is what an intent proves about its effects, for the file as it is now.
 type intentProofs struct {
-	flag, key map[int]bool
+	// flag holds the flags crw's run turned on in config.toml; notFlag the flags its run left off there, which a flag on now
+	// therefore owes to someone else. key holds the keys whose publication is in place.
+	flag, notFlag, key map[int]bool
+	// last is the index of the last attempted effect.
+	last int
 	// end is true when config.toml is exactly what the last attempted effect left, which is the baseline a later drift check
 	// compares against.
 	end bool
 }
 
 func intentProof(effects []intentEffect, current string) intentProofs {
-	p := intentProofs{flag: map[int]bool{}, key: map[int]bool{}}
+	p := intentProofs{flag: map[int]bool{}, notFlag: map[int]bool{}, key: map[int]bool{}}
 	last := -1
 	for i, e := range effects {
 		if !e.Attempted {
@@ -459,13 +553,16 @@ func intentProof(effects []intentEffect, current string) intentProofs {
 		}
 		switch e.Kind {
 		case intentFlag:
-			p.flag[i] = e.PostHash != "" && e.PostHash != e.PreHash
+			if e.PreOn != nil && e.PostOn != nil {
+				p.flag[i] = !*e.PreOn && *e.PostOn
+				p.notFlag[i] = !*e.PostOn
+			}
 		case intentKey:
 			p.key[i] = true
 		}
 	}
 	if last >= 0 {
-		p.end = effects[last].Done && effects[last].PostHash == current
+		p.last, p.end = last, effects[last].Done && effects[last].PostHash == current
 	}
 	return p
 }

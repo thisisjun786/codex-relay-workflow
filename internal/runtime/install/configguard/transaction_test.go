@@ -93,12 +93,21 @@ func txCheckRecorded(t *testing.T, home, path string, state map[string]bool) {
 }
 
 // txUnrecorded asserts the pending record as txCheckRecorded does, except that up to slack effects may be in place without a
-// record: a kill between an effect and its done record leaves that one effect unproven (CRW-1153). It answers their names.
+// record: a kill between an effect and its done record leaves that one effect unproven (CRW-1153), and it must then be kept as
+// a pending entry of the intent, never dropped. It answers their names.
 func txUnrecorded(t *testing.T, home, path string, state map[string]bool, slack int) []string {
 	t.Helper()
 	var left []string
-	if _, err := os.Stat(intentPath(home)); !os.IsNotExist(err) {
-		t.Fatalf("an intent is left after the rerun: %v", err)
+	pending := map[string]bool{}
+	if _, err := os.Stat(intentPath(home)); err == nil {
+		for _, name := range r4PendingNames(t, home) {
+			pending[name] = true
+		}
+		if len(pending) == 0 {
+			t.Fatal("an intent without pending entries is left after the rerun")
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 	m := parseInstallManifest(activationRead(t, manifestPath(home)))
 	if m == nil {
@@ -115,6 +124,11 @@ func txUnrecorded(t *testing.T, home, path string, state map[string]bool, slack 
 	}
 	if len(left) > slack {
 		t.Fatalf("effects in place but not recorded as crw's (at most %d allowed): %v", slack, left)
+	}
+	for _, name := range left {
+		if !pending[name] {
+			t.Fatalf("%s is in place, neither recorded as crw's nor kept pending", name)
+		}
 	}
 	return left
 }
@@ -199,7 +213,8 @@ func TestConfigSetTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 					t.Fatalf("stop at %s left an unrecorded change: %q", stopped, activationRead(t, path))
 				}
 				// A kill between the edit and the record that it ran leaves the key written but unproven (CRW-1153): the rerun finds
-				// the value in place, records it as the user's, and the unset leaves it.
+				// the value in place, records it as it is (not crw's) and keeps the uncertainty pending; the unset leaves the key and
+				// says so.
 				if kill && stopped == "intent" && activationRead(t, path) != txOriginal {
 					if r, err := ApplyManagedKey(deps, configSetKey, &value); err != nil || !r.OK || r.Changed {
 						t.Fatalf("rerun after a stop at %s: %+v %v", stopped, r, err)
@@ -207,8 +222,15 @@ func TestConfigSetTransactionSurvivesAFailureOrAKillAtEveryStep(t *testing.T) {
 					if configSetManifest(t, home).TableKeys[configSetKey].SetByCodexclaw {
 						t.Fatal("an unproven key was recorded as crw's")
 					}
-					if r, err := ApplyManagedKey(deps, configSetKey, nil); err != nil || r.OK || !strings.Contains(activationRead(t, path), "dedicated_tools = true") {
-						t.Fatalf("the unset removed an unproven key: %+v %v", r, err)
+					if names := r4PendingNames(t, home); len(names) != 1 || names[0] != configSetKey {
+						t.Fatalf("the unproven key is not kept pending: %v", names)
+					}
+					r, err := ApplyManagedKey(deps, configSetKey, nil)
+					if err != nil || r.OK || !strings.Contains(activationRead(t, path), "dedicated_tools = true") || !strings.Contains(r.Reason, "pending") {
+						t.Fatalf("the unset removed an unproven key, or did not report it pending: %+v %v", r, err)
+					}
+					if names := r4PendingNames(t, home); len(names) != 1 {
+						t.Fatalf("the unset dropped the pending key: %v", names)
 					}
 					return
 				}

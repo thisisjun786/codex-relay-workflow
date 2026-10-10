@@ -129,14 +129,15 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 	applied := "(absent)"
 	if value == nil {
 		if !hadRecord {
-			return ConfigSetOutcome{Reason: keyID + " is not recorded as set by crw; nothing to unset."}, nil
+			return ConfigSetOutcome{Reason: keyID + " is not recorded as set by crw; nothing to unset." + pendingKeyNote(deps.CodexHome, keyID)}, nil
 		}
 		// Unset decides ownership as the deactivation does (CRW-1149): only a key crw set, that still holds the value crw
 		// applied, and whose original absence is proven when it was absent, is restored. Anything else writes nothing and
 		// keeps the record; the explicit release drops it.
 		if why := configUnsetRefusal(m, recorded, pre, content); why != "" {
 			return ConfigSetOutcome{Reason: keyID + " " + why + "; config.toml was not changed and crw's record was kept. " +
-				"Set the value by hand, or run 'crw install config unset " + keyID + " --release' to drop crw's record and leave config.toml as it is."}, nil
+				"Set the value by hand, or run 'crw install config unset " + keyID + " --release' to drop crw's record and leave config.toml as it is." +
+				pendingKeyNote(deps.CodexHome, keyID)}, nil
 		}
 		prior = recorded.PriorValue
 		res, refused, err = semanticRestore(content, entry.Table, entry.Key, prior)
@@ -168,6 +169,7 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 		original, owned = recorded.PriorValue, recorded.SetByCodexclaw || res.Changed
 	}
 	var backup *string
+	var in *installIntent
 	if res.Changed {
 		if exists || value == nil {
 			info, err := os.Stat(path)
@@ -194,7 +196,7 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 		if value == nil {
 			op, effect = "config-unset", intentEffect{Kind: intentRestore, Name: keyID, Table: entry.Table, Key: entry.Key, Prior: recorded.PriorValue, Applied: recorded.AppliedValue, Attempted: true, PreHash: preFP, PostHash: postFP}
 		}
-		in, err := newIntent(deps.CodexHome, op, path, m)
+		in, err = newIntent(deps.CodexHome, op, path, m)
 		if err != nil {
 			return ConfigSetOutcome{}, err
 		}
@@ -206,11 +208,12 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 		}
 		if err := txPublish("config", target, []byte(res.Content), &unsynced); err != nil {
 			// Nothing was published over config.toml, so the intent describes nothing in place; it is closed when it can be.
-			return ConfigSetOutcome{}, errors.Join(err, closeIntent(deps.CodexHome, &unsynced))
+			return ConfigSetOutcome{}, errors.Join(err, in.close(&unsynced))
 		}
 		// The edit is in place: the intent says so before the manifest is committed (CRW-1153). When that cannot be published
 		// the edit is still recorded by this command; only a kill before the manifest leaves it unproven.
 		in.Effects[0].Done = true
+		in.Effects[0].Target, _ = configLockPathsRealPath(path)
 		if err := in.publish("intent"); err != nil {
 			unsynced = errors.Join(unsynced, err)
 		}
@@ -229,7 +232,7 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 		return ConfigSetOutcome{}, err
 	}
 	if res.Changed {
-		err = commitManifest(deps.CodexHome, m, &unsynced)
+		err = commitManifest(in, m, &unsynced)
 	} else {
 		var b []byte
 		if b, err = manifestBytes(m); err == nil {
@@ -338,8 +341,17 @@ func ReleaseManagedKey(deps ConfigSetDeps, id string) (_ ConfigSetOutcome, err e
 		return ConfigSetOutcome{Reason: "no readable install manifest under this codex home; there is no record to release."}, nil
 	}
 	keyID := ManagedKeyID(*entry)
+	// A key an interrupted change may have written is kept pending (CRW-1153); the release is the explicit answer that drops
+	// that note too and leaves config.toml as it is.
+	hadPending, err := releasePending(deps.CodexHome, keyID, &unsynced)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
 	rec, ok := m.TableKeys[keyID]
 	if !ok {
+		if hadPending {
+			return ConfigSetOutcome{OK: true, Entry: *entry, Recovered: recovered}, txDurability(unsynced)
+		}
 		return ConfigSetOutcome{Reason: keyID + " is not recorded as set by crw; nothing to release."}, nil
 	}
 	delete(m.TableKeys, keyID)

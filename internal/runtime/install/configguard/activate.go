@@ -427,7 +427,7 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 		if m.PostActivateHash, err = hashOrNull(path); err != nil {
 			return nil, errors.Join(cause, err)
 		}
-		if err = commitManifest(deps.CodexHome, m, &unsynced); err != nil {
+		if err = commitManifest(in, m, &unsynced); err != nil {
 			return nil, errors.Join(cause, err)
 		}
 		if cause != nil {
@@ -489,23 +489,24 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 		if effect.Kind != intentFlag || hardErr != nil {
 			continue
 		}
-		fp, e := configFingerprint(path)
+		fp, on, e := configFlagState(path, effect.Name)
 		if e != nil {
 			return stop(e)
 		}
-		in.Effects[i].PreHash = fp
+		in.Effects[i].PreHash, in.Effects[i].PreOn = fp, on
 		if e = in.attempt(i); e != nil {
 			return stop(e)
 		}
 		ran = true
 		key := DeclaredFeature(effect.Name)
 		r := deps.Run([]string{"features", "enable", effect.Name})
-		// The runner returned: the file as it is now is the proof that crw's own run changed it, and the next publication of the
-		// intent carries it (CRW-1153).
+		// The runner returned: the flag's state in the file as it is now is the proof of what crw's own run did to it, and the next
+		// publication of the intent carries it (CRW-1153).
 		in.Effects[i].Done = true
-		if in.Effects[i].PostHash, e = configFingerprint(path); e != nil {
+		if in.Effects[i].PostHash, in.Effects[i].PostOn, e = configFlagState(path, effect.Name); e != nil {
 			return stop(e)
 		}
+		in.Effects[i].Target, _ = configLockPathsRealPath(path)
 		lastRan = i
 		f := m.Flags[effect.Name]
 		if r.ExitCode == 0 {
@@ -565,6 +566,7 @@ func Activate(deps ActivateDeps) (_ *InstallManifest, err error) {
 		// still recorded by this command; only a kill before the manifest would leave it unproven, which is reported as the
 		// uncertainty it is.
 		in.Effects[i].Done = true
+		in.Effects[i].Target, _ = configLockPathsRealPath(path)
 		if e = in.publish("intent"); e != nil {
 			unsynced = errors.Join(unsynced, e)
 		}

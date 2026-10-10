@@ -116,10 +116,10 @@ func featureList(keys []string) string {
 	return strings.Join(keys, ", ")
 }
 
-// renderRecovered reports what a command recorded of an interrupted earlier change (CRW-1153).
+// renderRecovered reports what a command recorded of an interrupted earlier change, and what it keeps pending (CRW-1153).
 func renderRecovered(stdout io.Writer, recovered []string) {
 	if len(recovered) > 0 {
-		fmt.Fprintf(stdout, "crw: recorded an interrupted earlier change: %s\n", strings.Join(recovered, ", "))
+		fmt.Fprintf(stdout, "crw: recovered an interrupted earlier change: %s\n", strings.Join(recovered, ", "))
 	}
 }
 
