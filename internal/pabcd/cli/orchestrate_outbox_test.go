@@ -160,3 +160,50 @@ func TestOrchestrateDcloseAllDoneStoppedAfterPublishIsRecorded(t *testing.T) {
 		t.Fatalf("done rows after the next calls = %d, want 1", n)
 	}
 }
+
+// The status call of a session is a call of the session too: it records a row an earlier writer left pending, through the same
+// read entry the terminal uses (parse, then RunOrchestrateRead), and its answer is the session's status as before.
+func TestOrchestrateStatusRecordsAPendingRow(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "outbox-status"
+	orchestrateTransitionSession(t, cwd, id, `{"phase":"IDLE"}`)
+	stop := &orchestrateCommitSeams{writeState: func(cwd string, next state.State) error {
+		if err := state.WriteState(cwd, next); err != nil {
+			return err
+		}
+		panic("stopped after the publication")
+	}}
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = orchestrateCommitTry(t, cwd, stop, "P", "--session", id)
+	}()
+	if edges := orchestrateOutboxEdges(t, cwd); len(edges) != 0 {
+		t.Fatalf("a stopped writer appended %v", edges)
+	}
+	read, err := RunOrchestrateRead(ParseOrchestrateCliArgs([]string{"status", "--session", id}, cwd), ReadEnv{})
+	if err != nil || read.Result == nil || read.Result.Code != 0 || !strings.Contains(read.Result.Output, "P") {
+		t.Fatalf("status: %+v %v", read, err)
+	}
+	if edges := orchestrateOutboxEdges(t, cwd); strings.Join(edges, " ") != "IDLE>P" {
+		t.Fatalf("the ledger after the status call: %v, want [IDLE>P]", edges)
+	}
+	if pending, _, _ := state.PendingLedgerEvents(cwd, id); len(pending) != 0 {
+		t.Fatalf("pending after status: %+v", pending)
+	}
+}
+
+// CRW-1109 fix round: `reset --attest --cwd=<elsewhere>` is a parse error, so the reset never runs against the input workspace.
+func TestOrchestrateResetRefusesASwallowedCwd(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "swallow-reset"
+	orchestrateTransitionSession(t, cwd, id, `{"phase":"P","orchestrationActive":true}`)
+	parsed := ParseOrchestrateCliArgs([]string{"reset", "--session", id, "--attest", "--cwd=" + t.TempDir()}, cwd)
+	if parsed.Error == nil {
+		t.Fatalf("the swallowing form was parsed: %+v", parsed.Args)
+	}
+	read, err := RunOrchestrateRead(parsed, ReadEnv{})
+	if err != nil || read.Result == nil || read.Result.Code == 0 {
+		t.Fatalf("the read entry did not refuse: %+v %v", read, err)
+	}
+	if s := state.ReadState(cwd, id); s.Phase != state.PhaseP {
+		t.Fatalf("the input workspace's session moved: %+v", s)
+	}
+}

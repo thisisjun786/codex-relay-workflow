@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -248,9 +249,26 @@ func readStatus(a OrchestrateCliArgs, sessionID *string, hasNative bool, process
 	} else if hasNative {
 		selection = "native"
 	}
+	drainPendingLedgerForStatus(a.Cwd, *sessionID)
 	elsewhere := state.FindForeignSessionCopies(a.Cwd, *sessionID, SiblingRoots(a.Cwd, process))
 	output, err := RenderStatus(state.ReadState(a.Cwd, *sessionID), a.JSON, elsewhere, selection)
 	return readAnswer(0, output), err
+}
+
+// drainPendingLedgerForStatus (CRW-1097) lets the status call of a session record the transition rows an earlier writer left pending, so
+// "the next CLI call of the session recovers them" holds for the read verb too. Only a session with a pending event takes its lock; a
+// lock that is busy or a drain that cannot finish leaves the rows pending and never changes the status answer.
+func drainPendingLedgerForStatus(cwd, sessionID string) {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return
+	}
+	if events, _, err := state.PendingLedgerEvents(cwd, sessionID); err != nil || len(events) == 0 {
+		return
+	}
+	_ = state.WithSessionLock(cwd, sessionID, func() error {
+		hook.DrainSessionLedger(cwd, sessionID)
+		return nil
+	})
 }
 
 // Same compact JSON.stringify string rules as state.stringify, kept local because
