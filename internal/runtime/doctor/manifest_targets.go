@@ -426,15 +426,8 @@ func targetString(v any) string {
 	case bool:
 		return strconv.FormatBool(x)
 	case json.Number:
-		n, _ := strconv.ParseFloat(string(x), 64)
-		if n == 0 {
-			return "0"
-		}
-		b, e := json.Marshal(n)
-		if e != nil {
-			return strconv.FormatFloat(n, 'g', -1, 64)
-		}
-		return string(b)
+		n, _ := strconv.ParseFloat(string(x), 64) // out of range is an infinity, as it is in JavaScript
+		return jsnode.NumberString(n)
 	case pyjson.Object:
 		return "[object Object]"
 	case []any:

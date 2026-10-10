@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,20 +59,6 @@ func jsNumber(v any) (float64, bool) {
 	}
 	f, err := strconv.ParseFloat(string(n), 64)
 	return f, err == nil || errors.Is(err, strconv.ErrRange)
-}
-
-// jsNumberText is a number in a template literal: encoding/json prints a float64 as ECMAScript does, bar the infinities and -0.
-func jsNumberText(f float64) string {
-	switch {
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	text, _ := json.Marshal(f)
-	return string(text)
 }
 
 // dateParses is !Number.isNaN(Date.parse(s)) for the standard spellings only (known-defects names the differences).

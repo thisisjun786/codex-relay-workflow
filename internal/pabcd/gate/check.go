@@ -3,6 +3,7 @@ package gate
 import (
 	"fmt"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -39,7 +40,7 @@ func ValidateCheckReceipt(st state.State, sessionID, receiptPath, cwd string) Ch
 	case parsed.ExitCode == nil:
 		return refuse("the receipt reports exitCode none; only a passing run closes a check")
 	case *parsed.ExitCode != 0:
-		return refuse(fmt.Sprintf("the receipt reports exitCode %s; only a passing run closes a check", jsNumberText(*parsed.ExitCode)))
+		return refuse(fmt.Sprintf("the receipt reports exitCode %s; only a passing run closes a check", jsnode.NumberString(*parsed.ExitCode)))
 	case !parsed.CreatedAtProvided:
 		return refuse("the receipt carries no usable createdAt")
 	case parsed.OwnerSessionID == nil || *parsed.OwnerSessionID != sessionID:
