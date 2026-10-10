@@ -21,14 +21,18 @@ ignored). A pass moves a file out of `pending/` only after acting on it:
 | `solo-heads` | the heads (`node=head`, one per line) of a failed batch that have not yet had a run of their own; the file ends when none is pending any more |
 | `runner.log` | one line per decision |
 
-A file that changed while the run worked on it (the owner refreshed the head) stays in `pending/`. A name that is not an issue number, a
+A file that changed while the run worked on it (the owner refreshed the head) stays in `pending/`: the file is moved to a private name in
+its destination directory, read there, and put back as `pending/<name>` (never over a file written since) when it holds another head than the
+run worked on. A coordinator should replace a pending file atomically (write a new file and rename it); a writer that changes the same file in
+place after the move can still be missed. A name that is not an issue number, a
 directory and a link are not entries; they are reported as ignored.
 
 ## One pass
 
-1. A `stop` file ends the pass. An empty queue is `idle`.
-2. The lock (`lock_file`, a non-blocking `flock`, the lock every integration run takes) is held for the whole pass; a held lock is refused
-   with status 2 before anything is read or run.
+1. A `stop` file ends the pass. An empty queue is `idle` (the queue is listed once without the lock to decide this, as the shell runner's
+   `ls` did; nothing is changed by that listing).
+2. The lock (`lock_file`, a non-blocking `flock`, the lock every integration run takes) is taken as soon as the queue is not empty and held for
+   the rest of the pass; a held lock is refused with status 2 before any gate, merge or file move. The queue is read again under the lock.
 3. The gate (`gate_command`, `{issue}` and `{head}` replaced, run in `checkout`) is re-checked for every pending head, in issue-number
    order: its last output line must start with `PASS` and its status must be 0. In solo mode the pass takes the first head that passes.
    A gate that ran and did not say `PASS` blocks the head. A gate that could not start or was killed is no verdict: the pass ends with
@@ -51,7 +55,11 @@ directory and a link are not entries; they are reported as ignored.
      A change that cannot be added or committed (a refusing hook, for example) ends the run with status 2 before the verification.
    - What is verified is what is pushed: before the verification the worktree must be clean (`git status --porcelain` empty, so no
      uncommitted or untracked change beside the commit); otherwise the run ends with status 2, nothing is verified or pushed, and the heads
-     stay in `pending/`.
+     stay in `pending/`. The same holds after the verification: `verify_command` is a program the operator configures, and a HEAD it
+     moved or a change it left in the worktree (tracked, staged or untracked) ends the run with status 2 though it exited 0, because
+     the tree it judged is no longer the commit that would be pushed.
+   - The run's private temporary directory `work_root/tmp-<tag>` is created by the run itself (`mkdir`, not `mkdir -p`) and only a
+     directory the run created is removed with it; a name that already exists ends the run with status 2 and is left untouched.
 5. `record_version_command`, `verify_command` and the gate run with the inherited environment cleaned of Git routing variables
    (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the others `gitprobe.Sanitize` removes), so a command that asks Git for its
    repository finds the private worktree, never the shared checkout. `record_version_env` is the operator's explicit word and is applied

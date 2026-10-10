@@ -22,6 +22,10 @@ type Runner struct {
 	Sleep func(ctx context.Context, d time.Duration) error
 	// Env is the environment programs start with (nil: the process's).
 	Env []string
+
+	// hookMove is a test seam: it runs while a pending file is being moved, after the head the
+	// file holds was read and before the file leaves pending/.
+	hookMove func(src string)
 }
 
 // NewRunner is a runner over cfg (already Resolved) with the host's seams.

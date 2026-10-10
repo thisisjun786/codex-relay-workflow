@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // execStub replaces the world's program runner for the commands whose first word ends with
@@ -347,5 +348,144 @@ func TestPassSameSecondRunsKeepTheirOwnEvidence(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(w.cfg.RunsDir, s.Tag+".verify.log")); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// A temporary directory the run did not create is not the run's to delete: a retained
+// work_root/tmp-<tag> survives, and the run ends with status 2 before it touches anything.
+func TestPassDoesNotDeleteATemporaryDirectoryItDidNotCreate(t *testing.T) {
+	w := newWorld(t)
+	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
+	tag := w.cfg.TagPrefix + w.now.Add(time.Minute).Format("0102150405")
+	kept := filepath.Join(w.cfg.WorkRoot, "tmp-"+tag)
+	if err := os.MkdirAll(kept, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(kept, "retained.txt")
+	if err := os.WriteFile(sentinel, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := w.remoteDev()
+	rep := w.pass()
+	requireExit(t, rep, ExitUsage, "error")
+	if !strings.Contains(rep.Error, "tmp-") {
+		t.Fatalf("error %q does not name the temporary directory", rep.Error)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("a retained file in a directory the run did not create is gone: %v", err)
+	}
+	w.mustWhere("1", "pending")
+	if w.remoteDev() != base || w.ctlRead("verify-calls") != "" {
+		t.Fatal("a run that could not own its temporary directory verified or pushed")
+	}
+}
+
+// A run's own temporary directory is removed with it, a record run or not.
+func TestPassRemovesItsOwnTemporaryDirectory(t *testing.T) {
+	w := newWorld(t)
+	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
+	requireExit(t, w.pass(), ExitPushed, "pushed")
+	left, _ := filepath.Glob(filepath.Join(w.cfg.WorkRoot, "tmp-*"))
+	if len(left) != 0 {
+		t.Fatalf("temporary directories left: %v", left)
+	}
+}
+
+// What is verified is what is pushed, also after the verification: a verifier that repairs
+// the source, adds a file or commits ends the run with status 2 and nothing is pushed, though
+// it exits 0.
+func TestPassVerifierThatChangesTheTreeOrHeadPushesNothing(t *testing.T) {
+	for name, script := range map[string]string{
+		"edits a tracked file": "echo repaired >> README.md\n",
+		"adds a file":          "echo new > generated.txt\n",
+		"stages a change":      "echo staged >> README.md; git add README.md\n",
+		"commits":              "echo c > c2.txt; git add c2.txt; git commit -q -m verifier-commit\n",
+		"amends the commit":    "git commit -q --amend -m amended\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
+			w.ctlWrite("during-verify.sh", script)
+			base := w.remoteDev()
+			rep := w.pass()
+			requireExit(t, rep, ExitUsage, "error")
+			if !strings.Contains(rep.Error, "verification") {
+				t.Fatalf("error %q does not say the verification changed the tree", rep.Error)
+			}
+			w.mustWhere("1", "pending")
+			if w.remoteDev() != base {
+				t.Fatalf("pushed a commit the verification did not judge: %s", w.git(w.remote, "log", "--format=%s", "-3", "dev"))
+			}
+		})
+	}
+}
+
+// The refresh protection holds across the check: a coordinator that replaces the pending file
+// after the run read it (a new file by rename, the way a new head is written) keeps its new
+// file in pending, and the processed head is the one that moved.
+func TestMoveEntryKeepsAFileReplacedBetweenCheckAndMove(t *testing.T) {
+	w := newWorld(t)
+	a := w.head("a", map[string]string{"a.txt": "a\n"}, true)
+	newer := w.head("a2", map[string]string{"a2.txt": "a2\n"}, true)
+	w.pend("1", a)
+	pending := filepath.Join(w.cfg.QueueDir, "pending", "1")
+	fired := false
+	w.r.hookMove = func(string) {
+		if fired {
+			return
+		}
+		fired = true
+		tmp := pending + ".new"
+		w.write(tmp, newer+"\n")
+		if err := os.Rename(tmp, pending); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireExit(t, w.pass(), ExitPushed, "pushed")
+	if !fired {
+		t.Fatal("the seam did not run")
+	}
+	if got, _ := readHead(pending); got != newer {
+		t.Fatalf("pending holds %q, want the refreshed head %s", got, newer)
+	}
+	if _, err := os.Stat(filepath.Join(w.cfg.QueueDir, "done", "1")); err == nil {
+		t.Fatal("the refreshed head was carried into done/")
+	}
+}
+
+// A refresh written into the very file that is being moved is not carried into done/ either.
+func TestMoveEntryKeepsAFileRewrittenInPlaceBetweenCheckAndMove(t *testing.T) {
+	w := newWorld(t)
+	a := w.head("a", map[string]string{"a.txt": "a\n"}, true)
+	newer := w.head("a2", map[string]string{"a2.txt": "a2\n"}, true)
+	w.pend("1", a)
+	pending := filepath.Join(w.cfg.QueueDir, "pending", "1")
+	fired := false
+	w.r.hookMove = func(src string) {
+		if fired {
+			return
+		}
+		fired = true
+		// The writer holds the file path it opened before the move: src is pending/1 in the old
+		// order and the moved file in the new one; either way the bytes change in place.
+		for _, p := range []string{src, filepath.Join(w.cfg.QueueDir, "done", "1")} {
+			if _, err := os.Stat(p); err == nil {
+				if err := os.WriteFile(p, []byte(newer+"\n"), 0o664); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		t.Fatal("no file to rewrite")
+	}
+	requireExit(t, w.pass(), ExitPushed, "pushed")
+	if got, _ := readHead(pending); got != newer {
+		t.Fatalf("pending holds %q, want the refreshed head %s", got, newer)
+	}
+	if w.where("1") != "pending" {
+		t.Fatalf("file is in %q", w.where("1"))
+	}
+	if _, err := os.Stat(filepath.Join(w.cfg.QueueDir, "done", "1")); err == nil {
+		t.Fatal("the refreshed head was carried into done/")
 	}
 }

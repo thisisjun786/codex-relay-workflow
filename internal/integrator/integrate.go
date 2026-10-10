@@ -3,6 +3,7 @@ package integrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -68,23 +69,38 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 	if _, err := os.Lstat(wt); err == nil {
 		return fail("%s exists; remove it with git worktree remove first", wt)
 	}
+	// The temporary directory is created here, exclusively, and only a directory this run
+	// created is removed with it: a name that already exists holds someone else's data.
+	tmp := filepath.Join(c.WorkRoot, "tmp-"+tag)
+	if err := os.Mkdir(tmp, 0o775); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fail("%s exists; this run did not create it and does not remove it", tmp)
+		}
+		return fail("%v", err)
+	}
 	logPath := filepath.Join(c.RunsDir, tag+".log")
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o664)
 	if err != nil {
+		_ = os.Remove(tmp)
 		return fail("%v", err)
 	}
 	defer logf.Close()
-	if rc, err := r.git(ctx, c.Checkout, logf, "worktree", "add", "--detach", wt, base); err != nil || rc != 0 {
-		return fail("worktree add failed")
-	}
-	tmp := filepath.Join(c.WorkRoot, "tmp-"+tag)
+	added := false
 	defer func() {
 		// The worktree and the private temporary directory are the run's own; neither
 		// outlives it, whatever the result.
 		cleanup := context.WithoutCancel(ctx)
-		_, _ = r.git(cleanup, c.Checkout, nil, "worktree", "remove", "--force", wt)
+		if added {
+			_, _ = r.git(cleanup, c.Checkout, nil, "worktree", "remove", "--force", wt)
+		}
 		_ = os.RemoveAll(tmp)
 	}()
+	if rc, err := r.git(ctx, c.Checkout, logf, "worktree", "add", "--detach", wt, base); err != nil || rc != 0 {
+		// A failed add may have left a half-made worktree; remove it as an added one.
+		added = true
+		return fail("worktree add failed")
+	}
+	added = true
 
 	out := Outcome{}
 	rerecord := false
@@ -159,6 +175,11 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 			return fail("%v", ctx.Err())
 		}
 		return finish(fmt.Sprintf("verification-failed(rc=%d)", vrc), ExitVerifyFailed)
+	}
+	// The verification is a configurable program: the tree it judged must still be the commit
+	// that is pushed. A HEAD it moved, or a change it left beside the commit, is not a pass.
+	if err := r.treeIsTheCommit(ctx, wt, head); err != nil {
+		return fail("%v", err)
 	}
 	// From here on a git call the signal ended is not a moved branch or a refused push: the
 	// pass is cancelled and the heads stay pending (a push that did land makes them
@@ -257,6 +278,26 @@ func (r *Runner) resolveVersionOnly(ctx context.Context, wt string, log io.Write
 	}
 	rc, err := r.git(ctx, wt, log, "commit", "--no-edit", "-q")
 	return err == nil && rc == 0
+}
+
+// treeIsTheCommit reports an error unless the worktree's HEAD is still the commit that was
+// verified and the worktree holds nothing beside it (no changed, staged or untracked file).
+func (r *Runner) treeIsTheCommit(ctx context.Context, wt, head string) error {
+	now, err := r.gitOut(ctx, wt, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("after the verification: %w", err)
+	}
+	if now != head {
+		return fmt.Errorf("the verification moved HEAD from %s to %s; the tree it judged is not the commit to push, so nothing is pushed", head, now)
+	}
+	dirty, err := r.gitOut(ctx, wt, "status", "--porcelain")
+	if err != nil {
+		return fmt.Errorf("after the verification: %w", err)
+	}
+	if dirty != "" {
+		return fmt.Errorf("the verification left changes no commit holds; the tree it judged is not the commit to push, so nothing is pushed:\n%s", dirty)
+	}
+	return nil
 }
 
 // recordVersion re-derives the manifest's version line on the merged tree with the configured

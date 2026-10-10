@@ -105,18 +105,46 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 // moveEntry moves a pending file to one of the other queue directories, only while it still
 // holds the head the run worked on: a coordinator that refreshed the head meanwhile keeps its
 // new file in pending. It reports whether the file moved.
+//
+// The head is read before the move and again after it, from the file that was moved: a read
+// and a rename of the same path are two steps, and a refresh that lands between them would
+// otherwise carry the new, unprocessed head out of pending. The file first goes to a private
+// name beside its destination; if it holds another head than the run worked on it is put back
+// as pending/<name> without replacing a file the coordinator wrote since (that newer file
+// wins), and only a file that held the processed head replaces the destination.
 func (r *Runner) moveEntry(e Entry, to string) bool {
 	src := r.qpath(dirPending, e.Name)
 	if now, err := readHead(src); err != nil || now != e.Head {
 		r.logf("%s %s changed or went away during the run: left in pending", e.Key, e.Head)
 		return false
 	}
+	if r.hookMove != nil {
+		r.hookMove(src)
+	}
 	if err := os.MkdirAll(r.qpath(to), 0o775); err != nil {
 		r.logf("%s: %s: %v", e.Key, to, err)
 		return false
 	}
-	if err := os.Rename(src, r.qpath(to, e.Name)); err != nil {
+	claim := r.qpath(to, ".moving-"+e.Name+"-"+strconv.Itoa(os.Getpid()))
+	if err := os.Rename(src, claim); err != nil {
 		r.logf("%s: move to %s: %v", e.Key, to, err)
+		return false
+	}
+	if moved, err := readHead(claim); err != nil || moved != e.Head {
+		// The refresh slipped in between the check and the move: give it back.
+		if err := os.Link(claim, src); err != nil {
+			r.logf("%s: the refreshed file could not be put back (%v); a newer file in pending wins", e.Key, err)
+		}
+		_ = os.Remove(claim)
+		r.logf("%s %s changed or went away during the run: left in pending", e.Key, e.Head)
+		return false
+	}
+	if err := os.Rename(claim, r.qpath(to, e.Name)); err != nil {
+		r.logf("%s: move to %s: %v", e.Key, to, err)
+		if err := os.Link(claim, src); err != nil {
+			r.logf("%s: the file could not be put back (%v)", e.Key, err)
+		}
+		_ = os.Remove(claim)
 		return false
 	}
 	return true
