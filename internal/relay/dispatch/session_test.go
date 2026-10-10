@@ -57,3 +57,25 @@ func TestSessionFailureKeepsOracleAnswerWithoutSelectingRelayStore(t *testing.T)
 		t.Fatalf("exit=%d out=%q err=%q", code, out.String(), err.String())
 	}
 }
+
+// CRW-1136: the note of the root policy (an empty HOME replaced by the account home) goes to the stderr writer the
+// command was executed with, on a refusal too, and the JSON answer on stdout is the same document.
+func TestSessionRootNoteReachesTheSuppliedStderr(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("CODEX_SQLITE_HOME", "")
+	t.Setenv("CODEX_THREAD_ID", "019f0000-0000-7000-8000-00000000c0de")
+	t.Chdir(t.TempDir())
+	var out, err bytes.Buffer
+	code := Execute(context.Background(), "crw relay", []string{"session", "current", "--json"}, &out, &err)
+	var body struct{ Out struct{ OK bool } }
+	if code == 0 || json.Unmarshal(out.Bytes(), &body) != nil || body.Out.OK {
+		t.Fatalf("exit=%d out=%q err=%q", code, out.String(), err.String())
+	}
+	if !strings.HasPrefix(err.String(), "crw: HOME is set but empty") || strings.Count(err.String(), "\n") != 1 {
+		t.Errorf("the supplied stderr holds %q", err.String())
+	}
+	if strings.Contains(out.String(), "HOME is set but empty") {
+		t.Errorf("the note is on stdout: %q", out.String())
+	}
+}

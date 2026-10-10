@@ -33,7 +33,7 @@ func sessionOperands(name string, line []string) (flags, operands []string, miss
 	return line[1:], line[:1], ""
 }
 
-func runSessionCommand(_ context.Context, _ Services, args Args) (any, error) {
+func runSessionCommand(_ context.Context, services Services, args Args) (any, error) {
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		return nil, err
@@ -44,7 +44,11 @@ func runSessionCommand(_ context.Context, _ Services, args Args) (any, error) {
 	}
 	result := session.Run(opts, cwd, os.LookupEnv)
 	if result.Note != "" {
-		fmt.Fprintln(os.Stderr, "crw: "+result.Note)
+		diagnostics := services.Stderr
+		if diagnostics == nil {
+			diagnostics = os.Stderr
+		}
+		fmt.Fprintln(diagnostics, "crw: "+result.Note)
 	}
 	answer := contract.OrderedObject{{Key: "out", Value: result.Out}}
 	if result.Code != 0 {
