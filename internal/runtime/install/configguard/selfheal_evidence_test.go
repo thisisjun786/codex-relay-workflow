@@ -1039,9 +1039,8 @@ func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheMarkerLockIs
 				t.Fatalf("the older record was not written: %+v %v", older, err)
 			}
 			cwd, run := tc.setup(t, home)
-			prevWait := selfHealMarkerLockWait
-			selfHealMarkerLockWait = 5 * time.Second
-			t.Cleanup(func() { selfHealMarkerLockWait = prevWait })
+			// The default lock wait outlasts the 200ms deadline below; the abandoned drop reads it, so it
+			// is not changed here.
 			unlock, err := lockSelfHealMarker(home)
 			if err != nil {
 				t.Fatal(err)
