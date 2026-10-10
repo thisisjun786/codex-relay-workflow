@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
 // testdata/oracle-ledger.json holds what the CXC v0.2.40 oracle's interview-ledger.js answered for each case, recorded once by
@@ -77,7 +79,13 @@ func TestEveryRecordedOracleCaseAgrees(t *testing.T) {
 			case "read":
 				cwd := t.TempDir()
 				if c.Ledger != nil {
-					writeLedger(t, cwd, "s", *c.Ledger)
+					// The recorded rows name no session and the scan rows lack the fields the port requires (CRW-1108, known-defects.md:109):
+					// the port reads them as no evidence, and reads what the oracle read once each row carries them.
+					bare := t.TempDir()
+					writeLedger(t, bare, "s", *c.Ledger)
+					wantEq(t, "rows of no session: event ids", ids(ReadQaEvents(bare, "s")), []string{})
+					wantEq(t, "rows of no session: backed", DimensionsBackedByAnswers(bare, "s"), map[interview.Dimension]bool{})
+					writeLedger(t, cwd, "s", stampRows(*c.Ledger))
 				}
 				wantEq(t, "event ids", ids(ReadQaEvents(cwd, "s")), c.EventIDs)
 				backed := []string{}
@@ -203,4 +211,36 @@ func rowsOf(t *testing.T, path string) []map[string]any {
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// stampRows gives every question, answer and scan row of a recorded ledger the session name the port requires, and the scan rows the
+// ts and highContradictionCount it requires beside the roundId and contradictionCount the oracle already needed; a row that has the
+// key keeps its value, and a line that is no row stays as it is.
+func stampRows(ledger string) string {
+	lines := strings.Split(ledger, "\n")
+	for i, line := range lines {
+		var o map[string]any
+		trimmed := text.Trim(line) // JavaScript's trim, which strips the byte order mark too
+		if json.Unmarshal([]byte(trimmed), &o) != nil || o == nil || strings.Index(line, "{") < 0 {
+			continue
+		}
+		kind, _ := o["event"].(string)
+		add := ""
+		if _, ok := o["sessionId"]; !ok {
+			add += `"sessionId":"s",`
+		}
+		if kind == "scan_completed" || kind == "scan_started" || kind == "rescan_completed" {
+			if _, ok := o["ts"]; !ok {
+				add += `"ts":"t",`
+			}
+			if _, ok := o["highContradictionCount"]; !ok {
+				add += `"highContradictionCount":0,`
+			}
+		}
+		if kind != "" && add != "" {
+			at := strings.Index(line, "{") + 1
+			lines[i] = line[:at] + add + line[at:]
+		}
+	}
+	return strings.Join(lines, "\n")
 }

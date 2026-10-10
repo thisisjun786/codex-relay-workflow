@@ -215,10 +215,12 @@ func TestReadQaEventsKeepsTheRowAndSkipsWhatIsNotOne(t *testing.T) {
 	cwd := t.TempDir()
 	rows := []string{
 		"", "  ", "{bad", "[]", "5", "null",
-		"{'event':'question_asked','eventId':'a','turnId':'t','questionId':'q','question':'?','extra':1}",
-		"{'event':'answer_recorded','eventId':'b','answers':['x',1,null,'y']}",
-		"{'event':'answer_recorded','eventId':'c','answers':'x'}",
-		"{'event':'question_asked'}", "{'event':'scan_completed','eventId':'d'}", "{'event':'question_asked','eventId':5}",
+		"{'sessionId':'s','event':'question_asked','eventId':'a','turnId':'t','questionId':'q','question':'?','extra':1}",
+		"{'sessionId':'s','event':'answer_recorded','eventId':'b','answers':['x',1,null,'y']}",
+		"{'sessionId':'s','event':'answer_recorded','eventId':'c','answers':'x'}",
+		"{'event':'question_asked','eventId':'d'}", // names no session: another session's, as far as the reader can tell
+		"{'sessionId':'x','event':'question_asked','eventId':'e'}",
+		"{'sessionId':'s','event':'question_asked'}", "{'sessionId':'s','event':'scan_completed','eventId':'d'}", "{'sessionId':'s','event':'question_asked','eventId':5}",
 	}
 	writeLedger(t, cwd, "s", j(strings.Join(rows, "\r\n"))+"\n")
 	events := ReadQaEvents(cwd, "s")
@@ -396,4 +398,52 @@ func TestALoneSurrogateEscapeReadsAsTheReplacementCharacter(t *testing.T) {
 	// a Go string cannot hold one (documented limit): two ids that differ only in lone surrogates read as one
 	qs := ParseQuestions("{\"questions\":[{\"id\":\"a\\ud800\",\"question\":\"b\\udc00\"}]}")
 	wantEq(t, "question", qs, []ParsedQuestion{{"a\ufffd", "b\ufffd"}})
+}
+
+// CRW-1108 (pre-merge evaluation d2; known-defects.md:109, port: fixed): the consumers of the provenance gate count a row only when it
+// names the session asked for, the scan row also when it carries the fields ReadInterviewEvents requires. Rows of another session in the
+// file, the legacy alias contamination, back no dimension and suppress no capture of this session.
+func TestOnlyThisSessionsRowsBackADimensionOrSuppressACapture(t *testing.T) {
+	row := func(session, event, rest string) string {
+		return j("{'ts':'t','sessionId':'" + session + "','event':'" + event + "'," + rest + "}\n")
+	}
+	scan := func(session string) string {
+		return row(session, "scan_completed", "'roundId':1,'contradictionCount':0,'highContradictionCount':0,'map':{'q1':'goal'}")
+	}
+	asked := func(session string) string {
+		return row(session, "question_asked", "'questionId':'q1','eventId':'t:q1:question_asked','question':'?'")
+	}
+	answered := func(session string) string {
+		return row(session, "answer_recorded", "'questionId':'q1','eventId':'t:q1:answer_recorded','answers':['x']")
+	}
+	goal := map[interview.Dimension]bool{"goal": true}
+	none := map[interview.Dimension]bool{}
+	for name, c := range map[string]struct {
+		ledger string
+		want   map[interview.Dimension]bool
+	}{
+		"all rows are this session's":          {asked("s") + answered("s") + scan("s"), goal},
+		"every row names another session":      {asked("x") + answered("x") + scan("x"), none},
+		"the question is another session's":    {asked("x") + answered("s") + scan("s"), none},
+		"the answer is another session's":      {asked("s") + answered("x") + scan("s"), none},
+		"the scan row is another session's":    {asked("s") + answered("s") + scan("x"), none},
+		"rows name no session":                 {strings.ReplaceAll(asked("s")+answered("s")+scan("s"), "\"sessionId\":\"s\",", ""), none},
+		"the scan row has no ts":               {asked("s") + answered("s") + strings.Replace(scan("s"), "\"ts\":\"t\",", "", 1), none},
+		"the scan row has no counters":         {asked("s") + answered("s") + row("s", "scan_completed", "'map':{'q1':'goal'}"), none},
+		"a foreign row beside this one's":      {asked("x") + answered("x") + scan("x") + asked("s") + answered("s") + scan("s"), goal},
+		"the foreign scan beside own evidence": {asked("s") + answered("s") + scan("x") + row("s", "scan_completed", "'roundId':2,'contradictionCount':0,'highContradictionCount':0,'map':{'q1':''}"), none},
+	} {
+		cwd := t.TempDir()
+		writeLedger(t, cwd, "s", c.ledger)
+		wantEq(t, name+": backed", DimensionsBackedByAnswers(cwd, "s"), c.want)
+	}
+
+	// a foreign row with this turn's event id does not make the capture of this session a duplicate
+	cwd := t.TempDir()
+	writeLedger(t, cwd, "s", asked("x"))
+	wantEq(t, "foreign rows read", ids(ReadQaEvents(cwd, "s")), []string{})
+	input := "{'questions':[{'id':'q1','question':'?'}]}"
+	if n := len(run(t, cwd, "s", "t", input, "{'answers':{'q1':{'answers':['x']}}}").Written); n != 2 {
+		t.Fatalf("the capture wrote %d rows next to a foreign row with its event id; want 2", n)
+	}
 }
