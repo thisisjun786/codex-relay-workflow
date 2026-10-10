@@ -51,9 +51,10 @@ type FireOptions struct {
 	Only    *regexp.Regexp // restrict the fixtures
 	Fault   string
 	Run     string // the run id (a fresh one when empty)
-	// NoSwitch fires without the hook switch file, the state of an installation nobody switched: the
-	// ported legs are then silent (CRW-392). By default every case's CODEX_HOME holds the switch at crw.
-	NoSwitch bool
+	// Switch is the state the hook switch is held in while the commands run: SwitchOn (the default) is
+	// crw, so the ported legs do their work; SwitchOff has no switch file, the state of an installation
+	// nobody switched, and SwitchCXC says cxc: the ported legs are silent in both (CRW-392).
+	Switch string
 }
 
 // FixtureFire is the firing and effect of one fixture.
@@ -103,7 +104,7 @@ type FireReport struct {
 // Fire fires every claimed hook fixture of the corpus, plus CRW's own probes, through the commands
 // the plugin root declares, and returns the firing, effect and receipt cells.
 func Fire(o FireOptions) (FireReport, error) {
-	rep := FireReport{Run: o.Run, Fault: o.Fault, Switch: switchReport(o.NoSwitch)}
+	rep := FireReport{Run: o.Run, Fault: o.Fault, Switch: switchReport(o.Switch)}
 	if rep.Run == "" {
 		rep.Run = NewRunID()
 	}
@@ -140,9 +141,7 @@ func Fire(o FireOptions) (FireReport, error) {
 		defer os.RemoveAll(scratch)
 	}
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Only: o.Only}
-	if !o.NoSwitch {
-		in.Seed = seedSwitch
-	}
+	in.Seed = newSeedPlan(o.Switch, o.CRW, declared).seed
 	switch o.Fault {
 	case FaultDropStdout:
 		in.Mutate = func(_ string, got *cxccorpus.Expect) {

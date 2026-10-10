@@ -39,7 +39,7 @@ type HookFireInput struct {
 	Steps  func(id string, steps []cxccorpus.Step) []cxccorpus.Step
 	// Seed puts the harness's own files into every case root it fires in (cxccorpus.RunOptions.Seed),
 	// and takes them out before the tree is observed.
-	Seed func(c *cxccorpus.Case) (undo func() error, err error)
+	Seed func(c *cxccorpus.Case, env []string) (undo func() error, err error)
 }
 
 // FiredStep is one step of a fixture as delivered: the leg it fires and the payload it sends.

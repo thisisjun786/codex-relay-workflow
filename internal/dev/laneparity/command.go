@@ -279,7 +279,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	}
 	report.Plugin.Root = pluginRoot
 	if command == "fire" || command == "latency" || command == "all" {
-		sw := switchReport(false)
+		sw := switchReport(SwitchOn)
 		report.Switch = &sw
 	}
 	if report.Plugin.Digest, err = PluginDigest(pluginRoot); err != nil {
