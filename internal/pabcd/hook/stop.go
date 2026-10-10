@@ -141,7 +141,9 @@ func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock fun
 		// (decision 6), so the block that tells it to arm the next work-phase is withheld whole: a release, no budget spent, no
 		// write, whether or not a goalplan is bound. The read comes after every other release, so only a Stop that would block
 		// reads the registry, and an unknown role (no reader, no binding, a mixed role, a store that cannot be read) keeps the block.
-		if role != nil && role(p.Cwd, p.SessionID).Coordinates() {
+		// A seat that took an explicit request to implement a task in this session (loopArmSeen, ImplementsHere) is that task's
+		// implementer and not acting as a coordinating seat, so it keeps the block and the registry is not read for it.
+		if role != nil && !st.LoopArmSeen && role(p.Cwd, p.SessionID).Coordinates() {
 			return StopAnswer{}
 		}
 		// CRW-145: the source-identity investigation (git status, hashing the dirty files) is slow, so it is made here, before the

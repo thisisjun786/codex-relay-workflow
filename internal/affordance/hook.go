@@ -117,9 +117,10 @@ type RoleReader func(cwd, sessionID string) pabcdhook.PromptRole
 // carry no loop pointer (CRW-386, decision 6: a non-implementing seat does not run PABCD). The registry decides the role of any
 // session id the payload names, as it does for Stop and UserPromptSubmit: validSessionID is the rule for printing an id into a
 // pointer, not for whether the id is a session. A missing id, no reader and every role but parent and supervisor keep the
-// oracle's pointers.
+// oracle's pointers, and so does a seat that took an explicit request to implement a task in this session
+// (pabcdhook.ImplementsHere): it is that task's implementer, and the state is read only for a seat the registry verified.
 func (r RoleReader) coordinates(cwd, sessionID string) bool {
-	return r != nil && sessionID != "" && r(cwd, sessionID).Coordinates()
+	return r != nil && sessionID != "" && r(cwd, sessionID).Coordinates() && !pabcdhook.ImplementsHere(cwd, sessionID)
 }
 
 // RunUserPromptAffordance is RunUserPromptAffordanceWithRole with no role reader: every session gets the whole restore.

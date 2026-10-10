@@ -406,6 +406,16 @@ const (
 // An unknown role, a dispatched task and any mixed role are not coordinating seats: they keep the oracle's text.
 func (r PromptRole) Coordinates() bool { return r == PromptRoleParent || r == PromptRoleSupervisor }
 
+// ImplementsHere is whether the session took an explicit request to implement a task in the current session: UserPromptSubmit
+// keeps the loop-arm recipe for that request, whatever the registry says, and records it as loopArmSeen (a coordinating seat's
+// scope pointer arms nothing and does not). The registry role is what the session is bound as; this is what it is doing now
+// (goal-mode.md: for that task the session is its implementer and not acting as project parent), so every leg that withholds the
+// loop from a coordinating seat withholds it only from one for which this is false, and the implementer keeps the oracle's
+// goal-idle continuation between the work-phases of its own goalplan and its loop pointers after a start and a compaction.
+func ImplementsHere(cwd, sessionID string) bool {
+	return sessionID != "" && state.ReadState(cwd, sessionID).LoopArmSeen
+}
+
 // ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical and reads
 // only the request clauses requestLines keeps, after scopeText has dropped the example spans, so a quoted, listed, fenced or
 // plainly introduced example ("Example: ...", "e.g.", "예: ..."), an explanation and a negated clause say nothing about the scope.
