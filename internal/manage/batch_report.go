@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -103,13 +104,62 @@ func batchParseDigest(raw []byte) (BatchDigest, error) {
 		if strings.TrimSpace(key) == "" {
 			return d, fmt.Errorf("selected entry %d is blank", i+1)
 		}
+		if !batchKeyValid(key) {
+			return d, fmt.Errorf("selected entry %d %q is not an issue key (letters, digits, '-', '_' and '.', starting and ending with a letter or digit)", i+1, key)
+		}
 	}
 	for i, item := range d.Items {
 		if strings.TrimSpace(item.Issue) == "" {
 			return d, fmt.Errorf("item %d has no issue key", i+1)
 		}
+		if !batchKeyValid(item.Issue) {
+			return d, fmt.Errorf("item %d issue %q is not an issue key (letters, digits, '-', '_' and '.', starting and ending with a letter or digit)", i+1, item.Issue)
+		}
 	}
 	return d, nil
+}
+
+// batchKeyValid is whether an issue key is a plain identifier: a Linear key such as CRW-1040 or an
+// issue id. A key leads a line of the report, so it holds nothing Markdown could read as the start of
+// a heading, a list, a fence or an HTML block: only letters, digits, '-', '_' and '.', the first and the
+// last a letter or a digit.
+func batchKeyValid(key string) bool {
+	runes := []rune(key)
+	if len(runes) == 0 {
+		return false
+	}
+	for i, r := range runes {
+		alnum := unicode.IsLetter(r) || unicode.IsDigit(r)
+		if (i == 0 || i == len(runes)-1) && !alnum {
+			return false
+		}
+		if !alnum && r != '-' && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// batchKey is an issue key as the report shows it: the key itself, or, for a key a caller of
+// BatchReport passed without batchParseDigest's check, the key quoted on one line.
+func batchKey(key string) string {
+	if batchKeyValid(key) {
+		return key
+	}
+	return strconv.Quote(key)
+}
+
+// batchText is free text of the digest as the report shows it: one line, every run of white space or
+// control characters (newlines, carriage returns, line and paragraph separators) folded to one space.
+// Free text never starts a report line, so on one line it can neither add a heading nor a list item
+// nor end the section it stands in.
+func batchText(text string) string {
+	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)), " ")
 }
 
 // BatchReport renders the morning report of a digest. checkedAt is when the report was made. It reads
@@ -132,16 +182,17 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 	recorded := map[string]bool{}
 	for _, item := range d.Items {
 		recorded[item.Issue] = true
-		name := item.Issue
-		if t := strings.TrimSpace(item.Title); t != "" {
+		key := batchKey(item.Issue)
+		name := key
+		if t := batchText(item.Title); t != "" {
 			name += " " + t
 		}
 		if seen[item.Issue] {
-			unverified = append(unverified, fmt.Sprintf("%s: 같은 이슈가 중복 기록됨 (첫 기록만 사용, 뒤 기록 결과 %q)", item.Issue, item.Outcome))
+			unverified = append(unverified, fmt.Sprintf("%s: 같은 이슈가 중복 기록됨 (첫 기록만 사용, 뒤 기록 결과 %q)", key, item.Outcome))
 			continue
 		}
 		seen[item.Issue] = true
-		reason := strings.TrimSpace(item.Reason)
+		reason := batchText(item.Reason)
 		if !selected[item.Issue] {
 			decision = append(decision, fmt.Sprintf("%s: 선택 목록 밖 이슈가 실행 기록에 있다 (결과 %q). 해제 경위를 확인해야 한다", name, item.Outcome))
 			counts[batchOutcomeDecision]++
@@ -149,19 +200,20 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 		}
 		withReason := func(label string) string {
 			if reason == "" {
-				unverified = append(unverified, fmt.Sprintf("%s: %s로 기록됐으나 %s", item.Issue, label, batchNoReason))
+				unverified = append(unverified, fmt.Sprintf("%s: %s로 기록됐으나 %s", key, label, batchNoReason))
 				return fmt.Sprintf("%s: %s: %s", name, label, batchNoReason)
 			}
 			return fmt.Sprintf("%s: %s: %s", name, label, reason)
 		}
 		switch item.Outcome {
 		case batchOutcomeIntegrated:
-			if strings.TrimSpace(item.Evidence) == "" {
-				unverified = append(unverified, fmt.Sprintf("%s: 통합으로 기록됐으나 증거 없음 (통합으로 세지 않음)", item.Issue))
+			evidence := batchText(item.Evidence)
+			if evidence == "" {
+				unverified = append(unverified, fmt.Sprintf("%s: 통합으로 기록됐으나 증거 없음 (통합으로 세지 않음)", key))
 				continue
 			}
 			counts[batchOutcomeIntegrated]++
-			integrated = append(integrated, fmt.Sprintf("%s: 증거 %s", name, strings.TrimSpace(item.Evidence)))
+			integrated = append(integrated, fmt.Sprintf("%s: 증거 %s", name, evidence))
 		case batchOutcomeCancelled:
 			counts[batchOutcomeCancelled]++
 			carried = append(carried, withReason("취소"))
@@ -171,31 +223,31 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 		case batchOutcomeDecision:
 			counts[batchOutcomeDecision]++
 			if reason == "" {
-				unverified = append(unverified, fmt.Sprintf("%s: 결정 필요로 기록됐으나 %s", item.Issue, batchNoReason))
+				unverified = append(unverified, fmt.Sprintf("%s: 결정 필요로 기록됐으나 %s", key, batchNoReason))
 				decision = append(decision, fmt.Sprintf("%s: %s", name, batchNoReason))
 			} else {
 				decision = append(decision, fmt.Sprintf("%s: %s", name, reason))
 			}
 		default:
-			unverified = append(unverified, fmt.Sprintf("%s: 알 수 없는 결과 %q (분류하지 않음)", item.Issue, item.Outcome))
+			unverified = append(unverified, fmt.Sprintf("%s: 알 수 없는 결과 %q (분류하지 않음)", key, item.Outcome))
 		}
 	}
 	for _, key := range selectedKeys {
 		if !recorded[key] {
-			unverified = append(unverified, fmt.Sprintf("%s: 선택됐으나 실행 기록 없음", key))
+			unverified = append(unverified, fmt.Sprintf("%s: 선택됐으나 실행 기록 없음", batchKey(key)))
 		}
 	}
 
 	var b strings.Builder
 	scope := fmt.Sprintf("선택 %d건 중", len(selectedKeys))
-	fmt.Fprintf(&b, "# 밤 배치 아침 보고: %s\n\n", strings.TrimSpace(d.Label))
+	fmt.Fprintf(&b, "# 밤 배치 아침 보고: %s\n\n", batchText(d.Label))
 	fmt.Fprintf(&b, "**결론**: %s 통합 %d건, 취소 %d건, 이월 %d건, Jun 결정 필요 %d건, 미확인 %d건.", scope,
 		counts[batchOutcomeIntegrated], counts[batchOutcomeCancelled], counts[batchOutcomeCarried], counts[batchOutcomeDecision], len(unverified))
-	if d.Deadline != "" {
-		fmt.Fprintf(&b, " 기한 %s.", d.Deadline)
+	if deadline := batchText(d.Deadline); deadline != "" {
+		fmt.Fprintf(&b, " 기한 %s.", deadline)
 	}
-	if d.Stopped != "" {
-		fmt.Fprintf(&b, " 종료 사유 %s.", d.Stopped)
+	if stopped := batchText(d.Stopped); stopped != "" {
+		fmt.Fprintf(&b, " 종료 사유 %s.", stopped)
 	}
 	b.WriteString("\n")
 	section := func(heading string, lines []string) {
@@ -213,7 +265,7 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 
 	evidence := []string{"확인 시각: " + checkedAt.UTC().Format(time.RFC3339)}
 	times := func(label, v string) {
-		if v == "" {
+		if v = batchText(v); v == "" {
 			evidence = append(evidence, label+": 기록 없음")
 		} else {
 			evidence = append(evidence, label+": "+v)
@@ -229,9 +281,9 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 		if !p.Observed {
 			state = "관측 안 됨"
 		}
-		line := fmt.Sprintf("제공자 관측: %s: %s", p.Name, state)
-		if p.Detail != "" {
-			line += " (" + p.Detail + ")"
+		line := fmt.Sprintf("제공자 관측: %s: %s", batchText(p.Name), state)
+		if detail := batchText(p.Detail); detail != "" {
+			line += " (" + detail + ")"
 		}
 		evidence = append(evidence, line)
 	}
@@ -284,6 +336,9 @@ func batchRunReport(_ context.Context, e *Env, args []string) int {
 	if auditOptionsHelpRequested(args) {
 		fmt.Fprintln(e.Stdout, batchReportUsage)
 		return 0
+	}
+	if code, refused := batchConfigRefused(e); refused {
+		return code
 	}
 	values, err := auditPkgParseArgs(args, map[string]bool{"digest": true})
 	if err != nil {

@@ -44,6 +44,10 @@ The run writes one JSON object, schema `crw-batch-digest/1`: `label`, `selected`
 plan, `[]` when none), `started_at`, `finished_at` and `deadline` (RFC 3339, each optional), `stopped` (why the run
 ended: finished, deadline, budget, stopped), `providers` (`name`, `observed`, `detail`) and `items`
 (`issue`, `title`, `outcome`, `reason`, `evidence`). `outcome` is `integrated`, `cancelled`, `carried` or
-`needs_decision`. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which
+`needs_decision`. An issue key (in `selected` and on an item) is a plain identifier: letters, digits, `-`,
+`_` and `.`, starting and ending with a letter or digit; a digest with another key is refused. Free text
+(the label, a title, a reason, evidence, `stopped`, a provider's name and detail) is shown on one line, every
+line break or other white space or control run folded to one space, so it never adds a heading or an item
+to the report. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which
 reads the Linear issues the caller supplies and selects those in Backlog that carry the label and pass
 the release gate (`crw skill issue-ready check`), holding the others with their reasons.

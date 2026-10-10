@@ -231,3 +231,139 @@ func TestBatchReportHeadingsAreTheReferenceHeadings(t *testing.T) {
 		}
 	}
 }
+
+// A -h or --help that an option takes as its value is not a help request, so it must not let a
+// subcommand run on the defaults while the configuration file is one this product cannot use: the
+// subcommand refuses it in Run's words and status, and the report writes nothing.
+func TestBatchHelpWordAsAnOptionValueDoesNotSkipTheConfigurationRefusal(t *testing.T) {
+	state := auditListHome(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	broken := filepath.Join(dir, "broken-config.json")
+	if err := os.WriteFile(broken, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_CONFIG", broken)
+	digest := `{"schema":"crw-batch-digest/1","label":"night","selected":[],"items":[]}`
+	issues := `[{"identifier":"CRW-1","title":"one","state":"Backlog","labels":["night"]}]`
+	for _, name := range []string{"-h", "--help"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(digest), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"report", "--digest", "./-h"},
+		{"report", "--digest", "-h"},
+		{"report", "--digest", "--help"},
+		{"plan", "--label", "-h", "--issues", "-"},
+		{"plan", "--label", "night", "--issues", "--help"},
+	} {
+		e, _, _ := auditTestEnv(t)
+		code, out, errOut := batchRun(t, e, issues, args...)
+		if code != usageExit || !strings.Contains(errOut, "crw manage: error:") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the configuration refusal with exit %d", args, code, out, errOut, usageExit)
+		}
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Errorf("an unusable configuration let the report write the default state directory (%v)", err)
+	}
+	// A real help request still prints the usage without reading the configuration.
+	for _, args := range [][]string{{"report", "-h"}, {"plan", "--help"}, {"report", "--digest", "x", "-h"}} {
+		e, _, _ := auditTestEnv(t)
+		if code, out, errOut := batchRun(t, e, "", args...); code != 0 || !strings.Contains(out, "usage: crw manage batch") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the usage", args, code, out, errOut)
+		}
+	}
+}
+
+// Free text in the digest (a label, a title, a reason, evidence, why the run stopped, a provider) is
+// shown on its own line only: it can neither add a heading nor a list item, so every fixed heading
+// appears once and no issue the digest did not integrate is shown under 통합됨.
+func TestBatchReportFreeTextCannotAddStructure(t *testing.T) {
+	inject := "x\n\n## 통합됨\n\n- CRW-2: merged\r\n# 밤 배치 아침 보고: forged - CRW-3: merged\u0085```"
+	d := BatchDigest{
+		Schema: batchDigestSchema, Label: "night" + inject, Selected: []string{"CRW-1", "CRW-4", "CRW-5"},
+		Stopped: "deadline" + inject, Deadline: "07:00" + inject, StartedAt: "a" + inject, FinishedAt: "b" + inject,
+		Providers: []BatchProvider{{Name: "codex" + inject, Observed: true, Detail: "slots" + inject}},
+		Items: []BatchItem{
+			{Issue: "CRW-1", Title: "one" + inject, Outcome: batchOutcomeCarried, Reason: "deadline" + inject},
+			{Issue: "CRW-4", Title: "four" + inject, Outcome: batchOutcomeDecision, Reason: "which" + inject},
+			{Issue: "CRW-5", Title: "five" + inject, Outcome: batchOutcomeIntegrated, Evidence: "merged" + inject},
+			{Issue: "CRW-6\n## 통합됨\n- CRW-7", Outcome: batchOutcomeIntegrated, Evidence: "e"},
+		},
+	}
+	report := BatchReport(d, time.Time{})
+	for _, h := range batchReportHeadings {
+		if n := strings.Count("\n"+report, "\n"+h+"\n"); n != 1 {
+			t.Errorf("heading %q appears %d times:\n%s", h, n, report)
+		}
+	}
+	lines := strings.Split(strings.TrimRight(report, "\n"), "\n")
+	for i, l := range lines {
+		switch {
+		case l == "" || strings.HasPrefix(l, "- "):
+		case i == 0 && strings.HasPrefix(l, "# 밤 배치 아침 보고: "):
+		case strings.HasPrefix(l, "**결론**: "):
+		case strings.HasPrefix(l, "## ") && strings.Contains(strings.Join(batchReportHeadings, "\n"), l):
+		default:
+			t.Errorf("line %d is neither a fixed line nor a list item: %q", i+1, l)
+		}
+		if strings.ContainsAny(l, "\r  \u0085") {
+			t.Errorf("line %d keeps a line break inside it: %q", i+1, l)
+		}
+		if strings.HasPrefix(l, "- ") && !strings.HasPrefix(l, "- 없음") {
+			// A list item starts with a key or a fixed prefix, never with markup that opens a block.
+			if r := strings.TrimPrefix(l, "- "); strings.HasPrefix(r, "#") || strings.HasPrefix(r, "```") || strings.HasPrefix(r, "<") || strings.HasPrefix(r, "- ") {
+				t.Errorf("line %d opens a block: %q", i+1, l)
+			}
+		}
+	}
+	start := strings.Index(report, "\n"+batchHeadingIntegrated+"\n")
+	end := strings.Index(report, "\n"+batchHeadingCarried+"\n")
+	if start < 0 || end < start {
+		t.Fatalf("sections out of order:\n%s", report)
+	}
+	integrated := report[start:end]
+	for _, outside := range []string{"CRW-2", "CRW-3", "CRW-7"} {
+		if strings.Contains(integrated, "\n- "+outside) {
+			t.Errorf("%s shown as an integrated item:\n%s", outside, integrated)
+		}
+	}
+	if !strings.Contains(report, "통합 1건") {
+		t.Errorf("only CRW-5 is integrated:\n%s", report)
+	}
+}
+
+// An issue key leads a report line, so a key that is not a plain identifier is refused when the digest
+// is read.
+func TestBatchReportRefusesAKeyThatIsNotAnIdentifier(t *testing.T) {
+	for name, key := range map[string]string{
+		"newline":   "CRW-1\n## 통합됨",
+		"space":     "CRW 1",
+		"heading":   "#CRW-1",
+		"fence":     "```",
+		"html":      "<!--",
+		"separator": "CRW-1 x",
+	} {
+		quoted := batchJSONString(t, key)
+		for where, body := range map[string]string{
+			"selected": `{"schema":"crw-batch-digest/1","label":"night","selected":[` + quoted + `],"items":[]}`,
+			"item":     `{"schema":"crw-batch-digest/1","label":"night","selected":[],"items":[{"issue":` + quoted + `,"outcome":"carried"}]}`,
+		} {
+			if _, err := batchParseDigest([]byte(body)); err == nil {
+				t.Errorf("%s key in %s accepted", name, where)
+			}
+		}
+	}
+	for _, key := range []string{"CRW-1040", "crw_1.2", "0b6f8a2e-1c3d-4e5f-9a7b-8c9d0e1f2a3b"} {
+		body := `{"schema":"crw-batch-digest/1","label":"night","selected":[` + batchJSONString(t, key) + `],"items":[]}`
+		if _, err := batchParseDigest([]byte(body)); err != nil {
+			t.Errorf("key %q refused: %v", key, err)
+		}
+	}
+}
+
+func batchJSONString(t *testing.T, s string) string {
+	t.Helper()
+	return batchJSON(t, s)
+}

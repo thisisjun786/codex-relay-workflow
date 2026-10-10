@@ -91,6 +91,19 @@ func batchMain(ctx context.Context, e *Env, args []string) int {
 	return usageExit
 }
 
+// batchConfigRefused refuses a configuration file this product cannot use, in Run's words and status.
+// Run skips its own refusal when any argument is -h or --help, but an option takes such a token as its
+// value (--digest -h names the file -h), which is no help request; each subcommand therefore makes the
+// refusal itself once it has answered a real help request, as crw manage audit package does, so a file
+// this product cannot use never lets a batch command run on the defaults.
+func batchConfigRefused(e *Env) (int, bool) {
+	if err := coreConfigError(e); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+		return usageExit, true
+	}
+	return 0, false
+}
+
 // batchRefuse writes a usage-level refusal of one subcommand.
 func batchRefuse(e *Env, usage, name string, err error) int {
 	fmt.Fprintln(e.Stderr, usage)
@@ -102,6 +115,9 @@ func batchRunPlan(_ context.Context, e *Env, args []string) int {
 	if auditOptionsHelpRequested(args) {
 		fmt.Fprintln(e.Stdout, batchPlanUsage)
 		return 0
+	}
+	if code, refused := batchConfigRefused(e); refused {
+		return code
 	}
 	values, err := auditPkgParseArgs(args, map[string]bool{"label": true, "issues": true})
 	if err != nil {
