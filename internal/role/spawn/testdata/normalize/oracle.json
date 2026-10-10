@@ -481,33 +481,33 @@
       "input": "$crw-directory",
       "skills": "${SKILLS}",
       "oracle": "[$cxc-directory](skill://${SKILLS}/directory/SKILL.md)",
-      "expected": "[$crw-directory](skill://${SKILLS}/crw-directory/SKILL.md)",
+      "expected": "$crw-directory",
       "classification": "intentionally-changed",
-      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name). CRW-1114: a directory named SKILL.md is no skill (known-defects.md:854)."
     },
     {
       "input": "prefix$crw-dev",
       "skills": "${SKILLS}",
       "oracle": "prefix[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
-      "expected": "prefix[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+      "expected": "prefix$crw-dev",
       "classification": "intentionally-changed",
-      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name). CRW-1114: a mention inside a word is text (known-defects.md:855)."
     },
     {
       "input": "\\$crw-dev",
       "skills": "${SKILLS}",
       "oracle": "\\[$cxc-dev](skill://${SKILLS}/dev/SKILL.md)",
-      "expected": "\\[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
+      "expected": "\\$crw-dev",
       "classification": "intentionally-changed",
-      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name). CRW-1114: an escaped mention is text (known-defects.md:855)."
     },
     {
       "input": "[$crw-dev](${SKILLS}/crw-directory/SKILL.md)",
       "skills": "${SKILLS}",
       "oracle": "[$cxc-dev](${SKILLS}/directory/SKILL.md)",
-      "expected": "[$crw-dev](${SKILLS}/crw-directory/SKILL.md)",
+      "expected": "[$crw-dev](skill://${SKILLS}/crw-dev/SKILL.md)",
       "classification": "intentionally-changed",
-      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name). CRW-1114: a link to a directory named SKILL.md is repaired to the real skill (known-defects.md:854)."
     },
     {
       "input": "[$crw-dev](${SKILLS}/crw-dev/SKILL.md/)",
@@ -537,9 +537,9 @@
       "input": "$crw-dev",
       "skills": "${ANGLE}",
       "oracle": "[$cxc-dev](skill://${ANGLE}/dev/SKILL.md)",
-      "expected": "[$crw-dev](skill://${ANGLE}/crw-dev/SKILL.md)",
+      "expected": "$crw:crw-dev",
       "classification": "intentionally-changed",
-      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name)."
+      "reason": "CRW skill prefix and full crw-X folder substitution (R1/R3/R10 and folder=name). CRW-1114: a skills directory with an angle bracket keeps the plugin mention (known-defects.md:856)."
     }
   ]
 }

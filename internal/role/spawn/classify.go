@@ -76,7 +76,7 @@ func DenyEnvelope(reason string) string {
 // InferRole is the oracle's inferRole. The order is the oracle's own: explicit worker/executor,
 // then explicit architect/reviewer, then the producer header's CRW-ROLE: line (which wins over an
 // explorer agent type), then explorer, then the review-keyword fallback over the lowercased
-// message. Non-string agent types match nothing.
+// message, matched at a word start (spawnClassifyWordStart). Non-string agent types match nothing.
 func InferRole(agentType any, message string) role.RoleName {
 	if s, ok := agentType.(string); ok {
 		switch s {
@@ -98,11 +98,33 @@ func InferRole(agentType any, message string) role.RoleName {
 	}
 	lower := spawnInlineLowerJS(message)
 	for _, keyword := range spawnClassifyReviewKeywords {
-		if strings.Contains(lower, keyword) {
+		if spawnClassifyWordStart(lower, keyword) {
 			return role.Reviewer
 		}
 	}
 	return role.Explorer
+}
+
+// spawnClassifyWordStart reports whether keyword occurs in s at the start of a word (CRW-1114; the oracle's substring search took
+// "preview" for a review): an ASCII keyword must not follow a letter, digit or underscore, while an inflection after it still counts
+// ("reviewer", "verifying"). A Hangul keyword is matched anywhere, since Korean writes compounds without a space ("코드리뷰").
+func spawnClassifyWordStart(s, keyword string) bool {
+	for from := 0; from < len(s); {
+		at := strings.Index(s[from:], keyword)
+		if at < 0 {
+			return false
+		}
+		at += from
+		if keyword[0] >= 0x80 || at == 0 || !spawnClassifyWordByte(s[at-1]) {
+			return true
+		}
+		from = at + 1
+	}
+	return false
+}
+
+func spawnClassifyWordByte(ch byte) bool {
+	return ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch >= 0x80
 }
 
 // spawnClassifyTaskStart is the byte index of the first line-start "TASK:" in message, the cut

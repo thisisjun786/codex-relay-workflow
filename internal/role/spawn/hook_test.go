@@ -232,6 +232,12 @@ var spawnHookIntent = map[string]string{
 	"v1 items/4":                `{"updatedInput":{"items":[{"type":"text","text":"{{V1}}\n\n  keep  \n\n\n\nblank  tail  "},{"type":"attachment","ref":"a"}]},"ciphertext":false}`,
 }
 
+// spawnHookAssembledIntent are the recorded steps the oracle stopped on and the port assembles on purpose (CRW-1114,
+// known-defects.md:1133): a null message beside valid text items is no message, so the items are read and guarded.
+var spawnHookAssembledIntent = map[string]string{
+	"fail-open no-ops/9": `{"updatedInput":{"message":null,"items":[{"type":"text","text":"{{V1}}\n\nx"}]},"ciphertext":false}`,
+}
+
 func TestSpawnHookOracleReplay(t *testing.T) {
 	fixture := spawnHookReadFixture(t)
 	if len(fixture.Cases) == 0 {
@@ -255,6 +261,9 @@ func TestSpawnHookOracleReplay(t *testing.T) {
 				at := fmt.Sprintf("step %d (%s)", i+1, step.Note)
 				if intent, ok := spawnHookIntent[c.Name+"/"+strconv.Itoa(i+1)]; ok {
 					step.Expected = json.RawMessage(intent)
+				}
+				if intent, ok := spawnHookAssembledIntent[c.Name+"/"+strconv.Itoa(i+1)]; ok {
+					step.Seam, step.Kind, step.Expected = "assembled", "allow", json.RawMessage(intent)
 				}
 				input := rig.expand(spawnHookLoad(t, step.Input)).(pyjson.Object)
 				asm, deny, stop := spawnHookAssemble(spawnHookView(input), rig.env)

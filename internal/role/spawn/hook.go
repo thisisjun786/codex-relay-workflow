@@ -104,8 +104,9 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		}
 	}
 
-	// Project only the caller's text, never attachment metadata (:870-880). A null message is present, so items are then unread.
-	if _, hasMessage := toolInput.Lookup("message"); !a.v2Spawn && !hasMessage {
+	// Project only the caller's text, never attachment metadata (:870-880). A null message is no message, so the items are read
+	// (CRW-1114; the oracle counted a null member as present and left valid items unguarded).
+	if value, hasMessage := toolInput.Lookup("message"); !a.v2Spawn && (!hasMessage || value == nil) {
 		a.itemInput, _ = toolInput.Get("items").([]any)
 	}
 	var records []pyjson.Object

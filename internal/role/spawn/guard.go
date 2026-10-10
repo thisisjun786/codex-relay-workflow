@@ -1,15 +1,5 @@
 package spawn
 
-import (
-	"io/fs"
-	"os"
-	"regexp"
-	"slices"
-	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-)
-
 const LeafGuardMarker = "[CRW-LEAF-GUARD]"
 const ScopeGuardMarker = "[CRW-SUBAGENT-SCOPE]"
 const SkillAffordanceMarker = "[CRW-SKILL-AFFORDANCE]"
@@ -62,49 +52,6 @@ You and any child you spawn run in the parent's own working directory, on its
 branch and HEAD - not a copy. Keep every write scope non-overlapping and do not
 run branch-level git commands (checkout, switch, branch, stash, reset, rebase,
 merge, pull).`
-
-// BuildLeafSkillCatalog returns sorted leaf-safe metadata. Like the oracle it
-// scans the first 1024 UTF-16 units, without requiring YAML frontmatter fences.
-// Read failures omit the skill; its displayed name need not equal its folder.
-func BuildLeafSkillCatalog(skillsDir string) string {
-	root, err := os.OpenRoot(skillsDir)
-	if err != nil {
-		return ""
-	}
-	defer root.Close()
-	folders, err := fs.ReadDir(root.FS(), ".")
-	if err != nil {
-		return ""
-	}
-	boundary := `(?:^|[\n\r\x{2028}\x{2029}])`
-	end := `(?:$|[\n\r\x{2028}\x{2029}])`
-	namePattern := regexp.MustCompile(boundary + `name:` + spawnInlineJSSpace + `*([^\n\r\x{2028}\x{2029}]+)` + end)
-	descPattern := regexp.MustCompile(boundary + `description:` + spawnInlineJSSpace + `*"?([^"\n]+)"?` + end)
-	var entries []string
-	for _, folder := range folders {
-		if !folder.IsDir() || !slices.Contains(LeafSafeSkillFolders(), folder.Name()) {
-			continue
-		}
-		body, ok := spawnInlineReadSkill(root, skillsDir, folder.Name())
-		if !ok {
-			continue
-		}
-		head := spawnInlineUTF16Prefix(body, 1024)
-		name := namePattern.FindStringSubmatch(head)
-		if name == nil {
-			continue
-		}
-		desc := ""
-		if m := descPattern.FindStringSubmatch(head); m != nil {
-			desc = spawnInlineUTF16Prefix(text.Trim(m[1]), 120)
-		}
-		entries = append(entries, "- "+text.Trim(name[1])+": "+desc)
-	}
-	if len(entries) == 0 {
-		return ""
-	}
-	return "Available skills (self-load from " + skillsDir + "/<name>/SKILL.md):\n" + strings.Join(entries, "\n")
-}
 
 // SkillAffordanceBlock is the self-load guidance; a later caller chooses when
 // to use it. Catalog omission never removes the guidance itself.

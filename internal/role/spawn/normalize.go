@@ -126,20 +126,41 @@ func spawnNormalizeFenceTail(rest string) bool {
 	return strings.Trim(strings.TrimSuffix(rest, "\r"), " ") == ""
 }
 
-// These two helpers are shared with the later inlining files in this package.
-// Existence intentionally accepts directories and follows links, like existsSync.
+// These two helpers are shared with the later inlining files in this package. A skill is there when its SKILL.md is a regular file
+// whose real path stays inside the skills directory (CRW-1114; the oracle's existsSync took a directory named SKILL.md, and a
+// folder that links out of the skills directory).
 func spawnNormalizeSkillPath(skillsDir, folder string) (string, bool) {
 	path, err := filepath.Abs(filepath.Join(skillsDir, folder, "SKILL.md"))
 	if err != nil {
 		return "", false
 	}
-	_, err = os.Stat(path)
-	return path, err == nil
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return path, false
+	}
+	return path, spawnNormalizeContained(skillsDir, path)
 }
 
+// spawnNormalizeContained reports whether path, links resolved, lies inside skillsDir, links resolved.
+func spawnNormalizeContained(skillsDir, path string) bool {
+	root, err := filepath.EvalSymlinks(skillsDir)
+	if err != nil {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, real)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// spawnNormalizeCanonicalMention is the load link of a skill, or the plugin mention when the skills directory cannot stand as a raw
+// Markdown link target: a parenthesis or white space (the oracle's rule), and an angle bracket, a quote, a backtick, a backslash or
+// a control character (CRW-1114; the oracle wrote those raw).
 func spawnNormalizeCanonicalMention(skillsDir, folder, path string) string {
 	for _, r := range skillsDir {
-		if r == '(' || r == ')' || spawnNormalizeJSSpace(r) {
+		if r == '(' || r == ')' || spawnNormalizeJSSpace(r) || strings.ContainsRune("<>\"'`\\", r) || r < 0x20 || r == 0x7f {
 			return "$crw:" + folder
 		}
 	}
@@ -186,7 +207,7 @@ func spawnNormalizeStandaloneLink(body string) (spawnNormalizeLink, bool) {
 func spawnNormalizeRepairedStandaloneLink(body string, link spawnNormalizeLink, skillsDir string) string {
 	target := strings.TrimPrefix(link.target, "skill://")
 	if filepath.Base(target) == "SKILL.md" {
-		if _, err := os.Stat(target); err == nil {
+		if info, err := os.Stat(target); err == nil && info.Mode().IsRegular() { // a directory named SKILL.md is no skill (CRW-1114)
 			return body
 		}
 	}
@@ -234,7 +255,8 @@ func spawnNormalizeBareLine(line, skillsDir string) string {
 	}
 	var out strings.Builder
 	for i := 0; i < len(line); {
-		if line[i] == '$' {
+		// A mention starts a token: one escaped with a backslash or inside a word is text (CRW-1114; the oracle rewrote both).
+		if line[i] == '$' && (i == 0 || !spawnNormalizeTokenByte(line[i-1])) {
 			if end, mention, ok := spawnNormalizeMentionAt(line, i, skillsDir); ok {
 				out.WriteString(mention)
 				i = end
@@ -245,4 +267,10 @@ func spawnNormalizeBareLine(line, skillsDir string) string {
 		i++
 	}
 	return out.String()
+}
+
+// spawnNormalizeTokenByte is a byte a mention cannot follow: a backslash escape, an ASCII letter, digit or underscore, or a byte of
+// a non-ASCII character.
+func spawnNormalizeTokenByte(ch byte) bool {
+	return ch == '\\' || ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch >= 0x80
 }

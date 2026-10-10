@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -86,7 +87,7 @@ func CheckFinalGatePrereqs(packetText, sessionID, cwd string, capture func(cwd s
 		return allow
 	}
 	slots := []spawnFinalGateSlot{{"test", gate["testReceiptPath"]}}
-	criteria, _ := plan["criteria"].([]any)
+	criteria, problem := spawnFinalGateCriteria(plan)
 	if slices.ContainsFunc(criteria, func(c any) bool {
 		criterion, _ := c.(map[string]any)
 		surface, _ := criterion["surface"].(string)
@@ -94,19 +95,40 @@ func CheckFinalGatePrereqs(packetText, sessionID, cwd string, capture func(cwd s
 	}) {
 		slots = append(slots, spawnFinalGateSlot{"QA", gate["qaReceiptPath"]})
 	}
-	current, resolved := spawnFinalGateCurrent(cwd, sessionID, capture)
+	current, resolved := spawnFinalGateCurrent(cwd, sessionID, capture, nil)
 	if !resolved {
 		return FinalGateCheck{Reason: spawnFinalGateSource}
 	}
 	var missing, stale []string
+	if problem != "" {
+		missing = append(missing, "goalplan criteria cannot be read ("+problem+"), so the QA requirement cannot be decided")
+	}
 	for _, slot := range slots {
 		path, _ := slot.path.(string)
 		if path == "" {
 			missing = append(missing, slot.label+" receipt path is not recorded in finalGate")
-		} else if identity, readable := spawnFinalGateReceipt(root, cwd, path); !readable {
+			continue
+		}
+		identity, generated, readable := spawnFinalGateReceipt(root, cwd, path)
+		if !readable {
 			missing = append(missing, slot.label+" receipt is missing, empty or unreadable: "+path)
-		} else if source.Compare(identity, current).Kind == source.ComparisonDifferent {
-			stale = append(stale, slot.label+" receipt was produced against "+spawnFinalGateShort(identity)+", but the tree is now "+spawnFinalGateShort(current))
+			continue
+		}
+		// The tree is read again under the receipt's own contract when it declared generated paths, as the receipt producer and
+		// the enforcing check read it (CRW-1114; the oracle compared an inclusive capture with the receipt's exclusive one).
+		tree := current
+		if len(generated) > 0 && capture == nil {
+			if tree, resolved = spawnFinalGateCurrent(cwd, sessionID, nil, generated); !resolved {
+				return FinalGateCheck{Reason: spawnFinalGateSource}
+			}
+		}
+		switch source.Compare(identity, tree).Kind {
+		case source.ComparisonDifferent:
+			stale = append(stale, slot.label+" receipt was produced against "+spawnFinalGateShort(identity)+", but the tree is now "+spawnFinalGateShort(tree))
+		case source.ComparisonUnavailable:
+			// A receipt is the agent's claim, not proof: at a marked gate an identity git could not resolve, on either side,
+			// verifies nothing (CRW-1114; the oracle took it as not stale).
+			missing = append(missing, slot.label+" receipt cannot be verified: the source identity of the receipt or of the tree is unavailable")
 		}
 	}
 	if len(missing)+len(stale) == 0 {
@@ -121,14 +143,17 @@ func CheckFinalGatePrereqs(packetText, sessionID, cwd string, capture func(cwd s
 
 // spawnFinalGateCurrent is the identity of the tree the receipts are compared with; resolved is false when it cannot be had, as
 // when the oracle's capture throws, which a callback that panics does too.
-func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) source.Identity) (current source.Identity, resolved bool) {
+func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) source.Identity, generated []string) (current source.Identity, resolved bool) {
 	defer func() {
 		if recover() != nil {
 			current, resolved = source.Identity{}, false
 		}
 	}()
 	if capture == nil {
-		captured, err := sourcesession.Capture(cwd, sessionID, sourcesession.CaptureOptions{})
+		// The receipt producer's contract (CRW-1114): the state directory is left out, and the paths a receipt declared
+		// generated when it is read for that receipt.
+		exclude := true
+		captured, err := sourcesession.Capture(cwd, sessionID, sourcesession.CaptureOptions{ExcludeStateArtifacts: &exclude, GeneratedPaths: generated})
 		return captured, err == nil
 	}
 	sourceCwd, err := sourcesession.Resolve(cwd, sessionID)
@@ -145,15 +170,50 @@ func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) sourc
 // spawnFinalGateReceipt is the source identity a receipt file holds. An absolute path is read as a path below cwd, a relative one
 // from cwd; a path that leaves cwd, by name or by a link, is not readable, nor is a file that is not a regular non-empty one or holds
 // no readable identity.
-func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bool) {
+func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, []string, bool) {
 	rel := filepath.Clean(spawnFinalGateFSPath(path))
 	if filepath.IsAbs(rel) {
 		var ok bool
 		if rel, ok = spawnFinalGateBelow(cwd, rel); !ok {
-			return source.Identity{}, false
+			return source.Identity{}, nil, false
 		}
 	}
-	return spawnFinalGateIdentity(spawnFinalGateObject(root, rel)["sourceIdentity"])
+	receipt := spawnFinalGateObject(root, rel)
+	identity, ok := spawnFinalGateIdentity(receipt["sourceIdentity"])
+	var generated []string
+	list, _ := receipt["generatedPaths"].([]any)
+	for _, item := range list {
+		if s, isString := item.(string); isString {
+			generated = append(generated, s)
+		}
+	}
+	return identity, generated, ok
+}
+
+// spawnFinalGateCriteria is the plan's criteria and, when they cannot be read, why (CRW-1114; the oracle read a criteria that is not
+// an array as none and skipped an element that is not an object or whose surface is not a string, dropping a QA requirement). An
+// absent criteria is none, and a criterion without a surface (a schema 1 plan) has none.
+func spawnFinalGateCriteria(plan map[string]any) ([]any, string) {
+	raw, present := plan["criteria"]
+	if !present {
+		return nil, ""
+	}
+	criteria, isArray := raw.([]any)
+	if !isArray {
+		return nil, "criteria is not an array"
+	}
+	for i, c := range criteria {
+		criterion, isObject := c.(map[string]any)
+		if !isObject {
+			return criteria, "criterion " + strconv.Itoa(i+1) + " is not an object"
+		}
+		if surface, has := criterion["surface"]; has {
+			if _, isString := surface.(string); !isString {
+				return criteria, "criterion " + strconv.Itoa(i+1) + " has a surface that is not a string"
+			}
+		}
+	}
+	return criteria, ""
 }
 
 // spawnFinalGateSameDir decides whether two stats name one directory (device and inode); a seam of the tests, which make two spellings
