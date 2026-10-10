@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,7 @@ type nullKeyGuard struct {
 	updatable bool
 	// emptyRefused: the shipped DDL refuses an empty key with CHECK (<key> <> ''). Nothing appended changes that.
 	emptyRefused bool
-	// overrides are the columns the table's own shipped BEFORE INSERT trigger reads, set to values that pass it.
+	// overrides are the columns the table's own shipped BEFORE INSERT trigger or CHECKs read, set to values that pass them.
 	overrides map[string]string
 }
 
@@ -38,21 +39,28 @@ func (g nullKeyGuard) updateTrigger() string { return g.insertTrigger() + "_upda
 var zoneNullKeyGuards = []nullKeyGuard{
 	{table: "dag_plans", key: "plan_id"},
 	{table: "dag_input_manifests", key: "manifest_digest", updatable: true},
-	{table: "dag_acceptances", key: "acceptance_id", updatable: true},
+	{table: "dag_acceptances", key: "acceptance_id", updatable: true,
+		overrides: map[string]string{"verdict": "'verified'", "state": "'active'"}},
 	{table: "dag_integration_observations", key: "observation_id", updatable: true},
-	{table: "dag_decisions", key: "decision_id", updatable: true},
-	{table: "dag_merge_checks", key: "check_id", updatable: true},
+	{table: "dag_decisions", key: "decision_id", updatable: true,
+		overrides: map[string]string{"state": "'active'"}},
+	{table: "dag_merge_checks", key: "check_id", updatable: true,
+		overrides: map[string]string{"outcome": "'eligible'"}},
 	{table: "dag_acceptance_revalidations", key: "revalidation_id", updatable: true},
 	{table: "dag_acceptance_forge", key: "acceptance_id", updatable: true},
-	{table: "dag_conflict_observations", key: "observation_id", updatable: true},
+	{table: "dag_conflict_observations", key: "observation_id", updatable: true,
+		overrides: map[string]string{"left_node_id": "'a'", "right_node_id": "'b'"}},
 	{table: "dag_summary_outbox", key: "summary_id", emptyRefused: true,
-		overrides: map[string]string{"state": "'pending'", "attempts": "0", "seq": "1", "plan_revision": "1"}},
-	{table: "dag_tip_conflict_observations", key: "observation_id", updatable: true},
+		overrides: map[string]string{"state": "'pending'", "attempts": "0", "seq": "1", "plan_revision": "1", "subject_digest": "'" + zoneDigest + "'"}},
+	{table: "dag_tip_conflict_observations", key: "observation_id", updatable: true,
+		overrides: map[string]string{"head_source": "'explicit'"}},
 	{table: "dag_base_refreshes", key: "refresh_id", emptyRefused: true},
-	{table: "dag_landing_results", key: "result_id", updatable: true},
+	{table: "dag_landing_results", key: "result_id", updatable: true,
+		overrides: map[string]string{"kind": "'dev_green'"}},
 	{table: "dag_acceptance_refreshes", key: "refresh_id", emptyRefused: true},
 	{table: "dag_verified_heads", key: "event_id", emptyRefused: true},
-	{table: "dag_user_decisions", key: "decision_id", updatable: true, emptyRefused: true},
+	{table: "dag_user_decisions", key: "decision_id", updatable: true, emptyRefused: true,
+		overrides: map[string]string{"kind": "'design_choice'", "state": "'open'"}},
 	{table: "delivery_wakes", key: "event_id", updatable: true, emptyRefused: true},
 }
 
@@ -72,10 +80,13 @@ func zoneFillerDB(t *testing.T, path string) *sql.DB {
 // column without a default gets a placeholder, and the overrides set what the table's shipped trigger reads.
 func zoneFillerInsert(t *testing.T, db *sql.DB, g nullKeyGuard, keyValue string) string {
 	t.Helper()
+
 	rows, err := db.Query("PRAGMA table_info(" + g.table + ")")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// a text placeholder carries the key, so two rows with different keys differ in every UNIQUE constraint
+	placeholder := strings.NewReplacer("'", "", " ", "_").Replace(keyValue)
 	var columns, values []string
 	for rows.Next() {
 		var cid, notnull, pk int
@@ -93,7 +104,7 @@ func zoneFillerInsert(t *testing.T, db *sql.DB, g nullKeyGuard, keyValue string)
 		case notnull == 1 && dflt == nil && strings.Contains(strings.ToUpper(typ), "INT"):
 			value = "1"
 		case notnull == 1 && dflt == nil:
-			value = "'x'"
+			value = "'x-" + placeholder + "'"
 		default:
 			continue
 		}
@@ -104,6 +115,41 @@ func zoneFillerInsert(t *testing.T, db *sql.DB, g nullKeyGuard, keyValue string)
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", g.table, strings.Join(columns, ","), strings.Join(values, ","))
+}
+
+// zoneTableContents is every row of table, in rowid order, each value as its type and value (a NULL stays
+// distinguishable from an empty string), so two readings of the table are equal exactly when its content is.
+func zoneTableContents(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := db.Query("SELECT * FROM " + table + " ORDER BY rowid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatal(err)
+		}
+		var cells []string
+		for i, v := range values {
+			cells = append(cells, fmt.Sprintf("%s=%T:%v", columns[i], v, v))
+		}
+		out = append(out, strings.Join(cells, "|"))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // zoneGuardTriggerNames is the set of triggers the appended statements must add, read from the guard table.
@@ -188,13 +234,14 @@ func TestDAGZoneRefusesANullKeyOnUpdate(t *testing.T) {
 	}
 }
 
-// The shipped checks are unchanged: an empty key is refused exactly where the shipped DDL has a CHECK on
-// the key being non-empty, and a repeated key is a PRIMARY KEY refusal, which the guards do not touch.
-func TestDAGZoneEmptyAndDuplicateKeysKeepTheirShippedBehaviour(t *testing.T) {
+// The empty-key behaviour is unchanged: on a connection that enforces the CHECKs, an empty key is refused
+// exactly where the shipped DDL has CHECK (<key> <> ”), and accepted elsewhere. A control row with a
+// non-empty key shows the row's other columns satisfy their own checks, so a refusal is the key's.
+func TestDAGZoneEmptyKeyKeepsItsShippedBehaviour(t *testing.T) {
 	t.Parallel()
 	path := zonePreDAGStore(t)
 	zoneOpenClose(t, path)
-	db := zoneFillerDB(t, path)
+	db := zoneRawDB(t, path)
 	for _, g := range zoneNullKeyGuards {
 		t.Run(g.table, func(t *testing.T) {
 			var ddl string
@@ -202,10 +249,40 @@ func TestDAGZoneEmptyAndDuplicateKeysKeepTheirShippedBehaviour(t *testing.T) {
 				t.Fatal(err)
 			}
 			check := "CHECK (" + g.key + " <> '')"
-			hasCheck := strings.Contains(strings.Join(strings.Fields(ddl), " "), check)
-			if hasCheck != g.emptyRefused {
+			if hasCheck := strings.Contains(strings.Join(strings.Fields(ddl), " "), check); hasCheck != g.emptyRefused {
 				t.Fatalf("%s: the shipped DDL has %q = %v, the guard table says %v", g.table, check, hasCheck, g.emptyRefused)
 			}
+			zoneMustExec(t, db, zoneFillerInsert(t, db, g, "'k-control-"+g.table+"'"))
+			err := zoneExec(t, db, zoneFillerInsert(t, db, g, "''"))
+			switch {
+			case g.emptyRefused && (err == nil || !strings.Contains(err.Error(), "CHECK constraint failed")):
+				t.Fatalf("%s: an empty key: got %v; want the shipped CHECK's refusal", g.table, err)
+			case !g.emptyRefused && err != nil:
+				t.Fatalf("%s: an empty key was refused (%v); the shipped DDL accepts it", g.table, err)
+			}
+			if err != nil && strings.Contains(err.Error(), "is NULL") {
+				t.Fatalf("%s: an empty key was refused by the NULL guard: %v", g.table, err)
+			}
+			var n int
+			want := 1
+			if !g.emptyRefused {
+				want = 2
+			}
+			if err := db.QueryRow("SELECT count(*) FROM " + g.table).Scan(&n); err != nil || n != want {
+				t.Fatalf("%s: %d rows, want %d (%v)", g.table, n, want, err)
+			}
+		})
+	}
+}
+
+// A repeated key is a PRIMARY KEY refusal, which the guards do not touch.
+func TestDAGZoneDuplicateKeysKeepTheirShippedBehaviour(t *testing.T) {
+	t.Parallel()
+	path := zonePreDAGStore(t)
+	zoneOpenClose(t, path)
+	db := zoneFillerDB(t, path)
+	for _, g := range zoneNullKeyGuards {
+		t.Run(g.table, func(t *testing.T) {
 			value := "'k-dup-" + g.table + "'"
 			zoneMustExec(t, db, zoneFillerInsert(t, db, g, value))
 			if err := zoneExec(t, db, zoneFillerInsert(t, db, g, value)); err == nil {
@@ -243,13 +320,12 @@ func TestDAGZoneUpgradeKeepsNullKeyRows(t *testing.T) {
 	for _, g := range zoneNullKeyGuards {
 		zoneMustExec(t, old, zoneFillerInsert(t, old, g, "NULL"))
 	}
-	before := map[string]int{}
+	before := map[string][]string{}
 	for _, g := range zoneNullKeyGuards {
-		var n int
-		if err := old.QueryRow("SELECT count(*) FROM " + g.table).Scan(&n); err != nil {
-			t.Fatal(err)
+		before[g.table] = zoneTableContents(t, old, g.table)
+		if len(before[g.table]) != 1 {
+			t.Fatalf("%s: the old zone holds %d rows, want the one NULL-key row", g.table, len(before[g.table]))
 		}
-		before[g.table] = n
 	}
 	if err := old.Close(); err != nil {
 		t.Fatal(err)
@@ -264,9 +340,13 @@ func TestDAGZoneUpgradeKeepsNullKeyRows(t *testing.T) {
 	}
 	db := zoneFillerDB(t, path)
 	for _, g := range zoneNullKeyGuards {
+		after := zoneTableContents(t, db, g.table)
+		if !slices.Equal(after, before[g.table]) {
+			t.Errorf("%s: rows after upgrade %q, want the rows as they were %q", g.table, after, before[g.table])
+		}
 		var n int
-		if err := db.QueryRow("SELECT count(*) FROM " + g.table).Scan(&n); err != nil || n != before[g.table] {
-			t.Errorf("%s: %d rows after upgrade, want %d (%v)", g.table, n, before[g.table], err)
+		if err := db.QueryRow(fmt.Sprintf("SELECT count(*) FROM %s WHERE %s IS NULL", g.table, g.key)).Scan(&n); err != nil || n != 1 {
+			t.Errorf("%s: %d rows with a NULL %s after upgrade, want the 1 it held (%v)", g.table, n, g.key, err)
 		}
 	}
 	for _, g := range zoneNullKeyGuards {
