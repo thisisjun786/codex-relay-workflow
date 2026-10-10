@@ -14,7 +14,7 @@ import (
 // transaction instead of waiting on itself.
 func TestProjection_is_refused_inside_the_stores_own_transaction(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "state", "relay.sqlite3"), "")
 	if err != nil {

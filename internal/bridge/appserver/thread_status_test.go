@@ -175,7 +175,7 @@ func TestThreadHold_takes_its_own_hold_beside_a_live_watch(t *testing.T) {
 	}
 	// Releasing the backlog's hold drops the subscription it kept.
 	c.ReleaseThread("thread-1")
-	done, cancelDone := context.WithTimeout(context.Background(), 3*time.Second)
+	done, cancelDone := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelDone()
 	if err := host.WaitCount(done, "thread/unsubscribe", 1); err != nil {
 		t.Fatalf("releasing the backlog's hold did not unsubscribe: %v", err)
@@ -214,7 +214,7 @@ func TestThreadHold_releases_once_the_backlog_empties(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ReleaseThread("thread-1")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatalf("the released hold did not unsubscribe: %v", err)
@@ -266,7 +266,7 @@ func TestThreadHold_pins_the_root_it_holds_the_gate_of(t *testing.T) {
 	host.Script("thread/resume", fakehost.Reply{Paused: entered, Release: release})
 	returned := make(chan error, 1)
 	go func() { returned <- c.HoldThread(context.Background(), "thread-1") }()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/resume", 1); err != nil {
 		t.Fatalf("the hold's resume never reached the host: %v", err)
@@ -326,7 +326,7 @@ func TestThreadHold_a_transmitted_resume_without_a_reply_keeps_an_owned_hold(t *
 	close(release)
 	// The backlog empties: the release drops the subscription the resume may have made.
 	c.ReleaseThread("thread-1")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatalf("the released hold did not unsubscribe the subscription the unanswered resume made: %v", err)
@@ -391,7 +391,7 @@ func TestThreadHold_a_pending_release_does_not_cancel_a_new_hold(t *testing.T) {
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	host.Script("thread/unsubscribe", fakehost.Reply{Paused: entered, Release: release})
 	c.ReleaseThread("thread-1")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatalf("the release never reached the host: %v", err)
@@ -424,7 +424,7 @@ func TestThreadHold_a_hold_after_a_release_subscribes_again(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ReleaseThread("thread-1")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)

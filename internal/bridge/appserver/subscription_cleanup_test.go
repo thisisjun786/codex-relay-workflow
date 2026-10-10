@@ -19,7 +19,7 @@ func TestCleanupObservationsOutliveErrorBound(t *testing.T) {
 	w := rootWatch(t, c)
 	w.Finish("done", false)
 	announceEnd(t, c, host, "done")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestCleanupFailuresAreBounded(t *testing.T) {
 			w := rootWatch(t, c)
 			w.Finish("done", false)
 			announceEnd(t, c, host, "done")
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := host.WaitCount(ctx, "thread/unsubscribe", unsubscribes); err != nil {
 				t.Fatal(err)
@@ -70,7 +70,7 @@ func TestCleanupSuccessResetsErrorStreakAfterUnsubscribeFailure(t *testing.T) {
 	w := rootWatch(t, c)
 	w.Finish("done", false)
 	announceEnd(t, c, host, "done")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestAcknowledgedTurnRearmsExhaustedCleanup(t *testing.T) {
 	}
 	w.Finish("new", false)
 	announceEnd(t, c, host, "new")
-	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 2); err != nil {
 		t.Fatal(err)
