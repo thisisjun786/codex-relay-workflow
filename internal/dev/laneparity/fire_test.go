@@ -510,6 +510,27 @@ func TestMeasureLatency_timesTheGoSideAndJudgesItAgainstTheTimeout(t *testing.T)
 	}
 }
 
+// CRW-564 is on dev: its two fixtures of subagent-stop-observing-review are claimed, so the latency cell
+// times that leg like any other instead of skipping it (CRW-1082, item 3).
+func TestMeasureLatency_timesSubagentStopObservingReviewNowThatItsPortIsClaimed(t *testing.T) {
+	o := fireFixture(t)
+	const leg = "subagent-stop-observing-review"
+	lat, err := MeasureLatency(LatencyOptions{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Runs: 3, Attempts: 2, Only: regexp.MustCompile(`^` + leg + `$`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lat) != 1 || lat[0].Leg != leg || lat[0].Skipped || lat[0].Runs != 3 || lat[0].GoP95 <= 0 || lat[0].Broken {
+		t.Fatalf("the leg is skipped or broken although its port is claimed: %+v", lat)
+	}
+	rep, err := Fire(FireOptions{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Scratch: o.Scratch, Only: regexp.MustCompile(`^hook__` + leg + `__`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK || len(rep.Legs) != 1 || rep.Legs[0].Matched != 2 || rep.Legs[0].Pending != 0 {
+		t.Errorf("%+v", rep.Legs)
+	}
+}
+
 // With an oracle checkout (CXC_PARITY_ORACLE names the extracted v0.2.40 tree) the TS side is timed too.
 func TestMeasureLatency_againstTheOracle(t *testing.T) {
 	oracle := os.Getenv("CXC_PARITY_ORACLE")

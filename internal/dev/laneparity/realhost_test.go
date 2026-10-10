@@ -316,7 +316,7 @@ func TestCheckSilent_aSilentSwitchIsNotAnsweredOrRecorded(t *testing.T) {
 
 func TestCheckOn_theAnswersMustReachTheModel(t *testing.T) {
 	run := func(mutate func(*HostCell)) []string {
-		cell := HostCell{Switch: SwitchOn, Records: 3, Answered: 1, Firings: []HostFiring{{Leg: "session-start-injecting-recall-context", Event: "SessionStart", Answered: true, Reached: true}}}
+		cell := HostCell{Switch: SwitchOn, Records: 3, Answered: 1, Firings: []HostFiring{{Leg: "session-start-injecting-recall-context", Event: "SessionStart", Answered: true, Context: true, Reached: true}}}
 		r := &hostRun{items: []hostItem{{Type: "command_execution", Command: "echo crw-real-host", Status: "completed"}, {Type: "agent_message", Text: "turn done"}, {Type: "turn.completed"}}}
 		if mutate != nil {
 			mutate(&cell)
@@ -331,7 +331,7 @@ func TestCheckOn_theAnswersMustReachTheModel(t *testing.T) {
 		mutate func(*HostCell)
 		want   string
 	}{
-		"nothing answered": {func(c *HostCell) { c.Answered, c.Firings[0].Answered = 0, false }, "no hook answered"},
+		"nothing answered": {func(c *HostCell) { c.Answered, c.Firings[0].Answered, c.Firings[0].Context = 0, false, false }, "no hook answered"},
 		"not in a request": {func(c *HostCell) { c.Firings[0].Reached = false }, "is in no model request"},
 		"no record":        {func(c *HostCell) { c.Records = 0 }, "no hook invocation record"},
 	} {

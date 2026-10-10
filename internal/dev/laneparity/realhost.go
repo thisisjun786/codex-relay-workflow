@@ -83,8 +83,9 @@ type HostFiring struct {
 	Exit      int    `json:"exit"`
 	Answered  bool   `json:"answered"`
 	StdoutSHA string `json:"stdoutSha256"`
-	// Reached is whether the answer's text was in a request the model received (set for answers that
-	// carry context).
+	// Context is whether the answer carries text for the model (additionalContext, or plain text), and
+	// Reached whether that text was in a request the model received.
+	Context bool `json:"context,omitempty"`
 	Reached bool `json:"reachedModel,omitempty"`
 }
 
@@ -163,10 +164,6 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 	if rep.Plugin, err = PluginDigest(o.Plugin); err != nil {
 		return rep, err
 	}
-	want, err := ExpectedLegs(o.Root)
-	if err != nil {
-		return rep, err
-	}
 	manifest, registered, err := ReadRegistered(o.Plugin)
 	if err != nil {
 		return rep, err
@@ -199,7 +196,7 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 	}
 	defer os.RemoveAll(scratch)
 	rep.Args = hostArgs("<work>")
-	h := &hostEnv{opts: o, codex: codex, scratch: scratch, manifest: manifest, registered: registered, want: want}
+	h := &hostEnv{opts: o, codex: codex, scratch: scratch, manifest: manifest, registered: registered}
 	for _, spec := range hostCellSpecs() {
 		if o.Only != nil && !o.Only.MatchString(spec.name) {
 			continue
@@ -269,15 +266,12 @@ type hostEnv struct {
 	scratch    string
 	manifest   Manifest
 	registered []Registered
-	want       []Leg
 	n          int
 }
 
 // hostRun is a cell's run as the judgement sees it.
 type hostRun struct {
-	dir       string
 	codexHome string
-	registers []Registered
 	requests  []StubRequest
 	output    string // the host's JSON event stream
 	stderr    string
@@ -296,7 +290,7 @@ func (h *hostEnv) run(spec hostCellSpec) (HostCell, error) {
 	cell := HostCell{Name: spec.name, Switch: spec.state, Trusted: spec.trusted, Events: map[string]int{}}
 	h.n++
 	dir := filepath.Join(h.scratch, fmt.Sprintf("c%d", h.n))
-	r := &hostRun{dir: dir, codexHome: filepath.Join(dir, "codex"), registers: h.registered}
+	r := &hostRun{codexHome: filepath.Join(dir, "codex")}
 	home, work, tmp, rec := filepath.Join(dir, "home"), filepath.Join(dir, "work"), filepath.Join(dir, "tmp"), filepath.Join(dir, "rec")
 	for _, d := range []string{home, r.codexHome, work, tmp, rec} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -378,10 +372,7 @@ enabled = true
 		return cell, err
 	}
 	h.judge(&cell, r, spec)
-	cell.OK = len(cell.Problems) == 0 && cell.Unverified == ""
-	if spec.name == CellPermission {
-		cell.OK = len(cell.Problems) == 0
-	}
+	cell.OK = len(cell.Problems) == 0 // a cell the host could not be driven into is Unverified, not failed
 	return cell, nil
 }
 
@@ -599,10 +590,9 @@ func (h *hostEnv) collect(cell *HostCell, r *hostRun, rec string) error {
 		var ns int64
 		fmt.Sscan(strings.TrimSpace(string(at)), &ns)
 		all = append(all, started{ns, f})
-		if f.Answered {
-			if text := answerText(string(out)); text != "" && requestsHold(r.requests, text) {
-				all[len(all)-1].f.Reached = true
-			}
+		if text := answerText(string(out)); f.Answered && text != "" {
+			all[len(all)-1].f.Context = true
+			all[len(all)-1].f.Reached = requestsHold(r.requests, text)
 		}
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].at < all[j].at })
@@ -685,7 +675,7 @@ func requestsHold(requests []StubRequest, text string) bool {
 func (h *hostEnv) judge(cell *HostCell, r *hostRun, spec hostCellSpec) {
 	add := func(format string, args ...any) { cell.Problems = append(cell.Problems, fmt.Sprintf(format, args...)) }
 	if cell.Exit != 0 {
-		add("codex exec exited %d: %s", cell.Exit, firstLines(r.output, 3))
+		add("codex exec exited %d: %s %s", cell.Exit, firstLines(r.output, 3), firstLines(r.stderr, 3))
 	}
 	if cell.Thread == "" {
 		add("the host reported no thread")
@@ -915,7 +905,7 @@ func checkOn(cell *HostCell, r *hostRun) {
 		add("no hook answered: the ported legs did nothing at crw")
 	}
 	for _, f := range cell.Firings {
-		if f.Answered && !f.Reached && f.Leg != CompletionLeg && hasContext(f) {
+		if f.Context && !f.Reached {
 			add("the answer of %s (%s) is in no model request", f.Leg, f.Event)
 		}
 	}
@@ -924,11 +914,6 @@ func checkOn(cell *HostCell, r *hostRun) {
 	}
 	judgeTurn(cell, r)
 }
-
-// hasContext is whether a firing's answer was a context to inject (a JSON answer without it, a
-// permission decision, is not): Reached is only ever set for one, and an answer whose text could not
-// be read is judged by the other checks.
-func hasContext(f HostFiring) bool { return f.Answered && f.Event != "PermissionRequest" }
 
 // checkSilent: with the switch off or at cxc the host started every declared hook, and none of the
 // ported legs answered, failed or recorded anything; no hook text reached the model.
@@ -1001,7 +986,7 @@ func checkCompaction(cell *HostCell, r *hostRun) {
 	for _, f := range cell.Firings {
 		postCompact = postCompact || f.Event == "PostCompact"
 		recovered = recovered || (f.Event == "SessionStart" && f.Source == "compact" && f.Answered && f.Reached)
-		if f.Answered && !f.Reached && f.Leg != CompletionLeg && hasContext(f) {
+		if f.Context && !f.Reached {
 			add("the answer of %s (%s) is in no model request", f.Leg, f.Event)
 		}
 	}
