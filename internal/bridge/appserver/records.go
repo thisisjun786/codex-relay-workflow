@@ -139,6 +139,9 @@ type RequestReport struct {
 	RefusedForThisThread       int             `json:"refusedForThisThread"`
 	NotRetained                uint64          `json:"notRetained"`
 	Note                       string          `json:"note"`
+	// DeniedByResponderForThisThread counts requests an opt-in responder answered. A client without a
+	// responder never sets it, and the member is then absent from the report.
+	DeniedByResponderForThisThread int `json:"deniedByResponderForThisThread,omitempty"`
 }
 
 const requestsNote = "Requests recorded between the two marks this receipt spans. A turn outlives that window, so a request the turn raises later is handled the same way and is simply not on this receipt. An approval-class request is never answered here: the host sends it to every client subscribed to the thread and applies the first answer, so it stays with the thread's own approver. Nothing here was granted or denied."
@@ -178,6 +181,10 @@ type Client struct {
 	total         uint64
 	notifications chan Notification
 	subscriptions *subscriptionManager
+	bus           *Bus
+	// responder is the opt-in answerer of server requests about threads its owner started; nil for a
+	// client that was not given one, which then handles every request as it always has.
+	responder *serverResponder
 }
 type Notification struct {
 	Method string
@@ -277,9 +284,12 @@ func (c *Client) RequestsSince(mark uint64, threadID string) RequestReport {
 		switch {
 		case r.ThreadID == threadID:
 			report.ThisThread = append(report.ThisThread, r)
-			if r.Approval {
+			switch {
+			case r.Answered == AnsweredByResponder:
+				report.DeniedByResponderForThisThread++
+			case r.Approval:
 				report.ApprovalsLeftForThisThread++
-			} else {
+			default:
 				report.RefusedForThisThread++
 			}
 		case r.ThreadID == "":

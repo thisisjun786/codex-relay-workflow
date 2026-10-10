@@ -20,13 +20,17 @@ import (
 const BridgeVersion = "0.2.0"
 
 // New constructs a reconnecting client; Dial also performs the initial handshake.
-func New(socketPath string, bounds PhaseBounds) *Client {
+func New(socketPath string, bounds PhaseBounds, options ...Option) *Client {
 	c := &Client{socket: socketPath, bounds: bounds, maxFrame: MaxFrameBytes, pending: make(map[string]pending), notifications: make(chan Notification, 64), connectGate: make(chan struct{}, 1)}
 	c.subscriptions = newSubscriptions(c)
+	c.bus = newBus(c)
+	for _, option := range options {
+		option(c)
+	}
 	return c
 }
-func Dial(ctx context.Context, socketPath string) (*Client, error) {
-	c := New(socketPath, DefaultBounds)
+func Dial(ctx context.Context, socketPath string, options ...Option) (*Client, error) {
+	c := New(socketPath, DefaultBounds, options...)
 	if err := c.connect(ctx); err != nil {
 		return nil, err
 	}
