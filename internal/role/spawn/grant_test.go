@@ -225,6 +225,13 @@ func TestGrantOracleSequences(t *testing.T) {
 	}
 }
 
+// spawnGrantTestBeyondTTL are the recorded planted bodies the oracle consumes and the port refuses on purpose (CRW-1118): an
+// expiresAt that is not a finite integer within the minting TTL of the replay's clock (baseMs) is not a grant the hook minted.
+var spawnGrantTestBeyondTTL = map[string]bool{
+	`{"expiresAt":1900000000000}`: true, `{"expiresAt":1e999}`: true, `{"expiresAt":1900000000000.5}`: true,
+	`{"expiresAt":1,"expiresAt":1900000000000}`: true, "{\"expiresAt\":1900000000000}\n": true,
+}
+
 func TestGrantOraclePlantedBodies(t *testing.T) {
 	fixture := spawnGrantTestOracle(t)
 	root := t.TempDir()
@@ -236,7 +243,8 @@ func TestGrantOraclePlantedBodies(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, spawnGrantFile(c.Nonce)), []byte(c.Content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got := ConsumeRecursionGrant(spawnGrantTestScope, spawnGrantMarker+c.Nonce+"]", root, time.UnixMilli(fixture.BaseMs)); got != c.Expected {
+		want := c.Expected && !spawnGrantTestBeyondTTL[c.Content]
+		if got := ConsumeRecursionGrant(spawnGrantTestScope, spawnGrantMarker+c.Nonce+"]", root, time.UnixMilli(fixture.BaseMs)); got != want {
 			t.Errorf("body %q: got %v, want %v", c.Content, got, c.Expected)
 		}
 		if entries, _ := os.ReadDir(dir); len(entries) != 0 {

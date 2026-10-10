@@ -280,6 +280,11 @@ func TestSpawnHookOracleReplay(t *testing.T) {
 				default:
 					t.Fatalf("%s: unknown seam %q", at, step.Seam)
 				}
+				// The assembly only checks a subagent's grant; the answer that lets the spawn run spends it (CRW-1118), so the
+				// replay spends it as the route's finish does before it counts the grant files.
+				if asm.grant != nil {
+					asm.finish("", rig.env)
+				}
 				if step.GrantFiles != nil && spawnHookCount(rig.tmp) != *step.GrantFiles {
 					t.Fatalf("%s: %d grant files, want %d", at, spawnHookCount(rig.tmp), *step.GrantFiles)
 				}

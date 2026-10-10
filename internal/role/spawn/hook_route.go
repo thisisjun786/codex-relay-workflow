@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -44,9 +45,11 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	commit := &spawnHookCommit{}
 	defer func() {
 		if recover() != nil {
-			out = ""
-			if commit.issued {
+			switch out = ""; {
+			case commit.issued:
 				out = DenyEnvelope(spawnHookReconcileReason)
+			case commit.subagent:
+				out = DenyEnvelope(RecurseDenyReason) // a subagent is never let through by a failure, spent grant or not
 			}
 		}
 	}()
@@ -54,11 +57,10 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if !ok {
 		return ""
 	}
-	a, deny, stop := spawnHookAssemble(spawnHookView(payload), env)
+	a, deny, stop := spawnHookAssembleWith(spawnHookView(payload), env, commit)
 	if stop {
 		return deny
 	}
-	a.commit = commit
 	return spawnHookRoute(a, env)
 }
 
@@ -309,20 +311,20 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		return DenyEnvelope(reason)
 	}
 	if tooDeep {
-		if a.managed != nil {
-			// A managed spawn must run with the candidate the attempt was claimed for and be recorded as issued; an answer that
-			// cannot be written would let the host run the caller's input instead, so it is denied before anything is issued
-			// (CRW-1122; the oracle issued and then printed nothing).
-			return DenyEnvelope("managed dispatch: " + spawnHookDeepReason)
+		if a.managed == nil {
+			return a.finish("", env) // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
 		}
-		return "" // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
+		// A managed spawn must run with the candidate the attempt was claimed for and be recorded as issued; an answer that cannot
+		// be written would let the host run the caller's input instead, so it is denied before anything is issued (CRW-1122; the
+		// oracle issued and then printed nothing).
+		return DenyEnvelope("managed dispatch: " + spawnHookDeepReason)
 	}
 	routed, err := role.ReadSettingsSnapshot(env).Role(a.role)
 	if err != nil {
 		if deny := spawnHookSettingsDeny(err); deny != "" {
 			return deny
 		}
-		return "" // the oracle's throw, caught by its outer catch
+		return a.finish("", env) // the oracle's throw, caught by its outer catch
 	}
 	var notices []string
 	if a.managed == nil && routed.Fallback != nil {
@@ -333,7 +335,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	context := strings.Join(notices, "\n")
 	if a.managed == nil && context == "" && !changed && model == "" && effort == "" {
-		return ""
+		return a.finish("", env)
 	}
 	updated := slices.Clone(a.toolInput) // Set changes a present key in place, and a.toolInput is the caller's
 	if a.validItems {
@@ -364,16 +366,32 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if context != "" {
 		output = append(output, pyjson.Field{Key: "additionalContext", Value: context})
 	}
-	answer := spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}}) + "\n"
+	return a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
+}
+
+// finish commits what an answer that lets the spawn run needs, after every refusal has been checked and the answer is written
+// (CRW-1118, CRW-1122): a subagent's grant is reserved, the managed attempt is issued (:1094-1097), and the grant is spent. A
+// refusal at a step denies and gives a reserved grant back; past the commits the answer is only returned, and a failure there
+// is an unknown outcome (RunSpawnAttachHook), never the caller's own input and never a grant given back.
+func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
+	if a.grant != nil && !a.grant.reserve(time.Now()) {
+		return DenyEnvelope(RecurseDenyReason) // another call took the grant first
+	}
 	if a.managed != nil {
-		// Issue the managed spawn last (:1094-1097), once every refusal has been checked and the answer is written, so nothing is
-		// issued for a spawn the hook then cannot answer (CRW-1122). A failure is the deny envelope; after the issuance the answer
-		// is only returned, and a failure there is an unknown outcome to reconcile (RunSpawnAttachHook).
 		if _, err := role.IssueManagedSpawnEnv(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID, env); err != nil {
+			if a.grant != nil {
+				a.grant.release()
+			}
 			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
 		}
 		if a.commit != nil {
 			a.commit.issued = true
+		}
+	}
+	if a.grant != nil {
+		a.grant.commit()
+		if a.commit != nil {
+			a.commit.granted = true
 		}
 	}
 	return answer
@@ -390,7 +408,9 @@ const spawnHookReconcileReason = "managed dispatch: the attempt was issued but t
 // spawnHookCommit is what a hook run has committed, shared by RunSpawnAttachHook and the route so a failure after a commit is
 // answered as an unknown outcome and never as an allow of the caller's own input.
 type spawnHookCommit struct {
-	issued bool
+	subagent bool // the spawner is a subagent, so nothing may let it through without its grant
+	granted  bool // the subagent's grant is spent
+	issued   bool // the managed attempt is issued
 }
 
 // spawnHookRouteSettings is :999-1016: the trimmed promptOverride, which no fork restricts, and the model and effort to inject, which

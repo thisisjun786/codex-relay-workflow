@@ -52,7 +52,8 @@ type spawnHookAssembly struct {
 	dispatchSource     string                      // dispatchSource: the source line that resolved (:893)
 	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
 	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
-	commit             *spawnHookCommit            // what this run has committed; set by RunSpawnAttachHook, nil in a direct call
+	commit             *spawnHookCommit            // what this run has committed, shared with RunSpawnAttachHook
+	grant              *spawnGrantClaim            // a subagent's checked grant, spent by finish
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -63,7 +64,19 @@ type spawnHookAssembly struct {
 // obj is a decoded payload. tool_input and its items may be an ordered pyjson.Object or a plain map; a plain map is read with sorted
 // keys, which is a compatibility path, because a payload decoded into maps would otherwise read as no object and allow the spawn.
 func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembly, string, bool) {
-	stop := func(deny string) (spawnHookAssembly, string, bool) { return spawnHookAssembly{}, deny, true }
+	return spawnHookAssembleWith(obj, env, &spawnHookCommit{})
+}
+
+// spawnHookAssembleWith is spawnHookAssemble recording what it commits in commit. An answer that allows the spawn untouched
+// still spends a subagent's grant (spawnHookAssembly.finish), so a one-time grant never survives a spawn it let through.
+func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawnHookCommit) (spawnHookAssembly, string, bool) {
+	var grant *spawnGrantClaim
+	stop := func(deny string) (spawnHookAssembly, string, bool) {
+		if deny == "" && grant != nil {
+			deny = spawnHookAssembly{grant: grant, commit: commit}.finish("", env)
+		}
+		return spawnHookAssembly{}, deny, true
+	}
 	if event, _ := obj["hook_event_name"].(string); event != "PreToolUse" || !IsSpawnToolName(obj["tool_name"]) {
 		return stop("")
 	}
@@ -71,7 +84,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	if !ok {
 		return stop("")
 	}
-	a := spawnHookAssembly{toolInput: toolInput, firstText: -1}
+	a := spawnHookAssembly{toolInput: toolInput, firstText: -1, commit: commit}
 	a.v2Spawn = IsCollaborationToolName(obj["tool_name"]) || IsV2SpawnInput(spawnHookView(toolInput))
 	if session, ok := obj["session_id"].(string); ok {
 		a.sessionID = session
@@ -113,11 +126,22 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 
 	// D1: a spawn by a subagent needs a minted grant, and is denied before the message no-op below (:881-882). Where the oracle
 	// throws for a grant scope it cannot resolve (:396) and its outer catch prints nothing, which allows the spawn, the port denies:
-	// a failed grant check never lets a subagent recurse (known-defects, security).
+	// a failed grant check never lets a subagent recurse (known-defects, security). The grant is only checked here and spent with
+	// the answer, after every other refusal, so a refused spawn leaves it to the corrected retry (CRW-1118; the oracle spent it
+	// first).
 	tmpRoot, now := spawnHookTmpDir(env), time.Now()
 	spawnedBySubagent := IsSubagentSpawner(obj)
-	if spawnedBySubagent && !ConsumeRecursionGrant(obj, outgoing, tmpRoot, now) {
-		return stop(DenyEnvelope(RecurseDenyReason))
+	if spawnedBySubagent {
+		commit.subagent = true
+		tool := ""
+		if a.toolUseID != nil {
+			tool = *a.toolUseID
+		}
+		claim, ok := spawnGrantCheck(obj, outgoing, tmpRoot, os.Getuid(), now, tool)
+		if !ok {
+			return stop(DenyEnvelope(RecurseDenyReason))
+		}
+		grant, a.grant = claim, claim
 	}
 
 	if a.validItems {
