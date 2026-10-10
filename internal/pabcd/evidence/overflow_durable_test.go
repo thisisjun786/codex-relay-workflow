@@ -32,7 +32,7 @@ func (d *durableTrace) install(t *testing.T, failAt string) {
 	}
 	syncDirectory = func(dir string) error {
 		d.events = append(d.events, "dir:"+dir)
-		if failAt == "dir" {
+		if failAt == "dir" || failAt == "dir:"+dir {
 			return errors.New("injected directory sync failure")
 		}
 		return oldDir(dir)
@@ -64,6 +64,7 @@ func TestRecoverOverflowSyncsTheOverflowBeforeTheMainListShrinks(t *testing.T) {
 		overflowDir(cwd, "s1"),
 		filepath.Join(cwd, ".crw", OverflowSubdir),
 		filepath.Join(cwd, ".crw"),
+		cwd,
 	}
 	for _, dir := range wantDirs {
 		if !slices.Contains(before, "dir:"+dir) {
@@ -85,6 +86,35 @@ func TestRecoverOverflowKeepsTheMainListWhenTheOverflowCannotBeSynced(t *testing
 			err := RecoverOverflow(cwd, "s1", func(dir string, s state.State) error { wrote = true; return state.WriteState(dir, s) })
 			if err == nil || wrote {
 				t.Fatalf("the main list was shortened although the overflow was not durable: err=%v wrote=%v", err, wrote)
+			}
+			if after := rewriteGuardFile(t, cwd); !bytes.Equal(after, before) {
+				t.Fatal("the main list changed")
+			}
+		})
+	}
+}
+
+// CRW-1110 verification round 3: a sync that fails at any one directory on the way to the overflow record (the session directory,
+// evidence-overflow, .crw or the workspace) is returned, and the main list keeps its 65 entries.
+func TestRecoverOverflowKeepsTheMainListWhenAnyAncestorCannotBeSynced(t *testing.T) {
+	for _, step := range []string{"session dir", "overflow dir", "crw dir", "workspace"} {
+		t.Run(step, func(t *testing.T) {
+			cwd, before := seed65(t)
+			dir := map[string]string{
+				"session dir":  overflowDir(cwd, "s1"),
+				"overflow dir": filepath.Join(cwd, ".crw", OverflowSubdir),
+				"crw dir":      filepath.Join(cwd, ".crw"),
+				"workspace":    cwd,
+			}[step]
+			var trace durableTrace
+			trace.install(t, "dir:"+dir)
+			wrote := false
+			err := RecoverOverflow(cwd, "s1", func(dir string, s state.State) error { wrote = true; return state.WriteState(dir, s) })
+			if !slices.Contains(trace.events, "dir:"+dir) {
+				t.Fatalf("%s was never synced: %v", dir, trace.events)
+			}
+			if err == nil || wrote {
+				t.Fatalf("the main list was shortened although %s could not be synced: err=%v wrote=%v", dir, err, wrote)
 			}
 			if after := rewriteGuardFile(t, cwd); !bytes.Equal(after, before) {
 				t.Fatal("the main list changed")
