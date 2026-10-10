@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -865,5 +866,125 @@ func TestSelfHealEvidenceRecordingDoesNotOverwriteALaterOptOut(t *testing.T) {
 	}
 	if marker.OptedOut == nil || !*marker.OptedOut || marker.Probe != nil {
 		t.Fatalf("the later opt-out was lost or its evidence resurrected: %+v", marker)
+	}
+}
+
+// stallSelfHealPublication makes the first marker publication block until release is closed and
+// reports through entered that it is inside the marker lock; done is closed once that publication ends.
+func stallSelfHealPublication(t *testing.T) (entered, done chan struct{}, release func()) {
+	t.Helper()
+	prev := activationCrwdirPublish
+	entered, done = make(chan struct{}), make(chan struct{})
+	gate := make(chan struct{})
+	var once sync.Once
+	activationCrwdirPublish = func(path string, b []byte) error {
+		first := false
+		once.Do(func() { first = true })
+		if !first {
+			return prev(path, b)
+		}
+		close(entered)
+		<-gate
+		defer close(done)
+		return prev(path, b)
+	}
+	var closed sync.Once
+	release = func() { closed.Do(func() { close(gate) }) }
+	t.Cleanup(func() {
+		release()
+		select {
+		case <-entered:
+			<-done
+		default:
+		}
+		activationCrwdirPublish = prev
+	})
+	return entered, done, release
+}
+
+// A recorder that holds the marker lock for longer than a disable waits must not let that disable
+// report success without its opt-out: the disable refuses before it changes anything, and a rerun
+// after the holder is done records the opt-out.
+func TestDisableRefusesWhileTheMarkerLockIsHeldPastItsWait(t *testing.T) {
+	for _, kind := range []string{"no_manifest", "manifest"} {
+		t.Run(kind, func(t *testing.T) {
+			home := activationHome(t)
+			path := filepath.Join(home, "config.toml")
+			activationWrite(t, path, deactivationConfig)
+			var calls [][]string
+			state := map[string]bool{}
+			run := deactivationRun(t, path, state, &calls)
+			if kind == "manifest" {
+				deactivationManifest(t, home, map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}, map[string]FlagRecord{})
+			}
+			activationWrite(t, SelfHealMarkerPath(home), "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\"}\n")
+			prevWait := selfHealMarkerLockWait
+			selfHealMarkerLockWait = 150 * time.Millisecond
+			t.Cleanup(func() { selfHealMarkerLockWait = prevWait })
+			entered, _, release := stallSelfHealPublication(t)
+			recorded := make(chan error, 1)
+			go func() {
+				recorded <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: home, Run: (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run, Now: func() string { return "2026-10-10T00:00:00.000Z" }})
+			}()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the recorder never reached its publication")
+			}
+			configBefore, manifestBefore := activationRead(t, path), ""
+			if kind == "manifest" {
+				manifestBefore = activationRead(t, manifestPath(home))
+			}
+			calls = nil
+			r, err := Deactivate(deactivationDeps(home, run))
+			if err == nil {
+				t.Fatalf("the disable reported success (%+v) although its opt-out could not be recorded", r)
+			}
+			if !errors.Is(err, errSelfHealMarkerBusy) {
+				t.Fatalf("error %v does not name the busy marker", err)
+			}
+			if len(calls) != 0 || activationRead(t, path) != configBefore || (kind == "manifest" && activationRead(t, manifestPath(home)) != manifestBefore) {
+				t.Fatalf("a refused disable changed something: calls %v", calls)
+			}
+			release()
+			if err := <-recorded; err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Deactivate(deactivationDeps(home, run)); err != nil {
+				t.Fatal(err)
+			}
+			marker, err := ReadSelfHealMarkerFile(home)
+			if err != nil || marker == nil || marker.OptedOut == nil || !*marker.OptedOut || marker.Probe != nil {
+				t.Fatalf("the rerun did not record the opt-out over the record: %+v %v", marker, err)
+			}
+		})
+	}
+}
+
+// The deadline of a recording covers its marker publication too: a publication that stalls is
+// abandoned from the caller's side, so an enable is not held until it finishes.
+func TestSelfHealEvidenceRecordingReturnsAtTheDeadlineDuringASlowPublication(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\"}\n")
+	entered, _, _ := stallSelfHealPublication(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	returned := make(chan error, 1)
+	go func() {
+		returned <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: selfHealEvidenceCwd(t, home), Ctx: ctx, Run: (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run})
+	}()
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the recording outlived its deadline while the publication stalled")
+	}
+	select {
+	case <-entered:
+	default:
+		t.Fatal("the publication never started, so the test did not stall it")
 	}
 }

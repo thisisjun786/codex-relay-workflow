@@ -209,8 +209,8 @@ func ClearSelfHealOptOut(home string) error {
 var errSelfHealMarkerBusy = errors.New("the self-heal marker is busy: another CRW writer holds its lock")
 
 // selfHealMarkerLockWait is how long a marker writer waits for another's lock. A holder keeps it only
-// for one read and one publication.
-const selfHealMarkerLockWait = activationLockWait
+// for one read and one publication. It is a variable so a test can shorten it.
+var selfHealMarkerLockWait = activationLockWait
 
 // lockSelfHealMarker takes an exclusive advisory lock on the codex home directory, which every writer
 // of the marker shares. The directory is locked rather than a sidecar file so that the lock leaves
