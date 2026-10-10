@@ -249,3 +249,35 @@ func TestSkillAssetPaths(t *testing.T) {
 		"cmd/helper: a script with a python shebang; Python is allowed only in skill assets (plugins/crw/skills/*/{scripts,examples}/)"}
 	expectEqual(t, "messages", pythonFileErrors(root, []string{"cmd/a.py", skill + "scripts/a.py", "cmd/helper"}), want)
 }
+
+// tidyOK is what validate adds to its success line when the module files are checked and match.
+const tidyOK = "go.mod and go.sum match go mod tidy.\n"
+
+// Test1188_GoModIsTidyForValidate: validate refuses a go.mod that go mod tidy would rewrite, and
+// prints the difference; a tidy go.mod passes. The require of an unused module needs no download, so the
+// fixture stays offline.
+func Test1188_GoModIsTidyForValidate(t *testing.T) {
+	r := validateRepo(t)
+	r.write("go.mod", "module example.com/x\n\ngo 1.27\n")
+	expectEqual(t, "tidy", validate(t, r), result{0, validated + tidyOK, ""})
+	r.write("go.mod", "module example.com/x\n\ngo 1.27\n\nrequire example.com/nothere v1.0.0\n")
+	got := validate(t, r)
+	if got.code != 1 || got.stdout != "" ||
+		!strings.Contains(got.stderr, "go.mod or go.sum is not what go mod tidy writes") ||
+		!strings.Contains(got.stderr, "-require example.com/nothere v1.0.0") {
+		t.Errorf("untidy go.mod: %+v", got)
+	}
+}
+
+// Test1188_GoModTidyCheckSkipsAnIncompleteModuleCache: with no module cache the offline check cannot
+// load the imported module, so it says it skipped the check and validate still passes.
+func Test1188_GoModTidyCheckSkipsAnIncompleteModuleCache(t *testing.T) {
+	r := validateRepo(t)
+	r.write("go.mod", "module example.com/x\n\ngo 1.27\n\nrequire golang.org/x/mod v0.38.0\n")
+	r.write("x.go", "package x\n\nimport _ \"golang.org/x/mod/semver\"\n")
+	got := goCheck(t, r.root, []string{"GITHUB_EVENT_NAME=", "BLOB_RANGE_BASE=", "GOMODCACHE=" + t.TempDir()}, "validate")
+	if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, validated) ||
+		!strings.Contains(got.stdout, "go mod tidy check skipped: the module cache lacks a module") {
+		t.Errorf("incomplete cache: %+v", got)
+	}
+}
