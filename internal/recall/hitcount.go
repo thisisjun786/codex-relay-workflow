@@ -107,6 +107,14 @@ func recordHitEvent(db *RwDb, event string, refs []string, atISO string) error {
 	})
 }
 
+// forgetHitEvent drops a counted event once nothing can retry it any more; events of an invocation that
+// died first are removed by the age and number bounds above.
+func forgetHitEvent(db *RwDb, event string) {
+	if stmt, err := db.Prepare("DELETE FROM recall_hit_events WHERE event = ?"); err == nil {
+		_, _ = stmt.Run(event)
+	}
+}
+
 func hitEventCutoff(atISO string) string {
 	at, err := time.Parse("2006-01-02T15:04:05.000Z", atISO)
 	if err != nil {

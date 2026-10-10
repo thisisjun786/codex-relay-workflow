@@ -286,17 +286,23 @@ func TestHitEventCountsOnce(t *testing.T) {
 	}
 }
 
-// The store the hook uses keeps that promise too: a second Bump with a counted event changes nothing.
-func TestSidecarStoreBumpCountsAnEventOnce(t *testing.T) {
+// The store the hook uses keeps that promise for the retry it gets: an attempt that counted but reported
+// a failure is retried with its event, and the retry counts nothing more; the event is then forgotten.
+func TestSidecarStoreRetryOfACountedEventCountsOnce(t *testing.T) {
 	db, _ := indexTestDB(t)
 	store := &hookContextSidecarStore{db: db}
-	for range 2 {
-		if err := store.Bump("same-event", []string{"thread:a"}); err != nil {
-			t.Fatal(err)
-		}
+	// The failed attempt's transaction committed: the event and its count are in the store.
+	if err := recordHitEvent(db, "same-event", []string{"thread:a"}, "2026-09-09T00:00:00.000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Bump("same-event", []string{"thread:a"}); err != nil {
+		t.Fatal(err)
 	}
 	if got := readHitCounts(db, []string{"thread:a"})["thread:a"]; got != 1 {
-		t.Fatalf("one event counted %v times", got)
+		t.Fatalf("the retry of a counted event counted again: %v", got)
+	}
+	if rows := indexRows(t, db, "SELECT event FROM recall_hit_events"); len(rows) != 0 {
+		t.Fatal("a succeeded event is kept", rows)
 	}
 	if err := store.Bump("next-event", []string{"thread:a"}); err != nil {
 		t.Fatal(err)
