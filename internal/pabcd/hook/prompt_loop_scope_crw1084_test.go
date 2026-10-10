@@ -88,6 +88,12 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a single-task fix of coordinate values", "Use crw-loop to fix rounding of coordinate values in the parser.", PromptRoleUnknown, "recipe"},
 		{"a dispatched task fixing coordinates", "Use crw-loop to fix the coordinates in the parser", PromptRoleTask, "recipe"},
 		{"coordination while children implement", "Run crw-loop in this session to coordinate the migration project while child tasks implement their assigned issues.", PromptRoleUnknown, "pointer"},
+		// Verification round 3 (795db82a): a coordinate verb after an adverb or a subject is coordination, and a current-task
+		// implementation after a child process or after consulting the children stays this session's.
+		{"an adverb before the coordinate verb", "Use crw-loop to actively coordinate the lanes.", PromptRoleUnknown, "pointer"},
+		{"a subject before the coordinate verb", "Use crw-loop so we coordinate the lanes.", PromptRoleUnknown, "pointer"},
+		{"a current-task fix after inspecting a child process", "Use crw-loop in this session to inspect the child process and fix its crash in this project.", PromptRoleUnknown, "recipe"},
+		{"a current-task implementation after consulting the children", "Use crw-loop in this session to consult the children and implement this task.", PromptRoleUnknown, "recipe"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -240,6 +246,30 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"이 세션에서 crw-loop로 프로젝트 조정해줘, 자식 작업이 구현하게 해", LoopScopeProject},
 		{"Use crw-loop to implement this task in this session, and report to the children", LoopScopeCurrentTask},
 		{"Use crw-loop in this session to implement the parser; child tasks wait", LoopScopeCurrentTask},
+		// Verification round 3 (795db82a): coordination verbs in any verb position, the noun in noun positions.
+		{"Use crw-loop to actively coordinate the lanes.", LoopScopeProject},
+		{"Use crw-loop so we coordinate the lanes.", LoopScopeProject},
+		{"Use crw-loop; coordinate the lanes", LoopScopeProject},
+		{"Run crw-loop, then carefully coordinate the child lanes", LoopScopeProject},
+		{"Run crw-loop so this session coordinates the lanes", LoopScopeProject},
+		{"Use crw-loop to help coordinate the migration", LoopScopeProject},
+		{"crw-loop로 레인들을 조정해줘", LoopScopeProject},
+		{"Use crw-loop to fix coordinate rounding in the parser", LoopScopeNone},
+		{"Use crw-loop to fix the bug in coordinate parsing", LoopScopeNone},
+		{"Use crw-loop to normalize these coordinates", LoopScopeNone},
+		{"Use crw-loop: the coordinate values are off by one, fix them", LoopScopeNone},
+		{"Use crw-loop to round coordinates to six decimals", LoopScopeNone},
+		// Explicit current-task implementations that mention a child process or another agent only as an object.
+		{"Use crw-loop in this session to inspect the child process and fix its crash in this project.", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to consult the children and implement this task.", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to read the workers' notes, then fix this issue", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to restart the subprocess and fix the crash", LoopScopeCurrentTask},
+		{"Use crw-loop to ask the other agents for context and then implement this task in this session", LoopScopeCurrentTask},
+		{"crw-loop로 현재 세션에서 자식 프로세스 크래시를 고쳐줘", LoopScopeCurrentTask},
+		// ...while another agent as the subject or delegate of the verb is still a coordination.
+		{"Use crw-loop in this session to ask the children to review and implement their issues", LoopScopeProject},
+		{"Use crw-loop in this session; the child tasks review and fix their issues", LoopScopeProject},
+		{"Use crw-loop in this session, the workers will then implement the project issues", LoopScopeProject},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {
