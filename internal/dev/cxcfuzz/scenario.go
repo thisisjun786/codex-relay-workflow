@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -479,21 +480,21 @@ func build(root, resolvedRoot string, entry Entry) error {
 	}
 	switch entry.Kind {
 	case "dir":
-		return os.MkdirAll(path, modeOf(entry.Mode, 0o755))
+		return homeguard.MkdirAll(path, modeOf(entry.Mode, 0o755))
 	case "file":
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := homeguard.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(path, []byte(entry.Content), modeOf(entry.Mode, 0o644))
+		return homeguard.WriteFile(path, []byte(entry.Content), modeOf(entry.Mode, 0o644))
 	case "symlink":
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := homeguard.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
 		// The link stores exactly the target text that was checked - the substituted text, so a
 		// ROOT-prefixed entry becomes a real absolute link into the case root - and it is judged right
 		// after it is created, against the tree built so far.
 		target := rootSubstitutedPath(root, entry.Target)
-		if err := os.Symlink(target, path); err != nil {
+		if err := homeguard.Symlink(target, path); err != nil {
 			return err
 		}
 		if err := judgeLink(resolvedRoot, path); err != nil {

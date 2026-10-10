@@ -4,7 +4,6 @@
     "cli__subagents__cxc_home_ignores_legacy_codex_store",
     "cli__subagents__fallback_set_and_refusals",
     "cli__subagents__list_global_defaults",
-    "cli__subagents__malformed_global_config",
     "cli__subagents__refusals",
     "cli__subagents__register_refuses_symlinks",
     "cli__subagents__register_spaced_codex_home",

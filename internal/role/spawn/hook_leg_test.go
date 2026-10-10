@@ -79,6 +79,7 @@ func TestSpawnLegReplaysTheRecordedRouteSteps(t *testing.T) {
 			spawnLegEnv(t, rig)
 			for i, step := range c.Steps {
 				total++
+				step = spawnRouteExpect(envs[ci].Name, i, step)
 				at := "step " + strconv.Itoa(i+1)
 				got := spawnLegAnswer(t, rig, rig.expandRaw(step.Stdin))
 				for _, m := range nonce.FindAllStringSubmatch(got, -1) {

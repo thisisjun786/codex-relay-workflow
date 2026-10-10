@@ -36,6 +36,14 @@ func AnalyzeScript(src, cwd string, cdpath bool) (Result, error) {
 	return analyze(src, st, nil)
 }
 
+// AnalyzeScriptEnv is AnalyzeScript with the environment the script inherits: a variable the walk does not assign takes its value from
+// lookup. A consumer that knows only part of that environment answers the rest as unset.
+func AnalyzeScriptEnv(src, cwd string, cdpath bool, lookup func(string) (string, bool)) (Result, error) {
+	st := newState(cwd)
+	st.cdpath = cdpath
+	return analyze(src, st, lookup)
+}
+
 // AnalyzeScriptProvenDirectory is AnalyzeScript with the same failed-cd
 // tracking as AnalyzeEnvProvenDirectory, for memory destinations in carried files.
 func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) {
@@ -77,6 +85,7 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	}
 	st.lookup = lookup
 	st.cdpath = st.cdpath || textNamesCdpath(src)
+	w.prefixNamed = textNamesPycachePrefix(src)
 	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
 		return Result{}, err
 	}

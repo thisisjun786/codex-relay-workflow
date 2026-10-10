@@ -479,9 +479,9 @@
             "message": "preview the diff"
           },
           "oracle": "reviewer",
-          "expected": "reviewer",
-          "classification": "identical",
-          "reason": "",
+          "expected": "explorer",
+          "classification": "intentionally-changed",
+          "reason": "CRW-1114 (known-defects.md:1088): the review keywords match at a word start, so \"preview\" is no review.",
           "test": ""
         },
         {

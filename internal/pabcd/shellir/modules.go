@@ -1,6 +1,7 @@
 package shellir
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -64,6 +65,9 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	}
 	if ctx.Loop || ctx.Background || ctx.Unsequenced {
 		return true, unreadablef("module imports run in an unordered context")
+	}
+	if why := w.pycachePrefixSet(args[:at], assigns, st); why != "" {
+		return true, unreadablef("PYTHONPYCACHEPREFIX is %s; the interpreter loads compiled code from that cache, which is not read%s", why, pycachePrefixRoute)
 	}
 	var files []string
 	for i := at; i < len(args); i++ {
@@ -134,12 +138,19 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 				}
 				return nil
 			}
+			rel := strings.TrimPrefix(p, physical+"/")
 			if d.Type()&os.ModeSymlink != 0 {
-				return unreadablef("module import inventory contains a link")
+				return unreadablef("module import inventory contains a link (%s)", rel)
 			}
 			n := d.Name()
-			if strings.HasSuffix(n, ".pyc") || strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
-				return unreadablef("module imports compiled code that is not read")
+			if strings.HasSuffix(n, ".pyc") {
+				// Python loads a cache entry instead of its source whenever the entry's header agrees with the source, and code
+				// inside the run (a test module calling os.utime, or rewriting a source) can make any entry agree before it is
+				// imported. So no entry is trusted, stale or not; the reason names it and the way past it (CRW-1178).
+				return pycacheRefusal(rel)
+			}
+			if strings.HasSuffix(n, ".pyd") || strings.Contains(n, ".so") {
+				return unreadablef("module imports compiled code that is not read (%s)", rel)
 			}
 			if strings.HasSuffix(n, ".py") {
 				files = append(files, p)
@@ -150,7 +161,11 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			return nil
 		})
 		if err != nil {
-			return true, unreadablef("module import inventory refused")
+			var u *Unreadable
+			if errors.As(err, &u) {
+				return true, u
+			}
+			return true, unreadablef("module import inventory cannot be read (%s)", walkErrorWhat(err, physical))
 		}
 		// Pytest also loads ancestor conftest files and configuration. Config
 		// can name plugins whose execution set this reader cannot establish.
@@ -224,6 +239,90 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	return true, nil
 }
 
+// pycacheRoute and pycachePrefixRoute are the ways past a cache refusal. The cache is removed by a command of its own (in the same
+// command the entry is still there when the text is read), and the run then writes no new one; a prefix is not set for the run, or
+// the interpreter is told to ignore PYTHON* variables. Both fit the reason bound of the hooks with the file named (see shortRel).
+const (
+	pycacheRoute       = "; remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
+	pycachePrefixRoute = "; unset PYTHONPYCACHEPREFIX in the environment and do not set it in the command, or run python -E -B"
+)
+
+// pycacheRefusal is the refusal of compiled code in the module inventory, which names the file (rel, below the project) and the way past
+// it: an entry of a __pycache__ directory is removed with that directory; any other .pyc is a module of its own, removed by name.
+func pycacheRefusal(rel string) error {
+	if filepath.Base(filepath.Dir(rel)) == "__pycache__" {
+		return unreadablef("module imports compiled code that is not read (%s)%s", shortRel(rel), pycacheRoute)
+	}
+	return unreadablef("module imports compiled code that is not read (%s); remove it in a separate command first", shortRel(rel))
+}
+
+// shortRel bounds a project-relative name for a reason, keeping its start and its file name.
+func shortRel(rel string) string {
+	const limit = 96
+	if len(rel) <= limit {
+		return rel
+	}
+	return rel[:limit/2-2] + "..." + rel[len(rel)-limit/2+1:]
+}
+
+// pycachePrefixSet says how a module run may be given PYTHONPYCACHEPREFIX, or "" when it is not: the interpreter then reads and writes
+// every cache entry under <prefix>/<source directory>, even with -B, where the inventory never looks. The variable is set when the run
+// assigns it, when the text names it anywhere (an assignment, export, declare, eval, env), when a command or an expansion of the text
+// may assign a variable whose name it does not spell (a name built at run time: export "$N", ${!N:=x}, an arithmetic evaluation of a
+// value the walk does not know or that names other variables, declare -i), and when the environment the reader is given sets it
+// (empty is unset for the interpreter). -E and -I make the interpreter ignore it (CRW-1178).
+func (w *walker) pycachePrefixSet(args []Word, assigns []Assign, st *state) string {
+	if moduleIgnoresEnv(args) {
+		return ""
+	}
+	switch {
+	case moduleAssigned("PYTHONPYCACHEPREFIX", assigns):
+		return "assigned for the run"
+	case w.prefixNamed:
+		return "named by the command text"
+	case w.prefixUnknown:
+		return "possibly set through a variable name the command text does not spell"
+	}
+	if st.lookup != nil {
+		if v, ok := st.lookup("PYTHONPYCACHEPREFIX"); ok && v != "" {
+			return "set in the environment"
+		}
+	}
+	return ""
+}
+
+// moduleIgnoresEnv is whether the interpreter's startup flags include -E or -I, with which it ignores every PYTHON* variable.
+func moduleIgnoresEnv(args []Word) bool {
+	for _, a := range args {
+		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.ContainsAny(a.Value[1:], "EI") {
+			return true
+		}
+	}
+	return false
+}
+
+// textNamesPycachePrefix is whether a text spells PYTHONPYCACHEPREFIX anywhere, as textNamesCdpath is for CDPATH.
+func textNamesPycachePrefix(src string) bool {
+	return strings.Contains(src, "PYTHONPYCACHEPREFIX")
+}
+
+// walkErrorWhat names what failed in a directory walk: the operation, the cause and the file or directory it failed on, relative to the
+// project root (physical), so the host's path is not repeated and the reader's reason says what to fix.
+func walkErrorWhat(err error, root string) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		what := pe.Op + ": " + pe.Err.Error()
+		switch {
+		case pe.Path == root:
+			what += " in ."
+		case strings.HasPrefix(pe.Path, root+"/"):
+			what += " in " + strings.TrimPrefix(pe.Path, root+"/")
+		}
+		return what
+	}
+	return "walk failed"
+}
+
 func moduleEnv(name string, assigns []Assign, st *state) (string, bool) {
 	for i := len(assigns) - 1; i >= 0; i-- {
 		if assigns[i].Name == name {
@@ -241,10 +340,8 @@ func moduleAssigned(name string, assigns []Assign) bool {
 	return false
 }
 func moduleStartupEnv(name string, args []Word, assigns []Assign, st *state) (string, bool) {
-	for _, a := range args {
-		if a.Known && strings.HasPrefix(a.Value, "-") && !strings.HasPrefix(a.Value, "--") && strings.ContainsAny(a.Value[1:], "EI") {
-			return "", true // Python -E and -I ignore PYTHON* environment variables.
-		}
+	if moduleIgnoresEnv(args) {
+		return "", true // Python -E and -I ignore PYTHON* environment variables.
 	}
 	return moduleEnv(name, assigns, st)
 }
@@ -328,7 +425,7 @@ func (w *walker) moduleImportsClear(st *state) error {
 		}
 	}
 	codePath := func(v string) bool {
-		return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)]
+		return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)] || strings.Contains(v, "__pycache__")
 	}
 	for _, e := range w.out {
 		if e.Kind == KindScriptFile || e.Inline != nil || e.Name == "tar" || e.Name == "unzip" {
@@ -340,7 +437,7 @@ func (w *walker) moduleImportsClear(st *state) error {
 			}
 		}
 		switch e.Name {
-		case "cp", "mv", "ln", "install", "tee", "dd", "curl", "wget":
+		case "cp", "mv", "ln", "install", "tee", "dd", "curl", "wget", "touch":
 			for _, a := range e.Args {
 				if !a.Known || codePath(strings.TrimPrefix(a.Value, "of=")) {
 					return unreadablef("module import may be rewritten")

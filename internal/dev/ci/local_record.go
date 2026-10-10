@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // CRW-964: the verification record. `crw-dev ci local` leaves a
@@ -412,4 +414,28 @@ func localGateDigest(gate string) string {
 	}
 	sum := sha256.Sum256([]byte(gate))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// localCheckRecordDestination refuses a record whose files lie in the account's real home: the record,
+// its .canonical sibling and each directory writeRecord would make for them. The record is the
+// command's own output and is written wherever --record names, so it is judged like any harness
+// destination. The one place the account's .codex holds legitimately is a managed checkout, which
+// may be the repository being verified (homeguard.RefuseUnlessWithin): a record inside that checkout
+// stays, one that leaves it by name, "..", or a link is refused. Checking and writing are two steps.
+func localCheckRecordDestination(root, record string) error {
+	dests := []string{record, record + ".canonical"}
+	for i := 1; i < len(record); i++ {
+		if !os.IsPathSeparator(record[i]) || os.IsPathSeparator(record[i-1]) {
+			continue
+		}
+		if _, err := os.Stat(record[:i]); err != nil {
+			dests = append(dests, record[:i])
+		}
+	}
+	for _, dest := range dests {
+		if err := homeguard.RefuseUnlessWithin(root, dest); err != nil {
+			return fmt.Errorf("the verification record: %w", err)
+		}
+	}
+	return nil
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -20,7 +19,7 @@ import (
 // someone removes the file by hand, which is visible and recoverable, where two writers that both judge a lock stale can enter
 // together. The release removes the file by path and ignores the error, so it is attempted on every path, a panic included.
 func lockStore(path string, sleep func(time.Duration)) (release func(), err error) {
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err = os.MkdirAll(storeDir(path), 0o700); err != nil {
 		return nil, refused(err)
 	}
 	lock := path + ".lock"

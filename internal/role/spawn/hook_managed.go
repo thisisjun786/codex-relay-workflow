@@ -38,12 +38,20 @@ func spawnDispatchLine(s string) string { return text.SplitLines(s)[0] }
 // has no source. The settings read is the global store (decision 7); a failure is the oracle's readSettings throw, which the
 // caller turns into empty output.
 func spawnDispatchSources(message string, env host.LookupEnv) ([]spawnDispatchSource, error) {
+	return spawnDispatchSourcesWith(message, func() role.SettingsSnapshot { return spawnHookSettings(env) })
+}
+
+// spawnHookSettings reads the helper role settings; a hook event calls it at most once (CRW-1124), and a test counts the calls.
+var spawnHookSettings = role.ReadSettingsSnapshot
+
+// spawnDispatchSourcesWith is spawnDispatchSources over the event's settings snapshot, read only when a source needs it.
+func spawnDispatchSourcesWith(message string, snapshot func() role.SettingsSnapshot) ([]spawnDispatchSource, error) {
 	if strings.HasPrefix(message, "[CRW-DISPATCH:") {
 		return []spawnDispatchSource{{Source: spawnDispatchLine(message)}}, nil
 	}
-	settings, err := role.ReadSettings(env)
-	if err != nil {
-		return nil, err
+	settings := snapshot()
+	if _, err := settings.Role(role.Explorer); err != nil && !errors.As(err, new(*role.UnusableSettingsError)) {
+		return nil, err // a store that cannot be found, as the oracle's readSettings throw
 	}
 	rest, unwrapped := message, false
 	// The oracle's anchored, case-sensitive grant pattern, compiled here so the package keeps no initializer work.
@@ -73,6 +81,15 @@ func spawnDispatchSources(message string, env host.LookupEnv) ([]spawnDispatchSo
 	if !unwrapped {
 		return nil, nil
 	}
+	// Each role's prompt decides which source a guarded message carries, so an unusable store or role leaves the managed routing
+	// undecided when a dispatch marker could follow that role's prompt: the spawn is denied with the store's error (CRW-1119). Text
+	// with no marker at its start or behind a blank line has no source whatever any prompt is, so an unusable role stops only its
+	// own routing there.
+	if strings.HasPrefix(rest, "[CRW-DISPATCH:") || strings.Contains(rest, "\n\n[CRW-DISPATCH:") {
+		if err := settings.Err(); err != nil {
+			return nil, err
+		}
+	}
 	type entry struct {
 		role   role.RoleName
 		prompt string
@@ -80,7 +97,8 @@ func spawnDispatchSources(message string, env host.LookupEnv) ([]spawnDispatchSo
 	entries := make([]entry, 0, len(role.Roles()))
 	for _, r := range role.Roles() {
 		prompt := ""
-		if p := settings.Roles[r].PromptOverride; p != nil {
+		if cfg, _ := settings.Role(r); cfg.PromptOverride != nil {
+			p := cfg.PromptOverride
 			prompt = text.Trim(*p)
 		}
 		entries = append(entries, entry{r, prompt})
@@ -113,11 +131,12 @@ func spawnDispatchSources(message string, env host.LookupEnv) ([]spawnDispatchSo
 // "invalid managed dispatch marker".
 func spawnHookManaged(a *spawnHookAssembly, sources []spawnDispatchSource) (string, bool) {
 	var dispatchError error
+	resolver := role.NewManagedSpawnResolver(a.cwd) // the root and each source's record are looked at once per event (CRW-1124)
 	for _, candidate := range sources {
 		if IsFullHistoryFork(spawnHookView(a.toolInput)) {
 			return DenyEnvelope("managed fallback requires a fresh context"), true
 		}
-		resolved, err := role.ManagedSpawn(a.cwd, a.sessionID, candidate.Source)
+		resolved, err := resolver.Preview(a.sessionID, candidate.Source)
 		if err == nil && resolved == nil {
 			err = errors.New("invalid managed dispatch marker")
 		}

@@ -3,12 +3,15 @@
 package ci
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // localMarkerLines counts the lines a step wrote to the marker file, one per run of the step.
@@ -256,5 +259,19 @@ func TestLocal_a_step_reads_git_objects_without_replacement_refs(t *testing.T) {
 	}
 	if step := made.Jobs[0].Steps[1]; step.Result != localPassed {
 		t.Errorf("the step is %q (%s): replacement refs are not disabled for it", step.Result, step.Reason)
+	}
+}
+
+// CRW-1186: a work root in the account's real home (.codex, .crw, .local/share/crw-runtime) is refused,
+// whatever else is wrong with it.
+func TestLocalWorkRoot_a_root_in_the_account_home_is_refused(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(homeguard.SetAccountHome(home))
+	for _, rel := range []string{".codex/work", ".crw", ".local/share/crw-runtime/work"} {
+		_, err := localWorkRoot(localOptions{WorkRoot: filepath.Join(home, rel)})
+		var refusal *homeguard.Error
+		if !errors.As(err, &refusal) {
+			t.Errorf("%s: want a refusal of the account home, got %v", rel, err)
+		}
 	}
 }

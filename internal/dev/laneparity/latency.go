@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // Percentile is the nearest-rank percentile (0 < p <= 100) of the samples; zero for none.
@@ -151,10 +152,12 @@ func MeasureLatency(o LatencyOptions) ([]Latency, error) {
 	declared := Declared(registered, want)
 	scratch := o.Scratch
 	if scratch == "" {
-		if scratch, err = os.MkdirTemp("", "crw-parity-lat-"); err != nil {
+		if scratch, err = makeScratch("", "crw-parity-lat-"); err != nil {
 			return nil, err
 		}
 		defer os.RemoveAll(scratch)
+	} else if err = homeguard.Refuse(scratch); err != nil {
+		return nil, fmt.Errorf("the scratch directory: %w", err)
 	}
 	// Every step's Codex home holds the hook switch at crw, so the ported legs do their work (CRW-392).
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Light: true, Seed: newSeedPlan(SwitchOn, o.CRW, declared).seed}

@@ -60,6 +60,25 @@ func (w *walker) substsIn(n syntax.Node, st *state, ctx Context) error {
 			sctx.ProcSubst = true
 			firstErr = w.substBody(c.Stmts, st, sctx)
 			return false
+		case *syntax.ArithmExp:
+			w.arithmPrefix(st, c.X)
+		case *syntax.ArithmCmd:
+			w.arithmPrefix(st, c.X)
+		case *syntax.LetClause:
+			w.arithmPrefix(st, c.Exprs...)
+		case *syntax.CStyleLoop:
+			w.arithmPrefix(st, c.Init, c.Cond, c.Post)
+		case *syntax.BinaryTest:
+			// [[ a -eq b ]] evaluates both operands as arithmetic expressions
+			if c.Op >= syntax.TsEql && c.Op <= syntax.TsGtr {
+				w.arithmTestPrefix(st, c.X, false)
+				w.arithmTestPrefix(st, c.Y, false)
+			}
+		case *syntax.UnaryTest:
+			// [[ -v a[i] ]] evaluates the subscript
+			if c.Op == syntax.TsVarSet {
+				w.arithmTestPrefix(st, c.X, true)
+			}
 		case *syntax.BinaryArithm:
 			// an assignment in an arithmetic expansion, $((n=1)), sets a variable the reader does not follow
 			if assignsArithm(c.Op) {
@@ -70,14 +89,150 @@ func (w *walker) substsIn(n syntax.Node, st *state, ctx Context) error {
 				st.clearVars()
 			}
 		case *syntax.ParamExp:
+			// a subscript and a slice offset or length are arithmetic expressions
+			w.arithmPrefix(st, c.Index)
+			if c.Slice != nil {
+				w.arithmPrefix(st, c.Slice.Offset, c.Slice.Length)
+			}
 			// a default assignment, ${n:=x}, sets the variable it names
 			if c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
 				st.clearVars()
+				// ${!N:=x} assigns the variable whose name is N's value, built at run time and never spelled by the text: it may
+				// be PYTHONPYCACHEPREFIX, exported under set -a (CRW-1178).
+				if c.Excl || c.Param == nil || c.NestedParam != nil || !validName(c.Param.Value) {
+					w.prefixUnknown = true
+				}
 			}
 		}
 		return true
 	})
 	return firstErr
+}
+
+// maxArithmDepth bounds how far arithmPrefix follows a variable whose value names another variable, and maxArithmNames how many
+// names one check follows in all, so values that name each other many times over cannot make the check slow.
+const (
+	maxArithmDepth = 8
+	maxArithmNames = 1024
+)
+
+// arithmPrefix records in w.prefixUnknown that evaluating an arithmetic expression may assign a variable whose name the text does
+// not spell, which may be PYTHONPYCACHEPREFIX (CRW-1178). bash expands each operand to text, parses that text as arithmetic and
+// evaluates a name in it by evaluating its value as an expression of its own, so a value built at run time
+// (x=PYTHONPYCACHE; x+=PREFIX=7; $((x))) assigns a name the text never spells. An expression is clear when every name it reads holds
+// a value the walk knows and that is clear in turn; a plain assignment to a name the text spells evaluates only its right side.
+func (w *walker) arithmPrefix(st *state, exprs ...syntax.ArithmExpr) {
+	for _, x := range exprs {
+		if x == nil || w.prefixUnknown {
+			continue
+		}
+		syntax.Walk(x, func(n syntax.Node) bool {
+			if w.prefixUnknown {
+				return false
+			}
+			switch c := n.(type) {
+			case *syntax.BinaryArithm:
+				if wd, ok := c.X.(*syntax.Word); ok && c.Op == syntax.Assgn && validName(wd.Lit()) {
+					w.arithmPrefix(st, c.Y)
+					return false
+				}
+			case *syntax.Word:
+				if text, ok := arithmWordText(c, st); !ok || !arithmTextClear(text, st) {
+					w.prefixUnknown = true
+				}
+				return false
+			}
+			return true
+		})
+	}
+}
+
+// arithmTestPrefix is arithmPrefix for an operand of [[ ]] that bash evaluates as arithmetic: the whole word, or with subscript only
+// the subscript of a name[subscript] word (-v).
+func (w *walker) arithmTestPrefix(st *state, x syntax.TestExpr, subscript bool) {
+	wd, ok := x.(*syntax.Word)
+	if !ok || w.prefixUnknown {
+		return
+	}
+	text, ok := arithmWordText(wd, st)
+	if ok && subscript {
+		i, j := strings.IndexByte(text, '['), strings.LastIndexByte(text, ']')
+		switch {
+		case i < 0:
+			return
+		case j > i:
+			text = text[i+1 : j]
+		default:
+			text = text[i+1:]
+		}
+	}
+	if !ok || !arithmTextClear(text, st) {
+		w.prefixUnknown = true
+	}
+}
+
+// assignArithm is arithmPrefix for the subscripts of an assignment (a[i]=v, a=([i]=v)), which bash evaluates as arithmetic.
+func (w *walker) assignArithm(a *syntax.Assign, st *state) {
+	w.arithmPrefix(st, a.Index)
+	if a.Array != nil {
+		for _, e := range a.Array.Elems {
+			w.arithmPrefix(st, e.Index)
+		}
+	}
+}
+
+// arithmWordText is the text an arithmetic operand expands to, when the walk knows it.
+func arithmWordText(x *syntax.Word, st *state) (string, bool) {
+	if lit := x.Lit(); lit != "" {
+		return lit, true
+	}
+	if unknownWord(x, st) != "" {
+		return "", false
+	}
+	cfg := &expand.Config{
+		Env:       expand.FuncEnviron(func(name string) string { return st.value(name) }),
+		ProcSubst: refuseProcSubst,
+	}
+	v, err := expand.Literal(cfg, unescapeUnquoted(x))
+	return v, err == nil
+}
+
+// arithmTextClear is whether an arithmetic text assigns only names it spells: it does not spell PYTHONPYCACHEPREFIX, and every name
+// in it holds a value the walk knows that is clear in turn (bash evaluates it as an expression). Letters within a number (0x1f,
+// 16#ff) are digits, not names.
+func arithmTextClear(text string, st *state) bool {
+	budget := maxArithmNames
+	return arithmTextClearIn(text, st, 0, &budget)
+}
+
+func arithmTextClearIn(text string, st *state, depth int, budget *int) bool {
+	for i := 0; i < len(text); {
+		c := text[i]
+		switch {
+		case c >= '0' && c <= '9':
+			for i < len(text) && (validName("a"+text[i:i+1]) || text[i] == '#' || text[i] == '@') {
+				i++
+			}
+		case validName(text[i : i+1]):
+			j := i
+			for j < len(text) && validName("a"+text[j:j+1]) {
+				j++
+			}
+			name := text[i:j]
+			i = j
+			*budget--
+			if textNamesPycachePrefix(name) || depth >= maxArithmDepth || *budget < 0 {
+				return false
+			}
+			v, ok := st.vars[name]
+			if !ok || !arithmTextClearIn(v, st, depth+1, budget) {
+				return false
+			}
+		default:
+			i++
+		}
+	}
+	return true
 }
 
 func (w *walker) substBody(list []*syntax.Stmt, st *state, ctx Context) error {

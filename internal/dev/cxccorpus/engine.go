@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // Epoch is the frozen clock of a recording: the oracle's fake-clock preload starts every Node
@@ -92,6 +94,10 @@ func (c *Case) Expand(text string) string {
 // base environment of every process of the case (nothing is inherited). homeVar names the variable
 // that points at the CXC home root. A partial Case comes back with its error, to be removed.
 func NewCase(scratch, homeVar string, g Given) (*Case, error) {
+	// a case is the isolated tree of a run, and never lies in the account's real home (CRW-1186)
+	if err := homeguard.Refuse(scratch); err != nil {
+		return nil, err
+	}
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		return nil, err
@@ -165,6 +171,14 @@ func InstallStubs(c *Case, g Given, install func(name string) error) error {
 		stubs[name] = stub
 	}
 	for name, stub := range stubs {
+		// a stub is a file of the stubs directory: a name that leads out of it is refused, and so is
+		// a place of it that lies in the account's real home, before the installer writes (CRW-1186)
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
+			return fmt.Errorf("stub name %q is not a file name of the stubs directory", name)
+		}
+		if err := homeguard.Refuse(filepath.Join(c.Root, "stubs", name)); err != nil {
+			return err
+		}
 		if err := install(name); err != nil {
 			return err
 		}
@@ -179,10 +193,15 @@ func InstallStubs(c *Case, g Given, install func(name string) error) error {
 	return nil
 }
 
-// mkdirAll is os.MkdirAll with mode 0755 on every directory it creates, whatever the umask.
+// mkdirAll is os.MkdirAll with mode 0755 on every directory it creates, whatever the umask. A
+// directory it would make where a link of the case leads into the account's real home is refused
+// before it is made (CRW-1186).
 func mkdirAll(path string) error {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return nil
+	}
+	if err := homeguard.Refuse(path); err != nil {
+		return err
 	}
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
@@ -197,8 +216,12 @@ func mkdirAll(path string) error {
 // umask is; one that already exists keeps its mode, as with os.WriteFile. The scenario may then run
 // the file (an executable Given.Modes entry or a Step.Write program), so the descriptor is open only
 // under syscall.ForkLock: a fork in that window would inherit it and leave the file unexecutable
-// (ETXTBSY, golang/go#22315).
+// (ETXTBSY, golang/go#22315). A file a link of the case leads into the account's real home is
+// refused before anything is made (CRW-1186).
 func writeFile(path string, data []byte) error {
+	if err := homeguard.Refuse(path); err != nil {
+		return err
+	}
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -226,6 +249,9 @@ const writtenStampLead = time.Hour
 func stampWritten(path string) error {
 	when := time.Now().Add(writtenStampLead)
 	for _, entry := range []string{path, filepath.Dir(path)} {
+		if err := homeguard.Refuse(entry); err != nil {
+			return err
+		}
 		if err := os.Chtimes(entry, when, when); err != nil {
 			return err
 		}
@@ -455,7 +481,9 @@ func casePath(c *Case, rel string) (string, error) {
 
 // setUp writes the given state. What it creates has the modes of umask 022 whatever the process
 // umask is (files and directories are chmod-ed when made, git runs under umask 022); SQLite seeding
-// and the step processes are the runtime's, and so is their umask.
+// and the step processes are the runtime's, and so is their umask. A given link may lead anywhere,
+// so every destination it writes, makes, links, chmod-s, stamps, seeds or makes a repository in is
+// refused when it lands in the account's real home (CRW-1186).
 func setUp(c *Case, g Given, rt Runtime) error {
 	for _, dir := range g.Dirs {
 		path, err := casePath(c, dir)
@@ -494,6 +522,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 			if err != nil {
 				return err
 			}
+			if err := homeguard.Refuse(path); err != nil {
+				return err
+			}
 			if err := mkdirAll(filepath.Dir(path)); err != nil {
 				return err
 			}
@@ -513,7 +544,7 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		if err := mkdirAll(filepath.Dir(path)); err != nil {
 			return err
 		}
-		if err := os.Symlink(c.Expand(g.Symlinks[rel]), path); err != nil {
+		if err := homeguard.Symlink(c.Expand(g.Symlinks[rel]), path); err != nil {
 			return err
 		}
 	}
@@ -524,6 +555,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		}
 		ws, err := casePath(c, dir)
 		if err != nil {
+			return err
+		}
+		if err := homeguard.Refuse(ws); err != nil {
 			return err
 		}
 		if err := mkdirAll(ws); err != nil {
@@ -541,9 +575,15 @@ func setUp(c *Case, g Given, rt Runtime) error {
 			if err != nil {
 				return err
 			}
+			if err := homeguard.Refuse(path); err != nil {
+				return err
+			}
 			steps = append(steps, []string{"worktree", "add", "-q", "-b", wt.Branch, path})
 		}
 		for _, args := range steps {
+			if err := refuseGitDirs(c, rt, ws); err != nil {
+				return err
+			}
 			cmd := exec.Command("/bin/sh", append([]string{"-c", umask022, rt.GitPath()}, args...)...)
 			cmd.Dir = ws
 			cmd.Env = c.Env
@@ -555,6 +595,9 @@ func setUp(c *Case, g Given, rt Runtime) error {
 	for _, rel := range sortedKeys(g.Modes) {
 		path, err := casePath(c, rel)
 		if err != nil {
+			return err
+		}
+		if err := homeguard.Refuse(path); err != nil {
 			return err
 		}
 		if err := os.Chmod(path, fs.FileMode(g.Modes[rel])); err != nil {
@@ -575,11 +618,69 @@ func setUp(c *Case, g Given, rt Runtime) error {
 		if err != nil {
 			return fmt.Errorf("mtime %s: %w", rel, err)
 		}
+		if err := homeguard.Refuse(path); err != nil {
+			return err
+		}
 		if err := os.Chtimes(path, when, when); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// refuseGitDirs refuses a git command whose repository metadata lies in the account's real home. The
+// working directory is guarded on its own, but git writes where its metadata is: ws/.git may be a
+// link or a file ("gitdir: ...") that leads there, and the common directory of a worktree can name
+// another place. The places are read the way git reads them and each is guarded before the command
+// runs (CRW-1186). The git directory (ws/.git, or the place a .git file names) is read for its
+// commondir file whether or not git can read the repository yet: git init in a directory that is
+// not a repository still writes into the common directory that file names.
+func refuseGitDirs(c *Case, rt Runtime, ws string) error {
+	dotGit := filepath.Join(ws, ".git")
+	if err := homeguard.Refuse(dotGit); err != nil {
+		return err
+	}
+	gitDir := dotGit
+	if raw, err := os.ReadFile(dotGit); err == nil {
+		if line, _, _ := strings.Cut(string(raw), "\n"); strings.HasPrefix(line, "gitdir:") {
+			gitDir = joinUnder(ws, strings.TrimSpace(strings.TrimPrefix(line, "gitdir:")))
+			if err := homeguard.Refuse(gitDir); err != nil {
+				return err
+			}
+		}
+	}
+	if raw, err := os.ReadFile(gitDir + string(filepath.Separator) + "commondir"); err == nil {
+		if common := strings.TrimRight(string(raw), "\r\n"); common != "" {
+			if err := homeguard.Refuse(joinUnder(gitDir, common)); err != nil {
+				return err
+			}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+		return fmt.Errorf("cannot read the commondir of %s, so git does not run: %w", gitDir, err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", umask022, rt.GitPath(), "rev-parse", "--absolute-git-dir", "--git-common-dir")
+	cmd.Dir = ws
+	cmd.Env = c.Env
+	out, err := cmd.Output()
+	if err != nil {
+		return nil // no repository yet, or none git can read: nothing to resolve
+	}
+	for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if err := homeguard.Refuse(joinUnder(ws, dir)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// joinUnder is path taken from base the way git and the kernel take it: an absolute path as it
+// stands, a relative one appended to base without lexical cleaning, so a ".." after a link leaves
+// the link's target, not base.
+func joinUnder(base, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return base + string(filepath.Separator) + path
 }
 
 // freezeTimes gives every entry under root, symlinks apart, the time when through set (os.Chtimes

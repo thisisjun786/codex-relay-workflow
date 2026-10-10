@@ -32,16 +32,19 @@ func ResolveSpawnConfig(env host.LookupEnv, role RoleName) (SpawnResolution, err
 	if !validRole(role) {
 		return SpawnResolution{}, fmt.Errorf("unknown role \"%s\"", role)
 	}
-	s, err := ReadSettings(env)
+	cfg, err := readRole(env, role) // only this role's settings must be usable (CRW-1119)
 	if err != nil {
 		return SpawnResolution{}, err
 	}
-	cfg := s.Roles[role]
+	return spawnResolution(role, cfg), nil
+}
+
+func spawnResolution(role RoleName, cfg RoleConfig) SpawnResolution {
 	res := SpawnResolution{Role: role, UsesMainModel: cfg.Mode == ModeDefault, Effort: cfg.Effort, PromptOverride: cfg.PromptOverride}
 	if !res.UsesMainModel {
 		res.Model = cfg.Model
 	}
-	return res, nil
+	return res
 }
 
 // The two helpers below are what the oracle used to ignore a Git-tracked project config until it was reviewed. Nothing reads a project

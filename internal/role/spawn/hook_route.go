@@ -3,12 +3,15 @@ package spawn
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -23,6 +26,7 @@ import (
 // docs/port-cxc/known-defects.md:
 //   - the project layer is dropped (decision 7), so the trust warning is empty: trustPrefix is applied, but nothing sets it;
 //   - the oracle's :1030-1046 branches for an empty guard are ported in spawnHookRoutePrompt, but the guard is never empty;
+//   - a managed spawn whose tool_input nests too deep to be answered is denied before it is issued (CRW-1122);
 //   - a tool_input nested past 4,463 levels prints nothing, where the oracle's JSON.stringify fails past 4,462 levels of junk inside
 //     tool_input at Node 24's default stack, measured by the spawn recorder (the threshold depends on the stack size, the platform
 //     and the depth of the caller, CRW-749); the payload is still read at any depth, as JSON.parse reads it, so a subagent's
@@ -40,16 +44,27 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if len(raw) > spawnHookRouteMaxInput {
 		return DenyEnvelope(spawnHookOversizedInputReason)
 	}
+	commit := &spawnHookCommit{}
+	defer func() {
+		if commit.unlock != nil {
+			commit.unlock() // the event's lock is held until its answer is recorded
+		}
+	}()
 	defer func() {
 		if recover() != nil {
-			out = ""
+			switch out = ""; {
+			case commit.issued:
+				out = DenyEnvelope(spawnHookReconcileReason)
+			case commit.subagent:
+				out = DenyEnvelope(RecurseDenyReason) // a subagent is never let through by a failure, spent grant or not
+			}
 		}
 	}()
 	payload, ok := spawnHookRouteLoad(raw)
 	if !ok {
 		return ""
 	}
-	a, deny, stop := spawnHookAssemble(spawnHookView(payload), env)
+	a, deny, stop := spawnHookAssembleWith(spawnHookView(payload), env, commit)
 	if stop {
 		return deny
 	}
@@ -262,8 +277,16 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	tooDeep := spawnHookRouteDeep(a.toolInput)
 	prompt, model, effort := spawnHookRouteSettings(a)
 	message := a.updatedMessage
-	if prompt != "" && !(a.validItems && (message == a.guard+"\n\n"+prompt || strings.HasPrefix(message, a.guard+"\n\n"+prompt+"\n\n"))) {
-		message = spawnHookRoutePrompt(message, a.guard, prompt, a.validItems, a.v2Spawn)
+	// A prompt that already follows the guard is not inserted again, in the single-message form as in the items form (CRW-1121;
+	// the oracle checked the items form only, so a reapplied message got the prompt twice).
+	if prompt != "" {
+		forms := a.promptForms
+		if forms == nil {
+			forms = []string{prompt}
+		}
+		if lead, ok := strings.CutPrefix(message, a.guard+"\n\n"); !ok || !spawnHookPromptLeads(lead, forms) {
+			message = spawnHookRoutePrompt(message, a.guard, prompt, a.validItems, a.v2Spawn)
+		}
 	}
 	promptChanged := !a.encryptedV2Message && prompt != ""
 	message = a.trustPrefix + message
@@ -303,14 +326,23 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		return DenyEnvelope(reason)
 	}
 	if tooDeep {
-		return "" // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
+		if a.managed == nil {
+			return a.finish("", env) // the oracle's JSON.stringify throws a RangeError here, which its outer catch turns into nothing
+		}
+		// A managed spawn must run with the candidate the attempt was claimed for and be recorded as issued; an answer that cannot
+		// be written would let the host run the caller's input instead, so it is denied before anything is issued (CRW-1122; the
+		// oracle issued and then printed nothing).
+		return DenyEnvelope("managed dispatch: " + spawnHookDeepReason)
 	}
-	config, err := role.ReadConfig(env)
+	routed, err := a.settings.Role(a.role) // the event's snapshot, as the role resolution read it (CRW-1124)
 	if err != nil {
-		return "" // the oracle's throw, caught by its outer catch
+		if deny := spawnHookSettingsDeny(err); deny != "" {
+			return deny
+		}
+		return a.finish("", env) // the oracle's throw, caught by its outer catch
 	}
 	var notices []string
-	if a.managed == nil && config.Roles[a.role].Fallback != nil {
+	if a.managed == nil && routed.Fallback != nil {
 		notices = append(notices, "[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: "+role.DispatchGuidance)
 	}
 	if a.encryptedV2Message {
@@ -318,7 +350,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	context := strings.Join(notices, "\n")
 	if a.managed == nil && context == "" && !changed && model == "" && effort == "" {
-		return ""
+		return a.finish("", env)
 	}
 	updated := slices.Clone(a.toolInput) // Set changes a present key in place, and a.toolInput is the caller's
 	if a.validItems {
@@ -332,24 +364,8 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	if effort != "" {
 		updated = updated.Set("reasoning_effort", effort)
 	}
-	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed, and before a
-	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
-	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
-	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
-	if a.evidenceAssignment != nil {
-		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
-			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
-		}
-	}
 	if a.managed != nil {
-		// Issue the managed spawn (:1094-1097): a failure is the deny envelope. The candidate's model and effort then replace
-		// whatever the caller sent, a null candidate field deleting the key.
-		if _, err := role.IssueManagedSpawnEnv(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID, env); err != nil {
-			if a.evidenceAssignment != nil {
-				a.evidenceAssignment.Remove(a.cwd)
-			}
-			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
-		}
+		// The candidate's model and effort replace whatever the caller sent, a null candidate field deleting the key (:1098-1101).
 		if a.managed.Candidate.Model == nil {
 			updated = spawnHookWithout(updated, "model")
 		} else {
@@ -361,11 +377,103 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 			updated = updated.Set("reasoning_effort", string(*a.managed.Candidate.Effort))
 		}
 	}
+	// CRW-1115: the evidence assignment injected into the packet is recorded only now that the spawn is allowed, and before a
+	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
+	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
+	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
+	// The record carries the digest of the input this answer gives, so that input delivered again is known as this event (CRW-1121).
+	if a.evidenceAssignment != nil && !a.evidenceRecorded {
+		spawnHookBeforePersist()
+		if a.inputText != "" {
+			a.evidenceAssignment.AnswerInput = spawnHookDigest(spawnHookRouteStringify(updated))
+		}
+		// The record is created, never replaced: an event named after itself that another delivery registered first (and whose child
+		// may have claimed it) keeps that record, and this delivery answers with it (CRW-1121, CRW-1124).
+		if err := a.evidenceAssignment.PersistNew(a.cwd); errors.Is(err, evidence.ErrAssignmentExists) {
+			a.evidenceRecorded = true
+		} else if err != nil {
+			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
+		}
+	}
 	output := pyjson.Object{{Key: "hookEventName", Value: "PreToolUse"}, {Key: "permissionDecision", Value: "allow"}, {Key: "updatedInput", Value: updated}}
 	if context != "" {
 		output = append(output, pyjson.Field{Key: "additionalContext", Value: context})
 	}
-	return spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}}) + "\n"
+	answer := a.finish(spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}})+"\n", env)
+	if a.supersedes != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
+		a.supersedes.Remove(a.cwd) // under the claim lock, only while it is still open and unclaimed (CRW-1121)
+	}
+	if a.replay != nil && strings.Contains(answer, `"permissionDecision":"allow"`) {
+		a.replay(answer) // CRW-1121: the same event again gets this answer
+	}
+	return answer
+}
+
+// spawnHookBeforePersist runs before the route writes the event's evidence assignment; a test acts there.
+var spawnHookBeforePersist = func() {}
+
+// finish commits what an answer that lets the spawn run needs, after every refusal has been checked and the answer is written
+// (CRW-1118, CRW-1122): a subagent's grant is reserved, the managed attempt is issued (:1094-1097), and the grant is spent. A
+// refusal at a step denies and gives a reserved grant back; past the commits the answer is only returned, and a failure there
+// is an unknown outcome (RunSpawnAttachHook), never the caller's own input and never a grant given back.
+func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
+	if a.grant != nil && !a.grant.reserve(time.Now()) {
+		a.dropEvidenceAssignment()
+		return DenyEnvelope(RecurseDenyReason) // another call took the grant first
+	}
+	if a.managed != nil {
+		// The issuance works on the preview's root and attempt and re-reads the record under its lock only (CRW-1124).
+		if _, err := role.IssueManagedSpawnSelection(a.managed, a.toolUseID, env); err != nil {
+			if a.grant != nil {
+				a.grant.release()
+			}
+			a.dropEvidenceAssignment()
+			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
+		}
+		if a.commit != nil {
+			a.commit.issued = true
+		}
+	}
+	if a.grant != nil {
+		// The call's input and answer are recorded before its grant is spent: a delivery that stopped between the two finds the
+		// record and returns the answer, and one that never got there finds the reservation, held for this input (CRW-1118).
+		if a.record != nil {
+			a.record(answer)
+		}
+		a.grant.commit()
+		if a.commit != nil {
+			a.commit.granted = true
+		}
+	}
+	return answer
+}
+
+// dropEvidenceAssignment takes back the evidence assignment the route recorded (CRW-1115) when finish refuses the spawn, so a child
+// that never ran leaves no open assignment behind; the record was written before the issuance, which is a one-shot (CRW-1106).
+func (a spawnHookAssembly) dropEvidenceAssignment() {
+	if a.evidenceAssignment != nil && !a.evidenceRecorded { // a record an earlier delivery wrote stays with that delivery's child
+		a.evidenceAssignment.Remove(a.cwd)
+	}
+}
+
+// spawnHookDeepReason is why a managed spawn nested too deep is refused, with what the caller does about it.
+var spawnHookDeepReason = "the spawn's tool_input nests deeper than " + strconv.Itoa(spawnHookRouteMaxDepth) +
+	" levels, so the managed candidate cannot be applied; remove the deeply nested fields and spawn again"
+
+// spawnHookBusyReason answers a root spawn event whose lock another delivery of the same event keeps: nothing is minted for it.
+const spawnHookBusyReason = "crw: another delivery of this spawn call is still being answered; try again"
+
+// spawnHookReconcileReason answers a spawn whose managed attempt was issued when the hook then failed to give its answer: the
+// attempt is recorded as issued to this native call, so it is neither retried nor spawned again here.
+const spawnHookReconcileReason = "managed dispatch: the attempt was issued but the hook could not answer; inspect the dispatch status and reconcile before retry"
+
+// spawnHookCommit is what a hook run has committed, shared by RunSpawnAttachHook and the route so a failure after a commit is
+// answered as an unknown outcome and never as an allow of the caller's own input.
+type spawnHookCommit struct {
+	subagent bool   // the spawner is a subagent, so nothing may let it through without its grant
+	granted  bool   // the subagent's grant is spent
+	issued   bool   // the managed attempt is issued
+	unlock   func() // releases the lock of the event, when this run holds it (CRW-1121)
 }
 
 // spawnHookRouteSettings is :999-1016: the trimmed promptOverride, which no fork restricts, and the model and effort to inject, which
@@ -390,15 +498,17 @@ func spawnHookRouteSettings(a spawnHookAssembly) (prompt, model, effort string) 
 	return prompt, model, effort
 }
 
-// spawnHookRoutePrompt is :1021-1046: the prompt after the guard. A message that is only the guard (items) becomes guard and prompt;
-// otherwise the first guard-and-blank-line is replaced, as String.replace does with its $ patterns. The oracle's empty-guard branches
-// (an existing guard marker's block, else a prefix) are ported, but the guard is never empty.
+// spawnHookRoutePrompt is :1021-1046: the prompt after the guard. A message that is only the guard becomes guard and prompt, in both
+// forms (CRW-1121; the oracle did this for items only, so a bare guard message lost its prompt); otherwise the prompt goes after the
+// first guard-and-blank-line as literal text (CRW-1121; the oracle's String.replace read the prompt's $$, $&, $` and $' as
+// replacement patterns). The oracle's empty-guard branches (an existing guard marker's block, else a prefix) are ported, but the
+// guard is never empty.
 func spawnHookRoutePrompt(message, guard, prompt string, items, v2 bool) string {
 	switch {
-	case items && message == guard:
+	case message == guard:
 		return guard + "\n\n" + prompt
 	case guard != "":
-		return spawnHookRouteReplace(message, guard+"\n\n", guard+"\n\n"+prompt+"\n\n")
+		return strings.Replace(message, guard+"\n\n", guard+"\n\n"+prompt+"\n\n", 1)
 	}
 	marker := ScopeGuardMarker
 	if v2 {
@@ -414,35 +524,10 @@ func spawnHookRoutePrompt(message, guard, prompt string, items, v2 bool) string 
 	return message + "\n\n" + prompt
 }
 
-// spawnHookRouteReplace is s.replace(search, replacement) for a string search: the first occurrence only, with the replacement's $$,
-// $&, $` and $' patterns expanded. A $n or $<name> stays as written: a string search has no captures.
-func spawnHookRouteReplace(s, search, replacement string) string {
-	at := strings.Index(s, search)
-	if at < 0 {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(replacement); i++ {
-		if replacement[i] != '$' || i+1 == len(replacement) {
-			b.WriteByte(replacement[i])
-			continue
-		}
-		switch replacement[i+1] {
-		case '$':
-			b.WriteByte('$')
-		case '&':
-			b.WriteString(search)
-		case '`':
-			b.WriteString(s[:at])
-		case '\'':
-			b.WriteString(s[at+len(search):])
-		default:
-			b.WriteByte('$')
-			continue
-		}
-		i++
-	}
-	return s[:at] + b.String() + s[at+len(search):]
+// spawnHookPromptLeads reports whether s starts with the prompt in one of its forms.
+func spawnHookPromptLeads(s string, forms []string) bool {
+	_, ok := spawnHookPromptLead(s, forms)
+	return ok
 }
 
 // spawnHookRouteItems is :1053-1064: the first text item takes the message (or a new text item goes first when there is none), and the

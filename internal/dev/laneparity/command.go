@@ -22,6 +22,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,realhost,all} [flags]
@@ -195,6 +196,15 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw-dev parity %s: %v\n", command, err)
 		return 1
 	}
+	// what the run writes lies outside the account's real home (CRW-1186)
+	for flagName, path := range map[string]string{"out": *out, "scratch": *scratch, "json": *jsonOut} {
+		if path == "" {
+			continue
+		}
+		if err := homeguard.Refuse(path); err != nil {
+			return fail(fmt.Errorf("--%s: %w", flagName, err))
+		}
+	}
 	root := *repo
 	if root == "" {
 		var err error
@@ -272,7 +282,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// Every case root and a generated plugin root live in one directory of this run, removed at the end.
-	run, err := os.MkdirTemp(*scratch, "crw-parity-run-")
+	run, err := makeScratch(*scratch, "crw-parity-run-")
 	if err != nil {
 		return fail(err)
 	}

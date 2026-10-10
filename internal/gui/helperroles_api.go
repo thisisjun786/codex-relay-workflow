@@ -20,12 +20,12 @@ import (
 // type and re-encodes an answer: a copy of those semantics would drift from the store's. For the
 // same reason neither handler returns a non-nil error; that path is the server's 500.
 //
-// The two directions answer a damaged store differently, and that is the store's design rather than
-// this route's choice. A write refuses: role.UpdateSettings reads the store for update and answers
-// a 400 with the store's own message when the file cannot be understood, so a damaged store is
-// never overwritten. A read reports the store's defaults, because role.ReadSettings tolerates an
-// unreadable file and serves the empty config. The screen therefore shows the defaults for a store
-// it could not read, and the first write against it is refused rather than silently flattening it.
+// Both directions refuse a damaged store, with the store's own message as a 400. A write refuses because
+// role.UpdateSettings reads the store for update and never overwrites a file it cannot understand. A read
+// refuses because role.ReadSettings reports a store that cannot be read or parsed, and a role whose
+// routing fields are not valid, as an UnusableSettingsError (CRW-1119): showing the defaults would hide
+// that the configured routing is not in effect. The message names the store and the repair (reset the
+// role, or correct the file); the store keeps its bytes.
 //
 // Two consequences worth naming rather than leaving to be discovered. First, role.Settings is
 // served through encoding/json, which escapes <, >, & and U+2028/U+2029 as a backslash-u form.

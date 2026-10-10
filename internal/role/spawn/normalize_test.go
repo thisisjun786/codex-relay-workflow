@@ -172,8 +172,8 @@ func TestNormalizeWhitespaceAndTokenBoundaries(t *testing.T) {
 		t.Run(fmt.Sprintf("root_%q", suffix), func(t *testing.T) {
 			skills := filepath.Join(t.TempDir(), suffix)
 			spawnNormalizeTestSkills(t, skills)
-			want := "$crw:crw-dev"
-			if suffix == "\u0085" || suffix == "<angle>" || suffix == "quote'" {
+			want := "$crw:crw-dev" // an angle bracket or a quote cannot stand in a raw link target either (CRW-1114)
+			if suffix == "\u0085" {
 				want = spawnNormalizeTestLink(skills, "crw-dev")
 			}
 			if got := NormalizeSkillMentions("$crw-dev", skills); got != want {
@@ -190,10 +190,15 @@ func TestNormalizeWhitespaceAndTokenBoundaries(t *testing.T) {
 			t.Errorf("extended token %q changed", input)
 		}
 	}
-	for _, input := range []string{"prefix$crw-dev", "\\$crw-dev", "$crw-dev. $crw:crw-dev!", "$crw-dev\u0085"} {
+	for _, input := range []string{"$crw-dev. $crw:crw-dev!", "$crw-dev\u0085", " $crw-dev", "($crw-dev)"} {
 		want := strings.NewReplacer("$crw:crw-dev", link, "$crw-dev", link).Replace(input)
 		if got := NormalizeSkillMentions(input, skills); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	}
+	for _, input := range []string{"prefix$crw-dev", "\\$crw-dev", "a_$crw-dev", "9$crw-dev"} { // not at a token start (CRW-1114)
+		if got := NormalizeSkillMentions(input, skills); got != input {
+			t.Errorf("got %q, want it unchanged", got)
 		}
 	}
 	for _, target := range []string{"/bad\u00a0target", "/bad\ufefftarget", "/bad\ttarget", "/bad\\target"} {
@@ -253,12 +258,13 @@ func TestNormalizeFilesystemAndPrefixSemantics(t *testing.T) {
 	if err := os.MkdirAll(dirTarget, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := NormalizeSkillMentions("$crw-directory", skills), spawnNormalizeTestLink(skills, "crw-directory"); got != want {
-		t.Errorf("directory SKILL.md: got %q, want %q", got, want)
+	// A directory named SKILL.md is no skill: no load link, and a link to one is repaired to the real skill (CRW-1114).
+	if got := NormalizeSkillMentions("$crw-directory", skills); got != "$crw-directory" {
+		t.Errorf("directory SKILL.md: got %q", got)
 	}
 	input = "[$crw-dev](" + dirTarget + ")"
-	if got := NormalizeSkillMentions(input, skills); got != input {
-		t.Errorf("existing directory target changed: %q", got)
+	if got := NormalizeSkillMentions(input, skills); got != link {
+		t.Errorf("existing directory target: got %q, want %q", got, link)
 	}
 	alias := filepath.Join(skills, "crw-alias")
 	if err := os.Symlink(filepath.Join(skills, "crw-dev"), alias); err != nil {

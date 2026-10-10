@@ -90,78 +90,12 @@
       ]
     },
     {
-      "id": "hook__pre-tool-use-attaching-skills__final_gate_prerequisites_present_allowed",
-      "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
-      "set": {
-        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"rev-parse\",\"HEAD\"],\"cwd\":\"${WS}\"}",
-        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"status\",\"--porcelain=v1\",\"-z\",\"--untracked-files=all\"],\"cwd\":\"${WS}\"}"
-      },
-      "remove": [
-        "calls/4",
-        "calls/3",
-        "calls/2"
-      ]
-    },
-    {
-      "id": "hook__pre-tool-use-attaching-skills__final_gate_web_criterion_requires_qa",
-      "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
-      "set": {
-        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"rev-parse\",\"HEAD\"],\"cwd\":\"${WS}\"}",
-        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"status\",\"--porcelain=v1\",\"-z\",\"--untracked-files=all\"],\"cwd\":\"${WS}\"}"
-      },
-      "remove": [
-        "calls/3",
-        "calls/2"
-      ]
-    },
-    {
       "id": "hook__pre-tool-use-attaching-skills__items_attachment_only_gets_guard_item",
       "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
       "remove": [
         "calls/2",
         "calls/1",
         "calls/0"
-      ]
-    },
-    {
-      "id": "hook__pre-tool-use-attaching-skills__items_control_token_whitespace",
-      "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
-      "remove": [
-        "calls/2",
-        "calls/1",
-        "calls/0"
-      ]
-    },
-    {
-      "id": "hook__pre-tool-use-attaching-skills__managed_dispatch_marker_issues_once",
-      "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
-      "set": {
-        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/2": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/3": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/4": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/5": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/6": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/7": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/8": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}"
-      },
-      "remove": [
-        "calls/11",
-        "calls/10",
-        "calls/9"
-      ]
-    },
-    {
-      "id": "hook__pre-tool-use-attaching-skills__managed_fallback_candidate_null_effort",
-      "reason": "decision 7: the port keeps the global layer only, so nothing reads a project config and the oracle's project-config trust check (git ls-files --error-unmatch -- .crw/subagents.json and, when it is tracked, git rev-parse --show-toplevel) is not made. Every answer of this fixture is byte-identical; only the recorded calls differ, and the claim restates them in the port order.",
-      "set": {
-        "calls/0": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/1": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}",
-        "calls/2": "{\"cmd\":\"git\",\"argv\":[\"-C\",\"${WS}\",\"rev-parse\",\"--show-toplevel\"],\"cwd\":\"${WS}\"}"
-      },
-      "remove": [
-        "calls/3"
       ]
     },
     {

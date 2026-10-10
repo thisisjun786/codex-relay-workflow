@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // DefaultOutRoot is where a campaign writes when --out is not given.
@@ -168,13 +170,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	} else {
 		cfg.Out = filepath.Join(DefaultOutRoot, target.Name, time.Now().UTC().Format("20060102T150405Z"))
 	}
+	if err := homeguard.Refuse(cfg.Out); err != nil {
+		fmt.Fprintf(stderr, "crw-dev fuzz: the output directory: %v\n", err)
+		return 1
+	}
 	// A campaign refuses a directory that already holds results: a second run there would overwrite
 	// summary.json and leave the first run's divergence files beside it.
 	if entries, err := os.ReadDir(cfg.Out); err == nil && len(entries) > 0 {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: the output directory %s is not empty\n", cfg.Out)
 		return 2
 	}
-	if err := os.MkdirAll(cfg.Out, 0o755); err != nil {
+	if err := homeguard.MkdirAll(cfg.Out, 0o755); err != nil {
 		fmt.Fprintf(stderr, "crw-dev fuzz: %v\n", err)
 		return 1
 	}
@@ -208,6 +214,11 @@ func campaignFailed(summary Summary) bool {
 // Campaign runs one target: it generates inputs, evaluates each on both sides, shrinks every
 // divergence, and writes the divergence files and summary.json under cfg.Out.
 func Campaign(cfg Config) (summary Summary, err error) {
+	if cfg.Out != "" {
+		if err := homeguard.Refuse(cfg.Out); err != nil {
+			return Summary{}, fmt.Errorf("the output directory: %w", err)
+		}
+	}
 	seed := cfg.Seed
 	if seed == 0 && !cfg.SeedSet {
 		now := cfg.Now
@@ -385,12 +396,12 @@ func (c *campaign) one() (Verdict, string, string, any, error) {
 
 func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText string, err error) {
 	text := canonical(input)
-	goRoot, err := os.MkdirTemp("", "cxcfuzz-go-")
+	goRoot, err := MkdirTempRoot("cxcfuzz-go-")
 	if err != nil {
 		return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 	}
 	defer func() { err = joinCleanup(err, CleanupCaseRoot(goRoot)) }()
-	oracleRoot, err := os.MkdirTemp("", "cxcfuzz-oracle-")
+	oracleRoot, err := MkdirTempRoot("cxcfuzz-oracle-")
 	if err != nil {
 		return Verdict{}, "", "", CaseFailure{Cause: CauseTempRoot, Err: err}
 	}
@@ -472,14 +483,14 @@ func writeDivergence(out string, d Divergence, written map[string]bool) error {
 	}
 	written[name] = true
 	dir := filepath.Join(out, DivergenceDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, name), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(filepath.Join(dir, name), append(raw, '\n'), 0o644)
 }
 
 // writeSummary writes <out>/summary.json.
@@ -488,7 +499,7 @@ func writeSummary(out string, summary Summary) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644)
 }
 
 // repositoryRoot is the checkout holding the working directory: the first parent with a go.mod.
