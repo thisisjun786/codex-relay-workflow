@@ -201,12 +201,15 @@ func memorySlice(s string, from, end int) string {
 	return string(utf16.Decode(units[from:end]))
 }
 
-// frontmatterValue reads \s*(\S+) using the already-landed JavaScript whitespace set.
+// frontmatterValue is the value on the rest of a frontmatter line: its ends trimmed with the JavaScript whitespace set, one pair of
+// matching quotes taken off. A value that is empty is none (known-defects.md :592).
 func frontmatterValue(s string) *string {
-	s = strings.TrimLeftFunc(s, isJSSpace)
-	end := strings.IndexFunc(s, isJSSpace)
-	if end >= 0 {
+	if end := strings.IndexFunc(s, isJSLineTerminator); end >= 0 {
 		s = s[:end]
+	}
+	s = strings.TrimFunc(s, isJSSpace)
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		s = strings.TrimFunc(s[1:len(s)-1], isJSSpace)
 	}
 	if s == "" {
 		return nil
@@ -214,6 +217,10 @@ func frontmatterValue(s string) *string {
 	return &s
 }
 
+func isJSLineTerminator(r rune) bool { return r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' }
+
+// frontmatterThreadID is the value of a thread_id key that starts a line within the first 2,000 UTF-16 units. The value is on the line of
+// its key: a key with nothing after it does not take the next line (a heading, another key) for its id (known-defects.md :591).
 func frontmatterThreadID(content string) *string {
 	prefix := memorySlice(content, 0, 2000)
 	start := true
@@ -223,7 +230,7 @@ func frontmatterThreadID(content string) *string {
 				return value
 			}
 		}
-		start = r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029'
+		start = isJSLineTerminator(r)
 	}
 	return nil
 }
@@ -307,13 +314,33 @@ func firstPresentMember(lowerText string, groups []QueryGroup) QueryTerm {
 	return groups[0][0] // upstream caller guarantees nonempty groups/members
 }
 
+// originalUnits maps a position counted in UTF-16 units of the lowercased text to the same position in the original: İ lowercases to two
+// units, so every one before the position moves it by one (known-defects.md :593).
+func originalUnits(original string, lowerUnits int) int {
+	lowered, origin := 0, 0
+	for _, r := range original {
+		step, own := 1, 1
+		if r >= 0x10000 {
+			step, own = 2, 2
+		} else if r == 0x130 {
+			step = 2
+		}
+		if lowered+step > lowerUnits {
+			break
+		}
+		lowered += step
+		origin += own
+	}
+	return origin
+}
+
 func excerptAround(content string, term QueryTerm, span int) string {
 	lower := Lower(content)
 	at := TermIndexOf(lower, term, 0)
 	if at < 0 {
 		return memorySlice(content, 0, span)
 	}
-	at = len(utf16.Encode([]rune(lower[:at])))
+	at = originalUnits(content, len(utf16.Encode([]rune(lower[:at]))))
 	from := max(0, at-int(math.Floor(float64(span)/2)))
 	return memorySlice(content, from, from+span)
 }

@@ -1,0 +1,237 @@
+{
+ "span-Handbook": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "handbook",
+    "relpath": "MEMORY.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "# Memory Handbook",
+    "startLine": 1,
+    "cwd": null,
+    "score": 6
+   },
+   {
+    "origin": "file",
+    "kind": "other",
+    "relpath": "later-span.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "# Memory Handbook",
+    "startLine": 3,
+    "cwd": null,
+    "score": 4.5
+   },
+   {
+    "origin": "file",
+    "kind": "other",
+    "relpath": "windows-span.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "# Memory Handbook",
+    "startLine": 1,
+    "cwd": null,
+    "score": 4.5
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 3,
+  "elapsedMs": 0
+ },
+ "zero-cutoff-kept": {
+  "hits": [],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 0,
+  "elapsedMs": 0
+ },
+ "limit-1.5": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "summary",
+    "relpath": "memory_summary.md",
+    "threadId": null,
+    "updatedAt": "2026-06-12T00:00:00.000Z",
+    "excerpt": "zebra ranking checkpoint",
+    "startLine": 1,
+    "cwd": null,
+    "score": 13
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 4,
+  "elapsedMs": 0
+ },
+ "any-mode": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "other",
+    "relpath": "one.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "alpha",
+    "startLine": 1,
+    "cwd": null,
+    "score": 3.5
+   },
+   {
+    "origin": "file",
+    "kind": "other",
+    "relpath": "two.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "beta",
+    "startLine": 1,
+    "cwd": null,
+    "score": 3.5
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 2,
+  "elapsedMs": 0
+ },
+ "cwd-plain": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "rollout",
+    "relpath": "rollout_summaries/here.md",
+    "threadId": "here",
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "The wombat pipeline shipped.",
+    "startLine": 6,
+    "cwd": "/proj/here",
+    "score": 3.5
+   },
+   {
+    "origin": "file",
+    "kind": "rollout",
+    "relpath": "rollout_summaries/there.md",
+    "threadId": "there",
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "The wombat pipeline shipped.",
+    "startLine": 6,
+    "cwd": "/proj/here-adjacent",
+    "score": 3.5
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 2,
+  "elapsedMs": 0
+ },
+ "cwd-unrelated-boost": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "rollout",
+    "relpath": "rollout_summaries/here.md",
+    "threadId": "here",
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "The wombat pipeline shipped.",
+    "startLine": 6,
+    "cwd": "/proj/here",
+    "score": 3.5
+   },
+   {
+    "origin": "file",
+    "kind": "rollout",
+    "relpath": "rollout_summaries/there.md",
+    "threadId": "there",
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "The wombat pipeline shipped.",
+    "startLine": 6,
+    "cwd": "/proj/here-adjacent",
+    "score": 3.5
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 2,
+  "elapsedMs": 0
+ },
+ "cwd-blank": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "rollout",
+    "relpath": "rollout_summaries/here.md",
+    "threadId": "here",
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "The wombat pipeline shipped.",
+    "startLine": 6,
+    "cwd": "/proj/here",
+    "score": 3.5
+   },
+   {
+    "origin": "file",
+    "kind": "rollout",
+    "relpath": "rollout_summaries/there.md",
+    "threadId": "there",
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "The wombat pipeline shipped.",
+    "startLine": 6,
+    "cwd": "/proj/here-adjacent",
+    "score": 3.5
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 2,
+  "elapsedMs": 0
+ },
+ "prose-adjacent-kept": {
+  "hits": [],
+  "warnings": [
+   "memories db not found (stage1 search off)",
+   "state db not found (metadata enrichment off)",
+   "no matches inside --cwd-only /proj/here — retry with --cwd to rank it first instead"
+  ],
+  "scannedFiles": 1,
+  "elapsedMs": 0
+ },
+ "aggregate-null-cwd": {
+  "hits": [
+   {
+    "origin": "file",
+    "kind": "raw",
+    "relpath": "raw_memories.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "platypus work here.",
+    "startLine": 6,
+    "cwd": null,
+    "score": 4
+   },
+   {
+    "origin": "file",
+    "kind": "raw",
+    "relpath": "raw_memories.md",
+    "threadId": null,
+    "updatedAt": "2026-09-10T00:00:00.000Z",
+    "excerpt": "platypus work elsewhere.",
+    "startLine": 11,
+    "cwd": null,
+    "score": 4
+   }
+  ],
+  "warnings": [
+   "memories db not found (stage1 search off)"
+  ],
+  "scannedFiles": 1,
+  "elapsedMs": 0
+ }
+}

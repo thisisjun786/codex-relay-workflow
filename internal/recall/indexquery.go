@@ -188,44 +188,54 @@ func lowerSources(r rune) []rune {
 	return caseSources[r]
 }
 
-// shortWordSpellings are the spellings of a word of one or two letters that a case-sensitive lookup must try beside SQL's ASCII
-// fold: every spelling whose text lowers (with Lower) to a string holding the word, that has a letter outside ASCII, and that the
-// ASCII fold of the LIKE does not already reach. A word that SQL folds completely has none.
-func shortWordSpellings(word string) []string {
+// wordSpellings are the spellings of a word, other than itself, whose text lowers (with Lower) to a string holding the word, that have
+// a letter outside ASCII, and that SQLite's ASCII fold does not reach: Ü for ü, the Kelvin sign for k, İ for i. withASCIICase also
+// lists the upper-case ASCII spellings, for a case-sensitive lookup. ok is false when there would be more than limit of them.
+func wordSpellings(word string, withASCIICase bool, limit int) (out []string, ok bool) {
 	runes := []rune(word)
-	if len(runes) == 0 || len(runes) > 2 {
-		return nil
-	}
 	options := make([][]rune, len(runes))
+	total := 1
 	for i, r := range runes {
-		options[i] = append([]rune{r}, lowerSources(r)...)
-	}
-	out := []string{}
-	add := func(spelling string) {
-		if asciiLower(spelling) == word || slices.Contains(out, spelling) {
-			return // the LIKE reaches it, or it is listed
-		}
-		for _, r := range spelling {
-			if r >= 0x80 {
-				out = append(out, spelling)
-				return
+		options[i] = []rune{r}
+		for _, source := range lowerSources(r) {
+			if source >= 0x80 || withASCIICase {
+				options[i] = append(options[i], source)
 			}
 		}
-	}
-	if len(runes) == 1 {
-		for _, o := range options[0] {
-			add(string(o))
-		}
-		return out
-	}
-	for _, a := range options[0] {
-		for _, b := range options[1] {
-			add(string([]rune{a, b}))
+		if total *= len(options[i]); total > limit {
+			return nil, false
 		}
 	}
-	if Lower("\u0130") == word {
-		add("\u0130")
+	spellings := []string{""}
+	for _, choices := range options {
+		next := make([]string, 0, len(spellings)*len(choices))
+		for _, prefix := range spellings {
+			for _, c := range choices {
+				next = append(next, prefix+string(c))
+			}
+		}
+		spellings = next
 	}
+	if len(runes) == 2 && Lower("\u0130") == word {
+		spellings = append(spellings, "\u0130")
+	}
+	for _, spelling := range spellings {
+		if asciiLower(spelling) == word || slices.Contains(out, spelling) {
+			continue // the LIKE reaches it, or it is listed
+		}
+		if strings.IndexFunc(spelling, func(r rune) bool { return r >= 0x80 }) >= 0 {
+			out = append(out, spelling)
+		}
+	}
+	return out, true
+}
+
+// shortWordSpellings are the case-sensitive spellings to look up beside the ASCII LIKE for a word of one or two letters.
+func shortWordSpellings(word string) []string {
+	if n := utf8.RuneCountInString(word); n == 0 || n > 2 {
+		return nil
+	}
+	out, _ := wordSpellings(word, true, 64)
 	return out
 }
 

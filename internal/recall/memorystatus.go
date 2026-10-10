@@ -111,6 +111,13 @@ type MemoryStatus struct {
 	ExhaustedByCause         CauseCounts       `json:"exhaustedByCause"`
 	LastSuccessAt            *float64          `json:"lastSuccessAt"`
 	LastFinishedAt           *float64          `json:"lastFinishedAt"`
+
+	// lastSuccessUnreadable and lastFinishedUnreadable are set when the store held a time that is no number; the time itself is then
+	// nil, and the text and the notice say it is unreadable instead of never or NaN (known-defects.md :537).
+	lastSuccessUnreadable, lastFinishedUnreadable bool
+	// unreadable is set when the store exists but could not be read (corrupt, unreadable, a value too large): the state is unavailable,
+	// and the notice says so (known-defects.md :538).
+	unreadable bool
 }
 
 // JSON.stringify turns nonfinite timestamps into null; the in-memory NaN stays NaN.
@@ -175,9 +182,25 @@ func CollectMemoryStatus(home string) MemoryStatus {
 	defer db.Close() // An ignored close failure must not change the snapshot.
 	status, err := readMemoryStatus(db, path)
 	if err != nil {
-		return emptyMemoryStatus(MemoryStatusUnsupported, &path, "could not read the jobs table: "+err.Error())
+		if memoryStatusSchemaError(err) {
+			return emptyMemoryStatus(MemoryStatusUnsupported, &path, "could not read the jobs table: "+err.Error())
+		}
+		// A store that cannot be read is not a store of another schema: it is unavailable, what was counted before the failure stays,
+		// and the notice says it (the hook that prints it never blocks).
+		status.State, status.Detail, status.unreadable = MemoryStatusUnavailable, "the jobs table could not be read ("+err.Error()+")", true
+		if status.StorePath == nil {
+			status = emptyMemoryStatus(MemoryStatusUnavailable, &path, status.Detail)
+			status.unreadable = true
+		}
+		return status
 	}
 	return status
+}
+
+// memoryStatusSchemaError is an error that says the store lacks a table, a column or a function the reader needs.
+func memoryStatusSchemaError(err error) bool {
+	msg := Lower(err.Error())
+	return strings.Contains(msg, "no such table") || strings.Contains(msg, "no such column") || strings.Contains(msg, "has no column")
 }
 
 func readMemoryStatus(db *RwDb, path string) (MemoryStatus, error) {
@@ -211,14 +234,14 @@ func readMemoryStatus(db *RwDb, path string) (MemoryStatus, error) {
 	s := emptyMemoryStatus(MemoryStatusOK, &path, "")
 	rows, err := read("SELECT kind, status, COUNT(*) AS count FROM jobs GROUP BY kind, status ORDER BY kind, status")
 	if err != nil {
-		return MemoryStatus{}, err
+		return s, err
 	}
 	for _, row := range rows {
 		s.Jobs = append(s.Jobs, MemoryJobCounts{memoryStatusString(row["kind"]), memoryStatusString(row["status"]), row["count"].(float64)})
 	}
 	rows, err = read("SELECT last_error FROM jobs WHERE status = 'error' AND retry_remaining = 0")
 	if err != nil {
-		return MemoryStatus{}, err
+		return s, err
 	}
 	s.Exhausted = float64(len(rows))
 	for _, row := range rows {
@@ -233,14 +256,14 @@ func readMemoryStatus(db *RwDb, path string) (MemoryStatus, error) {
 	}
 	rows, err = read("SELECT MAX(finished_at) AS at FROM jobs WHERE status = 'done'")
 	if err != nil {
-		return MemoryStatus{}, err
+		return s, err
 	}
-	s.LastSuccessAt = memoryStatusNumber(rows[0]["at"])
+	s.LastSuccessAt, s.lastSuccessUnreadable = memoryStatusTime(rows[0]["at"])
 	rows, err = read("SELECT MAX(finished_at) AS at FROM jobs")
 	if err != nil {
-		return MemoryStatus{}, err
+		return s, err
 	}
-	s.LastFinishedAt = memoryStatusNumber(rows[0]["at"])
+	s.LastFinishedAt, s.lastFinishedUnreadable = memoryStatusTime(rows[0]["at"])
 	return s, nil
 }
 
@@ -316,6 +339,15 @@ func memoryStatusNumber(v any) *float64 {
 	return &n
 }
 
+// memoryStatusTime is a stored time as a number of seconds, or nil and true when the store holds a value that is no finite number.
+func memoryStatusTime(v any) (*float64, bool) {
+	at := memoryStatusNumber(v)
+	if at != nil && (math.IsNaN(*at) || math.IsInf(*at, 0)) {
+		return nil, true
+	}
+	return at, false
+}
+
 func memoryAgeLabel(at *float64, now float64) string {
 	if at == nil {
 		return "never"
@@ -354,7 +386,11 @@ func FormatMemoryStatus(s MemoryStatus, now ...float64) string {
 	for _, job := range s.Jobs {
 		lines = append(lines, "  "+job.Kind+" "+job.Status+": "+memoryNumberText(job.Count))
 	}
-	lines = append(lines, "  last success: "+memoryAgeLabel(s.LastSuccessAt, memoryStatusNow(now)))
+	if s.lastSuccessUnreadable {
+		lines = append(lines, "  last success: unreadable (the store holds a time that is not a number)")
+	} else {
+		lines = append(lines, "  last success: "+memoryAgeLabel(s.LastSuccessAt, memoryStatusNow(now)))
+	}
 	if s.Exhausted > 0 {
 		causes := slices.Clone(s.ExhaustedByCause)
 		slices.SortStableFunc(causes, func(a, b CauseCount) int {
@@ -381,6 +417,9 @@ func MemoryStatusNotice(s MemoryStatus, options ...float64) string {
 		return "memory pipeline: unsupported store schema — " + s.Detail
 	}
 	if s.State == MemoryStatusUnavailable {
+		if s.unreadable {
+			return "memory pipeline: " + s.Detail + " (crw recall memory status)"
+		}
 		return ""
 	}
 	now, stale := memoryStatusNow(options), float64(172800)
@@ -388,7 +427,9 @@ func MemoryStatusNotice(s MemoryStatus, options ...float64) string {
 		stale = options[1]
 	}
 	parts := []string{}
-	if s.LastSuccessAt == nil {
+	if s.lastSuccessUnreadable {
+		parts = append(parts, "last successful extraction time is unreadable (the store holds a value that is not a number)")
+	} else if s.LastSuccessAt == nil {
 		if len(s.Jobs) > 0 {
 			parts = append(parts, "no successful extraction recorded yet")
 		}

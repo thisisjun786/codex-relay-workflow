@@ -98,7 +98,25 @@ func TestMemoryStatusOracle(t *testing.T) {
 	if len(grid.Collect) != 49 || len(grid.Classify) != 18 {
 		t.Fatal("incomplete oracle grid")
 	}
+	fixes := portFixed(t, "memorystatus")
 	for _, c := range grid.Collect {
+		if fix, ok := fixes[c.ID]; ok {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's status and texts in place of the recorded ones.
+			var fixed struct {
+				Status   json.RawMessage
+				Observed []struct {
+					Now                  float64
+					Text, Notice, Custom string
+				}
+			}
+			if err := json.Unmarshal(fix, &fixed); err != nil {
+				t.Fatal(err)
+			}
+			c.Status = fixed.Status
+			if fixed.Observed != nil {
+				c.Observed = fixed.Observed
+			}
+		}
 		t.Run(c.ID, func(t *testing.T) {
 			home := memoryStatusHome(t, c)
 			before := memoryStatusFiles(t, home)
@@ -122,7 +140,19 @@ func TestMemoryStatusOracle(t *testing.T) {
 			if err := json.Unmarshal(c.Status, &want); err != nil {
 				t.Fatal(err)
 			}
+			type observation struct {
+				Now                  float64
+				Text, Notice, Custom string
+			}
+			observed := []observation{}
+			for _, o := range c.Observed {
+				observed = append(observed, observation{o.Now, strings.ReplaceAll(FormatMemoryStatus(s, o.Now), home, "<HOME>"), strings.ReplaceAll(MemoryStatusNotice(s, o.Now), home, "<HOME>"), strings.ReplaceAll(MemoryStatusNotice(s, o.Now, 100), home, "<HOME>")})
+			}
+			dump := func() {
+				portFixedDump("memorystatus", c.ID, map[string]any{"status": json.RawMessage(strings.ReplaceAll(string(gotJSON), home, "<HOME>")), "observed": observed})
+			}
 			if !reflect.DeepEqual(got, want) {
+				dump()
 				t.Fatalf("status: got %s, oracle %s", gotJSON, c.Status)
 			}
 			if s.ObservationSource != "jobs-db" || s.EffectiveExtractionRoute != "unknown" || s.StartupGuardDecision != "unknown" {
@@ -135,6 +165,7 @@ func TestMemoryStatusOracle(t *testing.T) {
 					"custom threshold": {MemoryStatusNotice(s, o.Now, 100), o.Custom},
 				} {
 					if value := strings.ReplaceAll(pair[0], home, "<HOME>"); value != pair[1] {
+						dump()
 						t.Errorf("%s at %v: got %q, oracle %q", label, o.Now, value, pair[1])
 					}
 				}
@@ -142,11 +173,12 @@ func TestMemoryStatusOracle(t *testing.T) {
 			if !reflect.DeepEqual(before, memoryStatusFiles(t, home)) {
 				t.Fatal("collector modified store bytes or file inventory")
 			}
-			if c.ID == "unsafe-integer" && (len(s.Jobs) != 0 || s.Exhausted != 0 || len(s.ExhaustedByCause) != 0 || s.LastSuccessAt != nil || s.LastFinishedAt != nil) {
-				t.Fatal("late read failure leaked partial counts")
+			if c.ID == "unsafe-integer" && (s.State != MemoryStatusUnavailable || s.LastSuccessAt != nil || s.LastFinishedAt != nil) {
+				// port: fixed (CRW-1128, known-defects.md :538): an unreadable value is unavailable, and the counts read before it stay.
+				t.Fatalf("a late read failure is unavailable, not a schema: %+v", s)
 			}
-			if c.ID == "non-numeric-time" && (s.LastSuccessAt == nil || !math.IsNaN(*s.LastSuccessAt)) {
-				t.Fatal("NaN was confused with null")
+			if c.ID == "non-numeric-time" && (s.LastSuccessAt != nil || !s.lastSuccessUnreadable) {
+				t.Fatal("a time that is no number is unreadable, not NaN and not never (CRW-1128, known-defects.md :537)")
 			}
 		})
 	}

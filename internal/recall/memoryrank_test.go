@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -93,7 +94,7 @@ func TestMemoryParagraphsAndExcerpts(t *testing.T) {
 	holds(t, ParagraphChunks("a\rb")[0].Text == "a\rb", "lone CR stays content")
 	holds(t, excerptAround("precision then CI here", bounded("ci"), 6) == "en CI ", "excerpt anchors boundary match")
 	holds(t, excerptAround("가나다 CI 라마", bounded("ci"), 6) == "나다 CI ", "Korean UTF-16 slicing")
-	holds(t, excerptAround("İabcdefgh CI xyz", bounded("ci"), 4) == " CI ", "lowercase expansion keeps oracle offset drift")
+	holds(t, excerptAround("İabcdefgh CI xyz", bounded("ci"), 4) == "h CI", "the excerpt is cut at the original offset (CRW-1128, known-defects.md :593)")
 	holds(t, excerptAround("ab😀cd", loose("absent"), 3) == "ab\ufffd", "split surrogate platform boundary")
 	holds(t, excerptAround("abcdef", loose("absent"), -2) == "abcd", "negative slice end")
 }
@@ -148,8 +149,8 @@ func TestMemoryMarkdownTreeAndFrontmatter(t *testing.T) {
 	holds(t, frontmatterCwd("# header\ncwd: /other") == nil, "body cwd ignored")
 	holds(t, frontmatterCwd("thread_id: one\n\ncwd: /other") == nil, "blank ends leading block")
 	holds(t, frontmatterCwd("Cwd: /bad\ncwd: /later") == nil, "uppercase key ends block")
-	holds(t, *frontmatterCwd("cwd: /a b\n") == "/a", "whitespace truncation kept")
-	holds(t, *frontmatterThreadID("intro\nthread_id:\n# next") == "#", "body/cross-line id scan kept")
+	holds(t, *frontmatterCwd("cwd: /a b\n") == "/a b", "a cwd with a space is read whole (CRW-1128, known-defects.md :592)")
+	holds(t, frontmatterThreadID("intro\nthread_id:\n# next") == nil, "the id is on the line of its key (CRW-1128, known-defects.md :591)")
 	for _, sep := range []string{"\r", "\n", "\u2028", "\u2029"} {
 		holds(t, *frontmatterThreadID("intro" + sep + "thread_id: one") == "one", "JS multiline anchor %q", sep)
 	}
@@ -204,6 +205,7 @@ func TestMemoryOracle(t *testing.T) {
 		}
 	}
 	seen, changed := map[string]int{}, 0
+	fixes := portFixed(t, "memoryrank")
 	for i, c := range cases {
 		seen[c.Fn]++
 		str := func(n int) string { return arg[string](t, c.oracleCase, n) }
@@ -274,6 +276,9 @@ func TestMemoryOracle(t *testing.T) {
 			continue
 		}
 		expected := c.Out
+		if fix, ok := fixes[strconv.Itoa(i)]; ok {
+			expected = fix // port: fixed (docs/port-cxc/known-defects/CRW-1128.md)
+		}
 		if c.Classification != "" {
 			holds(t, c.Classification == "intentionally-changed" && c.Reason != "" && len(c.GoExpected) > 0, "classified boundary needs evidence")
 			changed++
@@ -284,6 +289,7 @@ func TestMemoryOracle(t *testing.T) {
 			t.Fatal(err)
 		}
 		if g := canon(t, got); !reflect.DeepEqual(g, want) {
+			portFixedDump("memoryrank", strconv.Itoa(i), g)
 			t.Errorf("case %d %s%s: got %v, oracle %v", i, c.Fn, c.In, g, want)
 		}
 	}

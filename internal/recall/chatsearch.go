@@ -44,6 +44,11 @@ func SearchChat(query string, opts ChatSearchOptions, clock ...time.Time) (ChatS
 	if shared, err = normalizeChatScanShared(shared); err != nil {
 		return ChatSearchResult{}, err
 	}
+	if opts.NowMs != nil {
+		if err = checkFiniteNowMs(*opts.NowMs); err != nil {
+			return ChatSearchResult{}, err
+		}
+	}
 	if cwd := scanString(opts.Cwd); cwd != "" {
 		shared.RepoKey = repoKeyForCwd(cwd, opts.ReadOriginUrl)
 	}

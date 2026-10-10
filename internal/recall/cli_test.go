@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -358,6 +359,9 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				}
 				if want.Stdout != nil {
 					wantOut := recallCLIUsageWithVerify(sub.Expected(*want.Stdout))
+					if _, deviates := recallCLIPortFixedFixtures[id]; deviates {
+						out, wantOut = recallCLIDropPortWarnings(out), recallCLIDropPortWarnings(wantOut)
+					}
 					if out != wantOut {
 						t.Errorf("step%d stdout got %q want %q", i, out, wantOut)
 					}
@@ -376,12 +380,79 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 						hit.(map[string]any)["score"] = scores[i]
 					}
 				}
+				if _, deviates := recallCLIPortFixedFixtures[id]; deviates {
+					actual, expected = recallCLIPortNormalized(actual), recallCLIPortNormalized(expected)
+				}
 				if !recallCLICompareJSON(actual, expected) {
 					t.Errorf("step%d got %s want %s", i, out, sub.Expected(string(want.StdoutJSON)))
 				}
 			}
 		})
 	}
+}
+
+// recallCLIPortFixedFixtures are the recorded fixtures whose answer the port changed on purpose (CRW-1128, docs/port-cxc/known-defects/CRW-1128.md):
+// equal hits are ordered by a stable identity instead of V8's sort schedule (:694), and a memory fallback says what its chat search said (:818).
+// They are compared with the hits ordered by score then path, the thread placeholders (numbered by appearance) alike, and the warnings
+// the chat search adds left out.
+var recallCLIPortFixedFixtures = map[string]string{
+	"cli__memory__search_chat_fallback_and_no_chat":              "chat warnings are propagated",
+	"cli__memory__search_cwd_boost_filter_and_origin_federation": "equal hits are ordered by identity",
+	"cli__memory__search_plain_envelope":                         "chat warnings are propagated",
+}
+
+var recallCLIPortWarning = regexp.MustCompile(`(?m)^(index unavailable|state db not found)[^\n]*\n`)
+
+func recallCLIDropPortWarnings(text string) string {
+	return recallCLIPortWarning.ReplaceAllString(text, "")
+}
+
+func recallCLIPortNormalized(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := map[string]any{}
+	for k, val := range m {
+		out[k] = val
+	}
+	if warnings, ok := m["warnings"].([]any); ok {
+		kept := []any{}
+		for _, w := range warnings {
+			if text, ok := w.(string); !ok || !strings.HasPrefix(text, "index unavailable") && !strings.HasPrefix(text, "state db not found") {
+				kept = append(kept, w)
+			}
+		}
+		out["warnings"] = kept
+	}
+	if hits, ok := m["hits"].([]any); ok {
+		sorted := slices.Clone(hits)
+		for i, h := range sorted {
+			if hm, ok := h.(map[string]any); ok {
+				c := map[string]any{}
+				for k, val := range hm {
+					c[k] = val
+				}
+				delete(c, "threadId")
+				sorted[i] = c
+			}
+		}
+		slices.SortStableFunc(sorted, func(a, b any) int {
+			am, _ := a.(map[string]any)
+			bm, _ := b.(map[string]any)
+			as, _ := am["score"].(float64)
+			bs, _ := bm["score"].(float64)
+			if c := strings.Compare(fmt.Sprint(bs), fmt.Sprint(as)); as != bs && c != 0 {
+				if as > bs {
+					return -1
+				}
+				return 1
+			}
+			return strings.Compare(fmt.Sprint(am["relpath"], am["excerpt"]), fmt.Sprint(bm["relpath"], bm["excerpt"]))
+		})
+		out["hits"] = sorted
+	}
+	return out
 }
 
 func recallCLICompareJSON(actual, expected any) bool {
