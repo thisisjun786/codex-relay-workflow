@@ -165,10 +165,11 @@ func pumpSignalWant(t *testing.T, what string, got []pumpEvent, ids ...string) {
 
 // pumpSignalDagFake stands in for the DAG review: no relay store is opened.
 type pumpSignalDagFake struct {
-	review  Review
-	err     error
-	calls   int
-	noState []bool
+	review Review
+	err    error
+	calls  int
+	// pumpStore records, for each read, whether the review was given the pump's own offset store.
+	pumpStore []bool
 }
 
 func pumpSignalTestDag(t *testing.T) *pumpSignalDagFake {
@@ -177,8 +178,8 @@ func pumpSignalTestDag(t *testing.T) *pumpSignalDagFake {
 	saved := pumpSignalDagReview
 	pumpSignalDagReview = func(ctx context.Context, _ *Env, _ *Config) (Review, error) {
 		fake.calls++
-		noState, _ := ctx.Value(dagHostNoStateKey{}).(bool)
-		fake.noState = append(fake.noState, noState)
+		_, own := dagHostOffsetStoreOf(ctx).(pumpSignalDagOffsetStore)
+		fake.pumpStore = append(fake.pumpStore, own)
 		return fake.review, fake.err
 	}
 	t.Cleanup(func() { pumpSignalDagReview = saved })
@@ -220,8 +221,8 @@ func TestPumpSignalDagIntervalAndSilence(t *testing.T) {
 		t.Fatalf("calls = %d at 600s, want the second read", dag.calls)
 	}
 	pumpSignalWant(t, "same set", st.Pending, "signal_dag#1")
-	if got := dag.noState; len(got) != 2 || !got[0] || !got[1] {
-		t.Fatalf("noState = %v, want every read to run without offset state", got)
+	if got := dag.pumpStore; len(got) != 2 || !got[0] || !got[1] {
+		t.Fatalf("pumpStore = %v, want every read to keep its offsets in the pump state", got)
 	}
 }
 

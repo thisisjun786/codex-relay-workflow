@@ -64,13 +64,37 @@ type dagHostScope struct {
 	receipt  time.Duration
 	plans    []string
 	noState  bool
+	// store, when set, keeps the offsets instead of the state directory's file and instead of
+	// noState: the caller owns where they live and when they become durable (the management pump
+	// saves them in the same write as the events they produced, CRW-692).
+	store dagHostOffsetStore
+}
+
+// dagHostOffsetStore is where a caller-owned review keeps its refusal offsets. load returns the
+// offsets as the caller last saved them (none yet is an empty set, so a rollout is first seen and
+// its history is not replayed); save hands back the offsets the review ends with.
+type dagHostOffsetStore interface {
+	load() (dagHostOffsets, error)
+	save(dagHostOffsets) error
 }
 
 // The two context keys the host readings travel on.
 type (
-	dagHostScopeKey   struct{}
-	dagHostNoStateKey struct{}
+	dagHostScopeKey       struct{}
+	dagHostNoStateKey     struct{}
+	dagHostOffsetStoreKey struct{}
 )
+
+// dagHostWithOffsetStore makes the review keep its offsets in store (see dagHostScope.store).
+func dagHostWithOffsetStore(ctx context.Context, store dagHostOffsetStore) context.Context {
+	return context.WithValue(ctx, dagHostOffsetStoreKey{}, store)
+}
+
+// dagHostOffsetStoreOf is the store a review was given, or nil.
+func dagHostOffsetStoreOf(ctx context.Context) dagHostOffsetStore {
+	store, _ := ctx.Value(dagHostOffsetStoreKey{}).(dagHostOffsetStore)
+	return store
+}
 
 // dagHostNoState marks ctx as a review that reads and writes no offsets (--no-state). It is the one
 // datum the review body does not already carry, so it rides the context beside the scope.
@@ -90,6 +114,7 @@ func dagHostBind(ctx context.Context, cfg *Config) context.Context {
 	return context.WithValue(ctx, dagHostScopeKey{}, dagHostScope{
 		socket: cfg.Relay.Socket, parents: cfg.Parents, stateDir: cfg.StateDir,
 		receipt: time.Duration(receipt) * time.Minute, plans: section.Plans, noState: noState,
+		store: dagHostOffsetStoreOf(ctx),
 	})
 }
 
@@ -156,7 +181,16 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 	cfg := scope.config()
 	offsets := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}, raw: map[string]json.RawMessage{}}
 	offsetsRead, refusalsMeasured := false, false
-	if scope.noState {
+	if scope.store != nil {
+		state, err := scope.store.load()
+		if err != nil {
+			in.review.Checks = append(in.review.Checks, Check{
+				Name: "dag_review_state", State: dagReviewUnmeasured, Detail: err.Error(),
+			})
+		} else {
+			offsets, offsetsRead, refusalsMeasured = state, true, true
+		}
+	} else if scope.noState {
 		refusalsMeasured = true
 	} else if scope.stateDir != "" {
 		// The lock is held from before the offsets are read until after they are written, so a second
@@ -220,7 +254,13 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 		dagHostParentRollout(in, parent, read.Thread.Path, &offsets, offsetsRead, refusalsMeasured)
 	}
 	if offsetsRead {
-		if err := dagHostSaveOffsets(ctx, scope.stateDir, offsets); err != nil {
+		var err error
+		if scope.store != nil {
+			err = scope.store.save(offsets)
+		} else {
+			err = dagHostSaveOffsets(ctx, scope.stateDir, offsets)
+		}
+		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
@@ -246,7 +286,7 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 	} else {
 		for _, duplicate := range duplicates {
 			in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
-				Kind: dagHostKindDuplicateToolOutputs, Issue: parent.label,
+				Kind: dagHostKindDuplicateToolOutputs, Issue: parent.label, ref: duplicate.callID,
 				Detail: fmt.Sprintf("call %s has %d tool results in the rollout; the next context compaction fails",
 					duplicate.callID, duplicate.count),
 			})

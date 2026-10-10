@@ -40,15 +40,20 @@ const (
 	pumpDefaultCapacitySeconds  = 1800
 
 	pumpSignalDagName      = "signal_dag"
+	pumpSignalRefusalsName = "signal_dag_refusals"
 	pumpSignalCapacityName = "signal_capacity"
 	pumpSignalAuditName    = "signal_audit"
 
 	// The Cursors keys. The read times are Unix seconds; the DAG set is the sorted anomaly tuples as
 	// JSON; the change counter numbers each change of that set; the audit epoch counts the times the
 	// alert file shrank.
-	pumpSignalDagReadKey      = "signal.dag.read_at"
-	pumpSignalDagSetKey       = "signal.dag.set"
-	pumpSignalDagChangesKey   = "signal.dag.changes"
+	pumpSignalDagReadKey    = "signal.dag.read_at"
+	pumpSignalDagSetKey     = "signal.dag.set"
+	pumpSignalDagChangesKey = "signal.dag.changes"
+	// pumpSignalDagOffsetsKey holds the refusal reading's rollout offsets and reported call ids
+	// (dagHostOffsets as JSON), and pumpSignalDagRefusalsKey numbers the refusal events.
+	pumpSignalDagOffsetsKey   = "signal.dag.refusal_offsets"
+	pumpSignalDagRefusalsKey  = "signal.dag.refusals"
 	pumpSignalCapacityReadKey = "signal.capacity.read_at"
 	pumpSignalAuditEpochKey   = "signal.audit.epoch"
 	pumpSignalAuditFileKey    = "signal.audit.file"
@@ -86,6 +91,12 @@ func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) 
 	}
 	return ev.Report, ev.Commit, nil
 }
+
+// pumpSignalCapacityBudget is the longest one capacity read may hold the pump round. The read
+// runs before the round saves its pending events, so a read that does not return would hold the
+// urgent events, the audit queue and the parent queue behind it; past the budget it is unmeasured,
+// leaves everything as it was and is made again on the next round.
+var pumpSignalCapacityBudget = 90 * time.Second
 
 // pumpSignalDue reports whether a source whose last read is kept under key is due after every
 // seconds. No recorded read, an unreadable one, or one in the future is due.
@@ -126,6 +137,9 @@ type pumpSignalTuple struct {
 	Plan  string `json:"plan"`
 	Node  string `json:"node"`
 	Issue string `json:"issue"`
+	// Ref is what tells two anomalies apart when the four above do not (the call id of one of a
+	// parent's duplicated tool results).
+	Ref string `json:"ref,omitempty"`
 }
 
 func (t pumpSignalTuple) less(o pumpSignalTuple) bool {
@@ -138,11 +152,14 @@ func (t pumpSignalTuple) less(o pumpSignalTuple) bool {
 	if t.Node != o.Node {
 		return t.Node < o.Node
 	}
-	return t.Issue < o.Issue
+	if t.Issue != o.Issue {
+		return t.Issue < o.Issue
+	}
+	return t.Ref < o.Ref
 }
 
 func (t pumpSignalTuple) String() string {
-	return strings.TrimSpace(strings.Join([]string{t.Kind, t.Plan, t.Node, t.Issue}, " "))
+	return strings.TrimSpace(strings.Join([]string{t.Kind, t.Plan, t.Node, t.Issue, t.Ref}, " "))
 }
 
 // pumpSignalTupleSet sorts and de-duplicates tuples.
@@ -167,22 +184,88 @@ func pumpSignalDagLast(st *pumpState) []pumpSignalTuple {
 	return pumpSignalTupleSet(tuples)
 }
 
+// pumpSignalDagOffsetStore keeps the DAG review's refusal offsets in the pump's own Cursors. They
+// reach disk in the same write as the pending events the review produced, so a pump that ends
+// before that write reads the same refusals again, and one that completes it never reads them
+// twice.
+type pumpSignalDagOffsetStore struct{ st *pumpState }
+
+type pumpSignalDagOffsets struct {
+	Offsets  map[string]int64    `json:"offsets"`
+	Reported map[string][]string `json:"reported"`
+	Unparsed map[string][]string `json:"reported_unparsed"`
+}
+
+func (o pumpSignalDagOffsetStore) load() (dagHostOffsets, error) {
+	state := dagHostOffsets{Offsets: map[string]int64{}, Reported: map[string][]string{}, Unparsed: map[string][]string{}}
+	var held pumpSignalDagOffsets
+	// A value that cannot be decoded reads as no offsets: each rollout is then first seen, so its
+	// history is not replayed.
+	if raw := o.st.Cursors[pumpSignalDagOffsetsKey]; raw == "" || json.Unmarshal([]byte(raw), &held) != nil {
+		return state, nil
+	}
+	if held.Offsets != nil {
+		state.Offsets = held.Offsets
+	}
+	if held.Reported != nil {
+		state.Reported = held.Reported
+	}
+	if held.Unparsed != nil {
+		state.Unparsed = held.Unparsed
+	}
+	return state, nil
+}
+
+func (o pumpSignalDagOffsetStore) save(state dagHostOffsets) error {
+	encoded, err := json.Marshal(pumpSignalDagOffsets{Offsets: state.Offsets, Reported: state.Reported, Unparsed: state.Unparsed})
+	if err != nil {
+		return err
+	}
+	o.st.Cursors[pumpSignalDagOffsetsKey] = string(encoded)
+	return nil
+}
+
+// pumpSignalDagRefusalsEvent is the one event of a round's new relay refusals. A refusal is an
+// occurrence, not a standing condition: each is reported once, by the offsets above, and is not
+// part of the anomaly set that a later round compares.
+func pumpSignalDagRefusalsEvent(st *pumpState, refusals []DagReviewAnomaly) pumpEvent {
+	count, _ := strconv.Atoi(st.Cursors[pumpSignalDagRefusalsKey])
+	count++
+	st.Cursors[pumpSignalDagRefusalsKey] = strconv.Itoa(count)
+	lines := []string{fmt.Sprintf("[dag-review] new relay refusals: %d", len(refusals))}
+	for _, refusal := range refusals {
+		lines = append(lines, " - "+strings.TrimSpace(refusal.Kind+" "+refusal.Issue)+": "+refusal.Detail)
+	}
+	return pumpEvent{ID: fmt.Sprintf("%s#%d", pumpSignalRefusalsName, count), Kind: pumpKindDag, Text: pumpTruncate(strings.Join(lines, "\n"), pumpReportLimit)}
+}
+
 func (pumpSignalDagSource) Collect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings) pumpSourceResult {
 	now := e.Now()
 	if !pumpSignalDue(st, pumpSignalDagReadKey, now, pumpSettingInt(s.DagReviewSeconds, pumpDefaultDagReviewSeconds)) {
 		return pumpSignalIdle(st, pumpSignalDagName)
 	}
-	// The review reads no offset state: DagReview saves the refusal offsets before it returns, so a
-	// pump that ended before saving its pending events would lose the refusals. The repeat of a
-	// standing anomaly is suppressed by the set below instead.
-	review, err := pumpSignalDagReview(dagHostNoState(ctx, true), e, cfg)
+	// The review keeps its refusal offsets in the pump state, not in its own file: DagReview's file is
+	// saved before it returns, so a pump that ended before saving its pending events would lose the
+	// refusals. A review that fails after it moved the offsets gives them back.
+	offsetsBefore, hadOffsets := st.Cursors[pumpSignalDagOffsetsKey]
+	review, err := pumpSignalDagReview(dagHostWithOffsetStore(ctx, pumpSignalDagOffsetStore{st: st}), e, cfg)
 	if err != nil {
+		if hadOffsets {
+			st.Cursors[pumpSignalDagOffsetsKey] = offsetsBefore
+		} else {
+			delete(st.Cursors, pumpSignalDagOffsetsKey)
+		}
 		return pumpSignalUnmeasured(cfg, pumpSignalDagName, err)
 	}
 	details := map[pumpSignalTuple]string{}
 	var current []pumpSignalTuple
+	var refusals []DagReviewAnomaly
 	for _, anomaly := range review.Anomalies {
-		tuple := pumpSignalTuple{Kind: anomaly.Kind, Plan: anomaly.Plan, Node: anomaly.Node, Issue: anomaly.Issue}
+		if anomaly.Kind == dagHostKindParentDagRefusals {
+			refusals = append(refusals, anomaly)
+			continue
+		}
+		tuple := pumpSignalTuple{Kind: anomaly.Kind, Plan: anomaly.Plan, Node: anomaly.Node, Issue: anomaly.Issue, Ref: anomaly.ref}
 		if _, seen := details[tuple]; !seen {
 			details[tuple] = anomaly.Detail
 		}
@@ -203,8 +286,12 @@ func (pumpSignalDagSource) Collect(ctx context.Context, e *Env, cfg *Config, st 
 		effective = pumpSignalTupleSet(append(append([]pumpSignalTuple{}, last...), current...))
 	}
 	st.Cursors[pumpSignalDagReadKey] = strconv.FormatInt(now.Unix(), 10)
+	var events []pumpEvent
+	if len(refusals) > 0 {
+		events = append(events, pumpSignalDagRefusalsEvent(st, refusals))
+	}
 	if pumpSignalTuplesEqual(effective, last) {
-		return pumpSourceResult{Status: pumpSourceOK}
+		return pumpSourceResult{Status: pumpSourceOK, Events: events}
 	}
 	changes, _ := strconv.Atoi(st.Cursors[pumpSignalDagChangesKey])
 	changes++
@@ -234,7 +321,7 @@ func (pumpSignalDagSource) Collect(ctx context.Context, e *Env, cfg *Config, st 
 		}
 		ev.Text = pumpTruncate(strings.Join(lines, "\n"), pumpReportLimit)
 	}
-	return pumpSourceResult{Status: pumpSourceOK, Events: []pumpEvent{ev}}
+	return pumpSourceResult{Status: pumpSourceOK, Events: append(events, ev)}
 }
 
 func pumpSignalTuplesEqual(a, b []pumpSignalTuple) bool {
@@ -373,7 +460,9 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 	if !pumpSignalDue(st, pumpSignalCapacityReadKey, now, pumpSettingInt(s.CapacitySeconds, pumpDefaultCapacitySeconds)) {
 		return pumpSignalIdle(st, pumpSignalCapacityName)
 	}
-	report, commit, err := pumpSignalCapacity(ctx, e, cfg, st.dry)
+	readCtx, cancel := context.WithTimeout(ctx, pumpSignalCapacityBudget)
+	defer cancel()
+	report, commit, err := pumpSignalCapacity(readCtx, e, cfg, st.dry)
 	if err != nil {
 		// A read nobody could take is unmeasured: it leaves the alerted state as it is and is made
 		// again on the next round.
