@@ -277,8 +277,9 @@ type LedgerDrainReport struct {
 // drain decides whether its transition was published (the event says so, the caller says so, or the state found now is the one
 // the transition produced), appends its row unless that exact line is already in the ledger after the size recorded when the
 // event was prepared, runs its followup, and removes it. An event that was not published is removed without a row. An append that
-// fails stops the drain, so a later row is never appended ahead of an earlier one; a followup that fails leaves its event pending
-// with its row recorded and the drain goes on.
+// fails stops the appends, so a later row is never appended ahead of an earlier one, but every event behind it is still judged and
+// its verdict kept (judgeLedgerEventsBehind); a followup that fails leaves its event pending with its row recorded and the drain
+// goes on.
 func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainReport {
 	report := LedgerDrainReport{}
 	removeOrphanEventTemps(cwd, sessionID)
@@ -328,11 +329,12 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 				// The transition is known to be published now; record that, so a later drain does not judge it again
 				// from a state that may have moved on, and stop: the rows after it wait for it.
 				ev.Published, ev.LedgerOffset = true, max(from, floor)
-				_ = writeLedgerEvent(cwd, ev)
-				at := len(report.Pending)
-				report.Pending = append(report.Pending, events[i:]...)
-				report.Pending[at] = ev
+				if werr := writeLedgerEvent(cwd, ev); werr != nil {
+					err = errors.Join(err, werr)
+				}
+				report.Pending = append(report.Pending, ev)
 				report.Err = cmpErr(report.Err, err)
+				judgeLedgerEventsBehind(cwd, events[i+1:], o, current, currentDigest, &report)
 				return report
 			}
 			ev.RowRecorded, ev.RowEnd = true, end
@@ -375,6 +377,33 @@ func DrainLedgerOutbox(cwd, sessionID string, o LedgerDrainOptions) LedgerDrainR
 		}
 	}
 	return report
+}
+
+// judgeLedgerEventsBehind settles the events a blocked append stopped the drain in front of, without appending anything: each one
+// is judged now, against the state this drain read, and the verdict is kept. A published one is recorded as published in its file
+// (the caller published it, or the state is the one it produced), so no later drain judges it again from a state that may have
+// moved on - a round trip back to its pre-phase would otherwise read as never published and drop an applied transition. One that
+// was not published is dropped. Every writer drains before it prepares its own event, so the only event this can judge from the
+// state is the newest one, whose writer stopped between its preparation and its own drain, and that state is the one it saw.
+func judgeLedgerEventsBehind(cwd string, events []LedgerEvent, o LedgerDrainOptions, current State, currentDigest string, report *LedgerDrainReport) {
+	for _, ev := range events {
+		switch {
+		case ev.Published || ev.RowRecorded:
+		case o.Published[ev.ID] || ledgerEventPublished(ev, current, currentDigest):
+			ev.Published = true
+			if err := writeLedgerEvent(cwd, ev); err != nil {
+				report.Err = cmpErr(report.Err, err)
+			}
+		default:
+			if err := AbortLedgerEvent(cwd, ev); err != nil {
+				report.Err = cmpErr(report.Err, err)
+				break
+			}
+			report.Dropped++
+			continue
+		}
+		report.Pending = append(report.Pending, ev)
+	}
 }
 
 // cmpErr keeps the first error.

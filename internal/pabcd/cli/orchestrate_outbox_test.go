@@ -207,3 +207,31 @@ func TestOrchestrateResetRefusesASwallowedCwd(t *testing.T) {
 		t.Fatalf("the input workspace's session moved: %+v", s)
 	}
 }
+
+// Verification round 2: P>A, A>P and P>A all applied while the ledger cannot be appended to. Each call's drain stops at the oldest
+// blocked row and still records that it published its own, so the next call that can append records all three, in order (red at
+// d9a805df: the ledger held P>A P>A, the round trip's A>P was dropped because the phase was back at its pre-phase).
+func TestOrchestrateRoundTripsDuringALedgerFailureAreAllRecorded(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "outbox-roundtrip"
+	unit := orchestrateReplanSeed(t, cwd, id)
+	orchestrateCommitLedgerDirectory(t, cwd)
+	for _, argv := range [][]string{
+		{"A", "--session", id, "--attest", orchestrateReplanAttest(unit)},
+		{"P", "--session", id},
+		{"A", "--session", id, "--attest", orchestrateReplanAttest(unit)},
+	} {
+		if got, err := orchestrateCommitTry(t, cwd, nil, argv...); err != nil || got.Code != 0 {
+			t.Fatalf("%v: %+v %v", argv, got, err)
+		}
+	}
+	orchestrateOutboxUnblock(t, cwd)
+	if _, err := RunOrchestrateRead(ParseOrchestrateCliArgs([]string{"status", "--session", id}, cwd), ReadEnv{}); err != nil {
+		t.Fatal(err)
+	}
+	if edges := strings.Join(orchestrateOutboxEdges(t, cwd), " "); edges != "P>A A>P P>A" {
+		t.Fatalf("the ledger: %q, want P>A A>P P>A", edges)
+	}
+	if pending, _, _ := state.PendingLedgerEvents(cwd, id); len(pending) != 0 {
+		t.Fatalf("pending after status: %+v", pending)
+	}
+}

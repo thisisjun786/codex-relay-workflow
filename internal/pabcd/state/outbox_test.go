@@ -417,3 +417,90 @@ func TestLedgerOutboxPendingReportKeepsBothEvents(t *testing.T) {
 		t.Fatalf("pending: %+v", report.Pending)
 	}
 }
+
+// Verification round 2: three transitions, each published and drained while the ledger cannot be appended to, the second of which
+// returns the session to the phase the first one left. A drain that stops at the first blocked append still records that its
+// caller published its own event, so once the ledger works again every row is appended, in order, and none is judged again from a
+// state that has moved on (red at d9a805df: the round trip's middle event was dropped).
+func TestLedgerOutboxKeepsEveryPublishedEventAcrossABlockedLedger(t *testing.T) {
+	cwd := t.TempDir()
+	pre := DefaultState("s1", "")
+	pre.Phase = PhaseP
+	if err := WriteState(cwd, pre); err != nil {
+		t.Fatal(err)
+	}
+	ledger := filepath.Join(cwd, crwdir.DirName, LedgerFile)
+	if err := os.Mkdir(ledger, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, to := range []Phase{PhaseA, PhaseP, PhaseA} {
+		cur := ReadState(cwd, "s1")
+		next := cur
+		next.Phase = to
+		ev, err := NewLedgerEvent(cwd, cur, next, outboxRow("s1", cur.Phase, to), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := PrepareLedgerEvent(cwd, ev); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteState(cwd, next); err != nil {
+			t.Fatal(err)
+		}
+		if report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{Published: map[string]bool{ev.ID: true}}); report.Err == nil || report.Dropped != 0 {
+			t.Fatalf("the blocked drain: %+v", report)
+		}
+	}
+	if err := os.Remove(ledger); err != nil {
+		t.Fatal(err)
+	}
+	report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{})
+	if report.Appended != 3 || report.Dropped != 0 || len(report.Pending) != 0 || report.Err != nil {
+		t.Fatalf("a published transition was lost: %+v", report)
+	}
+	want := []string{`"from":"P","to":"A"`, `"from":"A","to":"P"`, `"from":"P","to":"A"`}
+	lines := outboxLedgerLines(t, cwd)
+	if len(lines) != len(want) {
+		t.Fatalf("ledger: %v", lines)
+	}
+	for i, w := range want {
+		if !strings.Contains(lines[i], w) {
+			t.Fatalf("row %d is %s, want %s", i, lines[i], w)
+		}
+	}
+}
+
+// A drain stopped by a blocked append still judges the events after the blocked one against the state found now: an event whose
+// writer stopped before its publication is dropped, the published one is kept as published.
+func TestLedgerOutboxJudgesTheEventsBehindABlockedAppend(t *testing.T) {
+	cwd := t.TempDir()
+	pre := DefaultState("s1", "")
+	pre.Phase = PhaseP
+	first, mid := outboxPrepared(t, cwd, pre, PhaseA)
+	if err := WriteState(cwd, mid); err != nil {
+		t.Fatal(err)
+	}
+	ledger := filepath.Join(cwd, crwdir.DirName, LedgerFile)
+	if err := os.Mkdir(ledger, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A second writer prepared A>B and stopped before it published it.
+	cur := ReadState(cwd, "s1")
+	next := cur
+	next.Phase = PhaseB
+	second, err := NewLedgerEvent(cwd, cur, next, outboxRow("s1", PhaseA, PhaseB), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareLedgerEvent(cwd, second); err != nil {
+		t.Fatal(err)
+	}
+	report := DrainLedgerOutbox(cwd, "s1", LedgerDrainOptions{})
+	if report.Err == nil || report.Dropped != 1 || len(report.Pending) != 1 || report.Pending[0].ID != first.ID || !report.Pending[0].Published {
+		t.Fatalf("the blocked drain: %+v", report)
+	}
+	pending, _, _ := PendingLedgerEvents(cwd, "s1")
+	if len(pending) != 1 || pending[0].ID != first.ID || !pending[0].Published {
+		t.Fatalf("pending: %+v", pending)
+	}
+}
