@@ -142,6 +142,10 @@ type sessionLock struct {
 // writer held the kernel lock, where the oracle's record is the bare pid.
 func sessionLockRecord(pid int) string { return strconv.Itoa(pid) + " flock\n" }
 
+// sessionLockRenameNoReplace is the no-replace rename a fresh lock is published with. It is a test seam (a seccomp filter that blocks
+// renameat2 answers EPERM); production keeps renameNoReplace.
+var sessionLockRenameNoReplace = renameNoReplace
+
 // sessionLockWriteRecord writes the holder's record over whatever the file held. It is a test seam; production keeps it.
 var sessionLockWriteRecord = func(f *os.File, record string) error {
 	if err := f.Truncate(0); err != nil {
@@ -216,8 +220,8 @@ func trySessionLock(path string) (*sessionLock, error) {
 
 // placeSessionLock stages a lock file beside the path (<lock>.<pid>.<uuid>.tmp), takes its kernel lock, writes this holder's
 // record into it and only then puts it at the path: for a fresh lock by a rename that refuses to replace (renameNoReplace; link(2)
-// where the filesystem has no such rename), which answers fs.ErrExist when another acquirer was first, and for a takeover by
-// rename(2) over the gone owner's file. The staged name is removed again on every path; a record that cannot be
+// where the platform has no such rename or a policy blocks it, noReplaceUnsupported, EPERM included), which answers fs.ErrExist
+// when another acquirer was first, and for a takeover by rename(2) over the gone owner's file. The staged name is removed again on every path; a record that cannot be
 // written returns the write's error with no lock file at the path. A process killed while it stages leaves only the staged name,
 // which `crw pabcd reset --state` removes once its pid is gone (OrphanStateTemp).
 func placeSessionLock(path string, replace bool) (*sessionLock, error) {
@@ -245,8 +249,8 @@ func placeSessionLock(path string, replace bool) (*sessionLock, error) {
 	case replace:
 		err = os.Rename(staged, path)
 	default:
-		err = renameNoReplace(staged, path)
-		if errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOSYS) {
+		err = sessionLockRenameNoReplace(staged, path)
+		if noReplaceUnsupported(err) {
 			err = os.Link(staged, path)
 		}
 	}

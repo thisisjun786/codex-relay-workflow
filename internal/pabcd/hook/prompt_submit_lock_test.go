@@ -1,11 +1,14 @@
 package hook
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -70,5 +73,100 @@ func TestChatOrchestrateUnderALiveLockSaysItWasNotApplied(t *testing.T) {
 	}
 	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
 		t.Fatalf("ledger rows %+v", rows)
+	}
+}
+
+// CRW-1094 (pre-merge evaluation d2): the explanation is the command write's too, not only the turn stamp's. A payload without a turn id
+// skips the stamp, and a writer that takes the lock after a successful stamp fails the command's own write; both answer in words that
+// name the lock or the write error, with the phase and ledger unchanged.
+func TestChatOrchestrateWithoutATurnIdUnderALiveLockSaysItWasNotApplied(t *testing.T) {
+	cwd := t.TempDir()
+	promptOrchestrateSeed(t, cwd, "s1", func(s *state.State) {
+		s.Phase, s.OrchestrationActive = state.PhaseP, true
+	})
+	held, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- state.WithSessionLock(cwd, "s1", func() error { close(held); <-release; return nil })
+	}()
+	<-held
+	got := promptOrchestrateAnswer(t, cwd, "s1", "", "orchestrate A")
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(cwd, ".crw", "sessions", "s1.json.lock")
+	for _, want := range []string{"orchestrate A was not applied", "session lock", lock, "The phase and ledger were not changed."} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the answer %q lacks %q", got, want)
+		}
+	}
+	if strings.Contains(got, "refused: the session state changed") {
+		t.Fatalf("the answer is the generic refusal: %q", got)
+	}
+	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseP {
+		t.Fatalf("phase %s; want P", s.Phase)
+	}
+	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
+		t.Fatalf("ledger rows %+v", rows)
+	}
+}
+
+func TestChatOrchestrateWhoseCommandWriteFailsAfterTheStampSaysWhy(t *testing.T) {
+	busy := &fs.PathError{Op: "open", Path: "x", Err: syscall.EEXIST}
+	for name, c := range map[string]struct {
+		fail error
+		want []string
+	}{
+		"the lock is busy":    {busy, []string{"orchestrate A was not applied", "session lock", "s1.json.lock", "another process holds it"}},
+		"the write is failed": {errors.New("disk exploded"), []string{"orchestrate A was not applied", "the session state could not be written", "disk exploded"}},
+	} {
+		cwd := t.TempDir()
+		promptOrchestrateSeed(t, cwd, "s1", func(s *state.State) {
+			s.Phase, s.OrchestrationActive = state.PhaseP, true
+		})
+		calls := 0
+		lock := func(cwd, sessionID string, fn func() error) error {
+			if calls++; calls == 2 { // the stamp is the first lock, the command write the second
+				return c.fail
+			}
+			return state.WithSessionLock(cwd, sessionID, fn)
+		}
+		got := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "orchestrate A", TurnID: "t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), lock)
+		if calls != 2 {
+			t.Fatalf("%s: %d lock calls; want the stamp and the command write", name, calls)
+		}
+		for _, want := range append(c.want, "The phase and ledger were not changed.") {
+			if !strings.Contains(got, want) {
+				t.Fatalf("%s: the answer %q lacks %q", name, got, want)
+			}
+		}
+		if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseP {
+			t.Fatalf("%s: phase %s; want P", name, s.Phase)
+		}
+	}
+}
+
+// A command refused for a reason of its own, the state having changed under the handler, keeps the generic refusal.
+func TestChatOrchestrateRefusedWithoutALockFailureKeepsTheGenericRefusal(t *testing.T) {
+	cwd := t.TempDir()
+	promptOrchestrateSeed(t, cwd, "s1", func(s *state.State) {
+		s.Phase, s.OrchestrationActive = state.PhaseP, true
+	})
+	calls := 0
+	lock := func(cwd, sessionID string, fn func() error) error {
+		if calls++; calls == 2 { // a participating writer moves the phase between the handler's read and the command's lock
+			if err := state.WithSessionLock(cwd, sessionID, func() error {
+				s, _ := state.ReadStateStrict(cwd, sessionID)
+				s.Phase = state.PhaseA
+				return state.WriteState(cwd, s)
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+	got := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "orchestrate A", TurnID: "t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), lock)
+	if !strings.Contains(got, "refused: the session state changed") {
+		t.Fatalf("the answer %q is not the generic refusal", got)
 	}
 }

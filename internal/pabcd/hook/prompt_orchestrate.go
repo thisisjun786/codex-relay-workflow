@@ -121,8 +121,13 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 	// State-changing command: persist the phase and the 1355-1382 fields, then append the row. Both
 	// happen only if the locked write landed; otherwise nothing is written at all. A write that
 	// published the state and then failed the directory sync landed too, and carries a warning.
-	next, applied, landed, warning := promptOrchestrateWrite(lock, p, current, verb, command, turn)
+	next, applied, landed, warning, writeErr := promptOrchestrateWrite(lock, p, current, verb, command, turn)
 	if !landed {
+		if writeErr != nil {
+			// CRW-1094: the lock could not be taken or the write failed, which the command's own answer names, as the turn
+			// stamp's failure does, instead of the generic refusal of a state that moved or cannot be rewritten whole.
+			return promptSubmitNotApplied(p.Cwd, p.SessionID, verb, writeErr), true
+		}
 		return "[crw — refused: the session state changed or cannot be rewritten without losing a stored record, so this command was not applied. Nothing was written.]", true
 	}
 	if applied != nil {
@@ -195,10 +200,11 @@ func promptOrchestrateSourceGate(p PromptSubmitPayload, current state.State) (st
 // directory sync. The state the lock finds must still be the one the handler read - same phase, same
 // slug - and the transition is applied to that fresh state rather than to a copy of the stale one, so
 // an update a participating writer landed in between survives and the row describes what was really
-// applied. A write that does not land leaves the file exactly as it was.
-func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string) (state.State, *state.LedgerEntry, bool, string) {
+// applied. A write that does not land leaves the file exactly as it was; the last answer is the error of a lock that could not be
+// taken or a write that failed (nil when the state simply was not as the handler read it).
+func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string) (state.State, *state.LedgerEntry, bool, string, error) {
 	next, row, landed := state.State{}, (*state.LedgerEntry)(nil), false
-	outcome, warning := promptSubmitWriteStateWarning(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+	outcome, warning, writeErr := promptSubmitWriteStateReason(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 		if fresh.Phase != current.Phase || fresh.Slug != current.Slug {
 			return false
 		}
@@ -217,13 +223,13 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 	})
 	switch outcome {
 	case promptSubmitWrote:
-		return next, row, landed, ""
+		return next, row, landed, "", nil
 	case promptSubmitPublished:
 		// The state is at its final path, so the command was applied; only its durability is in
 		// question, and the caller reports the warning on the success answer.
-		return next, row, landed, warning
+		return next, row, landed, warning, nil
 	}
-	return state.State{}, nil, false, ""
+	return state.State{}, nil, false, "", writeErr
 }
 
 // promptOrchestrateFields is the object the oracle's write spreads over result.state

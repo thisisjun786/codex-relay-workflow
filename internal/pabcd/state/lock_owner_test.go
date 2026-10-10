@@ -5,9 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -258,3 +260,53 @@ func createExclusive(path, data string) error {
 // lockOwnerLive is the oracle's record of a holder that is alive: this test process's own pid. A test that needs a lock file
 // nobody takes over uses it; the oracle's tests used any number, which since CRW-1094 is taken over when no such process exists.
 func lockOwnerLive() string { return strconv.Itoa(os.Getpid()) }
+
+// CRW-1094 (pre-merge evaluation d1): a filesystem or seccomp policy that answers EPERM, ENOTSUP, EINVAL, ENOSYS or EOPNOTSUPP to the
+// no-replace rename must not stop a fresh lock: the lock is then published with the exclusive hard link, as EnsureState publishes a
+// state file (noReplaceUnsupported), and a lock another acquirer put at the path first is still refused as busy.
+func TestAFreshLockFallsBackToALinkWhereTheNoReplaceRenameIsRefused(t *testing.T) {
+	for _, errno := range []syscall.Errno{syscall.EPERM, syscall.ENOTSUP, syscall.EINVAL, syscall.ENOSYS, syscall.EOPNOTSUPP} {
+		real := sessionLockRenameNoReplace
+		sessionLockRenameNoReplace = func(oldpath, newpath string) error {
+			return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errno}
+		}
+		cwd := t.TempDir()
+		entered := false
+		err := WithSessionLock(cwd, "s", func() error {
+			entered = true
+			raw, rerr := os.ReadFile(StatePath(cwd, "s") + ".lock")
+			if rerr != nil || string(raw) != sessionLockRecord(os.Getpid()) {
+				t.Errorf("%v: the lock at the path holds %q (%v); want this holder's record", errno, raw, rerr)
+			}
+			return nil
+		})
+		sessionLockRenameNoReplace = real
+		if err != nil || !entered {
+			t.Fatalf("%v: err %v entered %v; want the lock published through a link", errno, err, entered)
+		}
+		entries, rerr := os.ReadDir(filepath.Dir(StatePath(cwd, "s")))
+		if rerr != nil || len(entries) != 0 {
+			t.Fatalf("%v: the sessions directory holds %v (%v) after the release; want nothing", errno, entries, rerr)
+		}
+	}
+}
+
+// Where the rename is refused, a lock already at the path is still the busy answer, never a takeover or a second holder.
+func TestTheLinkFallbackOfAFreshLockStillRefusesAnOccupiedPath(t *testing.T) {
+	real := sessionLockRenameNoReplace
+	sessionLockRenameNoReplace = func(oldpath, newpath string) error {
+		if err := os.WriteFile(newpath, []byte(sessionLockRecord(os.Getpid())), 0o644); err != nil { // another acquirer was first
+			t.Error(err)
+		}
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EPERM}
+	}
+	defer func() { sessionLockRenameNoReplace = real }()
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	held, err := placeSessionLock(StatePath(cwd, "s")+".lock", false)
+	if held != nil || !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("held %v err %v; want fs.ErrExist and no lock", held, err)
+	}
+}
