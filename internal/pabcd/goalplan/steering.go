@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -49,6 +50,16 @@ type SteeringBatchOptions struct {
 	// appendLedger replaces the ledger append of the entry's rows, so a test can fail one row of a
 	// batch (CRW-1111). nil is AppendGoalplanLedger.
 	appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error
+
+	// syncLedger replaces the fsync of the plan's ledger and its directory that a retry performs before it counts a row it finds
+	// as recorded (CRW-1111), so a test can fail it. nil is syncSteeringLedger.
+	syncLedger func(cwd, slug string) error
+}
+
+// steeringLedgerOps is the ledger I/O of a batch: the append of one row and the fsync of the ledger a retry performs.
+type steeringLedgerOps struct {
+	append func(cwd, slug string, entry GoalplanLedgerEntry) error
+	sync   func(cwd, slug string) error
 }
 
 // steeringBatchSummary is the oracle's entry summary (:275): how many ops the batch carried and
@@ -203,16 +214,31 @@ func steeringRecordedRows(cwd, slug, ts string) (steeringRecorded, error) {
 
 // steeringRecordEvents appends the entry's rows, in order, each with its event id, skipping those recorded already (a retry; a
 // fresh entry has none). It answers the warning of the first row that could not be written, "" when every row is in the ledger.
-func steeringRecordEvents(cwd, slug string, entry SteeringEntry, recorded steeringRecorded, appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error) string {
+// A row found in the ledger may be one an earlier attempt wrote whole and could not fsync (the append's error came from its
+// sync), so a retry that finds one fsyncs the ledger and the plan directory before it counts the rows as recorded; a sync that
+// fails keeps the warning, and the next retry syncs again.
+func steeringRecordEvents(cwd, slug string, entry SteeringEntry, recorded steeringRecorded, ledger steeringLedgerOps) string {
+	appendLedger := ledger.append
 	if appendLedger == nil {
 		appendLedger = AppendGoalplanLedger
 	}
+	found := false
 	for _, ev := range entry.Events {
 		if recorded.has(ev) {
+			found = true
 			continue
 		}
 		id := ev.ID
 		if err := appendLedger(cwd, slug, GoalplanLedgerEntry{Ts: entry.AppliedAt, Slug: slug, Event: ev.Event, Detail: ev.Detail, EventID: &id}); err != nil {
+			return steeringLedgerWarning(slug, err)
+		}
+	}
+	if found {
+		sync := ledger.sync
+		if sync == nil {
+			sync = syncSteeringLedger
+		}
+		if err := sync(cwd, slug); err != nil {
 			return steeringLedgerWarning(slug, err)
 		}
 	}
@@ -243,9 +269,9 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 	var publish *goalplanPublishedOptions
 	var ctx context.Context
 	var beforeWrite func()
-	var appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error
+	var ledger steeringLedgerOps
 	if o != nil {
-		appendLedger = o.appendLedger
+		ledger = steeringLedgerOps{append: o.appendLedger, sync: o.syncLedger}
 		if o.Now != nil {
 			now = o.Now
 		}
@@ -257,7 +283,7 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 		ctx = lockOptions.Context
 	}
 	locked, err := WithGoalplanWriteLock(cwd, slug, func(plan *Goalplan) (SteerResult, error) {
-		return steeringApplyLocked(ctx, cwd, slug, plan, batch, now, publish, beforeWrite, appendLedger)
+		return steeringApplyLocked(ctx, cwd, slug, plan, batch, now, publish, beforeWrite, ledger)
 	}, lockOptions)
 	if err != nil {
 		return SteerResult{}, err
@@ -291,7 +317,7 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 // a first SIGINT that lands while the change is being prepared publishes nothing. After that write has begun
 // it is not read again: the transaction finishes and answers as before. beforeWrite (nil for none) runs right
 // after that last check, as the plan write begins.
-func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions, beforeWrite func(), appendLedger func(cwd, slug string, entry GoalplanLedgerEntry) error) (SteerResult, error) {
+func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions, beforeWrite func(), ledger steeringLedgerOps) (SteerResult, error) {
 	for i := range plan.SteeringLog {
 		if plan.SteeringLog[i].IdempotencyKey == batch.IdempotencyKey {
 			existing := plan.SteeringLog[i]
@@ -315,7 +341,7 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 			if err != nil {
 				return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringLedgerWarning(slug, err)}, nil
 			}
-			return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringRecordEvents(cwd, slug, existing, recorded, appendLedger)}, nil
+			return SteerResult{Kind: SteerResultDuplicate, Entry: &existing, Warning: steeringRecordEvents(cwd, slug, existing, recorded, ledger)}, nil
 		}
 	}
 	entry := SteeringEntry{
@@ -357,8 +383,27 @@ func steeringApplyLocked(ctx context.Context, cwd, slug string, plan *Goalplan, 
 	// actually declared prerequisites, so the batch that carried the edge is the row above it (:292-306).
 	// A fresh entry has no row recorded yet; a row that cannot be written leaves the batch applied with a
 	// warning, and the same batch sent again under the same key records it.
-	if rowWarning := steeringRecordEvents(cwd, slug, entry, steeringRecorded{}, appendLedger); rowWarning != "" {
+	if rowWarning := steeringRecordEvents(cwd, slug, entry, steeringRecorded{}, ledger); rowWarning != "" {
 		return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: rowWarning}, nil
 	}
 	return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: warning}, nil
+}
+
+// syncSteeringLedger makes the rows of the plan's ledger durable: the ledger file, then the plan directory that holds its entry.
+// Both are opened read-only, for the fsync alone.
+func syncSteeringLedger(cwd, slug string) error {
+	path, err := goalplanLedgerPath(cwd, slug)
+	if err != nil {
+		return err
+	}
+	for _, p := range []string{path, filepath.Dir(path)} {
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		if err := errors.Join(f.Sync(), f.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
 }

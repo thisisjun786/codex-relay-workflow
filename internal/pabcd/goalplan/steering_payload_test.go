@@ -220,3 +220,36 @@ func TestSteeringEventIDsOfDifferentKeysNeverCollide(t *testing.T) {
 		t.Fatalf("ids collide: %q", a[1].ID)
 	}
 }
+
+// Verification round 2: a row the first attempt wrote whole but could not fsync (the append returned the sync's error) is
+// visible to the retry, which fsyncs the plan's ledger and its directory before it counts the row as recorded. A sync that
+// fails again keeps the warning; one that succeeds answers duplicate without one, and no row is written twice (red at
+// d9a805df: the retry took the visible row as recorded, synced nothing and answered no warning).
+func TestSteeringRetrySyncsARowItFindsBeforeCountingIt(t *testing.T) {
+	cwd, slug := steeringApplyWorkspace(t)
+	writtenUnsynced := func(cwd, slug string, row GoalplanLedgerEntry) error {
+		if err := AppendGoalplanLedger(cwd, slug, row); err != nil {
+			return err
+		}
+		return errors.New("injected fsync failure after a complete write")
+	}
+	first, err := ApplySteeringBatch(cwd, slug, steeringPayloadDepsBatch(), &SteeringBatchOptions{appendLedger: writtenUnsynced})
+	if err != nil || first.Kind != SteerResultApplied || first.Warning == "" {
+		t.Fatalf("first attempt: %+v %v", first, err)
+	}
+	syncs := 0
+	failing := func(string, string) error { syncs++; return errors.New("injected retry fsync failure") }
+	again, err := ApplySteeringBatch(cwd, slug, steeringPayloadDepsBatch(), &SteeringBatchOptions{syncLedger: failing})
+	if err != nil || again.Kind != SteerResultDuplicate || !strings.Contains(again.Warning, "injected retry fsync failure") || syncs == 0 {
+		t.Fatalf("the retry whose sync fails: %+v %v (syncs %d)", again, err, syncs)
+	}
+	synced := 0
+	counting := func(cwd, slug string) error { synced++; return syncSteeringLedger(cwd, slug) }
+	done, err := ApplySteeringBatch(cwd, slug, steeringPayloadDepsBatch(), &SteeringBatchOptions{syncLedger: counting})
+	if err != nil || done.Kind != SteerResultDuplicate || done.Warning != "" || synced == 0 {
+		t.Fatalf("the retry whose sync succeeds: %+v %v (syncs %d)", done, err, synced)
+	}
+	if steered, deps := steeringPayloadCounts(t, cwd, slug); steered != 1 || deps != 2 {
+		t.Fatalf("rows: steered %d, dependency_registered %d; want 1 and 2", steered, deps)
+	}
+}
