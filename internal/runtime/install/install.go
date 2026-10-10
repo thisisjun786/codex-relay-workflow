@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
@@ -172,6 +173,13 @@ func Install(ctx context.Context, o Options, command string, source Source) (Obj
 	if !record.Stated(o.Issue) {
 		return refusedResult(command, "--issue is written into the host record as the evidence that this command placed the owned pointer, so it has to say something", "nothing was read, nothing was built and nothing was written.")
 	}
+	// The storage roots are checked before anything is read or written (CRW-958): a structural fault
+	// of a root the configuration names, or a split of the relay's state, refuses the run here; a
+	// warning is recorded as the run's first step and the run goes on.
+	storage, storageErr := crwconfig.Preflight(o.Env.Get)
+	if storageErr != nil {
+		return refusedResult(command, "the storage check refused the configuration: "+storageErr.Error(), "nothing was read, nothing was built and nothing was written.", field("storage", storage.FindingsOrdered()))
+	}
 	archive, done, err := Resolve(ctx, source)
 	defer done()
 	if err != nil {
@@ -192,6 +200,9 @@ func Install(ctx context.Context, o Options, command string, source Source) (Obj
 		pointerPath: recordedPointer(rec, o.Dest)}
 	if why := insideARuntime(o.Dest, r.pointerPath); why != "" {
 		return refusedResult(command, why, "nothing was created: a candidate built there would live inside a runtime, and the pointer placed at it would loop or name a directory a later update removes.", field("destination", o.Dest), field("pointer", pointerObject(r.pointerPath)))
+	}
+	if len(storage.Findings) > 0 {
+		r.step("check the storage roots", true, field("findings", storage.FindingsOrdered()))
 	}
 	r.step("verify the archive against "+SumsName, true, field("archive", archive.Object()))
 	result, code, next := r.take(rec)

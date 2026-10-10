@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
@@ -861,6 +862,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		{Key: "scope", Value: summary},
 		{Key: "scopeReadings", Value: readings},
 		{Key: "checks", Value: checks},
+		{Key: "storage", Value: StorageReport(o.Env)},
 		{Key: "doctorBinary", Value: Object{{Key: "path", Value: self()}, {Key: "target", Value: record.Target()}, {Key: "source", Value: record.Source()}}},
 	}
 }
@@ -899,4 +901,17 @@ func allOwn(classes []string) bool {
 		}
 	}
 	return true
+}
+
+// StorageReport is the storage check of env (crwconfig.Preflight, the check crw config check runs),
+// carried in the doctor report so a host sees it without the separate storage command (CRW-958):
+// every root and finding, and as refusal the structural fault a product command would refuse on, or
+// null. A configuration that cannot be read is that refusal.
+func StorageReport(env scope.Env) Object {
+	report, err := crwconfig.Preflight(env.Get)
+	var refusal any
+	if err != nil {
+		refusal = err.Error()
+	}
+	return append(Object{{Key: "refusal", Value: refusal}}, report.Ordered()...)
 }
