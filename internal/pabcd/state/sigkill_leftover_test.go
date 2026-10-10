@@ -22,9 +22,15 @@ import (
 // CRW-1255: what a process killed by SIGKILL at each step of the session state writes leaves in the sessions directory, whether the
 // next lock acquirer is ever blocked by it, and which explicit command removes it. The allowed leftover (known-defects/CRW-1255.md):
 // the owner process is gone; the next WithSessionLock takes a <key>.json.lock over, or `crw pabcd reset --state` removes a temp
-// file whose pid is gone; and no state read or write waits for either.
+// file whose pid is gone; and no state read or write waits for either. The two in-place rows are outside that definition: they
+// stand for a filesystem with neither hard links nor a no-replace rename, on which a fresh WithSessionLock cannot create its
+// lock either (placeSessionLock), so the tests run no acquirer for them (the test filesystem has both calls and an acquirer there
+// would change the contract the row stands for); reset is their only recorded repair.
 
 const sigkillID = "conc"
+
+// sigkillInPlace reports the rows of the in-place fallback of ensureState, whose filesystem cannot take a fresh session lock.
+func sigkillInPlace(step string) bool { return strings.HasPrefix(step, "ensure-inplace-") }
 
 // sigkillUnreadable is the table's phase for a state file that a strict read judges unreadable (an empty file).
 const sigkillUnreadable state.Phase = "unreadable"
@@ -122,7 +128,7 @@ func TestSigkillLeftoverTableCoversEveryStep(t *testing.T) {
 }
 
 // Each step leaves the names of the table, every temp file of them names the killed pid and is an orphan, the state file is whole,
-// and the next WithSessionLock is never blocked: it runs at once with no wait, writes the state, and leaves no lock behind.
+// and (outside the two in-place rows) the next WithSessionLock is never blocked: it runs at once with no wait, writes the state, and leaves no lock behind.
 func TestSigkillLeftoverNamesAndNextAcquirer(t *testing.T) {
 	for i, row := range sigkillLeftovers {
 		t.Run(row.step, func(t *testing.T) {
@@ -148,6 +154,9 @@ func TestSigkillLeftoverNamesAndNextAcquirer(t *testing.T) {
 				if unreadable || got.Phase != row.phase {
 					t.Fatalf("%s: state phase %q unreadable=%v, want %q", row.step, got.Phase, unreadable, row.phase)
 				}
+			}
+			if sigkillInPlace(row.step) {
+				return // no acquirer on the filesystem this row stands for; see the comment at the top of the file
 			}
 			var orphans []string // the real temp names before the next acquirer
 			for _, name := range sigkillList(t, cwd) {
@@ -223,6 +232,9 @@ func TestSigkillLeftoverIsRemovedByResetAndTheLockByTheNextAcquirer(t *testing.T
 			if left := sigkillList(t, cwd); !slices.Equal(append([]string{}, left...), want) {
 				t.Fatalf("%s: reset left %v, want %v (only a dead owner's lock)", row.step, left, want)
 			}
+			if sigkillInPlace(row.step) {
+				return // no acquirer on the filesystem this row stands for; see the comment at the top of the file
+			}
 			entered := false
 			if err := state.WithSessionLock(cwd, sigkillID, func() error { entered = true; return nil }); err != nil || !entered {
 				t.Fatalf("%s: the acquirer after reset: err %v entered %v", row.step, err, entered)
@@ -235,8 +247,9 @@ func TestSigkillLeftoverIsRemovedByResetAndTheLockByTheNextAcquirer(t *testing.T
 }
 
 // The in-place fallback leaves a state file that is not whole (the best-effort limit): no later EnsureState repairs it and a strict
-// read keeps calling it unreadable, a lock holder's write replaces it, and `crw pabcd reset --state` removes it with the temp file.
-func TestSigkillLeftoverInPlaceStateFileIsNotRepairedByEnsureButByWriteAndReset(t *testing.T) {
+// read keeps calling it unreadable, and `crw pabcd reset --state` removes it with the temp file. Nothing here takes a session lock:
+// on the filesystem the row stands for a fresh lock cannot be created, so a lock holder's write is not a repair.
+func TestSigkillLeftoverInPlaceStateFileIsNotRepairedByEnsureButByReset(t *testing.T) {
 	for i, row := range sigkillLeftovers {
 		if row.step != "ensure-inplace-write" {
 			continue
@@ -257,12 +270,6 @@ func TestSigkillLeftoverInPlaceStateFileIsNotRepairedByEnsureButByWriteAndReset(
 		}
 		if names := sigkillList(t, cwd); len(names) != 0 {
 			t.Fatalf("reset left %v", names)
-		}
-		if created, err := state.EnsureState(cwd, sigkillID); !created || err != nil {
-			t.Fatalf("EnsureState after reset: created %v err %v", created, err)
-		}
-		if _, unreadable := state.ReadStateStrict(cwd, sigkillID); unreadable {
-			t.Fatal("the state file is unreadable after reset and EnsureState")
 		}
 	}
 }
