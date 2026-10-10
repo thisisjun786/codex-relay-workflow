@@ -110,7 +110,13 @@ status and the time of every start and hands the start to the build under test u
 
 Hook starts are compared as a multiset of (leg, event, tool): a hook started twice, not at all, or that no declaration is due
 for fails the cell. A cell the host cannot be driven into is `notVerified` with the reason; a run without a Codex binary on
-`PATH` reports every cell not verified, with that reason, and does not fail. The cells are heavy (a host process each), so they
+`PATH` reports every cell not verified, with that reason, and does not fail. A cell whose turn sent the stub provider no model
+request (`turnDriven` false), or whose `crw doctor retrust` failed, is compared with a control run once in a home of the stub
+provider alone (no plugin, no trust, no switch): when the control's turn sends no request either (or its `codex features list`,
+the check retrust runs, fails too), the host cannot be driven or prepared with the stub and the cell is not verified with both
+measurements; when the control succeeds, what the cell adds stopped it and the cell fails, as does a hook the host started and
+that failed. Only cells whose turn reached the provider are named in the scope as turns that ran; the others are listed as
+attempted. The cells are heavy (a host process each), so they
 run only on request, and `go test` runs them behind the `realhost` build tag: `go test -tags dev,realhost ./internal/dev/laneparity`.
 
 ## Faults

@@ -402,7 +402,15 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 			report.Scope += "; the real-host filter matched no cell, so no real Codex turn ran"
 		}
 		if rh.Skipped == "" && len(rh.Cells) > 0 {
-			report.Scope = "isolated roots fired with corpus payloads, and the real-host cells that ran (" + strings.Join(cellNames(rh.Cells), ", ") + "): the real Codex binary (" + rh.Codex.Version + ") ran whole turns in isolated homes against a stub model provider on the loopback interface, the hooks trusted by crw doctor retrust and none by a bypass flag; not a normal installation (CRW-201, CRW-204), not a real model"
+			driven, attempted := drivenCells(rh.Cells)
+			if len(driven) > 0 {
+				report.Scope = "isolated roots fired with corpus payloads, and the real-host cells whose turn reached the stub provider (" + strings.Join(driven, ", ") + "): the real Codex binary (" + rh.Codex.Version + ") ran whole turns in isolated homes against a stub model provider on the loopback interface, the hooks trusted by crw doctor retrust and none by a bypass flag; not a normal installation (CRW-201, CRW-204), not a real model"
+			} else {
+				report.Scope += "; no real-host cell's turn reached the stub provider, so no real Codex turn ran"
+			}
+			if len(attempted) > 0 {
+				report.Scope += "; attempted with no turn (failed or not verified, see the cells): " + strings.Join(attempted, ", ")
+			}
 		}
 		printRealHost(stdout, rh)
 		report.OK = report.OK && rh.OK
@@ -768,11 +776,15 @@ func printLatency(w io.Writer, lat []Latency) {
 // HelperEnv is the variable that marks a process as a stub program or git wrapper of a replay case.
 const HelperEnv = contracttest.RecDirEnv
 
-// cellNames are the names of the real-host cells that ran.
-func cellNames(cells []HostCell) []string {
-	var names []string
+// drivenCells are the names of the real-host cells whose turn reached the stub provider, and of the
+// ones attempted that ran no turn.
+func drivenCells(cells []HostCell) (driven, attempted []string) {
 	for _, c := range cells {
-		names = append(names, c.Name)
+		if c.Driven {
+			driven = append(driven, c.Name)
+		} else {
+			attempted = append(attempted, c.Name)
+		}
 	}
-	return names
+	return driven, attempted
 }

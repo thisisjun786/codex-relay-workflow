@@ -95,6 +95,9 @@ type HostCell struct {
 	Trusted bool   `json:"trusted"`
 	Thread  string `json:"thread,omitempty"`
 	Exit    int    `json:"codexExit"`
+	// Driven is whether the host's turn reached the stub provider (at least one model request):
+	// only a driven cell ran a turn.
+	Driven bool `json:"turnDriven"`
 	// Trust is what `crw doctor retrust` reported for the home (empty for an untrusted cell).
 	Trust string `json:"trust,omitempty"`
 	// Events counts the starts by event name; Records are the invocation records the home held.
@@ -108,6 +111,8 @@ type HostCell struct {
 	// Unverified is set for a cell the host could not be driven into: why, with what was measured.
 	Unverified string `json:"unverified,omitempty"`
 	OK         bool   `json:"ok"`
+	// how is what would verify an Unverified cell.
+	how string
 }
 
 // RealHostReport is the real-host part of a run.
@@ -207,7 +212,7 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 		rep.Cells = append(rep.Cells, cell)
 		rep.OK = rep.OK && cell.OK
 		if cell.Unverified != "" {
-			rep.Unverified = append(rep.Unverified, NotVerified{"real host: " + spec.name, cell.Unverified, "a host turn that asks for permission (Codex exec runs with approval never)"})
+			rep.Unverified = append(rep.Unverified, NotVerified{"real host: " + spec.name, cell.Unverified, cell.how})
 		}
 	}
 	return rep, nil
@@ -268,6 +273,69 @@ type hostEnv struct {
 	manifest   Manifest
 	registered []Registered
 	n          int
+	ctl        *hostControl
+}
+
+// hostControl is what the host does in a home of the stub provider alone, with neither the plugin,
+// nor trust, nor the switch: whether `codex features list` (the check crw doctor retrust runs on the
+// config it rewrites) succeeds, and whether a turn reaches the provider. A cell that runs no turn, or
+// whose retrust fails, is not verified when the control fails the same way (the host cannot be
+// prepared or driven with the stub provider at all), and failed when the control succeeds (what the
+// cell adds, the build under test and the plugin, stopped it).
+type hostControl struct {
+	features    int    // exit status of codex features list
+	featuresOut string // its first lines
+	exit        int    // exit status of the turn
+	requests    int    // model requests the turn sent
+	detail      string // the first lines of the turn's output
+}
+
+// control runs the control once per run.
+func (h *hostEnv) control() (*hostControl, error) {
+	if h.ctl != nil {
+		return h.ctl, nil
+	}
+	h.n++
+	dir := filepath.Join(h.scratch, fmt.Sprintf("c%d-control", h.n))
+	home, codexHome, work, tmp := filepath.Join(dir, "home"), filepath.Join(dir, "codex"), filepath.Join(dir, "work"), filepath.Join(dir, "tmp")
+	for _, d := range []string{home, codexHome, work, tmp} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	provider, err := StartStubProvider(func(StubRequest) StubReply { return StubReply{Text: "control turn done"} })
+	if err != nil {
+		return nil, err
+	}
+	defer provider.Close()
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(stubProviderConfig(provider.URL())), 0o600); err != nil {
+		return nil, err
+	}
+	env := hostEnviron(home, codexHome, tmp, h.codex)
+	c := &hostControl{}
+	var out, stderr string
+	out, c.features = runHostCommand(h.opts.Timeout, dir, env, nil, h.codex, "features", "list")
+	c.featuresOut = firstLines(strings.TrimSpace(out), 3)
+	out, c.exit = runHostCommand(h.opts.Timeout, work, env, &stderr, h.codex, hostArgs(work)...)
+	c.requests = len(provider.Requests())
+	c.detail = firstLines(strings.TrimSpace(strings.TrimSpace(stderr)+"\n"+strings.TrimSpace(out)), 3)
+	h.ctl = c
+	return c, nil
+}
+
+// stubProviderConfig is the part of a home's config.toml that points the host at the stub provider.
+func stubProviderConfig(url string) string {
+	return fmt.Sprintf(`model = "stub-model"
+model_provider = "stub"
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+[model_providers.stub]
+name = "stub"
+base_url = %q
+wire_api = "responses"
+requires_openai_auth = false
+`, url)
 }
 
 // hostRun is a cell's run as the judgement sees it.
@@ -323,20 +391,10 @@ func (h *hostEnv) run(spec hostCellSpec) (HostCell, error) {
 		return cell, err
 	}
 	defer provider.Close()
-	config := spec.config + fmt.Sprintf(`model = "stub-model"
-model_provider = "stub"
-approval_policy = "never"
-sandbox_mode = "read-only"
-
-[model_providers.stub]
-name = "stub"
-base_url = %q
-wire_api = "responses"
-requires_openai_auth = false
-
+	config := spec.config + stubProviderConfig(provider.URL()) + fmt.Sprintf(`
 [plugins.%q]
 enabled = true
-`, provider.URL(), h.manifest.Name+"@"+hostMarket)
+`, h.manifest.Name+"@"+hostMarket)
 	if err := os.WriteFile(filepath.Join(r.codexHome, "config.toml"), []byte(config), 0o600); err != nil {
 		return cell, err
 	}
@@ -355,7 +413,18 @@ enabled = true
 		out, code := runHostCommand(h.opts.Timeout, dir, env, nil, h.opts.CRW, "doctor", "retrust", "--bootstrap-ok")
 		cell.Trust = trustSummary(out)
 		if code != 0 {
-			cell.Problems = append(cell.Problems, fmt.Sprintf("crw doctor retrust exited %d: %s", code, firstLines(out, 3)))
+			detail := fmt.Sprintf("crw doctor retrust exited %d: %s", code, firstLines(strings.TrimSpace(out), 3))
+			ctl, err := h.control()
+			if err != nil {
+				return cell, err
+			}
+			if ctl.features != 0 {
+				cell.Unverified = fmt.Sprintf("the host cannot be prepared: %s, and `codex features list`, the check retrust runs on the config it rewrites, exits %d in a home without the plugin too (%s); no turn ran", detail, ctl.features, ctl.featuresOut)
+				cell.how = "a Codex binary whose `codex features list` runs (crw doctor retrust checks the config it rewrites with it)"
+				cell.OK = true
+				return cell, nil
+			}
+			cell.Problems = append(cell.Problems, detail+"; no turn ran")
 			return cell, nil
 		}
 		if want := fmt.Sprintf("appended=%d", len(h.registered)); !strings.Contains(out, want) {
@@ -369,11 +438,35 @@ enabled = true
 	r.requests = provider.Requests()
 	cell.ModelRequest = len(r.requests)
 	cell.Thread, r.items = parseHostStream(out)
+	cell.Driven = cell.ModelRequest > 0
 	if err := h.collect(&cell, r, rec); err != nil {
 		return cell, err
 	}
+	if !cell.Driven {
+		// The turn never reached the provider. Whether the stub can drive this host at all is what
+		// the control says; a hook the host did start and that failed (or started untrusted) is a
+		// failure either way, judged below.
+		ctl, err := h.control()
+		if err != nil {
+			return cell, err
+		}
+		hookFailed := len(cell.Problems) > 0 || (!spec.trusted && len(cell.Firings) > 0)
+		for _, f := range cell.Firings {
+			hookFailed = hookFailed || f.Exit != 0
+		}
+		if ctl.requests == 0 && !hookFailed {
+			cell.Unverified = fmt.Sprintf("the stub provider cannot drive a turn on this host: codex exec exited %d with no model request (%s), and so did a control turn in a home without the plugin, its trust or the switch (exit %d: %s); %d hook start(s) before the end, none judged",
+				cell.Exit, firstLines(strings.TrimSpace(strings.TrimSpace(r.stderr)+"\n"+strings.TrimSpace(out)), 3), ctl.exit, ctl.detail, len(cell.Firings))
+			cell.how = "a Codex binary that runs a turn against a model provider of config.toml speaking the Responses API (the stub serves POST /v1/responses)"
+			cell.OK = true
+			return cell, nil
+		}
+		if ctl.requests > 0 {
+			cell.Problems = append(cell.Problems, fmt.Sprintf("the host sent no model request, while a control turn in a home without the plugin, its trust or the switch sent %d: what the cell adds stopped the turn", ctl.requests))
+		}
+	}
 	h.judge(&cell, r, spec)
-	cell.OK = len(cell.Problems) == 0 // a cell the host could not be driven into is Unverified, not failed
+	cell.OK = len(cell.Problems) == 0
 	return cell, nil
 }
 
@@ -1033,6 +1126,7 @@ func checkPermission(cell *HostCell, r *hostRun) {
 		for _, out := range req.ToolOutputs {
 			if strings.Contains(out, "approval policy is Never") {
 				cell.Unverified = "codex exec refuses an escalated command before any permission request (\"approval policy is Never\" came back to the model), so the PermissionRequest hook is never started"
+				cell.how = "a host turn that asks for permission (Codex exec runs with approval never)"
 				return
 			}
 		}
