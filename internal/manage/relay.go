@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // relayHelperStderrLimit is how much of a relay command's stderr an error carries: the
@@ -90,7 +93,7 @@ func (e *Env) Relay(ctx context.Context, cfg *Config, args ...string) ([]byte, i
 		return nil, 0, err
 	}
 	argv := append([]string{"relay", "--state", state, "--socket", cfg.Relay.Socket}, args...)
-	stdout, code, stderr, err := e.relayHelperRun(ctx, argv...)
+	stdout, code, stderr, err := e.relayHelperRun(ctx, cfg, argv...)
 	if err != nil {
 		return nil, 0, relayHelperError(err, stderr)
 	}
@@ -122,7 +125,7 @@ func (e *Env) relayHelperState(ctx context.Context, cfg *Config) (string, error)
 			entry = &relayHelperEntry{done: make(chan struct{})}
 			relayHelperMemo[e] = entry
 			relayHelperMemoMu.Unlock()
-			return e.relayHelperResolve(ctx, cfg.Relay.Socket, entry)
+			return e.relayHelperResolve(ctx, cfg, entry)
 		}
 		relayHelperMemoMu.Unlock()
 		select {
@@ -142,7 +145,7 @@ func (e *Env) relayHelperState(ctx context.Context, cfg *Config) (string, error)
 // relayHelperResolve asks the doctor for the call that owns entry, publishes the outcome to
 // the waiters. A success stays in the map as the remembered answer unless the Env was forgotten
 // meanwhile; any other outcome leaves the map.
-func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *relayHelperEntry) (state string, err error) {
+func (e *Env) relayHelperResolve(ctx context.Context, cfg *Config, entry *relayHelperEntry) (state string, err error) {
 	finished := false
 	defer func() {
 		relayHelperMemoMu.Lock()
@@ -156,7 +159,7 @@ func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *rela
 		relayHelperMemoMu.Unlock()
 		close(entry.done)
 	}()
-	resolved, doctorErr := e.relayHelperDoctorState(ctx, socket)
+	resolved, doctorErr := e.relayHelperDoctorState(ctx, cfg)
 	relayHelperMemoMu.Lock()
 	finished = true
 	switch {
@@ -180,8 +183,8 @@ func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *rela
 // relayHelperDoctorState is the state directory the relay's doctor answer selects. The
 // doctor call carries the socket and no state, because choosing the state is its whole
 // point.
-func (e *Env) relayHelperDoctorState(ctx context.Context, socket string) (string, error) {
-	stdout, code, stderr, err := e.relayHelperRun(ctx, "relay", "--socket", socket, "doctor")
+func (e *Env) relayHelperDoctorState(ctx context.Context, cfg *Config) (string, error) {
+	stdout, code, stderr, err := e.relayHelperRun(ctx, cfg, "relay", "--socket", cfg.Relay.Socket, "doctor")
 	if err != nil {
 		return "", relayHelperError(err, stderr)
 	}
@@ -202,13 +205,32 @@ func (e *Env) relayHelperDoctorState(ctx context.Context, socket string) (string
 	return answer.StateSelection.Path, nil
 }
 
+// relayChildEnv gives a relay child the configuration this tool was started with (CRW-958). A
+// configuration file named with --config is handed on as CRW_CONFIG, so the child's own state
+// selection (paths.relay_state) and the roots it starts tools with read the file this tool read; a
+// file reached through CRW_CONFIG or the default location is reached the same way by the child. The
+// configured tool roots are put into its environment, and with nothing configured the child
+// inherits the environment untouched.
+func relayChildEnv(cmd *exec.Cmd, cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.source == crwconfig.SourceConfig && cfg.path != "" {
+		cmd.Env = append(os.Environ(), "CRW_CONFIG="+cfg.path)
+	}
+	return cfg.tools.ApplyTo(cmd)
+}
+
 // relayHelperRun runs one relay command line of the same executable and reports its
 // stdout, exit status and stderr excerpt. A command that ran and failed is an exit status
 // with no error; one that could not be started, or whose context ended, is an error.
-func (e *Env) relayHelperRun(ctx context.Context, argv ...string) ([]byte, int, string, error) {
+func (e *Env) relayHelperRun(ctx context.Context, cfg *Config, argv ...string) ([]byte, int, string, error) {
 	var stdout bytes.Buffer
 	stderr := &relayHelperStderr{}
 	cmd := exec.CommandContext(ctx, e.Executable, argv...)
+	if err := relayChildEnv(cmd, cfg); err != nil {
+		return nil, 0, "", err
+	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = stderr
 	err := cmd.Run()

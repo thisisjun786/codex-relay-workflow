@@ -11,13 +11,20 @@ import (
 
 // selectionRecord is StateSelection.to_record.
 func selectionRecord(selection store.StateSelection) contract.OrderedObject {
+	// The order the selection reads its inputs in. A configured relay_state (CRW-958) sits between the
+	// environment variable and the XDG base, and is named only when the selection came from it, so the
+	// record of every other selection keeps its list.
+	precedence := []any{"flag", "env", "xdg", "home"}
+	if selection.Source == "config" {
+		precedence = []any{"flag", "env", "config", "xdg", "home"}
+	}
 	return contract.OrderedObject{
 		{Key: "path", Value: selection.Path},
 		{Key: "dbPath", Value: selection.DBPath()},
 		{Key: "source", Value: selection.Source},
 		{Key: "detail", Value: selection.Detail},
 		{Key: "socketScope", Value: nullableText(selection.SocketScope)},
-		{Key: "precedence", Value: []any{"flag", "env", "xdg", "home"}},
+		{Key: "precedence", Value: precedence},
 		{Key: "ambiguous", Value: stringList(selection.Ambiguous)},
 		{Key: "unidentified", Value: stringList(selection.Unidentified)},
 	}

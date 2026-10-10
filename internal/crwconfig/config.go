@@ -63,6 +63,14 @@ func (f *File) Section(name string, v any) error {
 // must carry this package's. The roots themselves come from Resolve, with the
 // document's paths section as its overrides.
 func Load(getenv func(string) string, flagPath string) (*File, error) {
+	return load(getenv, flagPath, true)
+}
+
+// load is Load. With strict false only the roots the configuration file names must be absolute: a
+// reading that wants one root (the relay state selection, the tool roots of a job) is not stopped by
+// a default another root derives from an environment it was never configured through, such as a
+// relative XDG_STATE_HOME, which other code reads and judges for itself.
+func load(getenv func(string) string, flagPath string, strict bool) (*File, error) {
 	path, source, err := locate(getenv, flagPath)
 	if err != nil {
 		return nil, err
@@ -103,7 +111,7 @@ func Load(getenv func(string) string, flagPath string) (*File, error) {
 			return nil, fmt.Errorf("%s: paths is not an object of paths", path)
 		}
 	}
-	roots, err := Resolve(getenv, overrides)
+	roots, err := resolve(getenv, overrides, strict)
 	if err != nil {
 		return nil, err
 	}

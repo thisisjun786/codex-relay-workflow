@@ -2,13 +2,14 @@ package manage
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // storageDoc is a configuration document with a paths section and, optionally, a manage object.
@@ -21,50 +22,137 @@ func storageDoc(t *testing.T, paths map[string]string, manage map[string]any) st
 	return coreConfigMarshal(t, doc)
 }
 
-// CRW-958: a configured relay_state moves the relay's store, WAL and sidecars as one bundle: the
-// management tool runs the relay on the scope directory below it that the socket names. Nothing
-// configured leaves the state to the relay's own discovery, as before.
-func TestStorageRelayStateConfiguredSelectsTheScopeDirectory(t *testing.T) {
-	home, codexHome, _ := coreTempHome(t)
-	// a short root: the store socket below it must stay under the bind limit
+// storageEnvCalls reads the environment lines the fake recorded, one per call.
+func storageEnvCalls(t *testing.T, path string) []map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []map[string]string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		call := map[string]string{}
+		if err := json.Unmarshal([]byte(line), &call); err != nil {
+			t.Fatalf("env record %q: %v", line, err)
+		}
+		calls = append(calls, call)
+	}
+	return calls
+}
+
+// CRW-958: a configured relay_state is not turned into a --state by the management tool. The relay's
+// own state selection reads it (store.DiscoverStateDir, after --state and CODEX_SESSION_RELAY_STATE),
+// so the tool asks the relay's doctor which store it selects and runs the relay on that answer, and a
+// relay started directly with the same configuration and socket chooses the same bundle
+// (cmd/crw TestRun_a_configured_relay_state_is_chosen_by_every_relay_start). manage.relay.state, which
+// is passed as --state, stays the more specific setting, and CODEX_SESSION_RELAY_STATE is never
+// overridden by a derived value.
+func TestStorageRelayStateIsLeftToTheRelaysSelection(t *testing.T) {
+	_, codexHome, _ := coreTempHome(t)
 	short, err := os.MkdirTemp("", "rs")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(short) })
 	root := filepath.Join(short, "relay")
-	_ = home
-	coreConfigAt(t, storageDoc(t, map[string]string{"relay_state": root}, nil))
 	socket := filepath.Join(codexHome, "app-server-control", "app-server-control.sock")
-	scope, err := store.SocketScope(socket)
-	if err != nil {
+	for _, test := range []struct {
+		name     string
+		manage   map[string]any
+		env      string
+		wantCall []string
+		doctor   bool
+	}{
+		{name: "relay_state only", wantCall: []string{"relay", "--state", "/doctor/chose", "--socket", socket, "status"}, doctor: true},
+		{name: "environment variable set", env: "/env/store", wantCall: []string{"relay", "--state", "/doctor/chose", "--socket", socket, "status"}, doctor: true},
+		{name: "manage.relay.state", manage: map[string]any{"relay": map[string]string{"state": "/srv/explicit"}},
+			wantCall: []string{"relay", "--state", "/srv/explicit", "--socket", socket, "status"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CODEX_SESSION_RELAY_STATE", test.env)
+			coreConfigAt(t, storageDoc(t, map[string]string{"relay_state": root}, test.manage))
+			report, code, errOut := coreConfigReportOf(t)
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, errOut)
+			}
+			wantState := ""
+			if test.manage != nil {
+				wantState = "/srv/explicit"
+			}
+			if relay := coreBlock(t, report, "relay"); relay["state"] != wantState {
+				t.Errorf("relay.state = %v, want %q: a configured relay_state is not a derived --state", relay["state"], wantState)
+			}
+			exe, record := coreFakeCRW(t, "/doctor/chose", 0)
+			t.Setenv(coreFakeEnvRecordEnv, filepath.Join(t.TempDir(), "env.jsonl"))
+			e := &Env{Getenv: os.Getenv, Executable: exe}
+			state := coreLoad(e, "")
+			if state.err != nil {
+				t.Fatal(state.err)
+			}
+			if _, _, err := e.Relay(context.Background(), state.cfg, "status"); err != nil {
+				t.Fatal(err)
+			}
+			want := [][]string{test.wantCall}
+			if test.doctor {
+				want = [][]string{{"relay", "--socket", socket, "doctor"}, test.wantCall}
+			}
+			coreCheckCalls(t, coreFakeCalls(t, record), want)
+		})
+	}
+}
+
+// CRW-958: a configuration file named with --config reaches the relay child as CRW_CONFIG, so the
+// child's own state selection and tool roots read the file this tool read, and the configured tool
+// roots are in its environment; a configured build_work that does not exist is made first. With
+// nothing configured the child gets neither.
+func TestStorageRelayChildCarriesTheConfigurationAndToolRoots(t *testing.T) {
+	home, _, _ := coreTempHome(t)
+	work := filepath.Join(home, "disk", "work")
+	path := coreConfigWrite(t, filepath.Join(home, "flag", "config.json"), storageDoc(t,
+		map[string]string{"build_cache": filepath.Join(home, "disk", "bc"), "module_cache": filepath.Join(home, "disk", "mc"), "build_work": work}, nil))
+	exe, record := coreFakeCRW(t, "/doctor/chose", 0)
+	envRecord := filepath.Join(t.TempDir(), "env.jsonl")
+	t.Setenv(coreFakeEnvRecordEnv, envRecord)
+	e := &Env{Getenv: os.Getenv, Executable: exe}
+	state := coreLoad(e, path)
+	if state.err != nil {
+		t.Fatal(state.err)
+	}
+	if _, _, err := e.Relay(context.Background(), state.cfg, "status"); err != nil {
 		t.Fatal(err)
 	}
-	report, code, errOut := coreConfigReportOf(t)
-	if code != 0 {
-		t.Fatalf("exit %d: %s", code, errOut)
+	_ = record
+	calls := storageEnvCalls(t, envRecord)
+	if len(calls) == 0 {
+		t.Fatal("the fake saw no call")
 	}
-	relay := coreBlock(t, report, "relay")
-	if want := filepath.Join(root, scope); relay["state"] != want {
-		t.Errorf("relay.state = %v, want %q", relay["state"], want)
+	for i, call := range calls {
+		want := map[string]string{"CRW_CONFIG": path, "GOCACHE": filepath.Join(home, "disk", "bc"), "GOMODCACHE": filepath.Join(home, "disk", "mc"), "GOTMPDIR": work}
+		if !reflect.DeepEqual(call, want) {
+			t.Errorf("call %d environment = %v, want %v", i, call, want)
+		}
 	}
-	if sources := coreBlock(t, report, "sources"); sources["relay.state"] != coreSourceConfig {
-		t.Errorf("sources = %v, want relay.state from config", sources)
+	if info, err := os.Stat(work); err != nil || !info.IsDir() {
+		t.Errorf("build_work was not made before the child started: %v", err)
 	}
-	// manage.relay.state is the more specific setting and wins
-	coreConfigAt(t, storageDoc(t, map[string]string{"relay_state": root}, map[string]any{"relay": map[string]string{"state": "/srv/explicit"}}))
-	report, _, _ = coreConfigReportOf(t)
-	if relay := coreBlock(t, report, "relay"); relay["state"] != "/srv/explicit" {
-		t.Errorf("manage.relay.state did not win: %v", relay)
-	}
-	// nothing configured: the relay chooses
+	// nothing configured: the child inherits the environment and nothing is added
 	coreConfigAt(t, `{}`)
-	report, _, _ = coreConfigReportOf(t)
-	if relay := coreBlock(t, report, "relay"); relay["state"] != "" {
-		t.Errorf("relay.state = %v with nothing configured", relay["state"])
+	t.Setenv("GOCACHE", "")
+	os.Unsetenv("GOCACHE")
+	envRecord = filepath.Join(t.TempDir(), "env.jsonl")
+	t.Setenv(coreFakeEnvRecordEnv, envRecord)
+	e = &Env{Getenv: os.Getenv, Executable: exe}
+	state = coreLoad(e, "")
+	if _, _, err := e.Relay(context.Background(), state.cfg, "status"); err != nil {
+		t.Fatal(err)
 	}
-	if sources := coreBlock(t, report, "sources"); sources["relay.state"] != nil {
-		t.Errorf("sources names relay.state with nothing configured: %v", sources)
+	for i, call := range storageEnvCalls(t, envRecord) {
+		if len(call) != 0 && !(len(call) == 1 && call["CRW_CONFIG"] == "") {
+			t.Errorf("call %d environment = %v with nothing configured", i, call)
+		}
 	}
 }
 
@@ -120,11 +208,14 @@ func TestStoragePumpLogFollowsTheConfiguredLogRoot(t *testing.T) {
 // no tool root configured it adds nothing to the caller's environment.
 func TestStorageGoListCommandCarriesTheConfiguredRoots(t *testing.T) {
 	t.Setenv("GOMODCACHE", "/caller/mod")
-	cmd := auditPkgGoListCommand(context.Background(), "/repo", "./...", crwconfig.ToolRoots{})
-	if cmd.Env != nil {
+	cmd, err := auditPkgGoListCommand(context.Background(), "/repo", "./...", crwconfig.ToolRoots{})
+	if err != nil || cmd.Env != nil {
 		t.Errorf("Env = %v with nothing configured, want the inherited environment", cmd.Env)
 	}
-	cmd = auditPkgGoListCommand(context.Background(), "/repo", "./...", crwconfig.ToolRoots{BuildCache: "/cfg/b", ModuleCache: "/cfg/m"})
+	cmd, err = auditPkgGoListCommand(context.Background(), "/repo", "./...", crwconfig.ToolRoots{BuildCache: "/cfg/b", ModuleCache: "/cfg/m"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got []string
 	for _, kv := range cmd.Env {
 		if strings.HasPrefix(kv, "GOCACHE=") || strings.HasPrefix(kv, "GOMODCACHE=") {
@@ -136,5 +227,24 @@ func TestStorageGoListCommandCarriesTheConfiguredRoots(t *testing.T) {
 	}
 	if cmd.Dir != "/repo" || cmd.Args[len(cmd.Args)-1] != "./..." {
 		t.Errorf("command = %v in %q", cmd.Args, cmd.Dir)
+	}
+}
+
+// CRW-958: a configured build_work that does not exist yet is made before go list starts, because go
+// makes its work directory directly below it and fails when it is missing.
+func TestStorageGoListCommandMakesAConfiguredBuildWork(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "disk", "work")
+	if _, err := auditPkgGoListCommand(context.Background(), "/repo", "./...", crwconfig.ToolRoots{BuildWork: work}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(work); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Errorf("build_work after the call: %v %v", info, err)
+	}
+	plain := filepath.Join(t.TempDir(), "plain")
+	if err := os.WriteFile(plain, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auditPkgGoListCommand(context.Background(), "/repo", "./...", crwconfig.ToolRoots{BuildWork: plain}); err == nil {
+		t.Error("a build_work that is a file was accepted")
 	}
 }

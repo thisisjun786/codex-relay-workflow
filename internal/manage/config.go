@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // coreConfigUsage is what crw manage config prints for -h.
@@ -216,10 +215,12 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 
 // coreApplyStorage applies the storage roots the configuration file names (CRW-958). A root the
 // file names that fails a structural check refuses the configuration, so no command starts a tool
-// or the relay against it. The tool roots are kept for the commands that start go; log_root moves
-// the pump log; relay_state, when manage.relay.state names nothing, selects the relay's scope
-// directory below it, so the store, its WAL and its sidecars move together. A root the file does
-// not name changes nothing: the relay chooses its own state and the log stays in the state directory.
+// or the relay against it. The tool roots are kept for the commands that start go and for the
+// relay child; log_root moves the pump log. relay_state is checked here but not turned into a
+// state directory: the relay's own state selection reads it (store.DiscoverStateDir), after --state
+// and CODEX_SESSION_RELAY_STATE, so this tool and a relay started directly choose one bundle for one
+// configuration and one socket, and manage.relay.state, which is passed as --state, stays the more
+// specific setting. A root the file does not name changes nothing.
 func coreApplyStorage(e *Env, file *crwconfig.File, cfg *Config) error {
 	if err := file.Refusal(e.Getenv, crwconfig.RootBuildCache, crwconfig.RootModuleCache, crwconfig.RootBuildWork, crwconfig.RootLog, crwconfig.RootRelayState); err != nil {
 		return err
@@ -228,14 +229,6 @@ func coreApplyStorage(e *Env, file *crwconfig.File, cfg *Config) error {
 	cfg.tools = file.ToolRoots()
 	if root := roots[crwconfig.RootLog]; root.Source == crwconfig.SourceConfig {
 		cfg.logDir = root.Path
-	}
-	if root := roots[crwconfig.RootRelayState]; root.Source == crwconfig.SourceConfig && cfg.Relay.State == "" {
-		scope, err := store.SocketScope(cfg.Relay.Socket)
-		if err != nil {
-			return fmt.Errorf("relay_state: the scope of %s: %v", cfg.Relay.Socket, err)
-		}
-		cfg.Relay.State = crwconfig.JoinRoot(root.Path, scope)
-		cfg.sources["relay.state"] = coreSourceConfig
 	}
 	return nil
 }

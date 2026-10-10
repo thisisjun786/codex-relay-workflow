@@ -135,6 +135,12 @@ func isUnsetRoot(name string) bool {
 // to, and a root derived from another (scratch_root from cache_root) sits under the
 // text its base was given.
 func Resolve(getenv func(string) string, overrides map[string]string) (map[string]Root, error) {
+	return resolve(getenv, overrides, true)
+}
+
+// resolve is Resolve. With strict false a root the overrides do not name is not required to be
+// absolute (see load).
+func resolve(getenv func(string) string, overrides map[string]string, strict bool) (map[string]Root, error) {
 	data, dataEnv := baseDir(getenv, "XDG_DATA_HOME", ".local/share")
 	cache, cacheEnv := baseDir(getenv, "XDG_CACHE_HOME", ".cache")
 	state, stateEnv := baseDir(getenv, "XDG_STATE_HOME", ".local/state")
@@ -182,6 +188,9 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 	for _, name := range rootOrder {
 		root := roots[name]
 		if !root.Set() && root.Source == SourceDefault && isUnsetRoot(name) {
+			continue
+		}
+		if !strict && root.Source != SourceConfig {
 			continue
 		}
 		if path := root.Path; !filepath.IsAbs(path) {
