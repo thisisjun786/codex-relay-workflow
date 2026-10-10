@@ -199,7 +199,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata; use portable renamed-skill paths for direct helper examples; describe the CRW map-affordance hook without the CXC component pointer.",
+      "reason": "CRW-1162: the venv is ready only with its completion marker; the Dependencies section says what a run without the marker does",
       "hunks": [
         {
           "line": 4,
@@ -217,6 +217,23 @@
           "new": [
             "python3 \"<crw-repo-map skill directory>/scripts/repomap.py\" .\n",
             "python3 \"<crw-repo-map skill directory>/scripts/repomap.py\" src/ --budget 2048\n"
+          ]
+        },
+        {
+          "line": 80,
+          "old": [
+            "   `CRW_MAP_BOOTSTRAP=1` is set (opt-in network install).\n"
+          ],
+          "new": [
+            "   `CRW_MAP_BOOTSTRAP=1` is set (opt-in network install). A venv is ready only\n",
+            "   when its completion marker `.crw-ready` exists in the venv directory; the\n",
+            "   bootstrap writes it (atomically) after `pip install` succeeded. A venv without\n",
+            "   the marker (one built before the marker existed, or one whose bootstrap was\n",
+            "   killed or failed) is not used: a run without `CRW_MAP_BOOTSTRAP=1` goes on to\n",
+            "   rung 4, and the next run with `CRW_MAP_BOOTSTRAP=1` builds it again once\n",
+            "   (`python3 -m venv` over the directory, then `pip install`) and marks it ready.\n",
+            "   Nothing else in the directory is deleted, and a failed attempt removes only\n",
+            "   what it made.\n"
           ]
         },
         {
