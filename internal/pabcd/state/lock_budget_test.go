@@ -94,3 +94,22 @@ func TestLockWaitBudgetDecidesWhetherASlowHolderBlocksTheWriter(t *testing.T) {
 		})
 	}
 }
+
+// WidenSessionLockWait (CRW-1181) is the seam through which a test that cannot reach the sleep seam widens the wait of
+// WithSessionLock: every delay of the schedule sleeps scale times as long (a sleep never ends early, so the lower bound is
+// exact whatever the load), and the returned call puts the previous scale back.
+func TestWidenedSessionLockWaitScalesEveryDelay(t *testing.T) {
+	if got := sessionLockWaitScale.Load(); got != 0 {
+		t.Fatalf("the scale starts at %d, want 0", got)
+	}
+	restore := WidenSessionLockWait(20)
+	started := time.Now()
+	sessionLockSleep(10 * time.Millisecond)
+	if took := time.Since(started); took < 200*time.Millisecond {
+		t.Fatalf("a 10 ms delay at scale 20 slept %v, want at least 200ms", took)
+	}
+	restore()
+	if got := sessionLockWaitScale.Load(); got != 0 {
+		t.Fatalf("scale %d after the restore, want 0", got)
+	}
+}

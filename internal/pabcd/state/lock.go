@@ -9,11 +9,33 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// sessionLockWaitScale multiplies every delay of the wait WithSessionLock schedules (a caller with a context keeps its timer); 0 and 1 leave the
+// oracle's schedule as it is, which is all production ever runs. A test that races callers it cannot reach through the sleep seam
+// (a hook, a command) widens the wait with WidenSessionLockWait so the lock, not the time a holder takes on a loaded host, decides
+// who is inside (CRW-1181).
+var sessionLockWaitScale atomic.Int64
+
+// WidenSessionLockWait makes every later wait for a session lock sleep scale times as long, and returns the call that puts the
+// previous scale back. It is for tests; production never calls it.
+func WidenSessionLockWait(scale int64) (restore func()) {
+	previous := sessionLockWaitScale.Swap(scale)
+	return func() { sessionLockWaitScale.Store(previous) }
+}
+
+// sessionLockSleep is the sleep a caller without a seam of its own uses.
+func sessionLockSleep(d time.Duration) {
+	if scale := sessionLockWaitScale.Load(); scale > 1 {
+		d *= time.Duration(scale)
+	}
+	time.Sleep(d)
+}
 
 // WithSessionLock runs fn holding the session's exclusive lock, the file <state file>.lock (withSessionLock). The session id must
 // be canonical: an id that sanitising would rewrite, or an empty one, is refused with ErrNonCanonicalSessionID before anything is
@@ -63,7 +85,7 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 // unchanged.
 func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
 	retryDelays, onBusy := lockWaitProbe()
-	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, time.Sleep, retryDelays, onBusy)
+	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, sessionLockSleep, retryDelays, onBusy)
 }
 
 // orchestrateInterruptLockContext is the acquisition both entries share. retryDelays is a test seam: a
