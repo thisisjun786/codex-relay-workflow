@@ -185,7 +185,7 @@ func hookContextOpenSidecarHitCountsUntil(env host.LookupEnv, until time.Time) H
 			return nil
 		}
 	}
-	db, err := openHitCountStoreBusy(path, busy)
+	db, err := openHitCountStore(path, busy)
 	if err != nil {
 		return nil
 	}
