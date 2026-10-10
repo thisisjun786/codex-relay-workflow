@@ -1,6 +1,8 @@
 package spawn
 
 import (
+	"crypto/sha256"
+	"encoding/base32"
 	"errors"
 	"maps"
 	"os"
@@ -60,6 +62,7 @@ type spawnHookAssembly struct {
 	replay             func(answer string)         // records the answer of an event that minted a grant, or nil
 	settings           role.SettingsSnapshot       // the event's one read of the helper role settings
 	evidenceAssignment *evidence.Assignment        // CRW-1115: the evidence assignment the packet asked for, written once the spawn is allowed
+	evidenceRecorded   bool                        // evidenceAssignment is the record an earlier delivery of this event wrote: kept as it is
 	guardReapplied     bool                        // guardReapplied: the message already starts with this surface's guard, so the hook runs over its own output (:983)
 }
 
@@ -340,7 +343,23 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	default:
 		a.updatedMessage = a.guard + "\n\n" + affordance
 	}
-	if deny := spawnHookEvidenceAssignment(&a, time.Now()); deny != "" {
+	// Deliveries of one event that registers an evidence assignment are serialized by the event's lock, held until the answer is
+	// given, so of two deliveries of one call the second finds the first's record and reuses it (CRW-1121 with CRW-1115).
+	serialize := func() string {
+		if commit.unlock != nil || a.inputText == "" {
+			return ""
+		}
+		if _, _, resolved := spawnGrantScope(obj); resolved {
+			_ = os.MkdirAll(tmpRoot, 0o700)
+		}
+		release, err := spawnHookEventLock(obj, tmpRoot, *a.toolUseID, true)
+		if errors.Is(err, errSpawnHookEventBusy) {
+			return DenyEnvelope(spawnHookBusyReason)
+		}
+		commit.unlock = release
+		return ""
+	}
+	if deny := spawnHookEvidenceAssignment(&a, time.Now(), serialize); deny != "" {
 		return stop(deny)
 	}
 	return a, "", false
@@ -364,8 +383,9 @@ func spawnHookSettingsDeny(err error) string {
 // cannot show its id, is taken out and this call gets an assignment of its own in its place, so two dispatches never share one;
 // a block at that place that names no record is refused. A marker elsewhere in the text registers nothing and suppresses
 // nothing. A native V2 ciphertext cannot be read, so it gets none. An ambiguous request or a tree that cannot be registered is a
-// deny envelope: the parent asked for a contract the gate could not honour.
-func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
+// deny envelope: the parent asked for a contract the gate could not honour. serialize takes the event's lock before a record of
+// the event is looked up, and returns a deny when another delivery keeps it.
+func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time, serialize func() string) string {
 	if a.encryptedV2Message {
 		return ""
 	}
@@ -420,14 +440,44 @@ func spawnHookEvidenceAssignment(a *spawnHookAssembly, now time.Time) string {
 		return DenyEnvelope("evidence assignment: " + err.Error())
 	}
 	assignment.ToolUseID = toolUseID
+	// The assignment of an event whose input is known is named after the event: its session, its tool call and that input. A
+	// delivery of the same event again (the host retrying the hook) finds the record the first delivery wrote and answers with it,
+	// claimed or not, instead of registering a second dispatch that no child would ever claim: an open record without a child
+	// refuses every later child of the session that is tied to no dispatch (CRW-1121 with CRW-1115). Another call, or another
+	// input of this call, is another name, so each dispatch still has its own contract; a call without an id gets a random one.
+	if a.inputText != "" {
+		if deny := serialize(); deny != "" {
+			return deny
+		}
+		assignment.ID = spawnHookEventAssignmentID(a.cwd, a.sessionID, toolUseID, a.inputText)
+		if recorded, ok := evidence.RecordedAssignment(a.cwd, a.sessionID, assignment.ID); ok && recorded.ToolUseID == toolUseID {
+			assignment, a.evidenceRecorded = recorded, true
+		}
+	}
 	a.evidenceAssignment = &assignment
-	block := EvidenceAssignmentBlock(assignment.ID, assignment.Root, none)
-	if a.updatedMessage == a.guard {
-		a.updatedMessage = a.guard + "\n\n" + block
+	block := EvidenceAssignmentBlock(assignment.ID, assignment.Root, assignment.Mode == evidence.AssignNone)
+	// The block goes right after the guard, or after the prompt override when the packet already has it there (an earlier answer
+	// whose block was taken out above): the route inserts the prompt only where it does not follow the guard yet, so a block put
+	// between them would get the prompt a second time (CRW-1121).
+	anchor := a.guard
+	if prompt := a.resolution.PromptOverride; prompt != nil && text.Trim(*prompt) != "" {
+		if withPrompt := a.guard + "\n\n" + text.Trim(*prompt); a.updatedMessage == withPrompt || strings.HasPrefix(a.updatedMessage, withPrompt+"\n\n") {
+			anchor = withPrompt
+		}
+	}
+	if a.updatedMessage == anchor {
+		a.updatedMessage = anchor + "\n\n" + block
 	} else {
-		a.updatedMessage = strings.Replace(a.updatedMessage, a.guard+"\n\n", a.guard+"\n\n"+block+"\n\n", 1)
+		a.updatedMessage = strings.Replace(a.updatedMessage, anchor+"\n\n", anchor+"\n\n"+block+"\n\n", 1)
 	}
 	return ""
+}
+
+// spawnHookEventAssignmentID is the assignment id of one event: the first 128 bits of the sha256 of its cwd, session, tool use id
+// and input, in the base32 alphabet of the ids NewAssignment mints (26 characters).
+func spawnHookEventAssignmentID(cwd, sessionID, toolUseID, input string) string {
+	sum := sha256.Sum256([]byte("crw-evidence-assignment\x00" + cwd + "\x00" + sessionID + "\x00" + toolUseID + "\x00" + input))
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:16])
 }
 
 // spawnHookRecord is isRecord over a decoded value: an ordered object, or a plain map with its keys sorted.

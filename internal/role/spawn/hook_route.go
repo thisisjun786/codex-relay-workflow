@@ -360,7 +360,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	// managed spawn is issued (CRW-1106): the issuance is a one-shot of the dispatch ledger, so a record that cannot be written
 	// refuses the spawn while the attempt is still issuable, and the record is removed again when the issuance is refused.
 	// A child told a location the gate does not know would be unverifiable, which is why a record that cannot be written denies.
-	if a.evidenceAssignment != nil {
+	if a.evidenceAssignment != nil && !a.evidenceRecorded {
 		if err := a.evidenceAssignment.Persist(a.cwd); err != nil {
 			return DenyEnvelope("evidence assignment: the record could not be written: " + err.Error())
 		}
@@ -428,7 +428,7 @@ func (a spawnHookAssembly) finish(answer string, env host.LookupEnv) string {
 // dropEvidenceAssignment takes back the evidence assignment the route recorded (CRW-1115) when finish refuses the spawn, so a child
 // that never ran leaves no open assignment behind; the record was written before the issuance, which is a one-shot (CRW-1106).
 func (a spawnHookAssembly) dropEvidenceAssignment() {
-	if a.evidenceAssignment != nil {
+	if a.evidenceAssignment != nil && !a.evidenceRecorded { // a record an earlier delivery wrote stays with that delivery's child
 		a.evidenceAssignment.Remove(a.cwd)
 	}
 }
