@@ -96,6 +96,9 @@ type FireReport struct {
 	Probes          []ProbeFire   `json:"probes"`
 	Receipts        []Receipt     `json:"receipts"`
 	ReceiptProblems []string      `json:"receiptProblems,omitempty"`
+	// Recorded names the hook invocation records the fixtures' trees held when they had run
+	// (<CODEX_HOME>/crw/hook-observations): the ported legs record nothing while the switch is off.
+	Recorded []string `json:"recorded,omitempty"`
 	// Unverified names what a green run does not show: legs no fixture witnesses.
 	Unverified []string `json:"unverified,omitempty"`
 	OK         bool     `json:"ok"`
@@ -189,10 +192,16 @@ func Fire(o FireOptions) (FireReport, error) {
 		}
 		rep.Fixtures = append(rep.Fixtures, ff)
 		if res.Run && res.Observed != nil {
+			for path := range res.Observed.Tree {
+				if strings.Contains(path, "/hook-observations/") && strings.HasSuffix(path, ".json") {
+					rep.Recorded = append(rep.Recorded, res.ID+": "+path)
+				}
+			}
 			ws, rs := stepReceipts(rep, wantLeg, declared, builds, res)
 			wants, rep.Receipts = append(wants, ws...), append(rep.Receipts, rs...)
 		}
 	}
+	sort.Strings(rep.Recorded)
 	rep.OK = true
 	if rep.Probes, err = fireOwn(o, in, wantLeg, declared, builds, &rep, &wants, perLeg); err != nil {
 		return rep, err

@@ -24,7 +24,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 )
 
-const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all} [flags]
+const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,realhost,all} [flags]
 
   plugin-root  --crw PATH --out DIR     write a plugin root declaring the 32 K1 legs and CRW's two own
                                         registrations, every command starting the crw build PATH
@@ -33,9 +33,16 @@ const usage = `usage: crw-dev parity {plugin-root,registration,fire,latency,all}
                [--only RE] [--inject FAULT]
   latency      --crw PATH --plugin DIR --oracle DIR [--node PATH] [--runs N] [--attempts N] [--strict] [--legs RE]
                                         p50 and p95 of the Go command against the CXC v0.2.40 command (--oracle required)
-  all          --crw PATH [--plugin DIR] [--oracle DIR] [--node PATH] [--runs N] [--attempts N] [--strict]
-                                        every cell; a generated root when --plugin is not given; without
-                                        --oracle the latency cell is not run and is reported not verified
+  realhost     --crw PATH [--plugin DIR] [--codex PATH] [--only RE]
+                                        the real Codex binary runs whole turns in an isolated home against a
+                                        stub model provider on the loopback interface; the hooks the host
+                                        starts are recorded (needs the plugin as it ships)
+  all          --crw PATH [--plugin DIR] [--generated] [--oracle DIR] [--node PATH] [--runs N] [--attempts N] [--strict]
+               [--realhost] [--codex PATH]
+                                        every cell; the plugin that ships (plugins/crw) when --plugin is not
+                                        given, or a root generated from K1 with --generated; without --oracle
+                                        the latency cell is not run and is reported not verified; --realhost
+                                        adds the real-host cells (a heavy run, off by default)
 
 common flags: --repo DIR (default: the git top level) --json FILE (the report) --scratch DIR (parent of the run's case roots)
               --reuse FILE (a passing report of the same build, plugin root, executables started, oracle, harness,
@@ -62,8 +69,13 @@ type Report struct {
 	LatencyLaterAttempts []string `json:"latencyLaterAttempts,omitempty"`
 	// Switch is the hook switch (CRW-392) every case root of the fire and latency cells held: the
 	// harness writes it into each isolated CODEX_HOME, since the ported legs are silent without it.
-	Switch      *SwitchReport `json:"switch,omitempty"`
-	NotVerified []NotVerified `json:"notVerified"`
+	Switch *SwitchReport `json:"switch,omitempty"`
+	// SwitchSilence is the cell that shows the switch gates the ported legs: one fixture per leg fired
+	// with the switch off and at cxc, where every leg must stay silent and record nothing.
+	SwitchSilence []SilenceReport `json:"switchSilence,omitempty"`
+	// RealHost is the cell of the real Codex binary driven by a stub model provider (`all --realhost`).
+	RealHost    *RealHostReport `json:"realHost,omitempty"`
+	NotVerified []NotVerified   `json:"notVerified"`
 	// Key identifies the artifact, plugin root, criteria and options a run judged: a report with the
 	// same key already holds the evidence (--reuse).
 	Key  string      `json:"key"`
@@ -118,18 +130,20 @@ type NotVerified struct {
 	Followup string `json:"followup"`
 }
 
-const realHost = "real-host cells with a stub model provider (decision 3 of the 10-10 coordinator comment); a follow-up issue carries them"
+const realHost = "run `crw-dev parity all --realhost` (or `parity realhost`) where the Codex binary is on PATH: the real-host cells (CRW-1082) drive it with a stub model provider"
 
-// NotVerifiedCells are the cells every run leaves unverified, so a green run is not read as more.
+// NotVerifiedCells are the cells every run leaves unverified, so a green run is not read as more. A
+// run that includes the real-host cells (notVerifiedWithRealHost) replaces the first three with what
+// it measured.
 func NotVerifiedCells() []NotVerified {
 	return []NotVerified{
 		{"real Codex binary fires the declared hook from a real turn (trust, thread, turn, socket receipts)", "needs the host started in an isolated home with a stub model provider", realHost},
 		{"hook trust: a declared hook does not run until trusted", "host behaviour; measured once in docs/plugin-packaging.md, not driven here", realHost},
-		{"pause, cancel and permission refusal at the host; forced exit and restart of the host mid-turn; stall", "need a live turn; the permission-request leg's payload handling is fired, the host's refusal is not", realHost},
 		{"context recovery after a real compaction", "post-compact and recall legs are fired with corpus payloads; the host's compaction is not", realHost},
-		{"native spawn surface: skill selection, delivery and behaviour of a spawned agent", "the spawn attach leg is fired with corpus payloads; the spawned agent is not", realHost},
-		{"real-model behaviour of the injected directives", "no model runs", realHost},
-		{"the CRW-392 switch turned by crw install switch, and a normal installation", "the harness writes <CODEX_HOME>/crw/switch.json at crw into every case root itself (the report's switch); the writer and installation parity belong to CRW-201 and CRW-204, and a pass here is never an installation pass", "CRW-201, CRW-204"},
+		{"pause, cancel and permission refusal at the host; forced exit and restart of the host mid-turn; stall", "need a live turn that is interrupted, or a host that asks for permission (codex exec runs with approval never, see the real-host permission cell)", "a host session driven through the App Server"},
+		{"native spawn surface: skill selection, delivery and behaviour of a spawned agent", "the spawn attach leg is fired with corpus payloads, and the real-host spawn cell shows the host starts it and the SubagentStop legs for an agent a scripted turn spawns; which skills a real model selects is not shown", "a real model"},
+		{"real-model behaviour of the injected directives", "no model runs: the stub provider's script never reads the directives", "a real model"},
+		{"the CRW-392 switch turned by crw install switch, and a normal installation", "the harness writes <CODEX_HOME>/crw/switch.json at crw (and off, cxc) into the Codex home of every step itself (the report's switch); the writer and installation parity belong to CRW-201 and CRW-204, and a pass here is never an installation pass", "CRW-201, CRW-204"},
 		{"completion Stop effect", "the declared command is fired and released in silence; its guard daemon is not started here (see internal/runtime/integration)", "CRW-204"},
 	}
 }
@@ -145,7 +159,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	switch args[0] {
-	case "plugin-root", "registration", "fire", "latency", "all":
+	case "plugin-root", "registration", "fire", "latency", "realhost", "all":
 		return runCommand(args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, usage)
@@ -168,6 +182,9 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	runs := set.Int("runs", 30, "latency: runs per leg and side")
 	strict := set.Bool("strict", false, "latency: a failing leg fails the run even when the host's load average is above its CPU count (otherwise it is inconclusive)")
 	attempts := set.Int("attempts", 5, "latency: measurements of a leg that fails before it is reported failing (a shared host's load puts outliers in a p95)")
+	generated := set.Bool("generated", false, "all: fire a plugin root generated from K1 (every command starting the crw build) instead of the plugin that ships")
+	realhost := set.Bool("realhost", false, "all: also run the real-host cells (the real Codex binary against a stub model provider)")
+	codex := set.String("codex", "", "realhost: the Codex executable (default: codex on PATH)")
 	jsonOut := set.String("json", "", "write the report here")
 	scratch := set.String("scratch", "", "parent of the run's directory of case roots (default: $TMPDIR)")
 	reuse := set.String("reuse", "", "a report: when it judged the same build, plugin root, criteria and options and passed, its evidence stands and nothing is run")
@@ -268,14 +285,17 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		Cleanup: "each case root is removed as its case ends and the run directory when the run ends; nothing outside the run directory is written, and no shared database, live session, Codex home or runtime is used"}
 	pluginRoot := *plugin
 	if pluginRoot == "" {
-		if command != "all" {
+		if command != "all" && command != "realhost" {
 			return fail(fmt.Errorf("--plugin is required"))
 		}
-		pluginRoot = filepath.Join(run, "plugin", "crw")
-		if err := GeneratePluginRoot(pluginRoot, filepath.Join(root, "plugins", "crw"), bin, expected); err != nil {
-			return fail(err)
+		pluginRoot = filepath.Join(root, "plugins", "crw")
+		if *generated {
+			pluginRoot = filepath.Join(run, "plugin", "crw")
+			if err := GeneratePluginRoot(pluginRoot, filepath.Join(root, "plugins", "crw"), bin, expected); err != nil {
+				return fail(err)
+			}
+			report.Plugin.Generated = true
 		}
-		report.Plugin.Generated = true
 	}
 	report.Plugin.Root = pluginRoot
 	if command == "fire" || command == "latency" || command == "all" {
@@ -297,7 +317,7 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 	// latency verdict among them) and every artifact a cell runs, by content: the executables the
 	// declared commands start, the node and the oracle tree a latency cell runs, and this harness.
 	if report.Key, err = ReportKey(root, report.CRW.SHA256, report.Plugin.Digest, command, *only, *legs, *inject, *oracle, *runs, *attempts,
-		"strict="+strconv.FormatBool(*strict), "node="+nodeIdentity(command, *oracle, *node), "oracle="+oracleIdentity(command, *oracle),
+		"strict="+strconv.FormatBool(*strict), "realhost="+hostIdentity(command, *realhost, *codex), "node="+nodeIdentity(command, *oracle, *node), "oracle="+oracleIdentity(command, *oracle),
 		"started="+startedIdentity(registered, bin), "harness="+harness); err != nil {
 		return fail(err)
 	}
@@ -332,6 +352,17 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		report.Fire = &rep
 		printFire(stdout, rep)
 		report.OK = report.OK && rep.OK
+		if *inject == "" {
+			for _, state := range SilenceStates {
+				sil, err := Silence(FireOptions{Root: root, CRW: bin, Plugin: pluginRoot, Scratch: cases}, state, rep)
+				if err != nil {
+					return fail(err)
+				}
+				report.SwitchSilence = append(report.SwitchSilence, sil)
+				printSilence(stdout, sil)
+				report.OK = report.OK && sil.OK
+			}
+		}
 	}
 	if command == "all" && *oracle == "" {
 		report.NotVerified = append(report.NotVerified, NotVerified{"latency of every leg (Go p95 against the CXC v0.2.40 p95 and half the declared timeout)",
@@ -356,6 +387,23 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 				report.NotVerified = append(report.NotVerified, NotVerified{"latency of " + l.Leg, l.Reason, "run again on a host whose load is below its CPU count, or with --strict to fail"})
 			}
 		}
+	}
+	if command == "realhost" || (command == "all" && *realhost) {
+		hostFault := ""
+		if *inject == FaultNoop || *inject == FaultDropStdout { // the faults of the declared command: the others change what a fired fixture reports
+			hostFault = *inject
+		}
+		rh, err := RealHost(RealHostOptions{Root: root, CRW: bin, Plugin: pluginRoot, Codex: *codex, Scratch: cases, Only: onlyRE, Fault: hostFault})
+		if err != nil {
+			return fail(err)
+		}
+		report.RealHost = &rh
+		if rh.Skipped == "" {
+			report.Scope = "isolated roots fired with corpus payloads, and the real-host cells: the real Codex binary (" + rh.Codex.Version + ") ran whole turns in isolated homes against a stub model provider on the loopback interface, the hooks trusted by crw doctor retrust and none by a bypass flag; not a normal installation (CRW-201, CRW-204), not a real model"
+		}
+		printRealHost(stdout, rh)
+		report.OK = report.OK && rh.OK
+		report.NotVerified = notVerifiedWithRealHost(report.NotVerified, rh)
 	}
 	report.Test.LoadEnd = load1()
 	if left, err := os.ReadDir(cases); err == nil {
@@ -385,6 +433,27 @@ func runCommand(command string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return exitCode(report.OK)
+}
+
+// hostIdentity names the Codex a real-host cell runs (its path and the sha256 of the file), or is
+// empty where no cell runs, so a report that ran the real host is never reused for a run that did not.
+func hostIdentity(command string, realhost bool, codex string) string {
+	if command != "realhost" && !(command == "all" && realhost) {
+		return ""
+	}
+	path, reason := findCodex(codex)
+	if path == "" {
+		return "none: " + reason
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path + ": " + err.Error()
+	}
+	digest, err := FileDigest(real)
+	if err != nil {
+		return real + ": unreadable"
+	}
+	return real + " sha256 " + digest
 }
 
 // nodeIdentity names the node executable a latency cell runs the oracle with: the path the flag
