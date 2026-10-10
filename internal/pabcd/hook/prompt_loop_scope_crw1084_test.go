@@ -94,6 +94,14 @@ func TestLoopArmScopeCases(t *testing.T) {
 		{"a subject before the coordinate verb", "Use crw-loop so we coordinate the lanes.", PromptRoleUnknown, "pointer"},
 		{"a current-task fix after inspecting a child process", "Use crw-loop in this session to inspect the child process and fix its crash in this project.", PromptRoleUnknown, "recipe"},
 		{"a current-task implementation after consulting the children", "Use crw-loop in this session to consult the children and implement this task.", PromptRoleUnknown, "recipe"},
+		// Verification round 4 (b1ffd290): a sentence adverb between another agent and the implement verb keeps the verb that
+		// agent's; only a comma or a coordinating conjunction right after the noun starts this session's own verb.
+		{"children then implement", "Use crw-loop in this session while the children then implement their issues.", PromptRoleUnknown, "pointer"},
+		{"child tasks then implement", "Use crw-loop in this session while child tasks then implement their assigned issues.", PromptRoleUnknown, "pointer"},
+		{"they also implement", "Use crw-loop in this session while they also implement the project issues.", PromptRoleUnknown, "pointer"},
+		{"children meanwhile implement", "Use crw-loop in this session while the children meanwhile implement their issues.", PromptRoleUnknown, "pointer"},
+		{"children each implement", "Use crw-loop in this session while the children each implement their own issue.", PromptRoleUnknown, "pointer"},
+		{"a current-task implementation after a comma and then", "Use crw-loop in this session to consult the children, then implement this task.", PromptRoleUnknown, "recipe"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -270,6 +278,16 @@ func TestClassifyLoopArmScope(t *testing.T) {
 		{"Use crw-loop in this session to ask the children to review and implement their issues", LoopScopeProject},
 		{"Use crw-loop in this session; the child tasks review and fix their issues", LoopScopeProject},
 		{"Use crw-loop in this session, the workers will then implement the project issues", LoopScopeProject},
+		{"Use crw-loop in this session while the children then implement their issues.", LoopScopeProject},
+		{"Use crw-loop in this session while child tasks then implement their assigned issues.", LoopScopeProject},
+		{"Use crw-loop in this session while they also implement the project issues.", LoopScopeProject},
+		{"Use crw-loop in this session while the child agents then also build their parts.", LoopScopeProject},
+		{"Use crw-loop in this session while the children, then, implement their issues.", LoopScopeProject},
+		{"Use crw-loop in this session while the children meanwhile implement their issues.", LoopScopeProject},
+		{"Use crw-loop in this session while the child lanes later fix their issues.", LoopScopeProject},
+		{"Use crw-loop in this session while the children each implement their own issue.", LoopScopeProject},
+		{"Use crw-loop in this session to consult the children, then implement this task.", LoopScopeCurrentTask},
+		{"Use crw-loop in this session to consult the children and then implement this task.", LoopScopeCurrentTask},
 	}
 	for _, c := range cases {
 		if got := ClassifyLoopArmScope(c.prompt); got != c.want {

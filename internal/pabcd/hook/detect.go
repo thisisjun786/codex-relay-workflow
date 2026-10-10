@@ -343,9 +343,10 @@ const (
 // negation governing the verb: a negation word right before it, at most a few filler words apart ("do not actually implement",
 // "not to implement"), or a Korean negation after it ("구현하지 마"). A negation elsewhere in the clause ("no questions, please
 // implement ...") does not govern the verb. Nor does the verb count when another agent does it: a children, worker, subagent or
-// "child task/lane/..." up to three words before it ("while child tasks implement their issues") makes the clause a
-// coordination, unless only a conjunction separates them ("consult the children and implement this task") or the noun is a
-// child process (delegatedVerb).
+// "child task/lane/..." up to three words before it ("while child tasks implement their issues", "while the children then
+// implement") makes the clause a coordination, unless a comma or a coordinating conjunction comes right after the noun and
+// only conjunctions follow ("consult the children and implement this task", "consult the children, then implement") or the
+// noun is a child process (delegatedVerb).
 //
 // A project is a Linear project link, a coordination word (the verb coordinate but not the noun - coordinateVerb -, supervise,
 // children or child tasks, 조정, 감독, 부모, 자식 but not a child process), or the word "project" - except where "project" only names the place of a single-task fix: "in this
@@ -418,21 +419,25 @@ func ungovernedImplement(clause string) bool {
 // delegatedVerb reports that the implement verb after the folded clause prefix is another agent's (ungovernedImplement). Another
 // agent as the subject or the delegate of the verb ("while child tasks implement", "ask the children to implement", "the
 // workers will then implement") is not this session implementing: the verb must not follow such a noun by up to three words of
-// the same clause. A child process or subprocess is no agent, and a noun that only a conjunction separates from the verb is the
-// object of an earlier verb whose subject goes on ("consult the children and implement this task", "read the workers' notes,
-// then fix this issue"): the session implements.
+// the same clause. A child process or subprocess is no agent, and a noun right after which a comma or a coordinating conjunction
+// (and, but, or, plus) starts a gap of conjunctions only is the object of an earlier verb whose subject goes on ("consult the
+// children and implement this task", "consult the children, then implement this task"): the session implements. A sentence
+// adverb right after the noun ("the children then implement", "they also implement", "the children each implement") or set
+// off by commas ("the children, then, implement") leaves the noun the subject of the verb.
 func delegatedVerb(prefix string) bool {
 	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
 	// detectorRE expands \s and \S into bracket classes, so the separator and word classes here spell jsSpaceChars out.
 	sep, word := `[`+jsSpaceChars+`,;]`, `[^`+jsSpaceChars+`,;]`
 	agent := detectorRE(`(?:\b(?:children|workers?|sub-?agents?|others|they|child\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?|workers?)|other\s+(?:agents?|sessions?|tasks?|threads?))\b|(?:자식|하위|워커)\S*)((?:` + sep + `+` + word + `+){0,3}` + sep + `*)$`)
-	conjunction := detectorRE(`^(?:` + sep + `|\b(?:and|then|but|or|also|plus)\b)*$`)
+	space := `[` + jsSpaceChars + `]*`
+	conjunction := detectorRE(`^` + space + `(?:[,;]|\b(?:and|but|or|plus)\b)(?:` + sep + `|\b(?:and|then|but|or|also|plus)\b)*$`)
+	parenthetical := detectorRE(`[,;]` + space + `\b(?:then|also)\b` + space + `,` + space + `$`)
 	m := agent.FindStringSubmatch(childProcess.ReplaceAllString(prefix, " "))
 	if m == nil {
 		return false
 	}
 	gap := m[1]
-	return strings.TrimSpace(gap) == "" || !conjunction.MatchString(gap)
+	return !conjunction.MatchString(gap) || parenthetical.MatchString(gap)
 }
 
 // scopeText is the prompt without its plainly introduced examples, for ClassifyLoopArmScope (CRW-1084): a parenthesis that
