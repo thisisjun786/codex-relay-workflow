@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,52 @@ func TestFallbackNoticeHookResumeWithoutAUsableSessionAnswers(t *testing.T) {
 			if out.String() == "" {
 				t.Errorf("resume %s answered nothing", raw)
 			}
+		}
+	}
+}
+
+// limitedWriter takes at most n bytes in all, then fails: a closed pipe (n = 0) or a short write.
+type limitedWriter struct{ n int }
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if len(p) <= w.n {
+		w.n -= len(p)
+		return len(p), nil
+	}
+	k := w.n
+	w.n = 0
+	return k, errors.New("write failed")
+}
+
+// CRW-1146: the notice counts as given only when the hook wrote all of it. A start or resume whose notice could not be written
+// (a closed pipe, a short write) leaves no record, so the next resume hears the notice, and only then is it not repeated.
+func TestFallbackNoticeHookRecordsOnlyANoticeItWrote(t *testing.T) {
+	_, env := fallbackTestEnv(t)
+	run := func(raw string, out io.Writer) {
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+	}
+	var want strings.Builder
+	run(`{"session_id":"base"}`, &want)
+	if want.Len() < 20 {
+		t.Fatalf("baseline notice %q", want.String())
+	}
+	for _, tc := range []struct {
+		name, source string
+		budget       int
+	}{{"resume-closed", "resume", 0}, {"resume-short", "resume", 10}, {"startup-closed", "startup", 0}, {"startup-short", "startup", 10}} {
+		resume := `{"session_id":"` + tc.name + `","source":"resume"}`
+		run(`{"session_id":"`+tc.name+`","source":"`+tc.source+`"}`, &limitedWriter{n: tc.budget})
+		var got strings.Builder
+		run(resume, &got)
+		if got.String() != want.String() {
+			t.Errorf("%s: resume after an unwritten notice answered %q", tc.name, got.String())
+		}
+		var again strings.Builder
+		run(resume, &again)
+		if again.String() != "" {
+			t.Errorf("%s: the written notice was repeated: %q", tc.name, again.String())
 		}
 	}
 }

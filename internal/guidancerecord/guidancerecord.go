@@ -32,7 +32,8 @@ func line(text, command string) string {
 }
 
 // slot is the record file for a session and a leg, or "" when the host has no home, the session is not an identifier
-// (1 to 256 UTF-16 units without a control character or space, as the hook observation requires) or the leg is not a slug.
+// (1 to 256 UTF-16 units without a control character or space, as the hook observation requires), the leg is not a slug, or a
+// test's guard refuses the path (RefuseAccountHome).
 func slot(env host.LookupEnv, session, leg string) string {
 	if n := len(utf16.Encode([]rune(session))); n == 0 || n > 256 || leg == "" || len(leg) > 96 {
 		return ""
@@ -58,7 +59,11 @@ func slot(env host.LookupEnv, session, leg string) string {
 	if home == "" {
 		return ""
 	}
-	return filepath.Join(home, "crw", dirName, digest(session), leg)
+	path := filepath.Join(home, "crw", dirName, digest(session), leg)
+	if !allowed(path) {
+		return ""
+	}
+	return path
 }
 
 // Delivered reports whether this session was given exactly this text, naming exactly this command, by this leg. The text is what

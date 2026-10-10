@@ -130,10 +130,10 @@ func RunUserPromptAffordance(raw string, env host.LookupEnv) string {
 }
 
 // RunMapAffordanceSessionStart keeps unconditional pointers on malformed stdin or a failed walk. Only this handler trims before
-// JSON.parse. It answers, then records what it gave the session (see mapAffordanceSessionStart).
+// JSON.parse. It renders the answer and records nothing: the hook that writes the answer records it (runHook), so guidance
+// counts as given only once it reached the host (see mapAffordanceSessionStart).
 func RunMapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) string {
-	answer, record := mapAffordanceSessionStart(raw, fallbackCwd, env)
-	record()
+	answer, _ := mapAffordanceSessionStart(raw, fallbackCwd, env)
 	return answer
 }
 
@@ -224,12 +224,13 @@ func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	case "session-start":
 		var record func()
 		answer, record = mapAffordanceSessionStart(raw, cwd, env)
-		_, _ = io.WriteString(out, answer)
-		answer = ""
-		// A cancelled hook is not recorded as having given the session anything.
-		if ctx.Err() == nil {
+		n, err := io.WriteString(out, answer)
+		// Only an answer written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a
+		// cancelled hook, leaves no record, so the session's next resume gets the whole list.
+		if err == nil && n == len(answer) && ctx.Err() == nil {
 			record()
 		}
+		answer = ""
 	case "post-compact":
 		answer = RunPostCompactAffordance(raw)
 	case "user-prompt-submit":

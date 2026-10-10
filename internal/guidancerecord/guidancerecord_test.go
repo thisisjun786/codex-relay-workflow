@@ -2,6 +2,7 @@ package guidancerecord
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,5 +72,40 @@ func TestACorruptOrLinkedRecordIsNotDelivered(t *testing.T) {
 	}
 	if Delivered(env, "s", "leg", "a", "") {
 		t.Error("a symlinked record was read")
+	}
+}
+
+// The guard a test package installs keeps every record out of the account's real Codex home: a path there is neither read
+// nor written (slot answers no path, before any file is touched), and the cleanup names it. Only slot is called with the real
+// home, so this test itself touches nothing there even if the guard were broken.
+func TestRefuseAccountHomeKeepsRecordsOutOfTheRealHome(t *testing.T) {
+	account, err := user.Current()
+	if err != nil || account.HomeDir == "" {
+		t.Skip("no account home")
+	}
+	cleanup, err := RefuseAccountHome("")
+	if err != nil || cleanup == nil {
+		t.Fatalf("setup: %v", err)
+	}
+	real := envFor(filepath.Join(account.HomeDir, ".codex"))
+	noHome := func(string) (string, bool) { return "", false } // falls back to the account home
+	for _, env := range []func(string) (string, bool){real, noHome} {
+		if p := slot(env, "s", "leg"); p != "" {
+			_ = cleanup()
+			t.Fatalf("a record path in the real home passed the guard: %s", p)
+		}
+	}
+	temp := envFor(t.TempDir())
+	Record(temp, "s", "leg", "a", "")
+	if !Delivered(temp, "s", "leg", "a", "") {
+		_ = cleanup()
+		t.Fatal("the guard refused a temporary home")
+	}
+	err = cleanup()
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(account.HomeDir, ".codex", "crw", dirName)) {
+		t.Fatalf("cleanup did not report the refused path: %v", err)
+	}
+	if p := slot(real, "s", "leg"); p == "" {
+		t.Fatal("the guard outlived its cleanup")
 	}
 }

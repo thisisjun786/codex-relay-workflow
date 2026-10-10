@@ -112,8 +112,10 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if resumed && guidancerecord.Delivered(env, session, fallbackNoticeLeg, answer, "") {
 		return 0
 	}
-	_, _ = io.WriteString(out, answer)
-	if ctx.Err() == nil {
+	n, werr := io.WriteString(out, answer)
+	// Only a notice written whole, by a hook that was not cancelled, counts as given: a failed or short write, or a cancelled
+	// hook, leaves no record, so the session's next resume hears the notice.
+	if werr == nil && n == len(answer) && ctx.Err() == nil {
 		guidancerecord.Record(env, session, fallbackNoticeLeg, answer, "")
 	}
 	return 0
