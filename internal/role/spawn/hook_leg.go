@@ -26,6 +26,12 @@ const (
 	// spawnHookOversizedInputReason is the oracle's one refusal text for an input over the bound (:851 and :1143), shared by
 	// this leg and RunSpawnAttachHook's own check.
 	spawnHookOversizedInputReason = "crw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary"
+
+	// SpawnHookOutputFailed is the status of a leg whose answer could not be written whole (CRW-1122, CRW-1118): the blocking status
+	// of a PreToolUse hook, so the host does not run the spawn on an answer it never got. What the event committed before the write (the
+	// managed attempt issued to its tool use id, a spent grant and the event's record) stays, so the same call delivered again is
+	// answered as the first time and nothing is issued or minted twice; no grant is given back.
+	SpawnHookOutputFailed = 2
 )
 
 // RunHook is the oracle's main: read the hook's input, record the invocation unless the input overflowed, and write
@@ -53,12 +59,20 @@ func runHook(ctx context.Context, in io.Reader, out io.Writer, env host.LookupEn
 	}
 	if overflow {
 		// The oracle drops the input and records nothing for it, then refuses before parsing.
-		_, _ = io.WriteString(out, DenyEnvelope(spawnHookOversizedInputReason))
-		return 0
+		return spawnHookWrite(out, DenyEnvelope(spawnHookOversizedInputReason))
 	}
 	harness.RecordInvocation(raw, "subagent-config", spawnHookEvent, env)
 	if answer := RunSpawnAttachHook(raw, env); answer != "" {
-		_, _ = io.WriteString(out, answer)
+		return spawnHookWrite(out, answer)
+	}
+	return 0
+}
+
+// spawnHookWrite writes answer whole. A write that fails or stops short is not a success: the answer may carry a deny or the managed
+// candidate, and the event has already committed what it needed (SpawnHookOutputFailed).
+func spawnHookWrite(out io.Writer, answer string) int {
+	if n, err := io.WriteString(out, answer); err != nil || n < len(answer) {
+		return SpawnHookOutputFailed
 	}
 	return 0
 }
