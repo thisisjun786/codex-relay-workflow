@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -233,6 +234,7 @@ func TestHookCompactRightAfterAResumeDoesNotRepeatTheLine(t *testing.T) {
 	if got := start("s1", "resume"); got != line {
 		t.Fatalf("resume = %q", got)
 	}
+	guidancerecord.NoteUserPrompt(os.LookupEnv, "s1", "turn-of-s1") // the resume's own prompt reaches the prompt hook before the compaction
 	if got := start("s1", "compact"); got != "" {
 		t.Fatalf("compact in the turn of a resume repeated the line: %q", got)
 	}
@@ -255,6 +257,7 @@ func TestHookCompactRightAfterAResumeDoesNotRepeatTheLine(t *testing.T) {
 	}
 	// The bridge stopping between the resume and the compact is a different line, and it is said.
 	start("s6", "resume")
+	guidancerecord.NoteUserPrompt(os.LookupEnv, "s6", "turn-of-s6")
 	syscall.ForkLock.RLock()
 	writeErr := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s' '{\"proxy\":{\"running\":false}}'\n"), 0o755)
 	syscall.ForkLock.RUnlock()

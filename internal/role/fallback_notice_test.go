@@ -243,6 +243,7 @@ func TestFallbackNoticeHookCompactAfterAWholeResumeAnswerIsSilentOnce(t *testing
 	if got := run(`{"session_id":"n","source":"resume"}`); got != whole {
 		t.Fatalf("resume of a session never given the notice answered %q", got)
 	}
+	guidancerecord.NoteUserPrompt(env, "n", "turn-of-n") // the resume's own prompt reaches the prompt hook before the compaction
 	if got := run(`{"session_id":"n","source":"compact"}`); got != "" {
 		t.Errorf("compact in the same turn as a whole resume repeated the notice: %q", got)
 	}
@@ -253,14 +254,35 @@ func TestFallbackNoticeHookCompactAfterAWholeResumeAnswerIsSilentOnce(t *testing
 	if got := run(`{"session_id":"c","source":"resume"}`); got != whole {
 		t.Fatalf("resume answered %q", got)
 	}
+	guidancerecord.NoteUserPrompt(env, "c", "turn-of-c")
 	m["CRW_SPAWN_V1"] = "1"
 	if got := run(`{"session_id":"c","source":"compact"}`); got == "" || got == whole {
 		t.Errorf("compact after the notice changed answered %q", got)
 	}
 	// Another session's compact is not the pair.
 	run(`{"session_id":"d","source":"resume"}`)
+	guidancerecord.NoteUserPrompt(env, "d", "turn-of-d")
 	if got := run(`{"session_id":"e","source":"compact"}`); got == "" {
 		t.Error("another session's compact was silenced")
+	}
+}
+
+// CRW-1180 (evaluation d1): a session whose prompt hook never ran has no evidence of the resume's turn, so its compact says the notice.
+func TestFallbackNoticeHookCompactWithoutPromptHookEvidenceSaysTheNotice(t *testing.T) {
+	_, env := fallbackTestEnv(t)
+	run := func(raw string) string {
+		var out strings.Builder
+		if code := RunFallbackNoticeHook(context.Background(), strings.NewReader(raw), &out, env, func(data []byte) string { return string(data) }); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		return out.String()
+	}
+	whole := run(`{"session_id":"s"}`)
+	if got := run(`{"session_id":"q","source":"resume"}`); got != whole {
+		t.Fatalf("resume answered %q", got)
+	}
+	if got := run(`{"session_id":"q","source":"compact"}`); got != whole {
+		t.Errorf("compact of a session whose prompt hook never ran answered %q, want the notice", got)
 	}
 }
 

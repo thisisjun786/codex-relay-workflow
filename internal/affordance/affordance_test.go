@@ -536,6 +536,7 @@ func TestSessionStartCompactRightAfterAWholeResumeIsSilentOnce(t *testing.T) {
 		if got := contextOf(t, hookAnswer(t, src(id, "resume"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
 			t.Fatalf("resume of %s, never given the list: %q", id, got)
 		}
+		userPrompt(t, big, id, "turn-of-"+id, env) // the prompt of the resume's own turn reaches the prompt hook before the compaction
 	}
 	full := hookAnswer(t, payload(big, "SessionStart", "S", nil), big, env)
 	// The resume of a session that was given the list is short; the compact that follows says the list, and only the list: the
@@ -543,6 +544,7 @@ func TestSessionStartCompactRightAfterAWholeResumeIsSilentOnce(t *testing.T) {
 	if got := contextOf(t, hookAnswer(t, src("S", "resume"), big, env), "SessionStart"); got != RenderSessionBinding("S", env) {
 		t.Fatalf("short resume: %q", got)
 	}
+	userPrompt(t, big, "S", "turn-of-S", env)
 	compact := contextOf(t, hookAnswer(t, src("S", "compact"), big, env), "SessionStart")
 	if want := strings.TrimPrefix(contextOf(t, full, "SessionStart"), RenderSessionBinding("S", env)+"\n\n"); compact != want {
 		t.Errorf("compact after a short resume = %q, want the list without the binding the resume gave: %q", compact, want)
@@ -731,8 +733,38 @@ func TestSessionStartCompactAfterAShortResumeLeavesOutTheBannerItGave(t *testing
 	if !strings.Contains(resume, banner) {
 		t.Fatalf("short resume gave no banner: %q", resume)
 	}
+	userPrompt(t, big, "S", "turn-of-S", env)
 	compact := contextOf(t, hookAnswer(t, src("compact"), big, env), "SessionStart")
 	if strings.Contains(compact, banner) || strings.Contains(compact, RenderSessionBinding("S", env)) || !strings.Contains(compact, "Loop contract") {
 		t.Errorf("compact after a short resume = %q", compact)
+	}
+}
+
+// CRW-1180 (evaluation d1): without evidence that the session's prompt hook runs, the compact cannot tell the resume's turn from a later one,
+// so it says the list. A session whose prompt hook ran before the resume pairs its compact whether or not the resume's own prompt came yet.
+func TestSessionStartCompactNeedsEvidenceThatThePromptHookRuns(t *testing.T) {
+	big := t.TempDir()
+	seed(t, big, 40)
+	env := sessionEnv(t, "crw")
+	src := func(id, source string) string {
+		return payload(big, "SessionStart", id, map[string]any{"source": source})
+	}
+	// The prompt hook never ran for this session: the whole resume is followed by a whole compact, as before records.
+	hookAnswer(t, src("H", "resume"), big, env)
+	if got := contextOf(t, hookAnswer(t, src("H", "compact"), big, env), "SessionStart"); !strings.Contains(got, "Loop contract") {
+		t.Errorf("compact of a session whose prompt hook never ran was silenced: %q", got)
+	}
+	// The prompt hook ran in the session's first life; the resume is whole (the switch changed), the compact comes first in the turn.
+	hookAnswer(t, payload(big, "SessionStart", "P", nil), big, env)
+	userPrompt(t, big, "P", "turn-0", env)
+	other := func(k string) (string, bool) {
+		if k == "CRW_BIN" {
+			return "other-crw", true
+		}
+		return env(k)
+	}
+	hookAnswer(t, src("P", "resume"), big, other)
+	if got := hookAnswer(t, src("P", "compact"), big, other); got != "" {
+		t.Errorf("compact before the resume's first prompt repeated the list: %q", got)
 	}
 }

@@ -14,6 +14,12 @@ func envFor(home string) func(string) (string, bool) {
 	return func(k string) (string, bool) { return home, k == "CODEX_HOME" }
 }
 
+// promptHookRuns stamps the session as one whose user-prompt hook has run before: the session had a turn under the hooks, then a resume.
+func promptHookRuns(env func(string) (string, bool), session string) {
+	Record(env, session, "boot", "boot", "")
+	NoteUserPrompt(env, session, "boot-turn")
+}
+
 func TestRecordedTextIsDeliveredAndOnlyThatText(t *testing.T) {
 	env := envFor(t.TempDir())
 	if Delivered(env, "s", "leg", "a", "") {
@@ -115,6 +121,7 @@ func TestRefuseAccountHomeKeepsRecordsOutOfTheRealHome(t *testing.T) {
 // CRW-1180: a resume that gave the whole text lets the compact that follows it in the same turn stay silent, once.
 func TestCompactAfterAResumeRepeatsOnlyOncePerResume(t *testing.T) {
 	env := envFor(t.TempDir())
+	promptHookRuns(env, "s")
 	if CompactRepeatsResume(env, "s", "leg", "a", "") {
 		t.Fatal("a compact with no record was taken for the pair")
 	}
@@ -147,6 +154,7 @@ func TestCompactAfterAResumeRepeatsOnlyOncePerResume(t *testing.T) {
 // A compact long after the resume is a compaction of its own: what the resume said is no longer in the context.
 func TestCompactLongAfterTheResumeIsNotThePair(t *testing.T) {
 	env := envFor(t.TempDir())
+	promptHookRuns(env, "s")
 	RecordResume(env, "s", "leg", "a", "")
 	path := slot(env, "s", "leg") + ".resume"
 	old := time.Now().Add(-2 * PairWindow)
@@ -165,6 +173,7 @@ func TestCompactLongAfterTheResumeIsNotThePair(t *testing.T) {
 // that turn (a second hook call for it too); a prompt of another turn ends the pair, and the window does not make a later turn one.
 func TestUserPromptOfALaterTurnEndsThePair(t *testing.T) {
 	env := envFor(t.TempDir())
+	promptHookRuns(env, "s")
 	paired := func() bool { return CompactRepeatsResume(env, "s", "leg", "a", "") }
 	RecordResume(env, "s", "leg", "a", "")
 	NoteUserPrompt(env, "s", "t1")
@@ -220,6 +229,7 @@ func TestUserPromptOfALaterTurnEndsThePair(t *testing.T) {
 // may leave exactly that part out.
 func TestAShortResumeLeavesAPairOfThePart(t *testing.T) {
 	env := envFor(t.TempDir())
+	promptHookRuns(env, "s")
 	Record(env, "s", "leg", "a", "")
 	RecordResumePart(env, "s", "leg", "binding")
 	if kind, part := TakePair(env, "s", "leg", "b", ""); kind != PairNone || part != "" {
@@ -253,6 +263,7 @@ func TestAShortResumeLeavesAPairOfThePart(t *testing.T) {
 // bring the mark back: each resume pairs with at most one compact, and an ended pair stays ended.
 func TestAPromptCannotBringBackATakenOrEndedPair(t *testing.T) {
 	env := envFor(t.TempDir())
+	promptHookRuns(env, "s")
 	race := func(end func()) {
 		start := make(chan struct{})
 		done := make(chan struct{})
@@ -281,6 +292,7 @@ func TestAPromptCannotBringBackATakenOrEndedPair(t *testing.T) {
 func TestAPromptOfAnotherProcessCannotBringBackATakenPair(t *testing.T) {
 	home := t.TempDir()
 	env := envFor(home)
+	promptHookRuns(env, "s")
 	stop := filepath.Join(t.TempDir(), "stop")
 	ready := stop + ".ready"
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperPromptHookLoop$", "-test.count=1")
@@ -313,6 +325,84 @@ func TestAPromptOfAnotherProcessCannotBringBackATakenPair(t *testing.T) {
 		if second, _ := TakePair(env, "s", "leg", "a", ""); first == PairWhole && second == PairWhole {
 			t.Fatalf("iteration %d: another process's prompt brought back the pair a compact took", i)
 		}
+	}
+}
+
+// CRW-1180 (evaluation d2): a start that gives up waiting for the lock of a hook that still holds it ends the pair for good: the slow
+// hook cannot bring the mark back, because a mark is written once and afterwards only deleted.
+func TestAStartThatTimedOutOnTheLockEndsThePairForGood(t *testing.T) {
+	env := envFor(t.TempDir())
+	promptHookRuns(env, "s")
+	wait := lockWait
+	lockWait = 30 * time.Millisecond
+	t.Cleanup(func() { lockWait, promptPause = wait, nil })
+	RecordResume(env, "s", "leg", "a", "")
+	// The prompt hook holds the lock and is held up after it read the mark; the start that follows the resume cannot wait for it.
+	promptPause = func() {
+		promptPause = nil
+		ClearResume(env, "s", "leg")
+		if _, err := os.Lstat(slot(env, "s", "leg") + resumeSuffix); err == nil {
+			t.Error("a start that could not take the lock left the pair open")
+		}
+	}
+	NoteUserPrompt(env, "s", "t1")
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("the prompt that was slow to count brought back the pair a start ended")
+	}
+	// The same for a compact that gave up on the lock.
+	RecordResume(env, "s", "leg", "a", "")
+	promptPause = func() {
+		promptPause = nil
+		if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+			t.Error("a compact that could not take the lock took the pair")
+		}
+	}
+	NoteUserPrompt(env, "s", "t1")
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("the prompt that was slow to count brought back the pair a compact dropped")
+	}
+	// A resume written while another hook holds the lock leaves no pair.
+	unlock, ok := lockSession(filepath.Dir(slot(env, "s", "leg")), false)
+	if !ok {
+		t.Fatal("lock")
+	}
+	RecordResume(env, "s", "leg", "a", "")
+	unlock()
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("a resume that could not take the lock left a pair")
+	}
+}
+
+// CRW-1180 (evaluation d1): the pair is a resume and the compaction of its own turn, and only the prompts tell a turn from the next one.
+// A session whose prompt hook has not run (untrusted, disabled, failing) has no such evidence, so its compacts say the text; one whose
+// hook has run, in this turn or before the resume, is paired as usual.
+func TestACompactNeedsEvidenceThatThePromptHookRuns(t *testing.T) {
+	env := envFor(t.TempDir())
+	Record(env, "s", "leg", "a", "") // the session's start, under hooks whose prompt leg never ran
+	RecordResume(env, "s", "leg", "a", "")
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("a compact was taken for the pair of a session whose prompt hook never ran")
+	}
+	if _, err := os.Lstat(slot(env, "s", "leg") + resumeSuffix); err == nil {
+		t.Fatal("the mark of a session without prompt evidence was left behind")
+	}
+	// The hook ran in the turn of the resume.
+	RecordResume(env, "s", "leg", "a", "")
+	NoteUserPrompt(env, "s", "t1")
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairWhole {
+		t.Fatal("the compact after the resume's own prompt was not the pair")
+	}
+	// The hook ran before the resume, and the compact comes before the resume's first prompt.
+	RecordResume(env, "s", "leg", "a", "")
+	if kind, _ := TakePair(env, "s", "leg", "a", ""); kind != PairWhole {
+		t.Fatal("a session whose prompt hook ran earlier lost its pair")
+	}
+	// A part pair needs the same evidence.
+	other := envFor(t.TempDir())
+	Record(other, "s", "leg", "a", "")
+	RecordResumePart(other, "s", "leg", "binding")
+	if kind, _ := TakePair(other, "s", "leg", "a", ""); kind != PairNone {
+		t.Fatal("a part pair was taken without prompt evidence")
 	}
 }
 

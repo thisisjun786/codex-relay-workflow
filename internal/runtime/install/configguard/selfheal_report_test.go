@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -396,6 +397,7 @@ func TestSelfHealReportCompactRightAfterAResumeDoesNotRepeatTheWarning(t *testin
 	if got := start("s1", "resume"); got != warning {
 		t.Fatalf("resume = %q", got)
 	}
+	guidancerecord.NoteUserPrompt(selfHealReportEnv(home), "s1", "turn-of-s1") // the resume's own prompt reaches the prompt hook before the compaction
 	if got := start("s1", "compact"); got != "" {
 		t.Fatalf("compact in the turn of a resume repeated the warning: %q", got)
 	}

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf16"
 
@@ -98,11 +99,11 @@ func record(env host.LookupEnv, session, leg, text, command string, m *mark) {
 	}
 	unlock, ok := lockSession(filepath.Dir(path), true)
 	if !ok {
-		_ = os.Remove(path + resumeSuffix)
+		_ = removeMark(path + resumeSuffix)
 		return
 	}
 	defer unlock()
-	_ = os.Remove(path + resumeSuffix)
+	_ = removeMark(path + resumeSuffix)
 	if writeRecord(path, text, command) && m != nil {
 		writeMark(path+resumeSuffix, *m)
 	}
@@ -131,16 +132,21 @@ const resumeSuffix = ".resume"
 
 // PairWindow bounds the pair from above: a compact start comes right after the resume start of the same turn (the host compacts a
 // resumed session's first turn before it samples). The window alone does not tell a turn from the next one, so the user prompts
-// that follow the resume end the pair too (NoteUserPrompt); the window only covers a session whose prompt hook did not run.
+// that follow the resume end the pair too (NoteUserPrompt); the window only bounds a pair whose later prompts the hook did not see.
 const PairWindow = 15 * time.Minute
 
+// promptSeen is the stamp, beside a session's records, that the session's user-prompt hook has run (NoteUserPrompt). Without it nothing
+// tells a compact of the resume's turn from one of a later turn, so a compact never takes a pair then (see takePair).
+const promptSeen = "prompt-hook"
+
 // mark is what a resume leaves: what it gave (the whole text, or only the Part whose SHA-256 is named, the rest of the text being in the
-// context from before) and the user prompts seen since, which end the pair when a second one arrives.
+// context from before). It is written once, whole, under a generation of its own (Gen), and afterwards only deleted: a hook that is
+// slow, or that gave up waiting for the session's lock, can end the pair by deleting it, and nothing can bring it back. The user
+// prompts that follow the resume are kept as files of their own beside it, named by the generation (see countPrompt).
 type mark struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Part          string `json:"part,omitempty"`
-	Prompts       int    `json:"prompts,omitempty"`
-	Turn          string `json:"turn,omitempty"`
+	Gen           string `json:"gen"`
 }
 
 // Pair is what a compact start finds of the resume of its turn.
@@ -170,14 +176,70 @@ func readMark(path string) (mark, os.FileInfo, bool) {
 	}
 	data, err := os.ReadFile(path)
 	var m mark
-	if err != nil || json.Unmarshal(data, &m) != nil || m.SchemaVersion != 1 || m.Prompts < 0 {
+	if err != nil || json.Unmarshal(data, &m) != nil || m.SchemaVersion != 1 || m.Gen == "" {
 		return mark{}, nil, false
 	}
 	return m, st, true
 }
 
+// removeMark ends the pair: it deletes the mark, then the prompts counted against it. Deleting needs no lock to hold, because nothing
+// writes a mark except the start that begins a generation.
+func removeMark(markPath string) error {
+	err := os.Remove(markPath)
+	dir, base := filepath.Split(markPath)
+	if entries, rerr := os.ReadDir(dir); rerr == nil {
+		for _, e := range entries {
+			if name := e.Name(); strings.HasPrefix(name, base+".") {
+				_ = os.Remove(filepath.Join(dir, name))
+			}
+		}
+	}
+	return err
+}
+
+// countPrompt notes a user prompt of a turn against the pair of the generation: a file of its own named by the generation and the turn
+// (a prompt without a turn id gets a name of its own, so it counts every time). It reports whether the file is there afterwards.
+func countPrompt(markPath, gen, turn string) bool {
+	id := hex.EncodeToString(randomBytes())
+	if turn != "" {
+		id = digest(turn)[:16]
+	}
+	f, err := os.OpenFile(markPath+"."+gen+".n-"+id, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		return f.Close() == nil
+	}
+	return os.IsExist(err)
+}
+
+// promptsOf is the number of different turns whose prompt was counted against the generation.
+func promptsOf(markPath, gen string) int {
+	dir, base := filepath.Split(markPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), base+"."+gen+".n-") {
+			n++
+		}
+	}
+	return n
+}
+
+func randomBytes() []byte {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		for i := range b { // no entropy: a name from the clock still never repeats within one process
+			b[i] = byte(time.Now().UnixNano() >> (8 * (i % 8)))
+		}
+	}
+	return b
+}
+
 func writeMark(path string, m mark) bool {
 	m.SchemaVersion = 1
+	m.Gen = hex.EncodeToString(randomBytes())
 	data, _ := json.Marshal(m)
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
@@ -213,11 +275,11 @@ func RecordResumePart(env host.LookupEnv, session, leg, part string) {
 	}
 	unlock, ok := lockSession(filepath.Dir(path), true)
 	if !ok {
-		_ = os.Remove(path + resumeSuffix)
+		_ = removeMark(path + resumeSuffix)
 		return
 	}
 	defer unlock()
-	_ = os.Remove(path + resumeSuffix)
+	_ = removeMark(path + resumeSuffix)
 	if d := PartDigest(part); d != "" {
 		writeMark(path+resumeSuffix, mark{Part: d})
 	}
@@ -233,7 +295,7 @@ func ClearResume(env host.LookupEnv, session, leg string) {
 	if unlock, ok := lockSession(filepath.Dir(path), false); ok {
 		defer unlock()
 	}
-	_ = os.Remove(path + resumeSuffix)
+	_ = removeMark(path + resumeSuffix) // ending a pair only deletes, so it needs no lock to stay ended (see mark)
 }
 
 // TakePair reports whether a compact start that would say this text follows a resume of its own turn, and takes the pair: the next
@@ -254,28 +316,36 @@ func takePair(env host.LookupEnv, session, leg, text, command string, end bool) 
 	markPath := path + resumeSuffix
 	unlock, ok := lockSession(filepath.Dir(path), false)
 	if !ok {
-		_ = os.Remove(markPath) // no lock, no pair: the compact says the text
+		_ = removeMark(markPath) // no lock, no pair: the compact says the text
 		return PairNone, "", true
 	}
 	defer unlock()
 	m, st, ok := readMark(markPath)
 	switch {
-	case !ok, m.Prompts > 1, time.Since(st.ModTime()) > PairWindow:
-		_ = os.Remove(markPath) // a mark that cannot be read, or of a later turn, or stale, is not a pair
+	case !ok, promptsOf(markPath, m.Gen) > 1, time.Since(st.ModTime()) > PairWindow, !promptHookSeen(filepath.Dir(path)):
+		// A mark that cannot be read, or of a later turn, or stale, is not a pair. Neither is one of a session whose prompt hook never
+		// ran: nothing then tells the compact of the resume's turn from one of a later turn, and a compaction of its own must say the text.
+		_ = removeMark(markPath)
 		return PairNone, "", true
 	case !Delivered(env, session, leg, text, command):
 		if end {
-			_ = os.Remove(markPath)
+			_ = removeMark(markPath)
 		}
 		return PairNone, "", end
 	}
-	if os.Remove(markPath) != nil {
+	if removeMark(markPath) != nil {
 		return PairNone, "", true
 	}
 	if m.Part != "" {
 		return PairPart, m.Part, true
 	}
 	return PairWhole, "", true
+}
+
+// promptHookSeen reports whether the session's user-prompt hook has run since its records began.
+func promptHookSeen(dir string) bool {
+	st, err := os.Lstat(filepath.Join(dir, promptSeen))
+	return err == nil && st.Mode().IsRegular()
 }
 
 // CompactRepeatsResume reports whether a compact start that would say this text is the second half of a resume that already gave
@@ -305,8 +375,10 @@ func Begin(env host.LookupEnv, session, source, leg, text, command string) (Pair
 
 // NoteUserPrompt counts a user prompt of a session against every pair its resumes left open: the first prompt after a resume is the
 // turn the pair belongs to, and a prompt of another turn ends it, so a compaction of a later turn is a compaction of its own and says
-// the text. Without a turn id every prompt counts. It counts holding the session's lock, so it never writes back a mark a compact took
-// or a start ended meanwhile. Best effort: whatever it cannot read or lock is removed, which only makes a hook say more.
+// the text. Without a turn id every prompt counts. It also stamps the session as one whose prompt hook runs (promptSeen), which a compact
+// needs to take a pair. It counts by adding a file beside the mark, never by rewriting the mark, so a prompt that is slow cannot bring
+// back a mark a compact took or a start ended meanwhile. Best effort: whatever it cannot read or lock is ended, which only makes a hook
+// say more.
 func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 	path := slot(env, session, "x")
 	if path == "" {
@@ -316,6 +388,9 @@ func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 	unlock, locked := lockSession(dir, false)
 	if locked {
 		defer unlock()
+		if f, err := os.OpenFile(filepath.Join(dir, promptSeen), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+			_ = f.Close()
+		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -327,27 +402,22 @@ func NoteUserPrompt(env host.LookupEnv, session, turn string) {
 			continue
 		}
 		markPath := filepath.Join(dir, name)
-		m, st, ok := readMark(markPath)
+		m, _, ok := readMark(markPath)
 		if !ok || !locked {
-			_ = os.Remove(markPath)
+			_ = removeMark(markPath)
 			continue
 		}
-		if turn != "" && m.Turn == turn {
-			continue
+		if promptPause != nil {
+			promptPause()
 		}
-		m.Prompts++
-		m.Turn = turn
-		if m.Prompts > 1 {
-			_ = os.Remove(markPath)
-			continue
-		}
-		if writeMark(markPath, m) {
-			_ = os.Chtimes(markPath, st.ModTime(), st.ModTime()) // the window runs from the resume
-		} else {
-			_ = os.Remove(markPath)
+		if !countPrompt(markPath, m.Gen, turn) || promptsOf(markPath, m.Gen) > 1 {
+			_ = removeMark(markPath)
 		}
 	}
 }
+
+// promptPause is a test's place to hold a prompt hook between reading a mark and counting against it.
+var promptPause func()
 
 // StartOf reads the session id and the source out of a SessionStart payload; each is "" when the payload is not an object or the
 // member is absent or not a string. It is for the legs whose text is live state (the provider line, the flag warning), which keep no
