@@ -82,9 +82,13 @@ func spawnDispatchSourcesWith(message string, snapshot func() role.SettingsSnaps
 		return nil, nil
 	}
 	// Each role's prompt decides which source a guarded message carries, so an unusable store or role leaves the managed routing
-	// undecided: the spawn is denied with the store's error (CRW-1119).
-	if err := settings.Err(); err != nil {
-		return nil, err
+	// undecided when a dispatch marker could follow that role's prompt: the spawn is denied with the store's error (CRW-1119). Text
+	// with no marker at its start or behind a blank line has no source whatever any prompt is, so an unusable role stops only its
+	// own routing there.
+	if strings.HasPrefix(rest, "[CRW-DISPATCH:") || strings.Contains(rest, "\n\n[CRW-DISPATCH:") {
+		if err := settings.Err(); err != nil {
+			return nil, err
+		}
 	}
 	type entry struct {
 		role   role.RoleName
