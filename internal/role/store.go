@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -93,8 +94,9 @@ func parseConfig(data []byte) (rawConfig, error) {
 
 // readRaw reads the store. Only a missing store is the empty config. Anything else that cannot be read or parsed is an error: for a
 // read an UnusableSettingsError (CRW-1119; the oracle read it as the empty config), for a write (forWrite) the refusal "cannot update
-// subagent config", so a store nobody can understand is never overwritten. A missing store while the place an earlier reading used
-// holds one is unusable too: the operator's settings would otherwise vanish without a word.
+// subagent config", so a store nobody can understand is never overwritten. A link whose target cannot be read is a store that cannot be
+// read, not a missing one. A missing store while the place an earlier reading used holds one is unusable too, for a write as for a
+// read: the operator's settings would otherwise vanish without a word behind a new store that holds only what was just set.
 func readRaw(env host.LookupEnv, path string, forWrite bool) (rawConfig, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -103,20 +105,43 @@ func readRaw(env host.LookupEnv, path string, forWrite bool) (rawConfig, error) 
 			return raw, nil
 		}
 	}
+	if errors.Is(err, fs.ErrNotExist) {
+		if info, linkErr := os.Lstat(path); linkErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			err = errors.New("the store is a link whose target cannot be read: " + err.Error()) // an existing entry is not an absent store
+		}
+	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		if forWrite {
 			return rawConfig{}, fmt.Errorf("cannot update subagent config: %w", err)
 		}
 		return rawConfig{}, &UnusableSettingsError{Path: path, Reason: err.Error()}
 	}
-	if earlier := storeEarlierPath(env); !forWrite && earlier != "" && earlier != path {
+	if earlier := storeEarlierPath(env); earlier != "" && earlier != path {
 		if _, statErr := os.Stat(earlier); statErr == nil {
-			return rawConfig{}, &UnusableSettingsError{Path: path, Reason: "the store is missing here, but " + earlier +
+			err := &UnusableSettingsError{Path: path, Reason: "the store is missing here, but " + earlier +
 				" holds one from an earlier reading of CRW_HOME or HOME; move it to " + path + " or set CRW_HOME to its directory (nothing reads or moves it automatically)"}
+			if forWrite {
+				return rawConfig{}, fmt.Errorf("cannot update subagent config: %w", err)
+			}
+			return rawConfig{}, err
 		}
 	}
 	empty, _ := parseConfig([]byte("{}"))
 	return empty, nil
+}
+
+// storeDir is the directory that holds the store at path, as raw text like the path itself: the last element is dropped and nothing is
+// cleaned, so a path that climbs through a link keeps the directory the kernel resolves it to. The lock, the temporary file and the
+// publication all use this one directory (filepath.Dir would clean "link/.." away and name another one).
+func storeDir(path string) string {
+	at := strings.LastIndexByte(path, '/')
+	switch {
+	case at < 0:
+		return "."
+	case at == 0:
+		return "/"
+	}
+	return path[:at]
 }
 
 // readSettings is the effective settings of every usable role, the reason each unusable role cannot be used, and the error of a
@@ -197,11 +222,11 @@ func writeRaw(path string, doc *object, rename func(tmp, finalPath string) error
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
+	dir := storeDir(path)
 	if err = os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	f, err := os.CreateTemp(dir, path[strings.LastIndexByte(path, '/')+1:]+".*.tmp")
 	if err != nil {
 		return err
 	}
@@ -290,25 +315,50 @@ func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp
 	return ReadConfig(env)
 }
 
+// ResetReport is what a reset that committed answers: the config (a role that stays unusable is at its default there) and the joined
+// errors of the roles that stay unusable, nil when every role is usable.
+type ResetReport struct {
+	Config   Config
+	Unusable error
+}
+
+// ResetRoleReport is ResetRole for a caller that tells a reset that failed from one that committed while another role stays
+// unusable. The reset is the repair of its own role: it is published whole, and the answer that follows reads the store back leniently, so
+// a role the reset did not touch that cannot be used is reported beside the answer and never turns a committed reset into a
+// failure (CRW-1119). A store that cannot be used at all is still the error.
+func ResetRoleReport(env host.LookupEnv, role RoleName) (ResetReport, error) {
+	return resetRoleReport(env, role, crwdir.Rename, time.Sleep)
+}
+
 // ResetRole removes a role's override, so it inherits again, and returns the effective config; a role the store does not hold
-// writes nothing.
+// writes nothing. Another role that cannot be used does not fail a reset that committed (ResetRoleReport names it).
 func ResetRole(env host.LookupEnv, role RoleName) (Config, error) {
-	return resetRole(env, role, crwdir.Rename, time.Sleep)
+	report, err := ResetRoleReport(env, role)
+	return report.Config, err
 }
 
 // resetRole is ResetRole with the same seams as setRole.
 func resetRole(env host.LookupEnv, role RoleName, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (Config, error) {
+	report, err := resetRoleReport(env, role, rename, sleep)
+	return report.Config, err
+}
+
+func resetRoleReport(env host.LookupEnv, role RoleName, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (ResetReport, error) {
 	path, raw, release, err := open(env, role, sleep)
 	if err != nil {
-		return Config{}, err
+		return ResetReport{}, err
 	}
 	defer release()
 	if raw.roles.remove(string(role)) {
 		if err := writeRaw(path, raw.doc, rename); err != nil {
-			return Config{}, err
+			return ResetReport{}, err
 		}
 	}
-	return ReadConfig(env)
+	s, unusable, err := readSettings(env)
+	if err != nil {
+		return ResetReport{}, err
+	}
+	return ResetReport{Config: Config{Roles: s.Roles}, Unusable: joinUnusable(unusable)}, nil
 }
 
 // SettingsSnapshot is one read of the store: the settings of every usable role, the error of each unusable role, and the error of a

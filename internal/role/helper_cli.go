@@ -236,7 +236,13 @@ func RunHelper(parsed HelperArgs, env host.LookupEnv, nativeHome ...string) Help
 	case "set":
 		cfg, err = SetRole(env, parsed.Role, parsed.Patch)
 	case "reset":
-		cfg, err = ResetRole(env, parsed.Role)
+		var report ResetReport
+		report, err = ResetRoleReport(env, parsed.Role)
+		if err == nil && report.Unusable != nil {
+			// The reset is committed; the other roles that cannot be used are said, not made a failure of it (CRW-1119).
+			return HelperResult{Output: fmt.Sprintf("subagents: reset %s: its override is removed and it inherits again; roles that stay unusable:\n%s", parsed.Role, report.Unusable)}
+		}
+		cfg = report.Config
 	default:
 		return helperCLIFailure(fmt.Sprintf("unknown subcommand '%s'", parsed.Action))
 	}

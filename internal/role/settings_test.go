@@ -75,6 +75,10 @@ func TestSettingsOracleReplay(t *testing.T) {
 				}
 				lastFile = op.File
 				switch {
+				case intent.resetCommitted:
+					if settings, ok := got.(Settings); err != nil || !ok || settings.Unusable[Executor] == "" || settings.Overrides[Explorer] {
+						t.Fatalf("%s: %+v, %v, want the committed reset with the unusable executor named (CRW-1119)", at, got, err)
+					}
 				case intent.unusable:
 					if !errors.As(err, new(*UnusableSettingsError)) {
 						t.Fatalf("%s: %v, want an UnusableSettingsError (CRW-1119)", at, err)
@@ -109,9 +113,9 @@ func TestSettingsOracleReplay(t *testing.T) {
 // settingsIntent is how CRW-1119 changes a recorded op on purpose. The full store of get_global_full, response_get, resolve_full and
 // update_inherit_resets holds an executor in model mode with the model "  ", which the oracle stores and spawns with and the port
 // reads as an unusable role; resolve_malformed resolves a store that is not JSON. A read that meets either is an
-// UnusableSettingsError (a 400 through the response); a reset is still written (it is the repair), and a set while the executor
+// UnusableSettingsError (a 400 through the response); a reset is still written (it is the repair) and answers as a success that names the unusable executor, and a set while the executor
 // is unusable is refused, so the store keeps its bytes from the op before.
-type settingsOpIntent struct{ unusable, status400, keepFile bool }
+type settingsOpIntent struct{ unusable, status400, keepFile, resetCommitted bool }
 
 func settingsIntent(id string, i int) settingsOpIntent {
 	switch {
@@ -120,7 +124,9 @@ func settingsIntent(id string, i int) settingsOpIntent {
 	case id == "response_get" && i == 0:
 		return settingsOpIntent{status400: true}
 	case id == "update_inherit_resets":
-		return settingsOpIntent{unusable: true, keepFile: i >= 2}
+		// A reset that commits answers with the settings and names the executor that stays unusable, where the oracle's answer holds
+		// the executor it stores and spawns with; a reset of a role the store does not hold writes nothing (CRW-1119).
+		return settingsOpIntent{resetCommitted: i < 2, unusable: i >= 2, keepFile: i >= 2}
 	}
 	return settingsOpIntent{}
 }

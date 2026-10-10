@@ -139,6 +139,9 @@ type Settings struct {
 	Scope     ConfigScope           `json:"scope"`
 	Sources   RoleMap[ConfigSource] `json:"sources"`
 	Overrides RoleMap[bool]         `json:"overrides"`
+	// Unusable names each role whose stored routing cannot be used, with the reason, in a settings answer that follows a committed
+	// reset of another role (CRW-1119); it is absent whenever every role is usable.
+	Unusable map[RoleName]string `json:"unusable,omitempty"`
 }
 
 // ParseScope is configScope: nil is the default scope, and every value but "global" is refused (I2).
