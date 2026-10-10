@@ -236,6 +236,11 @@ func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
 	query := resolvedQuery{IndexQueryOptions: opts, repoThreadIDs: indexSameOriginThreadIDs(meta, opts.RepoKey), hasRepoKeyColumn: filesHasColumn(db, "repo_key")}
 	if opts.Cwd != "" && FoldCwdCase() {
 		query.foldedCwds, query.foldedResolved = resolveFoldedCwds(db, opts.Cwd)
+		if !query.foldedResolved {
+			// SQL folds ASCII only, so the stored cwd values the scan's predicate accepts cannot be left to it; with too many of them to
+			// bind (or a list that could not be read) the index does not answer, and the scan, which asks the Go predicate, does.
+			return ChatSearchResult{}, errIndexCwdSet
+		}
 	}
 	var rows []indexRankRow
 	var truncated bool

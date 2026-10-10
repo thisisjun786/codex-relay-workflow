@@ -54,8 +54,9 @@ type resolvedQuery struct {
 	foldedResolved bool
 }
 
-// maxFoldedCwds bounds the stored cwd values bound into one statement; a larger set keeps the SQL predicate.
-const maxFoldedCwds = 10000
+// maxFoldedCwds bounds the stored cwd values bound into one statement; a larger set is not answered by the index (a variable so that a
+// test can lower it).
+var maxFoldedCwds = 10000
 
 // resolveFoldedCwds lists the distinct stored cwd values that CwdMatches accepts for cwd under case folding.
 func resolveFoldedCwds(db *RwDb, cwd string) ([]string, bool) {
@@ -380,5 +381,7 @@ func planHasNUL(plan MatchPlan) bool {
 	}
 	return false
 }
+
+var errIndexCwdSet = errors.New("the stored directories that match the cwd are too many to resolve for the index, which cannot fold their case")
 
 var errIndexNULWord = errors.New("a query word holds a NUL character, which the index cannot search")

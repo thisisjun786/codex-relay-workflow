@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -276,6 +277,29 @@ func TestSweep1125FoldedCwdScopesIndexAndScanAlike(t *testing.T) {
 		}
 		if len(got) != 2 || !strings.Contains(strings.Join(got, ","), "deploy one") || !strings.Contains(strings.Join(got, ","), "deploy two") {
 			t.Errorf("scan=%v: cwd /ü scoped to %q (mode %s), want /Ü/child and /ü", scan, got, r.Mode)
+		}
+	}
+}
+
+// :662 -- a set of stored cwd values too large to bind into one statement is never answered with the ASCII-only SQL predicate: the
+// index does not answer, and the scan, which asks the Go predicate, does.
+func TestSweep1125FoldedCwdSetOverTheBindLimitIsServedByTheScan(t *testing.T) {
+	foldCwdCaseSeam = func() bool { return true }
+	limit := maxFoldedCwds
+	maxFoldedCwds = 2
+	t.Cleanup(func() { foldCwdCaseSeam, maxFoldedCwds = nil, limit })
+	home := sweepIndexHome(t, []string{"/ü/a", "/ü/b", "/Ü/child", "/other"}, []string{"deploy one", "deploy two", "deploy three", "deploy four"})
+	for _, scan := range []bool{true, false} {
+		for _, order := range []ChatOrder{ChatRelevance, ChatRecent} {
+			r := sweepSearch(t, home, "deploy", scan, ChatSearchOptions{Cwd: scanPtr("/ü"), Order: order, ReadOriginUrl: func(string) string { return "" }})
+			var got []string
+			for _, h := range r.Hits {
+				got = append(got, h.Text)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, []string{"deploy one", "deploy three", "deploy two"}) {
+				t.Errorf("scan=%v order=%v: cwd /ü scoped to %q (mode %s), want the three cwds the predicate accepts", scan, order, got, r.Mode)
+			}
 		}
 	}
 }
