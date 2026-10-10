@@ -33,7 +33,8 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 // no context passes context.Background(), which is what WithSessionLock does: its behaviour and its sleep seam are
 // unchanged.
 func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
-	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep, nil)
+	retryDelays, onBusy := lockWaitProbe()
+	return orchestrateInterruptLockWait(ctx, cwd, sessionID, fn, time.Sleep, retryDelays, onBusy)
 }
 
 // orchestrateInterruptLockContext is the acquisition both entries share. retryDelays is a test seam: a
