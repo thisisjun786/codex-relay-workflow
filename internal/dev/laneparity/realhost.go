@@ -21,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // The real-host cells (CRW-1082): the real Codex binary runs whole turns in an isolated home against
@@ -166,6 +168,12 @@ type hostScript struct{ image string }
 func RealHost(o RealHostOptions) (RealHostReport, error) {
 	rep := RealHostReport{Run: NewRunID(), OK: true}
 	var err error
+	// every cell's home is made below the scratch directory: it is never the account's real home
+	if o.Scratch != "" {
+		if err = homeguard.Refuse(o.Scratch); err != nil {
+			return rep, fmt.Errorf("the scratch directory: %w", err)
+		}
+	}
 	if rep.Binary, err = FileDigest(o.CRW); err != nil {
 		return rep, err
 	}
@@ -195,7 +203,7 @@ func RealHost(o RealHostOptions) (RealHostReport, error) {
 	if o.Fault != FaultNone && o.Fault != FaultNoop && o.Fault != FaultDropStdout {
 		return rep, fmt.Errorf("fault %q cannot be injected into a real-host run (choose %s or %s)", o.Fault, FaultNoop, FaultDropStdout)
 	}
-	scratch, err := os.MkdirTemp(o.Scratch, "rh-")
+	scratch, err := makeScratch(o.Scratch, "rh-")
 	if err != nil {
 		return rep, err
 	}

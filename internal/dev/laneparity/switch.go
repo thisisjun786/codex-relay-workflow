@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/hookswitch"
 )
 
@@ -132,7 +133,10 @@ func recordsBelow(root, codexHome string) map[string]bool {
 // The switch goes where the hooks of this step look for it, <CODEX_HOME>/crw/switch.json with
 // CODEX_HOME as the step's environment has it, else $HOME/.codex: a step may name a home of its own
 // (env) or unset CODEX_HOME, and the switch must be there too. Nothing is written outside the case
-// root, and a step that names no home is refused (the account's home is never resolved here). A directory made for it has the mode
+// root, and a step that names no home is refused (the account's home is never resolved here). Nothing is
+// written in the account's real home either, whatever the case root or the step's HOME and CODEX_HOME
+// name (homeguard, CRW-1186): the case root, the runtime link and the switch file are each refused when
+// they are, or resolve into, <passwd home>/.codex, .crw or .local/share/crw-runtime. A directory made for it has the mode
 // the hooks give what they make there (MkdirAll 0700, as every recorded expectation holds it);
 // the undo removes the files, and the directories it made when they are empty again, so the observed
 // tree holds only what the scenario and the hooks left.
@@ -144,6 +148,9 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			}
 		}
 		return "", false
+	}
+	if err := homeguard.Refuse(c.Root); err != nil {
+		return nil, fmt.Errorf("the case root: %w", err)
 	}
 	var undos []func() error
 	undo := func() error {
@@ -165,6 +172,9 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			return fail(fmt.Errorf("the step's HOME %q is not under the case root %s: no runtime is linked there", home, c.Root))
 		}
 		link := filepath.Join(home, runtimeBin)
+		if err := homeguard.RefuseAll(home, link); err != nil {
+			return fail(fmt.Errorf("the runtime link under HOME %q: %w", home, err))
+		}
 		if err := resolvedWithin(c.Root, filepath.Dir(link)); err != nil {
 			return fail(fmt.Errorf("the runtime link under HOME %q: %w", home, err))
 		}
@@ -217,6 +227,9 @@ func (p seedPlan) seed(c *cxccorpus.Case, env []string) (func() error, error) {
 			return fail(fmt.Errorf("the step's Codex home %q is not under the case root %s: nothing is written there", codexHome, c.Root))
 		}
 		path := hookswitch.Path(codexHome)
+		if err := homeguard.RefuseAll(codexHome, path); err != nil {
+			return fail(fmt.Errorf("the switch file under the Codex home %q: %w", codexHome, err))
+		}
 		if err := resolvedWithin(c.Root, filepath.Dir(path)); err != nil {
 			return fail(fmt.Errorf("the switch file under the Codex home %q: %w", codexHome, err))
 		}
@@ -374,6 +387,10 @@ func removeIfExists(path string) error {
 
 // writeSwitch writes the switch document atomically: a temporary file beside it, renamed into place.
 func writeSwitch(path string, s hookswitch.State) error {
+	// the last line of defence: whatever reached here is refused in the account's real home
+	if err := homeguard.Refuse(path); err != nil {
+		return err
+	}
 	doc, err := json.Marshal(s)
 	if err != nil {
 		return err

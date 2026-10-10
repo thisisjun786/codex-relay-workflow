@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
 // Faults the harness can inject to show that a wrong run does not pass. Each one is a way a cell
@@ -139,10 +140,12 @@ func Fire(o FireOptions) (FireReport, error) {
 	}
 	scratch := o.Scratch
 	if scratch == "" {
-		if scratch, err = os.MkdirTemp("", "crw-parity-"); err != nil {
+		if scratch, err = makeScratch("", "crw-parity-"); err != nil {
 			return rep, err
 		}
 		defer os.RemoveAll(scratch)
+	} else if err = homeguard.Refuse(scratch); err != nil {
+		return rep, fmt.Errorf("the scratch directory: %w", err)
 	}
 	in := contracttest.HookFireInput{Root: o.Root, CRW: o.CRW, Plugin: o.Plugin, Declared: declared, Scratch: scratch, Only: o.Only}
 	plan := newSeedPlan(o.Switch, o.CRW, declared)
