@@ -76,8 +76,9 @@ func isHangulOnly(word string) bool {
 
 // KoreanStem is the Korean stem of a word, or false when nothing safe can be trimmed: Hangul-only input, a stem of at least two
 // syllables, and the original is never removed (callers keep it). An ending that would leave a shorter stem is skipped for the next
-// one (집에서는 gives 집에서), and the conjugated 하-verbalizer tail (결정했지, 배포하고) is judged at its leftmost position only
-// (해결했지 gives none).
+// one (집에서는 gives 집에서), and the conjugated 하-verbalizer tail (결정했지, 배포하고) is judged at its leftmost position that
+// leaves a stem: a word that itself begins with 했, 하 or 해 keeps looking (해결했지 and 해결하다 give 해결), and a one-syllable stem is
+// still refused (이해, 오하해하; CRW-1125, known-defects.md :122).
 func KoreanStem(word string) (string, bool) {
 	if !isHangulOnly(word) {
 		return "", false
@@ -90,6 +91,9 @@ func KoreanStem(word string) (string, bool) {
 	rs := []rune(word)
 	for i := max(len(rs)-4, 0); i < len(rs); i++ { // HA_VERB_TAIL: 했|하|해 followed by at most three syllables
 		if r := rs[i]; r == '했' || r == '하' || r == '해' {
+			if i == 0 {
+				continue // a word that begins with the syllable has no stem to keep: the tail is the next 했|하|해, if any (해결하다 gives 해결)
+			}
 			if i >= minStemSyllables {
 				return string(rs[:i]), true
 			}

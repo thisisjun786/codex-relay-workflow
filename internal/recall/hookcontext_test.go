@@ -167,6 +167,9 @@ func TestHookContextOracle(t *testing.T) {
 				}
 				want = replaced.Port
 			}
+			if want := hookContextRead[any](t, want); !reflect.DeepEqual(canon(t, got), want) {
+				portFixedDump("hookcontext", fmt.Sprint(i), map[string]any{"row": i, "kind": row.Kind, "input": json.RawMessage(row.Input), "oracle": json.RawMessage(row.Out), "port": canon(t, got)})
+			}
 			hookContextCompare(t, got, want)
 		})
 	}

@@ -4,7 +4,6 @@ package recall
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"time"
 )
@@ -29,17 +28,26 @@ func SearchChat(query string, opts ChatSearchOptions, clock ...time.Time) (ChatS
 	}
 	shared := chatScanShared{
 		Home: home, Days: chatSearchNumber(opts.Days, DefaultDays),
-		Limit:    math.Min(math.Max(chatSearchNumber(opts.Limit, DefaultLimit), 1), MaxLimit),
-		ContextN: math.Max(chatSearchNumber(opts.Context, 0), 0),
+		Limit:    chatSearchNumber(opts.Limit, DefaultLimit),
+		ContextN: chatSearchNumber(opts.Context, 0),
 		Plan:     ChatMatchPlan(query, opts.Any, opts.Synonyms), Source: RolloutMain,
 	}
 	if opts.Source != nil {
 		shared.Source = *opts.Source
 	}
-	// The entry computes this even for empty plans and forced scans, before git.
+	// The entry judges the window and the numbers for every query, empty plans and forced scans included, before git
+	// (known-defects.md :577, :578, :576, :781).
 	cutoff, err := chatScanCutoff(now(), shared.Days)
 	if err != nil {
 		return ChatSearchResult{}, err
+	}
+	if shared, err = normalizeChatScanShared(shared); err != nil {
+		return ChatSearchResult{}, err
+	}
+	if opts.NowMs != nil {
+		if err = checkFiniteNowMs(*opts.NowMs); err != nil {
+			return ChatSearchResult{}, err
+		}
 	}
 	if cwd := scanString(opts.Cwd); cwd != "" {
 		shared.RepoKey = repoKeyForCwd(cwd, opts.ReadOriginUrl)
@@ -67,6 +75,9 @@ func chatSearchNumber(value *float64, fallback float64) float64 {
 }
 
 func chatSearchViaIndex(opts ChatSearchOptions, shared chatScanShared, cutoff string, now func() time.Time) (result ChatSearchResult, err error) {
+	if planHasNUL(shared.Plan) {
+		return ChatSearchResult{}, errIndexNULWord // before the index is opened or refreshed: the scan serves it
+	}
 	started := now().UnixMilli()
 	path := ""
 	if opts.IndexPath != nil {

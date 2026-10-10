@@ -4,9 +4,9 @@ package recall
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,8 +42,15 @@ func Run(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return recallCLIMemoryRequeue(args[2:], stdout, stderr)
 		}
 	}
-	fmt.Fprintln(stdout, Usage())
-	return 0
+	// The usage with a success is for asking: no command, `help`, `/?`, and a group named without its command (`chat`, `memory help`).
+	if len(args) == 0 || args[0] == "help" || args[0] == "/?" || (args[0] == "chat" || args[0] == "memory") && (len(args) == 1 || args[1] == "help" || args[1] == "/?") {
+		fmt.Fprintln(stdout, Usage())
+		return 0
+	}
+	// A command this CLI does not have is an error, not the usage with a success (CRW-1131, known-defects.md :882).
+	given := strings.Join(args[:min(len(args), 2)], " ")
+	fmt.Fprintf(stderr, "unknown recall command: %s (the commands are chat search, chat index, memory search, memory status and memory requeue; --help prints the usage)\n", given)
+	return 1
 }
 
 func recallCLIFail(stderr io.Writer, err error) int { fmt.Fprintln(stderr, err); return 1 }
@@ -83,6 +90,12 @@ func recallCLIChatSearch(args []string, stdout, stderr io.Writer, now time.Time)
 	parsed, home, err := recallCLIFlags(args)
 	if err != nil {
 		return recallCLIFail(stderr, err)
+	}
+	// A days window that reaches no date is a flag error, before the query, the home or the index is looked at.
+	if days := NumFlag(parsed.Values, "days"); days != nil {
+		if _, err := chatScanCutoff(now, *days); err != nil {
+			return recallCLIFail(stderr, err)
+		}
 	}
 	query := text.Trim(strings.Join(parsed.Positionals, " "))
 	if query == "" {
@@ -235,7 +248,12 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}
 	fail := func(err error) int { return recallCLIFail(stderr, fmt.Errorf("chat index failed: %w", err)) }
-	statusOnly := recallCLIBool(v, "status") && !recallCLIBool(v, "rebuild")
+	if recallCLIBool(v, "status") && recallCLIBool(v, "rebuild") {
+		// --status reads and never writes; --rebuild empties and re-ingests the index. Asked together they would write under a flag that
+		// promises not to (known-defects.md :885).
+		return recallCLIFail(stderr, errors.New("--status and --rebuild conflict: --status never writes, --rebuild rewrites the index"))
+	}
+	statusOnly := recallCLIBool(v, "status")
 	verify := recallCLIBool(v, "verify")
 	var db *RwDb
 	if statusOnly {
@@ -309,35 +327,50 @@ func recallRebuildClearIndex(db *RwDb) error {
 	return nil
 }
 
-// Memory management preserves Node parseArgs(strict:false), unlike searches.
-func recallCLIParseLax(args []string, stringKeys string) map[string]any {
+// recallCLIParseStrict is the parser of the memory management verbs: only the flags the verb has, a value for every flag that takes
+// one, no bare word. The oracle read them with parseArgs(strict:false), which ignored unknown flags, took a dash-leading word as a
+// value and read a missing value as true (known-defects.md :883).
+func recallCLIParseStrict(args, bools, strs []string) (map[string]any, error) {
 	values := map[string]any{}
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
+		raw := args[i]
+		if raw == "--" {
+			if i+1 < len(args) {
+				return nil, fmt.Errorf("unexpected argument %s", flagJSONQuote(args[i+1]))
+			}
 			break
 		}
-		if len(arg) < 2 || arg[0] != '-' {
-			continue
+		if !strings.HasPrefix(raw, "-") || raw == "-" {
+			return nil, fmt.Errorf("unexpected argument %s", flagJSONQuote(raw))
 		}
-		if !strings.HasPrefix(arg, "--") {
-			for _, key := range arg[1:] {
-				values[string(key)] = true
+		if !strings.HasPrefix(raw, "--") {
+			return nil, unknownFlagError(raw)
+		}
+		name, value, attached := strings.Cut(raw[2:], "=")
+		switch {
+		case slices.Contains(bools, name):
+			if attached {
+				//lint:ignore ST1005 Preserve the exact Node parseArgs diagnostic.
+				return nil, fmt.Errorf("Option '--%s' does not take an argument", name)
 			}
-			continue
-		}
-		key, value, equal := strings.Cut(arg[2:], "=")
-		if equal {
-			values[key] = value
-			continue
-		}
-		values[key] = true
-		if slices.Contains(strings.Fields(stringKeys), key) && i+1 < len(args) {
-			i++
-			values[key] = args[i]
+			values[name] = true
+		case slices.Contains(strs, name):
+			if !attached {
+				if i+1 >= len(args) {
+					return nil, missingFlagError(name)
+				}
+				i++
+				value = args[i]
+				if value != "-" && strings.HasPrefix(value, "-") {
+					return nil, ambiguousFlagError("--"+name, name)
+				}
+			}
+			values[name] = value
+		default:
+			return nil, unknownFlagError("--" + name)
 		}
 	}
-	return values
+	return values, nil
 }
 func recallCLILaxHome(v map[string]any) (string, error) {
 	if s := recallCLIString(v, "home"); s != nil && *s != "" {
@@ -345,31 +378,30 @@ func recallCLILaxHome(v map[string]any) (string, error) {
 	}
 	return codexHome()
 }
-func recallCLIParseInt(v any) *float64 {
-	s, ok := v.(string)
+
+// recallCLIPositiveInt reads the whole value of a flag as a whole number of at least one: `2tail`, `1.5`, `0x10` and `0` are refused
+// (known-defects.md :886).
+func recallCLIPositiveInt(name string, v any) (*float64, error) {
+	raw, ok := v.(string)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	s = text.Trim(s)
-	end := 0
-	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
-		end++
+	s := text.Trim(raw)
+	digits := strings.TrimPrefix(s, "+")
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return nil, fmt.Errorf("--%s must be a whole number of at least 1: got %s", name, flagJSONQuote(raw))
 	}
-	start := end
-	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-		end++
+	n, err := strconv.ParseFloat(digits, 64)
+	if err != nil || n < 1 || n > 1<<53 {
+		return nil, fmt.Errorf("--%s must be a whole number of at least 1: got %s", name, flagJSONQuote(raw))
 	}
-	if start == end {
-		return nil
-	}
-	n, err := strconv.ParseFloat(s[:end], 64)
-	if err != nil || math.IsInf(n, 0) {
-		return nil
-	}
-	return &n
+	return &n, nil
 }
 func recallCLIMemoryStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
-	v := recallCLIParseLax(args, "home")
+	v, err := recallCLIParseStrict(args, []string{"json"}, []string{"home"})
+	if err != nil {
+		return recallCLIFail(stderr, err)
+	}
 	home, err := recallCLILaxHome(v)
 	if err != nil {
 		return recallCLIFail(stderr, err)
@@ -388,7 +420,18 @@ func recallCLIMemoryStatus(args []string, stdout, stderr io.Writer, now time.Tim
 	return 0
 }
 func recallCLIMemoryRequeue(args []string, stdout, stderr io.Writer) int {
-	v := recallCLIParseLax(args, "home kind limit retries")
+	v, err := recallCLIParseStrict(args, []string{"apply", "include-context-window", "json"}, []string{"home", "kind", "limit", "retries"})
+	if err != nil {
+		return recallCLIFail(stderr, err)
+	}
+	limit, err := recallCLIPositiveInt("limit", v["limit"])
+	if err != nil {
+		return recallCLIFail(stderr, err)
+	}
+	retries, err := recallCLIPositiveInt("retries", v["retries"])
+	if err != nil {
+		return recallCLIFail(stderr, err)
+	}
 	home, err := recallCLILaxHome(v)
 	if err != nil {
 		return recallCLIFail(stderr, err)
@@ -397,7 +440,7 @@ func recallCLIMemoryRequeue(args []string, stdout, stderr io.Writer) int {
 	if s := recallCLIString(v, "kind"); s != nil {
 		kind = *s
 	}
-	result := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: recallCLIBool(v, "apply"), IncludeContextWindow: recallCLIBool(v, "include-context-window"), Kind: kind, Limit: recallCLIParseInt(v["limit"]), Retries: recallCLIParseInt(v["retries"])})
+	result := RequeueExhaustedMemoryJobs(home, RequeueOptions{Apply: recallCLIBool(v, "apply"), IncludeContextWindow: recallCLIBool(v, "include-context-window"), Kind: kind, Limit: limit, Retries: retries})
 	if recallCLIBool(v, "json") {
 		if code := recallCLIJSON(stdout, stderr, result); code != 0 {
 			return code

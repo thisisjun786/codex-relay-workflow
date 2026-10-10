@@ -1,0 +1,211 @@
+{
+ "any": {
+  "out": {
+   "hits": [
+    {
+     "origin": "stage1",
+     "kind": "stage1",
+     "relpath": "stage1_outputs/one",
+     "threadId": "one",
+     "updatedAt": "2026-07-06T00:00:00.000Z",
+     "excerpt": "quagga\n",
+     "startLine": null,
+     "cwd": null,
+     "score": 3.5
+    },
+    {
+     "origin": "stage1",
+     "kind": "stage1",
+     "relpath": "stage1_outputs/two",
+     "threadId": "two",
+     "updatedAt": "2026-07-06T00:00:00.000Z",
+     "excerpt": "wombat\n",
+     "startLine": null,
+     "cwd": null,
+     "score": 3.5
+    }
+   ],
+   "warnings": [],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "unicode-like-kept": {
+  "out": {
+   "hits": [
+    {
+     "origin": "stage1",
+     "kind": "stage1",
+     "relpath": "stage1_outputs/upper",
+     "threadId": "upper",
+     "updatedAt": "2026-07-06T00:00:00.000Z",
+     "excerpt": "Ü\n",
+     "startLine": null,
+     "cwd": null,
+     "score": 3.5
+    }
+   ],
+   "warnings": [],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "null-empty-id-crlf": {
+  "out": {
+   "hits": [
+    {
+     "origin": "stage1",
+     "kind": "stage1",
+     "relpath": "stage1_outputs/unknown-1",
+     "threadId": null,
+     "updatedAt": "2026-07-06T00:00:00.000Z",
+     "excerpt": "quagga\n",
+     "startLine": null,
+     "cwd": null,
+     "score": 3.5
+    },
+    {
+     "origin": "stage1",
+     "kind": "stage1",
+     "relpath": "stage1_outputs/unknown-2",
+     "threadId": null,
+     "updatedAt": null,
+     "excerpt": "quagga\r\nnotes\n",
+     "startLine": null,
+     "cwd": null,
+     "score": 2
+    }
+   ],
+   "warnings": [],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "zero-cutoff-kept": {
+  "out": {
+   "hits": [],
+   "warnings": [],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "db-error-repeated": {
+  "out": {
+   "hits": [],
+   "warnings": [
+    "memories db unreadable (no such table: stage1_outputs)"
+   ],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "scope-prose": {
+  "out": {
+   "hits": [],
+   "warnings": [
+    "state db not found (metadata enrichment off)",
+    "no matches inside --cwd-only /proj/here — retry with --cwd to rank it first instead"
+   ],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "fallback-opts": {
+  "out": {
+   "hits": [
+    {
+     "origin": "chat",
+     "kind": "chat",
+     "relpath": "session.jsonl",
+     "threadId": "chat-one",
+     "updatedAt": "2026-07-05T00:00:00.000Z",
+     "excerpt": "pangolin migration",
+     "startLine": null,
+     "cwd": "/proj/here",
+     "score": 0.3585854963958601
+    }
+   ],
+   "warnings": [
+    "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs included)"
+   ],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "fallback-threshold-replaces": {
+  "out": {
+   "hits": [
+    {
+     "origin": "file",
+     "kind": "handbook",
+     "relpath": "MEMORY.md",
+     "threadId": null,
+     "updatedAt": "2026-07-06T00:00:00.000Z",
+     "excerpt": "pangolin thin",
+     "startLine": 1,
+     "cwd": null,
+     "score": 5
+    },
+    {
+     "origin": "chat",
+     "kind": "chat",
+     "relpath": "session.jsonl",
+     "threadId": "chat-one",
+     "updatedAt": "2026-07-05T00:00:00.000Z",
+     "excerpt": "pangolin migration",
+     "startLine": null,
+     "cwd": "/proj/here",
+     "score": 0.3585854963958601
+    }
+   ],
+   "warnings": [
+    "only 1 memory artifact(s) matched, at or below the chat fallback threshold 2 — 1 raw session message(s) added after them (tool logs excluded)"
+   ],
+   "scannedFiles": 1,
+   "elapsedMs": 0
+  }
+ },
+ "fallback-ignores-chat-warning": {
+  "out": {
+   "hits": [
+    {
+     "origin": "chat",
+     "kind": "chat",
+     "relpath": "session.jsonl",
+     "threadId": "chat-one",
+     "updatedAt": "2026-07-05T00:00:00.000Z",
+     "excerpt": "pangolin migration",
+     "startLine": null,
+     "cwd": "/proj/here",
+     "score": 0.3585854963958601
+    }
+   ],
+   "warnings": [
+    "child warning",
+    "no memory artifacts matched — 1 raw session message(s) shown instead (tool logs excluded)"
+   ],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ },
+ "nonstring-id": {
+  "out": {
+   "hits": [
+    {
+     "origin": "stage1",
+     "kind": "stage1",
+     "relpath": "stage1_outputs/unknown-1",
+     "threadId": null,
+     "updatedAt": "2026-07-06T00:00:00.000Z",
+     "excerpt": "quagga\n",
+     "startLine": null,
+     "cwd": null,
+     "score": 3.5
+    }
+   ],
+   "warnings": [],
+   "scannedFiles": 0,
+   "elapsedMs": 0
+  }
+ }
+}

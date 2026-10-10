@@ -1,6 +1,7 @@
 package recall
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -67,8 +68,17 @@ func TestOracle(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[string]int{}
+	fixed, used := oracleQueryWordsPortFixed(t), map[string]bool{}
 	for _, c := range cases {
 		seen[c.Fn]++
+		if out, ok := fixed[oracleCaseKey(t, c)]; ok {
+			used[oracleCaseKey(t, c)] = true
+			var recorded, answer any
+			if json.Unmarshal(c.Out, &recorded) != nil || json.Unmarshal(out, &answer) != nil || reflect.DeepEqual(recorded, answer) {
+				t.Errorf("%s%s: the port-fixed entry is the recorded answer, not another one", c.Fn, c.In)
+			}
+			c.Out = out // port: fixed (CRW-1125, docs/port-cxc/known-defects/CRW-1125.md): the port's answer in place of the recorded oracle's
+		}
 		str, words := func() string { return arg[string](t, c, 0) }, func() []string { return arg[[]string](t, c, 0) }
 		var got any
 		switch c.Fn {
@@ -154,7 +164,46 @@ func TestOracle(t *testing.T) {
 			t.Errorf("%s%s: got %v, oracle %v", c.Fn, c.In, g, want)
 		}
 	}
+	if !t.Failed() {
+		for key := range fixed {
+			if !used[key] {
+				t.Errorf("testdata/oracle-query-words-port-fixed.json: %s is no case of the recorded file", key)
+			}
+		}
+	}
 	if len(seen) != 18 || len(cases) < 3000 {
 		t.Errorf("the oracle file holds %d cases of %d functions, want 18 functions and 3000 cases or more", len(cases), len(seen))
 	}
+}
+
+func oracleCaseKey(t *testing.T, c oracleCase) string {
+	t.Helper()
+	in, err := json.Marshal(c.In)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, in); err != nil {
+		t.Fatal(err)
+	}
+	return c.Fn + compact.String()
+}
+
+// oracleQueryWordsPortFixed reads testdata/oracle-query-words-port-fixed.json: the cases whose answer the port changed on purpose.
+// Every one must be a case of the recorded file with another answer, so a stale entry fails here.
+func oracleQueryWordsPortFixed(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "oracle-query-words-port-fixed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []oracleCase
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]json.RawMessage{}
+	for _, r := range rows {
+		out[oracleCaseKey(t, r)] = r.Out
+	}
+	return out
 }

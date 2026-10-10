@@ -57,7 +57,22 @@ func TestMemoryStage1Oracle(t *testing.T) {
 	if len(cases) != 46 {
 		t.Fatalf("recorded %d cases, want 46", len(cases))
 	}
+	fixes := portFixed(t, "memorystage1")
 	for _, c := range cases {
+		if fix, ok := fixes.lookup(c.Name); ok {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's answer in place of the recorded one.
+			var fixed struct {
+				Out   MemorySearchResult
+				Calls []ChatSearchOptions
+			}
+			if err := json.Unmarshal(fix, &fixed); err != nil {
+				t.Fatal(err)
+			}
+			c.Out = fixed.Out
+			if fixed.Calls != nil {
+				c.Calls = fixed.Calls
+			}
+		}
 		if c.Name == "scope-presence-blocks-relax" {
 			// port: fixed (docs/port-cxc/known-defects/CRW-1087.md): TestMemoryStage1PresenceIsCountedInScope.
 			continue
@@ -118,17 +133,33 @@ func TestMemoryStage1Oracle(t *testing.T) {
 				}
 			}
 			got := memoryStage1Result(t, c.Query, c.Options)
+			dump := func() {
+				answer := map[string]any{"out": got}
+				if !reflect.DeepEqual(canon(t, calls), canon(t, c.Calls)) {
+					answer["calls"] = calls
+				}
+				portFixedDump("memorystage1", c.Name, answer)
+			}
 			if len(got.Hits) != len(c.Out.Hits) {
+				dump()
 				t.Fatalf("hits %d, want %d: %+v", len(got.Hits), len(c.Out.Hits), got)
 			}
+			scores := make([]float64, len(got.Hits))
 			for i := range got.Hits {
-				memoryFloatEqual(t, got.Hits[i].Score, c.Out.Hits[i].Score)
-				got.Hits[i].Score = c.Out.Hits[i].Score
+				scores[i] = got.Hits[i].Score
+				if d := got.Hits[i].Score - c.Out.Hits[i].Score; d <= 1e-9 && d >= -1e-9 {
+					got.Hits[i].Score = c.Out.Hits[i].Score
+				}
 			}
 			if !reflect.DeepEqual(got, c.Out) {
+				for i := range got.Hits {
+					got.Hits[i].Score = scores[i]
+				}
+				dump()
 				t.Fatalf("got %+v\nwant %+v", got, c.Out)
 			}
 			if !reflect.DeepEqual(canon(t, calls), canon(t, c.Calls)) {
+				dump()
 				t.Fatalf("chat options got %+v, want %+v", calls, c.Calls)
 			}
 			for _, call := range calls {
@@ -188,7 +219,9 @@ func TestMemoryStage1NonfiniteFallback(t *testing.T) {
 		if threshold == -1 {
 			want = 0
 		}
-		if calls != want || len(r.Hits) != 1 || want == 1 && r.Hits[0].Origin != "chat" {
+		// The chat message is added after the memory hit (CRW-1128, known-defects.md :818), not in its place.
+		wantHits := 1 + want
+		if calls != want || len(r.Hits) != wantHits || want == 1 && (r.Hits[0].Origin != "file" || r.Hits[1].Origin != "chat") {
 			t.Fatalf("threshold %v: calls %d, result %+v", threshold, calls, r)
 		}
 	}

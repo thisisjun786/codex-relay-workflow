@@ -65,7 +65,23 @@ func TestMemoryRequeueOracle(t *testing.T) {
 	if len(oracle.Cases) != 44 || !reflect.DeepEqual(TransientCauses(), oracle.Transient) {
 		t.Fatal("incomplete oracle grid")
 	}
+	fixes := portFixed(t, "memoryrequeue")
 	for _, c := range oracle.Cases {
+		if fix, ok := fixes.lookup(c.ID); ok {
+			// port: fixed (docs/port-cxc/known-defects/CRW-1131.md): the port's answer in place of the recorded one.
+			var fixed struct {
+				Result json.RawMessage
+				Text   string
+				Rows   []map[string]any
+			}
+			if err := json.Unmarshal(fix, &fixed); err != nil {
+				t.Fatal(err)
+			}
+			c.Result, c.Text = fixed.Result, fixed.Text
+			if fixed.Rows != nil {
+				c.Rows = fixed.Rows
+			}
+		}
 		t.Run(c.ID, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("CRW_HOME", t.TempDir())
@@ -90,10 +106,14 @@ func TestMemoryRequeueOracle(t *testing.T) {
 			if err := json.Unmarshal(c.Result, &want); err != nil {
 				t.Fatal(err)
 			}
+			// answer is what the replay would have to record for this case, to regenerate the port-fixed file.
+			answer := map[string]any{"result": json.RawMessage(strings.ReplaceAll(string(got), home, "<HOME>")), "text": strings.ReplaceAll(FormatRequeue(r), home, "<HOME>")}
 			if !reflect.DeepEqual(actual, want) {
+				portFixedDump("memoryrequeue", c.ID, answer)
 				t.Fatalf("result: got %s oracle %s", got, c.Result)
 			}
 			if text := strings.ReplaceAll(FormatRequeue(r), home, "<HOME>"); text != c.Text {
+				portFixedDump("memoryrequeue", c.ID, answer)
 				t.Fatalf("text: got %q oracle %q", text, c.Text)
 			}
 			if !r.Applied && !reflect.DeepEqual(memoryStatusFiles(t, home), before) {
@@ -127,6 +147,8 @@ func TestMemoryRequeueOracle(t *testing.T) {
 				}
 			}
 			if !reflect.DeepEqual(rows, c.Rows) {
+				answer["rows"] = rows
+				portFixedDump("memoryrequeue", c.ID, answer)
 				t.Fatalf("post-state: got %v oracle %v", rows, c.Rows)
 			}
 		})

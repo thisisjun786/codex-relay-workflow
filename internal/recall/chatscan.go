@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -101,6 +102,24 @@ type chatScanShared struct {
 	RepoKey               string
 }
 
+// maxChatContext caps the neighbours around a hit: an infinite window is every visible entry up to this many on each side.
+const maxChatContext = 200
+
+// normalizeChatScanShared makes the numbers of a search whole and bounded before anything is read: a limit that is no number cannot
+// switch the cap off, a fractional limit or window is whole entries, an infinite window is capped (CRW-1125, known-defects.md :576,
+// :578). Every search path takes its numbers from here.
+func normalizeChatScanShared(shared chatScanShared) (chatScanShared, error) {
+	if math.IsNaN(shared.Limit) || math.IsInf(shared.Limit, 0) {
+		return shared, fmt.Errorf("--limit %s is not a finite number", memoryNumberText(shared.Limit))
+	}
+	if math.IsNaN(shared.ContextN) {
+		return shared, errors.New("--context NaN is not a number")
+	}
+	shared.Limit = math.Min(math.Max(math.Floor(shared.Limit), 1), MaxLimit)
+	shared.ContextN = math.Min(math.Max(math.Floor(shared.ContextN), 0), maxChatContext)
+	return shared, nil
+}
+
 func groupsForChat(raw []string, synonyms bool) []QueryGroup {
 	if synonyms {
 		return RelaxQueryGroups(ExpandQueryWords(raw))
@@ -134,6 +153,15 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 		result.ElapsedMs = now().UnixMilli() - started
 		return result, nil
 	}
+	// The window and the numbers are judged before the plan, so an empty query is refused like any other (known-defects.md :577, :781).
+	cutoff, err := chatScanCutoff(now(), shared.Days)
+	if err != nil {
+		return ChatSearchResult{}, err
+	}
+	shared, err = normalizeChatScanShared(shared)
+	if err != nil {
+		return ChatSearchResult{}, err
+	}
 	if PlanIsEmpty(shared.Plan) {
 		result.Warnings = append(result.Warnings, "empty query")
 		return finish()
@@ -146,10 +174,6 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 	if threadMeta.Warning != "" {
 		result.Warnings = append(result.Warnings, threadMeta.Warning)
 	}
-	cutoff, err := chatScanCutoff(now(), shared.Days)
-	if err != nil {
-		return ChatSearchResult{}, err
-	}
 	files, unread, err := listRolloutFiles(shared.Home, shared.Days, now())
 	if err != nil {
 		return ChatSearchResult{}, err
@@ -159,12 +183,11 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 	}
 	result.TotalFiles = len(files)
 	includeTools := opts.IncludeTools == nil || *opts.IncludeTools
+	// The limit is applied to the matches, newest first: every eligible match of every file is seen, and the newest `Limit` of them are
+	// kept (equal timestamps keep the order found). The result is truncated exactly when a further eligible match was seen
+	// (known-defects.md :574, :575).
 	truncated := false
 	for _, file := range files {
-		if float64(len(result.Hits)) >= shared.Limit {
-			truncated = true
-			break
-		}
 		meta, err := ReadRolloutMeta(file.Path)
 		if err != nil {
 			// One file that cannot be read is skipped, with a warning; it does not end the search.
@@ -200,10 +223,6 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 		}
 		fileMatched := false
 		for i, entry := range visible {
-			if float64(len(result.Hits)) >= shared.Limit {
-				truncated = true
-				break
-			}
 			if role := scanString(opts.Role); role != "" && entry.Role != role {
 				continue
 			}
@@ -214,6 +233,12 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 				continue
 			}
 			fileMatched = true
+			// Where the match ranks among those kept: after every hit that is as new, before the first older one.
+			at := sort.Search(len(result.Hits), func(k int) bool { return rolloutCompare(result.Hits[k].TS, entry.TS) < 0 })
+			if float64(at) >= shared.Limit {
+				truncated = true // newer matches fill the limit: this one is a further eligible match that is not kept
+				continue
+			}
 			hit := ChatHit{TS: entry.TS, Role: entry.Role, Text: entry.Text, MatchField: entry.MatchField,
 				ThreadID: meta.ThreadID, Cwd: meta.Cwd, Source: meta.Source, File: file.Path, Context: []ChatContextEntry{}}
 			if id := scanString(meta.ThreadID); id != "" {
@@ -233,7 +258,11 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 					return ChatSearchResult{}, err
 				}
 			}
-			result.Hits = append(result.Hits, hit)
+			result.Hits = slices.Insert(result.Hits, at, hit)
+			if float64(len(result.Hits)) > shared.Limit {
+				result.Hits = result.Hits[:len(result.Hits)-1] // the oldest kept match gives way
+				truncated = true
+			}
 		}
 		if fileMatched {
 			result.MatchedFiles++
@@ -242,8 +271,6 @@ func searchViaScan(_ string, opts ChatSearchOptions, shared chatScanShared, cloc
 	if truncated {
 		result.Warnings = append(result.Warnings, "truncated at limit "+strconv.FormatFloat(shared.Limit, 'f', -1, 64)+" — raise --limit or narrow the query")
 	}
-	// Retain the oracle's cap-before-sort behavior and stable ties.
-	sort.SliceStable(result.Hits, func(i, j int) bool { return rolloutCompare(result.Hits[i].TS, result.Hits[j].TS) > 0 })
 	return finish()
 }
 
@@ -275,8 +302,7 @@ func chatScanCutoff(now time.Time, days float64) (string, error) {
 	}
 	ms := float64(now.UnixMilli()) - days*86_400_000
 	if math.IsNaN(ms) || math.IsInf(ms, 0) || math.Abs(ms) > 8_640_000_000_000_000 {
-		//lint:ignore ST1005 Exact JavaScript RangeError message.
-		return "", errors.New("Invalid time value")
+		return "", fmt.Errorf("--days %s is out of range: no date lies that many days before now", memoryNumberText(days))
 	}
 	d := time.UnixMilli(int64(math.Trunc(ms))).UTC()
 	if d.Year() < 0 || d.Year() > 9999 {

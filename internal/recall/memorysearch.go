@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -80,11 +82,78 @@ func memorySearchScopeAdjust(scope *CwdScope, hitCwd *string, lowerText, hitRepo
 		return true, CwdBoost
 	}
 	for _, prefix := range scope.lowerPrefixes {
-		if strings.Contains(lowerText, prefix) {
+		if mentionsPath(lowerText, prefix) {
 			return true, CwdBoost / 2
 		}
 	}
 	return !scope.only, 0
+}
+
+// isPathRune is a character that continues a path name; a mention of a path ends before one that is not. A combining mark continues
+// the name it follows: /proj/here and /proj/here with an accent on its last letter are two directories (known-defects.md :762).
+func isPathRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || strings.ContainsRune("_-.~%+@$#/\\", r)
+}
+
+// mentionsPath reports whether lowerText names the path prefix as a whole path: the mention does not start inside a longer path, and
+// it ends at the end of the text, at a separator (the path's own subpaths), or at a character that cannot continue a name, so
+// /proj/here-adjacent and /x/proj/here are not /proj/here, while "/proj/here." at the end of a sentence is (known-defects.md :762).
+func mentionsPath(lowerText, prefix string) bool {
+	if prefix == "" {
+		// The root directory normalizes to nothing and contains every path, so every text is inside it, as the oracle's
+		// includes("") answers (known-defects.md :762).
+		return true
+	}
+	for from := 0; from <= len(lowerText); {
+		i := strings.Index(lowerText[from:], prefix)
+		if i < 0 {
+			return false
+		}
+		start, end := from+i, from+i+len(prefix)
+		from = start + 1
+		before, _ := utf8.DecodeLastRuneInString(lowerText[:start])
+		if start > 0 && isPathRune(before) {
+			continue
+		}
+		if quoted, closed := quotedPath(lowerText, start, before); closed {
+			// A quoted path is the text to its closing quote, spaces included: it is this directory, or inside it.
+			if quoted == prefix || strings.HasPrefix(quoted, prefix) && (strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") ||
+				quoted[len(prefix)] == '/' || quoted[len(prefix)] == '\\') {
+				return true
+			}
+			continue
+		}
+		if end == len(lowerText) {
+			return true
+		}
+		next, size := utf8.DecodeRuneInString(lowerText[end:])
+		switch {
+		case next == '/' || next == '\\':
+			return true
+		case next == '.':
+			// A dot ends a sentence when nothing that continues a name follows it.
+			if after, _ := utf8.DecodeRuneInString(lowerText[end+size:]); end+size >= len(lowerText) || !isPathRune(after) {
+				return true
+			}
+		case !isPathRune(next):
+			return true
+		}
+	}
+	return false
+}
+
+// quotedPath is the text from start to the quote that closes the one just before it, on the same line; closed is false when the path is
+// not quoted or the quote is never closed.
+func quotedPath(lowerText string, start int, before rune) (quoted string, closed bool) {
+	if start == 0 || before != '"' && before != '\'' && before != '`' {
+		return "", false
+	}
+	rest := lowerText[start:]
+	end := strings.IndexRune(rest, before)
+	if end < 0 || strings.ContainsAny(rest[:end], "\r\n") {
+		return "", false
+	}
+	return rest[:end], true
 }
 
 type memorySearchState struct {
@@ -122,7 +191,7 @@ func (s *memorySearchState) memorySearchCollectFiles(active []QueryGroup, tally 
 			continue
 		}
 		stamp := float64(info.ModTime().Unix())*1000 + float64(info.ModTime().Nanosecond())/1e6
-		if s.cutoffMs != nil && *s.cutoffMs != 0 && stamp < *s.cutoffMs {
+		if s.cutoffMs != nil && stamp < *s.cutoffMs { // a cutoff of exactly zero still filters (known-defects.md :763)
 			continue
 		}
 		s.scannedFiles++
@@ -226,6 +295,9 @@ func SearchMemory(query string, opts MemorySearchOptions) (MemorySearchResult, e
 		days = *opts.Days
 	}
 	if opts.NowMs != nil {
+		if err := checkFiniteNowMs(*opts.NowMs); err != nil {
+			return MemorySearchResult{}, err
+		}
 		nowMs = *opts.NowMs
 	}
 	raw := SplitQueryWordsRaw(query)

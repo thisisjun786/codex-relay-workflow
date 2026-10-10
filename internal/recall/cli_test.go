@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -153,6 +154,17 @@ func TestRecallCLIHygiene(t *testing.T) {
 	})
 }
 
+// recallCLIOraclePortFixed are the rows of testdata/cli/oracle.json by index whose answer the port changed on purpose (CRW-1131): the exit
+// code and the standard error the port answers with, and no standard output.
+var recallCLIOraclePortFixed = map[int]struct {
+	code   int
+	stderr string
+}{
+	20: {1, "Option '--json' does not take an argument\n"},
+	21: {1, "--limit must be a whole number of at least 1: got \"2tail\"\n"},
+	24: {1, "unknown recall command: nonsense (the commands are chat search, chat index, memory search, memory status and memory requeue; --help prints the usage)\n"},
+}
+
 func TestRecallCLIRecordedOracle(t *testing.T) {
 	data, err := os.ReadFile("testdata/cli/oracle.json")
 	if err != nil {
@@ -178,6 +190,20 @@ func TestRecallCLIRecordedOracle(t *testing.T) {
 			code, out, e := recallCLIInvoke(t, args, time.Now())
 			norm := strings.NewReplacer(home, "<HOME>", idx, "<INDEX>")
 			out, e = norm.Replace(out), norm.Replace(e)
+			if fix, ok := recallCLIOraclePortFixed[i]; ok {
+				// port: fixed (CRW-1131, docs/port-cxc/known-defects/CRW-1131.md): the strict parser and the unknown verb.
+				if code != fix.code || out != "" || e != fix.stderr {
+					t.Fatalf("exit %d stdout %q stderr %q, want exit %d stderr %q", code, out, e, fix.code, fix.stderr)
+				}
+				return
+			}
+			if slices.Equal(row.Argv, []string{"chat", "search", "--", "--help"}) {
+				// port: fixed (CRW-1125, known-defects.md :667): the oracle printed usage; the port searches for the word --help.
+				if code != 0 || e != "" && !strings.HasPrefix(e, "recall: building the sidecar index") || strings.Contains(out, `crw recall chat search "<query>"`) || !strings.HasPrefix(out, "# 0 hits (") {
+					t.Fatalf("a --help after the terminator is a query word: %d %q %q", code, out, e)
+				}
+				return
+			}
 			if strings.Contains(out, `"elapsedMs"`) {
 				var a, b map[string]any
 				json.Unmarshal([]byte(out), &a)
@@ -321,6 +347,7 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			session := normal.NewSession(c.Bindings())
+			actualThreads, expectedThreads := map[string]string{}, map[string]string{}
 			for i, step := range fixture.Run.Steps {
 				args, ok := sub.MapArgv(step.CLI)
 				if !ok {
@@ -340,6 +367,13 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				code, out, e := recallCLIInvoke(t, args, now)
 				out, e = session.Text(out), session.Stderr(e)
 				want := fixture.Expect.Steps[i]
+				if override, ok := recallCLIPortFixedOutputs[id][i]; ok {
+					// port: fixed (CRW-1131): the requeue leaves consolidation jobs alone unless the kind names them.
+					if code != want.Exit || e != sub.Expected(want.Stderr) || !recallCLIPortOutputEqual(out, override) {
+						t.Errorf("step%d got %q want %q", i, out, override)
+					}
+					continue
+				}
 				if code != want.Exit || e != sub.Expected(want.Stderr) {
 					t.Errorf("step%d code%d/%d stderr %q/%q", i, code, want.Exit, e, sub.Expected(want.Stderr))
 				}
@@ -351,6 +385,9 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 				}
 				if want.Stdout != nil {
 					wantOut := recallCLIUsageWithVerify(sub.Expected(*want.Stdout))
+					if _, deviates := recallCLIPortFixedFixtures[id]; deviates {
+						out, wantOut = recallCLIDropPortWarnings(out), recallCLIDropPortWarnings(wantOut)
+					}
 					if out != wantOut {
 						t.Errorf("step%d stdout got %q want %q", i, out, wantOut)
 					}
@@ -369,11 +406,176 @@ func TestRecallCLIRecordedCorpus(t *testing.T) {
 						hit.(map[string]any)["score"] = scores[i]
 					}
 				}
+				if reason, deviates := recallCLIPortFixedFixtures[id]; deviates {
+					// The actual hits keep their order and their thread identities; only the recorded side is put in the port's order.
+					actual = recallCLIPortNormalized(actual, false, actualThreads)
+					expected = recallCLIPortNormalized(expected, reason == recallCLIPortOrderReason, expectedThreads)
+				}
 				if !recallCLICompareJSON(actual, expected) {
 					t.Errorf("step%d got %s want %s", i, out, sub.Expected(string(want.StdoutJSON)))
 				}
 			}
 		})
+	}
+}
+
+// recallCLIPortFixedOutputs are the standard outputs, by fixture and step, that the port prints in place of the recorded ones (CRW-1131,
+// known-defects.md :620): the same requeue, with the consolidation job left alone. A text that starts with `{` is JSON.
+var recallCLIPortFixedOutputs = map[string]map[int]string{
+	"cli__memory__requeue_dry_run": {0: "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 2 [capacity=1, incomplete-response=1]\n  left alone: consolidation=1, context-window=1\n    consolidation jobs are left alone unless --kind names their kind\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n"},
+	"cli__memory__requeue_apply_on_seeded_db": {
+		0: `{"state":"ok","detail":"","storePath":"${CODEX_HOME}/memories_1.sqlite","applied":true,"selected":[{"kind":"stage1","jobKey":"t-cap","cause":"capacity"},{"kind":"stage1","jobKey":"t-inc","cause":"incomplete-response"}],"skippedByCause":{"consolidation":1,"context-window":1},"changed":2,"retries":5}`,
+		1: "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 0\n  left alone: consolidation=1, context-window=1\n    consolidation jobs are left alone unless --kind names their kind\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+	},
+}
+
+func recallCLIPortOutputEqual(out, want string) bool {
+	if !strings.HasPrefix(want, "{") {
+		return out == want
+	}
+	var a, b any
+	return json.Unmarshal([]byte(out), &a) == nil && json.Unmarshal([]byte(want), &b) == nil && reflect.DeepEqual(a, b)
+}
+
+// recallCLIPortFixedFixtures are the recorded fixtures whose answer the port changed on purpose (CRW-1128, docs/port-cxc/known-defects/CRW-1128.md):
+// equal hits are ordered by a stable identity instead of V8's sort schedule (:694), and a memory fallback says what its chat search said (:818).
+// The warnings the chat search adds are left out of both sides. Where the order changed, the recorded hits are put in the port's order
+// (recallCLIPortHitBefore) and the actual hits are not sorted: they must come in that order themselves.
+var recallCLIPortFixedFixtures = map[string]string{
+	"cli__memory__search_chat_fallback_and_no_chat":              "chat warnings are propagated",
+	"cli__memory__search_cwd_boost_filter_and_origin_federation": recallCLIPortOrderReason,
+	"cli__memory__search_plain_envelope":                         "chat warnings are propagated",
+}
+
+const recallCLIPortOrderReason = "equal hits are ordered by identity"
+
+var recallCLIPortWarning = regexp.MustCompile(`(?m)^(index unavailable|state db not found)[^\n]*\n`)
+
+func recallCLIDropPortWarnings(text string) string {
+	return recallCLIPortWarning.ReplaceAllString(text, "")
+}
+
+// recallCLIPortHitBefore is the port's order of two hits as the JSON prints them (compareMemoryHits): score, newer first, relpath,
+// start line, origin, kind.
+func recallCLIPortHitBefore(a, b map[string]any) int {
+	as, _ := a["score"].(float64)
+	bs, _ := b["score"].(float64)
+	if as != bs {
+		if as > bs {
+			return -1
+		}
+		return 1
+	}
+	if c := strings.Compare(fmt.Sprint(b["updatedAt"]), fmt.Sprint(a["updatedAt"])); c != 0 {
+		return c
+	}
+	if c := strings.Compare(fmt.Sprint(a["relpath"]), fmt.Sprint(b["relpath"])); c != 0 {
+		return c
+	}
+	al, _ := a["startLine"].(float64)
+	bl, _ := b["startLine"].(float64)
+	if al != bl {
+		if al < bl {
+			return -1
+		}
+		return 1
+	}
+	if c := strings.Compare(fmt.Sprint(a["origin"]), fmt.Sprint(b["origin"])); c != 0 {
+		return c
+	}
+	return strings.Compare(fmt.Sprint(a["kind"]), fmt.Sprint(b["kind"]))
+}
+
+// recallCLIPortNormalized drops the warnings the chat search adds and, with order, puts the hits in the port's order. A thread id is
+// kept as an identity: the placeholders number the ids by appearance, which the order changes, so each is named by the relpath of the
+// first hit that carried it in this fixture (threads is shared by the steps of one side). A hit whose thread id belongs to another
+// file than on the other side, or is missing, differs.
+func recallCLIPortNormalized(v any, order bool, threads map[string]string) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := map[string]any{}
+	for k, val := range m {
+		out[k] = val
+	}
+	if warnings, ok := m["warnings"].([]any); ok {
+		kept := []any{}
+		for _, w := range warnings {
+			if text, ok := w.(string); !ok || !strings.HasPrefix(text, "index unavailable") && !strings.HasPrefix(text, "state db not found") {
+				kept = append(kept, w)
+			}
+		}
+		out["warnings"] = kept
+	}
+	if hits, ok := m["hits"].([]any); ok {
+		sorted := slices.Clone(hits)
+		if order {
+			slices.SortStableFunc(sorted, func(a, b any) int {
+				am, _ := a.(map[string]any)
+				bm, _ := b.(map[string]any)
+				return recallCLIPortHitBefore(am, bm)
+			})
+		}
+		for i, h := range sorted {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			c := map[string]any{}
+			for k, val := range hm {
+				c[k] = val
+			}
+			if id, ok := c["threadId"].(string); ok {
+				first, seen := threads[id]
+				if !seen {
+					first = fmt.Sprint(c["relpath"])
+					threads[id] = first
+				}
+				c["threadId"] = "thread of " + first
+			}
+			sorted[i] = c
+		}
+		out["hits"] = sorted
+	}
+	return out
+}
+
+// TestRecallCLIPortNormalizationKeepsIdentityAndOrder pins what the port-fixed comparison still checks: the hits' order, their thread
+// identities across the steps, and a thread id that is missing.
+func TestRecallCLIPortNormalizationKeepsIdentityAndOrder(t *testing.T) {
+	hit := func(relpath, thread string, score float64) any {
+		h := map[string]any{"relpath": relpath, "score": score, "updatedAt": "<TS>", "startLine": 1.0, "origin": "file", "kind": "rollout"}
+		if thread != "" {
+			h["threadId"] = thread
+		}
+		return h
+	}
+	env := func(hits ...any) any { return map[string]any{"hits": hits} }
+	same := recallCLICompareJSON
+	// The recorded order is a, b with <UUID_1>, <UUID_2>; the port prints b, a (equal scores order by path) and numbers its ids by appearance.
+	recorded := env(hit("z.md", "<UUID_1>", 2), hit("a.md", "<UUID_2>", 2))
+	actual := env(hit("a.md", "<UUID_1>", 2), hit("z.md", "<UUID_2>", 2))
+	if !same(recallCLIPortNormalized(actual, false, map[string]string{}), recallCLIPortNormalized(recorded, true, map[string]string{})) {
+		t.Fatal("the port's order with its own numbering differs from the recorded hits in the port's order")
+	}
+	// The recorded order is not accepted as the actual order.
+	if same(recallCLIPortNormalized(recorded, false, map[string]string{}), recallCLIPortNormalized(recorded, true, map[string]string{})) {
+		t.Error("a hit list in the recorded order passes as the port's order")
+	}
+	// The ids of a second step are judged against the files they were bound to in the first.
+	actualThreads, expectedThreads := map[string]string{}, map[string]string{}
+	recallCLIPortNormalized(actual, false, actualThreads)
+	recallCLIPortNormalized(recorded, true, expectedThreads)
+	if !same(recallCLIPortNormalized(actual, false, actualThreads), recallCLIPortNormalized(recorded, true, expectedThreads)) {
+		t.Error("the same ids on the same files differ in a second step")
+	}
+	moved := env(hit("z.md", "<UUID_1>", 2), hit("a.md", "<UUID_2>", 2)) // ids that belonged to the other files in the first step
+	if same(recallCLIPortNormalized(moved, false, actualThreads), recallCLIPortNormalized(recorded, true, expectedThreads)) {
+		t.Error("ids that moved to another file between the steps pass")
+	}
+	if same(recallCLIPortNormalized(env(hit("a.md", "", 2), hit("z.md", "<UUID_2>", 2)), false, map[string]string{}), recallCLIPortNormalized(recorded, true, map[string]string{})) {
+		t.Error("a missing thread id passes")
 	}
 }
 
@@ -435,22 +637,22 @@ func TestRecallCLINotices(t *testing.T) {
 }
 
 func TestRecallCLIManagementAndSearchEdges(t *testing.T) {
-	t.Run("lax-flags-do-not-accidentally-apply", func(t *testing.T) {
+	t.Run("odd-flags-do-not-accidentally-apply", func(t *testing.T) {
 		home := recallCLIHome(t)
 		recallFixtureDB(t, home, "memories_1.sqlite", requeueTestSchema, "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?)", []any{"stage1", "job", "error", 0, 999, "capacity", 10, 5})
 		before := requeueTestRows(t, home)
-		for _, flags := range [][]string{{"--apply=false"}, {"--limit", "--apply"}, {"--retries"}} {
+		// The strict parser (CRW-1131, known-defects.md :883, :886) refuses what the lax one read as a dry run, or as an apply of a prefix.
+		for _, flags := range [][]string{{"--apply=false"}, {"--limit", "--apply"}, {"--retries"}, {"--apply", "--retries=5tail"}} {
 			args := append([]string{"memory", "requeue", "--json"}, flags...)
 			code, out, e := recallCLIInvoke(t, args, time.Now())
-			var r RequeueResult
-			if json.Unmarshal([]byte(out), &r) != nil || code != 0 || e != "" || r.Applied || r.Changed != 0 || len(r.Selected) != 1 {
-				t.Fatal(code, out, e)
+			if code != 1 || out != "" || e == "" {
+				t.Fatal(flags, code, out, e)
 			}
 			if !reflect.DeepEqual(before, requeueTestRows(t, home)) {
-				t.Fatal("dry-run changed jobs")
+				t.Fatal("a refused command changed jobs")
 			}
 		}
-		code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--apply", "--retries=5tail", "--json"}, time.Now())
+		code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--apply", "--retries=5", "--json"}, time.Now())
 		var r RequeueResult
 		json.Unmarshal([]byte(out), &r)
 		if code != 0 || e != "" || !r.Applied || r.Changed != 1 || r.Retries != 5 {
@@ -491,9 +693,9 @@ func TestRecallCLIManagementAndSearchEdges(t *testing.T) {
 func TestRecallCLIReviewerRegressions(t *testing.T) {
 	home := recallCLIHome(t)
 	a, b := filepath.Join(home, "a"), filepath.Join(home, "b-<&>")
-	code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--home", a, "--limit retries", "--home", b, "--json"}, time.Now())
+	code, out, e := recallCLIInvoke(t, []string{"memory", "requeue", "--home", a, "--home", b, "--json"}, time.Now())
 	if code != 1 || e != "" || !strings.Contains(out, b) || strings.Contains(out, a) {
-		t.Fatal("unknown option consumed home", code, out, e)
+		t.Fatal("the last home wins", code, out, e)
 	}
 	code, out, e = recallCLIInvoke(t, []string{"memory", "status", "--home", b, "--json"}, time.Now())
 	if code != 1 || e != "" || !strings.Contains(out, b) || strings.Contains(out, `\u003c`) {

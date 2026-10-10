@@ -80,9 +80,13 @@ func TestChatScanUpstreamCases(t *testing.T) {
 		t.Fatal(r)
 	}
 	for _, q := range []string{"", " "} {
-		r := mustScanChat(t, t.TempDir(), q, ChatSearchOptions{Days: scanPtr(math.Inf(1))})
+		r := mustScanChat(t, t.TempDir(), q, ChatSearchOptions{})
 		if !reflect.DeepEqual(r.Warnings, []string{"empty query"}) || r.TotalFiles != 0 {
 			t.Fatal(r)
+		}
+		// The window is judged before the plan (CRW-1125, known-defects.md :577): an empty query is refused like any other.
+		if _, err := scanChat(t, t.TempDir(), q, ChatSearchOptions{Days: scanPtr(math.Inf(1))}); err == nil || !strings.Contains(err.Error(), "--days") {
+			t.Fatalf("empty query with an unreachable window: %v", err)
 		}
 	}
 	r = mustScanChat(t, t.TempDir(), "anything", ChatSearchOptions{})
@@ -124,7 +128,9 @@ func TestChatScanScopeAndMetadata(t *testing.T) {
 type chatScanFixedCase struct {
 	Index                        int
 	Fn, Query, Kind, OracleError string
-	Out                          json.RawMessage
+	// Error, when set, is the error the port answers with; otherwise Out is its result.
+	Error string
+	Out   json.RawMessage
 }
 
 func chatScanPortFixed(t *testing.T) map[int]chatScanFixedCase {
@@ -168,11 +174,11 @@ func TestChatScanOracle(t *testing.T) {
 	fixed := chatScanPortFixed(t)
 	for i, c := range cases {
 		if f, ok := fixed[i]; ok {
-			// port: fixed (docs/port-cxc/known-defects/CRW-1123.md): the oracle's recorded result and the port's.
+			// port: fixed (docs/port-cxc/known-defects/CRW-1123.md and CRW-1125.md): the oracle's recorded result and the port's.
 			if f.Fn != c.Fn || f.Query != c.Query || f.Kind != c.Kind || f.OracleError != c.Error {
 				t.Fatalf("case %d: the port-fixed record is for another case", i)
 			}
-			c.Error, c.Out = "", f.Out
+			c.Error, c.Out = f.Error, f.Out
 		}
 		t.Run(c.Fn+"/"+c.Query+"/"+c.Kind+"/"+string(rune(i+0x100)), func(t *testing.T) {
 			var got any

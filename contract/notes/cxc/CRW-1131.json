@@ -1,0 +1,29 @@
+{
+  "issue": "CRW-1131",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__memory__requeue_dry_run",
+      "reason": "memory requeue leaves consolidation jobs alone unless --kind names their kind, and says so in the report (CRW-1131, known-defects/CRW-1131.md :620)",
+      "set": {
+        "steps/0/stdout": "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 2 [capacity=1, incomplete-response=1]\n  left alone: consolidation=1, context-window=1\n    consolidation jobs are left alone unless --kind names their kind\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n"
+      }
+    },
+    {
+      "id": "cli__memory__requeue_apply_on_seeded_db",
+      "reason": "memory requeue leaves consolidation jobs alone unless --kind names their kind, so the apply writes the two transient rows and the second dry run lists the consolidation job as left alone (CRW-1131, known-defects/CRW-1131.md :620)",
+      "set": {
+        "steps/0/stdout": "{\"state\":\"ok\",\"detail\":\"\",\"storePath\":\"${CODEX_HOME}/memories_1.sqlite\",\"applied\":true,\"selected\":[{\"kind\":\"stage1\",\"jobKey\":\"t-cap\",\"cause\":\"capacity\"},{\"kind\":\"stage1\",\"jobKey\":\"t-inc\",\"cause\":\"incomplete-response\"}],\"skippedByCause\":{\"consolidation\":1,\"context-window\":1},\"changed\":2,\"retries\":5}",
+        "steps/1/stdout": "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 0\n  left alone: consolidation=1, context-window=1\n    consolidation jobs are left alone unless --kind names their kind\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+        "tree/codex/memories_1.sqlite/content": "{\"tables\":[{\"name\":\"jobs\",\"sql\":\"CREATE TABLE jobs (kind TEXT NOT NULL, job_key TEXT NOT NULL, status TEXT NOT NULL, retry_remaining INTEGER NOT NULL, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER, finished_at INTEGER)\",\"rows\":[{\"kind\":\"stage1\",\"job_key\":\"t-cap\",\"status\":\"error\",\"retry_remaining\":5,\"retry_at\":null,\"last_error\":\"rate limit exceeded (429)\",\"input_watermark\":12,\"last_success_watermark\":null,\"finished_at\":1767200000},{\"kind\":\"stage1\",\"job_key\":\"t-ctx\",\"status\":\"error\",\"retry_remaining\":0,\"retry_at\":null,\"last_error\":\"input exceeds the context window\",\"input_watermark\":13,\"last_success_watermark\":null,\"finished_at\":1767200100},{\"kind\":\"stage1\",\"job_key\":\"t-inc\",\"status\":\"error\",\"retry_remaining\":5,\"retry_at\":null,\"last_error\":\"incomplete response\",\"input_watermark\":14,\"last_success_watermark\":null,\"finished_at\":1767200200},{\"kind\":\"consolidate\",\"job_key\":\"c-1\",\"status\":\"error\",\"retry_remaining\":0,\"retry_at\":null,\"last_error\":\"stream closed before completion\",\"input_watermark\":15,\"last_success_watermark\":null,\"finished_at\":1767200300},{\"kind\":\"stage1\",\"job_key\":\"t-ok\",\"status\":\"done\",\"retry_remaining\":3,\"retry_at\":null,\"last_error\":null,\"input_watermark\":10,\"last_success_watermark\":10,\"finished_at\":1767222000}]}]}"
+      }
+    },
+    {
+      "id": "cli__memory__search_plain_envelope",
+      "reason": "the chat fallback of memory search passes on the warnings of its chat search (CRW-1128, known-defects/CRW-1128.md :818); the replay's chat search had no index and served the query by scan, which the plain envelope now shows",
+      "set": {
+        "steps/1/stdout": "# 2 memory hits (3 files scanned, <DURATION>ms)\n\n(chat/chat) ${CODEX_HOME}/sessions/2025/12/30/rollout-2025-12-30T05-00-00-<UUID_1>.jsonl [<TS>] {/proj/elsewhere} [age: 1d]\nunrelated project question about the trigram index\n---\n\n(chat/chat) ${CODEX_HOME}/sessions/2025/12/30/rollout-2025-12-30T05-00-00-<UUID_1>.jsonl [<TS>] {/proj/elsewhere} [age: 1d]\nunrelated answer\n---\n\n--- warnings ---\nindex unavailable (no index at ${CXC_HOME}/recall/index.sqlite) — served by scan\nstate db not found (metadata enrichment off)\nno memory artifacts matched — 2 raw session message(s) shown instead (tool logs excluded)\n"
+      }
+    }
+  ]
+}

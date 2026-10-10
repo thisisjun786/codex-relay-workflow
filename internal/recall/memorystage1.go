@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,11 +67,16 @@ func (s *memorySearchState) memoryStage1RowScope(id string) (cwd *string, repoKe
 }
 
 func (s *memorySearchState) memoryStage1Old(ms *float64) bool {
-	return s.cutoffMs != nil && *s.cutoffMs != 0 && ms != nil && *ms < *s.cutoffMs
+	return s.cutoffMs != nil && ms != nil && *ms < *s.cutoffMs // a cutoff of exactly zero still filters (known-defects.md :819)
 }
 
+// memoryStage1Warning says that the memories database could not be read, once however many passes meet the same failure
+// (known-defects.md :819).
 func (s *memorySearchState) memoryStage1Warning(err error) {
-	s.warnings = append(s.warnings, "memories db unreadable ("+err.Error()+")")
+	warning := "memories db unreadable (" + err.Error() + ")"
+	if !slices.Contains(s.warnings, warning) {
+		s.warnings = append(s.warnings, warning)
+	}
 }
 
 func (s *memorySearchState) memoryStage1FillPresence(home string) error {
@@ -124,15 +130,28 @@ func memoryStage1Where(plan MatchPlan) (string, []any) {
 	}
 	params, conditions := []any{}, []string{}
 	for _, group := range groups {
-		members := []string{}
+		// The group's bindings are kept apart until the group is known to be filtered in SQL: a group left to the final predicate adds
+		// no binding, so every placeholder of the statement has a value and every value a placeholder.
+		members, bound, folded := []string{}, []any{}, true
 		for _, word := range group {
-			params = append(params, "%"+word.Text+"%")
-			n := strconv.Itoa(len(params))
-			members = append(members, "(lower(raw_memory) LIKE ?"+n+" OR lower(rollout_summary) LIKE ?"+n+")")
+			// SQLite folds ASCII only: the word is also looked up in each spelling of its letters that SQL cannot fold (Ü for ü), so
+			// the prefilter never cuts off a row the final predicate accepts; a word with too many spellings leaves the group to the
+			// final predicate alone (known-defects.md :814).
+			spellings, ok := wordSpellings(word.Text, false, 16)
+			if !ok {
+				folded = false
+				break
+			}
+			for _, spelling := range append([]string{word.Text}, spellings...) {
+				bound = append(bound, "%"+spelling+"%")
+				n := strconv.Itoa(len(params) + len(bound))
+				members = append(members, "(lower(raw_memory) LIKE ?"+n+" OR lower(rollout_summary) LIKE ?"+n+")")
+			}
 		}
 		condition := "1"
-		if len(members) != 0 {
+		if len(members) != 0 && folded {
 			condition = "(" + strings.Join(members, " OR ") + ")"
+			params = append(params, bound...)
 		}
 		conditions = append(conditions, condition)
 	}
@@ -166,10 +185,12 @@ func (s *memorySearchState) memoryStage1Search(home string, plan MatchPlan, grou
 		s.memoryStage1Warning(err)
 		return nil
 	}
+	unnamed := 0
 	for _, row := range rows {
 		var threadID, cwd, updatedAt *string
 		var repoKey string
 		id, isString := row["thread_id"].(string)
+		isString = isString && id != "" // an empty id names no thread (known-defects.md :816)
 		if isString {
 			threadID = &id
 		}
@@ -195,7 +216,10 @@ func (s *memorySearchState) memoryStage1Search(home string, plan MatchPlan, grou
 			updatedAt = &stamp
 		}
 		if !isString {
-			id = "unknown"
+			// A row without a thread names itself by its place in the result, so that rows without one neither hide each other
+			// behind one path nor count as one file (known-defects.md :816).
+			unnamed++
+			id = "unknown-" + strconv.Itoa(unnamed)
 		}
 		*candidates = append(*candidates, MemoryHit{Origin: "stage1", Kind: MemoryStage1, Relpath: "stage1_outputs/" + id,
 			ThreadID: threadID, UpdatedAt: updatedAt, Cwd: cwd, Excerpt: excerptAround(body, firstPresentMember(lower, groups), 400),
@@ -212,7 +236,13 @@ func (s *memorySearchState) memoryStage1Backfill(query string, hits []MemoryHit,
 	if opts.SearchChat == nil || float64(len(hits)) > threshold {
 		return hits
 	}
-	want, context, source := math.Min(limit, 5), 0.0, RolloutMain
+	// The chat messages are added after the memory hits that were found, never in their place, and they fill only what is left of the
+	// limit (known-defects.md :818).
+	room := limit - float64(len(hits))
+	if room < 1 {
+		return hits
+	}
+	want, context, source := math.Min(room, 5), 0.0, RolloutMain
 	synonyms, tools := opts.Synonyms == nil || *opts.Synonyms, opts.ChatIncludeTools
 	chatOpts := ChatSearchOptions{Home: &home, Days: &days, Limit: &want, Context: &context, Source: &source,
 		NoRefresh: true, IncludeTools: &tools, ReadOriginUrl: opts.ReadOriginUrl, Synonyms: synonyms, Any: opts.Any}
@@ -228,18 +258,31 @@ func (s *memorySearchState) memoryStage1Backfill(query string, hits []MemoryHit,
 	if !math.IsNaN(want) {
 		n = min(len(r.Hits), int(math.Trunc(want)))
 	}
-	out := make([]MemoryHit, 0, n)
+	added := make([]MemoryHit, 0, n)
 	for _, hit := range r.Hits[:n] {
 		var ms *float64
 		if stamp, valid := formatDateMs(hit.TS); valid {
 			ms = &stamp
 		}
-		out = append(out, MemoryHit{Origin: "chat", Kind: MemoryChat, Relpath: hit.File, ThreadID: hit.ThreadID,
+		added = append(added, MemoryHit{Origin: "chat", Kind: MemoryChat, Relpath: hit.File, ThreadID: hit.ThreadID,
 			UpdatedAt: &hit.TS, Cwd: hit.Cwd, Excerpt: memorySlice(hit.Text, 0, memoryStage1ChatExcerpt), Score: FinalScore(0, MemoryChat, ms, s.nowMs)})
 	}
-	if len(out) == 0 {
+	for _, warning := range r.Warnings {
+		if warning != "" && !slices.Contains(s.warnings, warning) {
+			s.warnings = append(s.warnings, warning) // what the chat search had to say is said
+		}
+	}
+	if len(added) == 0 {
 		return hits
 	}
-	s.warnings = append(s.warnings, fmt.Sprintf("no memory artifacts matched — %d raw session message(s) shown instead (tool logs excluded)", len(out)))
-	return out
+	policy := "tool logs excluded"
+	if opts.ChatIncludeTools {
+		policy = "tool logs included"
+	}
+	if len(hits) == 0 {
+		s.warnings = append(s.warnings, fmt.Sprintf("no memory artifacts matched — %d raw session message(s) shown instead (%s)", len(added), policy))
+	} else {
+		s.warnings = append(s.warnings, fmt.Sprintf("only %d memory artifact(s) matched, at or below the chat fallback threshold %s — %d raw session message(s) added after them (%s)", len(hits), memoryNumberText(threshold), len(added), policy))
+	}
+	return append(hits[:len(hits):len(hits)], added...)
 }

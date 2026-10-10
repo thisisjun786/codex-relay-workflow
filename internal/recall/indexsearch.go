@@ -4,6 +4,7 @@ package recall
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -212,6 +213,20 @@ func indexRankRecentRows(db *RwDb, opts resolvedQuery) ([]indexRankRow, bool, er
 
 // queryIndex resolves metadata once, chooses ordering, then enriches shared hits.
 func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
+	if planHasNUL(opts.Plan) {
+		return ChatSearchResult{}, errIndexNULWord
+	}
+	// The clock and the limit are judged before a pool is sized or a row ranked: a clock that is no number would give some rows NaN
+	// scores and others finite ones, and a fractional limit would size a pool of a fraction of rows (known-defects.md :737, :738).
+	if opts.NowMs != nil {
+		if err := checkFiniteNowMs(*opts.NowMs); err != nil {
+			return ChatSearchResult{}, err
+		}
+	}
+	if math.IsNaN(opts.Limit) || math.IsInf(opts.Limit, 0) {
+		return ChatSearchResult{}, fmt.Errorf("the index limit %s is not a finite number", memoryNumberText(opts.Limit))
+	}
+	opts.Limit = math.Max(math.Floor(opts.Limit), 0)
 	started := time.Now()
 	statePath, err := stateDbPath(opts.Home)
 	if err != nil {
@@ -219,6 +234,14 @@ func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
 	}
 	meta := loadThreadMeta(statePath)
 	query := resolvedQuery{IndexQueryOptions: opts, repoThreadIDs: indexSameOriginThreadIDs(meta, opts.RepoKey), hasRepoKeyColumn: filesHasColumn(db, "repo_key")}
+	if opts.Cwd != "" && FoldCwdCase() {
+		query.foldedCwds, query.foldedResolved = resolveFoldedCwds(db, opts.Cwd)
+		if !query.foldedResolved {
+			// SQL folds ASCII only, so the stored cwd values the scan's predicate accepts cannot be left to it; with too many of them to
+			// bind (or a list that could not be read) the index does not answer, and the scan, which asks the Go predicate, does.
+			return ChatSearchResult{}, errIndexCwdSet
+		}
+	}
 	var rows []indexRankRow
 	var truncated bool
 	if opts.Order == ChatRecent {
@@ -313,4 +336,12 @@ func queryIndexContext(db *RwDb, path string, ord, n float64, includeSynthetic b
 		out[i] = ChatContextEntry{TS: memoryStatusString(row["ts"]), Role: memoryStatusString(row["role"]), Text: memoryStatusString(row["text"]), IsMatch: hitCountNumber(row["ord"]) == ord}
 	}
 	return out, nil
+}
+
+// checkFiniteNowMs refuses a clock override that is no finite number.
+func checkFiniteNowMs(nowMs float64) error {
+	if math.IsNaN(nowMs) || math.IsInf(nowMs, 0) {
+		return fmt.Errorf("nowMs %s is not a finite number", memoryNumberText(nowMs))
+	}
+	return nil
 }

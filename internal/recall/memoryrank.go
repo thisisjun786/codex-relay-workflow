@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -201,12 +202,15 @@ func memorySlice(s string, from, end int) string {
 	return string(utf16.Decode(units[from:end]))
 }
 
-// frontmatterValue reads \s*(\S+) using the already-landed JavaScript whitespace set.
+// frontmatterValue is the value on the rest of a frontmatter line: its ends trimmed with the JavaScript whitespace set, one pair of
+// matching quotes taken off. A value that is empty is none (known-defects.md :592).
 func frontmatterValue(s string) *string {
-	s = strings.TrimLeftFunc(s, isJSSpace)
-	end := strings.IndexFunc(s, isJSSpace)
-	if end >= 0 {
+	if end := strings.IndexFunc(s, isJSLineTerminator); end >= 0 {
 		s = s[:end]
+	}
+	s = strings.TrimFunc(s, isJSSpace)
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		s = strings.TrimFunc(s[1:len(s)-1], isJSSpace)
 	}
 	if s == "" {
 		return nil
@@ -214,36 +218,57 @@ func frontmatterValue(s string) *string {
 	return &s
 }
 
-func frontmatterThreadID(content string) *string {
-	prefix := memorySlice(content, 0, 2000)
-	start := true
-	for i, r := range prefix {
-		if start && strings.HasPrefix(prefix[i:], "thread_id:") {
-			if value := frontmatterValue(prefix[i+len("thread_id:"):]); value != nil {
-				return value
-			}
+func isJSLineTerminator(r rune) bool { return r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' }
+
+// splitJSLines splits at every JavaScript line terminator: LF, CRLF, a lone CR, U+2028 and U+2029.
+func splitJSLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !isJSLineTerminator(r) {
+			i += size
+			continue
 		}
-		start = r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029'
+		lines = append(lines, s[start:i])
+		if r == '\r' && i+1 < len(s) && s[i+1] == '\n' {
+			size++
+		}
+		i += size
+		start = i
 	}
-	return nil
+	return append(lines, s[start:])
 }
 
-func frontmatterCwd(content string) *string {
-	for _, line := range text.SplitLines(memorySlice(content, 0, 2000)) {
+// frontmatterKey is the value of a key among the leading key lines of a memory file, within its first 2,000 UTF-16 units: the lines from
+// the first one that are each a lower-case key (letters and underscores), a colon and the rest. The first line that is not such a line
+// (a blank line, a heading, a delimiter, any prose) ends them, so a key written in the body, a code example among others, names nothing
+// (known-defects.md :591). The value is on the line of its key, and a key with an empty value has none: a key with nothing after it does
+// not take the next line for its value, and it does not end the leading lines (known-defects.md :591, :592). The lines end where
+// split ends them.
+func frontmatterKey(content, want string, split func(string) []string) *string {
+	for _, line := range split(memorySlice(content, 0, 2000)) {
 		key, rest, colon := strings.Cut(line, ":")
 		if !colon || key == "" || !allBytes(key, func(b byte) bool { return isLower(b) || b == '_' }) {
 			return nil
 		}
-		value := frontmatterValue(rest)
-		if value == nil {
-			return nil
-		}
-		if key == "cwd" {
-			return value
+		if key == want {
+			if value := frontmatterValue(rest); value != nil {
+				return value
+			}
 		}
 	}
 	return nil
 }
+
+// frontmatterThreadID is the thread_id of the leading key lines. A line ends at any JavaScript line terminator, as the key was read
+// before the leading lines were bounded: a file written with CR, U+2028 or U+2029 line ends keeps its identity (known-defects.md :591).
+func frontmatterThreadID(content string) *string {
+	return frontmatterKey(content, "thread_id", splitJSLines)
+}
+
+// frontmatterCwd is the cwd of the leading key lines, whose lines end at LF or CRLF as the cwd was read before.
+func frontmatterCwd(content string) *string { return frontmatterKey(content, "cwd", text.SplitLines) }
 
 type ParagraphChunk struct {
 	Text      string `json:"text"`
@@ -307,13 +332,33 @@ func firstPresentMember(lowerText string, groups []QueryGroup) QueryTerm {
 	return groups[0][0] // upstream caller guarantees nonempty groups/members
 }
 
+// originalUnits maps a position counted in UTF-16 units of the lowercased text to the same position in the original: İ lowercases to two
+// units, so every one before the position moves it by one (known-defects.md :593).
+func originalUnits(original string, lowerUnits int) int {
+	lowered, origin := 0, 0
+	for _, r := range original {
+		step, own := 1, 1
+		if r >= 0x10000 {
+			step, own = 2, 2
+		} else if r == 0x130 {
+			step = 2
+		}
+		if lowered+step > lowerUnits {
+			break
+		}
+		lowered += step
+		origin += own
+	}
+	return origin
+}
+
 func excerptAround(content string, term QueryTerm, span int) string {
 	lower := Lower(content)
 	at := TermIndexOf(lower, term, 0)
 	if at < 0 {
 		return memorySlice(content, 0, span)
 	}
-	at = len(utf16.Encode([]rune(lower[:at])))
+	at = originalUnits(content, len(utf16.Encode([]rune(lower[:at]))))
 	from := max(0, at-int(math.Floor(float64(span)/2)))
 	return memorySlice(content, from, from+span)
 }

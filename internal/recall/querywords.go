@@ -108,6 +108,14 @@ func IsVersionWord(rawWord string) bool {
 	return isVersionCore(strings.TrimPrefix(Lower(rawWord), "v"))
 }
 
+// isCommitShaWord: a commit SHA is 7 to 40 characters of a to f and digits that hold a digit, or an abbreviation of twelve or more
+// characters (a 7-character run of a to f that is a real abbreviation is about one in a thousand, an English word such as defaced is
+// not). A word without a digit shorter than twelve is an ordinary word: it is searched as a substring, not on token boundaries, so the
+// literal still finds itself inside a longer token (CRW-1125, known-defects.md :123).
+func isCommitShaWord(lower string) bool {
+	return sized(lower, 7, 40, isLowerHex) && (anyByte(lower, isDigit) || len(lower) >= 12)
+}
+
 // IsSymbolWord reports whether a word is symbol-shaped, i.e. matches on token boundaries; it takes the word as typed (CI is an acronym).
 func IsSymbolWord(rawWord string) bool {
 	if sized(rawWord, 2, 6, isUpper) { // UPPER_ACRONYM
@@ -118,7 +126,7 @@ func IsSymbolWord(rawWord string) bool {
 	return isVersionCore(strings.TrimPrefix(lower, "v")) ||
 		sized(lower, 1, 3, isLower) || // SHORT_ASCII
 		sized(strings.TrimPrefix(lower, "#"), 2, 10, isDigit) || // NUMERIC_ID
-		sized(lower, 7, 40, isLowerHex) || // SHA
+		isCommitShaWord(lower) || // SHA
 		strings.Contains(lower, ".") && sized(ext, 1, 5, func(b byte) bool { return isLower(b) || isDigit(b) }) || // FILENAME
 		strings.ContainsAny(lower, "/\\") // PATH_LIKE
 }

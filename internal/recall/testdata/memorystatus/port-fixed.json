@@ -1,0 +1,1389 @@
+{
+ "corrupt": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (file is not a database)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (file is not a database) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "unavailable",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "the jobs table could not be read (file is not a database)",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "non-numeric-time": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "infinite-time": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "blob-time": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  52,50,57 done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "52,50,57",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "unsafe-integer": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: unavailable — the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "Notice": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)",
+    "Custom": "memory pipeline: the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "unavailable",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "the jobs table could not be read (Value is too large to be represented as a JavaScript number: 9007199254740992)",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    },
+    {
+     "kind": "a",
+     "status": "error",
+     "count": 1
+    }
+   ],
+   "exhausted": 1,
+   "exhaustedByCause": {
+    "capacity": 1
+   },
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-6": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-7": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-10": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-14": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-15": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-16": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-17": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-18": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-19": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-20": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-21": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "number-22": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ },
+ "blob-0102": {
+  "observed": [
+   {
+    "Now": 0,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 2100,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4599,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 4600,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87399,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 87400,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173800,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 173801,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   },
+   {
+    "Now": 99999999,
+    "Text": "memory pipeline: <HOME>/memories_1.sqlite\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n  a done: 1\n  last success: unreadable (the store holds a time that is not a number)\n",
+    "Notice": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)",
+    "Custom": "memory pipeline: last successful extraction time is unreadable (the store holds a value that is not a number) (crw recall memory status)"
+   }
+  ],
+  "status": {
+   "state": "ok",
+   "observationSource": "jobs-db",
+   "effectiveExtractionRoute": "unknown",
+   "startupGuardDecision": "unknown",
+   "detail": "",
+   "storePath": "<HOME>/memories_1.sqlite",
+   "jobs": [
+    {
+     "kind": "a",
+     "status": "done",
+     "count": 1
+    }
+   ],
+   "exhausted": 0,
+   "exhaustedByCause": {},
+   "lastSuccessAt": null,
+   "lastFinishedAt": null
+  }
+ }
+}

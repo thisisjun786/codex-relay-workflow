@@ -1,0 +1,353 @@
+{
+ "rank/quokka/9": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/rank",
+     "file": "$R/sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.029521753294487172,
+     "source": "main",
+     "text": "quokka deployment plan for the quokka rollout, quokka everywhere",
+     "threadId": "019f0000-0000-7000-8000-0000000f0001",
+     "title": null,
+     "ts": "2026-08-10T00:00:00.000Z"
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "index",
+   "scannedFiles": 7,
+   "totalFiles": 7,
+   "warnings": [
+    "truncated at limit 1 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "rank/quokka/10": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/rank",
+     "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0003.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "another long unrelated message about pipelines, caches, and a quokka reference at the end",
+     "threadId": "019f0000-0000-7000-8000-0000000f0003",
+     "title": null,
+     "ts": "2026-09-08T23:00:00.000Z"
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "index",
+   "scannedFiles": 7,
+   "totalFiles": 7,
+   "warnings": [
+    "truncated at limit 1 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "rank/quokka/11": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/rank",
+     "file": "$R/sessions/2026/08/10/rollout-2026-08-10T00-00-00-019f0000-0000-7000-8000-0000000f0001.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.029521753294487172,
+     "source": "main",
+     "text": "quokka deployment plan for the quokka rollout, quokka everywhere",
+     "threadId": "019f0000-0000-7000-8000-0000000f0001",
+     "title": null,
+     "ts": "2026-08-10T00:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/rank",
+     "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0003.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.029090766644382635,
+     "source": "main",
+     "text": "another long unrelated message about pipelines, caches, and a quokka reference at the end",
+     "threadId": "019f0000-0000-7000-8000-0000000f0003",
+     "title": null,
+     "ts": "2026-09-08T23:00:00.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/rank",
+     "file": "$R/sessions/2026/09/08/rollout-2026-09-08T00-00-00-019f0000-0000-7000-8000-0000000f0002.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.029027879742135547,
+     "source": "main",
+     "text": "unrelated standup notes that happen to name quokka once among many other words here",
+     "threadId": "019f0000-0000-7000-8000-0000000f0002",
+     "title": null,
+     "ts": "2026-09-08T12:00:00.000Z"
+    }
+   ],
+   "matchedFiles": 3,
+   "mode": "index",
+   "scannedFiles": 7,
+   "totalFiles": 7,
+   "warnings": [
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "dates/date/1": {
+  "error": "nowMs NaN is not a finite number"
+ },
+ "edge/needle/7": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [],
+   "matchedFiles": 0,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 0 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/8": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [],
+   "matchedFiles": 0,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 0 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/10": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [],
+   "matchedFiles": 0,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 0 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/11": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/edge",
+     "file": "$R/sessions/2026/09/09/edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.02977260708619778,
+     "source": "main",
+     "text": "needle",
+     "threadId": "edge",
+     "title": null,
+     "ts": "2026-09-09T00:00:02.000Z"
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 1 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/12": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/edge",
+     "file": "$R/sessions/2026/09/09/edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.02977260708619778,
+     "source": "main",
+     "text": "needle",
+     "threadId": "edge",
+     "title": null,
+     "ts": "2026-09-09T00:00:02.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/edge",
+     "file": "$R/sessions/2026/09/09/edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "score": 0.02929666842940243,
+     "source": "main",
+     "text": "한글문서 needle needle",
+     "threadId": "edge",
+     "title": null,
+     "ts": "2026-09-09T00:00:00.000Z"
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/13": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [],
+   "matchedFiles": 0,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 0 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/14": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [],
+   "matchedFiles": 0,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 0 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/16": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [],
+   "matchedFiles": 0,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 0 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/17": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/edge",
+     "file": "$R/sessions/2026/09/09/edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "needle",
+     "threadId": "edge",
+     "title": null,
+     "ts": "2026-09-09T00:00:02.000Z"
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "truncated at limit 1 — raise --limit or narrow the query",
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/18": {
+  "out": {
+   "elapsedMs": 0,
+   "hits": [
+    {
+     "context": [],
+     "cwd": "/proj/edge",
+     "file": "$R/sessions/2026/09/09/edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "needle",
+     "threadId": "edge",
+     "title": null,
+     "ts": "2026-09-09T00:00:02.000Z"
+    },
+    {
+     "context": [],
+     "cwd": "/proj/edge",
+     "file": "$R/sessions/2026/09/09/edge.jsonl",
+     "gitBranch": null,
+     "matchField": "content",
+     "role": "user",
+     "source": "main",
+     "text": "한글문서 needle needle",
+     "threadId": "edge",
+     "title": null,
+     "ts": "2026-09-09T00:00:00.000Z"
+    }
+   ],
+   "matchedFiles": 1,
+   "mode": "index",
+   "scannedFiles": 1,
+   "totalFiles": 1,
+   "warnings": [
+    "state db not found (metadata enrichment off)"
+   ]
+  }
+ },
+ "edge/needle/19": {
+  "error": "the index limit NaN is not a finite number"
+ },
+ "edge/needle/20": {
+  "error": "the index limit Infinity is not a finite number"
+ },
+ "edge/needle/21": {
+  "error": "the index limit NaN is not a finite number"
+ },
+ "edge/needle/22": {
+  "error": "the index limit Infinity is not a finite number"
+ }
+}

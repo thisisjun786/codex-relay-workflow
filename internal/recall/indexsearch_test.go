@@ -222,11 +222,14 @@ func indexRankNormalized(t *testing.T, r ChatSearchResult, home string) map[stri
 	}
 	return out
 }
-func indexRankCompare(t *testing.T, got, want any) {
+
+// indexRankCompare compares a normalized result with the recorded one; key names the case for a regenerated port-fixed file.
+func indexRankCompare(t *testing.T, key string, got, want any) {
 	t.Helper()
 	g, w := got.(map[string]any), want.(map[string]any)
 	gh, wh := g["hits"].([]any), w["hits"].([]any)
 	if len(gh) != len(wh) {
+		portFixedDump("indexsearch", key, map[string]any{"out": got})
 		t.Fatalf("hit count %d != %d", len(gh), len(wh))
 	}
 	for i := range gh {
@@ -240,6 +243,7 @@ func indexRankCompare(t *testing.T, got, want any) {
 		}
 	}
 	if !reflect.DeepEqual(g, w) {
+		portFixedDump("indexsearch", key, map[string]any{"out": g})
 		t.Fatalf("Node oracle differs\ngot: %v\nwant: %v", g, w)
 	}
 }
@@ -260,10 +264,23 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 	t.Cleanup(func() { time.Local = old })
 	data := indexRankOracle(t)
 	count := 0
+	fixes := portFixed(t, "indexsearch")
 	for _, corpus := range data.Corpora {
 		for i, c := range corpus.Cases {
 			count++
 			t.Run(corpus.Name+"/"+c.Name+"/"+memoryNumberText(float64(i)), func(t *testing.T) {
+				key := corpus.Name + "/" + c.Name + "/" + memoryNumberText(float64(i))
+				if fix, ok := fixes.lookup(key); ok {
+					// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's answer in place of the recorded one.
+					var fixed struct {
+						Error string
+						Out   any
+					}
+					if err := json.Unmarshal(fix, &fixed); err != nil {
+						t.Fatal(err)
+					}
+					c.Error, c.Out = fixed.Error, fixed.Out
+				}
 				home, db, _, _ := indexRankCorpus(t, corpus.Name)
 				opts := c.Options
 				opts.Home = home
@@ -290,19 +307,26 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 				}
 				r, err := queryIndex(db, opts)
 				if c.Error != "" {
-					if err == nil || err.Error() != c.Error {
+					if err == nil {
+						portFixedDump("indexsearch", key, map[string]any{"out": indexRankNormalized(t, r, home)})
+						t.Fatalf("error %v != %q", err, c.Error)
+					}
+					if err.Error() != c.Error {
+						portFixedDump("indexsearch", key, map[string]any{"error": err.Error()})
 						t.Fatalf("error %v != %q", err, c.Error)
 					}
 					return
 				}
 				if err != nil {
+					portFixedDump("indexsearch", key, map[string]any{"error": err.Error()})
 					t.Fatal(err)
 				}
 				// port: fixed (docs/port-cxc/known-defects/CRW-1087.md): lane ranks are taken among the eligible rows.
-				for hit, score := range indexRankLaneScoreFixes[corpus.Name+"/"+c.Name+"/"+memoryNumberText(float64(i))] {
+				for hit, score := range indexRankLaneScoreFixes[key] {
 					c.Out.(map[string]any)["hits"].([]any)[hit].(map[string]any)["score"] = score
 				}
-				indexRankCompare(t, indexRankNormalized(t, r, home), c.Out)
+				normalized := indexRankNormalized(t, r, home)
+				indexRankCompare(t, key, normalized, c.Out)
 			})
 		}
 	}
