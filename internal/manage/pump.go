@@ -152,8 +152,10 @@ type pumpState struct {
 	// dry is set for the round being collected when it is a dry run, so a source reads without
 	// writing anything of its own. commits are the steps the sources asked to run once the round's
 	// pending events are durable (a source with a state of its own that must not move first).
+	// dirty is set by a commit that changed this state again, which the round then saves once more.
 	dry     bool
 	commits []pumpCommitStep
+	dirty   bool
 
 	extra map[string]json.RawMessage
 }
@@ -602,8 +604,15 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 				pumpLog(cfg, "source "+step.source+" commit: "+err.Error())
 			}
 		}
+		// What a commit recorded about itself is saved too. Losing that save only makes the next
+		// read treat the commit as not made, which converges on the same ids.
+		if st.dirty {
+			if err := st.pumpSave(cfg); err != nil {
+				pumpLog(cfg, "state save after the commits: "+err.Error())
+			}
+		}
 	}
-	st.commits = nil
+	st.commits, st.dirty = nil, false
 	switch {
 	case cfg.ManagementThread == "":
 		pumpLog(cfg, "no management_thread; the management batch waits, the parent queue still runs")

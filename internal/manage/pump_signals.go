@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -50,6 +51,10 @@ const (
 	pumpSignalDagChangesKey   = "signal.dag.changes"
 	pumpSignalCapacityReadKey = "signal.capacity.read_at"
 	pumpSignalAuditEpochKey   = "signal.audit.epoch"
+	pumpSignalAuditFileKey    = "signal.audit.file"
+	// pumpSignalCapacityEpochPrefix is followed by a plan id: the alert epoch the pump last put in
+	// that plan's event id, see pumpSignalCapacityRecord.
+	pumpSignalCapacityEpochPrefix = "signal.capacity.epoch."
 
 	// pumpSignalAuditOffsetKey is the alert file's byte offset in Offsets.
 	pumpSignalAuditOffsetKey = "signal_audit"
@@ -249,14 +254,64 @@ type pumpSignalCapacitySource struct{}
 
 func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 
-// pumpSignalCapacityID is the id of one alert: the plan, its alert epoch and the waiting set. The
-// epoch comes from the last committed state, so a judgement made again after a lost commit is the
-// same id, and a realert_hours re-alert is the next epoch. The waiting set is in the id so a set
-// that changed before a lost commit was repaired is a new alert, not one the sent set swallows.
-func pumpSignalCapacityID(plan CapacityPlan) string {
-	data, _ := json.Marshal(plan.Waiting)
+// pumpSignalCapacityRecord is what the pump keeps, under its own Cursors and in the same write as
+// the pending events, about the last alert event it made for a plan: the epoch the capacity state
+// had when the alert was judged (Base), the epoch put in the event id (Epoch), the waiting set
+// (Waiting) and whether the alerted state was committed afterwards (Committed).
+//
+// The capacity state file alone cannot give an event id that is stable and also never reused: a
+// plan removed from the settings and added again, or a state file that is gone, restarts its epoch
+// at 1 and would rebuild the id of an alert already sent, which the sent set then swallows. The
+// record is what keeps the id apart. A judgement repeated over an uncommitted record (same base,
+// same waiting set) reuses its epoch, so a lost commit converges on the same id; any other alert
+// takes an epoch above the record's, so the epoch of a plan's events only grows.
+type pumpSignalCapacityRecord struct {
+	Base      int    `json:"base"`
+	Epoch     int    `json:"epoch"`
+	Waiting   string `json:"waiting"`
+	Committed bool   `json:"committed"`
+}
+
+func pumpSignalCapacityLoad(st *pumpState, plan string) (pumpSignalCapacityRecord, bool) {
+	var rec pumpSignalCapacityRecord
+	raw := st.Cursors[pumpSignalCapacityEpochPrefix+plan]
+	if raw == "" || json.Unmarshal([]byte(raw), &rec) != nil {
+		return pumpSignalCapacityRecord{}, false
+	}
+	return rec, true
+}
+
+func pumpSignalCapacityStore(st *pumpState, plan string, rec pumpSignalCapacityRecord) {
+	if encoded, err := json.Marshal(rec); err == nil {
+		st.Cursors[pumpSignalCapacityEpochPrefix+plan] = string(encoded)
+	}
+}
+
+func pumpSignalWaitingHash(waiting []string) string {
+	data, _ := json.Marshal(waiting)
 	sum := sha256.Sum256(data)
-	return fmt.Sprintf("%s#%s@%d:%s", pumpSignalCapacityName, plan.Plan, plan.AlertEpoch, hex.EncodeToString(sum[:])[:8])
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep.
+func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan) (int, pumpSignalCapacityRecord) {
+	base, hash := plan.AlertEpoch-1, pumpSignalWaitingHash(plan.Waiting)
+	epoch := plan.AlertEpoch
+	if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok {
+		if !rec.Committed && rec.Base == base && rec.Waiting == hash {
+			epoch = rec.Epoch
+		} else if rec.Epoch >= epoch {
+			epoch = rec.Epoch + 1
+		}
+	}
+	return epoch, pumpSignalCapacityRecord{Base: base, Epoch: epoch, Waiting: hash}
+}
+
+// pumpSignalCapacityID is the id of one alert: the plan, its event epoch and the waiting set. The
+// waiting set is in the id so a set that changed before a lost commit was repaired is a new alert,
+// not one the sent set swallows.
+func pumpSignalCapacityID(plan CapacityPlan, epoch int) string {
+	return fmt.Sprintf("%s#%s@%d:%s", pumpSignalCapacityName, plan.Plan, epoch, pumpSignalWaitingHash(plan.Waiting))
 }
 
 // pumpSignalCandidateKeys is the issue keys of the plan's detachable branch candidates.
@@ -300,10 +355,32 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 		return pumpSignalUnmeasured(cfg, pumpSignalCapacityName, err)
 	}
 	st.Cursors[pumpSignalCapacityReadKey] = strconv.FormatInt(now.Unix(), 10)
-	res := pumpSourceResult{Status: pumpSourceOK, Commit: commit}
+	res := pumpSourceResult{Status: pumpSourceOK}
+	var alerted []string
 	for _, plan := range report.Plans {
-		if plan.Alert {
-			res.Events = append(res.Events, pumpEvent{ID: pumpSignalCapacityID(plan), Kind: pumpKindLow, Text: pumpSignalCapacityText(plan)})
+		if !plan.Alert {
+			continue
+		}
+		epoch, rec := pumpSignalCapacityEpoch(st, plan)
+		pumpSignalCapacityStore(st, plan.Plan, rec)
+		alerted = append(alerted, plan.Plan)
+		res.Events = append(res.Events, pumpEvent{ID: pumpSignalCapacityID(plan, epoch), Kind: pumpKindLow, Text: pumpSignalCapacityText(plan)})
+	}
+	if commit != nil {
+		// Once the alerted state is committed the record says so, and the pump saves that again: a
+		// state that is later lost or reset then takes a higher epoch instead of repeating this one.
+		res.Commit = func() error {
+			if err := commit(); err != nil {
+				return err
+			}
+			for _, name := range alerted {
+				if rec, ok := pumpSignalCapacityLoad(st, name); ok {
+					rec.Committed = true
+					pumpSignalCapacityStore(st, name, rec)
+					st.dirty = true
+				}
+			}
+			return nil
 		}
 	}
 	return res
@@ -320,15 +397,10 @@ type pumpSignalAuditLine struct {
 	text  string
 }
 
-// pumpSignalAuditLines is the complete lines of the queue after start and the offset after the last
-// one. A half-written last line is not returned and the offset stays at its start, so it is read
-// whole on a later round.
-func pumpSignalAuditLines(path string, start int64) ([]pumpSignalAuditLine, int64, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, start, err
-	}
-	defer file.Close()
+// pumpSignalAuditLines is the complete lines of the open queue file after start and the offset
+// after the last one. A half-written last line is not returned and the offset stays at its start,
+// so it is read whole on a later round.
+func pumpSignalAuditLines(file *os.File, start int64) ([]pumpSignalAuditLine, int64, error) {
 	if _, err := file.Seek(start, 0); err != nil {
 		return nil, start, err
 	}
@@ -347,6 +419,15 @@ func pumpSignalAuditLines(path string, start int64) ([]pumpSignalAuditLine, int6
 		offset += int64(len(line))
 	}
 	return lines, offset, nil
+}
+
+// pumpSignalFileIdentity names the file a descriptor holds (device and inode), so a queue file that
+// was replaced by another is told from the same file grown, whatever the new one's size.
+func pumpSignalFileIdentity(info os.FileInfo) string {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return fmt.Sprintf("%d:%d", uint64(stat.Dev), uint64(stat.Ino))
+	}
+	return ""
 }
 
 func pumpSignalAuditText(row auditAlertRow) string {
@@ -370,27 +451,39 @@ func pumpSignalAuditText(row auditAlertRow) string {
 
 func (pumpSignalAuditSource) Collect(_ context.Context, e *Env, cfg *Config, st *pumpState, _ pumpSettings) pumpSourceResult {
 	path := crwconfig.JoinRoot(auditStateDir(e, cfg), "audit", auditAlertFile)
-	info, err := os.Stat(path)
+	// The size, the identity and the lines all come from the one open file, so a replacement between
+	// a stat and an open cannot split them.
+	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return pumpSourceResult{Status: pumpSourceOK}
 		}
 		return pumpSignalUnmeasured(cfg, pumpSignalAuditName, err)
 	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return pumpSignalUnmeasured(cfg, pumpSignalAuditName, err)
+	}
 	start := st.Offsets[pumpSignalAuditOffsetKey]
 	epoch, _ := strconv.Atoi(st.Cursors[pumpSignalAuditEpochKey])
-	if info.Size() < start {
-		// The file is shorter than what was read: it was replaced. It is read from its start, and the
-		// ids carry a new epoch so they cannot collide with the ones the old file produced.
+	identity, known := pumpSignalFileIdentity(info), st.Cursors[pumpSignalAuditFileKey]
+	// A different file, or one shorter than what was read, is a replacement: it is read from its
+	// start, and the ids carry a new epoch so they cannot collide with the ones the old file
+	// produced. A state that predates the identity adopts the file it finds.
+	if (known != "" && identity != "" && identity != known) || info.Size() < start {
 		epoch++
 		start = 0
 		st.Cursors[pumpSignalAuditEpochKey] = strconv.Itoa(epoch)
 		st.Offsets[pumpSignalAuditOffsetKey] = 0
 	}
+	if identity != "" {
+		st.Cursors[pumpSignalAuditFileKey] = identity
+	}
 	if info.Size() == start {
 		return pumpSourceResult{Status: pumpSourceOK}
 	}
-	lines, end, err := pumpSignalAuditLines(path, start)
+	lines, end, err := pumpSignalAuditLines(file, start)
 	if err != nil {
 		return pumpSignalUnmeasured(cfg, pumpSignalAuditName, err)
 	}

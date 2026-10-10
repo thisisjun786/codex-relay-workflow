@@ -3,11 +3,13 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"os"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -137,7 +139,15 @@ type capacityPlanState struct {
 
 type capacityState struct {
 	Plans map[string]capacityPlanState `json:"plans"`
+	// Version counts the writes of the file. A commit is made against the version its evaluation
+	// read and is refused when the file has moved since, so a late commit never overwrites a state
+	// the command line or another evaluation saved in between.
+	Version int `json:"version"`
 }
+
+// errCapacityStateMoved is a commit refused because the state file changed after the evaluation
+// read it. The alerted state is left as the newer writer saved it and the caller evaluates again.
+var errCapacityStateMoved = errors.New("capacity: the state changed since it was evaluated")
 
 func capacityPick[T any](value *T, fallback T) T {
 	if value == nil {
@@ -170,23 +180,33 @@ func capacityFamilyOf(ref capacityPlanRef) string {
 // parents is the management session's work. dry judges without writing that state, and a relay read
 // failure is an error the command reports as exit 3.
 func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, error) {
-	ev, err := capacityEvaluate(ctx, e, cfg)
-	if err != nil {
-		return CapacityReport{}, err
-	}
-	if !dry {
-		if err := ev.Commit(); err != nil {
+	for attempt := 1; ; attempt++ {
+		ev, err := capacityEvaluate(ctx, e, cfg)
+		if err != nil {
+			return CapacityReport{}, err
+		}
+		if dry {
+			return ev.Report, nil
+		}
+		// A state that moved under the evaluation (another run saved first) is judged again from the
+		// newer state rather than overwritten.
+		if err := ev.Commit(); err == nil {
+			return ev.Report, nil
+		} else if !errors.Is(err, errCapacityStateMoved) || attempt == capacityCommitAttempts {
 			return CapacityReport{}, err
 		}
 	}
-	return ev.Report, nil
 }
+
+// capacityCommitAttempts bounds the evaluations Capacity makes while the state keeps moving.
+const capacityCommitAttempts = 3
 
 // capacityEvaluation is one judgement not yet reflected in the alerted state: the report, with the
 // alerts it carries, and the state the judgement would write.
 type capacityEvaluation struct {
 	Report    CapacityReport
 	statePath string
+	base      int
 	next      capacityState
 }
 
@@ -194,7 +214,11 @@ type capacityEvaluation struct {
 // elsewhere first (the pump's pending events) evaluates, records the alert, and only then commits;
 // an evaluation that is never committed leaves the state as it was, so the next evaluation judges
 // the same alert under the same epoch (CapacityPlan.AlertEpoch) and converges on the same event.
-func (ev capacityEvaluation) Commit() error { return capacityWriteState(ev.statePath, ev.next) }
+// The write is made under the state's lock and only if the file is still at the version the
+// evaluation read; otherwise it is refused with errCapacityStateMoved and nothing is written.
+func (ev capacityEvaluation) Commit() error {
+	return capacityCommitState(ev.statePath, ev.base, ev.next)
+}
 
 // capacityEvaluate is the pure half of Capacity: it reads the signals and the previous state and
 // writes nothing.
@@ -287,7 +311,7 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 		}
 		report.Plans = append(report.Plans, plan)
 	}
-	return capacityEvaluation{Report: report, statePath: statePath, next: next}, nil
+	return capacityEvaluation{Report: report, statePath: statePath, base: previous.Version, next: next}, nil
 }
 
 // capacityPersist records this run's waiting set and reports how long it has waited and whether the
@@ -358,6 +382,28 @@ func capacityReadState(path string) capacityState {
 		return state
 	}
 	return stored
+}
+
+// capacityCommitState writes next as the version after base, under an exclusive lock on the state's
+// lock file, and refuses when the file is no longer at base.
+func capacityCommitState(path string, base int, next capacityState) error {
+	if err := os.MkdirAll(rootDir(path), 0o755); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if capacityReadState(path).Version != base {
+		return errCapacityStateMoved
+	}
+	next.Version = base + 1
+	return capacityWriteState(path, next)
 }
 
 func capacityWriteState(path string, state capacityState) error {
