@@ -107,7 +107,7 @@ func TestChatSearchDispatchAndNumericEdges(t *testing.T) {
 	}
 	calls := 0
 	_, err := SearchChat("", ChatSearchOptions{Home: &home, Days: scanPtr(math.Inf(1)), Cwd: scanPtr("/proj/alpha"), ReadOriginUrl: func(string) string { calls++; return "" }}, scanTestNow())
-	if err == nil || err.Error() != "Invalid time value" || calls != 0 {
+	if err == nil || !strings.Contains(err.Error(), "--days Infinity is out of range") || calls != 0 {
 		t.Fatalf("cutoff must precede empty query and origin: %v calls=%d", err, calls)
 	}
 	for _, n := range []float64{0, -1} {
@@ -433,6 +433,9 @@ func TestChatSearchRecordedOracle(t *testing.T) {
 			opts.Home, opts.IndexPath = &home, &index
 			if c.Name == "invalid-days" {
 				opts.Days = scanPtr(math.Inf(1))
+			}
+			if c.Name == "invalid-days" {
+				c.Error = "--days Infinity is out of range: no date lies that many days before now" // port: fixed (CRW-1125, known-defects.md :781)
 			}
 			r, err := SearchChat(c.Query, opts, scanTestNow())
 			if c.Error != "" {

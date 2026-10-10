@@ -62,8 +62,13 @@ const boolFlagNames = "any all no-tools rank recent scan no-refresh no-synonyms 
 // but a parse that did not see one does not list it, so the parsed shape of every oracle case is unchanged.
 const portBoolFlagNames = "verify"
 
+// WantsHelp reports a --help or -h before the -- terminator: what follows it is the query, so a literal --help there is searched for
+// (CRW-1125, known-defects.md :667).
 func WantsHelp(args []string) bool {
 	for _, s := range args {
+		if s == "--" {
+			return false
+		}
 		if s == "--help" || s == "-h" {
 			return true
 		}
@@ -96,8 +101,12 @@ func ExplicitHome(values map[string]any) (*string, error) {
 	if !ok {
 		return nil, nil
 	}
-	if _, err := os.Stat(raw); err != nil {
+	info, err := os.Stat(raw)
+	if err != nil {
 		return nil, fmt.Errorf("--home not found: %s", raw)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("--home is not a directory: %s", raw) // known-defects.md :668
 	}
 	return &raw, nil
 }

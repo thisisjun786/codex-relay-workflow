@@ -84,6 +84,12 @@ func recallCLIChatSearch(args []string, stdout, stderr io.Writer, now time.Time)
 	if err != nil {
 		return recallCLIFail(stderr, err)
 	}
+	// A days window that reaches no date is a flag error, before the query, the home or the index is looked at.
+	if days := NumFlag(parsed.Values, "days"); days != nil {
+		if _, err := chatScanCutoff(now, *days); err != nil {
+			return recallCLIFail(stderr, err)
+		}
+	}
 	query := text.Trim(strings.Join(parsed.Positionals, " "))
 	if query == "" {
 		fmt.Fprintln(stdout, Usage())

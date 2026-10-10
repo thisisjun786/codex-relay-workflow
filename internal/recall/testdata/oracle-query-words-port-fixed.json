@@ -1,0 +1,14 @@
+[
+ {"fn":"symbol","in":["deadbeef"],"out":false},
+ {"fn":"required","in":["deadbeef"],"out":false},
+ {"fn":"symbol","in":["defaced"],"out":false},
+ {"fn":"required","in":["defaced"],"out":false},
+ {"fn":"stem","in":["해결했지"],"out":"해결"},
+ {"fn":"stem","in":["해결하다"],"out":"해결"},
+ {"fn":"stem","in":["하배포해"],"out":"하배포"},
+ {"fn":"expand","in":[["deadbeef"]],"out":[[{"text":"deadbeef","boundary":false}]]},
+ {"fn":"expand","in":[["defaced"]],"out":[[{"text":"defaced","boundary":false}]]},
+ {"fn":"expand","in":[["해결했지"]],"out":[[{"text":"해결했지","boundary":false},{"text":"해결","boundary":false}]]},
+ {"fn":"expand","in":[["해결하다"]],"out":[[{"text":"해결하다","boundary":false},{"text":"해결","boundary":false}]]},
+ {"fn":"expand","in":[["하배포해"]],"out":[[{"text":"하배포해","boundary":false},{"text":"하배포","boundary":false}]]}
+]

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -16,7 +18,12 @@ func TestRecallFlagsOracle(t *testing.T) {
 		var err error
 		switch c.Fn {
 		case "help":
-			got = WantsHelp(arg[[]string](t, c.oracleCase, 0))
+			args := arg[[]string](t, c.oracleCase, 0)
+			got = WantsHelp(args)
+			// port: fixed (CRW-1125, known-defects.md :667): the oracle scans every argument, the port stops at the -- terminator.
+			if end := slices.Index(args, "--"); end >= 0 {
+				c.Out = json.RawMessage(strconv.FormatBool(slices.Contains(args[:end], "--help") || slices.Contains(args[:end], "-h")))
+			}
 		case "parse":
 			got, err = ParseFlags(arg[[]string](t, c.oracleCase, 0))
 		case "read":
@@ -71,9 +78,14 @@ func TestRecallFlagsOracle(t *testing.T) {
 }
 
 func TestRecallReadFlagsAndHelpPrecedence(t *testing.T) {
-	for _, args := range [][]string{{"--unknown", "--help"}, {"--cwd", "-x", "-h"}, {"--", "--help"}} {
+	for _, args := range [][]string{{"--unknown", "--help"}, {"--cwd", "-x", "-h"}, {"--help", "--", "x"}} {
 		if !WantsHelp(args) {
 			t.Errorf("help must precede parser: %v", args)
+		}
+	}
+	for _, args := range [][]string{{"--", "--help"}, {"x", "--", "-h"}} {
+		if WantsHelp(args) {
+			t.Errorf("a flag after the terminator is a query word (CRW-1125, :667): %v", args)
 		}
 	}
 	for _, query := range []string{"help", "/?", "--help=value"} {
@@ -120,9 +132,8 @@ func TestRecallExplicitHome(t *testing.T) {
 	if err = os.WriteFile(file, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	p, err = ExplicitHome(map[string]any{"home": file})
-	if p == nil || *p != file || err != nil {
-		t.Fatal("oracle accepts existing non-directory", p, err)
+	if _, err = ExplicitHome(map[string]any{"home": file}); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatal("an existing non-directory is no home (CRW-1125, :668)", err)
 	}
 	if err = os.Symlink(missing, filepath.Join(home, "dangling")); err != nil {
 		t.Fatal(err)

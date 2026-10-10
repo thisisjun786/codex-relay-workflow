@@ -119,8 +119,16 @@ func CwdMatches(sessionCwd, prefix string, caseInsensitive ...bool) bool {
 // FoldCwdCaseFor takes Node platform names, as does the oracle.
 func FoldCwdCaseFor(platform string) bool { return platform == "darwin" || platform == "win32" }
 
+// foldCwdCaseSeam is nil in production. A test sets it to run the case-folding hosts' branch on any platform.
+var foldCwdCaseSeam func() bool
+
 // FoldCwdCase replaces the oracle's platform-computed module initializer.
-func FoldCwdCase() bool { return runtime.GOOS == "darwin" || runtime.GOOS == "windows" }
+func FoldCwdCase() bool {
+	if foldCwdCaseSeam != nil {
+		return foldCwdCaseSeam()
+	}
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
 
 // DateFromRolloutName checks the filename grammar, not calendar validity.
 func DateFromRolloutName(name string) *string {

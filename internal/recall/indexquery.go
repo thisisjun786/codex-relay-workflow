@@ -3,8 +3,12 @@
 package recall
 
 import (
+	"errors"
 	"math"
+	"slices"
 	"strings"
+	"sync"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -44,6 +48,30 @@ type resolvedQuery struct {
 	IndexQueryOptions
 	repoThreadIDs    []string
 	hasRepoKeyColumn bool
+	// foldedCwds, when foldedResolved, is every stored cwd the scan's own predicate (CwdMatches, folded) accepts for Cwd. SQL's lower()
+	// folds ASCII only, so a case-insensitive host asks the same Go predicate that the scan asks (known-defects.md :662).
+	foldedCwds     []string
+	foldedResolved bool
+}
+
+// maxFoldedCwds bounds the stored cwd values bound into one statement; a larger set keeps the SQL predicate.
+const maxFoldedCwds = 10000
+
+// resolveFoldedCwds lists the distinct stored cwd values that CwdMatches accepts for cwd under case folding.
+func resolveFoldedCwds(db *RwDb, cwd string) ([]string, bool) {
+	rows, err := indexRankRead(db, "SELECT DISTINCT cwd FROM files WHERE cwd IS NOT NULL")
+	if err != nil {
+		return nil, false
+	}
+	out := []string{}
+	for _, row := range rows {
+		if stored, ok := row["cwd"].(string); ok && CwdMatches(stored, cwd, true) {
+			if out = append(out, stored); len(out) > maxFoldedCwds {
+				return nil, false
+			}
+		}
+	}
+	return out, true
 }
 
 func poolSize(limit float64) float64 {
@@ -121,7 +149,94 @@ func wordCondition(word string, params *[]any) string {
 		return "m.id IN (SELECT rowid FROM msgs_tri WHERE msgs_tri MATCH ?)"
 	}
 	*params = append(*params, "%"+escapeLike(word)+"%")
-	return `lower(m.text) LIKE ? ESCAPE '\'`
+	like := `lower(m.text) LIKE ? ESCAPE '\'`
+	// SQLite folds ASCII only, while the final predicate lowers the whole text: a short word is also looked up as each spelling of
+	// its letters that SQL cannot fold (Ü for ü, the Kelvin sign for k, İ for i), so no row the final predicate accepts is cut off
+	// before it (known-defects.md :661).
+	extra := shortWordSpellings(word)
+	if len(extra) == 0 {
+		return like
+	}
+	conditions := []string{like}
+	for _, spelling := range extra {
+		conditions = append(conditions, "instr(m.text, ?) > 0")
+		*params = append(*params, spelling)
+	}
+	return "(" + strings.Join(conditions, " OR ") + ")"
+}
+
+var (
+	caseSourcesOnce sync.Once
+	caseSources     map[rune][]rune
+)
+
+// lowerSources are the runes, other than r itself, whose lowercase holds r.
+func lowerSources(r rune) []rune {
+	caseSourcesOnce.Do(func() {
+		caseSources = map[rune][]rune{}
+		for _, cr := range unicode.CaseRanges {
+			for c := rune(cr.Lo); c <= rune(cr.Hi); c++ {
+				if l := unicode.ToLower(c); l != c {
+					caseSources[l] = append(caseSources[l], c)
+				}
+			}
+		}
+		caseSources['i'] = append(caseSources['i'], 0x130) // İ lowers to i and a combining dot above
+		caseSources[0x307] = append(caseSources[0x307], 0x130)
+		caseSources[0x3c2] = append(caseSources[0x3c2], 0x3a3) // a capital sigma ending a word lowers to the final form
+	})
+	return caseSources[r]
+}
+
+// shortWordSpellings are the spellings of a word of one or two letters that a case-sensitive lookup must try beside SQL's ASCII
+// fold: every spelling whose text lowers (with Lower) to a string holding the word, that has a letter outside ASCII, and that the
+// ASCII fold of the LIKE does not already reach. A word that SQL folds completely has none.
+func shortWordSpellings(word string) []string {
+	runes := []rune(word)
+	if len(runes) == 0 || len(runes) > 2 {
+		return nil
+	}
+	options := make([][]rune, len(runes))
+	for i, r := range runes {
+		options[i] = append([]rune{r}, lowerSources(r)...)
+	}
+	out := []string{}
+	add := func(spelling string) {
+		if asciiLower(spelling) == word || slices.Contains(out, spelling) {
+			return // the LIKE reaches it, or it is listed
+		}
+		for _, r := range spelling {
+			if r >= 0x80 {
+				out = append(out, spelling)
+				return
+			}
+		}
+	}
+	if len(runes) == 1 {
+		for _, o := range options[0] {
+			add(string(o))
+		}
+		return out
+	}
+	for _, a := range options[0] {
+		for _, b := range options[1] {
+			add(string([]rune{a, b}))
+		}
+	}
+	if Lower("\u0130") == word {
+		add("\u0130")
+	}
+	return out
+}
+
+// asciiLower folds A-Z only, as SQLite's lower() does.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
 }
 
 func groupCondition(group QueryGroup, params *[]any) string {
@@ -184,6 +299,16 @@ func candidateFilterFor(opts resolvedQuery, withWords, fold bool) (string, []any
 		}
 		parts := []string{eq, like}
 		params = append(params, cwd, escapeLike(prefix)+"/%")
+		if fold && opts.foldedResolved {
+			// SQL folds ASCII only: the stored cwd values the scan's own predicate accepts stand in for the two comparisons.
+			parts, params = parts[:0], params[:len(params)-2]
+			if len(opts.foldedCwds) > 0 {
+				parts = append(parts, "f.cwd IN ("+strings.TrimSuffix(strings.Repeat("?,", len(opts.foldedCwds)), ",")+")")
+				for _, stored := range opts.foldedCwds {
+					params = append(params, stored)
+				}
+			}
+		}
 		if opts.RepoKey != "" && opts.hasRepoKeyColumn {
 			parts = append(parts, "(f.repo_key IS NOT NULL AND f.repo_key = ?)")
 			params = append(params, opts.RepoKey)
@@ -193,6 +318,9 @@ func candidateFilterFor(opts resolvedQuery, withWords, fold bool) (string, []any
 			for _, id := range opts.repoThreadIDs {
 				params = append(params, id)
 			}
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "0") // no stored cwd matches, and no repository does either
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
@@ -205,3 +333,18 @@ func candidateFilterFor(opts resolvedQuery, withWords, fold bool) (string, []any
 func textMatches(text string, plan MatchPlan) bool {
 	return PlanMatches(Lower(text), plan)
 }
+
+// planHasNUL reports whether a query term holds a NUL character: FTS5 quoting cannot carry one (MATCH raises "unterminated string"),
+// so such a query is served by the scan (known-defects.md :663).
+func planHasNUL(plan MatchPlan) bool {
+	for _, group := range AllGroups(plan) {
+		for _, term := range group {
+			if strings.ContainsRune(term.Text, 0) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var errIndexNULWord = errors.New("a query word holds a NUL character, which the index cannot search")

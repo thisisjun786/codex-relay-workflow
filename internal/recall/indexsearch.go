@@ -212,6 +212,9 @@ func indexRankRecentRows(db *RwDb, opts resolvedQuery) ([]indexRankRow, bool, er
 
 // queryIndex resolves metadata once, chooses ordering, then enriches shared hits.
 func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
+	if planHasNUL(opts.Plan) {
+		return ChatSearchResult{}, errIndexNULWord
+	}
 	started := time.Now()
 	statePath, err := stateDbPath(opts.Home)
 	if err != nil {
@@ -219,6 +222,9 @@ func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
 	}
 	meta := loadThreadMeta(statePath)
 	query := resolvedQuery{IndexQueryOptions: opts, repoThreadIDs: indexSameOriginThreadIDs(meta, opts.RepoKey), hasRepoKeyColumn: filesHasColumn(db, "repo_key")}
+	if opts.Cwd != "" && FoldCwdCase() {
+		query.foldedCwds, query.foldedResolved = resolveFoldedCwds(db, opts.Cwd)
+	}
 	var rows []indexRankRow
 	var truncated bool
 	if opts.Order == ChatRecent {

@@ -60,11 +60,11 @@ func TestExpandQueryWordsReachesTheEnglishFamily(t *testing.T) {
 }
 
 // What the oracle does and the port keeps (known-defects.md): a too-short stem falls through to a shorter ending, and the 하/해 tail
-// is judged at its leftmost position only.
+// is judged at its leftmost position that leaves a stem (해결했지 and 해결하다 give 해결 since CRW-1125, known-defects.md :122).
 func TestKoreanStemOracleQuirks(t *testing.T) {
 	stemIs(t, "집에서는", "집에서")
 	stemIs(t, "결정하하하하", "결정")
-	for _, in := range []string{"해결했지", "해결하다", "오하해하", "하하하하하"} {
+	for _, in := range []string{"오하해하", "하하하하하"} {
 		stemIs(t, in, "")
 	}
 }

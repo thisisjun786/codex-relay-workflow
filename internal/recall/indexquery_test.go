@@ -34,7 +34,7 @@ func queryOracleOptions(t *testing.T, c oracleCase) resolvedQuery {
 		RepoThreadIDs    []string `json:"repoThreadIds"`
 		HasRepoKeyColumn bool     `json:"hasRepoKeyColumn"`
 	}](t, c, 0)
-	return resolvedQuery{v.IndexQueryOptions, v.RepoThreadIDs, v.HasRepoKeyColumn}
+	return resolvedQuery{IndexQueryOptions: v.IndexQueryOptions, repoThreadIDs: v.RepoThreadIDs, hasRepoKeyColumn: v.HasRepoKeyColumn}
 }
 
 func queryOracleNumber(t *testing.T, c oracleCase, i int) float64 {
@@ -49,11 +49,37 @@ func queryOracleNumber(t *testing.T, c oracleCase, i int) float64 {
 	return v
 }
 
+// indexQueryPortFixed reads testdata/indexquery/port-fixed.json: the answers of the cases whose recorded oracle answer the port changed on
+// purpose, by case index (CRW-1125, docs/port-cxc/known-defects/CRW-1125.md).
+func indexQueryPortFixed(t *testing.T) map[int]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile("testdata/indexquery/port-fixed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Index int
+		Out   json.RawMessage
+	}
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	out := map[int]json.RawMessage{}
+	for _, r := range rows {
+		out[r.Index] = r.Out
+	}
+	return out
+}
+
 func TestIndexQueryOracle(t *testing.T) {
 	seen := map[string]int{}
+	fixed := indexQueryPortFixed(t)
 	for i, c := range queryOracle(t).Cases {
 		if c.Fn == "candidates" {
 			continue
+		}
+		if out, ok := fixed[i]; ok {
+			c.Out = out
 		}
 		seen[c.Fn]++
 		var got any
@@ -141,6 +167,7 @@ func TestIndexQueryOracle(t *testing.T) {
 
 func TestIndexQueryCandidates(t *testing.T) {
 	oracle := queryOracle(t)
+	fixed := indexQueryPortFixed(t)
 	for _, legacy := range []bool{false, true} {
 		db, path := indexTestDB(t)
 		for _, row := range oracle.Seeds.Files {
@@ -188,6 +215,9 @@ func TestIndexQueryCandidates(t *testing.T) {
 						got["hits"] = append(got["hits"].([]any), r["id"])
 					}
 				}
+			}
+			if out, ok := fixed[i]; ok {
+				c.Out = out
 			}
 			var want any
 			if err := json.Unmarshal(c.Out, &want); err != nil {

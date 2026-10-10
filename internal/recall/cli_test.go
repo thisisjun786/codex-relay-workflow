@@ -178,6 +178,13 @@ func TestRecallCLIRecordedOracle(t *testing.T) {
 			code, out, e := recallCLIInvoke(t, args, time.Now())
 			norm := strings.NewReplacer(home, "<HOME>", idx, "<INDEX>")
 			out, e = norm.Replace(out), norm.Replace(e)
+			if slices.Equal(row.Argv, []string{"chat", "search", "--", "--help"}) {
+				// port: fixed (CRW-1125, known-defects.md :667): the oracle printed usage; the port searches for the word --help.
+				if code != 0 || e != "" && !strings.HasPrefix(e, "recall: building the sidecar index") || strings.Contains(out, `crw recall chat search "<query>"`) || !strings.HasPrefix(out, "# 0 hits (") {
+					t.Fatalf("a --help after the terminator is a query word: %d %q %q", code, out, e)
+				}
+				return
+			}
 			if strings.Contains(out, `"elapsedMs"`) {
 				var a, b map[string]any
 				json.Unmarshal([]byte(out), &a)
