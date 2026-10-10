@@ -127,6 +127,46 @@ func requestClauses(s string) []string {
 	}
 }
 
+// unfencedLines are the trimmed nonempty lines of the prompt outside a code fence. A fence opens with three or more backticks
+// or tildes and closes with a line of the same character, at least as long, and nothing else; a different fence character
+// inside it is text. CRW-1084 (port: fixed): the oracle knew only the backtick fence (hook.ts:236-322), so a tilde example of a
+// request was read as one.
+func unfencedLines(prompt string) []string {
+	var out []string
+	var fence byte
+	fenceLen := 0
+	for _, raw := range text.SplitLines(prompt) {
+		line := text.Trim(raw)
+		if c, n := fenceRun(line); n >= 3 {
+			switch {
+			case fence == 0:
+				fence, fenceLen = c, n
+				continue
+			case c == fence && n >= fenceLen && strings.Trim(line, string(fence)) == "":
+				fence, fenceLen = 0, 0
+				continue
+			}
+		}
+		if fence != 0 || line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// fenceRun is the fence character the line opens with and the length of its run, or zero.
+func fenceRun(line string) (byte, int) {
+	if line == "" || line[0] != '`' && line[0] != '~' {
+		return 0, 0
+	}
+	n := 0
+	for n < len(line) && line[n] == line[0] {
+		n++
+	}
+	return line[0], n
+}
+
 // requestLines keeps only clauses that can carry an advisory request. Quoted
 // examples, lists, fences, explanatory leads and mode negations stay silent.
 func requestLines(prompt string) []string {
@@ -134,14 +174,8 @@ func requestLines(prompt string) []string {
 	explain := detectorRE(`^(?:(?:please|좀)\s+)?(?:explain|describe|how do|how to|what is|what does|why)\b|^(?:좀\s*)?(?:설명|어떻게|뭐야)`)
 	lead, tail := detectorRE(negatedLead), detectorRE(negatedTail)
 	var result []string
-	fenced := false
-	for _, raw := range text.SplitLines(prompt) {
-		line := text.Trim(raw)
-		if strings.HasPrefix(line, "```") {
-			fenced = !fenced
-			continue
-		}
-		if fenced || line == "" || skip.MatchString(line) {
+	for _, line := range unfencedLines(prompt) {
+		if skip.MatchString(line) {
 			continue
 		}
 		explanatory := explain.MatchString(foldASCII(line))
@@ -273,4 +307,163 @@ func DetectMemoryWriteRequest(prompt string) bool {
 		}
 	}
 	return memoryDestination(p)
+}
+
+// LoopArmScope is what a loop-arm request says about its scope (CRW-1084).
+type LoopArmScope int
+
+const (
+	// LoopScopeNone names no project and no current-task implementation: the request is about the task at hand, and the
+	// implementation recipe is its answer.
+	LoopScopeNone LoopArmScope = iota
+	// LoopScopeProject names a project or a coordination of children, which crw-run owns (goal mode where a parent goal was
+	// asked for) and the project parent never runs as a loop.
+	LoopScopeProject
+	// LoopScopeCurrentTask asks, in so many words, to implement a task in this session. The session is then the task's
+	// implementer and not the project parent, which is the one exception goal-mode.md makes.
+	LoopScopeCurrentTask
+)
+
+// PromptRole is what the relay registry says this session is. The hook reads it only through a verified registry read; a
+// session with no such evidence is PromptRoleUnknown, and a project link never makes it a parent.
+type PromptRole string
+
+// The roles a verified registry read can report.
+const (
+	PromptRoleUnknown PromptRole = ""
+	PromptRoleParent  PromptRole = "parent"
+	PromptRoleTask    PromptRole = "task"
+)
+
+// ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical and reads
+// only the request clauses requestLines keeps, after scopeText has dropped the example spans, so a quoted, listed, fenced or
+// plainly introduced example ("Example: ...", "e.g.", "예: ..."), an explanation and a negated clause say nothing about the scope.
+//
+// A current-task implementation needs an implement verb and a this/current session, task or issue in the SAME clause, with no
+// negation governing the verb: a negation word right before it, at most a few filler words apart ("do not actually implement",
+// "not to implement"), or a Korean negation after it ("구현하지 마"). A negation elsewhere in the clause ("no questions, please
+// implement ...") does not govern the verb. Nor does the verb count when another agent does it: a children, worker, subagent or
+// "child task/lane/..." up to three words before it ("while child tasks implement their issues", "while the children then
+// implement") makes the clause a coordination, unless a comma or a coordinating conjunction comes right after the noun and
+// only conjunctions follow ("consult the children and implement this task", "consult the children, then implement") or the
+// noun is a child process (delegatedVerb).
+//
+// A project is a Linear project link, a coordination word (the verb coordinate but not the noun - coordinateVerb -, supervise,
+// children or child tasks, 조정, 감독, 부모, 자식 but not a child process), or the word "project" - except where "project" only names the place of a single-task fix: "in this
+// project", "of the project", "이 프로젝트에서" in a clause that carries its own ungoverned implement verb. A named project ("the
+// migration project") stays a project. The current-task exception wins over a project mention.
+func ClassifyLoopArmScope(prompt string) LoopArmScope {
+	current := detectorRE(`\b(?:this|current|my)\s+(?:session|task|issue|thread|worktree|checkout)\b|\bin\s+the\s+current\s+(?:session|thread)\b|(?:이|현재)\s*(?:세션|작업|이슈|태스크|스레드)|지금\s*세션`)
+	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
+	// "coordinate" and "coordinates" are also a plain noun (coordinate values, the coordinates in the parser); coordinateVerb
+	// reads the bare forms. "coordinating" and "coordination" always count.
+	coordination := detectorRE(`linear\.app/\S+/project/|\bcoordinat(?:ing|ion)\b|\bsupervis(?:e|es|ing|ion)\b|\bchildren\b|\bchild\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?)\b|조정|감독|부모|자식`)
+	projectWord := detectorRE(`\bprojects?\b|프로젝트`)
+	location := detectorRE(`\b(?:in|inside|within|across|throughout|of|for)\s+(?:the\s+current|this|the|current|my|our)\s+(?:project|repo|repository|codebase)\b|(?:이|현재|우리|내)\s*프로젝트\s*(?:에서|안에서|안의|의|에)`)
+	clauses := requestLines(scopeText(prompt))
+	for i := range clauses {
+		clauses[i] = foldASCII(clauses[i])
+	}
+	for _, clause := range clauses {
+		if current.MatchString(clause) && ungovernedImplement(clause) {
+			return LoopScopeCurrentTask
+		}
+	}
+	for _, clause := range clauses {
+		if rest := childProcess.ReplaceAllString(clause, " "); coordination.MatchString(rest) || coordinateVerb(rest) {
+			return LoopScopeProject
+		}
+		if ungovernedImplement(clause) {
+			clause = location.ReplaceAllString(clause, " ")
+		}
+		if projectWord.MatchString(clause) {
+			return LoopScopeProject
+		}
+	}
+	return LoopScopeNone
+}
+
+// coordinateVerb reports a bare "coordinate" or "coordinates" in a folded clause that is the verb and not the noun
+// (ClassifyLoopArmScope). The word is the noun when a determiner, a preposition, a coordinate-kind modifier or a transitive
+// work verb comes right before it ("the coordinates", "of coordinate values", "fix coordinate rounding", "normalize these
+// coordinates") or a noun it compounds with comes right after it ("coordinate values", "coordinate system"); anywhere else,
+// at a clause start, after "to", an adverb or a subject ("to actively coordinate", "so we coordinate", "this session
+// coordinates the lanes"), it is the verb.
+func coordinateVerb(clause string) bool {
+	word := detectorRE(`\bcoordinates?\b`)
+	nounBefore := detectorRE(`\b(?:the|a|an|of|in|on|at|for|from|with|into|by|per|about|between|these|those|this|that|its|their|our|your|his|her|my|each|every|any|some|no|new|raw|x|y|z|xy|xyz|gps|geo|polar|cartesian|screen|world|local|global|pixel|map|texture|fix|fixes|fixing|implement|build|code|develop|debug|parse|convert|round|compute|normalize|validate|refactor|handle|store|read|write|test|update|change|clamp|sort|format|serialize|deserialize)\s+$`)
+	nounAfter := detectorRE(`^\s+(?:values?|systems?|transforms?|transformation|conversions?|rounding|parsing|parsers?|math|bugs?|data|fields?|types?|pairs?|spaces?|frames?|formats?|precision|offsets?|grids?|mappings?|helpers?|utils?|functions?|logic|tests?|columns?|arrays?|lists?|points?|calculations?|projections?|are|is|was|were)\b`)
+	for _, at := range word.FindAllStringIndex(clause, -1) {
+		if !nounBefore.MatchString(clause[:at[0]]) && !nounAfter.MatchString(clause[at[1]:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// ungovernedImplement reports an implement verb in a folded clause that no negation governs (ClassifyLoopArmScope).
+func ungovernedImplement(clause string) bool {
+	implement := detectorRE(`\b(?:implement|build|fix|code|develop|work\s+on)\b|구현|고쳐|수정|개발|작업해`)
+	filler := `(?:(?:,|\s)+(?:actually|really|yet|ever|even|just|please|to|be|want|need|you|i|we|me|going|try|trying|start|starting|begin|bother|asking))*`
+	negatedBefore := detectorRE(`(?:\b(?:not|never|don't|dont|cannot|can't|won't|wont|shouldn't|mustn't|avoid|stop|without|instead\s+of|rather\s+than|no\s+need\s+to)\b` +
+		filler + `|\bno|말고)(?:,|\s)*$`)
+	negatedAfter := detectorRE(`^\S*\s*(?:(?:하|지|고)\s*)?(?:지\s*)?(?:마|말|않|못)`)
+	for _, at := range implement.FindAllStringIndex(clause, -1) {
+		if !negatedBefore.MatchString(clause[:at[0]]) && !negatedAfter.MatchString(clause[at[1]:]) && !delegatedVerb(clause[:at[0]]) {
+			return true
+		}
+	}
+	return false
+}
+
+// delegatedVerb reports that the implement verb after the folded clause prefix is another agent's (ungovernedImplement). Another
+// agent as the subject or the delegate of the verb ("while child tasks implement", "ask the children to implement", "the
+// workers will then implement") is not this session implementing: the verb must not follow such a noun by up to three words of
+// the same clause. A child process or subprocess is no agent, and a noun right after which a comma or a coordinating conjunction
+// (and, but, or, plus) starts a gap of conjunctions only is the object of an earlier verb whose subject goes on ("consult the
+// children and implement this task", "consult the children, then implement this task"): the session implements. A sentence
+// adverb right after the noun ("the children then implement", "they also implement", "the children each implement") or set
+// off by commas ("the children, then, implement") leaves the noun the subject of the verb.
+func delegatedVerb(prefix string) bool {
+	childProcess := detectorRE(`\bchild\s+process(?:es)?\b|\bsubprocess(?:es)?\b|자식\s*프로세스`)
+	// detectorRE expands \s and \S into bracket classes, so the separator and word classes here spell jsSpaceChars out.
+	sep, word := `[`+jsSpaceChars+`,;]`, `[^`+jsSpaceChars+`,;]`
+	agent := detectorRE(`(?:\b(?:children|workers?|sub-?agents?|others|they|child\s+(?:tasks?|issues?|sessions?|lanes?|threads?|agents?|goals?|workers?)|other\s+(?:agents?|sessions?|tasks?|threads?))\b|(?:자식|하위|워커)\S*)((?:` + sep + `+` + word + `+){0,3}` + sep + `*)$`)
+	space := `[` + jsSpaceChars + `]*`
+	conjunction := detectorRE(`^` + space + `(?:[,;]|\b(?:and|but|or|plus)\b)(?:` + sep + `|\b(?:and|then|but|or|also|plus)\b)*$`)
+	parenthetical := detectorRE(`[,;]` + space + `\b(?:then|also)\b` + space + `,` + space + `$`)
+	m := agent.FindStringSubmatch(childProcess.ReplaceAllString(prefix, " "))
+	if m == nil {
+		return false
+	}
+	gap := m[1]
+	return !conjunction.MatchString(gap) || parenthetical.MatchString(gap)
+}
+
+// scopeText is the prompt without its plainly introduced examples, for ClassifyLoopArmScope (CRW-1084): a parenthesis that
+// opens with an example marker is dropped, a line is cut at an example marker ("example:", "for example", "for instance",
+// "e.g.", "sample:", "such as", "예:", "예시", "예를 들어", "예컨대", "가령", "이를테면"), and a marker that ends its line
+// ("Example:") drops the next nonempty line too, unless that line opens or closes a fence. Quotes, backticks, lists and fences
+// are requestLines' own.
+func scopeText(prompt string) string {
+	paren := detectorRE(`\((?:e\.g\.?|eg\.|for\s+example|for\s+instance|examples?\b|samples?\b|예시|예\s*:|예를\s*들|예컨대|가령)[^)]*\)`)
+	marker := detectorRE(`(?:^|[^a-z0-9_])(?:for\s+example|for\s+instance|e\.g\.|eg\.|examples?\s*:|samples?\s*:|such\s+as)|예\s*[:)]|예시|예를\s*들|예컨대|가령|이를테면`)
+	headingRest := detectorRE(`^(?:\s|[:,.)-])*$`)
+	var out []string
+	skipNext := false
+	for _, line := range text.SplitLines(prompt) {
+		if skipNext && text.Trim(line) != "" {
+			skipNext = false
+			if _, n := fenceRun(text.Trim(line)); n < 3 {
+				continue
+			}
+		}
+		folded := paren.ReplaceAllString(foldASCII(line), " ")
+		if at := marker.FindStringIndex(folded); at != nil {
+			skipNext = headingRest.MatchString(folded[at[1]:])
+			folded = folded[:at[0]]
+		}
+		out = append(out, folded)
+	}
+	return strings.Join(out, "\n")
 }

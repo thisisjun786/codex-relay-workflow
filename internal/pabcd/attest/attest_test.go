@@ -1,6 +1,7 @@
 package attest
 
 import (
+	"encoding/json"
 	"math"
 	"slices"
 	"strings"
@@ -194,5 +195,38 @@ func TestCoerceCarriesATypedOverride(t *testing.T) {
 	}
 	if Coerce(obj{"from": "I", "to": "P", "did": "x", "override": "yes"}).Override || Coerce(obj{"from": "I", "to": "P", "did": "x"}).Override {
 		t.Error("a non-boolean override was kept")
+	}
+}
+
+// CRW-1116: auditBlockers is the structured, language-neutral disposition of a recorded GO-WITH-FIXES (blockers=N) round.
+func TestCoerceCarriesAuditBlockersAndDisposesThem(t *testing.T) {
+	entry := func(blocker any, disposition, reason string) obj {
+		return obj{"blocker": blocker, "disposition": disposition, "reason": reason}
+	}
+	build := func(list any) *Attestation {
+		return Coerce(obj{"from": "A", "to": "B", "did": "x", "auditBlockers": list})
+	}
+	good := []any{entry(1.0, "folded", "plan step 3"), entry(json.Number("2"), " Rebutted ", " the gate owns it ")}
+	if a := build(good); !a.DisposesBlockers(2) || a.DisposesBlockers(1) || a.DisposesBlockers(3) {
+		t.Fatalf("%+v", a.AuditBlockers)
+	}
+	for name, list := range map[string]any{
+		"absent":       nil,
+		"not a list":   obj{"1": "folded"},
+		"duplicate":    []any{entry(1.0, "folded", "a"), entry(1.0, "folded", "b")},
+		"out of range": []any{entry(1.0, "folded", "a"), entry(3.0, "folded", "b")},
+		"fraction":     []any{entry(1.0, "folded", "a"), entry(1.5, "folded", "b")},
+		"text number":  []any{entry(1.0, "folded", "a"), entry("2", "folded", "b")},
+		"unknown":      []any{entry(1.0, "folded", "a"), entry(2.0, "waived", "b")},
+		"no reason":    []any{entry(1.0, "folded", "a"), entry(2.0, "folded", " ")},
+		"not objects":  []any{entry(1.0, "folded", "a"), "2"},
+	} {
+		if build(list).DisposesBlockers(2) {
+			t.Errorf("%s: disposed", name)
+		}
+	}
+	var none *Attestation
+	if none.DisposesBlockers(1) {
+		t.Error("no attestation disposes nothing")
 	}
 }

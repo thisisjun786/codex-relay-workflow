@@ -50,6 +50,10 @@ func HandleReviewObserver(raw string) (out string) {
 	}
 	// last_assistant_message only: reading the child transcript would scan bytes without knowing whose they are, so a
 	// LAUNCH/VERDICT example inside the dispatch packet could sign off on itself.
+	//
+	// CRW-1116 (port: fixed): the verdict line is the grammar of review.ParseSignoff, the one the reviewer skill and the relay's
+	// report renderer share, so `GO-WITH-FIXES (blockers=N)` is a near-pass that keeps N, and the oracle's "no sign-off at all"
+	// for it (review-round.ts:372) is gone. A count the grammar refuses is still no sign-off.
 	signoff := review.ParseSignoff(field("last_assistant_message"))
 	// CRW-564 d1 (port: fixed): the oracle reads the state and writes the verdict without the session lock, so a FAIL could land
 	// between the A>B transition's review check and its publication, both of which run inside that lock. The session lock comes
@@ -96,7 +100,7 @@ func (o reviewObserver) observe(plan *goalplan.Goalplan, st state.State, session
 				// line: the difference between "the reviewer said nothing usable" and "the gate is broken".
 				if st.Phase == state.PhaseA {
 					o.note(reviewObserverUnparsed, "a subagent exited with no parseable sign-off while a plan_audit round was in flight; "+
-						"the closing two lines must be exactly LAUNCH then VERDICT", nil, nil)
+						"the closing two lines must be exactly LAUNCH then VERDICT (PASS, FAIL, NEAR-PASS or GO-WITH-FIXES (blockers=N))", nil, nil)
 				}
 				return
 			}
@@ -148,7 +152,7 @@ func (o reviewObserver) observe(plan *goalplan.Goalplan, st state.State, session
 		return
 	}
 	recorded := review.RecordVerdict(plan, review.VerdictInput{Purpose: goalplan.PurposePlanAudit, RoundID: round.RoundID, LaunchID: launch,
-		Verdict: signoff.Verdict, ReviewerSession: &agentID})
+		Verdict: signoff.Verdict, ReviewerSession: &agentID, Blockers: signoff.Blockers, Findings: signoff.Findings})
 	if recorded.Kind != review.OK {
 		reason := recorded.Reason
 		if reason == "" {

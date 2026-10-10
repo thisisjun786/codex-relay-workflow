@@ -536,7 +536,9 @@ func TestReviewRoundRunOracle(t *testing.T) {
 	if len(o.Cases) < 25 {
 		t.Fatalf("recorded cases missing: %d", len(o.Cases))
 	}
-	rename := strings.NewReplacer("CXC-ROLE:", "CRW-ROLE:", "cxc orchestrate A", "crw pabcd orchestrate A", "cxc review-round", "crw pabcd review-round")
+	rename := strings.NewReplacer("CXC-ROLE:", "CRW-ROLE:", "cxc orchestrate A", "crw pabcd orchestrate A", "cxc review-round", "crw pabcd review-round",
+		// CRW-1116 (port: fixed): the open packet names the GO-WITH-FIXES (blockers=N) line the sign-off parser reads.
+		"VERDICT: PASS | NEAR-PASS | FAIL", "VERDICT: PASS | NEAR-PASS | FAIL | GO-WITH-FIXES (blockers=N)")
 	for _, c := range o.Cases {
 		t.Run(c.ID, func(t *testing.T) {
 			cwd := reviewRoundRunSeed(t)
