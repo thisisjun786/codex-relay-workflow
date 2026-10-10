@@ -182,3 +182,48 @@ func TestVerifyUnbindDoesNotWriteGoalplanWhenThePromptAlsoAsksToRemember(t *test
 		t.Fatal("the goalplan file changed")
 	}
 }
+
+// CRW-146 evaluation round (d1): the chat release answers "no goalplan is bound" only for a session state it could read. A damaged
+// state file is not a session without a binding: the answer refuses, names the damaged state, and the file stays as it is, with or
+// without a turn id and with the unbind also asking to remember (the CLI verb refuses the same file).
+func TestPromptOrchestrateUnbindRefusesAnUnreadableSessionState(t *testing.T) {
+	for _, tc := range []struct{ name, turn, prompt string }{
+		{"with a turn id", "t1", "orchestrate unbind"},
+		{"without a turn id", "", "orchestrate unbind"},
+		{"with a remember request", "t1", "remember this for later\norchestrate unbind"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			damaged := []byte(`{"phase":"IDLE","slug":"demo"`)
+			path := state.StatePath(cwd, "s1")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, damaged, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := PromptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: tc.prompt, TurnID: tc.turn, PabcdEnabled: true}, "", promptSubmitHost(cwd))
+			want := "[crw — refused: unbind: the session state is unreadable; refusing to overwrite it. Nothing was written.]"
+			if got != want {
+				t.Errorf("the answer\n got %q\nwant %q", got, want)
+			}
+			if b, _ := os.ReadFile(path); !bytes.Equal(b, damaged) {
+				t.Errorf("the damaged state was replaced: %q", b)
+			}
+			if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
+				t.Errorf("a refused unbind wrote a row: %+v", rows)
+			}
+		})
+	}
+}
+
+// A session without a state file is the clean rest: the repeat answer stays.
+func TestPromptOrchestrateUnbindOfASessionWithoutStateIsTheNoopAnswer(t *testing.T) {
+	cwd := t.TempDir()
+	if got, want := promptOrchestrateAnswer(t, cwd, "s1", "t1", "orchestrate unbind"), "[crw — no goalplan is bound]"; got != want {
+		t.Errorf("the answer\n got %q\nwant %q", got, want)
+	}
+	if _, err := os.Stat(state.StatePath(cwd, "s1")); !os.IsNotExist(err) {
+		t.Errorf("a state file appeared: %v", err)
+	}
+}

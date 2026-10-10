@@ -129,6 +129,13 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 	// reset-from-IDLE no-op: recognized but nothing to write. So is an unbind of a session that binds no goalplan.
 	if result.Noop {
 		if result.Control == fsm.ControlUnbind {
+			// "No goalplan is bound" is a statement about the session state, so it is made only for one that could be read: the
+			// reader behind current turns a damaged file into a default IDLE with no slug, which this answer must not take for a
+			// session that binds nothing (CRW-146, the loop unbind verb refuses the same file). The read is the strict one and
+			// writes nothing.
+			if _, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID); unreadable {
+				return promptOrchestrateRefusal("unbind: the session state is unreadable; refusing to overwrite it. Nothing was written."), true
+			}
 			return "[crw — no goalplan is bound]", true
 		}
 		return "[crw — already IDLE]", true
