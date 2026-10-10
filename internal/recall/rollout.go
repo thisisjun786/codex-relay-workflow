@@ -452,18 +452,8 @@ func rolloutString(v any) (string, error) {
 	case bool:
 		return strconv.FormatBool(v), nil
 	case json.Number:
-		f, _ := strconv.ParseFloat(string(v), 64)
-		if math.IsInf(f, 1) {
-			return "Infinity", nil
-		}
-		if math.IsInf(f, -1) {
-			return "-Infinity", nil
-		}
-		if f == 0 {
-			return "0", nil
-		}
-		b, err := json.Marshal(f)
-		return string(b), err
+		f, _ := strconv.ParseFloat(string(v), 64) // out of range is an infinity, as it is in JavaScript
+		return jsnode.NumberString(f), nil
 	case []any:
 		parts := make([]string, len(v))
 		for i, item := range v {

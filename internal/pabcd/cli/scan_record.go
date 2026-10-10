@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -181,7 +182,7 @@ func cliScanRecordRunContext(ctx context.Context, a ScanCliArgs, appendEvent fun
 			}
 		}
 	}
-	recorded := fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", scanRecordNumberText(round), a.SessionID, scanRecordNumberText(a.ContradictionCount), scanRecordNumberText(a.HighContradictionCount), derived)
+	recorded := fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", jsnode.NumberString(round), a.SessionID, jsnode.NumberString(a.ContradictionCount), jsnode.NumberString(a.HighContradictionCount), derived)
 	if err != nil {
 		return CliResult{Output: recorded + "\n" + cliPublishedStateWarning(err)}, nil
 	}
@@ -361,7 +362,7 @@ func scanRecordPropertyKey(v any) (string, error) {
 	case bool:
 		return strconv.FormatBool(x), nil
 	case float64:
-		return scanRecordNumberText(x), nil
+		return jsnode.NumberString(x), nil
 	case *scanRecordReference:
 		if m, ok := x.value.(map[string]any); ok {
 			if _, own := m["toString"]; own {
@@ -386,22 +387,6 @@ func scanRecordPropertyKey(v any) (string, error) {
 	}
 	//lint:ignore ST1005 Preserve the oracle's observable TypeError text.
 	return "", errors.New("Cannot convert object to primitive value")
-}
-func scanRecordNumberText(n float64) string {
-	if n == 0 {
-		return "0"
-	}
-	if math.IsInf(n, 1) {
-		return "Infinity"
-	}
-	if math.IsInf(n, -1) {
-		return "-Infinity"
-	}
-	if math.IsNaN(n) {
-		return "NaN"
-	}
-	b, _ := json.Marshal(n)
-	return string(b)
 }
 
 const scanRecordHelp = `crw pabcd scan — record an interview rescan round and fold answers into the tracker

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -602,25 +602,9 @@ type receiptRecord struct {
 }
 
 func encodeReceipt(record receiptRecord) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(record); err != nil {
+	out, err := jsnode.Stringify(record, "  ")
+	if err != nil {
 		return nil, err
 	}
-	in, out := b.Bytes(), make([]byte, 0, b.Len())
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
+	return append(out, '\n'), nil
 }

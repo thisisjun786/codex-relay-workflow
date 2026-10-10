@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -322,31 +320,8 @@ func pendingLedgerEventCount(cwd, sessionID string) int {
 	return len(events) + len(damaged)
 }
 
-// Same compact JSON.stringify string rules as state.stringify, kept local because
-// the state encoder is private. Escaped backslashes stay paired during the pass.
+// statusJSON is the compact JSON.stringify of value (jsnode.Stringify) as a string.
 func statusJSON(value any) (string, error) {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return "", err
-	}
-	in := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
-	out := make([]byte, 0, len(in))
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out = append(out, "\u2028"...)
-			i += 5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out = append(out, "\u2029"...)
-			i += 5
-		default:
-			out = append(out, in[i], in[i+1])
-			i++
-		}
-	}
-	return string(out), nil
+	b, err := jsnode.Stringify(value, "")
+	return string(b), err
 }

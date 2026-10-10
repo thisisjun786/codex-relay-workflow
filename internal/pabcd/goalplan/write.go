@@ -2,9 +2,7 @@ package goalplan
 
 // CXC v0.2.40 goalplan.ts:915-1030. firstInvalidField (:875-913) is in read.go.
 import (
-	"bytes"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -13,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -100,40 +99,13 @@ type writeFreshPlan struct {
 
 func writeEncodePlan(plan Goalplan) ([]byte, error) {
 	if !plan.goalplanBuiltFresh {
-		return writeEncodeJSON(plan, "  ")
+		return jsnode.Stringify(plan, "  ")
 	}
 	criteria := make([]writeFreshCriterion, len(plan.Criteria))
 	for i, c := range plan.Criteria {
 		criteria[i] = writeFreshCriterion{c.ID, c.Scenario, c.Surface, c.Presented, c.ExpectedEvidence, c.CapturedEvidence, c.Status}
 	}
-	return writeEncodeJSON(writeFreshPlan{plan.Objective, plan.Slug, plan.SchemaVersion, plan.CreatedAt, plan.UpdatedAt, plan.ActiveWorkPhaseID, plan.WorkPhases, criteria, plan.Host, plan}, "  ")
-}
-
-// The existing state.stringify and oracle test encoder are private. Preserve
-// JSON.stringify's literal markup/U+2028/U+2029 and lack of a final newline.
-func writeEncodeJSON(value any, indent string) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", indent)
-	if err := enc.Encode(value); err != nil {
-		return nil, err
-	}
-	in := bytes.TrimSuffix(b.Bytes(), []byte("\n"))
-	out := make([]byte, 0, len(in))
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
+	return jsnode.Stringify(writeFreshPlan{plan.Objective, plan.Slug, plan.SchemaVersion, plan.CreatedAt, plan.UpdatedAt, plan.ActiveWorkPhaseID, plan.WorkPhases, criteria, plan.Host, plan}, "  ")
 }
 
 // WriteGoalplan is low-level atomic publication (:915-942). New-plan creation
@@ -221,7 +193,7 @@ func AppendGoalplanLedger(cwd, slug string, entry GoalplanLedgerEntry) error {
 		return err
 	}
 	defer dir.Close()
-	data, err := writeEncodeJSON(entry, "")
+	data, err := jsnode.Stringify(entry, "")
 	if err != nil {
 		return err
 	}

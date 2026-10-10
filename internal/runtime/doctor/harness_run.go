@@ -25,7 +25,6 @@ package doctor
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +35,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -429,42 +427,12 @@ func harnessRunParseOptions(args []string, env host.LookupEnv) (HarnessOptions, 
 // a trailing newline and no HTML escaping, so <, >, & and the em dash stay as the oracle printed
 // them.
 func harnessRunWriteJSON(w io.Writer, report HarnessReport) error {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(report); err != nil {
+	out, err := jsnode.Stringify(report, "  ")
+	if err != nil {
 		return err
 	}
-	_, err := w.Write(harnessRunUnescapeSeparators(buffer.Bytes()))
+	_, err = w.Write(append(out, '\n'))
 	return err
-}
-
-// harnessRunUnescapeSeparators rewrites the \u2028 and \u2029 escapes encoding/json always emits
-// back to the characters themselves, which JSON.stringify writes literally (cli.ts:83). The
-// report carries the manifest version and the environment's active surface, so a separator in
-// either must not change the bytes. An escaped backslash (\\u2028) is data and stays as it is.
-func harnessRunUnescapeSeparators(data []byte) []byte {
-	out := make([]byte, 0, len(data))
-	for i := 0; i < len(data); {
-		if data[i] == '\\' && i+1 < len(data) {
-			if i+5 < len(data) && data[i+1] == 'u' && (string(data[i+2:i+6]) == "2028" || string(data[i+2:i+6]) == "2029") {
-				if string(data[i+2:i+6]) == "2028" {
-					out = utf8.AppendRune(out, '\u2028')
-				} else {
-					out = utf8.AppendRune(out, '\u2029')
-				}
-				i += 6
-				continue
-			}
-			out = append(out, data[i], data[i+1])
-			i += 2
-			continue
-		}
-		out = append(out, data[i])
-		i++
-	}
-	return out
 }
 
 // harnessRunExec is the real HarnessRunner: run file with args under the timeout and answer the
