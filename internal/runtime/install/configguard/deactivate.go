@@ -745,10 +745,23 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	}
 	// A deactivation that reverted everything it owned releases the manifest: the records stay as evidence, and the next
 	// activation starts a new baseline (CRW-1145). A flag that failed to disable, or a key whose provenance could not be
-	// proven, is unresolved ownership and keeps the manifest live for a retry. The release is written only under the config
-	// lock this command holds when it owned something (an install that owned nothing has nothing to release), and only over a
+	// proven, is unresolved ownership and keeps the manifest live for a retry. An install that owned nothing is released too,
+	// or the next activation would carry its first prior states as if they still described the flags. The release is written
+	// only under the config lock (the one this command holds when it owned something, otherwise taken now), and only over a
 	// regular file.
-	if len(r.Failed) == 0 && pin != nil && !deactivateUnresolved(r) && deactivateRegularFile(manifestPath(deps.CodexHome)) {
+	if len(r.Failed) == 0 && !deactivateUnresolved(r) && deactivateRegularFile(manifestPath(deps.CodexHome)) && (pin != nil || path != "") {
+		if pin == nil {
+			lock, err := crwdir.LockConfig(path, activationLockWait)
+			if err != nil {
+				return r, fmt.Errorf("crw owned nothing to revert, but the release of the install manifest could not be recorded under the config lock (%w); run 'crw install features disable' again", err)
+			}
+			defer lock.Release()
+			// An activation that published while this command waited owns what its manifest records: that manifest is not
+			// released from this command's reading.
+			if fresh, _ := readTextOrNull(manifestPath(deps.CodexHome)); fresh == nil || *fresh != *raw {
+				return r, errors.New("the install manifest changed while the deactivation ran, so it was not released; run 'crw install features disable' again")
+			}
+		}
 		at := now()
 		m.ReleasedAt = &at
 		b, err := manifestBytes(m)

@@ -128,3 +128,43 @@ func TestV2TuningWithoutEnabledIsRestored(t *testing.T) {
 		t.Fatalf("config = %q, want %q", config, want)
 	}
 }
+
+// CRW-1145: a completed deactivation of an install that owned nothing releases the manifest too, so the next activation
+// starts a new baseline from the flags as they are then.
+func TestCompletedUnownedDisableStartsNewBaseline(t *testing.T) {
+	home := activationHome(t)
+	path := filepath.Join(home, "config.toml")
+	activationWrite(t, path, "[memories]\ndedicated_tools = [true]\n")
+	state := allActivationFlags()
+	var calls [][]string
+	deps := activationDeps(t, home, state, &calls)
+	base := deps.Run
+	deps.Run = func(args []string) CodexRunResult {
+		if args[1] == "disable" {
+			state[args[2]] = false
+			activationWrite(t, path, SetTableKey(activationRead(t, path), "features", args[2], false).Content)
+			return CodexRunResult{}
+		}
+		return base(args)
+	}
+	if _, err := Activate(deps); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Deactivate(deactivationDeps(home, deps.Run)); err != nil {
+		t.Fatal(err)
+	}
+	if m := parseInstallManifest(activationRead(t, manifestPath(home))); m.ReleasedAt == nil {
+		t.Fatal("the completed deactivation did not release the install")
+	}
+	state["goals"] = false
+	if _, err := Activate(deps); err != nil {
+		t.Fatal(err)
+	}
+	rec := parseInstallManifest(activationRead(t, manifestPath(home))).Flags["goals"]
+	if rec.PriorEnabled || !rec.EnabledByCodexclaw {
+		t.Fatalf("the next activation kept the old baseline: %+v", rec)
+	}
+	if _, err := Deactivate(deactivationDeps(home, deps.Run)); err != nil || state["goals"] {
+		t.Fatalf("the flag crw enabled after the new baseline was left on: %v %v", err, state)
+	}
+}
