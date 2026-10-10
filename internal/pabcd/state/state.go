@@ -138,6 +138,9 @@ type State struct {
 	StopBlockTotal       float64 `json:"stopBlockTotal"`
 	StopBlockTurnID      *string `json:"stopBlockTurnId"`
 	StopBlockCapNotified bool    `json:"stopBlockCapNotified"`
+	// StopDivergenceWindow names the evaluation window (metric, work phase, row count) the Stop plateau block was last
+	// answered for, so one window asks for divergence once (CRW-1088, not in the oracle); absent until a plateau block is.
+	StopDivergenceWindow *string `json:"stopDivergenceWindow,omitempty"`
 
 	// IDLE-edit advisory and the memory-write gate (a remember request, its turn, an operator grant).
 	LoopArmSeen          bool    `json:"loopArmSeen"`

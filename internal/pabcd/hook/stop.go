@@ -28,7 +28,9 @@
 // goal, the goalplan wait and the payload's turn_id are judged again inside the lock), a cycle in flight whose bound goalplan waits only on open decisions releases as the idle path
 // does, and the friction advisory line is not ported (its ledger writer is a deprecated, unregistered
 // hook of the oracle, so no CRW store feeds it). docs/port-cxc/known-defects/CRW-1086.md: a spent
-// per-phase budget latches instead of recharging on the next Stop.
+// per-phase budget latches instead of recharging on the next Stop. CRW-1088.md: a metric row is progress
+// only against the earlier row of its own metric and work phase, the plateau of a bound goalplan is its
+// active work phase's, and one evaluation window gets the plateau block once.
 package hook
 
 import (
@@ -111,7 +113,7 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if stopContextPressure(p) {
 			return StopAnswer{}
 		}
-		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State) string {
+		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State) string {
 			return stopGoalIdleBlock(p.Cwd, fresh, p.SessionID, platform, env)
 		})
 	}
@@ -130,8 +132,10 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 	if stopContextPressure(p) {
 		return StopAnswer{}
 	}
-	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State) string {
-		if plateau := stopObjectivePlateau(p.Cwd, p.SessionID); plateau.Flat {
+	return stopCounted(p, st, platform, env, lock, stopInFlightDue, func(fresh state.State, next *state.State) string {
+		// CRW-1088: one evaluation window asks for divergence once; the window it was asked for is written with the counter.
+		if plateau, window := stopObjectivePlateau(p.Cwd, fresh); plateau.Flat && !stopSameText(fresh.StopDivergenceWindow, &window) {
+			next.StopDivergenceWindow = &window
 			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID, renderAdvisory)
 		}
 		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(p.Cwd, fresh), p.SessionID, platform, env)
@@ -173,10 +177,11 @@ func stopInFlightDue(p StopPayload, fresh state.State, env host.LookupEnv) bool 
 }
 
 // stopCounted bumps the stop counter under the session lock and, when the bump leaves a block, builds
-// it from the state the lock found. judged is the state the decision was made on; if the phase, the
-// cycle, the binding or the user turn changed since, or due no longer holds, the event is stale and
-// releases without writing.
-func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, due stopDue, build func(fresh state.State) string) StopAnswer {
+// it from the state the lock found before the counter is written, so the block can record what it
+// answered in the same write (build may change next). judged is the state the decision was made on; if
+// the phase, the cycle, the binding or the user turn changed since, or due no longer holds, the event is
+// stale and releases without writing.
+func stopCounted(p StopPayload, judged state.State, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, due stopDue, build func(fresh state.State, next *state.State) string) StopAnswer {
 	var answer StopAnswer
 	err := lock(p.Cwd, p.SessionID, func() error {
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
@@ -184,12 +189,16 @@ func stopCounted(p StopPayload, judged state.State, platform string, env host.Lo
 			return nil
 		}
 		next, outcome := stopBump(p.Cwd, fresh)
+		var block string
+		if outcome == stopBumpBlock {
+			block = build(fresh, &next)
+		}
 		if err := stopWriteState(p.Cwd, next); err != nil && !state.Published(err) {
 			return nil
 		}
 		switch outcome {
 		case stopBumpBlock:
-			answer = StopAnswer{Stdout: build(fresh)}
+			answer = StopAnswer{Stdout: block}
 		case stopBumpTotalCap:
 			answer = StopAnswer{Stdout: stopSystemMessage(stopTotalCapMessage)}
 		}
@@ -263,7 +272,10 @@ type stopProgress struct {
 
 // stopObserveProgress is observeProgress (hook.ts:1465-1490): did a phase transition, a work-phase
 // switch or a new, better metric row happen since the last Stop. Fail-open: an unreadable ledger or
-// goalplan is no progress. A new user turn is progress too (CRW-1086): UserPromptSubmit's turn stamp
+// goalplan is no progress. CRW-1088: a new row is better only against the earlier row of its own metric
+// and work phase (metric.JudgeNewRows); the oracle took every result that was not flat, the
+// insufficient-data result of a singleton included, so alternating metric names recharged the budget
+// on every Stop. A new user turn is progress too (CRW-1086): UserPromptSubmit's turn stamp
 // resets the turn's total to 0 (prompt_submit.go) and nothing else does, so a total of 0 is the first
 // Stop of a new turn, which starts with a fresh per-phase budget.
 func stopObserveProgress(cwd string, st state.State) stopProgress {
@@ -272,7 +284,7 @@ func stopObserveProgress(cwd string, st state.State) stopProgress {
 	// High-water: a hand-truncated ledger must not let restored rows replay as new observations.
 	cursor := math.Max(st.StopMetricCursor, float64(len(rows)))
 	if float64(len(rows)) > st.StopMetricCursor {
-		improved = !metric.CheckObjectivePlateau(cwd, st.SessionID, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor}).Flat
+		improved = metric.JudgeNewRows(rows, int(st.StopMetricCursor), stopPlateauNoiseFloor) == metric.JudgmentImproving
 	}
 	var workPhaseID *string
 	if plan := stopSafeReadBoundGoalplan(cwd, st.Slug); plan != nil {
@@ -302,12 +314,38 @@ func stopSafeReadBoundGoalplan(cwd, slug string) *goalplan.Goalplan {
 
 var stopSlugPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// stopObjectivePlateau is objectivePlateau (hook.ts:1773-1782): flat only for a maximize objective.
-func stopObjectivePlateau(cwd, sessionID string) metric.PlateauCheck {
-	if metric.ReadObjectiveKind(cwd, sessionID) != metric.Maximize {
-		return metric.PlateauCheck{Values: []float64{}}
+// stopObjectivePlateau is objectivePlateau (hook.ts:1773-1782): flat only for a maximize objective. The
+// second result names the evaluation window judged (its metric, work phase and row count), which a new
+// row of that metric and work phase changes.
+//
+// CRW-1088: with a bound goalplan the window is the active work phase's. The oracle judged the latest
+// ledger row's work phase, so two flat rows of a finished wp-old redirected wp-new to re-plan before wp-new
+// had any evaluation. Rows recorded for another work phase are left out; rows recorded without one (the
+// default work phase, what `metric record` writes without --work-phase) keep the legacy scope, as every
+// row does for a session without a bound goalplan.
+func stopObjectivePlateau(cwd string, st state.State) (metric.PlateauCheck, string) {
+	rows := metric.ReadObjectiveMetrics(cwd, st.SessionID)
+	none := metric.PlateauCheck{Values: []float64{}}
+	if metric.InferObjectiveKind(cwd, st.SessionID, rows) != metric.Maximize {
+		return none, ""
 	}
-	return metric.CheckObjectivePlateau(cwd, sessionID, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
+	if plan := stopSafeReadBoundGoalplan(cwd, st.Slug); plan != nil {
+		active := goalplan.EffectiveActiveWorkPhaseID(plan)
+		rows = slices.DeleteFunc(rows, func(r metric.Record) bool {
+			return r.WorkPhaseID != metric.DefaultWorkPhaseID && (active == nil || r.WorkPhaseID != *active)
+		})
+	}
+	plateau := metric.PlateauOf(rows, metric.PlateauOptions{MinRecords: stopPlateauMetricRecords, NoiseFloor: stopPlateauNoiseFloor})
+	if len(rows) == 0 {
+		return plateau, ""
+	}
+	latest, series := rows[len(rows)-1], 0
+	for _, r := range rows {
+		if r.MetricName == latest.MetricName && r.WorkPhaseID == latest.WorkPhaseID {
+			series++
+		}
+	}
+	return plateau, fmt.Sprintf("%s#%d@%s", latest.MetricName, series, latest.WorkPhaseID)
 }
 
 // stopEnvelope is `${JSON.stringify({decision:"block",reason})}\n`.

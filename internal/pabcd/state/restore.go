@@ -96,6 +96,7 @@ func restore(sessionID string, raw []byte, now time.Time) (State, bool) {
 	s.StopBlockTotal = count(m["stopBlockTotal"])
 	s.StopBlockTurnID = nonEmpty(m["stopBlockTurnId"])
 	s.StopBlockCapNotified = m["stopBlockCapNotified"] == true
+	s.StopDivergenceWindow = nonEmpty(m["stopDivergenceWindow"])
 	s.LoopArmSeen = m["loopArmSeen"] == true
 	s.IdleEditNudges = count(m["idleEditNudges"])
 	s.MemoryWriteRequested = m["memoryWriteRequested"] == true

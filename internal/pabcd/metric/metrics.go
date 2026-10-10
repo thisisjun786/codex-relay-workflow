@@ -7,6 +7,9 @@
 // row on a new line (the oracle fuses the two into one line the reader drops), and WriteObjectiveKind does not replace a kind file
 // that holds another session's id, holds U+FFFD, is not a regular file or can not be read (a file read without a string sessionId is
 // replaced). The appender locks the ledger and the kind writer the kind directory, which excludes other writers of this package only.
+// CRW-1088 adds two deviations (docs/port-cxc/known-defects/CRW-1088.md): ReadExplicitObjectiveKind does not read a kind file whose
+// sessionId names another session, and JudgeNewRows, PlateauOf and InferObjectiveKind judge rows already read, so a caller that
+// read the ledger once compares a new row only with the earlier row of its own metric and work phase.
 //
 // The oracle has no lock and no signal handler: its process dies at the first interrupt and keeps the lines it had appended.
 // RecordMetricsFromTextContext gives the record window that end: it checks its context before each METRIC line and asks for the
@@ -425,23 +428,37 @@ func writeObjectiveKind(ctx context.Context, cwd, sessionID string, kind Objecti
 }
 
 // ReadExplicitObjectiveKind is the kind a session's file names, or false when the file is missing, is not one JSON document, is not an
-// object, or its kind is not one of the two. The sessionId inside the file is not looked at.
+// object, or its kind is not one of the two. CRW-1088: a file whose sessionId names another session (the file name is the sanitised
+// id, so "s/1" and "s-1" share one), or is not a string, or holds U+FFFD (not told from a lone surrogate), is not this session's and
+// gives false too; the oracle does not look at it. A legacy file without a sessionId keeps its kind.
 func ReadExplicitObjectiveKind(cwd, sessionID string) (ObjectiveKind, bool) {
 	raw, err := os.ReadFile(objectiveKindPath(cwd, sessionID))
 	if err != nil {
 		return "", false
 	}
-	kind, _ := ledgerDoc(string(raw))["kind"].(string)
+	doc := ledgerDoc(string(raw))
+	if owner, present := doc["sessionId"]; present {
+		if named, ok := owner.(string); !ok || named != sessionID || strings.ContainsRune(named, utf8.RuneError) {
+			return "", false
+		}
+	}
+	kind, _ := doc["kind"].(string)
 	return ObjectiveKind(kind), isObjectiveKind(kind)
 }
 
 // ReadObjectiveKind is the explicit kind when there is one, else maximize when the session has any row (the ledger of an empty session
 // id is every session's), else satisfy.
 func ReadObjectiveKind(cwd, sessionID string) ObjectiveKind {
+	return InferObjectiveKind(cwd, sessionID, ReadObjectiveMetrics(cwd, sessionID))
+}
+
+// InferObjectiveKind is ReadObjectiveKind on the session's rows already read (rows is ReadObjectiveMetrics of the session): the
+// explicit kind when there is one, else maximize when rows is not empty, else satisfy. Only the kind file is read.
+func InferObjectiveKind(cwd, sessionID string, rows []Record) ObjectiveKind {
 	if kind, ok := ReadExplicitObjectiveKind(cwd, sessionID); ok {
 		return kind
 	}
-	if len(ReadObjectiveMetrics(cwd, sessionID)) > 0 {
+	if len(rows) > 0 {
 		return Maximize
 	}
 	return Satisfy
@@ -497,13 +514,17 @@ func RecordMetricsFromTextContext(ctx context.Context, cwd string, in TextInput)
 // CheckObjectivePlateau judges the latest row's metric within its work phase: the last MinRecords rows of it are flat when none beats
 // the first by more than NoiseFloor, so a falling window is flat too. Fewer rows than MinRecords are never flat.
 func CheckObjectivePlateau(cwd, sessionID string, opts PlateauOptions) PlateauCheck {
+	return PlateauOf(ReadObjectiveMetrics(cwd, sessionID), opts)
+}
+
+// PlateauOf is CheckObjectivePlateau on rows already read, in ledger order; records is not changed.
+func PlateauOf(records []Record, opts PlateauOptions) PlateauCheck {
 	minRecords, noiseFloor := math.Max(2, math.Floor(opts.MinRecords)), math.Max(0, opts.NoiseFloor)
-	records := ReadObjectiveMetrics(cwd, sessionID)
 	if len(records) == 0 {
 		return PlateauCheck{Values: []float64{}}
 	}
 	latest := records[len(records)-1]
-	same := slices.DeleteFunc(records, func(r Record) bool { return r.MetricName != latest.MetricName || r.WorkPhaseID != latest.WorkPhaseID })
+	same := slices.DeleteFunc(slices.Clone(records), func(r Record) bool { return r.MetricName != latest.MetricName || r.WorkPhaseID != latest.WorkPhaseID })
 	start := 0
 	if minRecords < float64(len(same)) { // false for NaN and +Inf too: the whole history
 		start = len(same) - int(minRecords)
@@ -517,6 +538,40 @@ func CheckObjectivePlateau(cwd, sessionID string, opts PlateauOptions) PlateauCh
 		check.Flat = slices.Max(values) <= values[0]+noiseFloor
 	}
 	return check
+}
+
+// Judgment is what a set of new rows says about progress (CRW-1088): the oracle reads every result that is not flat, the
+// insufficient-data result included, as an improvement.
+type Judgment int
+
+// The three judgments. Unknown is no comparison at all: no new row, or only rows with no earlier row of their metric and work phase.
+const (
+	JudgmentUnknown Judgment = iota
+	JudgmentImproving
+	JudgmentNonImproving
+)
+
+// JudgeNewRows judges rows[from:], the rows observed since a cursor, each against the row before it of the same metric and work
+// phase in rows (which may itself be new). A row that beats its predecessor by more than noiseFloor is an improvement (the metric
+// direction is maximize); a row with a predecessor and no such gain is non-improving; a row with no predecessor (a singleton) is
+// unknown. Any improvement makes the set improving, else any comparison makes it non-improving, else it is unknown.
+func JudgeNewRows(rows []Record, from int, noiseFloor float64) Judgment {
+	type series struct{ workPhase, metric string }
+	last := map[series]float64{}
+	judgment := JudgmentUnknown
+	for i, r := range rows {
+		key := series{r.WorkPhaseID, r.MetricName}
+		prev, seen := last[key]
+		last[key] = r.Value
+		if i < from || !seen {
+			continue
+		}
+		if r.Value > prev+math.Max(0, noiseFloor) {
+			return JudgmentImproving
+		}
+		judgment = JudgmentNonImproving
+	}
+	return judgment
 }
 
 // ledgerUTF8 is Node's utf8 decoding of a file: each maximal invalid subpart becomes one U+FFFD (the WHATWG decoder; utf8.DecodeRune

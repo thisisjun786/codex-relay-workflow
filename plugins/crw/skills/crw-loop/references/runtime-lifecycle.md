@@ -85,13 +85,19 @@ command and remaining work. Termination remains bounded by:
 - **Context-pressure bail** — don't pile on during compaction recovery.
 - **Stagnation cap** — a bounded `stopBlockCount` per phase; after `MAX_STOP_BLOCKS`
   consecutive blocks at the same phase with no transition, the loop releases so it can
-  never trap a session. A real transition (chat or CLI) resets the counter, so each
+  never trap a session, and it stays released at that phase and work-phase for the rest
+  of the user turn, even when another Stop hook keeps the turn going. A real transition
+  (chat or CLI), a switch of the active work-phase, a metric row that beats the previous
+  row of its own metric and work-phase, or a new user turn resets the counter, so each
   phase of a healthy P→A→B→C→D gets a fresh budget. This is the runtime companion to
   LOOP-DOOM-01, not a success signal; after release, apply the no-progress discipline
   before retrying the same phase.
 - **Objective plateau block** — for active maximize goals with session-scoped metrics,
   two non-improving same-metric rows switch the block reason from plain continuation
-  to "step back and re-plan with divergence." This still uses the same bounded
+  to "step back and re-plan with divergence." With a bound goalplan only the active
+  work-phase's rows (and rows recorded without `--work-phase`) count, and one evaluation
+  window asks once: the next Stop continues normally until a new metric row opens a new
+  window. This still uses the same bounded
   `MAX_STOP_BLOCKS` release path and never asks the user inside goal mode.
 
 ### Stop decision matrix
