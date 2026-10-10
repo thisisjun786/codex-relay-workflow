@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The divergence CLI port's tests. TestDivergenceCliMatchesTheRecordedOracle replays the answers the
@@ -273,19 +274,26 @@ func divergenceCliFiles(want map[string]string) map[string]string {
 	return out
 }
 
-// divergenceCliSandbox points HOME, CODEX_HOME and CRW_HOME at a temporary tree (the operator rule
-// after a self-heal write reached a real CODEX_HOME). It does not observe the real ~/.codex or ~/.crw:
-// the host's own Codex sessions write there while the test runs, and with the three variables
-// repointed nothing the run resolves from them can reach the real ones (CRW-1170).
+// divergenceCliSandbox points HOME, CODEX_HOME and CRW_HOME at temporary directories the test owns and
+// returns a separate workspace root. The run is held to those homes (SandboxAccountHomes fails the test
+// at its end if the run created or removed anything at the top level of them), so a divergence file written
+// under the account homes instead of the workspace is a failure. It does not observe the real ~/.codex or
+// ~/.crw: the host's own Codex sessions write there while the test runs (CRW-1170).
 func divergenceCliSandbox(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
+	testsupport.SandboxAccountHomes(t)
+	return t.TempDir()
+}
+
+// CRW-1170: the sandbox hands out a workspace and account homes that are different directories, and the
+// account homes are the ones the run's environment names, so a divergence file under CODEX_HOME or CRW_HOME is
+// seen by the homes' end-of-test check instead of being mistaken for workspace content.
+func TestDivergenceCliSandboxKeepsTheWorkspaceApartFromTheAccountHomes(t *testing.T) {
+	root := divergenceCliSandbox(t)
+	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
+		dir := os.Getenv(name)
+		if dir == "" || dir == root || strings.HasPrefix(dir, root+string(filepath.Separator)) {
+			t.Errorf("%s=%q is not apart from the workspace %q", name, dir, root)
+		}
 	}
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
-	t.Setenv("CRW_HOME", filepath.Join(home, "crw"))
-	return root
 }

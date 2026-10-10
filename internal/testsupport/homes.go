@@ -17,6 +17,7 @@ import (
 type AccountHomes struct {
 	Home, Codex, CRW string
 	before           string
+	watchHome        bool
 }
 
 // SandboxAccountHomes points HOME, CODEX_HOME and CRW_HOME at fresh temporary directories for the test (t
@@ -36,6 +37,22 @@ func SandboxAccountHomes(t *testing.T) *AccountHomes {
 	return h
 }
 
+// WatchAccountHomes observes homes a test hands to a child process through its environment (a real shell
+// started with HOME, CODEX_HOME and CRW_HOME set to these directories), which SandboxAccountHomes does not
+// reach because the child never sees the process's own variables. It sets no variable. The test fails, at its
+// end, if anything was created or removed at the top level of home, home/.codex, home/.crw, codex and crw; the
+// top level of home is watched too, since the child's HOME is the directory its own startup would write to.
+// The directories exist when it is called; a test that puts fixtures there calls Rebase once they are in place.
+func WatchAccountHomes(t *testing.T, home, codex, crw string) *AccountHomes {
+	t.Helper()
+	h := &AccountHomes{Home: home, Codex: codex, CRW: crw, watchHome: true}
+	h.Rebase()
+	t.Cleanup(func() {
+		h.Verify(func(msg string) { t.Error(msg) })
+	})
+	return h
+}
+
 // Rebase takes the current listing as the one later changes are measured against.
 func (h *AccountHomes) Rebase() { h.before = h.Listing() }
 
@@ -43,9 +60,15 @@ func (h *AccountHomes) Rebase() { h.before = h.Listing() }
 // an absent directory marked.
 func (h *AccountHomes) Listing() string {
 	parts := []string{}
-	for _, dir := range []string{filepath.Join(h.Home, ".codex"), filepath.Join(h.Home, ".crw"), h.Codex, h.CRW} {
+	dirs := []string{filepath.Join(h.Home, ".codex"), filepath.Join(h.Home, ".crw"), h.Codex, h.CRW}
+	if h.watchHome {
+		dirs = append([]string{h.Home}, dirs...)
+	}
+	for _, dir := range dirs {
 		label := strings.TrimPrefix(dir, h.Home)
-		if label == dir {
+		if dir == h.Home {
+			label = "HOME"
+		} else if label == dir {
 			label = filepath.Base(dir)
 		}
 		entries, err := os.ReadDir(dir)

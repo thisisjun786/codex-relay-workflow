@@ -94,3 +94,29 @@ func TestNoTestFileResolvesTheAccountHome(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A watch reports a write below the directories a child process was given, the top level of its HOME included,
+// and sets no process variable.
+func TestWatchAccountHomes_reports_a_write_below_the_homes_it_was_given(t *testing.T) {
+	t.Setenv("CODEX_HOME", "kept")
+	home, codex, crw := t.TempDir(), t.TempDir(), t.TempDir()
+	h := WatchAccountHomes(t, home, codex, crw)
+	if os.Getenv("CODEX_HOME") != "kept" {
+		t.Errorf("the watch changed CODEX_HOME to %q", os.Getenv("CODEX_HOME"))
+	}
+	h.Verify(func(msg string) { t.Errorf("an untouched home is reported: %s", msg) })
+	for _, dir := range []string{home, codex, crw} {
+		reported := ""
+		stray := filepath.Join(dir, "stray")
+		if err := os.WriteFile(stray, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.Verify(func(msg string) { reported = msg })
+		if !strings.Contains(reported, "stray") {
+			t.Errorf("a write below %s is not reported: %q", dir, reported)
+		}
+		if err := os.Remove(stray); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
