@@ -240,6 +240,10 @@ func TestUnprovenFlagIsKeptPendingAcrossCommands(t *testing.T) {
 	if err != nil || !state["multi_agent"] {
 		t.Fatalf("the deactivation turned off an unproven flag: %+v %v", r, err)
 	}
+	// A command that refuses (config set into a released install) still reports what it keeps pending.
+	if r, err := ApplyManagedKey(ConfigSetDeps{CodexHome: home}, configSetKey, &value); err != nil || r.OK || !strings.Contains(strings.Join(r.Recovered, "\n"), "multi_agent") {
+		t.Fatalf("a refusing command did not report the pending flag: %+v %v", r, err)
+	}
 	state["multi_agent"] = false
 	if _, err := Activate(deps); err != nil {
 		t.Fatal(err)

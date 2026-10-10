@@ -51,7 +51,7 @@ func ResolveManagedKey(id string) (*ManagedKey, string) {
 
 // ApplyManagedKey ports config-set.ts:64-159. nil restores the recorded prior value.
 // Atomic owners replace the oracle's truncating writes; other ordering is retained.
-func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOutcome, err error) {
+func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (out ConfigSetOutcome, err error) {
 	// A stop after a record was published whose directory sync failed reports that uncertainty with the stop (CRW-1153).
 	var unsynced error
 	defer func() { err = txWithDurability(err, unsynced) }()
@@ -94,6 +94,12 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (_ ConfigSetOut
 		return ConfigSetOutcome{}, recErr
 	}
 	unsynced = recErr
+	// What the recovery recorded and keeps pending is reported whatever this command answers, a refusal included (CRW-1153).
+	defer func() {
+		if out.Recovered == nil {
+			out.Recovered = recovered
+		}
+	}()
 	// The authoritative manifest, read inside the lock so a concurrent writer's manifest is seen
 	// rather than a copy that is already stale. One that exists but cannot be read is refused, never replaced (CRW-1153).
 	m, err := readOwnedManifest(deps.CodexHome)
@@ -312,7 +318,7 @@ func ReadManagedState(configPath string) ([]ManagedState, error) {
 // ReleaseManagedKey drops crw's record of a managed key and leaves config.toml as it is (CRW-1149). It is the explicit
 // answer to an unset that refused because crw no longer owns the key: the record is the evidence of what crw changed, so it is
 // never dropped silently, only when the user asks.
-func ReleaseManagedKey(deps ConfigSetDeps, id string) (_ ConfigSetOutcome, err error) {
+func ReleaseManagedKey(deps ConfigSetDeps, id string) (out ConfigSetOutcome, err error) {
 	var unsynced error
 	defer func() { err = txWithDurability(err, unsynced) }()
 	entry, reason := ResolveManagedKey(id)
@@ -333,6 +339,12 @@ func ReleaseManagedKey(deps ConfigSetDeps, id string) (_ ConfigSetOutcome, err e
 		return ConfigSetOutcome{}, recErr
 	}
 	unsynced = recErr
+	// What the recovery recorded and keeps pending is reported whatever this command answers, a refusal included (CRW-1153).
+	defer func() {
+		if out.Recovered == nil {
+			out.Recovered = recovered
+		}
+	}()
 	m, err := readOwnedManifest(deps.CodexHome)
 	if err != nil {
 		return ConfigSetOutcome{}, err
