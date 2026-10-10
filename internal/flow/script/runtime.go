@@ -62,6 +62,8 @@ type Loop struct {
 	wake  chan struct{}
 	// pending counts operations that were started and whose completion is yet to run.
 	pending int
+	// aborted is set by Abort: no completion runs any more and Run returns.
+	aborted bool
 }
 
 type queued struct {
@@ -202,6 +204,10 @@ func (l *Loop) Begin(rt *Runtime) (complete func(fn func())) {
 	return func(fn func()) {
 		once.Do(func() {
 			l.mu.Lock()
+			if l.aborted {
+				l.mu.Unlock()
+				return
+			}
 			l.queue = append(l.queue, queued{rt, fn})
 			l.mu.Unlock()
 			select {
@@ -212,11 +218,36 @@ func (l *Loop) Begin(rt *Runtime) (complete func(fn func())) {
 	}
 }
 
-// Run runs completions on the calling goroutine until no operation is pending. A limit error a completion hits is
-// passed to onError.
+// Abort ends the loop: completions that have not run are dropped, later ones are never queued, and Run returns without
+// waiting for the operations still pending (one whose completion would only come from a script that no longer runs
+// would keep it waiting for ever). It may be called from any goroutine.
+func (l *Loop) Abort() {
+	l.mu.Lock()
+	l.aborted = true
+	l.queue = nil
+	l.mu.Unlock()
+	select {
+	case l.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Aborted reports whether Abort was called.
+func (l *Loop) Aborted() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.aborted
+}
+
+// Run runs completions on the calling goroutine until no operation is pending or the loop is aborted. A limit error a
+// completion hits is passed to onError.
 func (l *Loop) Run(onError func(error)) {
 	for {
 		l.mu.Lock()
+		if l.aborted {
+			l.mu.Unlock()
+			return
+		}
 		if len(l.queue) == 0 {
 			if l.pending == 0 {
 				l.mu.Unlock()

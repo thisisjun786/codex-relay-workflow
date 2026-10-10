@@ -630,9 +630,11 @@ return [
   await r({ agentType: 'haiku', isolation: 'worktree' }),
   await r({ model: 'haiku' }),
   await r({ stepDecision: 'sd-2' }),
+  await r({ effort: 'low' }),
   await r({ agentType: 'executor-t1', stepDecision: 'sd-1', model: 'sonnet', effort: 'low' }),
+  await r({ agentType: 'executor-t1', stepDecision: 'sd-1', model: 'sonnet', effort: 'xhigh' }),
 ]`)
-	want := []string{"refused/pair_refused", "refused/pair_refused", "refused/pair_refused", "refused/pair_refused", "completed/<nil>"}
+	want := []string{"refused/pair_refused", "refused/pair_refused", "refused/pair_refused", "refused/pair_refused", "refused/pair_refused", "refused/pair_refused", "completed/<nil>"}
 	for i, w := range want {
 		if g := fmt.Sprintf("%v/%v", got[i]["status"], got[i]["reason"]); g != w {
 			t.Errorf("case %d: %s, want %s", i, g, w)
@@ -643,14 +645,15 @@ return [
 	}
 }
 
+// A fresh call's requested effort is recorded and not applied; a continuation that names another effort than the
+// thread's pair is refused (TestResumeConflictingPairRefused).
 func TestRequestedEffortIsKeptNotApplied(t *testing.T) {
 	h := newHarness(t)
 	res := h.run(`
-const t1 = await agent.call('build', { agentType: 'executor-t1', stepDecision: 'sd-1' })
-const r = await agent.call('c', { resume: t1.handle, effort: 'low' })
-return { configured: r.meta.configuredPair, requested: r.meta.requestedPair }`)
-	v := value[map[string]map[string]string](t, res)
-	if v["configured"]["effort"] != "xhigh" || v["requested"]["effort"] != "low" {
+const r = await agent.call('build', { agentType: 'executor-t1', stepDecision: 'sd-1', effort: 'low' })
+return { status: r.status, configured: r.meta.configuredPair, requested: r.meta.requestedPair }`)
+	v := value[map[string]any](t, res)
+	if v["status"] != "completed" || fmt.Sprint(v["configured"]) != "map[effort:xhigh model:fake-sonnet]" || fmt.Sprint(v["requested"]) != "map[effort:low model:fake-sonnet]" {
 		t.Errorf("%v", v)
 	}
 }

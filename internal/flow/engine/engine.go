@@ -112,6 +112,9 @@ type Engine struct {
 	cancel context.CancelFunc
 	pool   chan struct{}
 	loop   *script.Loop
+	// inflight counts the goroutines of agent calls that have not written their terminal row; a run reports its end
+	// only after all of them have.
+	inflight sync.WaitGroup
 
 	spent  atomic.Int64
 	warned atomic.Bool
@@ -185,19 +188,46 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	e.loop.Run(func(err error) { e.fail(limitKind(err), err) })
 
-	res := &Result{RunID: e.runID, Workflow: workflow, Status: RunCompleted, Value: json.RawMessage("null"), Spent: e.spent.Load()}
+	res := &Result{RunID: e.runID, Workflow: workflow, Status: RunCompleted, Value: json.RawMessage("null")}
+	// What the script came to is read inside the VM under the step and heap limits: rendering a thrown value or
+	// serialising the returned one runs the script's own toString, toJSON and getters.
 	switch {
 	case e.fatalErr != nil:
-		res.Status, res.ErrorKind, res.Error = RunScriptError, e.fatalKind, e.fatalErr.Error()
 	case promise == nil:
-		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, "the script did not start"
+		e.fail(ErrKindEngine, errors.New("the script did not start"))
 	case promise.State() == goja.PromiseStateRejected:
-		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindJS, main.errorText(promise.Result())
+		var text string
+		if err := main.rt.Enter(func() error {
+			var err error
+			text, err = main.textOf(promise.Result())
+			return err
+		}); err != nil {
+			e.fail(valueErrKind(err), fmt.Errorf("the script failed and its error cannot be rendered: %w", err))
+		} else {
+			e.fail(ErrKindJS, errors.New(text))
+		}
 	case promise.State() == goja.PromiseStatePending:
-		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindUnsettled, "the script awaits a promise that nothing will settle"
+		e.fail(ErrKindUnsettled, errors.New("the script awaits a promise that nothing will settle"))
 	default:
-		res.Value = main.jsonOf(promise.Result())
+		var v json.RawMessage
+		if err := main.rt.Enter(func() error {
+			var err error
+			v, err = main.jsonOfErr(promise.Result())
+			return err
+		}); err != nil {
+			e.fail(valueErrKind(err), fmt.Errorf("the script's value cannot be serialised: %w", err))
+		} else {
+			res.Value = v
+		}
 	}
+	if e.fatalErr != nil {
+		res.Status, res.ErrorKind, res.Error = RunScriptError, e.fatalKind, e.fatalErr.Error()
+	}
+	// Every call still in flight was cancelled by the abort (or has finished); its terminal row is written before the
+	// run's last one.
+	e.cancel()
+	e.inflight.Wait()
+	res.Spent = e.spent.Load()
 	sort.SliceStable(e.results, func(i, k int) bool {
 		if e.results[i].Path != e.results[k].Path {
 			return e.results[i].Path < e.results[k].Path
@@ -230,12 +260,23 @@ func limitKind(err error) string {
 	return ErrKindEngine
 }
 
-// fail ends the run: the first failure is its error and every call in flight is cancelled.
+// valueErrKind is the error kind of a failure to read the script's final value: a limit, or the script's own throw.
+func valueErrKind(err error) string {
+	var le *script.LimitError
+	if errors.As(err, &le) {
+		return limitKind(err)
+	}
+	return ErrKindJS
+}
+
+// fail ends the run: the first failure is its error, every call in flight is cancelled and the loop is aborted, so no
+// completion resumes the script and no pending operation keeps the run waiting.
 func (e *Engine) fail(kind string, err error) {
 	if e.fatalErr == nil {
 		e.fatalKind, e.fatalErr = kind, err
 	}
 	e.cancel()
+	e.loop.Abort()
 }
 
 // failResolve reports an error from resolving a script promise. An interrupt is the step or heap limit, which the

@@ -35,6 +35,7 @@ type scriptVM struct {
 	parse      goja.Callable
 	stringify  goja.Callable
 	freeze     goja.Callable
+	toString   goja.Callable
 	pathErrCls *goja.Object
 }
 
@@ -80,7 +81,7 @@ func (s *scriptVM) throwType(format string, args ...any) {
 // crw. No fs, net, exec or require exists.
 func (s *scriptVM) install() error {
 	vm := s.vm
-	for _, name := range []string{"JSON.parse", "JSON.stringify", "Object.freeze"} {
+	for _, name := range []string{"JSON.parse", "JSON.stringify", "Object.freeze", "String"} {
 		v, err := vm.RunString(name)
 		if err != nil {
 			return err
@@ -91,6 +92,8 @@ func (s *scriptVM) install() error {
 			s.parse = fn
 		case "JSON.stringify":
 			s.stringify = fn
+		case "String":
+			s.toString = fn
 		default:
 			s.freeze = fn
 		}
@@ -239,8 +242,22 @@ func (s *scriptVM) pathError(err *PathConcurrencyError) *goja.Object {
 	return obj
 }
 
+// errRunEnded is the interrupt value of a script that tries to go on after its run ended.
+var errRunEnded = errors.New("the run has ended")
+
+// live stops a script that goes on after its run ended (it caught the error that ended it): the VM is interrupted,
+// which no try/catch can catch, so the script opens no further position, writes no intent row and starts nothing.
+func (s *scriptVM) live() {
+	if s.e.fatalErr == nil {
+		return
+	}
+	s.vm.Interrupt(errRunEnded)
+	panic(s.vm.NewGoError(fmt.Errorf("%w (%s): no further call may open", errRunEnded, s.e.fatalKind)))
+}
+
 // open claims the next position of the current path for label; a path with an outstanding position refuses.
 func (s *scriptVM) open(label string) (*pathState, int) {
+	s.live()
 	p := s.cur
 	pos, err := p.openPosition(label)
 	if err != nil {
@@ -302,24 +319,42 @@ func (s *scriptVM) itemFailed(call goja.FunctionCall) goja.Value {
 	return goja.Undefined()
 }
 
-// errorText renders a thrown value.
-func (s *scriptVM) errorText(v goja.Value) string {
+// textOf renders a thrown value with the String function the runtime started with. The value's own toString runs, so
+// the error is its throw or an interrupt.
+func (s *scriptVM) textOf(v goja.Value) (string, error) {
 	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
-		return "undefined"
+		return "undefined", nil
 	}
-	return v.String()
+	out, err := s.toString(goja.Undefined(), v)
+	if err != nil {
+		return "", err
+	}
+	return out.String(), nil
 }
 
-// jsonOf serialises a script value; undefined is null.
-func (s *scriptVM) jsonOf(v goja.Value) json.RawMessage {
+// errorText renders a thrown value for a record; a value that cannot be rendered says so.
+func (s *scriptVM) errorText(v goja.Value) string {
+	t, err := s.textOf(v)
+	if err != nil {
+		return "(the thrown value cannot be rendered: " + err.Error() + ")"
+	}
+	return t
+}
+
+// jsonOfErr serialises a script value; undefined, and a value JSON has no text for, is null. The value's own toJSON
+// and getters run, so the error is their throw (or a cycle) or an interrupt.
+func (s *scriptVM) jsonOfErr(v goja.Value) (json.RawMessage, error) {
 	if v == nil || goja.IsUndefined(v) {
-		return json.RawMessage("null")
+		return json.RawMessage("null"), nil
 	}
 	out, err := s.stringify(goja.Undefined(), v)
-	if err != nil || out == nil || goja.IsUndefined(out) {
-		return json.RawMessage("null")
+	if err != nil {
+		return nil, err
 	}
-	return json.RawMessage(out.String())
+	if out == nil || goja.IsUndefined(out) {
+		return json.RawMessage("null"), nil
+	}
+	return json.RawMessage(out.String()), nil
 }
 
 // fromJSON builds a script value from JSON text.

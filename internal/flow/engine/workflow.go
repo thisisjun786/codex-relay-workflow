@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/dop251/goja"
@@ -10,6 +11,7 @@ import (
 // returns. The child shares the run's pool, journal, budget and abort; its calls live on the child path of the
 // position workflow() took. Nesting is one level: workflow() inside a child throws.
 func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
+	s.live()
 	if s.depth >= 1 {
 		s.throwType("workflow(): nesting is one level only")
 	}
@@ -30,9 +32,13 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 		}
 		name = str
 	}
-	childArgs := s.jsonOf(call.Argument(1))
-	if goja.IsUndefined(call.Argument(1)) {
-		childArgs = nil
+	var childArgs json.RawMessage
+	if !goja.IsUndefined(call.Argument(1)) {
+		a, err := s.jsonOfErr(call.Argument(1))
+		if err != nil {
+			s.throwType("workflow(): the arguments cannot be serialised: %v", err)
+		}
+		childArgs = a
 	}
 	prog, err := s.e.cfg.Workflows(name, scriptPath)
 	if err != nil {
@@ -74,7 +80,12 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 	cpObj := child.vm.ToValue(cp).ToObject(child.vm)
 	then, _ := goja.AssertFunction(cpObj.Get("then"))
 	onOK := child.vm.ToValue(func(c goja.FunctionCall) goja.Value {
-		settle(true, child.jsonOf(c.Argument(0)), "")
+		v, err := child.jsonOfErr(c.Argument(0))
+		if err != nil {
+			settle(false, nil, "workflow(): the child's value cannot be serialised: "+err.Error())
+			return goja.Undefined()
+		}
+		settle(true, v, "")
 		return goja.Undefined()
 	})
 	onErr := child.vm.ToValue(func(c goja.FunctionCall) goja.Value {

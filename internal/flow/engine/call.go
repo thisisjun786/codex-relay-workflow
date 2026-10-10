@@ -83,6 +83,7 @@ func (s *scriptVM) handleArg(what string, v goja.Value) string {
 // agent opens an agent call: agent() resolves with the output (null unless the call completed), agent.call with the
 // CallResult.
 func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
+	s.live()
 	name := "agent.call"
 	if plain {
 		name = "agent"
@@ -147,7 +148,11 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 	if p.refusal != nil {
 		c.deliverNow(c.terminal(EvRefused, StatusRefused, p.refusal.Reason, map[string]any{"detail": p.refusal.Detail}))
 	} else {
-		go func() { c.deliverNow(c.execute(s.e.ctx)) }()
+		s.e.inflight.Add(1)
+		go func() {
+			defer s.e.inflight.Done()
+			c.deliverNow(c.execute(s.e.ctx))
+		}()
 	}
 	return s.vm.ToValue(promise)
 }
@@ -232,6 +237,12 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 	}
 	if m := p.opts.Model; m != "" && m != spec.Pair.Model && !slices.Contains(spec.ModelAliases, m) {
 		refuse(ReasonPairRefused, "model "+m+" is not the thread's model "+spec.Pair.Model)
+		return
+	}
+	// A fresh call records a differing effort and runs on its role's pair; a continuation cannot, because the thread's
+	// pair is already fixed: naming another effort is a conflict with what it inherits.
+	if ef := p.opts.Effort; ef != "" && ef != spec.Pair.Effort {
+		refuse(ReasonPairRefused, "effort "+ef+" is not the thread's effort "+spec.Pair.Effort)
 		return
 	}
 	p.inherited = append(p.inherited, "pair")

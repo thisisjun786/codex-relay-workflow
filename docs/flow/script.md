@@ -57,7 +57,8 @@ A helper is a module the header imports. Two kinds are admitted, and nothing els
 
 Helpers are ES modules with static `import` and `export`. A helper with top-level `await` is a load error (the bundle is an
 IIFE), and so is a dynamic `import()` in a helper, literal or computed, direct or in a helper it imports: a helper reaches
-other modules only through static imports the resolver checks. There is no `require`, `fs`, `net` or `exec` in a script or a helper.
+other modules only through static imports the resolver checks. Every helper source is read by the same lexer as the body
+for this check, and a helper the lexer cannot read is a load error, so the check never passes a source it did not see. There is no `require`, `fs`, `net` or `exec` in a script or a helper.
 
 The run record holds the SHA-256 digest of the script's bytes and, for every bundled helper, the digest of the sources it
 was built from.
@@ -122,7 +123,7 @@ supplied by the policy the run is configured with; the fake backend runs against
   `effort`; `isolation`): `opus` is `architect`; `haiku` with `isolation: 'worktree'` is `executor`; `sonnet` is `executor-t1`;
   `ocx-gpt-6-1-sol` with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`. `haiku` without isolation is ambiguous
   and anything else is not in the table: both are `refused` with reason `policy_refused`.
-- A requested `effort` is never applied; a differing one is kept in `meta.requestedPair`.
+- A fresh call's requested `effort` is never applied; a differing one is kept in `meta.requestedPair`.
 - A fresh `executor-t1` call needs `stepDecision` (the id `crw.tierStep` returned), otherwise it is `refused` with reason
   `missing_step_decision`.
 - The thread's configured pair is read back; a mismatch is `refused` with reason `pair_refused`.
@@ -205,8 +206,8 @@ turn to the same thread and gets a handle of its own. An explicit value that dif
 - A handle from another run, another role family or another node, and a handle that names no call with a thread in this run,
   is `refused` with reason `foreign_handle`. The run of a handle is judged by the journal row of the call it names, not by the
   run id written in the handle's text.
-- The same role family on another role, a `model` that is not the thread's model or an alias of it, or another `stepDecision`
-  is `refused` with reason `pair_refused`.
+- The same role family on another role, a `model` that is not the thread's model or an alias of it, an `effort` that is not
+  the thread's effort, or another `stepDecision` is `refused` with reason `pair_refused`.
 
 - A thread whose pair read back wrong when it started (its call was `refused` with `pair_refused`) stays refused: continuing
   it is `refused` with `pair_refused` too. A continuation carries the thread's read-back pair, not the role's.
@@ -229,7 +230,15 @@ A step is one uninterrupted stretch of script execution: from the run's start, o
 the script awaits again or ends. A step that runs longer than the step limit (10 s) without awaiting is interrupted, and so
 is a step during which the Go heap grows by more than the heap limit (512 MiB, sampled; the figure covers the whole process,
 so it is a ceiling against runaway allocation and not an exact account). The run ends with status `script_error` and error
-kind `step_limit` or `heap_limit`. The call stack depth is bounded as well.
+kind `step_limit` or `heap_limit`. The call stack depth is bounded as well. Rendering a thrown value and serialising the
+returned one run the script's own `toString`, `toJSON` and getters, so they run under the same limits; one that throws ends
+the run with error kind `js_error`.
+
+A run that ends with an error (a limit, `path_concurrency`, an engine error) stops at once, in a `workflow()` child as in the
+main script: no completion resumes the script, nothing it still awaits keeps the run waiting, and every call in flight is
+cancelled and writes its terminal row (`superseded`) before the run's own last row. A script that catches the error and
+goes on may finish the statements it is running, but the first `agent()`, `agent.call()`, `crw.*`, join or `workflow()`
+it opens after that stops it for good: no position, journal row or host request follows the error.
 
 ## Journal
 
