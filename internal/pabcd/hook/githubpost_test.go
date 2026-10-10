@@ -102,6 +102,7 @@ func githubPostWrite(t *testing.T, dir, name, content string) {
 // whose sqlite files appear there at any moment, so a listing of them says nothing about the guard (CRW-1170).
 func githubPostTempHome(t *testing.T) *testsupport.AccountHomes {
 	t.Helper()
+	neutralTempBase(t)
 	return testsupport.SandboxAccountHomes(t)
 }
 
@@ -476,18 +477,23 @@ func TestGitHubPostGuardLeavesOtherToolsAndEvents(t *testing.T) {
 // directory is not a temporary root.
 func TestGitHubPostGuardRefusesABodyFileOutsideTheRoots(t *testing.T) {
 	githubPostTempHome(t)
-	// The checkout's own go.mod is a readable regular file outside TMPDIR, /tmp and /var/tmp, so a post
-	// that names it is refused: the closed rule reads only a path under a temporary root.
+	// A readable regular file outside TMPDIR, /tmp and /var/tmp: a post that names it is refused, because the closed rule reads
+	// only a path under a temporary root. The checkout's own go.mod is that file unless the checkout itself lies under a trusted
+	// root (a lane checkout under /tmp or /var/tmp, CRW-1183), where the guard reads it by design; /etc/hosts is the fixture then.
 	t.Setenv("TMPDIR", t.TempDir())
 	repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "go.mod")); err != nil {
-		t.Skipf("the checkout's go.mod is not at %s: %v", repo, err)
+	dir, name := repo, "go.mod"
+	if resolved, err := filepath.EvalSymlinks(repo); err != nil || githubPostUnderRoots(repo) || githubPostUnderRoots(resolved) {
+		dir, name = "/etc", "hosts"
 	}
-	command := "gh pr comment 1 --body-file go.mod"
-	githubPostWant(t, githubPostShell(t, repo, command), command, githubPostRuleUnread, "go.mod")
+	if fi, err := os.Stat(filepath.Join(dir, name)); err != nil || !fi.Mode().IsRegular() || githubPostUnderRoots(dir) {
+		t.Skipf("no readable regular file outside the temporary roots at %s/%s: %v", dir, name, err)
+	}
+	command := "gh pr comment 1 --body-file " + name
+	githubPostWant(t, githubPostShell(t, dir, command), command, githubPostRuleUnread, name)
 }
 
 func TestGitHubPostGuardReadsAnArgvCommand(t *testing.T) {

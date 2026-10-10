@@ -1,6 +1,8 @@
 # CRW-765 (and its generations 3 to 9 and CRW-986): a here-document is the program of an interpreter.
 # Every row is a complete command: header, body and terminator. The fragments of the issue text (a header alone) are completed
 # with a body that writes to the memory root, or a harmless body for a control.
+# No row starts an interpreter: the three gates read the command text and run nothing, so a perl or ruby row (CRW-765-33) needs
+# neither interpreter installed. A row's verdict depends on the fixture paths (CRW-1183: a refused word in them, see tempbase_test.go).
 
 === CRW-765-01 | B
 --why python3 - with a harmless quoted here-document program: the body is read as Python, it writes nothing.

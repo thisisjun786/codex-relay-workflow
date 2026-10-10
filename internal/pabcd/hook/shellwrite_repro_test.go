@@ -280,7 +280,9 @@ func reproGot(r delRig, cwd, root string, env func(string) (string, bool), cmd s
 }
 
 // TestReproductionRows judges every reproduction against the three gates: the memory write gate, the GitHub post guard and
-// the worktree deletion guard.
+// the worktree deletion guard. No row runs its command: the gates read the text, so a perl or ruby row needs no interpreter on the
+// host. The fixtures stand under a clean temporary base (cleanTempDir): a word the program reader refuses inside a fixture path
+// ("code" in code-worktrees) would turn an allow row into a deny (CRW-1183).
 func TestReproductionRows(t *testing.T) {
 	deviations := 0
 	for _, row := range reproductionRows() {
@@ -288,7 +290,8 @@ func TestReproductionRows(t *testing.T) {
 		t.Run(row.id, func(t *testing.T) {
 			r := newDelRig(t)
 			cwd, root, env := gateScene(t)
-			tmp := t.TempDir()
+			tmp := cleanTempDir(t)
+			requireCleanFixture(t, cwd, root, r.checkout, tmp)
 			fill := strings.NewReplacer("{MEMORY}", root, "{CODEXHOME}", filepath.Dir(root), "{MEMORY_NOSLASH}", strings.TrimPrefix(root, "/"), "{PAD1M}", strings.Repeat("#", 1<<20+1), "{CHECKOUT}", r.checkout, "{WORK}", cwd, "{TMP}", tmp,
 				"{NUL}", "\x00", "{DEL}", "\x7f", "{CR}", "\r", "{TAB}", "\t")
 			reproScene(t, row, cwd, r.checkout, tmp, fill)

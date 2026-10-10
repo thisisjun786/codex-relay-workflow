@@ -237,6 +237,7 @@ func TestCRW941ShapesThroughTheThreeEntryPoints(t *testing.T) {
 	githubPostTempHome(t)
 	rig := newDelRig(t)
 	cwd, root, env := gateScene(t)
+	requireCleanFixture(t, cwd, root, rig.checkout)
 	for _, dir := range []string{cwd, rig.checkout} {
 		if err := os.WriteFile(filepath.Join(dir, "real.sed"), []byte("p\n"), 0o644); err != nil {
 			t.Fatal(err)

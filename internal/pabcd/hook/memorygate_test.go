@@ -22,7 +22,7 @@ const gateSession = "s1"
 // gateScene is a workspace, a home and a CODEX_HOME in a temporary directory; root is the protected memories directory.
 func gateScene(t *testing.T) (cwd, root string, env host.LookupEnv) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := cleanTempDir(t)
 	cwd = filepath.Join(dir, "work")
 	vars := map[string]string{"HOME": filepath.Join(dir, "home"), "CODEX_HOME": filepath.Join(dir, "codex-home")}
 	for _, d := range []string{cwd, vars["HOME"], vars["CODEX_HOME"]} {
