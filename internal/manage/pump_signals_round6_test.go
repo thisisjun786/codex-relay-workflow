@@ -207,6 +207,7 @@ func pumpSignalTestTruncateNew(t *testing.T, rollout string) {
 func TestPumpSignalCapacityNoopCommandLineCommitKeepsTheAlertId(t *testing.T) {
 	f, cf, _ := pumpSignalRealCapacity(t)
 	capacityTestState(t, cf, "p-crw-129", capacityTestNow.Add(-29*time.Minute), []string{"CRW-1", "CRW-2"}, nil, time.Time{})
+	capacityTestStoreLifecycle(t, cf, "p-crw-129", "stored-lifecycle")
 	held, err := capacityEvaluate(context.Background(), cf.env, cf.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +251,19 @@ func TestPumpSignalCapacityNoopCommandLineCommitKeepsTheAlertId(t *testing.T) {
 	pumpSignalWant(t, "after the command line's save", st.Pending, first)
 	if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 2 || got.AlertEpoch != 1 {
 		t.Fatalf("stored = %+v, want the alert committed at epoch 1", got)
+	}
+}
+
+// capacityTestStoreLifecycle gives the plan's entry in the capacity state a lifecycle, as every
+// entry a commit of this version writes carries one.
+func capacityTestStoreLifecycle(t *testing.T, cf *capacityFixture, plan, lifecycle string) {
+	t.Helper()
+	state := pumpSignalTestCapacityState(t, cf)
+	entry := state.Plans[plan]
+	entry.Lifecycle = lifecycle
+	state.Plans[plan] = entry
+	if err := capacityWriteState(filepath.Join(cf.stateDir, capacityStateFile), state); err != nil {
+		t.Fatal(err)
 	}
 }
 

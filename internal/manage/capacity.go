@@ -86,11 +86,25 @@ type CapacityPlan struct {
 	BranchesUnmeasured string `json:"branches_unmeasured,omitempty"`
 
 	// lifecycle names the plan's entry in the capacity state (capacityPlanState.Lifecycle) and
-	// committedEpoch is the alert epoch that entry held when the plan was judged. Neither is part of
-	// the document: the pump keeps them beside an alert so a retry of the same judgement is told from
-	// a later alert of another lifecycle, and a commit it lost track of from one it never made.
+	// committedEpoch is the alert epoch that entry held when the plan was judged. proposal is set
+	// when the state read held no lifecycle for the plan: lifecycle is then the one this evaluation
+	// gives the entry, and its commit stores it. None is part of the document: the pump keeps them
+	// beside an alert so a retry of the same judgement is told from a later alert of another
+	// lifecycle, and a commit it lost track of from one it never made.
 	lifecycle      string
 	committedEpoch int
+	proposal       *capacityLifecycleProposal
+}
+
+// capacityLifecycleProposal is a lifecycle given to a plan's entry that the state read held none
+// for, and whether that entry was held at all: Held is an entry written before entries carried a
+// lifecycle, not Held a plan the state does not hold. A caller proposes it back to a later
+// evaluation (capacityWithLifecycles), which takes it only for the same case: an entry still held
+// without a lifecycle, or a plan still absent. A plan whose entry was held and is now gone lost its
+// state, and takes a fresh lifecycle.
+type capacityLifecycleProposal struct {
+	Lifecycle string `json:"lifecycle"`
+	Held      bool   `json:"held"`
 }
 
 // MarshalJSON keeps a plan's three answers about its branches apart in the document: the key is
@@ -147,9 +161,11 @@ type capacityPlanState struct {
 	AlertEpoch int      `json:"alert_epoch"`
 	// Lifecycle names this entry from the evaluation that created it until the plan leaves the
 	// state: a save that only carries the entry forward keeps it, and an entry made anew (a plan
-	// registered again, a state file that was lost) takes another. It is derived from the stamp of the
-	// state the creating evaluation read (capacityLifecycle), so every evaluation of that same state
-	// names the new entry alike and a retry converges on it.
+	// registered again, a state file that was lost or written again without the plan) takes another.
+	// It is a random name drawn once, when the entry is made (capacityProposedLifecycle), and never
+	// derived from the file's stamp, so no two entries share it whatever the file went through. A
+	// caller that must retry the commit of a new entry under the same name (the pump, whose pending
+	// alert carries it) proposes that name to the evaluation with capacityWithLifecycles.
 	Lifecycle string `json:"lifecycle,omitempty"`
 }
 
@@ -323,8 +339,10 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		if entry := next.Plans[ref.Plan]; entry.Lifecycle == "" {
-			entry.Lifecycle = capacityLifecycle(stamp, ref.Plan)
+			_, held := previous.Plans[ref.Plan]
+			entry.Lifecycle = capacityProposedLifecycle(ctx, ref.Plan, held)
 			next.Plans[ref.Plan] = entry
+			plan.proposal = &capacityLifecycleProposal{Lifecycle: entry.Lifecycle, Held: held}
 		}
 		plan.lifecycle, plan.committedEpoch = next.Plans[ref.Plan].Lifecycle, previous.Plans[ref.Plan].AlertEpoch
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
@@ -438,12 +456,28 @@ const (
 	capacityStampUnreadable = "unreadable"
 )
 
-// capacityLifecycle names a plan entry made anew by an evaluation of the state stamped stamp. Every
-// write draws a new revision, so an entry made over another generation of the file has another
-// name, while every evaluation of one generation names it alike.
-func capacityLifecycle(stamp, plan string) string {
-	sum := sha256.Sum256([]byte(stamp + "\x00" + plan))
-	return hex.EncodeToString(sum[:8])
+// capacityLifecyclesKey carries, on an evaluation's context, the lifecycles its caller proposes for
+// plans the state does not hold yet (capacityWithLifecycles).
+type capacityLifecyclesKey struct{}
+
+// capacityWithLifecycles proposes, for each plan it names, the lifecycle an evaluation gives that
+// plan's entry when the state it reads holds none. The pump proposes the name its durable pending
+// record already carries, so a commit that was refused or never made is retried under the same
+// lifecycle; a state that holds the plan's lifecycle keeps it and ignores the proposal.
+func capacityWithLifecycles(ctx context.Context, proposed map[string]capacityLifecycleProposal) context.Context {
+	return context.WithValue(ctx, capacityLifecyclesKey{}, proposed)
+}
+
+// capacityProposedLifecycle is the lifecycle an entry of plan without one takes: the one proposed
+// on ctx for the same case (held tells an entry held without a lifecycle from an absent plan), else
+// a random name drawn now.
+func capacityProposedLifecycle(ctx context.Context, plan string, held bool) string {
+	if proposed, ok := ctx.Value(capacityLifecyclesKey{}).(map[string]capacityLifecycleProposal); ok {
+		if p := proposed[plan]; p.Lifecycle != "" && p.Held == held {
+			return p.Lifecycle
+		}
+	}
+	return rand.Text()
 }
 
 // capacityCommitState writes next as the generation after base, under an exclusive lock on the
@@ -505,23 +539,62 @@ func capacityWriteState(path string, state capacityState) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(dir, capacityStateFile+".*")
+	temp, err := capacityStateIO.createTemp(dir, capacityStateFile+".*")
 	if err != nil {
 		return err
 	}
 	name := temp.Name()
+	// The file is synced before the rename that commits it and the directory after, as the pump
+	// state is: the pump records a commit as made once this returns, and a power loss that kept that
+	// record beside an older capacity state would judge the committed alert again under a new epoch.
 	_, writeErr := temp.Write(append(data, '\n'))
+	if writeErr == nil {
+		writeErr = temp.Sync()
+	}
 	if closeErr := temp.Close(); writeErr == nil {
 		writeErr = closeErr
 	}
 	if writeErr == nil {
-		writeErr = os.Rename(name, path)
+		writeErr = capacityStateIO.rename(name, path)
 	}
 	if writeErr != nil {
 		os.Remove(name)
 		return writeErr
 	}
-	return nil
+	return capacityStateIO.syncDir(dir)
+}
+
+// capacityTempFile is the part of a temporary file the state write uses.
+type capacityTempFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+	Name() string
+}
+
+// capacityStateIO is the file system the state write goes through. A test replaces it to record
+// the order of the writes, syncs and renames, or to make one of them fail.
+var capacityStateIO = struct {
+	createTemp func(dir, pattern string) (capacityTempFile, error)
+	rename     func(from, to string) error
+	syncDir    func(dir string) error
+}{
+	createTemp: func(dir, pattern string) (capacityTempFile, error) {
+		file, err := os.CreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
+	},
+	rename: os.Rename,
+	syncDir: func(dir string) error {
+		handle, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		defer handle.Close()
+		return handle.Sync()
+	},
 }
 
 var capacityCommand = Command{Name: "capacity", Summary: "judge whether a parent can be added, and why not", Run: capacityRun}

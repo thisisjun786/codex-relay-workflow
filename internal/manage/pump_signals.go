@@ -63,6 +63,10 @@ const (
 	// pumpSignalCapacityEpochPrefix is followed by a plan id: the alert epoch the pump last put in
 	// that plan's event id, see pumpSignalCapacityRecord.
 	pumpSignalCapacityEpochPrefix = "signal.capacity.epoch."
+	// pumpSignalCapacityLifecyclePrefix is followed by a plan id: the lifecycle the pump proposed for
+	// the plan's entry while the capacity state holds none, kept until a commit or a later read shows
+	// the state holds the plan (see pumpSignalCapacityProposals).
+	pumpSignalCapacityLifecyclePrefix = "signal.capacity.lifecycle."
 
 	// pumpSignalAuditOffsetKey is the alert file's byte offset in Offsets.
 	pumpSignalAuditOffsetKey = "signal_audit"
@@ -73,7 +77,19 @@ const (
 )
 
 // pumpSignalDagReview is the seam the DAG source reads through, so no test opens a relay store.
-var pumpSignalDagReview = func(ctx context.Context, e *Env, cfg *Config) (Review, error) {
+var pumpSignalDagReview = pumpSignalDagReviewRead
+
+// pumpSignalDagReviewRead is the real read. The relay doctor that names the store's state directory
+// is asked first, under pumpSignalDagDoctorBudget; the answer is remembered for the Env
+// (relayHelperState), so the review then runs with it and asks no doctor of its own. A doctor that
+// does not answer in time is an error, and the source reports the review unmeasured.
+func pumpSignalDagReviewRead(ctx context.Context, e *Env, cfg *Config) (Review, error) {
+	doctorCtx, cancel := context.WithTimeout(ctx, pumpSignalDagDoctorBudget)
+	_, err := e.relayHelperState(doctorCtx, cfg)
+	cancel()
+	if err != nil {
+		return Review{}, fmt.Errorf("the relay state directory (doctor budget %v): %w", pumpSignalDagDoctorBudget, err)
+	}
 	return DagReview(ctx, e, cfg)
 }
 
@@ -100,6 +116,12 @@ func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) 
 // urgent events, the audit queue and the parent queue behind it; past the budget it is unmeasured,
 // leaves everything as it was and is made again on the next round.
 var pumpSignalCapacityBudget = 90 * time.Second
+
+// pumpSignalDagDoctorBudget is the longest the DAG review's relay doctor call (the one that names
+// the store's state directory) may hold the pump round. The doctor is a child process the deadline
+// kills, and relayHelperRun's WaitDelay bounds a child it leaves holding the output; past the budget
+// the review is unmeasured like any failed read and is made again on the next round.
+var pumpSignalDagDoctorBudget = 30 * time.Second
 
 // pumpSignalDue reports whether a source whose last read is kept under key is due after every
 // seconds. No recorded read, an unreadable one, or one in the future is due.
@@ -533,9 +555,12 @@ func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 // how a lost or refused commit converges on the same id, also when another writer (the command
 // line) saved the state in between without alerting this plan: the commit's conflict check is
 // against every write of the file (capacityCommitState), the alert's identity only against the
-// plan's own lifecycle and alert epoch. A plan registered again or a state file that was lost
-// starts a new lifecycle. Any other alert takes an epoch above the record's, so the epoch of a
-// plan's events only grows.
+// plan's own lifecycle and alert epoch. A lifecycle is a random name drawn when the plan's entry is
+// made, never derived from a stamp of the file; for an entry the state does not hold yet the pump
+// keeps the name it proposed (pumpSignalCapacityProposals) so the retry stores the same one. A
+// plan registered again or a state file lost or written again without the plan therefore starts a
+// new lifecycle. Any other alert takes an epoch above the record's, so the epoch of a plan's events
+// only grows.
 type pumpSignalCapacityRecord struct {
 	Base      int    `json:"base"`
 	Lifecycle string `json:"lifecycle"`
@@ -579,11 +604,45 @@ func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan) (int, pumpSignalC
 	return epoch, pumpSignalCapacityRecord{Base: base, Lifecycle: plan.lifecycle, Epoch: epoch, Waiting: hash}
 }
 
+// pumpSignalCapacityProposals is the lifecycles the pump proposed for plans the capacity state did
+// not hold, as the evaluation takes them (capacityWithLifecycles).
+//
+// A plan the state holds no lifecycle for (it does not hold the plan, or holds an entry written
+// before entries carried one) gets a new random lifecycle from its evaluation. The pump writes that
+// name to its own state, in the same save as the pending events and so before the commit that
+// would store it, and proposes it to every later evaluation while the state still lacks it in the
+// same way: a commit refused (another writer saved in between without the plan's lifecycle) or
+// never made (a crash, a failed save) is retried under the same lifecycle, and the alert it carries
+// converges on its pending id. The proposal is dropped once the state holds a lifecycle for the plan
+// (the commit succeeded, or a later read finds one) and when the plan leaves the settings; an
+// entry that was held and is now gone does not take it (capacityLifecycleProposal). A state file
+// that is lost or written again without the plan after its commit therefore gives the plan a fresh
+// lifecycle and a later alert a new id.
+func pumpSignalCapacityProposals(st *pumpState) map[string]capacityLifecycleProposal {
+	proposed := map[string]capacityLifecycleProposal{}
+	for key, value := range st.Cursors {
+		name, ok := strings.CutPrefix(key, pumpSignalCapacityLifecyclePrefix)
+		var p capacityLifecycleProposal
+		if ok && json.Unmarshal([]byte(value), &p) == nil && p.Lifecycle != "" {
+			proposed[name] = p
+		}
+	}
+	return proposed
+}
+
 // pumpSignalCapacitySettle settles the record of every judged plan whose state already reflects a
 // later alert of the same lifecycle: the commit was made (by this pump, whose record of it was lost,
 // or by the command line). The record is then not reused, whatever happens to the state file later.
+// A plan whose entry carries a lifecycle in the state needs no proposal any more, and one whose
+// entry carries none keeps the lifecycle its evaluation gave it as the proposal for its retry.
 func pumpSignalCapacitySettle(st *pumpState, report CapacityReport) {
 	for _, plan := range report.Plans {
+		if plan.proposal != nil {
+			encoded, _ := json.Marshal(plan.proposal) // two plain fields: it cannot fail
+			st.Cursors[pumpSignalCapacityLifecyclePrefix+plan.Plan] = string(encoded)
+		} else {
+			delete(st.Cursors, pumpSignalCapacityLifecyclePrefix+plan.Plan)
+		}
 		if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok && !rec.Committed &&
 			rec.Lifecycle == plan.lifecycle && plan.committedEpoch > rec.Base {
 			rec.Committed = true
@@ -594,13 +653,18 @@ func pumpSignalCapacitySettle(st *pumpState, report CapacityReport) {
 
 // pumpSignalCapacitySupersede settles the record of every plan the report no longer judges: a plan
 // that left the settings ends its alert generation, so when it is registered again its next alert
-// takes a new epoch rather than the uncommitted one of its last alert.
+// takes a new epoch rather than the uncommitted one of its last alert, and its entry a new
+// lifecycle rather than the one proposed before.
 func pumpSignalCapacitySupersede(st *pumpState, report CapacityReport) {
 	judged := map[string]bool{}
 	for _, plan := range report.Plans {
 		judged[plan.Plan] = true
 	}
 	for key := range st.Cursors {
+		if name, ok := strings.CutPrefix(key, pumpSignalCapacityLifecyclePrefix); ok && !judged[name] {
+			delete(st.Cursors, key)
+			continue
+		}
 		name, ok := strings.CutPrefix(key, pumpSignalCapacityEpochPrefix)
 		if !ok || judged[name] {
 			continue
@@ -655,7 +719,7 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 	}
 	readCtx, cancel := context.WithTimeout(ctx, pumpSignalCapacityBudget)
 	defer cancel()
-	report, commit, err := pumpSignalCapacity(readCtx, e, cfg, st.dry)
+	report, commit, err := pumpSignalCapacity(capacityWithLifecycles(readCtx, pumpSignalCapacityProposals(st)), e, cfg, st.dry)
 	if err == nil && readCtx.Err() != nil {
 		// A read that returns after its budget ran out (or after the round was cancelled) is not a
 		// judgement: the evaluation absorbs a failed signal read as an unknown signal, so a report
@@ -672,8 +736,11 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 	pumpSignalCapacitySupersede(st, report)
 	pumpSignalCapacitySettle(st, report)
 	res := pumpSourceResult{Status: pumpSourceOK}
-	var alerted []string
+	var alerted, proposed []string
 	for _, plan := range report.Plans {
+		if plan.proposal != nil {
+			proposed = append(proposed, plan.Plan)
+		}
 		if !plan.Alert {
 			continue
 		}
@@ -684,10 +751,15 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 	}
 	if commit != nil {
 		// Once the alerted state is committed the record says so, and the pump saves that again: a
-		// state that is later lost or reset then takes a higher epoch instead of repeating this one.
+		// state that is later lost or reset then takes a higher epoch instead of repeating this one,
+		// and a plan whose proposed lifecycle the state now holds proposes none any more.
 		res.Commit = func() error {
 			if err := commit(); err != nil {
 				return err
+			}
+			for _, name := range proposed {
+				delete(st.Cursors, pumpSignalCapacityLifecyclePrefix+name)
+				st.dirty = true
 			}
 			for _, name := range alerted {
 				if rec, ok := pumpSignalCapacityLoad(st, name); ok {
