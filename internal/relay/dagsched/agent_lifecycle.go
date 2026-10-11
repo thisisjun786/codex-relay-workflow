@@ -636,7 +636,7 @@ func agentCallHeld(ctx context.Context, q store.Querier, plan, node string, cur 
 }
 
 // resumeOfAgent fills the report of a node whose current execution is an agent execution and answers whether it did (a node of the relationship side is the caller's). The state is released (the execution
-// runs), accepted (an acceptance stands on it), integrated (the accepted head landed) or held (the newest call is held or of unknown outcome); the actor and the run are the ones the current row names. What is
+// runs), accepted (an acceptance stands on it), integrated (the accepted head landed) or held (a call is unresolved: held or of unknown outcome); the actor and the run are the ones the current row names. What is
 // outstanding is resumed by the orchestrator that holds the node: the run resumes a released node, `crw flow recover` settles a held one, the accepted head is integrated and a stale result is corrected; a
 // node another orchestrator holds is adopted first (dag-adopt). A result that landed, or an accepted one with no head to land, needs nothing.
 func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, actor string, n NodeReading, out *RestartNode) (bool, error) {
