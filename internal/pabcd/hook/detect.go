@@ -396,7 +396,25 @@ const (
 	PromptRoleUnknown PromptRole = ""
 	PromptRoleParent  PromptRole = "parent"
 	PromptRoleTask    PromptRole = "task"
+	// PromptRoleSupervisor is a session whose only live binding is a supervisor seat (initiative or store scope; CRW-386).
+	PromptRoleSupervisor PromptRole = "supervisor"
 )
+
+// Coordinates is whether the role is a non-implementing seat that runs no PABCD loop for itself (decision 6): a project parent or
+// a supervisor. Every hook leg that withholds the loop from a coordinating seat (UserPromptSubmit's loop-arm recipe, Stop's
+// goal-idle block, the loop pointer of SessionStart and of the compaction restore) asks this one question, so the legs agree.
+// An unknown role, a dispatched task and any mixed role are not coordinating seats: they keep the oracle's text.
+func (r PromptRole) Coordinates() bool { return r == PromptRoleParent || r == PromptRoleSupervisor }
+
+// ImplementsHere is whether the session took an explicit request to implement a task in the current session: UserPromptSubmit
+// keeps the loop-arm recipe for that request, whatever the registry says, and records it as loopArmSeen (a coordinating seat's
+// scope pointer arms nothing and does not). The registry role is what the session is bound as; this is what it is doing now
+// (goal-mode.md: for that task the session is its implementer and not acting as project parent), so every leg that withholds the
+// loop from a coordinating seat withholds it only from one for which this is false, and the implementer keeps the oracle's
+// goal-idle continuation between the work-phases of its own goalplan and its loop pointers after a start and a compaction.
+func ImplementsHere(cwd, sessionID string) bool {
+	return sessionID != "" && state.ReadState(cwd, sessionID).LoopArmSeen
+}
 
 // ClassifyLoopArmScope reads the scope words of a prompt that has already been found to ask for a loop. It is lexical and reads
 // only the request clauses requestLines keeps, after scopeText has dropped the example spans, so a quoted, listed, fenced or
@@ -650,7 +668,9 @@ func finiteKorean(w string) bool {
 	case '해':
 		return !detectorRE(`^(?:위해|대해|통해|관해|의해|인해|이해|피해|방해|손해|오해|견해|재해|침해|저해|장해)$`).MatchString(string(r))
 	case '요':
-		return prev != 0 && strings.ContainsRune("해세줘봐돼게래네데까지죠어아워와여쳐려겨", prev)
+		// 끝내요, 끝나요, 바꿔요 (CRW-1173): whole verb stems, not the syllable before 요, which a noun ending like 안내요 shares.
+		return prev != 0 && strings.ContainsRune("해세줘봐돼게래네데까지죠어아워와여쳐려겨", prev) ||
+			detectorRE(`(?:끝내|끝나|바꿔)요$`).MatchString(string(r))
 	case '다':
 		return prev != 0 && strings.ContainsRune("니한했된됐는었았였겠렸쳤갔왔졌냈봤", prev)
 	case '라':

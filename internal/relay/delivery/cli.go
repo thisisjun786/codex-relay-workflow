@@ -56,7 +56,7 @@ var deliveryCommands = []commandSpec{
 var family = &dispatch.Family{HostDetail: hostDetail}
 
 func init() {
-	for _, spec := range append(deliveryCommands, intentCommands...) {
+	for _, spec := range slices.Concat(deliveryCommands, intentCommands, receiveCommands) {
 		registration := spec.Command
 		registration.Run = func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 			return spec.execute(ctx, services, args)
@@ -358,15 +358,69 @@ func cmdRevisionHead(c *cliRun) (any, error) {
 }
 
 func cmdVerdict(c *cliRun) (any, error) {
+	req := VerdictRequest{Event: c.s("--event"), Verdict: c.s("--verdict"), VerdictTurn: c.s("--verdict-turn"),
+		Criterion: c.list("--criterion"), Finding: c.list("--finding"), Reason: c.opt("--reason"), ExpectCriteriaDigest: c.opt("--expect-criteria-digest")}
+	if c.opt("--criteria") != nil {
+		criteria := c.s("--criteria")
+		req.Criteria = &criteria
+	}
+	if c.opt("--restoration") != nil {
+		restoration := c.s("--restoration")
+		req.Restoration = &restoration
+	}
+	if c.opt("--verified-head") != nil {
+		head := c.s("--verified-head")
+		req.VerifiedHead = &head
+	}
+	prepared, err := PrepareVerdict(req)
+	if err != nil {
+		return nil, err
+	}
+	_, ack, err := c.services()
+	if err != nil {
+		return nil, err
+	}
+	record, err := prepared.Record(c.ctx, ack)
+	if err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+// VerdictRequest is the verdict command's line: its options as the parser read them, the three that
+// are optional as pointers (nil when the line left them out). receive reads the same line from its
+// verdict file.
+type VerdictRequest struct {
+	Event, Verdict, VerdictTurn string
+	// Criterion and Finding are the repeated --criterion and --finding values.
+	Criterion, Finding []string
+	// Criteria is --criteria: a JSON array of findings, or @path to one.
+	Criteria *string
+	// Restoration is --restoration, VerifiedHead --verified-head.
+	Restoration, VerifiedHead *string
+	// Reason and ExpectCriteriaDigest are --reason and --expect-criteria-digest: nil, or a string.
+	Reason, ExpectCriteriaDigest any
+}
+
+// PreparedVerdict is a verdict line read and checked as far as it can be without the store.
+type PreparedVerdict struct {
+	req               VerdictRequest
+	criteria, finding []any
+}
+
+// PrepareVerdict reads a verdict line: the criteria and findings it gives, the file --criteria names,
+// and the finding --restoration marks. A line the verdict command refuses before it opens the store
+// is refused here with that command's words.
+func PrepareVerdict(req VerdictRequest) (*PreparedVerdict, error) {
 	var criteria, findings []any
-	for _, item := range c.list("--criterion") {
+	for _, item := range req.Criterion {
 		name, value, _ := strings.Cut(item, "=")
 		if value == "" {
 			value = "verified"
 		}
 		criteria = append(criteria, Obj{{Key: "id", Value: name}, {Key: "verdict", Value: value}})
 	}
-	for _, item := range c.list("--finding") {
+	for _, item := range req.Finding {
 		name, rest, _ := strings.Cut(item, "=")
 		disposition, note, _ := strings.Cut(rest, ":")
 		if disposition == "" {
@@ -374,7 +428,8 @@ func cmdVerdict(c *cliRun) (any, error) {
 		}
 		findings = append(findings, Obj{{Key: "id", Value: name}, {Key: "verdict", Value: disposition}, {Key: "note", Value: strings.TrimSpace(note)}})
 	}
-	if raw := c.s("--criteria"); c.opt("--criteria") != nil {
+	if req.Criteria != nil {
+		raw := *req.Criteria
 		text := raw
 		if strings.HasPrefix(raw, "@") {
 			content, err := os.ReadFile(raw[1:])
@@ -398,8 +453,8 @@ func cmdVerdict(c *cliRun) (any, error) {
 			return nil, dispatch.Host(fmt.Sprintf("--criteria is a JSON %s, not a list of findings", jsonType(v)))
 		}
 	}
-	if c.opt("--restoration") != nil {
-		wanted := strings.TrimSpace(c.s("--restoration"))
+	if req.Restoration != nil {
+		wanted := strings.TrimSpace(*req.Restoration)
 		if wanted == "" {
 			return nil, &dispatch.UsageError{Detail: "--restoration names the criterion id whose finding carries the block, so it cannot be empty. Leave the option out to carry no block", Code: contract.ExitUsage}
 		}
@@ -417,7 +472,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 			}
 		}
 		if len(marked) == 0 && wellFormed {
-			return nil, &dispatch.UsageError{Detail: "--restoration names " + strconv.Quote(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--restoration names " + strconv.Quote(*req.Restoration) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", Code: contract.ExitUsage}
 		}
 		for _, list := range [][]any{criteria, findings} {
 			for i, item := range list {
@@ -441,25 +496,36 @@ func cmdVerdict(c *cliRun) (any, error) {
 			}
 		}
 	}
-	_, ack, err := c.services()
-	if err != nil {
-		return nil, err
+	return &PreparedVerdict{req: req, criteria: criteria, finding: findings}, nil
+}
+
+// checkHead is the check of --verified-head's shape: the 40 lowercase hex digits of a commit id.
+func (p *PreparedVerdict) checkHead() error {
+	if p.req.VerifiedHead == nil {
+		return nil
 	}
+	if head := *p.req.VerifiedHead; !verifiedHeadPattern.MatchString(head) {
+		return &dispatch.UsageError{Detail: "--verified-head takes the 40 lowercase hex digits of the head this verified ruling handled, not " + strconv.Quote(head) + ". The head is recorded with the ruling and a later dag-accept proves a parent-made refresh against it, so it is the commit id itself", Code: contract.ExitUsage}
+	}
+	return nil
+}
+
+// Record rules the verdict on the open store: the verdict command from the store on.
+func (p *PreparedVerdict) Record(ctx context.Context, ack *Ack) (Obj, error) {
 	ack.Sync = VerdictSync(ack.Store, ack.Clock)
-	event := c.s("--event")
-	var verifiedHead []string
-	if c.opt("--verified-head") != nil {
-		head := c.s("--verified-head")
-		if !verifiedHeadPattern.MatchString(head) {
-			return nil, &dispatch.UsageError{Detail: "--verified-head takes the 40 lowercase hex digits of the head this verified ruling handled, not " + strconv.Quote(head) + ". The head is recorded with the ruling and a later dag-accept proves a parent-made refresh against it, so it is the commit id itself", Code: contract.ExitUsage}
-		}
-		verifiedHead = append(verifiedHead, head)
+	if err := p.checkHead(); err != nil {
+		return nil, err
 	}
-	record, err := ack.RecordVerdict(c.ctx, event, c.s("--verdict"), c.s("--verdict-turn"), criteria, findings, c.opt("--reason"), c.opt("--expect-criteria-digest"), verifiedHead...)
+	var verifiedHead []string
+	if p.req.VerifiedHead != nil {
+		verifiedHead = append(verifiedHead, *p.req.VerifiedHead)
+	}
+	event := p.req.Event
+	record, err := ack.RecordVerdict(ctx, event, p.req.Verdict, p.req.VerdictTurn, p.criteria, p.finding, p.req.Reason, p.req.ExpectCriteriaDigest, verifiedHead...)
 	if err != nil {
 		return nil, err
 	}
-	restoration, err := ack.RestorationOf(c.ctx, event)
+	restoration, err := ack.RestorationOf(ctx, event)
 	if err != nil {
 		return nil, err
 	}

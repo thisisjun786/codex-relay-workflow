@@ -8,6 +8,7 @@ import (
 // CRW-965 (parent decision D6): the push takes only a head the relay verified and moved the branch onto. A tip with one
 // local commit on top of the verified move, and a tip of another branch, are refused and the remote does not move.
 func TestPushRefusesATipThatTheRelayDidNotMove(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(k *batchKit, other string){
 		"an extra local commit on the verified move": func(k *batchKit, other string) {
 			k.repo.git("checkout", "-q", "dev-int")

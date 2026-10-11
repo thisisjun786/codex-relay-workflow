@@ -9,6 +9,7 @@ import (
 // batch under merge_candidate_moved. The branch does not move and nothing is marked; the next batch leaves that candidate
 // out and verifies the rest again.
 func TestIntegrationBatchRefusesACandidateThatChangedAfterVerification(t *testing.T) {
+	t.Parallel()
 	changes := map[string]func(k *batchKit){
 		"cancelled": func(k *batchKit) {
 			k.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = (SELECT relationship_id FROM dag_node_executions WHERE plan_id = 'g' AND node_id = 'a')")

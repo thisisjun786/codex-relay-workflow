@@ -28,12 +28,13 @@ import (
 // Control is what a chat command asks for beyond a forward move.
 type Control string
 
-// The controls of ApplyResult: none for a plain move, a status, a reset, and a D that closes the cycle to IDLE.
+// The controls of ApplyResult: none for a plain move, a status, a reset, a D that closes the cycle to IDLE, and an unbind (CRW-146).
 const (
 	ControlNone   Control = ""
 	ControlStatus Control = "status"
 	ControlReset  Control = "reset"
 	ControlDone   Control = "done"
+	ControlUnbind Control = "unbind"
 )
 
 // ApplyResult is ApplyResult. State is the next state to persist, nil on a refusal, a status and the reset no-op; Ledger is the row to
@@ -61,6 +62,36 @@ func ClearedIdle(s state.State) state.State {
 	s.Phase, s.Flags, s.OrchestrationActive, s.LastInjectedPhase, s.IdleEditNudges = state.PhaseIdle, state.Flags{}, false, nil, 0
 	s.PhaseEntrySource, s.PlanUnit, s.PlanEpoch, s.CheckEpoch, s.DcloseRecovery = nil, nil, nil, nil, nil
 	return s
+}
+
+// Unbound is the state after the session's goalplan slug is released (CRW-146): the slug and the work-phase pointer the Stop guard
+// kept for it are gone and nothing else changes. The input is not changed.
+func Unbound(s state.State) state.State {
+	s.Slug, s.StopBlockWorkPhaseID = "", nil
+	return s
+}
+
+// unbindResult is the unbind verb (CRW-146, not in the oracle): the one release of a session's goalplan slug. It is judged from rest
+// only, so it never orphans a running cycle: a phase other than IDLE, and an IDLE that still holds a check epoch or a D-close
+// marker (reset's "work to clear"), are refused with the way out, which is to close the cycle or reset first. The judgement is of the state
+// as the reader returns it: a checkEpoch stored on an IDLE file with no D-close marker is not returned (state.ReadStateStrict keeps the epoch
+// only for phase C or an IDLE that holds a marker), so that file is the normalised rest, in which reset finds nothing to clear either. A session with no slug is
+// a recognised no-op, so a repeat is idempotent. The row is IDLE to IDLE with the released slug as its evidence.
+func unbindResult(s state.State, ts string) ApplyResult {
+	reset := "`crw pabcd orchestrate reset --session " + s.SessionID + "`"
+	if s.Phase != state.PhaseIdle {
+		return ApplyResult{Reason: "unbind: a PABCD cycle is in flight at phase " + string(s.Phase) + ", so the session's goalplan stays bound. Close the cycle (advance to D) or run " + reset +
+			", then unbind again (reset closes the cycle and keeps the slug)."}
+	}
+	if s.CheckEpoch != nil || s.DcloseRecovery != nil {
+		return ApplyResult{Reason: "unbind: a check or a D-close is still pending on this session, so the session's goalplan stays bound. Run " + reset + ", then unbind again."}
+	}
+	if s.Slug == "" {
+		return ApplyResult{OK: true, Control: ControlUnbind, Noop: true}
+	}
+	next, idle, evidence := Unbound(s), state.PhaseIdle, "released goalplan slug "+s.Slug
+	return ApplyResult{OK: true, Control: ControlUnbind, State: &next,
+		Ledger: &state.LedgerEntry{TS: ts, SessionID: s.SessionID, From: &idle, To: state.PhaseIdle, Reason: "unbound", Evidence: &evidence}}
 }
 
 // unlockedFlag is unlockedFlag: the gate flag of f that the forward edge from>to unlocks, auditPassed for A>B and checkPassed for
@@ -106,6 +137,8 @@ func applyHumanTransition(s state.State, verb OrchestrateVerb, att *attest.Attes
 		next := ClearedIdle(s)
 		next.LoopArmSeen = false
 		return ApplyResult{OK: true, Control: ControlReset, State: &next, Ledger: &state.LedgerEntry{TS: ts, SessionID: s.SessionID, From: &from, To: state.PhaseIdle, Reason: "reset"}}
+	case verb == VerbUnbind:
+		return unbindResult(s, ts)
 	case to == state.PhaseD:
 		// The human D means "I am done": C>D and D>IDLE together, so D is never a resting phase.
 		if from != state.PhaseC {

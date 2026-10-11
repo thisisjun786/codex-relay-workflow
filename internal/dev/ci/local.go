@@ -451,18 +451,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	if err != nil {
 		return verificationRecord{}, false, err
 	}
-	// The record's node pin is the distinct setup-node pins of the workflow; the mismatch is per job.
-	var nodePins []string
-	for _, job := range workflowJobs {
-		for _, step := range job.steps {
-			if step.nodeVersion != "" {
-				nodePins = append(nodePins, step.nodeVersion)
-			}
-		}
-	}
-	if nodes := localSortedUnique(nodePins); len(nodes) > 0 {
-		pins["node"] = strings.Join(nodes, ",")
-	}
+	// The record's pins (node included) are the ones the judge reads from the commit (localToolPinsFrom); the node mismatch is per job.
 	record.PinMismatch = localSortedUnique(append(localPinMismatch(pins, record.Tools), localNodeMismatch(plan, workflowJobs, record.Tools["node"])...))
 	// The steps read the same base the record names (the blob and secret range) and the commit
 	// itself (the changed-path decisions), so the environment carries the resolved values rather

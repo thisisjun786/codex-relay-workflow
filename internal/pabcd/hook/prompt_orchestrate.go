@@ -79,9 +79,10 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return promptOrchestrateRefusal("the --attest of this command is malformed: " + command.AttestError + ". Fix it or leave --attest out; this command was not applied."), true
 	}
 
-	// SOURCE-ROOT: every verb but status and reset needs a session source that resolves. status is a
-	// read and reset is the operator's stand-down, so neither is refused by a broken binding.
-	if verb != fsm.VerbStatus && verb != fsm.VerbReset {
+	// SOURCE-ROOT: every verb but status, reset and unbind needs a session source that resolves. status is a
+	// read, reset is the operator's stand-down and unbind (CRW-146) releases the binding itself, so none of
+	// them is refused by a broken one.
+	if verb != fsm.VerbStatus && verb != fsm.VerbReset && verb != fsm.VerbUnbind {
 		if _, err := session.Resolve(p.Cwd, p.SessionID); err != nil {
 			// A bound D-close reaches this before the bound handler, and a matching retry may already
 			// have published its marker and committed its goalplan, so the refusal names them rather
@@ -125,8 +126,18 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return RenderStatusLine(current.Phase, current.Flags.Interview, current.Flags.AuditPassed, current.Flags.CheckPassed), true
 	}
 
-	// reset-from-IDLE no-op: recognized but nothing to write.
+	// reset-from-IDLE no-op: recognized but nothing to write. So is an unbind of a session that binds no goalplan.
 	if result.Noop {
+		if result.Control == fsm.ControlUnbind {
+			// "No goalplan is bound" is a statement about the session state, so it is made only for one that could be read: the
+			// reader behind current turns a damaged file into a default IDLE with no slug, which this answer must not take for a
+			// session that binds nothing (CRW-146, the loop unbind verb refuses the same file). The read is the strict one and
+			// writes nothing.
+			if _, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID); unreadable {
+				return promptOrchestrateRefusal("unbind: the session state is unreadable; refusing to overwrite it. Nothing was written."), true
+			}
+			return "[crw — no goalplan is bound]", true
+		}
 		return "[crw — already IDLE]", true
 	}
 
@@ -157,6 +168,8 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 	switch {
 	case result.Control == fsm.ControlReset:
 		answer = "[crw — reset → IDLE]"
+	case result.Control == fsm.ControlUnbind:
+		answer = "[crw — unbound goalplan " + current.Slug + "]"
 	case result.Control == fsm.ControlDone:
 		// done: the chat D-close. Inject the DONE summary directive this turn; the resting state is
 		// already IDLE, so the footer surfaces IDLE.
@@ -222,8 +235,18 @@ func promptOrchestrateSourceGate(p PromptSubmitPayload, current state.State) (st
 func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) error, p PromptSubmitPayload, current state.State, verb fsm.OrchestrateVerb, command *fsm.OrchestrateCommand, turn string, seams *promptDcloseSeams) (state.State, bool, string, string, error) {
 	next, landed, rowPending := state.State{}, false, ""
 	var publishedErr error
+	// The release of a goalplan slug is no phase move and writes no goalplan (CRW-146): it drains the outbox for rows only, so a
+	// followup an earlier writer left pending (a re-plan's plan-audit cleanup) stays pending, and it publishes the state its
+	// transition produced as it is, without the bookkeeping of a phase move.
+	release := verb == fsm.VerbUnbind
+	drain := func(published ...string) state.LedgerDrainReport {
+		if release {
+			return DrainSessionLedgerRows(p.Cwd, p.SessionID, published...)
+		}
+		return DrainSessionLedger(p.Cwd, p.SessionID, published...)
+	}
 	err := lock(p.Cwd, p.SessionID, func() error {
-		DrainSessionLedger(p.Cwd, p.SessionID)
+		drain()
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if unreadable || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
 			return nil
@@ -235,9 +258,12 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 		if !applied.OK || applied.State == nil {
 			return nil
 		}
-		fields, ok := promptOrchestrateFields(p, *applied.State, fresh, current, command.Attest, turn)
-		if !ok {
-			return nil
+		fields := *applied.State
+		if !release {
+			var ok bool
+			if fields, ok = promptOrchestrateFields(p, fields, fresh, current, command.Attest, turn); !ok {
+				return nil
+			}
 		}
 		var event *state.LedgerEvent
 		if applied.Ledger != nil {
@@ -264,7 +290,7 @@ func promptOrchestrateWrite(lock func(cwd, sessionID string, fn func() error) er
 		if promptOrchestrateAfterPublish(seams) {
 			return nil
 		}
-		rowPending = promptOrchestrateRecordRow(p, event)
+		rowPending = promptOrchestrateRecordRow(drain, event)
 		return nil
 	})
 	if !landed {
@@ -288,8 +314,8 @@ func promptOrchestrateAfterPublish(seams *promptDcloseSeams) bool {
 
 // promptOrchestrateRecordRow drains the session's outbox with event marked as just published and
 // answers the warning for a row left pending, "" when the row is in the ledger.
-func promptOrchestrateRecordRow(p PromptSubmitPayload, event *state.LedgerEvent) string {
-	report := DrainSessionLedger(p.Cwd, p.SessionID, promptOrchestrateEventIDs(event)...)
+func promptOrchestrateRecordRow(drain func(published ...string) state.LedgerDrainReport, event *state.LedgerEvent) string {
+	report := drain(promptOrchestrateEventIDs(event)...)
 	if event != nil && LedgerEventStillPending(report, event.ID) {
 		return promptOrchestrateRowPendingWarning(report)
 	}

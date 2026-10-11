@@ -91,7 +91,7 @@ func Legs() []Leg {
 			// the context, and ContextOutput is the port of buildContextOutput that wraps it.
 			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandleWithRole(pabcdhook.PromptSubmitPayload{
 				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, TranscriptPath: transcript,
-				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv, registryPromptRole))
+				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv, RegistryPromptRole))
 		}},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, InputBlock, false, false, true, func(c Call) string {
 			p, ok := ParseStop(c.Raw)
@@ -108,7 +108,7 @@ func Legs() []Leg {
 			if p.TurnID != nil {
 				turn = *p.TurnID
 			}
-			answer := pabcdhook.StopHandle(pabcdhook.StopPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: transcript, TurnID: turn}, "", os.LookupEnv)
+			answer := pabcdhook.StopHandleWithRole(pabcdhook.StopPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: transcript, TurnID: turn}, "", os.LookupEnv, RegistryPromptRole)
 			if answer.Context != "" {
 				return ContextOutput("Stop", answer.Context)
 			}

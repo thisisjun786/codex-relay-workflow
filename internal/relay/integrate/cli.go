@@ -47,6 +47,7 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 	result, err := sched.IntegrateBatch(ctx, dagsched.IntegrationBatchInput{
 		Plan: args.Text("plan"), Actor: args.Text("actor"), Checkout: args.Text("checkout"),
 		IntegrationRef: args.Text("integration-ref"), BaseRef: args.Text("base"), Nodes: args.Strings("node"),
+		RetryNotProven: args.Bool("retry-not-proven"),
 	}, dagsched.IntegrationBatchDeps{Verify: commandVerifier(argv), Update: updateRef})
 	if err != nil {
 		return nil, err
