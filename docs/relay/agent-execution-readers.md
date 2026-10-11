@@ -28,8 +28,13 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/manage/pump_signals.go` | `caller` | `R06` | n/a | the pump signals call DagReview (dagreview.go) and capacityEvaluate |
 | `internal/manage/relayread.go` | `node-scoped-release` | `R06` | yes | the manage read of a plan is the scheduler's Progress, which reads both sides; the selection of relationships by plan is relationship-scoped (an agent node has none) |
 | `internal/relay/acceptance/stand.go` | `node-scoped-acceptance` | `R06` | yes | the head an acceptance stands on (standOf): OwnOfAgent is what an agent acceptance stands on, itself; no base refresh is recorded for it |
+| `internal/relay/adapter/cli.go` | `caller` | `R06` | n/a | calls Channel.Attempt (supervisor/send.go) |
 | `internal/relay/childcleanup/command.go` | `caller` | `R06` | n/a | the cleanup command runs the gate of gate.go through Execute |
 | `internal/relay/childcleanup/gate.go` | `relationship-scoped` | `R06` | n/a | asks ExecutionIntegrated of a relationship's merged mark, not of a node |
+| `internal/relay/cli/daemon.go` | `caller` | `R06` | n/a | calls Daemon.Tick (daemon/daemon.go) |
+| `internal/relay/cli/registry.go` | `caller` | `R06` | n/a | registers the daemon and supervisor commands (daemonCommand, supervisorSelectCommand, supervisorStageCommand, supervisorStandingCommand) |
+| `internal/relay/cli/supervisor.go` | `caller` | `R06` | n/a | the supervisor commands call Channel.SelectEvent, Stage, StageStandingWithObservations, StageWithReading and StatusAnswer |
+| `internal/relay/daemon/daemon.go` | `caller` | `R06` | n/a | the tick calls Channel.AutoSend (supervisor/autosend.go) |
 | `internal/relay/dagsched/accept.go` | `agent-writer` | `R05` | n/a | dag-accept: the agent path reads the current agent execution and writes the agent acceptance row |
 | `internal/relay/dagsched/accept_agent.go` | `agent-writer` | `R05` | n/a | the agent path of dag-accept: the reviewer verdict and the author pairs of the run (flow_calls), the commit proof read from git, the pre-merge and verification bodies stored in the agent acceptance row |
 | `internal/relay/dagsched/accept_commit.go` | `relationship-scoped` | `R06` | n/a | the commit acceptance of a relationship; agents use accept_agent |
@@ -102,6 +107,14 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/store/dag_integration_stages.go` | `store` | `R05` | n/a | the row writer of dag_integration_stages: batch-level rows of every batch |
 | `internal/relay/store/dag_zone.go` | `store` | `R04,R05` | n/a | the zone ledger: DDL, appended by R04 and R05 |
 | `internal/relay/store/domain_rows.go` | `store` | `R06` | n/a | frozen row types for port parity; unchanged |
+| `internal/relay/supervisor/autosend.go` | `caller` | `R06` | n/a | calls Channel.StageWithReading, attempt and standing |
+| `internal/relay/supervisor/notice.go` | `caller` | `R06` | n/a | calls Channel.attempt (send.go) |
+| `internal/relay/supervisor/obligation.go` | `relationship-scoped` | `R06` | n/a | Reportable asks delivery.PlanSummaryCarriesVerdict whether the confirmed summary entry of a plan relationship carries the verdict of an event; it names a relationship, not a node |
+| `internal/relay/supervisor/proposal.go` | `relationship-scoped` | `R06` | n/a | ReportableCurrent asks delivery.PlanSummaryCarriesVerdict, as Reportable does |
+| `internal/relay/supervisor/selection.go` | `relationship-scoped` | `R06` | n/a | Selection asks delivery.PlanSummaryCarriesVerdict, as Reportable does |
+| `internal/relay/supervisor/send.go` | `caller` | `R06` | n/a | calls Channel.refreshProposal and reopenProposal (proposal.go) |
+| `internal/relay/supervisor/stage.go` | `caller` | `R06` | n/a | calls Channel.Reportable (obligation.go), Standing and reopenProposal |
+| `internal/relay/supervisor/standing.go` | `caller` | `R06` | n/a | calls Channel.Selection (selection.go) |
 
 ## Named by the design and outside the set
 
