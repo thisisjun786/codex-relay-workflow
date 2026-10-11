@@ -405,12 +405,14 @@ func TestWorktreeOwnerTable(t *testing.T) {
 
 // lunasearchOldPathAllowed are the tracked files that keep the name crw-lunasearch on purpose: the rename table of
 // the CXC port, the recorded contract corpus and fuzz targets that replay the source behaviour, the port oracle's
-// folder allowlist, and the notes that quote a past lane's task text. No skill, inventory row, test registration or
+// folder allowlist, the skillport records (they quote the original lines of the edits they account for), and the
+// notes that quote a past lane's task text. No skill, inventory row, test registration or
 // document points at the old path.
 var lunasearchOldPathAllowed = []string{
 	"contract/",
 	"docs/port-cxc/",
 	"internal/dev/cxcfuzz/",
+	"port/cxc/records/",
 	"internal/role/spawn/inline.go",
 	"internal/dev/ci/dev_skills_test.go",
 	"testdata/flow/parity/",
@@ -653,8 +655,14 @@ func containsString(items []string, s string) bool {
 
 func TestRepoGovernanceInCanon(t *testing.T) {
 	t.Run("the checked-in skills", func(t *testing.T) {
-		if errs := repoGovernanceErrors(repoRoot()); len(errs) > 0 {
+		root := repoRoot()
+		if errs := repoGovernanceErrors(root); len(errs) > 0 {
 			t.Errorf("%s", strings.Join(errs, "\n"))
+		}
+		for _, read := range governanceReads {
+			if files, err := scanFiles(root, read); err != nil || len(files) == 0 {
+				t.Errorf("%s: holds no file to read (%v)", read, err)
+			}
 		}
 	})
 	t.Run("fixture: governance rows left in devops, a missing canon row and an old path fail", func(t *testing.T) {
