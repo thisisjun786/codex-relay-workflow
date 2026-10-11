@@ -208,22 +208,19 @@ func premergeTestNewRepo(t *testing.T, spec premergeTestRepoSpec) premergeTestRe
 	} else {
 		premergeTestTemplateMu.Unlock()
 	}
-	root := t.TempDir()
+	return premergeTestCopyRepo(t, template, t.TempDir())
+}
+
+// premergeTestCopyRepo copies a built repository pair into root and points the copy's origin at the
+// copied remote.
+func premergeTestCopyRepo(t *testing.T, template premergeTestRepo, root string) premergeTestRepo {
+	t.Helper()
 	from := filepath.Dir(template.checkout)
 	premergeTestCopyTree(t, filepath.Join(from, "remote.git"), filepath.Join(root, "remote.git"))
 	premergeTestCopyTree(t, template.checkout, filepath.Join(root, "checkout"))
-	// The checkout's origin is the remote it was cloned from: point it at the copy.
-	config := filepath.Join(root, "checkout", ".git", "config")
-	raw, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), template.remote) {
-		t.Fatalf("the template checkout's config does not name %s:\n%s", template.remote, raw)
-	}
-	if err := os.WriteFile(config, []byte(strings.ReplaceAll(string(raw), template.remote, filepath.Join(root, "remote.git"))), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The checkout's origin is the remote it was cloned from: point it at the copy. Git writes the
+	// value (it escapes a backslash, a tab and a newline), so the config file is never edited as text.
+	premergeTestGit(t, filepath.Join(root, "checkout"), "remote", "set-url", "origin", filepath.Join(root, "remote.git"))
 	return premergeTestRepo{checkout: filepath.Join(root, "checkout"), remote: filepath.Join(root, "remote.git"), head: template.head, dev: template.dev}
 }
 
@@ -564,5 +561,34 @@ func premergeTestNoRecords(t *testing.T, dir string) {
 			names[i] = entry.Name()
 		}
 		t.Errorf("%s holds %v, want nothing", dir, names)
+	}
+}
+
+// TestPremergeTestCopyRepoKeepsOddTemporaryPaths pins that the copy's origin is set through git, so a
+// temporary directory whose name holds a backslash, a tab or a newline (git writes those escaped in its
+// configuration) still gets a working origin.
+func TestPremergeTestCopyRepoKeepsOddTemporaryPaths(t *testing.T) {
+	t.Parallel()
+	for name, odd := range map[string]string{
+		"backslash": `odd\dir`,
+		"tab":       "odd\tdir",
+		"newline":   "odd\ndir",
+		"all three": "odd\\\t\ndir",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			base := t.TempDir()
+			built := premergeTestBuildRepo(t, filepath.Join(base, "built-"+odd), premergeTestCleanSpec())
+			copied := premergeTestCopyRepo(t, built, filepath.Join(base, "copy-"+odd))
+			if got := premergeTestGit(t, copied.checkout, "remote", "get-url", "origin"); got != copied.remote {
+				t.Fatalf("origin = %q, want the copied remote %q", got, copied.remote)
+			}
+			if got := premergeTestGit(t, copied.checkout, "ls-remote", "origin", "refs/pull/7/head"); !strings.HasPrefix(got, copied.head) {
+				t.Fatalf("the copy's origin does not serve the pull request head %s: %q", copied.head, got)
+			}
+			if got := premergeTestGit(t, built.checkout, "remote", "get-url", "origin"); got != built.remote {
+				t.Fatalf("the template's origin changed: %q, want %q", got, built.remote)
+			}
+		})
 	}
 }
