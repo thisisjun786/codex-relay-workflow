@@ -43,7 +43,9 @@ func TestFeatureCodexHelper(t *testing.T) {
 	if len(args) == 1 && args[0] == "--version" && os.Getenv("CRW1150_FAKE_VERSION_HANG") != "" {
 		// The stalled probe says that it has begun to stall, so a test ends the recording after that and
 		// never before, whatever the host load made the start of this process take.
-		_ = os.WriteFile(filepath.Join(home, "stalled"), nil, 0600)
+		if err := os.WriteFile(filepath.Join(home, "stalled"), nil, 0600); err != nil {
+			os.Exit(92)
+		}
 		time.Sleep(5 * time.Minute)
 		os.Exit(0)
 	}
@@ -575,8 +577,22 @@ func TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe(t *testing.T) {
 	prev := featureEvidenceContext
 	t.Cleanup(func() { featureEvidenceContext = prev })
 	ends := make(chan context.CancelFunc, 1)
+	// Whatever way the test leaves, the recording's context ends and the enable has returned before the
+	// test's directories are removed: a failure before the explicit end below must not leave the enable
+	// and its 5 minute probe running.
+	leave, leaveNow := context.WithCancel(context.Background())
+	exited := make(chan struct{})
+	t.Cleanup(func() {
+		leaveNow()
+		select {
+		case <-exited:
+		case <-time.After(30 * time.Second):
+			t.Error("the enable did not return after its recording ended")
+		}
+	})
 	featureEvidenceContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
 		evidenceCtx, end := context.WithCancel(ctx)
+		context.AfterFunc(leave, end)
 		ends <- end
 		return evidenceCtx, end
 	}
@@ -588,6 +604,7 @@ func TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe(t *testing.T) {
 	}
 	done := make(chan answer, 1)
 	go func() {
+		defer close(exited)
 		code, out, errOut := h.run("enable")
 		done <- answer{code, out, errOut}
 	}()
