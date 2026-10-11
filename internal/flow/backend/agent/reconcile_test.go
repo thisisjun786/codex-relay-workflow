@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -1180,4 +1181,80 @@ func TestSupersedeInterruptsLiveTurnFirst(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Error("the first process's run did not end")
 	}
+}
+
+// holdOnAForeignThread leaves a call unknown: its thread/start answer was lost and a thread with a turn sits at its cwd.
+func holdOnAForeignThread(t *testing.T) (e *env, clk *fakeClock, genuine, foreign string) {
+	t.Helper()
+	e = newEnv(t, withOwner("proc-1"))
+	clk = e.useClock()
+	e.lostAck("thread/start", 1)
+	e.run(buildScript)
+	genuine = e.threads.All()[0].ID
+	foreign = e.threads.Seed(fakehost.SeedThread{Cwd: e.wt("n1", 1, 0), Model: executorModel, Effort: executorEffort, CreatedAt: clk.Now(),
+		Turns: []fakehost.SeedTurn{{ClientID: "someone-else/t1", Text: "crw-flow-op: someone-else/t1\n\nwork"}}})
+	e.restart("proc-2")
+	res := e.resumeRun(buildScript)
+	if got := value[[]string](t, res); !slices.Equal(got, []string{"unknown", "dispatch_unknown"}) {
+		t.Fatalf("%v", got)
+	}
+	e.expectUnknown("a", "n1")
+	return e, clk, genuine, foreign
+}
+
+// The hold of an unknown outcome ends only through reconcile finding the proof, or through `crw flow recover`: --absent is
+// refused while the foreign thread is there and accepted, with its evidence, once the host shows only an empty container;
+// --adopt names the thread by hand.
+func TestRecoverReleasesTheHoldThroughTheBackend(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		e, clk, genuine, foreign := holdOnAForeignThread(t)
+		cfg := e.reconcileConfig(clk)
+		before := len(e.journal.Events())
+		_, err := engine.Recover(context.Background(), e.journal, cfg, engine.RecoverRequest{CallID: e.row("a", engine.EvPrepared).CallID, Absent: true})
+		var refused *engine.ProofNotMet
+		if !errors.As(err, &refused) || !strings.Contains(err.Error(), "is not this call's") {
+			t.Fatalf("%v", err)
+		}
+		if len(e.journal.Events()) != before {
+			t.Fatalf("a refused recovery appended %v", kinds(e.journal.Events()[before:]))
+		}
+		// the foreign thread goes away
+		if _, err := e.client.Call(context.Background(), "thread/archive", map[string]any{"threadId": foreign}); err != nil {
+			t.Fatal(err)
+		}
+		callID := e.row("a", engine.EvPrepared).CallID
+		res, err := engine.Recover(context.Background(), e.journal, cfg, engine.RecoverRequest{CallID: callID, Absent: true})
+		if err != nil || res.Action != engine.RecoverThreadReady || res.ThreadID != genuine {
+			t.Fatalf("%+v / %v", res, err)
+		}
+		got := kinds(e.journal.Events()[before:])
+		if !slices.Equal(got, []string{"recovery_cleared", "thread_started"}) {
+			t.Errorf("rows %v", got)
+		}
+		resumed := e.resumeRun(buildScript)
+		if c := calls(resumed)["a"]; c.Status != engine.StatusCompleted || c.Meta.ThreadID != genuine {
+			t.Fatalf("a: %s on %s; rows %v", callStatus(c), c.Meta.ThreadID, kinds(e.rows("a")))
+		}
+		if n := e.markerCount(callID + "/t1"); n != 1 {
+			t.Errorf("%d turn/start requests carried the operation", n)
+		}
+		if len(engine.RecoveryHolds(e.journal, e.runID)) != 0 {
+			t.Errorf("holds %v", engine.RecoveryHolds(e.journal, e.runID))
+		}
+	})
+	t.Run("adopt", func(t *testing.T) {
+		e, clk, genuine, _ := holdOnAForeignThread(t)
+		callID := e.row("a", engine.EvPrepared).CallID
+		res, err := engine.Recover(context.Background(), e.journal, e.reconcileConfig(clk), engine.RecoverRequest{CallID: callID, Adopt: genuine})
+		if err != nil || res.Action != engine.RecoverThreadReady || res.ThreadID != genuine {
+			t.Fatalf("%+v / %v", res, err)
+		}
+		resumed := e.resumeRun(buildScript)
+		if c := calls(resumed)["a"]; c.Status != engine.StatusCompleted || c.Meta.ThreadID != genuine {
+			t.Fatalf("a: %s on %s; rows %v", callStatus(c), c.Meta.ThreadID, kinds(e.rows("a")))
+		}
+		if n := e.markerCount(callID + "/t1"); n != 1 {
+			t.Errorf("%d turn/start requests carried the operation", n)
+		}
+	})
 }

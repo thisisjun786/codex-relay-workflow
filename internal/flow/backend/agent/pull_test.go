@@ -332,6 +332,47 @@ func TestFakehostThreadMatchesSchema(t *testing.T) {
 			t.Errorf("%s does not match %s: %v", name, c.file, err)
 		}
 	}
+	// the answers reconcile depends on: a seeded thread, an archived one, a filtered and paged listing, an active thread and
+	// the interrupt that ends its turn
+	forkID := fork["thread"].(map[string]any)["id"].(string)
+	seeded := e.threads.Seed(fakehost.SeedThread{Cwd: cwd, Model: "m", Effort: "high", ForkedFromID: id, ParentThreadID: "",
+		Turns: []fakehost.SeedTurn{{ClientID: "x/t1", Text: "crw-flow-op: x/t1\n\nwork"}}})
+	archive := call("thread/archive", map[string]any{"threadId": forkID})
+	e.threads.ListPageSize(1)
+	paged := call("thread/list", map[string]any{"cwd": cwd, "sourceKinds": []any{"appServer"}, "limit": 50})
+	archivedOnly := call("thread/list", map[string]any{"cwd": filepath.Join(e.root, "fork"), "archived": true})
+	seededRead := call("thread/read", map[string]any{"threadId": seeded, "includeTurns": false})
+	seededTurns := call("thread/turns/list", map[string]any{"threadId": seeded, "itemsView": "full"})
+	e.plan(func(fakehost.TurnRequest) fakehost.TurnPlan { return fakehost.TurnPlan{Hang: true} })
+	running := call("turn/start", map[string]any{"threadId": id, "input": []any{map[string]any{"type": "text", "text": "hang"}}})
+	active := call("thread/read", map[string]any{"threadId": id, "includeTurns": false})
+	interrupted := call("turn/interrupt", map[string]any{"threadId": id, "turnId": running["turn"].(map[string]any)["id"]})
+	for name, c := range map[string]struct {
+		file   string
+		answer map[string]any
+	}{
+		"thread/archive":                {"ThreadArchiveResponse.json", archive},
+		"turn/interrupt":                {"TurnInterruptResponse.json", interrupted},
+		"thread/list (paged, filtered)": {"ThreadListResponse.json", paged},
+		"thread/list (archived)":        {"ThreadListResponse.json", archivedOnly},
+		"thread/read (seeded)":          {"ThreadReadResponse.json", seededRead},
+		"thread/turns/list (seeded)":    {"ThreadTurnsListResponse.json", seededTurns},
+		"thread/read (active)":          {"ThreadReadResponse.json", active},
+	} {
+		if err := resolve(c.file).Validate(c.answer); err != nil {
+			t.Errorf("%s does not match %s: %v", name, c.file, err)
+		}
+	}
+	if status := active["thread"].(map[string]any)["status"].(map[string]any)["type"]; status != "active" {
+		t.Errorf("a thread with a turn in progress reads %v", status)
+	}
+	if n := len(paged["data"].([]any)); n != 1 || paged["nextCursor"] == nil {
+		t.Errorf("the page holds %d threads with next cursor %v: the page size is capped", n, paged["nextCursor"])
+	}
+	if got := archivedOnly["data"].([]any); len(got) != 1 {
+		t.Errorf("the archived listing holds %d threads", len(got))
+	}
+	e.threads.ListPageSize(0)
 	// the validator is live: a Thread of the wrong shape does not pass
 	bad := map[string]any{"thread": map[string]any{"id": 7}}
 	if err := resolve("ThreadReadResponse.json").Validate(bad); err == nil {
