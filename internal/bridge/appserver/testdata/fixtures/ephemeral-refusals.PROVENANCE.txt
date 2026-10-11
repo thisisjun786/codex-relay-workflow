@@ -1,0 +1,10 @@
+thread-read-ephemeral-include-turns.json and thread-turns-list-ephemeral.json: the error answers codex-cli 0.154.0 gives for the history
+of an ephemeral thread (thread/read with includeTurns true, thread/turns/list).
+
+The message texts are the ones the 0.154.0 binary carries ("ephemeral threads do not support includeTurns" and "ephemeral threads do not
+support thread/turns/list"), read from the binary's strings without starting an App Server; the code -32600 is the App Server's
+invalid-request code, the one it answers its other refusals of a request with (see the -32600 fixtures of the bridge and relay tests).
+The frame's id is left out, as the other fixtures do. Upstream: rust-v0.154.0 thread_processor.rs, around lines 3002-3005 and 3525-3529.
+
+The fakehost serves exactly these error members (fakehost.EphemeralIncludeTurnsRefusal, fakehost.EphemeralTurnsListRefusal), and
+TestEphemeralHistoryRefusedFixture in internal/flow/backend/agent compares them with these files.

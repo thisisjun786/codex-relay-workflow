@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": -32600,
+    "message": "ephemeral threads do not support thread/turns/list"
+  }
+}

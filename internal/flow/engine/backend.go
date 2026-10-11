@@ -33,6 +33,13 @@ const (
 	ReasonSupersededByAttempt      = "superseded_by_attempt"
 	ReasonSupersededByResume       = "superseded_by_resume"
 	ReasonCancelled                = "cancelled"
+	// ReasonWorktreeFailed ends a call whose worktree could not be decided (refused: no start commit is recorded) or
+	// made (held: git failed); nothing was sent to the host.
+	ReasonWorktreeFailed = "worktree_failed"
+	// ReasonRestoreSnapshotMismatch is the reason of a call that adopted a restored worktree whose live snapshot is not
+	// the one the restore verified: it sent nothing further and its node stops with an escalation. Every later call of
+	// the node in the run ends held with this reason, sending nothing.
+	ReasonRestoreSnapshotMismatch = "restore_snapshot_mismatch"
 )
 
 // ThreadSpec is what a thread is created with. Every engine thread is persistent.
@@ -44,6 +51,12 @@ type ThreadSpec struct {
 	Sandbox string
 	// Cwd is the call's private working directory ("" lets the backend choose).
 	Cwd string
+	// Node is the node the call belongs to ("" for a call without one).
+	Node string
+	// Head is the commit a reviewer reads (the head option), "" for any other call.
+	Head string
+	// Placement is where the call runs when the backend placed it (Placer); Cwd is then its Path.
+	Placement Placement
 	// AutoCompactTokenLimit is the role's model_auto_compact_token_limit, nil when its pair declares none.
 	AutoCompactTokenLimit *int64
 }
@@ -52,6 +65,8 @@ type ThreadSpec struct {
 type ThreadInfo struct {
 	ID   string
 	Pair Pair
+	// Cwd is the working directory the host reports for the thread ("" when the backend does not read it).
+	Cwd string
 }
 
 // TurnSpec is one turn of a call. Op is the turn operation `<call_id>/t<k>`; the first line of Input carries it as
@@ -62,10 +77,13 @@ type TurnSpec struct {
 	K        int
 	ThreadID string
 	Role     string
+	Node     string
 	Pair     Pair
 	Input    string
 	// Schema is the strict outputSchema (nil for a call without one).
 	Schema []byte
+	// Cwd is the working directory of the thread the turn runs on ("" when the journal does not name one). It is the
+	// call's own: a backend decides whether a turn of the role may carry it (only an architect turn does).
 	Cwd    string
 	Repair bool
 	// Started is called once the host has accepted the turn and named it; the packet counts as delivered from then on.
@@ -85,6 +103,9 @@ type TurnOutcome struct {
 	// Text is the turn's last agent message.
 	Text   string
 	Tokens Tokens
+	// TokensUnmeasured is set on a completed turn whose token usage the backend never received (a lost notification,
+	// a turn recovered by a read): Tokens is then not a measurement, and zero is not what the turn used.
+	TokensUnmeasured bool
 	// Failed is set for a terminal failed or interrupted turn.
 	Failed *TurnFailure
 }
@@ -170,4 +191,113 @@ func ClassifyHostFailure(codexErrorInfo string) Disposition {
 		d.Status, d.Reason = StatusHeld, "host_infra_unknown"
 	}
 	return d
+}
+
+// Placement kinds.
+const (
+	// PlaceFresh is a new attempt worktree an executor call that creates a thread runs in.
+	PlaceFresh = "fresh"
+	// PlaceRestore is the worktree a resume suffix restored, adopted unchanged by the node's first executor call.
+	PlaceRestore = "restore"
+	// PlaceCall is the call-private working directory of any other role.
+	PlaceCall = "call"
+	// PlaceContinued is a continuation: the thread keeps the directory it was started in and nothing is made.
+	PlaceContinued = "continued"
+)
+
+// Placement is where a call's thread runs and how that directory came to be. The engine journals it in the call's
+// prepared row (key allocation) before anything exists.
+type Placement struct {
+	Kind    string `json:"kind"`
+	Attempt int    `json:"attempt,omitempty"`
+	Lineage int    `json:"lineage,omitempty"`
+	Path    string `json:"path,omitempty"`
+	// Start is the commit the directory starts at (C).
+	Start string `json:"start_commit,omitempty"`
+	// Pending is the restored pending tree (P) of a restore, empty when the prefix ended without one.
+	Pending string `json:"pending,omitempty"`
+	// Digest is the verified working-snapshot digest of a restore.
+	Digest string `json:"snapshot_digest,omitempty"`
+	// Fork is set on a continuation that runs in a restored worktree: it forks its handle's thread into it.
+	Fork bool `json:"fork,omitempty"`
+}
+
+// PlaceRequest is what a placer is asked about.
+type PlaceRequest struct {
+	RunID, CallID, Role, Family, Node, Head string
+	// Continues is the record of the handle a continuation resumes, nil for a call that creates a thread.
+	Continues *CallInfo
+	// Journal is the run's journal: the allocations of the node so far are read from it.
+	Journal Journal
+}
+
+// SnapshotMismatch is the error Establish and Recheck return when the live working snapshot of a restored worktree is
+// not the one its restore verified.
+type SnapshotMismatch struct{ Want, Got string }
+
+func (e *SnapshotMismatch) Error() string {
+	return fmt.Sprintf("the restored worktree changed: snapshot %s, verified %s", e.Got, e.Want)
+}
+
+// Placer is implemented by a backend that decides where a call runs and makes that place. The engine asks Place while it
+// writes the call's prepared row, calls Establish after that row and before thread_requested (or fork_requested), and
+// Recheck before the first turn_requested of a restore; the worktree exists only after the row that names it.
+type Placer interface {
+	// Place decides the call's directory. It reads the journal and the repository and writes nothing.
+	Place(req PlaceRequest) (Placement, error)
+	// Establish makes the placement real: it creates the worktree, or for a restore compares the live snapshot with the
+	// verified digest and returns a *SnapshotMismatch when they differ. Any other error is a worktree failure.
+	Establish(ctx context.Context, req PlaceRequest, p Placement) error
+	// Recheck compares the live snapshot of a restore with its verified digest again.
+	Recheck(ctx context.Context, p Placement) error
+	// Snapshot is the working snapshot of a worktree (the P_held of a held executor call).
+	Snapshot(ctx context.Context, path string) (string, error)
+}
+
+// ForkSpec is a thread/fork request of a continuation that runs in a restored worktree.
+type ForkSpec struct {
+	CallID, Role, Node    string
+	Pair                  Pair
+	Sandbox               string
+	Cwd                   string
+	SourceThreadID        string
+	ThroughTurnID         string
+	AutoCompactTokenLimit *int64
+}
+
+// Forker is implemented by a backend that can fork a thread at a turn into another directory.
+type Forker interface {
+	ForkThread(ctx context.Context, spec ForkSpec) (ThreadInfo, error)
+}
+
+// Reconciled is implemented by a backend whose requests that got no answer are decided afterwards by the reconcile pass
+// (F05). The engine then writes no terminal row for such a call: its last row stays the intent that was sent, and the
+// script sees status unknown. A backend without it (the fake) has the call end outcome_unknown.
+type Reconciled interface {
+	LeavesLostRequestsOpen() bool
+}
+
+// Map is the placement as the prepared row of a call records it.
+func (p Placement) Map() map[string]any {
+	m := map[string]any{"kind": p.Kind}
+	if p.Attempt != 0 {
+		m["attempt"] = p.Attempt
+		m["lineage"] = p.Lineage
+	}
+	if p.Path != "" {
+		m["path"] = p.Path
+	}
+	if p.Start != "" {
+		m["start_commit"] = p.Start
+	}
+	if p.Pending != "" {
+		m["pending"] = p.Pending
+	}
+	if p.Digest != "" {
+		m["snapshot_digest"] = p.Digest
+	}
+	if p.Fork {
+		m["fork"] = true
+	}
+	return m
 }

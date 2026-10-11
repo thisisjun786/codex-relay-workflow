@@ -87,6 +87,10 @@ type Reply struct {
 	SchemaParams bool
 	// Close, when set, closes the connection with this frame and sends no answer.
 	Close *CloseFrame
+	// After runs once the answer was written, with the connection that asked: the way a handler pushes the
+	// notifications that follow a request (a turn's progress) at a later time. It runs on the connection's reader
+	// unless the answer has a Delay; a hook that waits must start its own goroutine.
+	After func(*Conn)
 }
 
 // Request is one request or notification (ID is nil) the client sent.
@@ -129,6 +133,7 @@ type Server struct {
 	conns          map[*websocket.Conn]struct{}
 	scripted       map[string][]Reply
 	handlerFor     map[string]Handler
+	connHandlerFor map[string]ConnHandler
 	standing       map[string]Reply
 	requests       []Request
 	recorded       chan struct{}
@@ -136,6 +141,7 @@ type Server struct {
 	raised         []ServerRequest
 	answers        []Answer
 	compressionOff int
+	threads        *Threads
 }
 
 // Start listens on a fresh unix socket and stops the fake when the test ends.
@@ -148,13 +154,14 @@ func Start(tb testing.TB) *Server {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
-		SocketPath: path,
-		cancel:     cancel,
-		conns:      map[*websocket.Conn]struct{}{},
-		scripted:   map[string][]Reply{},
-		handlerFor: map[string]Handler{},
-		standing:   map[string]Reply{},
-		recorded:   make(chan struct{}),
+		SocketPath:     path,
+		cancel:         cancel,
+		conns:          map[*websocket.Conn]struct{}{},
+		scripted:       map[string][]Reply{},
+		handlerFor:     map[string]Handler{},
+		connHandlerFor: map[string]ConnHandler{},
+		standing:       map[string]Reply{},
+		recorded:       make(chan struct{}),
 	}
 	s.httpSrv = &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.accept(ctx, w, r) }),
@@ -235,6 +242,16 @@ func (s *Server) Script(method string, replies ...Reply) {
 // Handler computes the answer to one request from its params. It runs on the connection's read
 // loop, so a handler that blocks holds that connection exactly as a busy host would.
 type Handler func(params json.RawMessage) Reply
+
+// ConnHandler is a Handler that also sees the connection the request came on.
+type ConnHandler func(conn *Conn, params json.RawMessage) Reply
+
+// HandleConn answers method through h like Handle, handing it the connection the request came on.
+func (s *Server) HandleConn(method string, h ConnHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.connHandlerFor[method] = h
+}
 
 // Handle answers method through h whenever no scripted answer is queued; it takes precedence
 // over a standing answer.
@@ -355,17 +372,21 @@ func (s *Server) accept(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	(&session{server: s, conn: conn}).serve(ctx)
 }
 
-func (s *Server) reply(method string, params json.RawMessage) (Reply, bool) {
+func (s *Server) replyOn(conn *Conn, method string, params json.RawMessage) (Reply, bool) {
 	s.mu.Lock()
 	if queued := s.scripted[method]; len(queued) > 0 {
 		s.scripted[method] = queued[1:]
 		s.mu.Unlock()
 		return queued[0], true
 	}
+	connHandler, connHandled := s.connHandlerFor[method]
 	handler, handled := s.handlerFor[method]
 	reply, ok := s.standing[method]
 	s.mu.Unlock()
-	if handled {
+	switch {
+	case connHandled:
+		return connHandler(conn, params), true
+	case handled:
 		return handler(params), true
 	}
 	return reply, ok

@@ -131,6 +131,13 @@ type Engine struct {
 	warned atomic.Bool
 	pauseM sync.Mutex
 	paused string
+	// turns are the calls with a turn in flight; quotaEscalated is set once the run's quota escalation was written.
+	turnsM         sync.Mutex
+	turns          map[*callRun]struct{}
+	quotaEscalated atomic.Bool
+	// stopped are the nodes a restore_snapshot_mismatch stopped.
+	stoppedM sync.Mutex
+	stopped  map[string]bool
 
 	// Everything below is touched only by the loop goroutine.
 	fatalKind string
@@ -184,7 +191,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}}
+	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}}
 	// A run that resumes a journal read the policy under another digest before: the change is journaled before any live
 	// call, and only calls that start a thread afterwards take the new pairs.
 	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
@@ -399,6 +406,40 @@ func (e *Engine) addTokens(n int64) {
 	if spent >= total {
 		e.pause(ReasonBudgetExhausted)
 	}
+}
+
+// tokensUnmeasured journals a completed turn whose usage was never reported. Under a token ceiling the run cannot tell
+// what it has spent any more, so it stops sending requests the way an exhausted budget does.
+func (e *Engine) tokensUnmeasured(c *callRun, turnID string) {
+	ceiling := e.cfg.TokenBudget > 0
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: "tokens_unmeasured",
+		Data: map[string]any{"call_id": c.id, "node": c.plan.node, "turn_id": turnID, "ceiling": ceiling}})
+	if ceiling {
+		e.pause(ReasonBudgetExhausted)
+	}
+}
+
+// stopNode ends the node's work for the rest of the run; nodeStopped asks whether it was. A call without a node is never
+// stopped.
+func (e *Engine) stopNode(node string) {
+	if node == "" {
+		return
+	}
+	e.stoppedM.Lock()
+	if e.stopped == nil {
+		e.stopped = map[string]bool{}
+	}
+	e.stopped[node] = true
+	e.stoppedM.Unlock()
+}
+
+func (e *Engine) nodeStopped(node string) bool {
+	if node == "" {
+		return false
+	}
+	e.stoppedM.Lock()
+	defer e.stoppedM.Unlock()
+	return e.stopped[node]
 }
 
 // callID derives a call's id from its identity, so it is the same on every run and resume.

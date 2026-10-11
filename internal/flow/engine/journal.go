@@ -17,8 +17,13 @@ const (
 	EvPrepared        = "prepared"
 	EvThreadRequested = "thread_requested"
 	EvThreadStarted   = "thread_started"
+	EvForkRequested   = "fork_requested"
+	EvForkStarted     = "fork_started"
 	EvTurnRequested   = "turn_requested"
 	EvTurnStarted     = "turn_started"
+	// EvInterruptRequested is the engine's intent to interrupt the turn in flight (the pause of a run); it is written
+	// before the interrupt is sent, and decides how the interrupted turn is classified.
+	EvInterruptRequested = "interrupt_requested"
 
 	EvCompleted      = "completed"
 	EvNullModel      = "null_model"
@@ -108,6 +113,8 @@ type CallInfo struct {
 	// Configured is the pair the host read back for the thread (carried unchanged along a chain of continuations); a
 	// thread whose readback differs from its role's pair is never continued.
 	Configured Pair
+	// Cwd is the working directory of the call's thread, as the host read it back when the thread started (or was forked).
+	Cwd string
 	// ThroughTurnID is the last turn of the call: a continuation resumes the thread after it.
 	ThroughTurnID string
 	Terminal      string // the status of the call's last terminal event, empty while it is open
@@ -140,10 +147,14 @@ func LookupCall(j Journal, callID string) (CallInfo, bool) {
 			}
 			info.Configured.Model, _ = d["configured_model"].(string)
 			info.Configured.Effort, _ = d["configured_effort"].(string)
-		case EvThreadStarted:
+			if cwd, _ := d["thread_cwd"].(string); cwd != "" {
+				info.Cwd = cwd
+			}
+		case EvThreadStarted, EvForkStarted:
 			info.ThreadID, _ = d["thread_id"].(string)
 			info.Configured.Model, _ = d["model"].(string)
 			info.Configured.Effort, _ = d["effort"].(string)
+			info.Cwd, _ = d["cwd"].(string)
 		case EvTurnStarted:
 			info.ThroughTurnID, _ = d["turn_id"].(string)
 		}
