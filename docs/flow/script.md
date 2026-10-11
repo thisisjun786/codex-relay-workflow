@@ -13,8 +13,9 @@ crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.j
 ```
 
 `--backend fake` runs the script against the in-process fake backend: every turn answers immediately with a value that
-satisfies the call's schema, including its numeric bounds, `multipleOf` and `pattern` (or a short sentence for a call without one). It is the only backend of this build; the App
-Server backend arrives with its own issue. The command prints the run's result as JSON and exits 0 when the script
+satisfies the call's schema, including its numeric bounds, `multipleOf` and `pattern` (or a short sentence for a call without one). It is the only backend the
+command selects; the App Server backend is the package `internal/flow/backend/agent` (see [The App Server backend](#the-app-server-backend)),
+which the engine drives through the same `Backend` interface and which no command selects yet. The command prints the run's result as JSON and exits 0 when the script
 completed, 1 when the script failed (`status: script_error`) or did not load, and 2 for a command line it cannot use.
 The journal sequence numbers of a call (`meta.startSeq`, `meta.endSeq`) depend on the order the host finished concurrent
 calls, so under `crw flow run` neither the `CallResult` the script holds nor the printed result carries them (a value,
@@ -197,7 +198,7 @@ The calls of a run share an agent pool (`--pool`, default 6): at most that many 
 | `handle` | Opaque `crwh1:<run>:<call_id>`; non-null once a thread exists for the call. It resolves through the journal to the call's thread and last turn. |
 | `status` | `completed`, `null_model`, `held`, `refused`, `unknown` or `superseded`. |
 | `output` | The schema-valid object (or the text of a call without a schema); non-null only when `status` is `completed`. |
-| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`. |
+| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`. |
 | `meta` | `role`, `requestedPair`, `configuredPair`, `threadId`, `turnIds`, `repairUsed`, `tokens`, `startSeq`, `endSeq` (the last two are absent under `crw flow run`, see above). |
 
 A failed or interrupted turn, and an RPC error to the thread or turn request, is classified by its `codexErrorInfo`: the
@@ -206,8 +207,14 @@ rate limit also pauses the run), `sessionBudgetExceeded` is `held` with `budget_
 `sandboxError` are `refused` (`host_config_<kind>`), `cyberPolicy` and `misalignmentPolicyViolation` are `refused`
 (`host_policy_<kind>`), `contextWindowExceeded` is `null_model`, and a failure with no `codexErrorInfo` or one the table does
 not list is `held` with `host_infra_unknown`. An interrupt the engine did not send is `held` with `host_interrupted_external`.
-A request that failed without an answer (a lost connection, a timeout) ends `unknown` with `dispatch_unknown`. Only
-`null_model` can be evidence for a tier step.
+A request that failed without an answer (a lost connection, a timeout) ends `unknown` with `dispatch_unknown`; on the fake
+backend the call writes `outcome_unknown`, and on the App Server backend it writes no terminal row at all, so its last row
+stays the intent that was sent and the reconcile pass decides it. Only `null_model` can be evidence for a tier step.
+
+A turn the engine interrupts - the turns in flight when a usage or rate limit pauses the run - is journaled first
+(`interrupt_requested`, reason `engine_paused`) and ends `held` with reason `engine_paused`, whatever the host reports for
+the interrupted turn; a turn the host reports interrupted with no such row is `held` with `host_interrupted_external`. A
+usage or rate limit also writes one flow row `escalation` with reason `quota_or_rate`.
 
 ### Schemas
 
@@ -319,9 +326,65 @@ The journal is in memory in this build; the store persistence arrives with the f
 rows `prepared` (written before anything is sent, with the role, pair, node, `stepDecision` and, for a continuation, the
 thread it continues and what it inherited), `thread_requested`, `thread_started`, `turn_requested`, `turn_started` and one
 terminal row (`completed`, `null_model`, `held`, `refused`, `outcome_unknown` or `superseded`). A held row records whether the
-call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim. The run record
-holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and the path and digest of
-the execution policy file.
+call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
+that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
+classified. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
+the path and digest of the execution policy file.
+
+A backend that places calls adds to a call's rows: the `allocation` member of `prepared` (below), `fork_requested` and
+`fork_started` in place of `thread_requested` and `thread_started` for a continuation that runs in a restored worktree, and
+`interrupt_requested` before a turn the engine interrupts. Flow rows named `escalation` carry a `reason` (`quota_or_rate`,
+`restore_snapshot_mismatch`) with the call and node they stopped.
+
+## The App Server backend
+
+`internal/flow/backend/agent` runs a call as a persistent Codex 0.154 thread. A thread is never ephemeral: Codex refuses
+`includeTurns` and `thread/turns/list` for an ephemeral thread, which would take away pull recovery and the audit of a run.
+
+- `thread/start` carries the call's own `cwd`, the role's model, `config.model_reasoning_effort`, the role's sandbox (workspace-write
+  for `executor` and `executor-t1`, read-only for every other role), `approvalPolicy: never`, `ephemeral: false` and the role
+  prompt as `developerInstructions`. Nothing that names the call is written there: the 0.154 `Thread` has no such member, so
+  it could never be read back. A pair's `autoCompactTokenLimit` travels in the same `config`.
+- The pair the thread is configured with is read with `thread/read` (`includeTurns: false`): `Thread.model` and
+  `Thread.reasoningEffort`. A different or null value ends the call `refused` with `pair_refused`, and the thread, with the pair it
+  read back, stays in the journal. Every `turn/start` repeats the thread's model and effort, so nothing changes a thread's pair.
+- A turn's operation is `<call_id>/t<k>`. It is sent as `clientUserMessageId` and as the first input line `crw-flow-op: <op>`; a
+  turn read back from the host is identified by its `userMessage` item's `clientId` first and by that first line second. The
+  call's schema is the turn's `outputSchema`.
+- A turn's end comes over the notification bus. When none comes, or the feed may have lost some, the backend reads the turn it
+  recorded: it pages `thread/turns/list` with `itemsView: full` up to that turn id and reads a turn the list gave only as a
+  summary with `thread/items/list`. It never hydrates with `includeTurns`. A turn whose items cannot be read in full is
+  unreadable, not empty: the call stays with the reconcile pass.
+- An executor turn never carries a `cwd`: a turn `cwd` moves the thread's working directory for that turn and every later one, so
+  an executor's directory is fixed by `thread/start` or `thread/fork` alone. An architect turn carries its call's directory.
+- If a run pauses, the turns in flight are interrupted with `turn/interrupt`; the same request is sent for a cancelled run.
+
+### Working directories
+
+One allocator makes every directory a call runs in. An executor's is an attempt worktree
+`<state>/flow/<run>/wt/<node>/a<attempt>-l<lineage>`, where the attempt is 1 plus the allocations of the node already journaled.
+There are two ways to get one, and the call's `prepared` row records which (`allocation`: `kind`, `attempt`, `lineage`, `path`,
+`start_commit`):
+
+- `fresh`: a call that creates a thread and adopts no restore - the first build, the rebuild after a `null_model` and the
+  `executor-t1` build - gets a new worktree made with `git worktree add --detach` at C, the result commit of the node's last
+  `crw.commit` row (else the base recorded for its first attempt). The `prepared` row is written first, the worktree is made
+  after it, and `thread_requested` follows. The node's previous worktree is retired: its HEAD and working snapshot are committed
+  to `refs/crw/flow/<run>/retired/<node>/a<n>`, and the edits of a `null_model` attempt stay there.
+- `restore`: when a resume suffix has restored the node's worktree (a flow row `worktree_restored` with the node, lineage, attempt,
+  path, `C`, `P` and the verified `snapshot_digest`), the node's first executor call adopts it as its cwd - as a fresh thread, as
+  an `executor-t1` thread, or, for a continuation, by forking its handle's thread (`thread/fork` with `lastTurnId` and the
+  restored `cwd`, rows `fork_requested` and `fork_started`). Nothing is made, checked out or reset. The live snapshot is compared
+  with the digest before `thread_requested` (or `fork_requested`) and again before the call's first `turn_requested`; a
+  difference sends nothing more, leaves the call's last row where it was, writes one `escalation` with reason
+  `restore_snapshot_mismatch` and ends the call `unknown`.
+
+The `cwd` and `worktree` options of a call are journaled in `prepared` but do not choose its directory: no two calls share one, so
+the allocator does. A continuation that runs in no restored worktree makes nothing and keeps the directory its thread started in. Every other role
+runs in `<state>/flow/<run>/calls/<call_id>/wt`, a detached worktree at the `head` option (else the node's base); a reviewer
+reads it through a read-only thread. The run commits and reads the head from git (`Allocator.Commit`, `Allocator.Head`); a model
+never does. The working snapshot (`Allocator.Snapshot`) is the tree id of every file the worktree holds that git does not
+ignore, computed in a throwaway index.
 
 ## Dependencies and their supply-chain check
 
