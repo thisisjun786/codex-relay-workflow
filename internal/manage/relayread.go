@@ -404,7 +404,8 @@ func relayReadRelationships(ctx context.Context, st *store.Store, opts RelayRead
 	return items
 }
 
-// relayReadPlans reads the progress of each chosen plan under the scheduler's own stage names.
+// relayReadPlans reads the progress of each chosen plan under the scheduler's own stage names. The stages are the scheduler's reading of both sides of every node (R06): a node an agent runs, has had
+// accepted or has landed is in the stage its execution and acceptance rows say, as a node of a relationship is. (The selection of relationships by plan, above, is relationship-scoped: an agent node has none.)
 func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions, out *RelayProjection) []RelayPlan {
 	query := "SELECT plan_id FROM dag_plans"
 	var args []any
