@@ -199,7 +199,10 @@ one per test process when the variable is unset, and `CRWDevPath` and `BuildCRW`
 the seam builds a few tests need (a link-time clock, a build tag, an overlay) the same way. Every
 package's `TestMain` is `testsupport.Main`, which points the homes, the XDG directories and the
 relay's roots at one temporary tree (`crw-relay-test-*` in `TMPDIR`), keeps `CRW_REFUSE_LIVE_STATE=1`, and
-removes the tree and every binary the process built after the tests. A helper process a test starts from
+removes the tree and every binary the process built after the tests. The tree's crw configuration (`xdg-config/crw/config.json`, `testsupport.SandboxConfig`) names `TMPDIR` as
+`paths.sandbox_root`, so the sandbox-root rule (CRW-1265) judges the directories a test makes the same
+whatever `TMPDIR` is; a harness that starts a process with an environment of its own passes that file as
+`CRW_CONFIG` or writes the same document into the configuration home it chose. A helper process a test starts from
 its own test binary (a crash child, a lock holder) passes through that `TestMain` as well; it makes its
 tree inside its starter's, named by `CRW_TEST_ISOLATION_ROOT`, so a helper killed by a signal or ended by
 `os.Exit` leaves nothing once its starter removes its own tree. `CRW_TEST_KEEP_ROOT=1` keeps the trees of a
