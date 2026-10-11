@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,13 +42,6 @@ func TestMain(m *testing.M) {
 // runs, so a test that drives Run without setting its own home reads no configuration file
 // and writes nothing under the real ones.
 func coreMain(m *testing.M) int {
-	if memory := coreMemoryTempRoot(); memory != "" {
-		defer func() { _ = os.RemoveAll(memory) }()
-		if err := os.Setenv("TMPDIR", memory); err != nil {
-			fmt.Fprintln(os.Stderr, "crw manage tests:", err)
-			return 1
-		}
-	}
 	root, err := os.MkdirTemp("", "crw-manage-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "crw manage tests: the isolation root:", err)
@@ -70,34 +62,6 @@ func coreMain(m *testing.M) int {
 		}
 	}
 	return m.Run()
-}
-
-// coreMemoryTempRootEnv set to 1 keeps the test temporary directories where TMPDIR names them.
-const coreMemoryTempRootEnv = "CRW_MANAGE_TEST_DISK_TMP"
-
-// coreMemoryTempRoot is a temporary root in memory (/dev/shm) for the tests' own directories, or ""
-// when there is none to use. Nearly every test builds a state directory, a store or a repository and
-// the code under test syncs them; on a loaded host each sync waits behind the other writers of the
-// disk, and a temporary root in memory has no disk to wait for (CRW-1259: the package took 129 s with
-// it off and 44 s with it on at the same load). The tests assert no durability a sync gives, so what
-// they check is the same. It is used only if a script written there runs (a mount can forbid
-// execution), and CRW_MANAGE_TEST_DISK_TMP=1 turns it off.
-func coreMemoryTempRoot() string {
-	if os.Getenv(coreMemoryTempRootEnv) == "1" || runtime.GOOS != "linux" {
-		return ""
-	}
-	root, err := os.MkdirTemp("/dev/shm", "crw-manage-")
-	if err != nil {
-		return ""
-	}
-	script := filepath.Join(root, "probe.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err == nil {
-		if err = exec.Command(script).Run(); err == nil {
-			return root
-		}
-	}
-	_ = os.RemoveAll(root)
-	return ""
 }
 
 // coreFakeMain is this test binary acting as the fake crw: it appends its own arguments
