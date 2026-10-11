@@ -298,6 +298,8 @@ var targetRuleForbidden = []struct{ pattern, why string }{
 	{`(?i)target is the issue's`, "an integration target belonging to the issue"},
 	{`(?i)issues? (is|are) delivered into (its own|one) integration target`, "an integration target belonging to the issue"},
 	{`(?i)(two|several|more than one|many) integration targets`, "a project with more than one integration target"},
+	{`(?i)\bproject\b[^.]*\bissues each carry their own[^.]*repository label`, "issues of one project in separate repositories"},
+	{`(?i)repository labels? each\b[^|]*\bmilestone`, "issues of separate repositories gathered in one milestone of one project"},
 }
 
 func targetRuleProblems(text string) []string {
@@ -315,6 +317,8 @@ func TestTargetRuleJudgesOneTargetPerProject(t *testing.T) {
 	accepted := []string{
 		"A project has one integration target and at most 64 live issues.",
 		"Work in several repositories is one project per repository; an initiative holds the projects, each with its own single integration target.",
+		"For example, a requested “Complete installation and first launch” initiative holds one project for core, one for desktop and one for installer, each project with its own single integration target and its issues carrying that repository label.",
+		"| 2 projects, one per repository, held by 1 initiative, 1 issue and 1 repository label each, installer blocked by core, combined outcome on the initiative. | Different target repository. |",
 	}
 	for _, text := range accepted {
 		if got := targetRuleProblems(text); len(got) > 0 {
@@ -326,6 +330,9 @@ func TestTargetRuleJudgesOneTargetPerProject(t *testing.T) {
 		"A project may span repositories, so the target is the issue's and not the project's.",
 		"Multiple repositories can belong to one project.",
 		"Each of its issues is delivered into one integration target.",
+		// The examples round 4 found in the canon and the plan boundaries, as they stood.
+		"For example, a requested “Complete installation and first launch” project can have one product family while its core, desktop, and installer issues each carry their own edit-target repository label.",
+		"| 1 | An outcome needs a change in the core repository and in the installer repository; the installer consumes the new core interface. | 2 issues, 1 repository label each, installer blocked by core, combined outcome on the milestone, 0 extra issues for reading core. | Different target repository. |",
 	}
 	for _, text := range rejected {
 		if got := targetRuleProblems(text); len(got) == 0 {
@@ -351,6 +358,7 @@ func TestPlanSizeRuleKeepsOneIntegrationTargetPerProject(t *testing.T) {
 	for _, path := range []string{
 		"plugins/crw/skills/crw-plan/SKILL.md",
 		"plugins/crw/skills/crw-plan/references/integrations.md",
+		"plugins/crw/skills/crw-plan/references/issue-boundaries.md",
 		canonRefDir + "linear-model.md",
 		canonRefDir + "hierarchy.md",
 	} {

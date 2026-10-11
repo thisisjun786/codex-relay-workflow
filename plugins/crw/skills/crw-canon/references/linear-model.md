@@ -35,11 +35,13 @@ Keep goals, product classification, and repository identity separate:
   all project labels to issues. Keep descriptions brief. Views, filters, and
   default screens belong to the user and are configured only when requested.
 
-For example, a requested “Complete installation and first launch” project can
-have one product family while its core, desktop, and installer issues each carry
-their own edit-target repository label. A shared planning project can omit a
-product family, and a non-code planning issue can omit a repository label.
-Neither example requires an initiative or a product prefix in the project name.
+For example, a requested “Complete installation and first launch” outcome
+across the core, desktop, and installer repositories is one initiative holding
+three projects, one per repository, each with its own single integration target
+and its issues carrying that repository's edit-target label. A shared planning
+project can omit a product family, and a non-code planning issue can omit a
+repository label. A product prefix in a project name is required by none of
+these examples.
 
 Do not migrate existing labels merely by loading this model. When migration is
 authorized, classify each issue from its accepted scope and delivery evidence,
