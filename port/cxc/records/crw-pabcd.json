@@ -242,7 +242,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker (a child forked from the session is tied by the call's result alone) and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. Under multi-agent V2 the created report's agentId is the agent path /root/<task> that spawn_agent returns, which the command resolves to the child's thread id (CRW-1260).",
       "hunks": [
         {
           "line": 141,
@@ -259,9 +259,13 @@
             "   Report `outcome:created` and the actual `agentId`, then use native wait. Report\n"
           ],
           "new": [
-            "   Report `outcome:created` and the actual `agentId`, then use native wait. Created\n",
+            "   Report `outcome:created` and the actual `agentId` (under multi-agent V2, where\n",
+            "   `spawn_agent` returns the agent path `/root/<task>` and no thread id, that path is the\n",
+            "   `agentId`; the command resolves it to the child's thread id in the native database\n",
+            "   and records the thread id), then use native wait. Created\n",
             "   requires the spawn hook's issuance of the attempt, and the child's first message\n",
-            "   must carry this attempt's marker. The marker does not tie the child to the call:\n",
+            "   must carry this attempt's marker (a child forked from this session starts with the\n",
+            "   parent's history, so it is tied by the call's result alone). The marker does not tie the child to the call:\n",
             "   only the host's own result of the issued spawn call naming this `agentId` does, and\n",
             "   a child the host cannot yet tie that way is recorded unverified and cannot complete\n",
             "   an independent review until created is reported again. A child spawned while the hook was off is recorded only with\n",
