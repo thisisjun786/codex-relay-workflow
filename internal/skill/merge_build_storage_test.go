@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -124,9 +125,14 @@ func TestMergeBuildToolEnvKeepsTheRawSpellingOfBuildWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The go tool cleans the paths it joins below XDG_CONFIG_HOME, TMPDIR and HOME, so the
+	// environment names the owned directory by its physical path, never the raw spelling.
 	tmp, _ := mbsValue(env, "GOTMPDIR")
-	if !strings.HasPrefix(tmp, spelled+"/") {
-		t.Errorf("GOTMPDIR=%q is not below the raw build_work %q", tmp, spelled)
+	if !strings.HasPrefix(tmp, real+string(filepath.Separator)) {
+		t.Errorf("GOTMPDIR=%q is not below the physical build_work %q", tmp, real)
+	}
+	if config, _ := mbsValue(env, "XDG_CONFIG_HOME"); !strings.HasPrefix(config, real+string(filepath.Separator)) {
+		t.Errorf("XDG_CONFIG_HOME=%q is not below the physical build_work %q", config, real)
 	}
 	if entries, _ := os.ReadDir(real); len(entries) != 1 {
 		t.Errorf("the owned directory is not on the real disk %s: %d entries", real, len(entries))
@@ -137,5 +143,67 @@ func TestMergeBuildToolEnvKeepsTheRawSpellingOfBuildWork(t *testing.T) {
 	cleanup()
 	if entries, _ := os.ReadDir(real); len(entries) != 0 {
 		t.Errorf("the run left %d entries in %s", len(entries), real)
+	}
+}
+
+// CRW-958 fix round 4: the real go tool, run in the environment for a build_work spelled through a
+// symbolic link and "..", reads the off telemetry mode the run wrote and keeps its telemetry and
+// temporary files inside the owned directory: nothing lands at the lexically cleaned place, and the
+// cleanup leaves the physical build_work empty.
+func TestMergeBuildToolEnvRawBuildWorkHoldsTheRealGoTool(t *testing.T) {
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("this test runs the real go tool and needs it on PATH: %v", err)
+	}
+	t.Setenv("GOENV", "off")
+	base := t.TempDir()
+	for _, dir := range []string{"a", "b/deep"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "b", "deep"), filepath.Join(base, "a", "link")); err != nil {
+		t.Fatal(err)
+	}
+	spelled, real, cleaned := base+"/a/link/../root", filepath.Join(base, "b", "root"), filepath.Join(base, "a", "root")
+	caller := append(os.Environ(), "GOTELEMETRYDIR=")
+	env, cleanup, err := mergeBuildToolEnv(context.Background(), caller, t.TempDir(), crwconfig.ToolRoots{BuildWork: spelled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	probe := exec.Command(goTool, "env", "GOTELEMETRY", "GOTELEMETRYDIR")
+	probe.Env = env
+	out, err := probe.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go env: %v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 2 || lines[0] != "off" {
+		t.Errorf("the go tool does not read the off mode the run wrote: %q", out)
+	}
+	if len(lines) == 2 && !strings.HasPrefix(lines[1], real+string(filepath.Separator)) {
+		t.Errorf("the go tool keeps telemetry at %q, not below the physical build_work %q", lines[1], real)
+	}
+	module := t.TempDir()
+	if err := os.WriteFile(filepath.Join(module, "go.mod"), []byte("module example.test/raw\n\ngo 1.21\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(module, "raw.go"), []byte("package raw\n\nfunc Value() int { return 958 }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command(goTool, "build", "-o", filepath.Join(module, "raw.a"), ".")
+	build.Dir = module
+	build.Env = env
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Errorf("go build in the environment: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(cleaned); err == nil {
+		entries, _ := os.ReadDir(cleaned)
+		t.Errorf("the go tool wrote at the lexically cleaned directory %s: %v", cleaned, entries)
+	}
+	cleanup()
+	if entries, _ := os.ReadDir(real); len(entries) != 0 {
+		t.Errorf("the cleanup left %d entries in the physical build_work %s", len(entries), real)
 	}
 }

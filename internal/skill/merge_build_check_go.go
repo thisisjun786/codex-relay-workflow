@@ -109,9 +109,16 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 			env = append(env, "GOENV="+abs)
 		}
 	}
-	// The owned directory can sit below a configured build_work that mixes a symbolic link and "..":
-	// every path under it is joined as spelled, never cleaned, so it names the directory the
-	// filesystem gives that spelling, where the temporary files of the go tool and the cleanup meet.
+	// The owned directory can sit below a configured build_work that mixes a symbolic link and "..".
+	// The go tool cleans what it joins below XDG_CONFIG_HOME, TMPDIR and HOME (filepath.Join), which
+	// would turn such a spelling into another directory than the one the mode files are written to
+	// and the cleanup removes. So the owned directory is made as spelled and then named by its
+	// physical path, which every value below derives from and which no cleaning changes.
+	physical, err := mergeBuildPhysicalDir(owned)
+	if err != nil {
+		return nil, err
+	}
+	owned = physical
 	config := crwconfig.JoinRoot(owned, "config")
 	tmp := crwconfig.JoinRoot(owned, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
@@ -174,8 +181,14 @@ func mergeBuildToolEnv(ctx context.Context, base []string, scratch string, tools
 		if err := os.MkdirAll(tools.BuildWork, 0o700); err != nil {
 			return nil, cleanup, err
 		}
-		dir, err := os.MkdirTemp(tools.BuildWork, "merge-build-go-")
+		made, err := os.MkdirTemp(tools.BuildWork, "merge-build-go-")
 		if err != nil {
+			return nil, cleanup, err
+		}
+		// the directory made is removed by its physical path, the one the go tool is given
+		dir, err := filepath.EvalSymlinks(made)
+		if err != nil {
+			os.RemoveAll(made)
 			return nil, cleanup, err
 		}
 		owned = dir
@@ -217,6 +230,16 @@ const mergeBuildProbeModule = "module crw-merge-build-probe\n"
 // for it.
 func mergeBuildProbeDir(owned string) string {
 	return crwconfig.JoinRoot(owned, "probe")
+}
+
+// mergeBuildPhysicalDir makes dir as spelled (the filesystem resolves a symbolic link before a
+// following "..") and returns the path the filesystem gives it, free of links and "..", so a tool
+// that cleans the paths it joins below it still names the same directory.
+func mergeBuildPhysicalDir(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(dir)
 }
 
 // mergeBuildRawDir is the part of path before its last separator, as spelled: filepath.Dir would clean
