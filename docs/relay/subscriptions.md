@@ -200,8 +200,12 @@ open from the creation until the wait is over, reads the watch's `turn/completed
 host's own record of the turn (`thread/turns/list`) every second when the watch has not reported
 it, and answers `incomplete` / `standby_incomplete` only when the 60 second bound
 (`Start.StandbyWait`) has passed; a caller's timeout must be longer than the bound. The bound is one
-deadline over the whole wait: a host read that is still running when it passes is cut, and no read
-is given a budget of its own. A turn seen to end is kept for the business step and is not asked of
+deadline over the whole wait: a host read that is still running when it passes is cut (the App
+Server client reports that cut as its phase timeout, which the wait counts as the bound and not as a
+host failure), and no read is given a budget of its own. The watch is asked again after every read
+and once more when the bound passes, so a `turn/completed` that arrived during a read or between
+reads ends the wait as completed; a read is not cut for the watch, because a request cancelled
+mid-write closes the connection that carries the watch. A turn seen to end is kept for the business step and is not asked of
 the host again, so the watch's proof of completion survives its release. The watch is let go once
 the wait is over and on every way out of the call.
 

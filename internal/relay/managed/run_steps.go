@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -440,15 +441,25 @@ func (m *Start) standbyPoll() time.Duration {
 // (ReadTurn) at the poll interval when the watch has not reported it. The wait is bounded by
 // Start.StandbyWait (60 seconds by default, so a caller's timeout has to be longer); the bound is one deadline
 // over the whole wait, the host reads included, so a read that is still running at the bound is cut and no read
-// gets a budget of its own. It returns the turn as last observed, which is not an end when the bound passed
-// first; the caller's own cancellation is the caller's error. An interrupted or failed standby is an end: it
-// keeps its original anchor, and its business send also needs a ready host (awaitStandby).
+// gets a budget of its own. The watch is asked again after every read and once more when the bound passes, so a
+// turn/completed that arrived while a read or the poll interval was running is never dropped. A read is not cut
+// for the watch: an App Server request cancelled mid-write closes the connection that carries the watch. It
+// returns the turn as last observed, which is not an end when the bound passed first; the caller's own
+// cancellation is the caller's error. An interrupted or failed standby is an end: it keeps its original anchor,
+// and its business send also needs a ready host (awaitStandby).
 func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	var last *Turn
+	// atBound is the answer once the bound has passed: the watch's end when it arrived meanwhile, else the turn as last read.
+	atBound := func() *Turn {
+		if r.watchCompleted() {
+			return &Turn{ID: r.standby, Status: "completed"}
+		}
+		return last
+	}
 	for {
-		if r.hold != nil && r.hold.TurnCompleted(r.standby) {
+		if r.watchCompleted() {
 			return &Turn{ID: r.standby, Status: "completed"}, nil
 		}
 		turn, err := r.m.Adapter.ReadTurn(waitCtx, r.task, r.standby)
@@ -457,13 +468,16 @@ func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, 
 				return nil, ctx.Err()
 			}
 			if waitCtx.Err() != nil && cutByDeadline(err) {
-				return last, nil // the bound passed under the read
+				return atBound(), nil // the bound passed under the read
 			}
 			return nil, err
 		}
 		last = turn
-		if turn != nil && (turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed") {
+		if endedStandby(turn) {
 			return turn, nil
+		}
+		if waitCtx.Err() != nil {
+			return atBound(), nil
 		}
 		poll := time.NewTimer(r.m.standbyPoll())
 		select {
@@ -472,16 +486,28 @@ func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, 
 			return nil, ctx.Err()
 		case <-waitCtx.Done():
 			poll.Stop()
-			return last, nil
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return atBound(), nil
 		case <-poll.C:
 		}
 	}
 }
 
-// cutByDeadline reports whether a host read failed because its context ended (the wait's deadline) and not for a reason of its own.
+// watchCompleted reports whether the creation watch, when the call holds it, has received the standby turn's turn/completed.
+func (r *startRun) watchCompleted() bool {
+	return r.hold != nil && r.hold.TurnCompleted(r.standby)
+}
+
+// cutByDeadline reports whether a host read failed because its context ended (the wait's deadline) and not for a
+// reason of its own. The App Server client reports a read whose context's deadline ended it in the transmit or ack
+// phase as its own PhaseTimeout (it clamps the phase to the context's deadline), which wraps neither the context's
+// error nor a net.Error; the caller asks only once that deadline has passed.
 func cutByDeadline(err error) bool {
 	var network net.Error
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.As(err, &network) && network.Timeout()
+	var phase *appserver.PhaseTimeout
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.As(err, &network) && network.Timeout() || errors.As(err, &phase)
 }
 
 // endedStandby is a turn that is an end: completed, interrupted or failed.

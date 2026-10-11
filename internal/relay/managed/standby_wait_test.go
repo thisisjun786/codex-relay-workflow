@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 )
 
 // waitApp is the scripted App Server with a standby turn that ends when the test says so: statuses are
@@ -410,4 +412,70 @@ func TestStandbyBoundCoversReadTurn(t *testing.T) {
 			t.Fatalf("the caller's deadline is the caller's error: %v", err)
 		}
 	})
+}
+
+// phaseTimeoutReadApp answers ReadTurn as the App Server client does when the context's deadline ends the read
+// while it waits for the answer: with the client's own *appserver.PhaseTimeout, which is neither the context's
+// error nor a net.Error.
+type phaseTimeoutReadApp struct{ *waitApp }
+
+func (a *phaseTimeoutReadApp) ReadTurn(ctx context.Context, _, _ string) (*Turn, error) {
+	<-ctx.Done()
+	return nil, &appserver.PhaseTimeout{Method: "thread/turns/list", Phase: "ack", Bound: 30 * time.Millisecond}
+}
+
+// The App Server client reports a read its context's deadline ended as a PhaseTimeout: when that deadline is the
+// standby bound, the read was cut by the bound and the call answers standby_incomplete, not an error.
+func TestStandbyBoundCutsPhaseTimeoutRead(t *testing.T) {
+	t.Parallel()
+	k, app := waitKit(t, 30*time.Millisecond, time.Millisecond)
+	k.start.Adapter = &phaseTimeoutReadApp{waitApp: app}
+	got, err := k.runErr()
+	if err != nil || got["reason"] != "standby_incomplete" {
+		t.Fatalf("a read the bound cut answers standby_incomplete: %v %v", got, err)
+	}
+}
+
+// timedHoldApp is a slow-reading host whose creation watch reports turn/completed `after` the creation.
+type timedHoldApp struct {
+	*slowReadApp
+	after time.Duration
+}
+
+type timedHold struct {
+	at    time.Time
+	after time.Duration
+}
+
+func (h timedHold) TurnCompleted(string) bool { return time.Since(h.at) >= h.after }
+func (h timedHold) Release()                  {}
+
+func (a *timedHoldApp) CreateThreadHeld(ctx context.Context, in CreateThreadRequest) (map[string]any, CreationHold, error) {
+	receipt, err := a.waitApp.CreateThread(ctx, in)
+	return receipt, timedHold{at: time.Now(), after: a.after}, err
+}
+
+// The watch's turn/completed that arrives inside the bound ends the standby even when the bound passes while the engine
+// is not asking the watch: during a host read the bound cuts, and during the interval between reads.
+func TestWatchCompletionInsideBoundIsKept(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		delay, poll time.Duration
+	}{
+		{"during a read the bound cuts", 2 * time.Second, time.Millisecond},
+		{"during the poll interval", 0, 10 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k, app := waitKit(t, 300*time.Millisecond, tc.poll)
+			k.start.Adapter = &timedHoldApp{slowReadApp: &slowReadApp{waitApp: app, delay: tc.delay}, after: 20 * time.Millisecond}
+			started := time.Now()
+			got := k.run()
+			if got["state"] != "admitted" || time.Since(started) > 5*time.Second {
+				t.Fatalf("a turn/completed inside the bound is the standby's end: %v/%v after %v", got["state"], got["reason"], time.Since(started))
+			}
+			k.effects(1, 1)
+		})
+	}
 }
