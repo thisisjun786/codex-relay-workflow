@@ -49,7 +49,7 @@ func Check(ctx context.Context, src script.Source, opts Options) Report {
 		return report
 	}
 	var found []Diagnostic
-	a, err := parse(prog.Body)
+	a, err := parse(prog.Body, prog.Imports)
 	if err != nil {
 		found = append(found, Diagnostic{Rule: RuleParse, Message: "the static rules could not read the script: " + err.Error(), Source: sourceStatic})
 	} else {

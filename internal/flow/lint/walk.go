@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/dop251/goja/ast"
@@ -46,17 +47,29 @@ type state struct {
 	// crw.tierStep call made before it on the same path, or from a parameter (what the caller passes is for the dry run
 	// to judge).
 	steps map[*binding]bool
+	// pend are the lifecycle calls whose promise a name of the function holds and the path has not read yet: the call has
+	// run, and the node reaches its phase only when the name is read (awaited, passed on, returned).
+	pend map[*binding]pending
+}
+
+// pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node and its phase.
+type pending struct {
+	slot string
+	ev   uint8
 }
 
 func newState() *state {
-	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}}
+	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}, pend: map[*binding]pending{}}
 }
 
 func (s *state) dead() bool { return !s.live }
 func (s *state) kill()      { s.live = false }
 
 func (s *state) clone() *state {
-	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps))}
+	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pending, len(s.pend))}
+	for k, v := range s.pend {
+		c.pend[k] = v
+	}
 	for k, v := range s.phases {
 		c.phases[k] = v
 	}
@@ -92,14 +105,24 @@ func (s *state) join(o *state) {
 			delete(s.steps, k)
 		}
 	}
+	for k, v := range o.pend {
+		if _, ok := s.pend[k]; !ok {
+			s.pend[k] = v
+		}
+	}
 	if s.author != o.author {
 		s.author = ""
 	}
 }
 
 func (s *state) equal(o *state) bool {
-	if s.live != o.live || s.author != o.author || len(s.phases) != len(o.phases) || len(s.labels) != len(o.labels) || len(s.steps) != len(o.steps) {
+	if s.live != o.live || s.author != o.author || len(s.phases) != len(o.phases) || len(s.labels) != len(o.labels) || len(s.steps) != len(o.steps) || len(s.pend) != len(o.pend) {
 		return false
+	}
+	for k, v := range s.pend {
+		if o.pend[k] != v {
+			return false
+		}
 	}
 	for k, v := range s.phases {
 		if o.phases[k] != v {
@@ -119,9 +142,13 @@ func (s *state) equal(o *state) bool {
 	return true
 }
 
+// exit is a loop, a switch or a labeled statement a break (or, for a loop, a continue) can go to. names are its labels;
+// a labeled statement that is no loop or switch (labelOnly) is the target of a labeled break only.
 type exit struct {
 	breaks, continues *state
 	isLoop            bool
+	labelOnly         bool
+	names             []string
 }
 
 // tryCtx collects, while a try statement is walked, the states that leave its body or handler abruptly, by where they
@@ -173,6 +200,10 @@ type walker struct {
 	// guard is how many conditions (a branch, the right side of a logical operator, a case, a try, a loop that may not
 	// run) the point being walked is under, counted from the function's start.
 	guard int
+	// pending are the labels of the labeled statement being entered, for the loop or switch it labels to take.
+	pending []string
+	// deferred are the lifecycle calls whose promise the text does not await where it is made.
+	deferred map[*ast.CallExpression]*deferral
 	// buildKeys are the node keys a fresh executor call of the function starts; initial is the phase set each node
 	// slot starts in.
 	buildKeys map[string]bool
@@ -183,7 +214,7 @@ type walker struct {
 func (s *scanner) flow() {
 	lanes := s.laneFunctions()
 	for _, fn := range s.a.order {
-		w := &walker{s: s, fn: fn, lanes: lanes}
+		w := &walker{s: s, fn: fn, lanes: lanes, deferred: map[*ast.CallExpression]*deferral{}}
 		w.life = w.hasLifecycle()
 		w.collectNodes()
 		start := newState()
@@ -378,9 +409,55 @@ var legalFrom = map[uint8]uint8{
 
 var eventNames = map[uint8]string{pBuilt: "build", pCommitted: "crw.commit", pVerified: "crw.verify", pReviewed: "crw.review", pLanded: "crw.land"}
 
+// deferral says a lifecycle call's promise is not awaited where the call is made: it is dropped (id is nil), or held by
+// a name that has to be read before the event is complete.
+type deferral struct{ bd *binding }
+
+// lifecycleCall is the crw.commit, crw.verify, crw.review or crw.land call an expression is, if it is one.
+func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
+	c, ok := e.(*ast.CallExpression)
+	if !ok {
+		return nil
+	}
+	if obj, name := w.s.a.callee(c); obj == "crw" && lifecycleOp(name) != 0 {
+		return c
+	}
+	return nil
+}
+
+// complete marks the event a name's promise stands for as done: the node is in its phase.
+func (w *walker) complete(bd *binding, st *state) {
+	if p, ok := st.pend[bd]; ok {
+		delete(st.pend, bd)
+		st.phases[p.slot] = p.ev
+	}
+}
+
+// completeIn completes every pending event whose name appears in n (a function literal may read it when it runs).
+func (w *walker) completeIn(n any, st *state) {
+	if len(st.pend) == 0 {
+		return
+	}
+	var visit func(n any)
+	visit = func(n any) {
+		if id, ok := n.(*ast.Identifier); ok {
+			if bd := w.s.a.refs[id]; bd != nil {
+				w.complete(bd, st)
+			}
+		}
+		for _, c := range children(n) {
+			visit(c)
+		}
+	}
+	visit(n)
+}
+
 // event applies one lifecycle event of one node. It is reported only when it is illegal in every phase the node may be
-// in, so a path the text cannot rule out is not a violation; the node then goes on in the event's phase.
-func (w *walker) event(ev uint8, node string, line int, st *state) {
+// in, so a path the text cannot rule out is not a violation; the node then goes on in the event's phase. The call's
+// promise has to settle for the phase to be reached: a call whose promise is dropped never gets the node there, and a
+// call held by a name gets it there where the name is read (anywhere the text can read it counts: the lint does not
+// follow the promise further).
+func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral) {
 	if st.dead() || !w.life {
 		return
 	}
@@ -399,7 +476,12 @@ func (w *walker) event(ev uint8, node string, line int, st *state) {
 			w.s.add(RuleLifecycleOrder, line, "", "%s runs while the node is %s: the order is build, then rounds of commit, verify, review, then land", eventNames[ev], phaseList(cur))
 		}
 	}
-	st.phases[slot] = ev
+	switch {
+	case def == nil:
+		st.phases[slot] = ev
+	case def.bd != nil:
+		st.pend[def.bd] = pending{slot: slot, ev: ev}
+	}
 }
 
 func (w *walker) stmts(list []ast.Statement, st *state) {
@@ -411,8 +493,8 @@ func (w *walker) stmts(list []ast.Statement, st *state) {
 	}
 }
 
-func (w *walker) pushExit(loop bool) *exit {
-	e := &exit{breaks: newState(), continues: newState(), isLoop: loop}
+func (w *walker) pushExit(loop bool, names []string) *exit {
+	e := &exit{breaks: newState(), continues: newState(), isLoop: loop, names: names}
 	w.exits = append(w.exits, e)
 	return e
 }
@@ -457,9 +539,19 @@ func (w *walker) jumpTo(i int, cont bool, st *state) {
 
 // binding walks one declarator: the initializer, then the names it gives a value to.
 func (w *walker) binding(b *ast.Binding, st *state) {
+	if id, ok := b.Target.(*ast.Identifier); ok {
+		w.deferTo(b.Initializer, id)
+	}
 	w.expr(b.Initializer, st)
 	derived := b.Initializer != nil && w.derives(b.Initializer, st)
 	patternNames(b.Target, func(id *ast.Identifier) { w.setStep(id, derived, st) })
+}
+
+// deferTo notes that a lifecycle call held by a name is complete where the name is read.
+func (w *walker) deferTo(e ast.Expression, id *ast.Identifier) {
+	if c := w.lifecycleCall(e); c != nil {
+		w.deferred[c] = &deferral{bd: w.s.a.refs[id]}
+	}
 }
 
 // setStep records that a name now holds (or no longer holds) a value that comes from crw.tierStep.
@@ -508,8 +600,18 @@ func (w *walker) derives(e ast.Expression, st *state) bool {
 }
 
 func (w *walker) stmt(n ast.Statement, st *state) {
+	labels := w.pending
+	w.pending = nil
 	switch s := n.(type) {
 	case *ast.ExpressionStatement:
+		// A lifecycle call used as a statement (or voided) drops its promise.
+		e := s.Expression
+		if u, ok := e.(*ast.UnaryExpression); ok && u.Operator == token.VOID {
+			e = u.Operand
+		}
+		if c := w.lifecycleCall(e); c != nil {
+			w.deferred[c] = &deferral{}
+		}
 		w.expr(s.Expression, st)
 	case *ast.VariableStatement:
 		for _, b := range s.List {
@@ -540,11 +642,32 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 		})
 		st.join(other)
 	case *ast.LabelledStatement:
-		w.stmt(s.Statement, st)
+		names := append(append([]string(nil), labels...), string(s.Label.Name))
+		switch s.Statement.(type) {
+		case *ast.LabelledStatement, *ast.ForStatement, *ast.WhileStatement, *ast.DoWhileStatement, *ast.ForInStatement, *ast.ForOfStatement, *ast.SwitchStatement:
+			// The loop or switch takes the labels: a break or continue to one of them is its own.
+			w.pending = names
+			w.stmt(s.Statement, st)
+		default:
+			// Any other labeled statement is left by a break to its label.
+			e := w.pushExit(false, names)
+			e.labelOnly = true
+			w.stmt(s.Statement, st)
+			w.popExit()
+			st.join(e.breaks)
+		}
 	case *ast.BranchStatement:
 		cont := s.Token == token.CONTINUE
 		for i := len(w.exits) - 1; i >= 0; i-- {
-			if cont && !w.exits[i].isLoop {
+			e := w.exits[i]
+			if s.Label != nil {
+				if !slices.Contains(e.names, string(s.Label.Name)) {
+					continue
+				}
+			} else if e.labelOnly {
+				continue
+			}
+			if cont && !e.isLoop {
 				continue
 			}
 			w.jumpTo(i, cont, st)
@@ -564,23 +687,23 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 				w.binding(b, st)
 			}
 		}
-		w.loop(s.Test, s.Update, s.Body, s.Test != nil, forRounds(s), st)
+		w.loop(s.Test, s.Update, s.Body, s.Test != nil, forRounds(s), labels, st)
 	case *ast.WhileStatement:
-		w.loop(s.Test, nil, s.Body, !truthy(s.Test), 0, st)
+		w.loop(s.Test, nil, s.Body, !truthy(s.Test), 0, labels, st)
 	case *ast.DoWhileStatement:
-		w.doWhile(s, st)
+		w.doWhile(s, labels, st)
 	case *ast.ForInStatement:
 		w.expr(s.Source, st)
-		w.loop(nil, nil, s.Body, true, 0, st)
+		w.loop(nil, nil, s.Body, true, 0, labels, st)
 	case *ast.ForOfStatement:
 		w.expr(s.Source, st)
-		w.loop(nil, nil, s.Body, true, arrayRounds(s.Source), st)
+		w.loop(nil, nil, s.Body, true, arrayRounds(s.Source), labels, st)
 	case *ast.TryStatement:
 		w.try(s, st)
 	case *ast.SwitchStatement:
 		w.expr(s.Discriminant, st)
 		pre := st.clone()
-		e := w.pushExit(false)
+		e := w.pushExit(false, labels)
 		after := newState()
 		var prev *state
 		hasDefault := false
@@ -658,7 +781,7 @@ func (w *walker) try(s *ast.TryStatement, st *state) {
 // doWhile walks a do-while loop to a fixed point. The body runs once before the test, so the state after the loop is
 // one the body has run on; whether it runs again is the test's, so a label the first round used is not repeated by the
 // text unless the loop is endless and has no way out of a round early.
-func (w *walker) doWhile(s *ast.DoWhileStatement, st *state) {
+func (w *walker) doWhile(s *ast.DoWhileStatement, labels []string, st *state) {
 	certain := truthy(s.Test) && !leavesEarly(s.Body)
 	w.loops = append(w.loops, loopCtx{certain: certain, guard: w.guard})
 	entry := st.clone()
@@ -667,7 +790,7 @@ func (w *walker) doWhile(s *ast.DoWhileStatement, st *state) {
 	var out *state
 	for i := 0; i < 4; i++ {
 		cur := head.clone()
-		e := w.pushExit(true)
+		e := w.pushExit(true, labels)
 		w.stmt(s.Body, cur)
 		w.popExit()
 		cur.join(e.continues)
@@ -853,7 +976,7 @@ func truthy(e ast.Expression) bool {
 // round again. endless is set for a loop with no test or a constant true one, which is left only through break or return.
 // rounds is the number of rounds the text shows the loop makes (0 when it does not); a loop with at least two rounds and
 // no way out of a round early runs every call of its body at least twice.
-func (w *walker) loop(test, update ast.Expression, body ast.Statement, hasTest bool, rounds int, st *state) {
+func (w *walker) loop(test, update ast.Expression, body ast.Statement, hasTest bool, rounds int, labels []string, st *state) {
 	head := st.clone()
 	breaks := newState()
 	certain := rounds >= 2 && !leavesEarly(body)
@@ -864,7 +987,7 @@ func (w *walker) loop(test, update ast.Expression, body ast.Statement, hasTest b
 	for i := 0; i < 4; i++ {
 		cur := head.clone()
 		w.expr(test, cur)
-		e := w.pushExit(true)
+		e := w.pushExit(true, labels)
 		w.stmt(body, cur)
 		w.popExit()
 		cur.join(e.continues)
@@ -908,6 +1031,12 @@ func (w *walker) expr(n any, st *state) {
 	case nil:
 		return
 	case *ast.FunctionLiteral, *ast.ArrowFunctionLiteral, *ast.ClassLiteral:
+		w.completeIn(e, st)
+		return
+	case *ast.Identifier:
+		if bd := w.s.a.refs[e]; bd != nil {
+			w.complete(bd, st)
+		}
 		return
 	case *ast.ConditionalExpression:
 		w.expr(e.Test, st)
@@ -927,6 +1056,9 @@ func (w *walker) expr(n any, st *state) {
 			return
 		}
 	case *ast.AssignExpression:
+		if id, ok := e.Left.(*ast.Identifier); ok && e.Operator == token.ASSIGN {
+			w.deferTo(e.Right, id)
+		}
 		w.expr(e.Right, st)
 		switch left := e.Left.(type) {
 		case *ast.Identifier:
@@ -957,7 +1089,7 @@ func (w *walker) call(c *ast.CallExpression, st *state) {
 	obj, name := a.callee(c)
 	switch {
 	case obj == "crw" && lifecycleOp(name) != 0:
-		w.event(lifecycleOp(name), a.eventNode(c), line, st)
+		w.event(lifecycleOp(name), a.eventNode(c), line, st, w.deferred[c])
 	case obj == "agent":
 		call, _ := a.agentFacts(c, w.fn, w.s.policy)
 		w.agent(call, st)
@@ -996,6 +1128,6 @@ func (w *walker) agent(call *agentCall, st *state) {
 	}
 	if call.family == "executor" {
 		st.author = call.modelFamily
-		w.event(pBuilt, a.buildNode(call), call.line, st)
+		w.event(pBuilt, a.buildNode(call), call.line, st, nil)
 	}
 }

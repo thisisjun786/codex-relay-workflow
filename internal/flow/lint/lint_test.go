@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
@@ -831,5 +832,148 @@ func TestLintLabelInLoopOnlyWhenShownTwice(t *testing.T) {
 		if len(r.Diagnostics) != 1 || r.Diagnostics[0].Rule != RuleLabelDuplicate || r.Diagnostics[0].Source != sourceStatic {
 			t.Errorf("%s: %v", name, r.Diagnostics)
 		}
+	}
+}
+
+// A name the header imports is the script's own binding: a helper imported as Date is not the engine's Date, and the
+// static rules read it like a const of the body.
+func TestLintImportedNamesAreScriptBindings(t *testing.T) {
+	dir := fstest.MapFS{"clock.js": {Data: []byte("export function now() { return 42 }\nexport default function stamp() { return 7 }\n")}}
+	check := func(t *testing.T, text string) Report {
+		t.Helper()
+		return Check(context.Background(), script.Source{Name: "imp.js", Text: []byte(text), Dir: dir}, Options{DryRun: true})
+	}
+	for name, text := range map[string]string{
+		"a named import called Date":    "import { now as Date } from './clock.js'; export const meta = { name: 'local-clock' }; return Date();",
+		"a default import named Date":   "import Date from './clock.js'\nexport const meta = { name: 'local-clock' }\nreturn Date()",
+		"a namespace import named Math": "import * as Math from './clock.js'\nexport const meta = { name: 'local-math' }\nreturn Math.now()",
+		"an import named agent":         "import { now as agent } from './clock.js'\nexport const meta = { name: 'agent-import' }\nreturn agent('x', { agentType: 'nope' })",
+	} {
+		if r := check(t, text); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// The engine's own Date is still judged when the script imports something else.
+	r := check(t, "import { now } from './clock.js'\nexport const meta = { name: 'global-clock' }\nreturn Date() + now()")
+	wantRules(t, r, RuleDeterminism)
+}
+
+// A break or continue with a label goes to the statement the label names, through any loop between.
+func TestLintLabeledJumps(t *testing.T) {
+	const build = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+`
+	for name, row := range map[string]struct{ body, rule string }{
+		"break to an outer endless loop leaves it": {`
+outer: for (;;) { for (;;) { break outer } }
+return crw.land('n', {})`, RuleLandWithoutReview},
+		"break to an outer while(true)": {`
+outer: while (true) { while (true) { break outer } }
+return crw.land('n', {})`, RuleLandWithoutReview},
+		"break to a labeled block": {`
+blk: { if (args.x) break blk; await crw.verify('n', head) }
+return crw.land('n', {})`, RuleLandWithoutReview},
+		"a continue to the outer loop through an inner one that may not run": {`
+outer: for (const x of args.xs) { for (const y of args.ys) { continue outer } await crw.verify('n', head); await crw.review('n', head, null) }
+return crw.land('n', {})`, ""},
+		"a continue to the outer loop out of an endless inner one": {`
+outer: for (const x of args.xs) { while (true) { continue outer } await crw.verify('n', head); await crw.review('n', head, null) }
+return crw.land('n', {})`, RuleLandWithoutReview},
+		"a break to the outer loop through finally": {`
+outer: for (;;) { for (;;) { try { break outer } finally { 1 } } }
+return crw.land('n', {})`, RuleLandWithoutReview},
+		"a break to the inner loop does not leave the outer": {`
+outer: for (;;) { for (;;) { break } }
+return crw.land('n', {})`, ""},
+		"a break outer after the review": {`
+await crw.verify('n', head)
+outer: for (;;) { for (;;) { await crw.review('n', head, null); break outer } }
+return crw.land('n', {})`, ""},
+		"labels on a nested label": {`
+a: b: for (;;) { for (;;) { break a } }
+return crw.land('n', {})`, RuleLandWithoutReview},
+	} {
+		r := lintText(t, build+row.body)
+		if row.rule == "" {
+			if !r.OK() {
+				t.Errorf("%s: %v", name, r.Diagnostics)
+			}
+			continue
+		}
+		if !slices.Contains(rules(r), row.rule) {
+			t.Errorf("%s: want %s, got %v", name, row.rule, r.Diagnostics)
+		}
+	}
+}
+
+// Invoking a lifecycle call does not complete it: the node is in the next phase once the call's promise is awaited,
+// returned, or used in a way the text cannot rule out.
+func TestLintLifecycleCompletionNeedsTheAwait(t *testing.T) {
+	const build = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+await crw.verify('n', head)
+`
+	for name, body := range map[string]string{
+		"a review that is dropped": `
+crw.review('n', head, null)
+return crw.land('n', { head })`,
+		"a review stored and never read": `
+const pending = crw.review('n', head, null)
+return crw.land('n', { head })`,
+		"a review assigned and never read": `
+let p
+p = crw.review('n', head, null)
+return crw.land('n', { head })`,
+		"a voided review": `
+void crw.review('n', head, null)
+return crw.land('n', { head })`,
+	} {
+		r := lintText(t, build+body)
+		if !slices.Contains(rules(r), RuleLandWithoutReview) {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	for name, body := range map[string]string{
+		"an awaited review": `
+await crw.review('n', head, null)
+return crw.land('n', { head })`,
+		"a review stored and then awaited": `
+const p = crw.review('n', head, null)
+await p
+return crw.land('n', { head })`,
+		"a review stored and awaited in Promise.all": `
+const p = crw.review('n', head, null)
+await Promise.all([p])
+return crw.land('n', { head })`,
+		"a review read in a closure": `
+const p = crw.review('n', head, null)
+const wait = async () => { await p }
+await wait()
+return crw.land('n', { head })`,
+		"a review passed to Promise.all": `
+await Promise.all([crw.review('n', head, null)])
+return crw.land('n', { head })`,
+		"a review awaited on one path of two": `
+const p = crw.review('n', head, null)
+if (args.a) { await p }
+return crw.land('n', { head })`,
+		"a returned land": `
+await crw.review('n', head, null)
+return crw.land('n', { head })`,
+	} {
+		if r := lintText(t, build+body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// Each of the four calls is judged alike.
+	r := lintText(t, `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+crw.commit('n', ex)
+await crw.verify('n', 'h')
+return 1`)
+	if !slices.Contains(rules(r), RuleLifecycleOrder) {
+		t.Errorf("a dropped commit leaves the node built, so verify is out of order: %v", r.Diagnostics)
 	}
 }

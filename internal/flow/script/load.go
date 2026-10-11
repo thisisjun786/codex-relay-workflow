@@ -60,6 +60,9 @@ type Program struct {
 	// Body is the script's body with the header replaced by its newlines, so a line of Body is the line of the
 	// script's file. Static analysis (crw flow lint) reads it; the executable text is built from the same bytes.
 	Body string
+	// Imports are the local names the header's imports declare, in header order: the body sees them as consts, so
+	// static analysis of Body declares them too.
+	Imports []string
 
 	libs []*goja.Program
 	main *goja.Program
@@ -143,6 +146,7 @@ func load(src Source) (*Program, error) {
 		g := p.Helpers[idx].GlobalName
 		var named []string
 		for _, bd := range imp.bindings {
+			p.Imports = append(p.Imports, bd.local)
 			switch bd.kind {
 			case bindDefault:
 				fmt.Fprintf(&wrapper, "const %s = %s.default; ", bd.local, g)

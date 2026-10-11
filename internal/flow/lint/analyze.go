@@ -111,9 +111,15 @@ type analysis struct {
 	order  []*fnInfo
 }
 
-// parse parses the wrapped body and resolves every identifier to its declaration.
-func parse(body string) (*analysis, error) {
-	src := wrapperHead + body + "\n})"
+// parse parses the wrapped body and resolves every identifier to its declaration. The names the header imports are
+// declared on the wrapper's first line (the executable wrapper declares them as consts there), so the body's lines
+// are unchanged and a reference to an import resolves to a script binding, not to an engine global.
+func parse(body string, imports []string) (*analysis, error) {
+	decl := ""
+	if len(imports) > 0 {
+		decl = "let " + strings.Join(imports, ", ") + "; "
+	}
+	src := wrapperHead + decl + body + "\n})"
 	prog, err := parser.ParseFile(nil, "script.js", src, 0)
 	if err != nil {
 		return nil, err
