@@ -2,12 +2,13 @@ package supervisor
 
 import (
 	"context"
+	"strconv"
 	"testing"
 )
 
 // CRW-1216 after the evaluation (d1): a verdict on a relationship a plan runs enqueues no sync_outbox row, because the plan's summary outbox carries it. The supervisor's discharge reads the record the
 // supervisor reads, so a confirmed summary entry of the relationship's coordination document that was enqueued after the verdict discharges the obligation as a confirmed sync_outbox row does, and
-// an entry that was enqueued before the verdict, one that is not confirmed, one of another document and a node the plan no longer holds do not. The tests use temporary stores only.
+// an entry that was enqueued before the verdict, one that is not confirmed, one of another document and an entry made at a plan revision where the node was not live do not (an entry made while the node was live keeps discharging after the plan retires the node). The tests use temporary stores only.
 
 const (
 	verdictAt = "2023-11-14T22:13:21.000000+00:00"
@@ -18,6 +19,7 @@ const (
 type planSummary struct {
 	state, document, created string
 	retired                  bool
+	revision                 int // the plan revision the entry was made at; 0 is revision 1
 }
 
 // planRelationship binds rel-1 to a node of plan-1, rules its event and stores one summary entry.
@@ -26,6 +28,10 @@ func planRelationship(t *testing.T, f *stageFixture, sum planSummary) {
 	retired := "NULL"
 	if sum.retired {
 		retired = "2"
+	}
+	revision := 1
+	if sum.revision != 0 {
+		revision = sum.revision
 	}
 	for _, stmt := range []string{
 		"INSERT INTO sync_targets (relationship_id,target,target_ref,recorded_at) VALUES ('rel-1','coordination_document','doc-1','t')",
@@ -36,7 +42,7 @@ func planRelationship(t *testing.T, f *stageFixture, sum planSummary) {
 		"INSERT INTO dag_node_executions (plan_id,node_id,relationship_id,execution_generation,manifest_digest,kind) VALUES ('plan-1','node-1','rel-1',1,'manifest','initial')",
 		"INSERT INTO verdicts (event_id,record,verdict,next_generation,verdict_turn_id,decided_at) VALUES ('event-1','{}','verified',NULL,'verdict-turn','" + verdictAt + "')",
 		"INSERT INTO dag_summary_outbox (summary_id,plan_id,project_key,document,plan_revision,seq,subject_digest,state_digest,summary,summary_sha256,state,enqueued_by,created_at,updated_at) VALUES ('sum-1','plan-1','PRJ-1','" +
-			sum.document + "',1,1,'" + "0123456789012345678901234567890123456789012345678901234567890123','s','text','sha','pending','parent','" + sum.created + "','" + sum.created + "')",
+			sum.document + "'," + strconv.Itoa(revision) + ",1,'" + "0123456789012345678901234567890123456789012345678901234567890123','s','text','sha','pending','parent','" + sum.created + "','" + sum.created + "')",
 	} {
 		if _, err := f.s.DB.ExecContext(f.ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
@@ -62,11 +68,14 @@ func TestPlanSummaryDischargesTheVerdictObligation(t *testing.T) {
 		sum       planSummary
 		discharge bool
 	}{
-		{"confirmed entry after the verdict", planSummary{"confirmed", "doc-1", afterAt, false}, true},
-		{"confirmed entry before the verdict", planSummary{"confirmed", "doc-1", beforeAt, false}, false},
-		{"entry not confirmed", planSummary{"pending", "doc-1", afterAt, false}, false},
-		{"entry of another document", planSummary{"confirmed", "doc-2", afterAt, false}, false},
-		{"node the plan retired", planSummary{"confirmed", "doc-1", afterAt, true}, false},
+		{"confirmed entry after the verdict", planSummary{"confirmed", "doc-1", afterAt, false, 0}, true},
+		{"confirmed entry before the verdict", planSummary{"confirmed", "doc-1", beforeAt, false, 0}, false},
+		{"entry not confirmed", planSummary{"pending", "doc-1", afterAt, false, 0}, false},
+		{"entry of another document", planSummary{"confirmed", "doc-2", afterAt, false, 0}, false},
+		// the entry was confirmed at plan revision 1, where the node was live; the plan retires the node at revision 2 and the discharge stays
+		{"entry confirmed before the plan retired the node", planSummary{"confirmed", "doc-1", afterAt, true, 1}, true},
+		// the verdict was ruled after the retirement: the only entry after it was made at revision 2, where the node is not live, and states no row of the node
+		{"verdict after the plan retired the node", planSummary{"confirmed", "doc-1", afterAt, true, 2}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

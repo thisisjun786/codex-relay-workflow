@@ -71,13 +71,22 @@ func renderVerdictSummary(r Relationship, event Row, verdict string, findings []
 	return strings.Join(lines, "\n")
 }
 
+// planTables reports whether the store holds the tables a plan relationship is read from (dag_node_executions, dag_nodes and dag_summary_outbox); a store without them has no plan relationship.
+func planTables(ctx context.Context, q store.Querier) (bool, error) {
+	var tables int
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('dag_node_executions', 'dag_nodes', 'dag_summary_outbox')").Scan(&tables); err != nil {
+		return false, err
+	}
+	return tables == 3, nil
+}
+
 // planOfRelationship is the plan whose summary outbox projects the verdicts of this relationship to Linear (dagsched/outbox.go, docs/relay/dag-outbox.md): the store holds the summary outbox and a plan runs
 // the relationship on a node the plan still holds, so a row of the plan's summary states the verdict. The binding is the relationship's own row of dag_node_executions (every release, correction and
 // replacement of a plan node leaves one); a node the plan retired or replaced has no row in any summary, so the relationship of such a node is not a plan relationship and keeps the sync_outbox row it always
-// had. A relationship that no plan runs, and a store without either table, answer "".
+// had. A relationship that no plan runs, and a store without either table, answer "". Only VerdictSync asks it: the live-node rule decides whether a new verdict enqueues a row, and does not
+// decide whether an entry that was made while the node was live has carried a verdict (PlanSummaryCarriesVerdict).
 func planOfRelationship(ctx context.Context, q store.Querier, relationshipID string) (string, error) {
-	var tables int
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('dag_node_executions', 'dag_nodes', 'dag_summary_outbox')").Scan(&tables); err != nil || tables != 3 {
+	if ok, err := planTables(ctx, q); err != nil || !ok {
 		return "", err
 	}
 	var plan string
@@ -91,17 +100,21 @@ func planOfRelationship(ctx context.Context, q store.Querier, relationshipID str
 }
 
 // PlanSummaryCarriesVerdict is the id of the confirmed summary entry that carries the verdict of this event, or "" when none does. The verdict of a relationship a plan runs enqueues no sync_outbox row (VerdictSync),
-// so the record the supervisor reads for it is the plan's summary: an entry of the relationship's coordination document, confirmed, and enqueued at or after the instant the verdict was decided (the entry reads
-// the newest verdict of the node in the transaction that enqueues it). The supervisor's discharge readers (supervisor/obligation.go Reportable, proposal.go ReportableCurrent, selection.go Selection) ask it
-// next to their sync_outbox read, so the obligation of a plan relationship is discharged by the record that holds its verdict (CRW-1216).
+// so the record the supervisor reads for it is the plan's summary: an entry of the relationship's coordination document, confirmed, enqueued at or after the instant the verdict was decided (the entry reads
+// the newest verdict of the node in the transaction that enqueues it), and made at a plan revision where the node the relationship is bound to (dag_node_executions, any version of the node) was live, because
+// only such an entry states a row of that node. A later retirement or replacement of the node does not undo the discharge: the confirmed entry stays in the record, as a confirmed sync_outbox row did. The
+// supervisor's discharge readers (supervisor/obligation.go Reportable, proposal.go ReportableCurrent, supervisor/selection.go Selection) ask it next to their sync_outbox read, so the obligation of a plan
+// relationship is discharged by the record that holds its verdict (CRW-1216).
 func PlanSummaryCarriesVerdict(ctx context.Context, q store.Querier, relationshipID, eventID, document string) (string, error) {
-	plan, err := planOfRelationship(ctx, q, relationshipID)
-	if err != nil || plan == "" {
+	if ok, err := planTables(ctx, q); err != nil || !ok {
 		return "", err
 	}
 	var id string
-	err = q.QueryRowContext(ctx, "SELECT o.summary_id FROM dag_summary_outbox o WHERE o.plan_id = ? AND o.document = ? AND o.state = 'confirmed'"+
-		" AND o.created_at >= (SELECT v.decided_at FROM verdicts v WHERE v.event_id = ?) ORDER BY o.seq LIMIT 1", plan, document, eventID).Scan(&id)
+	err := q.QueryRowContext(ctx, "SELECT o.summary_id FROM dag_node_executions x JOIN dag_summary_outbox o ON o.plan_id = x.plan_id"+
+		" WHERE x.relationship_id = ? AND o.document = ? AND o.state = 'confirmed'"+
+		" AND o.created_at >= (SELECT v.decided_at FROM verdicts v WHERE v.event_id = ?)"+
+		" AND EXISTS (SELECT 1 FROM dag_nodes n WHERE n.plan_id = x.plan_id AND n.node_id = x.node_id AND n.introduced_rev <= o.plan_revision AND (n.retired_rev IS NULL OR n.retired_rev > o.plan_revision))"+
+		" ORDER BY o.seq, o.plan_id LIMIT 1", relationshipID, document, eventID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

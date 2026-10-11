@@ -14,8 +14,8 @@ and the plan still holds the node, that is, `dag_nodes` has a live version of it
 replaced is no plan relationship: no row of any summary states its verdict, so its verdict keeps its `sync_outbox` row. The `sync_outbox` table and its drain stay as they are for the relationships outside a plan.
 
 The supervisor reads the record of a verdict for its discharge: for a relationship a plan runs that record is the plan's summary, so a confirmed entry of the relationship's `coordination_document` target that was enqueued at
-or after the instant the verdict was decided discharges the verdict's obligation (`delivery.PlanSummaryCarriesVerdict`, read next to the confirmed `sync_outbox` row by `Reportable`, `ReportableCurrent` and `Selection`). An entry that
-is not confirmed, one enqueued before the verdict, one of another document and one of a node the plan no longer holds does not discharge it.
+or after the instant the verdict was decided, and made at a plan revision where the node the relationship is bound to was live, discharges the verdict's obligation (`delivery.PlanSummaryCarriesVerdict`, read next to the confirmed `sync_outbox` row by `Reportable`, `ReportableCurrent` and `Selection`). An entry that
+is not confirmed, one enqueued before the verdict, one of another document and one made at a plan revision where the node was not live does not discharge it. An entry made while the node was live keeps discharging after the plan retires or replaces the node.
 
 ## The queue
 
