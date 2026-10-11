@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policy-decision.schema.json",
+  "title": "policy-decision/1",
+  "description": "One policy decision about one issue branch head: which risk tier the change falls in and which gates were skipped for it. It is not a pre-merge evaluation and carries no grader or score; premerge-record/1 is unchanged and is still produced for every node. The tier is the classification (the larger of the author's declaration and the tier derived from the declared edit regions and the actual changed paths); execution_tier is the tier whose gates run, and differs from tier only through a recorded exception. Produced and judged by internal/risktier, which recomputes every derived member from the record's own inputs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "policy",
+    "issue",
+    "node",
+    "head",
+    "dev",
+    "decided_at",
+    "decided_by",
+    "declared_tier",
+    "region_tier",
+    "changed_tier",
+    "derived_tier",
+    "tier",
+    "execution_tier",
+    "declared_regions",
+    "changed_paths",
+    "outside_regions",
+    "reclassified",
+    "skipped_gates"
+  ],
+  "properties": {
+    "schema": { "const": "policy-decision/1" },
+    "policy": { "const": "risk-tier/1" },
+    "issue": { "type": "string", "minLength": 1 },
+    "node": { "type": "string", "minLength": 1 },
+    "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "dev": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "decided_at": { "$ref": "#/$defs/instant" },
+    "decided_by": { "type": "string", "minLength": 1 },
+    "declared_tier": {
+      "description": "The tier the author declared; null when the issue declares none.",
+      "enum": ["low", "high", null]
+    },
+    "region_tier": {
+      "description": "The highest tier of the declared edit regions; null when none were declared.",
+      "enum": ["low", "high", null]
+    },
+    "changed_tier": {
+      "description": "The highest tier of the actual changed paths; high when the diff is empty.",
+      "$ref": "#/$defs/tier"
+    },
+    "derived_tier": {
+      "description": "The larger of region_tier and changed_tier.",
+      "$ref": "#/$defs/tier"
+    },
+    "tier": {
+      "description": "The classification: the larger of declared_tier and derived_tier. An exception never changes it.",
+      "$ref": "#/$defs/tier"
+    },
+    "execution_tier": {
+      "description": "The tier whose gates run: tier, or the exception's execution_tier.",
+      "$ref": "#/$defs/tier"
+    },
+    "declared_regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind", "change", "tier", "rule"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["tree", "file", "symbol"] },
+          "key": { "type": "string", "minLength": 1 },
+          "change": { "enum": ["edit", "rename", "delete"] },
+          "tier": { "$ref": "#/$defs/tier" },
+          "rule": { "$ref": "#/$defs/rule" }
+        }
+      }
+    },
+    "changed_paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change", "tier", "rule"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "old_path": { "type": "string", "minLength": 1 },
+          "change": { "enum": ["add", "modify", "delete", "rename", "copy", "type_change"] },
+          "tier": { "$ref": "#/$defs/tier" },
+          "rule": { "$ref": "#/$defs/rule" }
+        }
+      }
+    },
+    "outside_regions": {
+      "description": "Changed paths (and the old paths of renames and copies) that no declared region covers; empty when no region was declared.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "reclassified": {
+      "description": "True when regions were declared, the diff left them, and the derived tier differs from region_tier.",
+      "type": "boolean"
+    },
+    "exception": {
+      "description": "A management exception: it changes execution_tier and leaves tier as classified.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by", "reason", "at", "execution_tier"],
+      "properties": {
+        "by": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "at": { "$ref": "#/$defs/instant" },
+        "execution_tier": { "$ref": "#/$defs/tier" }
+      }
+    },
+    "skipped_gates": {
+      "description": "The gates that were actually skipped for this head, and only those. Empty when execution_tier is high. Never premerge_record or dag_accept: every node still produces both.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "reason"],
+        "properties": {
+          "gate": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tier": { "enum": ["low", "high"] },
+    "rule": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "instant": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
+  }
+}
