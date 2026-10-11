@@ -262,7 +262,6 @@ var happyPathEvents = []string{
 	"HostCall(thread/read)@run",
 	"RequireLedger@run",
 	"GetOperation(dispatch)@run",
-	"ReadTurn@run",
 	"Lifecycle@run",
 	"Readiness@run",
 	"RequireLedger@run",
@@ -297,7 +296,6 @@ var retryIncompleteEvents = []string{
 	"ReadTurn@run",
 	"RequireLedger@run",
 	"GetOperation(dispatch)@run",
-	"ReadTurn@run",
 }
 var retryCompletedEvents = []string{
 	"LedgerIdentityRecord@run",
@@ -310,6 +308,8 @@ var retryCompletedEvents = []string{
 	"ReadTurn@run",
 	"Lifecycle@run",
 	"Readiness@run",
+	"Readiness@run",
+	"HostCall(thread/read)@run",
 	"RequireLedger@run",
 	"SendMessage(business)@run",
 	"RequireLedger@guard",
@@ -350,7 +350,6 @@ var recoveryEvents = []string{
 	"HostCall(thread/read)@run",
 	"RequireLedger@run",
 	"GetOperation(dispatch)@run",
-	"ReadTurn@run",
 	"Lifecycle@run",
 	"Readiness@run",
 	"RequireLedger@run",

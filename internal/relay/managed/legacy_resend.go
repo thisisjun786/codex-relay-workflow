@@ -1,9 +1,11 @@
 package managed
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -18,11 +20,14 @@ import (
 // successor: a request that holds such rows keeps the meaning they had, and every other request sends its
 // business turn once.
 //
-//   - A begin row without a closing row (an archive that may or may not have happened) is held: the child is
-//     neither archived again nor sent to, unless the host itself reports it unloaded again.
-//   - A closing row is replayed as recorded: the successor operations the earlier calls made are walked, an
-//     accepted successor replays its admission and never starts a turn again, and a successor not yet sent is
-//     sent once the host reports the child unloaded (notLoaded) with its standby turn as its whole history.
+//   - The rows of a business attempt are read, not only counted. A begin row without a closing row (an archive that
+//     may or may not have happened) is held whatever the host reports now, and so is a closing row that records no
+//     completed lowering (nothing archived, an archive of unknown outcome, an unarchive that failed): the child is
+//     neither archived again nor sent to.
+//   - A closing row of a lowering that archived and unarchived the child is replayed as recorded: the successor
+//     operations the earlier calls made are walked, an accepted successor replays its admission and never starts a
+//     turn again, and a successor not yet sent is sent once the host reports the child unloaded (notLoaded) with
+//     its standby turn as its whole history.
 //   - The request, dispatch, relationship and generation identity are untouched: the successor operation ids
 //     are derived from the request and the attempt exactly as before, and nothing else changes.
 
@@ -109,6 +114,38 @@ func (r *startRun) legacyResend(ctx context.Context) (bool, error) {
 	var rows int
 	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM journal WHERE kind='managed_resend_unloaded' AND subject=?", r.identity.RequestID).Scan(&rows)
 	return rows > 0, err
+}
+
+// legacyLowered reports whether the rows of business attempt n allow its successor operation: the attempt has no
+// managed_resend_unloaded row (the earlier recovery found the child unloaded already and lowered nothing), or its newest
+// row is a closing row that records an archive (ok, or reply_lost, where the archived listing showed it) and an unarchive
+// that succeeded. A begin row without its closing row, and a closing row of an archive that did not happen, whose outcome
+// is unknown or that left the child archived, do not license a successor operation; the host's load status is no
+// evidence for them (another client may have unloaded the child).
+func (r *startRun) legacyLowered(ctx context.Context, attempt int) (bool, error) {
+	rows, err := r.m.Store.Querier(ctx).QueryContext(ctx, "SELECT detail FROM journal WHERE kind='managed_resend_unloaded' AND subject=? ORDER BY seq DESC", r.identity.RequestID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return false, err
+		}
+		decoder := json.NewDecoder(bytes.NewBufferString(raw))
+		decoder.UseNumber()
+		var row map[string]any
+		if decoder.Decode(&row) != nil {
+			continue // a row this reader cannot read licenses nothing
+		}
+		if number, ok := row["attempt"].(json.Number); !ok || number.String() != strconv.Itoa(attempt) {
+			continue
+		}
+		archive, unarchive := pyjson.Text(row["archive"]), pyjson.Text(row["unarchive"])
+		return row["phase"] == "end" && (archive == "ok" || archive == "reply_lost") && unarchive == "ok", rows.Err()
+	}
+	return true, rows.Err() // no row of this attempt
 }
 
 // businessOperations walks the business operation ids the ledger holds for the request and settles what
@@ -200,11 +237,19 @@ func (r *startRun) threadStatus(ctx context.Context) (string, string, error) {
 }
 
 // legacyResendReady is the gate before a successor business send of a request that holds
-// managed_resend_unloaded rows: the host must list exactly the recorded standby turn, then report the same
-// child as notLoaded. A child the earlier recovery lowered and that the host has unloaded is sent to as the
-// closing row recorded; a child still loaded (a begin row without its closing row, an archive that is not
-// known to have happened, an unarchive that failed) is held, and nothing is archived or unarchived here.
+// managed_resend_unloaded rows: the attempt's rows must record a finished lowering (legacyLowered), the host must
+// list exactly the recorded standby turn, then report the same child as notLoaded. A child the earlier recovery
+// lowered and that the host has unloaded is sent to as the closing row recorded; any other (a begin row without its
+// closing row, an archive that is not known to have happened, an unarchive that failed, a child still loaded) is
+// held, and nothing is archived or unarchived here.
 func (r *startRun) legacyResendReady(ctx context.Context) (string, error) {
+	lowered, err := r.legacyLowered(ctx, r.businessAttempt)
+	if err != nil {
+		return "", err
+	}
+	if !lowered {
+		return "recipient_not_idle", nil
+	}
 	if code, err := r.standbyOnlyHistory(ctx); code != "" || err != nil {
 		return code, err
 	}

@@ -53,3 +53,12 @@ type CreationHold interface {
 type HeldCreator interface {
 	CreateThreadHeld(context.Context, CreateThreadRequest) (map[string]any, CreationHold, error)
 }
+
+// MCPChecker is an Adapter that knows how the request's MCP profile resolves against the host. MCPProblem reports
+// "mcpServers" when the thread the host holds loaded reports other MCP servers than the profile of the child's role
+// asks for (a host ignores the overrides of a resume on a loaded thread), and "" when it holds them, when the request
+// states no profile the role declares, or when the answer cannot decide. An adapter without it leaves the MCP servers
+// out of the orphan judgement; the business guard still refuses a thread that reports other servers.
+type MCPChecker interface {
+	MCPProblem(ctx context.Context, thread string, settings map[string]any) (string, error)
+}

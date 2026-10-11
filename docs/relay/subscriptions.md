@@ -199,12 +199,18 @@ A managed start waits for its standby turn inside the call. It holds the creatio
 open from the creation until the wait is over, reads the watch's `turn/completed` first and the
 host's own record of the turn (`thread/turns/list`) every second when the watch has not reported
 it, and answers `incomplete` / `standby_incomplete` only when the 60 second bound
-(`Start.StandbyWait`) has passed; a caller's timeout must be longer than the bound. The watch is
-let go once the wait is over and on every way out of the call.
+(`Start.StandbyWait`) has passed; a caller's timeout must be longer than the bound. The bound is one
+deadline over the whole wait: a host read that is still running when it passes is cut, and no read
+is given a budget of its own. A turn seen to end is kept for the business step and is not asked of
+the host again, so the watch's proof of completion survives its release. The watch is let go once
+the wait is over and on every way out of the call.
 
 When the standby turn has ended and the child is not yet recorded, the start judges the child.
 A child is an orphan when the host reports it `idle` (loaded) with a model, reasoning effort or
-working directory other than the request's, and its history is exactly the recorded standby turn:
+working directory other than the request's, or when the adapter, which resolves the MCP profile of
+the child's role against the host as a resume does, finds that the thread's `mcpServerStatus/list`
+differs from the profile's expectation (a thread read does not report MCP servers), and its history
+is exactly the recorded standby turn:
 a resume cannot change the settings of a thread the host holds loaded, so no business turn could
 start on it under the recorded profile, and nothing else lives on it. The start then archives the
 orphan once and creates the child again under the same managed request, as it creates again after
@@ -214,6 +220,15 @@ whose history shows any other turn (`business_identity_unobserved`), or whose hi
 read completely (`lifecycle_unknown`), is somebody's work or unknown: it is never archived or
 replaced and the start is held. When the creations are spent the start stops `creation_unknown`
 with `creationReconciliation` `attempts_exhausted` and the last child stays where it is.
+
+A standby that has not ended when the bound passes is not judged: the child is recorded and
+registered and the start answers `standby_incomplete`. A registered child cannot be replaced (the
+reservation publishes one child per request), so the call that later finds the standby ended
+reads the child once more before the business turn: an orphan by the rule above is held as
+`incomplete` / `recipient_not_idle` (`creationReconciliation` `standby_orphan_held`) with nothing
+archived, created or sent, instead of sending a turn whose failure would stay on the request. Once the
+host has unloaded the child (another client closing it, or an operator's `thread/archive` then
+`thread/unarchive`), the resume applies the recorded settings and the business turn goes out.
 
 The archive is a host effect and is bounded by its journal rows. The readiness policy and the ledger
 are asked again before it; a `managed_standby_orphan` row with `archive` `attempting` is written
@@ -237,10 +252,14 @@ recovery keeps their meaning, read only: nothing writes such a row, archives or 
 Its successor operation IDs (at most two, derived from the managed request and attempt) are still
 read; an accepted successor passes the bridge ledger's fingerprint-aware lookup for the exact
 packet before replaying admission, never starting a turn again, and another operation or message
-occupying its ID is refused. A successor that has no attempt yet is sent only when the host lists
-exactly the recorded standby turn with no continuation cursor and reports the same child as
-`notLoaded`, as the closing row recorded; a begin row without a closing row, and a closing row
-whose child the host still holds loaded, hold as `recipient_not_idle` with no archive and no send.
+occupying its ID is refused. The newest row of the business attempt decides whether a successor
+that has no attempt yet may be sent: only the closing row of a lowering that archived (`ok`, or
+`reply_lost`) and unarchived (`ok`) the child does, and then only when the host lists exactly the
+recorded standby turn with no continuation cursor and reports the same child as `notLoaded`, as the
+closing row recorded. A begin row without a closing row, and a closing row that records no
+finished lowering (`archive` `none` or `unknown`, an `unarchive` that failed), hold as
+`recipient_not_idle` with no archive and no send, whatever the host reports now (another client may
+have unloaded the child); so does a closing row whose child the host still holds loaded.
 Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed effect evidence
 and failures without affirmative pre-turn evidence are held, as before; an explicit pre-turn effect
 trace must be empty or contain exactly one `thread/resume`. The final business guard repeats the

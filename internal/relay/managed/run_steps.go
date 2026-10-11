@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -52,7 +53,8 @@ type startRun struct {
 
 	hold   CreationHold // the creation's turn watch, kept open from the creation until the standby wait is over (create.go)
 	rewind bool         // a step created the child again: Run goes back to the creation steps for the new attempt
-	waited bool         // this call has already waited for the standby turn (settleStandby): the business step only checks it
+	ended  *Turn        // the standby turn as settleStandby saw it end (the creation watch's turn/completed or the host's record): the business step uses it and asks the host nothing more
+	waited bool         // settleStandby spent this call's bound on the standby turn without seeing it end: the business step does not wait again
 
 	attempt    int             // the creation attempt now current: 0 is the request's own operation (reconcile.go)
 	adopted    bool            // the receipt is an unknown creation continued on the thread the App Server showed
@@ -436,24 +438,31 @@ func (m *Start) standbyPoll() time.Duration {
 // waitStandby waits, inside the call, for a known end of the inert standby turn: the creation watch's
 // turn/completed first when the creation handed the watch over, and the host's own record of the turn
 // (ReadTurn) at the poll interval when the watch has not reported it. The wait is bounded by
-// Start.StandbyWait (60 seconds by default, so a caller's timeout has to be longer); it returns the turn as
-// last observed, which is not an end when the bound passed first. An interrupted or failed standby is an
-// end: it keeps its original anchor, and its business send also needs a ready host (awaitStandby).
+// Start.StandbyWait (60 seconds by default, so a caller's timeout has to be longer); the bound is one deadline
+// over the whole wait, the host reads included, so a read that is still running at the bound is cut and no read
+// gets a budget of its own. It returns the turn as last observed, which is not an end when the bound passed
+// first; the caller's own cancellation is the caller's error. An interrupted or failed standby is an end: it
+// keeps its original anchor, and its business send also needs a ready host (awaitStandby).
 func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, error) {
-	bound := time.NewTimer(wait)
-	defer bound.Stop()
+	waitCtx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	var last *Turn
 	for {
 		if r.hold != nil && r.hold.TurnCompleted(r.standby) {
 			return &Turn{ID: r.standby, Status: "completed"}, nil
 		}
-		turn, err := r.m.Adapter.ReadTurn(ctx, r.task, r.standby)
+		turn, err := r.m.Adapter.ReadTurn(waitCtx, r.task, r.standby)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if waitCtx.Err() != nil && cutByDeadline(err) {
+				return last, nil // the bound passed under the read
+			}
 			return nil, err
 		}
+		last = turn
 		if turn != nil && (turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed") {
-			return turn, nil
-		}
-		if wait <= 0 {
 			return turn, nil
 		}
 		poll := time.NewTimer(r.m.standbyPoll())
@@ -461,27 +470,39 @@ func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, 
 		case <-ctx.Done():
 			poll.Stop()
 			return nil, ctx.Err()
-		case <-bound.C:
+		case <-waitCtx.Done():
 			poll.Stop()
-			return turn, nil
+			return last, nil
 		case <-poll.C:
 		}
 	}
 }
 
+// cutByDeadline reports whether a host read failed because its context ended (the wait's deadline) and not for a reason of its own.
+func cutByDeadline(err error) bool {
+	var network net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.As(err, &network) && network.Timeout()
+}
+
+// endedStandby is a turn that is an end: completed, interrupted or failed.
+func endedStandby(turn *Turn) bool {
+	return turn != nil && (turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed")
+}
+
 // awaitStandby waits for a known end of the inert standby. An interrupted or failed
 // standby keeps its original anchor; its business send also needs a ready host.
 func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, error) {
-	wait := r.m.standbyWait()
-	if r.waited {
-		wait = 0 // settleStandby spent this call's wait before the child was registered
+	turn, judged := r.ended, r.ended != nil
+	if turn == nil && !r.waited {
+		// The call did not settle the standby itself (a child an earlier call recorded): wait for it here.
+		var err error
+		turn, err = r.waitStandby(ctx, r.m.standbyWait())
+		r.releaseHold()
+		if err != nil {
+			return nil, err
+		}
 	}
-	turn, err := r.waitStandby(ctx, wait)
-	r.releaseHold()
-	if err != nil {
-		return nil, err
-	}
-	if turn == nil || (turn.Status != "completed" && turn.Status != "interrupted" && turn.Status != "failed") {
+	if !endedStandby(turn) {
 		return r.answer(ctx, "incomplete", "standby", "standby_incomplete")
 	}
 	if check, ok := r.m.Adapter.(lifecycleChecker); ok {
@@ -511,7 +532,12 @@ func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, er
 			return r.answer(ctx, "incomplete", "business", code)
 		}
 	}
-	return nil, nil
+	if judged {
+		return nil, nil
+	}
+	// The child was recorded before its standby turn ended (the earlier call's bound passed, or an earlier version recorded it), so no
+	// call judged it. It has no business turn yet: a loaded child under other settings is held here, not sent to.
+	return r.holdRecordedOrphan(ctx)
 }
 
 // settleStandby is the wait for the standby turn of a child the reservation has not recorded yet, and the
@@ -521,24 +547,30 @@ func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, er
 // child is recorded and registered because that is the last point at which the request can still be given
 // another child. A standby turn that has not ended when the bound passes is not judged and not answered
 // here: the child is registered as before and awaitStandby answers standby_incomplete, with the receipt it
-// has always had. The project's lock stays held over the wait (create takes it, register lets it go): the
-// binding of the project's parent cannot move between the creation and the registration, whatever the wait takes.
+// has always had; a registered child cannot be replaced, so the call that later finds the standby ended
+// judges it without archiving (awaitStandby, holdRecordedOrphan). The turn as it ended is kept (r.ended)
+// for the business step, so the proof the creation watch gave is not asked of the host again. The
+// project's lock stays held over the wait (create takes it, register lets it go): the binding of the project's
+// parent cannot move between the creation and the registration, whatever the wait takes.
 func (r *startRun) settleStandby(ctx context.Context) (contract.OrderedObject, error) {
 	if r.row.State == "attached" || r.row.ReceiptStatus.Valid && r.row.ReceiptStatus.String == "accepted" {
 		// A recorded child was settled by the call that recorded it; awaitStandby waits if its standby is still running.
 		r.releaseHold()
 		return nil, nil
 	}
+	r.ended = nil
 	turn, err := r.waitStandby(ctx, r.m.standbyWait())
 	r.releaseHold()
 	if err != nil {
 		return nil, err
 	}
-	r.waited = true
-	if turn != nil && (turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed") {
-		if answer, err := r.settleOrphan(ctx); answer != nil || err != nil || r.rewind {
-			return answer, err
-		}
+	if !endedStandby(turn) {
+		r.waited = true
+		return nil, nil
+	}
+	r.ended = turn
+	if answer, err := r.settleOrphan(ctx); answer != nil || err != nil || r.rewind {
+		return answer, err
 	}
 	return nil, nil
 }

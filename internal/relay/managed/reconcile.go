@@ -917,7 +917,8 @@ func (r *startRun) recordStandbyOrphan(ctx context.Context, detail map[string]an
 
 // heldSettingsProblem names the first of the model, the reasoning effort and the working directory that the
 // host reports for the loaded child and that differs from the request's; "" when none does. A field the host
-// does not report is not a difference.
+// does not report is not a difference. The MCP servers, which a thread read does not report, are judged by the
+// adapter (MCPChecker) when settleOrphan has found these three alike.
 func (r *startRun) heldSettingsProblem(facts map[string]any) string {
 	for _, field := range []string{"model", "reasoningEffort"} {
 		if got := pyjson.Text(facts[field]); got != "" && got != pyjson.Text(r.childSettings[field]) {
@@ -939,6 +940,79 @@ func (r *startRun) orphanHeld(ctx context.Context, code, detail string) (contrac
 	return r.answer(ctx, "incomplete", "standby", code)
 }
 
+// orphanWhat names a settings problem as the held answers and the reconciliation text say it.
+func orphanWhat(problem string) string {
+	if problem == "mcpServers" {
+		return "MCP servers"
+	}
+	return "a " + problem
+}
+
+// orphanVerdict reads the loaded child and says how it differs from the request: problem is the first of the model,
+// the reasoning effort, the working directory and the MCP servers the host holds it under that is not the request's,
+// "" when the child is not idle, stands as asked, or cannot be judged now (readiness withholds the host's reads, the
+// thread is not there, an MCP answer is lost: the business guard asks again); code is "" when its history is exactly its
+// standby turn, and the lifecycle code standbyOnlyHistory names otherwise. It writes nothing and archives nothing.
+func (r *startRun) orphanVerdict(ctx context.Context) (problem, code string, err error) {
+	// The worker policy withholds every host call of a refused start, reads included: the business step refuses it.
+	if readiness, err := r.m.ready(ctx, r.req); err != nil || readiness != "" {
+		return "", "", err
+	}
+	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": r.task, "includeTurns": false})
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		if unreadable(err) {
+			return "", "", nil // the host holds no such thread to judge; the business guard asks it again
+		}
+		return "", "", err
+	}
+	facts := pyjson.Map(read["thread"])
+	if pyjson.Text(pyjson.Map(facts["status"])["type"]) != "idle" {
+		return "", "", nil
+	}
+	problem = r.heldSettingsProblem(facts)
+	if problem == "" {
+		// The MCP servers are the settings the thread read does not report: the adapter that resolves the profile asks for them.
+		if check, ok := r.m.Adapter.(MCPChecker); ok {
+			if problem, err = check.MCPProblem(ctx, r.task, r.childSettings); err != nil {
+				if ctx.Err() != nil {
+					return "", "", ctx.Err()
+				}
+				return "", "", nil // undecided; the business guard asks again
+			}
+		}
+	}
+	if problem == "" {
+		return "", "", nil
+	}
+	code, err = r.standbyOnlyHistory(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		code = "lifecycle_unknown"
+	}
+	return problem, code, nil
+}
+
+// holdRecordedOrphan is the judgement of a child that was recorded and registered before its standby turn ended, so that no call
+// judged it (settleStandby): when the standby has ended since and the child stands in the host, idle, under settings other than
+// the request's with nothing but its standby turn, the business turn is not sent. A resume cannot change the settings of a thread the host
+// holds, so the send would fail and its failure would stay on the request; and the registered child cannot be archived and
+// replaced as an unrecorded one is, so it is held as recipient_not_idle until the host has unloaded it (another client closing it,
+// or an operator's thread/archive and thread/unarchive), when the resume applies the recorded settings. A child whose history shows
+// another turn, or that cannot be judged, is not this case: it goes on to the business guard as it always did.
+func (r *startRun) holdRecordedOrphan(ctx context.Context) (contract.OrderedObject, error) {
+	problem, code, err := r.orphanVerdict(ctx)
+	if err != nil || problem == "" || code != "" {
+		return nil, err
+	}
+	detail := fmt.Sprintf("thread %s was recorded before its standby turn ended and stands in the host with %s other than the request's; it cannot be replaced, and the business turn is not sent while the host holds it loaded", r.task, orphanWhat(problem))
+	return r.orphanHeld(ctx, "recipient_not_idle", detail)
+}
+
 // settleOrphan judges the child once its standby turn has ended. It answers nil when the child stands (the
 // request goes on with it), nil with r.rewind set when the child was archived and created again, and the
 // held answer otherwise.
@@ -956,36 +1030,11 @@ func (r *startRun) settleOrphan(ctx context.Context) (contract.OrderedObject, er
 		// loaded the child again since, so neither the host's lists nor a new archive can settle it.
 		return r.orphanHeld(ctx, "lifecycle_unknown", fmt.Sprintf("an archive of thread %s was sent and its outcome was not recorded; it is not sent again", r.task))
 	}
-	// The worker policy withholds every host call of a refused start, reads included: the business step refuses it.
-	if readiness, err := r.m.ready(ctx, r.req); err != nil || readiness != "" {
+	problem, code, err := r.orphanVerdict(ctx)
+	if err != nil || problem == "" {
 		return nil, err
 	}
-	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": r.task, "includeTurns": false})
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if unreadable(err) {
-			return nil, nil // the host holds no such thread to judge; the business guard asks it again
-		}
-		return nil, err
-	}
-	facts := pyjson.Map(read["thread"])
-	if pyjson.Text(pyjson.Map(facts["status"])["type"]) != "idle" {
-		return nil, nil
-	}
-	problem := r.heldSettingsProblem(facts)
-	if problem == "" {
-		return nil, nil
-	}
-	why := fmt.Sprintf("thread %s stands in the host with a %s other than the request's", r.task, problem)
-	code, err := r.standbyOnlyHistory(ctx)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		code = "lifecycle_unknown"
-	}
+	why := fmt.Sprintf("thread %s stands in the host with %s other than the request's", r.task, orphanWhat(problem))
 	if code != "" {
 		rec := reconciliation{state: reconOrphanHeld, detail: why + ", and its history is not exactly its standby turn", thread: r.task, attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
 		r.reconciled = &rec
@@ -1072,7 +1121,7 @@ func (r *startRun) recreateOrphan(ctx context.Context) (contract.OrderedObject, 
 	if notReady != "" {
 		return r.answer(ctx, "refused", "creation", notReady)
 	}
-	r.adopted, r.task, r.standby = false, "", ""
+	r.adopted, r.task, r.standby, r.ended = false, "", "", nil
 	r.rewind = true
 	return nil, nil
 }

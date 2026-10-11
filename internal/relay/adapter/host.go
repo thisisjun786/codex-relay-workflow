@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"syscall"
 
@@ -275,5 +276,48 @@ func (a Managed) ReadTurn(ctx context.Context, thread, turn string) (*managed.Tu
 	return &managed.Turn{ID: r.TurnID, Status: status}, nil
 }
 
+// MCPProblem is managed.MCPChecker: it resolves the MCP profile the request states for the child's role (or the role's declared
+// default) against the host, as a resume does, and compares it with the servers the host reports for the loaded thread. It
+// answers "mcpServers" when they differ, and "" when they agree or when there is nothing to decide (no policy, a role that declares
+// no profiles, a profile the host cannot resolve, an answer that cannot be read): the business guard still refuses a thread
+// that reports other servers.
+func (a Managed) MCPProblem(ctx context.Context, thread string, settings map[string]any) (string, error) {
+	if a.bridge == nil || a.bridge.Policy == nil {
+		return "", nil
+	}
+	declared, ok := a.bridge.Policy.Role("child")
+	if !ok || declared.MCP == nil {
+		return "", nil
+	}
+	profile, _ := settings["mcpProfile"].(string)
+	selection, err := declared.SelectMCP("child", profile)
+	if err != nil || selection.Name == "" {
+		return "", nil
+	}
+	ctx, release, err := a.admitRead(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	cwd, _ := settings["cwd"].(string)
+	expected, _, err := bridge.ResolveMCP(ctx, a.hostCall, selection, cwd)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", nil
+	}
+	answer, err := bridge.MCPStatus(ctx, a.hostCall, thread)
+	if err != nil {
+		return "", err
+	}
+	observed, ok := expected.Observe(answer)
+	if !ok || reflect.DeepEqual(observed, expected.Shape()) {
+		return "", nil
+	}
+	return "mcpServers", nil
+}
+
 var _ managed.Adapter = Managed{}
 var _ managed.HeldCreator = Managed{}
+var _ managed.MCPChecker = Managed{}

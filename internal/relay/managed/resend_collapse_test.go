@@ -34,6 +34,15 @@ type collapseApp struct {
 	createErr         error
 	creates           int
 	createStatus      string // the load status a created thread has once its standby turn has ended; idle when empty
+	mcpWrong          map[string]bool
+}
+
+// MCPProblem is what an adapter that knows the request's MCP profile answers: the host reports the thread under other MCP servers.
+func (a *collapseApp) MCPProblem(_ context.Context, thread string, _ map[string]any) (string, error) {
+	if a.mcpWrong[thread] {
+		return "mcpServers", nil
+	}
+	return "", nil
 }
 
 func collapseKit(t *testing.T, wrong ...string) (*reconcileKit, *collapseApp) {
@@ -463,4 +472,84 @@ func TestNoBusinessResendPathRemains(t *testing.T) {
 	if len(app.archiveCalls)+len(app.unarchiveCalls) != 0 || k.host.sent != 0 || k.host.operations[legacyResendID("managed-1", business, 1)] != nil {
 		t.Fatalf("a failed business send is kept: archives %v successor %v", app.archiveCalls, k.host.operations[legacyResendID("managed-1", business, 1)])
 	}
+}
+
+// A begin row with no closing row holds the request whatever the host reports now, a child it lists as unloaded
+// included; so do closing rows that record no completed lowering (nothing archived, an archive of unknown
+// outcome, an unarchive that failed). Only a closing row of a lowering that archived and unarchived the child
+// licenses the successor operation.
+func TestLegacyUnfinishedLoweringStaysHeld(t *testing.T) {
+	t.Parallel()
+	for _, rows := range []struct {
+		name    string
+		details []string
+	}{
+		{"begin only", []string{`{"attempt":1,"phase":"begin","threadId":"t-1"}`}},
+		{"nothing archived", []string{`{"attempt":1,"phase":"begin","threadId":"t-1"}`, `{"archive":"none","attempt":1,"phase":"end","reason":"not_idle","threadId":"t-1"}`}},
+		{"archive unknown", []string{`{"attempt":1,"phase":"begin","threadId":"t-1"}`, `{"archive":"unknown","attempt":1,"phase":"end","reason":"archive_unconfirmed","threadId":"t-1"}`}},
+		{"unarchive failed", []string{`{"attempt":1,"phase":"begin","threadId":"t-1"}`, `{"archive":"ok","attempt":1,"operator":"thread/unarchive t-1","phase":"end","threadId":"t-1","unarchive":"failed"}`}},
+		{"a later begin", []string{`{"attempt":1,"phase":"begin","threadId":"t-1"}`, `{"after":"notLoaded","archive":"ok","attempt":1,"phase":"end","threadId":"t-1","unarchive":"ok"}`, `{"attempt":1,"phase":"begin","threadId":"t-1"}`}},
+	} {
+		for _, status := range []string{"notLoaded", "idle"} {
+			t.Run(rows.name+"/"+status, func(t *testing.T) {
+				t.Parallel()
+				k, app, business := legacyKit(t, false, false, status)
+				for _, detail := range rows.details {
+					if _, err := k.start.Store.DB.Exec("INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", "2026-10-03T08:22:00+00:00", "managed_resend_unloaded", "managed-1", detail); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for round := range 3 {
+					k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+					if round == 1 {
+						k.restart()
+					}
+				}
+				if len(app.archiveCalls)+len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 || k.host.operations[legacyResendID("managed-1", business, 1)] != nil {
+					t.Fatalf("no archive, no successor: %v %v sent %d sends %v", app.archiveCalls, app.unarchiveCalls, k.host.sent, k.host.sends)
+				}
+				if got := k.orphanRows("managed_resend_unloaded"); len(got) != len(rows.details) {
+					t.Fatalf("the rows are read, never added to: %v", got)
+				}
+			})
+		}
+	}
+}
+
+// A child the host holds under other MCP servers, with nothing but its standby turn, is an orphan like one held under
+// another model: archived once and created again under the same request. A history with another turn is held, and an
+// unloaded child is left to the resume (which transmits the profile).
+func TestStandbyOnlyWrongMCPRecreated(t *testing.T) {
+	t.Parallel()
+	t.Run("archived and created again", func(t *testing.T) {
+		t.Parallel()
+		k, app := collapseKit(t)
+		app.mcpWrong = map[string]bool{"t-1": true}
+		got := k.run()
+		k.expect(got, "admitted", "", "recreated")
+		if got["childTaskId"] != "t-2" || !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || len(app.unarchiveCalls) != 0 {
+			t.Fatalf("t-1 archived once, t-2 registered: child %v archive %v unarchive %v", got["childTaskId"], app.archiveCalls, app.unarchiveCalls)
+		}
+		k.effects(2, 1)
+	})
+	t.Run("another turn is held", func(t *testing.T) {
+		t.Parallel()
+		k, app := collapseKit(t)
+		app.mcpWrong = map[string]bool{"t-1": true}
+		k.host.initialTurns = []string{"standby", "other"}
+		k.expect(k.run(), "refused", "business_identity_unobserved", "standby_orphan_held")
+		if len(app.archiveCalls) != 0 || app.creates != 1 || k.host.sent != 0 {
+			t.Fatalf("nothing archived, created or sent: %v %d %d", app.archiveCalls, app.creates, k.host.sent)
+		}
+	})
+	t.Run("an unloaded child is left alone", func(t *testing.T) {
+		t.Parallel()
+		k, app := collapseKit(t)
+		app.mcpWrong = map[string]bool{"t-1": true}
+		app.createStatus = "notLoaded"
+		k.expect(k.run(), "admitted", "", "")
+		if len(app.archiveCalls) != 0 || app.creates != 1 {
+			t.Fatalf("an unloaded child is resumed under the recorded profile: %v", app.archiveCalls)
+		}
+	})
 }

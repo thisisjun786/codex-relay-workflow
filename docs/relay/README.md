@@ -480,6 +480,7 @@ Running it does not wake a parent, write a queue, or publish a new report.
 | Observation | Recovery |
 | --- | --- |
 | `incomplete` / `standby_incomplete` | The call waited 60 seconds without a known end of the standby. Retry the same request after a known end: `completed`, or `interrupted`/`failed` when the host is ready; the retry waits again. Missing, unknown and running turns stay held; no second standby is sent. |
+| `incomplete` / `recipient_not_idle` with `creationReconciliation` `standby_orphan_held` | The registered child (recorded before its standby ended) stands in the host, loaded, under settings or MCP servers other than the request's, with only its standby turn; it cannot be replaced and no business turn is sent while it is loaded. Wait for the host to unload it or run `thread/archive` then `thread/unarchive` on it, then retry the same request. |
 | `incomplete` / `lifecycle_unknown` with `creationReconciliation` `standby_orphan_held` | The child stands in the host under settings other than the request's and an archive of it was sent without a recorded answer. It is not archived again and no new child is made; inspect the thread, then repair or release the request. |
 | worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
 | paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |

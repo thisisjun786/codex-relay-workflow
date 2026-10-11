@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -280,4 +281,143 @@ func TestReplayAfterWaitIdempotent(t *testing.T) {
 		t.Fatalf("the repeat is the same request: %v %v", admitted["requestId"], admitted["childTaskId"])
 	}
 	k.effects(1, 1)
+}
+
+// A standby turn that is still running when the bound passes leaves a registered child: it cannot be archived and
+// replaced as an unrecorded one is. The call that finds the turn ended judges it all the same, before any business
+// turn: a child the host holds loaded under other settings, with nothing but its standby turn, is held (no business
+// send whose failure would stay on the request), and the request goes on once the host has unloaded the child.
+func TestTimedOutStandbyIsJudgedWhenItEnds(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"model", "mcp"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			k, app := collapseKit(t)
+			if kind == "model" {
+				app.wrong["t-1"] = true
+			} else {
+				app.mcpWrong = map[string]bool{"t-1": true}
+			}
+			k.host.standby = "inProgress"
+			first := k.run()
+			k.expect(first, "incomplete", "standby_incomplete", "")
+			if first["childTaskId"] != "t-1" || first["relationshipId"] == nil || k.host.sent != 0 || len(app.archiveCalls) != 0 {
+				t.Fatalf("the first call registers the child and sends nothing: child %v relationship %v sent %d archives %v", first["childTaskId"], first["relationshipId"], k.host.sent, app.archiveCalls)
+			}
+			k.host.standby = "completed"
+			for round := range 3 {
+				k.expect(k.run(), "incomplete", "recipient_not_idle", "standby_orphan_held")
+				if round == 0 {
+					k.restart()
+				}
+			}
+			if k.host.sent != 0 || len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || app.creates != 1 {
+				t.Fatalf("held: nothing sent, archived or created: sent %d archives %v creates %d", k.host.sent, app.archiveCalls, app.creates)
+			}
+			// The host unloads the child (another client closed it): the resume applies the recorded settings.
+			k.host.threads["t-1"].status = "notLoaded"
+			app.wrong["t-1"], app.mcpWrong = false, nil
+			k.expect(k.run(), "admitted", "", "")
+			k.effects(1, 1)
+		})
+	}
+}
+
+// A child that stands as asked and whose standby ended after the first call is admitted by the next one, with one creation and one business turn.
+func TestTimedOutStandbyThenCompletedAdmitsOnce(t *testing.T) {
+	t.Parallel()
+	k, app := collapseKit(t)
+	k.host.standby = "inProgress"
+	k.expect(k.run(), "incomplete", "standby_incomplete", "")
+	k.host.standby = "completed"
+	for range 2 {
+		k.expect(k.run(), "admitted", "", "")
+	}
+	if app.creates != 1 || len(app.archiveCalls) != 0 {
+		t.Fatalf("one creation, no archive: %d %v", app.creates, app.archiveCalls)
+	}
+	k.effects(1, 1)
+}
+
+// The creation watch proved the end of the standby turn: the proof is kept for the business step, whatever the host's
+// own record says once the watch is let go (a turn not listed yet, or listed as still running).
+func TestWatchTerminalSurvivesRelease(t *testing.T) {
+	t.Parallel()
+	for _, after := range []string{"inProgress", "absent"} {
+		t.Run(after, func(t *testing.T) {
+			t.Parallel()
+			k, app := heldKit(t, time.Second, time.Millisecond, 1)
+			if after == "absent" {
+				k.start.Adapter = &absentAfterReleaseApp{heldApp: app}
+			}
+			app.afterRelease = "inProgress"
+			started := time.Now()
+			got := k.run()
+			if got["state"] != "admitted" || time.Since(started) > 500*time.Millisecond {
+				t.Fatalf("the watch's turn/completed ends the standby for good: %v/%v after %v", got["state"], got["reason"], time.Since(started))
+			}
+			k.effects(1, 1)
+		})
+	}
+}
+
+// absentAfterReleaseApp lists no standby turn once the creation watch has been let go.
+type absentAfterReleaseApp struct{ *heldApp }
+
+func (a *absentAfterReleaseApp) ReadTurn(ctx context.Context, thread, turn string) (*Turn, error) {
+	if a.released > 0 {
+		return nil, nil
+	}
+	return a.heldApp.ReadTurn(ctx, thread, turn)
+}
+
+// slowReadApp answers ReadTurn after delay, or when its context ends, whichever is first.
+type slowReadApp struct {
+	*waitApp
+	delay time.Duration
+}
+
+func (a *slowReadApp) ReadTurn(ctx context.Context, thread, turn string) (*Turn, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(a.delay):
+	}
+	return a.waitApp.ReadTurn(ctx, thread, turn)
+}
+
+// The bound is one deadline over the whole wait, the host reads included: a slow read is cut at the bound and the call answers
+// standby_incomplete; the caller's own cancellation stays the caller's error.
+func TestStandbyBoundCoversReadTurn(t *testing.T) {
+	t.Parallel()
+	t.Run("the bound cuts a slow read", func(t *testing.T) {
+		t.Parallel()
+		k, app := waitKit(t, 30*time.Millisecond, time.Millisecond)
+		k.start.Adapter = &slowReadApp{waitApp: app, delay: 2 * time.Second}
+		started := time.Now()
+		got := k.run()
+		if got["reason"] != "standby_incomplete" || time.Since(started) > time.Second {
+			t.Fatalf("a 30ms bound over a 2s read: %v/%v after %v", got["state"], got["reason"], time.Since(started))
+		}
+	})
+	t.Run("a read near the bound gets no new budget", func(t *testing.T) {
+		t.Parallel()
+		k, app := waitKit(t, 60*time.Millisecond, time.Millisecond)
+		k.start.Adapter = &slowReadApp{waitApp: app, delay: 40 * time.Millisecond}
+		started := time.Now()
+		got := k.run()
+		if got["reason"] != "standby_incomplete" || time.Since(started) > 400*time.Millisecond {
+			t.Fatalf("the reads end at the 60ms bound: %v/%v after %v", got["state"], got["reason"], time.Since(started))
+		}
+	})
+	t.Run("the caller's cancellation is not the bound", func(t *testing.T) {
+		t.Parallel()
+		k, app := waitKit(t, 10*time.Second, time.Millisecond)
+		k.start.Adapter = &slowReadApp{waitApp: app, delay: 2 * time.Second}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		defer cancel()
+		if _, err := k.start.Run(ctx, k.raw); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("the caller's deadline is the caller's error: %v", err)
+		}
+	})
 }
