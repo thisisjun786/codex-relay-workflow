@@ -193,6 +193,8 @@ type Threads struct {
 	archivedIDs  []string
 	clock        func() time.Time
 	listPage     int
+	turnsPage    int
+	forkAll      bool
 	handled      map[string]int
 	detachNext   bool
 	drops        map[string][]func(n int, params map[string]any) bool
@@ -236,6 +238,21 @@ func (t *Threads) Clock(fn func() time.Time) {
 func (t *Threads) ListPageSize(n int) {
 	t.mu.Lock()
 	t.listPage = n
+	t.mu.Unlock()
+}
+
+// TurnsPageSize caps the page size of thread/turns/list at n (0: no cap), so that the history of a thread takes several pages.
+func (t *Threads) TurnsPageSize(n int) {
+	t.mu.Lock()
+	t.turnsPage = n
+	t.mu.Unlock()
+}
+
+// ForkKeepsAllTurns makes thread/fork ignore lastTurnId and keep the whole history of the source: a host that does not omit
+// the turns after the boundary, which a client that checks the history it got has to notice.
+func (t *Threads) ForkKeepsAllTurns(keep bool) {
+	t.mu.Lock()
+	t.forkAll = keep
 	t.mu.Unlock()
 }
 
@@ -576,7 +593,7 @@ func (t *Threads) handleFork(c *Conn, raw json.RawMessage) Reply {
 		}
 	}
 	keep := len(source.turns)
-	if last := str(params, "lastTurnId"); last != "" {
+	if last := str(params, "lastTurnId"); last != "" && !t.forkAll {
 		keep = -1
 		for i, tu := range source.turns {
 			if tu.id == last {
@@ -721,6 +738,11 @@ func (t *Threads) handleTurnsList(c *Conn, raw json.RawMessage) Reply {
 	turns := slices.Clone(th.turns)
 	if str(params, "sortDirection") != "asc" {
 		slices.Reverse(turns)
+	}
+	if t.turnsPage > 0 {
+		if l, ok := params["limit"].(float64); !ok || int(l) > t.turnsPage || l <= 0 {
+			params["limit"] = float64(t.turnsPage)
+		}
 	}
 	from, to, next := page(len(turns), params)
 	data := []any{}

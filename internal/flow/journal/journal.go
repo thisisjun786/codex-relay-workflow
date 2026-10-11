@@ -360,7 +360,7 @@ func (j *Journal) insertCall(ctx context.Context, conn *sql.Conn, e engine.Event
  commit_sha, commit_parent, tree_digest, verification_digest, acceptance_id, batch_id, thread_id, turn_id, plan_id, node_id, attempt, execution_id, worktree_kind, worktree_path, start_commit,
  pending_tree, snapshot_digest, input_state, held_tree, tokens, detail_json, recorded_at)
  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		e.CallID, e.Seq, j.runID, e.Path, e.Position, kindOf, role, str(d, "input_digest"), "", e.Event, str(d, "op"), str(d, "result_digest"), result, "",
+		e.CallID, e.Seq, j.runID, e.Path, e.Position, kindOf, role, str(d, "input_digest"), str(d, "input_snapshot"), e.Event, str(d, "op"), str(d, "result_digest"), result, "",
 		commit, str(d, "parent"), str(d, "tree"), str(d, "digest"), str(d, "acceptance_id"), str(d, "batch_commit"), thread, turn,
 		orElse(str(d, "plan_id"), j.id.PlanID), node, intOf(alloc["attempt"]), orElse(str(d, "execution_id"), cc.execution), worktreeKind, str(alloc, "path"), str(alloc, "start_commit"),
 		pending, str(alloc, "snapshot_digest"), inputState, str(d, "p_held"), tokensOf(d), detailJSON, j.stamp())

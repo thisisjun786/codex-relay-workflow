@@ -288,6 +288,10 @@ type callState struct {
 	terminal string
 	// unknownDetail is the detail of a trailing outcome_unknown.
 	unknownDetail string
+	// rejected is set on the state of a held call whose creation or turn request the host answered with an error: the
+	// answer proves the request finished (no grace is waited for), and a turn that carries its marker is not an adoption but
+	// an outcome nobody can prove.
+	rejected bool
 }
 
 func isTerminal(ev string) bool {
@@ -636,7 +640,10 @@ func (r *reconciler) observeCreate(ctx context.Context, st *callState) plan {
 		case len(res.adoptable) > 0:
 			return r.adopt(ctx, st, kind, cwd, res)
 		}
-		// No candidate: the request is absent only if it is proven finished.
+		// No candidate: the request is absent only if it is proven finished. A request the host answered with an error is.
+		if st.rejected {
+			return r.resendCreate(st, kind, cwd, send, map[string]any{"proof": "rejected"})
+		}
 		switch r.cfg.Host.CreationState(owner, st.id, send) {
 		case CreationUnsent:
 			return r.resendCreate(st, kind, cwd, send, map[string]any{"proof": "unsent"})
@@ -729,6 +736,9 @@ func (r *reconciler) observeTurnRequested(ctx context.Context, st *callState) pl
 		return r.unknown(st, "the history of thread %s is not complete: %v", st.thread, err)
 	}
 	for _, t := range turns {
+		if t.Readable && t.Marker == op && st.rejected {
+			return r.unknown(st, "turn %s of thread %s carries %s, the marker of a request the host refused", t.ID, st.thread, op)
+		}
 		if t.Readable && t.Marker == op {
 			adopted := r.callRow(st, EvTurnStarted, map[string]any{"k": rowInt(st.turnReq.Data, "k"), "op": op, "turn_id": t.ID, "recovered": true,
 				"evidence": map[string]any{"listing": "complete", "marker": op, "status": t.Status}})

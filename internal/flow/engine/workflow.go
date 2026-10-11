@@ -57,10 +57,16 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 	// Only the scripts of this run can settle the child, so waiting for it does not keep the loop running: a child
 	// that awaits something nothing will settle ends the run as unsettled.
 	complete := s.e.loop.Link(s.rt)
+	join := &joinState{parent: path, position: position, label: label}
 	settle := func(ok bool, jsonText []byte, msg string) {
 		complete(func() {
-			path.settle(position)
-			s.e.j.Append(Event{RunID: s.e.runID, Kind: KindFlow, Path: path.id, Position: position, Op: "workflow", Label: label, Event: "workflow_settled"})
+			// the child's final value is the workflow position's result: it replays when nothing under it ran live and the value
+			// is the one the previous process settled (a child that failed is never replayed)
+			digest := digestJSON([]byte("error\x00" + msg))
+			if ok {
+				digest = canonicalDigest(jsonText)
+			}
+			s.e.settleJoin(path, position, label, "workflow", digest, nil, ok && s.e.joinReplays(join, "workflow", digest))
 			var err error
 			if ok {
 				err = resolve(s.fromJSON(jsonText))
@@ -72,7 +78,7 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 			}
 		})
 	}
-	child, err := s.e.newScriptVM(prog, path.child(position, "workflow"), s.depth+1, childArgs)
+	child, err := s.e.newScriptVM(prog, path.child(position, "workflow", join), s.depth+1, childArgs)
 	if err != nil {
 		settle(false, nil, "workflow(): "+err.Error())
 		return s.vm.ToValue(promise)

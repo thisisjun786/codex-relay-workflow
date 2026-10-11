@@ -41,6 +41,9 @@ const (
 	// the one the restore verified: it sent nothing further and its node stops with an escalation. Every later call of
 	// the node in the run ends held with this reason, sending nothing.
 	ReasonRestoreSnapshotMismatch = "restore_snapshot_mismatch"
+	// ReasonAcceptedNodeChanged refuses a call of a node that was accepted when its spec or packet changed on a resume: the
+	// refusal names the route (a plan revision with update_node, or dag-correct for an oversized child).
+	ReasonAcceptedNodeChanged = "accepted_node_changed"
 	// ReasonRecoveryHold ends a call whose node holds a call with an unknown outcome (recovery_hold): nothing was sent.
 	ReasonRecoveryHold = "recovery_hold"
 )
@@ -235,6 +238,10 @@ type PlaceRequest struct {
 	Continues *CallInfo
 	// Journal is the run's journal: the allocations of the node so far are read from it.
 	Journal Journal
+	// Fork is set on a continuation inside a resume's suffix, whose handle's thread belongs to the previous process: it runs on
+	// a fork of that thread in a directory of its own (the restored worktree for an executor, the call's private directory
+	// for any other role), never on the thread whose cwd is a worktree that was retired.
+	Fork bool
 }
 
 // SnapshotMismatch is the error Establish and Recheck return when the live working snapshot of a restored worktree is
@@ -262,12 +269,15 @@ type Placer interface {
 
 // ForkSpec is a thread/fork request of a continuation that runs in a restored worktree.
 type ForkSpec struct {
-	CallID, Role, Node    string
-	Pair                  Pair
-	Sandbox               string
-	Cwd                   string
-	SourceThreadID        string
-	ThroughTurnID         string
+	CallID, Role, Node string
+	Pair               Pair
+	Sandbox            string
+	Cwd                string
+	SourceThreadID     string
+	ThroughTurnID      string
+	// ThroughOp is the operation marker of the through turn (`<call_id>/t<k>`), "" when the journal names none: the fork's
+	// history is checked to end at the turn by its id or by this marker.
+	ThroughOp             string
 	AutoCompactTokenLimit *int64
 	// Send is the send ordinal of the creation request (see ThreadSpec).
 	Send int

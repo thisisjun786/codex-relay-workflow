@@ -55,29 +55,6 @@ func (b *Backend) StartThread(ctx context.Context, spec engine.ThreadSpec) (engi
 	return b.readback(ctx, started.ID)
 }
 
-// ForkThread implements engine.Forker: thread/fork at the last turn the continuation resumes, into the restored
-// worktree, with the pair of the source thread repeated; then the same readback as a new thread.
-func (b *Backend) ForkThread(ctx context.Context, spec engine.ForkSpec) (engine.ThreadInfo, error) {
-	params, err := b.threadParams(spec.Role, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit)
-	if err != nil {
-		return engine.ThreadInfo{}, err
-	}
-	params["threadId"] = spec.SourceThreadID
-	if spec.ThroughTurnID != "" {
-		params["lastTurnId"] = spec.ThroughTurnID
-	}
-	raw, err := b.sendCreation(ctx, spec.CallID, spec.Send, "thread/fork", params)
-	if err != nil {
-		return engine.ThreadInfo{}, requestError(err)
-	}
-	forked, err := decodeThread(raw, "thread/fork")
-	if err != nil {
-		return engine.ThreadInfo{}, err
-	}
-	b.threads.Add(forked.ID)
-	return b.readback(ctx, forked.ID)
-}
-
 // readback reads the pair a thread is configured with from thread/read: Thread.model and Thread.reasoningEffort, a null
 // being the empty string so that it never equals the role's pair. includeTurns is never sent.
 func (b *Backend) readback(ctx context.Context, id string) (engine.ThreadInfo, error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/dop251/goja"
 
@@ -148,6 +149,9 @@ func (s *scriptVM) install() error {
 	_ = crw.Set("classify", s.classify)
 	_ = crw.Set("clock", s.clock)
 	_ = crw.Set("tierStep", s.tierStep)
+	if err := s.installOps(crw); err != nil {
+		return err
+	}
 	_ = vm.Set("crw", crw)
 
 	x := vm.NewObject()
@@ -207,7 +211,7 @@ const bootstrap = `(function (X) {
     const run = thunks.map((t, i) => X.runIn(join, keys[i], async () => {
       try { return await t(); } catch (e) { X.itemFailed(join, keys[i], e); return null; }
     }));
-    return Promise.all(run).then((v) => { X.closeJoin(join); return v; });
+    return Promise.all(run).then((v) => { X.closeJoin(join, keys, v); return v; });
   };
 
   globalThis.pipeline = function pipeline(items, ...stages) {
@@ -225,7 +229,7 @@ const bootstrap = `(function (X) {
         return prev;
       } catch (e) { X.itemFailed(join, keys[i], e); return null; }
     }));
-    return Promise.all(run).then((v) => { X.closeJoin(join); return v; });
+    return Promise.all(run).then((v) => { X.closeJoin(join, keys, v); return v; });
   };
 })(__crw)`
 
@@ -298,7 +302,7 @@ func (s *scriptVM) runIn(call goja.FunctionCall) goja.Value {
 		s.throwType("runIn: not a function")
 	}
 	prev := s.cur
-	s.cur = j.parent.child(j.position, key)
+	s.cur = j.parent.child(j.position, key, j)
 	defer func() { s.cur = prev }()
 	v, err := fn(goja.Undefined())
 	if err != nil {
@@ -307,16 +311,40 @@ func (s *scriptVM) runIn(call goja.FunctionCall) goja.Value {
 	return v
 }
 
+// closeJoin settles a join: its result is the canonical digest of the item paths' final results ordered by path key (the join
+// digest), which every later position of the parent path carries in its input digest. A resumed run replays the join only when
+// every position under it replayed and the digest equals the one the previous process journaled; otherwise the positions
+// after it on the parent path are the suffix.
 func (s *scriptVM) closeJoin(call goja.FunctionCall) goja.Value {
 	j := s.joinArg(call.Argument(0))
-	j.parent.settle(j.position)
-	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindFlow, Path: j.parent.id, Position: j.position, Op: "join", Label: j.label, Event: "join_settled"})
+	digest, children := s.joinDigest(call.Argument(1), call.Argument(2))
+	replayed := s.e.joinReplays(j, "join", digest)
+	s.e.settleJoin(j.parent, j.position, j.label, "join", digest, children, replayed)
 	return goja.Undefined()
+}
+
+// joinDigest is the digest of a join's items: each item's key and the canonical JSON of its final result, ordered by key.
+func (s *scriptVM) joinDigest(keys, values goja.Value) (string, []map[string]any) {
+	ko, kok := keys.(*goja.Object)
+	vo, vok := values.(*goja.Object)
+	var out []map[string]any
+	if kok && vok {
+		n := int(ko.Get("length").ToInteger())
+		for i := 0; i < n; i++ {
+			key := ko.Get(strconv.Itoa(i)).String()
+			raw, err := s.jsonOfErr(vo.Get(strconv.Itoa(i)))
+			if err != nil {
+				raw = json.RawMessage("null")
+			}
+			out = append(out, map[string]any{"key": key, "digest": canonicalDigest(raw)})
+		}
+	}
+	return joinDigestOf(out), out
 }
 
 func (s *scriptVM) itemFailed(call goja.FunctionCall) goja.Value {
 	j := s.joinArg(call.Argument(0))
-	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindFlow, Path: j.parent.child(j.position, call.Argument(1).String()).id, Event: "item_error",
+	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindFlow, Path: j.parent.childID(j.position, call.Argument(1).String()), Event: "item_error",
 		Data: map[string]any{"error": s.errorText(call.Argument(2))}})
 	return goja.Undefined()
 }

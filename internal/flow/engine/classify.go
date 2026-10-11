@@ -153,8 +153,13 @@ func (s *scriptVM) classify(call goja.FunctionCall) goja.Value {
 	}
 	path, position := s.open("crw.classify")
 	id := s.e.callID(path.id, position)
-	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: "crw.classify", Label: "crw.classify", Event: EvCompleted,
-		Data: map[string]any{"result": mustJSONString(state), "of": res.CallID}})
+	// the state is a function of the result it classifies: a resumed run records it once, at the position it was recorded at
+	digest := digestJSON(mustJSON(map[string]any{"op": "crw.classify", "of": res.CallID, "state": state, "joins": path.joins}))
+	if _, ok := s.e.replayableOp(path, id, "crw.classify", digest); !ok {
+		s.e.markLive(path, position)
+		s.e.j.Append(Event{RunID: s.e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: "crw.classify", Label: "crw.classify", Event: EvCompleted,
+			Data: map[string]any{"result": mustJSONString(state), "of": res.CallID, "input_digest": digest}})
+	}
 	path.settle(position)
 	return s.vm.ToValue(state)
 }
@@ -164,8 +169,18 @@ func (s *scriptVM) clock(goja.FunctionCall) goja.Value {
 	path, position := s.open("crw.clock")
 	id := s.e.callID(path.id, position)
 	now := s.e.cfg.Now().UTC().Format(time.RFC3339Nano)
-	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: "crw.clock", Label: "crw.clock", Event: EvCompleted,
-		Data: map[string]any{"result": mustJSONString(now)}})
+	digest := digestJSON(mustJSON(map[string]any{"op": "crw.clock", "joins": path.joins}))
+	if prior, ok := s.e.replayableOp(path, id, "crw.clock", digest); ok {
+		// the time is journaled: a resumed script reads the time it read before, not the time of the resume
+		var recorded string
+		if json.Unmarshal([]byte(rowStr(prior.Data, "result")), &recorded) == nil {
+			now = recorded
+		}
+	} else {
+		s.e.markLive(path, position)
+		s.e.j.Append(Event{RunID: s.e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: "crw.clock", Label: "crw.clock", Event: EvCompleted,
+			Data: map[string]any{"result": mustJSONString(now), "input_digest": digest}})
+	}
 	promise, resolve, _ := s.vm.NewPromise()
 	complete := s.e.loop.Begin(s.rt)
 	complete(func() {

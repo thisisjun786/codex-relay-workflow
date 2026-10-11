@@ -257,23 +257,39 @@ func TestAckLostThreadStartAdoptsTurnlessByCwd(t *testing.T) {
 	}
 }
 
-// restoreFork builds the fork scenario: the call "third" continues "mid" into a restored worktree, so it forks the thread
-// through mid's last turn. The thread holds three turns by then (first's turn and repair, mid's turn).
-func (e *env) restoreFork() (restored, script string) {
+// restoreFork builds the fork scenario: the call "third" continues "mid" inside the suffix of a resume, so it forks the thread
+// through mid's last turn into the worktree the suffix restored. The thread holds three turns by then (first's turn and
+// repair, mid's turn). prefix is the script the first process runs (first and mid), script the whole one the resumed
+// process runs.
+func (e *env) restoreFork() (restored, prefix, script string) {
 	e.t.Helper()
-	restored = e.restoreAfter("mid", 2, 1)
+	restored = e.wt("n1", 2, 1)
 	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
 		if r.N == 1 {
 			return fakehost.TurnPlan{Message: "not json"}
 		}
 		return fakehost.TurnPlan{Message: passMessage}
 	})
+	prefix = `const S = ` + verdictSchema + `
+const first = await agent.call('one', { agentType: 'executor', node: 'n1', schema: S, label: 'first' })
+const mid = await agent.call('two', { resume: first, schema: S, label: 'mid' })
+return [first.status, mid.status]`
 	script = `const S = ` + verdictSchema + `
 const first = await agent.call('one', { agentType: 'executor', node: 'n1', schema: S, label: 'first' })
 const mid = await agent.call('two', { resume: first, schema: S, label: 'mid' })
 const third = await agent.call('three', { resume: mid, schema: S, label: 'third' })
 return [first.status, mid.status, third.status]`
-	return restored, script
+	return restored, prefix, script
+}
+
+// runToLostFork runs the prefix in a first process, then the whole script in a process whose thread/fork answer is lost: the
+// fork exists on the host and the call that asked for it is left open.
+func (e *env) runToLostFork(prefix, script string) map[string]engine.CallResult {
+	e.t.Helper()
+	e.run(prefix)
+	e.restart("proc-1b")
+	e.lostAck("thread/fork", 1)
+	return calls(e.resumeRun(script))
 }
 
 // forkOf finds the fork thread the lost answer left on the host (the thread the original ThreadView names as its source).
@@ -293,16 +309,14 @@ func (e *env) forkThreads(source string) []fakehost.ThreadView {
 func TestAckLostForkAdoptsByCwdAndForkedFrom(t *testing.T) {
 	e := newEnv(t, withOwner("proc-1"))
 	e.useClock()
-	restored, script := e.restoreFork()
-	e.lostAck("thread/fork", 1)
-	first := e.run(script)
-	by := calls(first)
+	restored, prefix, script := e.restoreFork()
+	by := e.runToLostFork(prefix, script)
 	if by["first"].Status != "completed" || by["mid"].Status != "completed" || by["third"].Status != engine.StatusUnknown {
 		t.Fatalf("the first run: %s %s %s", callStatus(by["first"]), callStatus(by["mid"]), callStatus(by["third"]))
 	}
 	req := e.row("third", engine.EvForkRequested).Data
-	prefix, _ := req["prefix"].([]map[string]any)
-	if len(prefix) != 3 || req["cwd"] != restored || req["send"] != 1 {
+	fork, _ := req["prefix"].([]map[string]any)
+	if len(fork) != 3 || req["cwd"] != restored || req["send"] != 1 {
 		t.Fatalf("fork_requested %v", req)
 	}
 	source := by["first"].Meta.ThreadID
@@ -974,7 +988,8 @@ return [a.status, b.status, b.reason]`
 }
 
 // A call whose last event is held is terminal: the first step of a resume does not look it up on the host. (What the resume
-// then does with the held position is F07's rule (g); this build runs it as a call of its own.)
+// then does with the held position is F07's rule (g): a call whose packet was delivered goes on in place and reads nothing of
+// the host's threads or turns.)
 func TestHeldCallNotReconciled(t *testing.T) {
 	e := newEnv(t, withOwner("proc-1"))
 	clk := e.useClock()
@@ -1008,9 +1023,8 @@ func TestHeldCallNotReconciled(t *testing.T) {
 func TestForkAckLostTwoExactPrefixAdoptEarliest(t *testing.T) {
 	e := newEnv(t, withOwner("proc-1"))
 	clk := e.useClock()
-	restored, script := e.restoreFork()
-	e.lostAck("thread/fork", 1)
-	by := calls(e.run(script))
+	restored, prefix, script := e.restoreFork()
+	by := e.runToLostFork(prefix, script)
 	source := by["first"].Meta.ThreadID
 	genuine := e.forkThreads(source)
 	if len(genuine) != 1 {
@@ -1064,9 +1078,8 @@ func TestForkAckLostBoundaryMismatchIsForeign(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t, withOwner("proc-1"))
 			e.useClock()
-			_, script := e.restoreFork()
-			e.lostAck("thread/fork", 1)
-			by := calls(e.run(script))
+			_, prefix, script := e.restoreFork()
+			by := e.runToLostFork(prefix, script)
 			forks := e.forkThreads(by["first"].Meta.ThreadID)
 			if len(forks) != 1 {
 				t.Fatalf("the host holds %d forks", len(forks))
@@ -1175,7 +1188,7 @@ func TestSupersedeInterruptsLiveTurnFirst(t *testing.T) {
 	if superseded < 0 || secondRequest < superseded {
 		t.Errorf("rows %v: superseded must come before the new attempt's thread_requested", kinds(e.rows("a")))
 	}
-	if row := e.rowsOf("a", engine.EvSuperseded); len(row) != 1 || row[0].Data["reason"] != engine.ReasonSupersededByAttempt {
+	if row := e.rowsOf("a", engine.EvSuperseded); len(row) != 1 || row[0].Data["reason"] != engine.ReasonSupersededByResume {
 		t.Errorf("superseded rows %v", row)
 	}
 	// the interrupted attempt's turn and the new attempt's turn carry the same marker (the position keeps its call id):

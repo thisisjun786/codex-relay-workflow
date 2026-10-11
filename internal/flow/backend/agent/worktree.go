@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
 // EvWorktreeRestored is the flow row F07's suffix restore writes once per node and lineage: the worktree it made at C
@@ -181,6 +182,14 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 
 	if req.Family != "executor" {
 		if req.Continues != nil {
+			if req.Fork {
+				// inside a suffix the continuation runs on a fork in a private directory of its own
+				start, err := a.callStart(req, node)
+				if err != nil {
+					return engine.Placement{}, err
+				}
+				return engine.Placement{Kind: engine.PlaceCall, Path: a.CallPath(req.CallID), Start: start, Fork: true}, nil
+			}
 			return engine.Placement{Kind: engine.PlaceContinued}, nil
 		}
 		start, err := a.callStart(req, node)
@@ -362,4 +371,62 @@ func (a *Allocator) Retire(ctx context.Context, node string, attempt int, path s
 	}
 	_, err = a.git(ctx, a.cfg.Repo, nil, "update-ref", a.RetiredRef(node, attempt), commit)
 	return err
+}
+
+// SupersededRef is the ref the HEAD and working snapshot of a worktree a resume superseded are kept on
+// (refs/crw/flow/<run>/superseded/<lineage>/<path>).
+func (a *Allocator) SupersededRef(lineage int, flowPath, node string) string {
+	return engine.SupersededRef(a.cfg.RunID, lineage, flowPath, node)
+}
+
+// Preserve implements engine.Restorer: the old worktree's HEAD and working snapshot are kept on the superseded ref of the
+// suffix, and the worktree is never written to again (the node's next allocation is the restored one).
+func (a *Allocator) Preserve(ctx context.Context, req engine.PreserveRequest) (engine.Preserved, error) {
+	ref := a.SupersededRef(req.Lineage, req.FlowPath, req.Node)
+	msg := fmt.Sprintf("superseded %s of run %s (lineage %d, path %s)", req.Node, a.cfg.RunID, req.Lineage, req.FlowPath)
+	git := ops.GitFunc(a.git)
+	kept, err := ops.Preserve(ctx, git, a.cfg.Repo, req.Worktree, ref, msg)
+	if err != nil {
+		return engine.Preserved{}, err
+	}
+	out := engine.Preserved{Ref: ref, Commit: kept.Commit, Head: kept.Head, Snapshot: kept.Snapshot}
+	for _, held := range req.Held {
+		if held.Tree == kept.Snapshot {
+			continue
+		}
+		heldRef := engine.SupersededHeldRef(a.cfg.RunID, req.Lineage, req.FlowPath, req.Node, held.CallID)
+		if _, err := ops.PreserveTree(ctx, git, a.cfg.Repo, held.Tree, kept.Head, heldRef, "held state "+held.CallID+" of "+msg); err != nil {
+			return engine.Preserved{}, err
+		}
+		if out.HeldRefs == nil {
+			out.HeldRefs = map[string]string{}
+		}
+		out.HeldRefs[held.CallID] = heldRef
+	}
+	return out, nil
+}
+
+// Restore implements engine.Restorer: a new worktree for the node at the boundary of the replayed prefix, at
+// <state>/flow/<run>/wt/<node>/a<attempt>-l<lineage>. The attempt is the next one the node has (its restores and the fresh
+// allocations its calls recorded).
+func (a *Allocator) Restore(ctx context.Context, req engine.RestoreRequest) (engine.Restored, error) {
+	var events []engine.Event
+	if req.Journal != nil {
+		events = req.Journal.Events()
+	}
+	node := req.Node
+	restores, prepared := journaled(events, node)
+	attempt := 1 + len(restores) + countKind(prepared, engine.PlaceFresh)
+	path := a.WorktreePath(node, attempt, req.Lineage)
+	digest, err := ops.Restore(ctx, ops.GitFunc(a.git), a.cfg.Repo, path, req.Base, req.Pending)
+	if err != nil {
+		return engine.Restored{}, err
+	}
+	return engine.Restored{Attempt: attempt, Path: path, Digest: digest}, nil
+}
+
+// WorktreeExists reports whether the directory of a worktree is still there.
+func (a *Allocator) WorktreeExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }

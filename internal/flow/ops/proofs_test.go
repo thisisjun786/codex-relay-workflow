@@ -624,3 +624,38 @@ func TestCommitOfAnEarlierTreeDoesNotCoverALaterCall(t *testing.T) {
 		t.Errorf("the commit of P2 covers both calls: %+v", np.Calls)
 	}
 }
+
+// A worktree a resume restored holds the pending tree of the prefix's last build or fix: that worktree proves the prefix's calls
+// while its files are P - the call P belongs to and the calls before it - though they ran in the worktree of the first attempt.
+// When the files changed after the restore, the prefix is no longer proven.
+func TestRestoredWorktreeProvesThePrefix(t *testing.T) {
+	f := newFx(t)
+	f.edit("a.txt", "built\n")
+	f.complete("t1")
+	f.prepare("t2", engine.PlaceContinued, f.wt, "")
+	f.edit("src/c.txt", "fixed\n")
+	p2 := f.complete("t2")
+	// a suffix after t2 is restored at the start commit with P2 on top and a call adopts it
+	restored := filepath.Join(t.TempDir(), "wt", "n1", "a2-l1")
+	if _, err := Restore(ctx, ExecGit("git"), f.repo, restored, f.start, p2); err != nil {
+		t.Fatal(err)
+	}
+	f.add(engine.Event{Kind: engine.KindCall, CallID: "t3", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{
+		"node": f.node, "family": "executor", "role": "executor",
+		"allocation": map[string]any{"kind": engine.PlaceRestore, "path": restored, "start_commit": f.start, "pending": p2, "attempt": 2, "lineage": 1}}})
+	np := f.prove()
+	if np.Worktree != restored {
+		t.Fatalf("the proof reads %s, want the restored worktree", np.Worktree)
+	}
+	expectProven(t, np, map[string]bool{"t1": true, "t2": true})
+	if np.Foreign != "" {
+		t.Errorf("foreign %q", np.Foreign)
+	}
+	// the files of the restored worktree change: the prefix is not proven any more
+	write(t, restored, "a.txt", "edited after the restore\n", 0o644)
+	np, err := f.prover.Node(ctx, f.events, f.node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectProven(t, np, map[string]bool{"t1": false, "t2": false})
+}

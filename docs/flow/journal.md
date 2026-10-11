@@ -49,8 +49,7 @@ pair, thread, turns, repair, tokens, and the sequence numbers of the first and t
 table is read. A call has a result only while it is ended: a `prepared` row starts an attempt, and a thread or turn intent, a
 started thread or turn, or a `recovery_cleared` row after a terminal row makes the call open again, so the terminal row of an
 earlier attempt is never returned with the thread and sequence numbers of a later one (`ok` is false until the new attempt ends).
-A resumed run replays the calls it replays through the same function. Which calls a resume replays and where it
-starts the suffix of live calls is the resume rule (F07), not this page.
+A resumed run replays the calls it replays through the same function; [the resume walk](#the-resume-walk) says which calls those are.
 
 ## The working snapshot
 
@@ -77,9 +76,9 @@ regions is recorded, not refused: `ops.Scope` lists them for the commit row and 
 ## The proofs
 
 A proof is a function of the journal rows and, for the effects in a worktree, of what git says about it now. This page defines the
-functions; which positions a resumed run replays is F07's rule.
+functions; [the resume walk](#the-resume-walk) says which positions a resumed run replays on them.
 
-**Build and fix.** `ops.Prover.Node` proves the executor calls of one node against the worktree of its current attempt and
+**Build and fix.** `ops.Prover.Node` (`engine.Prover` is its interface) proves the executor calls of one node against the worktree of its current attempt and
 reads no other directory: the attempt is the node's last `prepared` row with a fresh or restore allocation, and the worktree of
 an attempt that was retired (a `null_model` attempt leaves its uncommitted edits there) is never read. The recorded commits of
 the node (`crw.commit` rows) after that row form a chain that starts at the attempt's start commit. A dirty worktree is not foreign
@@ -96,6 +95,9 @@ as such:
   recorded commit, the pending tree P of a build or fix journaled after that commit, or the P_held of an executor call held after
   it. A call is proven when the snapshot is its own P (or an earlier call's, which leaves the later calls unproven). A snapshot
   that is none of them breaks the proof from the latest build or fix after the last valid commit.
+- A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
+  current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
+  before it, which ran in the worktree of an earlier attempt - while its files are P.
 - The proof is of the state of the files, not a flag: restoring the files restores the proof. Another actor moving the
   integration target does not touch a worktree and does not undo a call that ended.
 
@@ -117,3 +119,132 @@ relay's discovery for the control socket) and connects to the App Server control
 It finds the run that holds the call (or takes `--run`), opens its journal, runs the recovery of [script.md](script.md#journal)
 and commits the rows of the recovery together, in one transaction, when it ends. The command exits 0 when it recovered the call, 1 when the proof does not hold
 (nothing is appended but the sighting of a closed connection), and 2 for a command line, a store or a call it cannot use.
+
+## The resume walk
+
+A run resumes with `Config.Resume`; `crw flow resume RUN SCRIPT` is the command. The journal is read in this order:
+
+1. The pass of [reconcile](script.md#reconcile-and-recovery) looks up on the host every call whose last row is a dispatch intent,
+   and every call whose outcome was left unknown and not cleared. What it cannot prove holds the node.
+2. The script runs again from its top. Every position it opens - an `agent()` or `agent.call`, a `crw.*` call, a join, a
+   `workflow()` - is looked up at its own `(path, position)` in the rows the earlier processes wrote, and replays or runs live.
+
+There is no reuse across positions. A result belongs to the `(path, position)` it was recorded at, within the journal of one run;
+no call is found by its prompt, and no earlier lineage's result is a cache (this is the deliberate departure from Claude's
+`resumeFromRunId`, which matches calls by key and occurrence across the whole run and asks no host: here the host is reconciled
+first, the walk is per path, the conversation a call starts from is part of what must match, and nothing is global).
+
+A position replays only when all of these hold:
+
+- (a) every earlier position of its path replayed;
+- (b) every position of the parent path before the call that created this path replayed. Whether that call - a join - replays
+  is not asked: a join replays only when all its item paths do, so asking would make one lane's suffix run every sibling lane;
+- (c) its input digest is the recorded one. The digest covers the canonical prompt, the schema, the role and its pair, the node,
+  step decision, head and directory options, the digests of the joins settled before it on its path, and the context boundary:
+  `{fresh, packet digest}` for a call that starts a thread; for a continuation the handle's thread, its `through_turn_id` and the
+  digest chain of the turns up to it with the result digest of the call each belongs to, so a continuation whose conversation
+  would hold turns outside the replayed prefix never matches. The prepared row has it as `input_digest`, with `prompt_digest` and
+  the `context`;
+- (d) its input snapshot is the recorded one. `Config.InputSnapshot` reads the facts only an external act changes (the node's
+  slice of the plan revision, the criteria digest, the acceptance and integration ids of its dependencies); the prepared row
+  keeps them as `input_snapshot`. Git facts are never compared with live HEAD: a start state is rebuilt from the journal, so a commit the run made later
+  never invalidates an earlier call;
+- (e) the effect it produced is still there: for an executor, the pending tree P of its completed row is carried by a recorded
+  commit or is the state of the node's current worktree (`engine.Prover`, which `ops.Prover` and the App Server backend
+  implement; a run with no prover has nothing to prove against); for an op, `Op.Proven`. A call that is not an executor's has no
+  effect to prove (a reviewer's, an explorer's);
+- (f) when it comes after a join on its path, the join replayed;
+- (g) its last event is not `held` (below).
+
+A completed, `null_model`, `refused` or `outcome_unknown` call replays through `RestoreCallResult`; a call refused before it
+opened (policy, pair, schema) replays when it was refused for the same reason. A call whose outcome is unknown and not cleared is
+never run again, whatever the walk says: its result stays unknown and its node stays in `recovery_hold`.
+
+A join - `parallel`, `pipeline` - settles with a digest: the canonical digest of its item paths' final results ordered by path
+key, written on the `join_settled` row. It replays when no position under it ran live and the digest is the recorded one; the
+digest joins the chain every later input digest of the path carries, so the positions after a join whose items changed run live
+though their own arguments did not. A `workflow()` position is a join of its one child path. The order the items finish in, and
+the order the array lists them in, are not identity: items are keyed by their explicit key or their index.
+
+### Ops
+
+`crw.<name>` calls with an effect outside the engine - `commit`, `verify`, `review`, `accept`, `integrate`, `hold`, a report to the
+relay - are `engine.Op`s registered in `Config.Ops`. An op takes a position like a call. Its completed row (`crw.<name>`, with the
+`input_digest` of its arguments, its `result` and what its proofs read: the `node`, `commit` and `tree` of a commit, the
+`acceptance_id` of an acceptance) replays when the position's earlier positions replayed, the arguments are the same and
+`Op.Proven` says the effect is there. An op that ran and did not write its row runs again under the same call id and the same
+`RequestID`, so whoever it asked sees one request. `crw.tierStep`, `crw.clock` and `crw.classify` are the engine's own: a
+resumed script gets the step decision, the time and the state it got before.
+
+### The suffix
+
+The first position that does not replay, every later position of its path and every path a later position of it opened are the
+suffix. The calls the earlier processes ended there are ended `superseded` (reason `superseded_by_resume`, with the lineage of
+the resume: 0 for the first process of the run, one more for each resume). A turn an earlier process left running there is first
+interrupted and the interruption confirmed with `thread/read`; the call it belongs to is ended after that. Every other path -
+the sibling items of a join included - is untouched and replays. A node whose accepted result has another spec or packet is not
+rebuilt: the call is refused (`accepted_node_changed`) and the refusal names the route, a plan revision with `update_node` (which
+makes the acceptance stale) or `dag-correct` for an oversized child.
+
+The first executor call of the suffix on a node that had been worked on rebuilds the boundary before its `prepared` row:
+
+1. The old worktree's HEAD and working snapshot are kept as one commit on `refs/crw/flow/<run>/superseded/<lineage>/<path>`; the
+   path is one percent-encoded component followed by `@<node>`, and a flow row `worktree_preserved` names the ref. The state a
+   held call recorded (`p_held`) is kept too, on `...-held-<call>`, when it is not the snapshot. The old worktree is never written
+   to or proven again.
+2. A new worktree `<state>/flow/<run>/wt/<node>/a<attempt>-l<lineage>` is made with `git worktree add --detach` at C, the last
+   commit of the positions that held (the node's creation base when none). When they end with a build or fix whose pending tree P
+   was proven, P is put on top with `read-tree -m -u C P` in a temporary index, so the files are P and the worktree's own index
+   stays at C. The snapshot is checked against the boundary (the tree of C, or P) before any call runs.
+3. A flow row `worktree_restored` records the node, lineage, attempt, path, `C`, `P` (or null) and the verified `snapshot_digest`.
+
+This worktree is the node's restore allocation: the suffix's first executor call on the node - a new thread, a fork or a
+checkpoint thread - adopts it as its cwd, and its `prepared` row carries the same C, P and digest; the allocator never makes
+another or resets a file. A process that dies after the restore leaves a call with no result, which the next resume meets as its
+first failing position: it keeps the old restored worktree on a ref of its own lineage and rebuilds the same C and P in a
+worktree of the new lineage, verified against the same digest.
+
+A continuation of a thread the earlier process started never sends a turn to that thread inside a suffix, even when the thread's
+last turn already is its `through_turn_id`: its cwd is the retired worktree, and moving it with `TurnStartParams.cwd` would
+leave the thread's recorded cwd, its `thread/list` identity and the effect proofs on the old allocation. It runs on
+`thread/fork {threadId, lastTurnId: through_turn_id, cwd, model and config of the role, ephemeral false, excludeTurns true}`, with
+`cwd` the restored worktree for an executor and the call's own directory
+(`<state>/flow/<run>/calls/<call_id>/wt`) for any other role. `thread/rollback` is not used: it changes the history only, leaves
+the files and edits the original thread. The answer carries no history; the fork's turns are read with `thread/turns/list`
+(`itemsView` full) to the end of every page. A fork whose `Thread.cwd` is not the cwd it was forked into, or whose last turn is
+not the through turn (found by id or by the turn's `clientId` marker) and has ended, is archived and the call refused; a fork
+whose configured pair is not the role's is refused for its pair (`pair_refused`). A fork whose answer was lost is found by reconcile through its cwd,
+`Thread.forkedFromId` and a history that is exactly the recorded prefix. When the source thread or the turn cannot be read, the
+continuation starts a new thread of the same role in the same directory, with a checkpoint packet built from the journal's
+record of the turns up to the through turn (a flow row `checkpoint_started` has its digest).
+
+### Held calls
+
+A position whose last event is `held` never replays: neither its held `CallResult` nor the `crw.hold` record after it is reused.
+When (a) to (d) and (f) hold for it, and its effect proof does (for an executor: the live snapshot of its worktree is its
+`p_held`; for `host_infra_activeTurnNotSteerable` also: the thread reads idle), it goes on in place: the call keeps its call id,
+cwd and pair, a flow row `hold_cleared` (call id, lineage, reason, input state) is written, and the records after it are the suffix
+and so superseded. What it sends follows `input_state` of the held row:
+
+- `delivered` (a turn carrying the packet started): the next turn `<call_id>/t<k+1>` of the same thread carries the marker and a
+  fixed instruction - the previous turn stopped for the reason, continue the same task, the output schema is unchanged;
+- `not_delivered` (stopped before sending, `thread/start` refused, the packet turn's `turn/start` refused): the host is asked
+  first whether the refused request made anything. For a creation, `thread/list` at the call's cwd: a thread with no turn is
+  adopted, a thread with turns is an unknown outcome, and none lets `thread_requested` be written again at the same cwd with the
+  next send ordinal (the answer proves the request finished, so no grace is waited for). For a turn, the marker
+  `<call_id>/t<k>` on the thread: a turn that carries it is an unknown outcome and nothing is sent; with every turn read in full
+  and none carrying it, the original packet is sent as `<call_id>/t<k+1>`.
+
+A call held again on the retry has a second held row and its node holds again. When any condition fails, the held position is an
+ordinary first failing position: it is superseded, the boundary is restored, `p_held` is kept on its ref, and the call runs with
+its full packet in the restored worktree.
+
+### `crw flow resume`
+
+`crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT` opens the run's stored
+journal and the App Server host, checks that the script and the arguments are the run's (their digests are on the run's `started`
+row; an edited script is not a resume of the run), and runs the walk above. It prints the result as `crw flow run` does and exits
+0 when the script completed, 1 when it ended in `script_error`, 2 for a command line, a store or a script it cannot use. It goes on
+with every call that is not settled and not in recovery hold; the calls in recovery hold stay until `crw flow recover` settles
+them. `dag-restart` names the command by the same reading of a call's rows (`internal/flow/callstate`): `crw flow recover` for a
+call in recovery hold, `crw flow resume` for every other unsettled call.

@@ -10,6 +10,7 @@ crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token
 crw flow run --script JS [--plan-only=false --backend fake] [--args JSON] [--journal]
 crw flow roles [--json]
 crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
+crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT
 crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...
 ```
 
@@ -199,7 +200,7 @@ The calls of a run share an agent pool (`--pool`, default 6): at most that many 
 | `handle` | Opaque `crwh1:<run>:<call_id>`; non-null once a thread exists for the call. It resolves through the journal to the call's thread and last turn. |
 | `status` | `completed`, `null_model`, `held`, `refused`, `unknown` or `superseded`. |
 | `output` | The schema-valid object (or the text of a call without a schema); non-null only when `status` is `completed`. |
-| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`, `recovery_hold`. |
+| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`, `accepted_node_changed`, `recovery_hold`. |
 | `meta` | `role`, `requestedPair`, `configuredPair`, `threadId`, `turnIds`, `repairUsed`, `tokens`, `startSeq`, `endSeq` (the last two are absent under `crw flow run`, see above). |
 
 A failed or interrupted turn, and an RPC error to the thread or turn request, is classified by its `codexErrorInfo`: the
@@ -336,6 +337,12 @@ that places calls an executor's held row also carries `p_held`, the working snap
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
 the path and digest of the execution policy file.
 
+The `prepared` row also carries what the resume walk compares: `input_digest` (the prompt, schema, role, pair, node, options,
+context boundary and the joins before the position), `prompt_digest`, `context` and, with `Config.InputSnapshot`, `input_snapshot`.
+A join or `workflow()` position writes `join_opened` and `join_settled` flow rows, the latter with the `digest` of its item paths'
+results; a resume writes `hold_cleared`, `worktree_preserved`, `worktree_restored` and `checkpoint_started` flow rows
+([journal.md](journal.md#the-resume-walk)).
+
 A backend that places calls adds to a call's rows: the `allocation` member of `prepared` (below), `fork_requested` and
 `fork_started` in place of `thread_requested` and `thread_started` for a continuation that runs in a restored worktree, and
 `interrupt_requested` before a turn the engine interrupts. Flow rows named `escalation` carry a `reason` (`quota_or_rate`,
@@ -414,12 +421,18 @@ as a call of its own (the same call id, a new `prepared` row), so a call has one
 keeps the call id of its position and so its `<call_id>/t<k>` operation marker; one thread never receives a marker twice, and
 two threads that carry the same marker are two attempts.
 
-A run resumes a journal with `Config.Resume` (`ResumeOptions` set the grace and polling timings of the reconcile pass). The
-pass runs before the script, a call the journal ended `completed`, `null_model`, `refused` or `outcome_unknown` with the same
-prompt, schema and pair is not run again - its result is replayed - and a call that reconcile decided goes on from where it
-stopped: the adopted thread gets its first turn, a creation proven absent is sent again, an adopted turn is waited for or
-harvested and then validated and repaired like any turn. A held call is not replayed. The other conditions of resuming a
-position (effect proofs, snapshots, joins) belong to the resume rule and are not decided here.
+A run resumes a journal with `Config.Resume` (`ResumeOptions` set the grace and polling timings of the reconcile pass), and
+`crw flow resume RUN SCRIPT` runs it on the stored journal and the App Server. The pass runs before the script; the script then
+runs again and each position replays or runs live by the rule of [journal.md](journal.md#the-resume-walk): a position replays
+only when every earlier position of its path did, its input digest, input snapshot and effect proof are the recorded ones and its
+last event is not `held`; a call that reconcile decided goes on from where it stopped (the adopted thread gets its first turn, a
+creation proven absent is sent again, an adopted turn is waited for or harvested and then validated and repaired like any turn);
+a held call whose conditions hold goes on in place, with `hold_cleared` written. The first position that does not replay and
+the rest of its path are the suffix: its calls end `superseded` with the reason `superseded_by_resume`.
+
+`crw flow resume` goes on with every call that is not settled and not in recovery hold (an intent nobody answered, a hold that was
+cleared, a call that ended held); `crw flow recover` settles a call in recovery hold, and a call it does not accept is a call
+`crw flow resume` takes.
 
 ## The App Server backend
 

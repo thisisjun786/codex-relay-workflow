@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 )
 
@@ -67,6 +68,8 @@ var (
 	_ engine.Placer     = (*Backend)(nil)
 	_ engine.Forker     = (*Backend)(nil)
 	_ engine.Reconciled = (*Backend)(nil)
+	_ engine.Restorer   = (*Backend)(nil)
+	_ engine.Prover     = (*Backend)(nil)
 	_ engine.Owned      = (*Backend)(nil)
 	_ engine.ReconHost  = (*Backend)(nil)
 )
@@ -171,6 +174,35 @@ func (b *Backend) Snapshot(ctx context.Context, path string) (string, error) {
 		return "", errNoAllocator
 	}
 	return b.cfg.Allocator.Snapshot(ctx, path)
+}
+
+// Restore implements engine.Restorer.
+func (b *Backend) Restore(ctx context.Context, req engine.RestoreRequest) (engine.Restored, error) {
+	if b.cfg.Allocator == nil {
+		return engine.Restored{}, errNoAllocator
+	}
+	return b.cfg.Allocator.Restore(ctx, req)
+}
+
+// Preserve implements engine.Restorer.
+func (b *Backend) Preserve(ctx context.Context, req engine.PreserveRequest) (engine.Preserved, error) {
+	if b.cfg.Allocator == nil {
+		return engine.Preserved{}, errNoAllocator
+	}
+	return b.cfg.Allocator.Preserve(ctx, req)
+}
+
+// WorktreeExists reports whether the directory of an old worktree is still there.
+func (b *Backend) WorktreeExists(path string) bool {
+	return b.cfg.Allocator != nil && b.cfg.Allocator.WorktreeExists(path)
+}
+
+// ProveNode implements engine.Prover: the effects of a node's executor calls against its current worktree (internal/flow/ops).
+func (b *Backend) ProveNode(ctx context.Context, events []engine.Event, node string) (engine.NodeProof, error) {
+	if b.cfg.Allocator == nil {
+		return nil, errNoAllocator
+	}
+	return ops.Prover{Git: ops.GitFunc(b.cfg.Allocator.git)}.ProveNode(ctx, events, node)
 }
 
 // Threads is the set of threads a backend started: the server requests about them are the flow's to refuse.
