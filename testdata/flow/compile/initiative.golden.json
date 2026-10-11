@@ -1,0 +1,983 @@
+{
+  "schema": "crw-flow-compile/1",
+  "initiative": "INIT-CHECKOUT",
+  "plans": [
+    {
+      "plan_id": "plan-papi",
+      "project_key": "PAPI",
+      "status": "changes",
+      "base_revision": 0,
+      "revision": {
+        "author_task_id": "crw-plan-checkout",
+        "changes": [
+          {
+            "node": {
+              "criteria_set_digest": "a213ed91b87aeb5d84f0b290d76b1c6b2657e0ac78b2182ea3c86191298daba4",
+              "issue_key": "API-1",
+              "kind": "implementation",
+              "node_id": "API-1",
+              "title": "Cart model"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "d286754c09a6c522a487a880755a60aa1f1995b9c4787c6edb2988eeff1f5c3d",
+              "issue_key": "API-2",
+              "kind": "implementation",
+              "node_id": "API-2",
+              "title": "Cart storage"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "de8550c062c96d280cc14666d2509d2e6c12900a0a6f9a2ed691f248dafa1a39",
+              "issue_key": "API-3",
+              "kind": "implementation",
+              "node_id": "API-3",
+              "title": "Cart HTTP surface"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "a9d7fb56bf74bff5586bc0afc008acf36d7728864f28caa8663ade133a18ba28",
+              "issue_key": "API-4",
+              "kind": "implementation",
+              "node_id": "API-4",
+              "title": "Cart events"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "2b5dde9f3b610e5e8dd08c8e434d033556deb2133f627b9fa5343659bd0ae702",
+              "issue_key": "API-5",
+              "kind": "implementation",
+              "node_id": "API-5",
+              "title": "Price rules"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "a2a3248cf338d65f2c977496cc8f527b413f138318bb1cac3c6eb9467bf4a80d",
+              "issue_key": "API-6",
+              "kind": "non_pr",
+              "node_id": "API-6",
+              "title": "Decision: tax rounding"
+            },
+            "op": "add_node"
+          },
+          {
+            "edge": {
+              "edge_id": "e:API-1:API-2",
+              "from_node_id": "API-1",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "API-2"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:API-2:API-3",
+              "from_node_id": "API-2",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "API-3"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:API-3:API-4",
+              "from_node_id": "API-3",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "API-4"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:API-6:API-5",
+              "from_node_id": "API-6",
+              "kind": "artifact_verified",
+              "to_node_id": "API-5"
+            },
+            "op": "add_edge"
+          }
+        ],
+        "expected_parent_revision": 0,
+        "plan_id": "plan-papi",
+        "project_key": "PAPI",
+        "request_id": "flow-compile-ff75a897e4cc6380",
+        "schema": "dag-plan-revision/1"
+      },
+      "preview": {
+        "nodes": 6,
+        "edges": 4,
+        "changes": {
+          "add_node": 6,
+          "update_node": 0,
+          "retire_node": 0,
+          "add_edge": 4,
+          "retire_edge": 0
+        },
+        "parallel_width": 2,
+        "critical_path": [
+          "API-1",
+          "API-2",
+          "API-3",
+          "API-4"
+        ],
+        "critical_path_length": 4,
+        "waves": [
+          [
+            "API-1",
+            "API-6"
+          ],
+          [
+            "API-2",
+            "API-5"
+          ],
+          [
+            "API-3"
+          ],
+          [
+            "API-4"
+          ]
+        ],
+        "issues": [
+          {
+            "key": "API-1",
+            "node_id": "API-1",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 cart",
+            "regions": [
+              "internal/cart/model.go",
+              "internal/cart/model_test.go"
+            ],
+            "after": [],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "API-2",
+            "node_id": "API-2",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 cart",
+            "regions": [
+              "internal/cart/store/"
+            ],
+            "after": [
+              "API-1"
+            ],
+            "group": "g-cart",
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "API-3",
+            "node_id": "API-3",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 cart",
+            "regions": [
+              "internal/cart/http/",
+              "internal/cart/store/index.go"
+            ],
+            "after": [],
+            "group": "g-cart",
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "API-4",
+            "node_id": "API-4",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 cart",
+            "regions": [
+              "internal/cart/http/events.go"
+            ],
+            "after": [],
+            "group": "g-cart",
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "API-5",
+            "node_id": "API-5",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 pricing",
+            "regions": [
+              "internal/price/",
+              "docs/price.md"
+            ],
+            "after": [
+              "API-6"
+            ],
+            "size_fit": "child",
+            "size_reason": "steps_gt5",
+            "issue_size": "over_line_accepted",
+            "bundle_reason": "one concept: the price rule engine",
+            "exception_record": "size-check exception: API-5 is over a baseline (criteria_total 9 exceeds the limit 8); approved by Jun on 2026-10-11: one concept, kept whole"
+          },
+          {
+            "key": "API-6",
+            "node_id": "API-6",
+            "op": "add",
+            "kind": "non_pr",
+            "milestone": "M2 pricing",
+            "regions": [
+              "docs/decisions/tax-rounding.md"
+            ],
+            "after": [],
+            "size_fit": "executor",
+            "size_reason": "fits_executor"
+          }
+        ],
+        "groups": [
+          {
+            "group": "g-cart",
+            "order": [
+              "API-2",
+              "API-3",
+              "API-4"
+            ]
+          }
+        ],
+        "milestones": [
+          {
+            "milestone": "M1 cart",
+            "issues": 4
+          },
+          {
+            "milestone": "M2 pricing",
+            "issues": 2
+          }
+        ],
+        "size_unreviewed": [],
+        "external_after": [],
+        "retired": [],
+        "request_id": "flow-compile-ff75a897e4cc6380",
+        "expected_parent_revision": 0
+      }
+    },
+    {
+      "plan_id": "plan-pweb",
+      "project_key": "PWEB",
+      "status": "changes",
+      "base_revision": 0,
+      "revision": {
+        "author_task_id": "crw-plan-checkout",
+        "changes": [
+          {
+            "node": {
+              "criteria_set_digest": "dfbce84b8998f09d9e28fc93e8df7b022c040dacefd74b8a734bdbe7c30ec5be",
+              "issue_key": "WEB-1",
+              "kind": "implementation",
+              "node_id": "WEB-1",
+              "title": "Cart page"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "e514293c4cc61bb52485e8697a5119e022c786ff0a0d6ccdb7dc133c0290afc6",
+              "issue_key": "WEB-2",
+              "kind": "implementation",
+              "node_id": "WEB-2",
+              "title": "Cart totals"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "51e376e89b8af55284134473d8823870e7fdc8f3f84bdc3e375e035fcd081d94",
+              "issue_key": "WEB-3",
+              "kind": "implementation",
+              "node_id": "WEB-3",
+              "title": "Checkout form"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "207d340aa4fb51dbff1696088836324a5e9acc93de72a1ef7cf2131ea8d79cdd",
+              "issue_key": "WEB-4",
+              "kind": "implementation",
+              "node_id": "WEB-4",
+              "title": "Checkout flow rewrite"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "6c48121fb13b845201ca229036be9d0dd5c3a2d12e6fd439203474a2500df1b6",
+              "issue_key": "WEB-5",
+              "kind": "implementation",
+              "node_id": "WEB-5",
+              "title": "Order confirmation"
+            },
+            "op": "add_node"
+          },
+          {
+            "edge": {
+              "edge_id": "e:WEB-1:WEB-2",
+              "from_node_id": "WEB-1",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "WEB-2"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:WEB-2:WEB-3",
+              "from_node_id": "WEB-2",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "WEB-3"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:WEB-3:WEB-4",
+              "from_node_id": "WEB-3",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "WEB-4"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:WEB-3:WEB-5",
+              "from_node_id": "WEB-3",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "WEB-5"
+            },
+            "op": "add_edge"
+          }
+        ],
+        "expected_parent_revision": 0,
+        "plan_id": "plan-pweb",
+        "project_key": "PWEB",
+        "request_id": "flow-compile-a1d5932bb94a492c",
+        "schema": "dag-plan-revision/1"
+      },
+      "preview": {
+        "nodes": 5,
+        "edges": 4,
+        "changes": {
+          "add_node": 5,
+          "update_node": 0,
+          "retire_node": 0,
+          "add_edge": 4,
+          "retire_edge": 0
+        },
+        "parallel_width": 2,
+        "critical_path": [
+          "WEB-1",
+          "WEB-2",
+          "WEB-3",
+          "WEB-4"
+        ],
+        "critical_path_length": 4,
+        "waves": [
+          [
+            "WEB-1"
+          ],
+          [
+            "WEB-2"
+          ],
+          [
+            "WEB-3"
+          ],
+          [
+            "WEB-4",
+            "WEB-5"
+          ]
+        ],
+        "issues": [
+          {
+            "key": "WEB-1",
+            "node_id": "WEB-1",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 cart",
+            "regions": [
+              "web/cart/"
+            ],
+            "after": [],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "WEB-2",
+            "node_id": "WEB-2",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 cart",
+            "regions": [
+              "web/cart/totals.ts"
+            ],
+            "after": [
+              "WEB-1"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "WEB-3",
+            "node_id": "WEB-3",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 checkout",
+            "regions": [
+              "web/checkout/"
+            ],
+            "after": [
+              "WEB-2"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "WEB-4",
+            "node_id": "WEB-4",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 checkout",
+            "regions": [
+              "web/checkout/flow/",
+              "web/shared/"
+            ],
+            "after": [
+              "WEB-3"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "over_line",
+            "size_unreviewed": true
+          },
+          {
+            "key": "WEB-5",
+            "node_id": "WEB-5",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M3 confirm",
+            "regions": [
+              "web/confirm/"
+            ],
+            "after": [
+              "WEB-3"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          }
+        ],
+        "groups": [],
+        "milestones": [
+          {
+            "milestone": "M1 cart",
+            "issues": 2
+          },
+          {
+            "milestone": "M2 checkout",
+            "issues": 2
+          },
+          {
+            "milestone": "M3 confirm",
+            "issues": 1
+          }
+        ],
+        "size_unreviewed": [
+          "WEB-4"
+        ],
+        "external_after": [
+          {
+            "issue": "WEB-2",
+            "after": "API-3",
+            "project": "PAPI"
+          }
+        ],
+        "retired": [],
+        "request_id": "flow-compile-a1d5932bb94a492c",
+        "expected_parent_revision": 0
+      }
+    },
+    {
+      "plan_id": "plan-pdata",
+      "project_key": "PDATA",
+      "status": "changes",
+      "base_revision": 0,
+      "revision": {
+        "author_task_id": "crw-plan-checkout",
+        "changes": [
+          {
+            "node": {
+              "criteria_set_digest": "8ea04355c448820192747dbf848e7656b7abab8c77e924a7fed6c3bb754435ff",
+              "issue_key": "DATA-1",
+              "kind": "implementation",
+              "node_id": "DATA-1",
+              "title": "Order schema"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "d9aa355fcacca954f1b5ba23672365500510334cd3a722fbdd2c6436d7a2995b",
+              "issue_key": "DATA-2",
+              "kind": "implementation",
+              "node_id": "DATA-2",
+              "title": "Order writer"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "d3e8cc3d3a8c742f5a556c736a33f809d3fdb84a568690be1c3844b1a20544e6",
+              "issue_key": "DATA-3",
+              "kind": "implementation",
+              "node_id": "DATA-3",
+              "title": "Order reader"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "2d24eb9920839bbb913417b3575690250f2cba59b45ccbd349079a7103ad403f",
+              "issue_key": "DATA-4",
+              "kind": "implementation",
+              "node_id": "DATA-4",
+              "title": "Order export"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "f0ca669580107807893e518e02bee2f747e7431ea6a38a1ff616b62b3fa0bf5b",
+              "issue_key": "DATA-5",
+              "kind": "implementation",
+              "node_id": "DATA-5",
+              "title": "Backfill"
+            },
+            "op": "add_node"
+          },
+          {
+            "edge": {
+              "edge_id": "e:DATA-1:DATA-2",
+              "from_node_id": "DATA-1",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "DATA-2"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:DATA-1:DATA-3",
+              "from_node_id": "DATA-1",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "DATA-3"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:DATA-2:DATA-4",
+              "from_node_id": "DATA-2",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "DATA-4"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:DATA-2:DATA-5",
+              "from_node_id": "DATA-2",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "DATA-5"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:DATA-3:DATA-4",
+              "from_node_id": "DATA-3",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "DATA-4"
+            },
+            "op": "add_edge"
+          }
+        ],
+        "expected_parent_revision": 0,
+        "plan_id": "plan-pdata",
+        "project_key": "PDATA",
+        "request_id": "flow-compile-fbddbc70779c91fb",
+        "schema": "dag-plan-revision/1"
+      },
+      "preview": {
+        "nodes": 5,
+        "edges": 5,
+        "changes": {
+          "add_node": 5,
+          "update_node": 0,
+          "retire_node": 0,
+          "add_edge": 5,
+          "retire_edge": 0
+        },
+        "parallel_width": 2,
+        "critical_path": [
+          "DATA-1",
+          "DATA-2",
+          "DATA-4"
+        ],
+        "critical_path_length": 3,
+        "waves": [
+          [
+            "DATA-1"
+          ],
+          [
+            "DATA-2",
+            "DATA-3"
+          ],
+          [
+            "DATA-4",
+            "DATA-5"
+          ]
+        ],
+        "issues": [
+          {
+            "key": "DATA-1",
+            "node_id": "DATA-1",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 orders",
+            "regions": [
+              "db/schema/orders.sql"
+            ],
+            "after": [],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "DATA-2",
+            "node_id": "DATA-2",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 orders",
+            "regions": [
+              "internal/order/writer.go"
+            ],
+            "after": [
+              "DATA-1"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "DATA-3",
+            "node_id": "DATA-3",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 orders",
+            "regions": [
+              "internal/order/reader.go"
+            ],
+            "after": [
+              "DATA-1"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "DATA-4",
+            "node_id": "DATA-4",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 export",
+            "regions": [
+              "internal/order/export/"
+            ],
+            "after": [
+              "DATA-2",
+              "DATA-3"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "DATA-5",
+            "node_id": "DATA-5",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 export",
+            "regions": [
+              "tools/backfill/"
+            ],
+            "after": [
+              "DATA-2"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          }
+        ],
+        "groups": [],
+        "milestones": [
+          {
+            "milestone": "M1 orders",
+            "issues": 3
+          },
+          {
+            "milestone": "M2 export",
+            "issues": 2
+          }
+        ],
+        "size_unreviewed": [],
+        "external_after": [],
+        "retired": [],
+        "request_id": "flow-compile-fbddbc70779c91fb",
+        "expected_parent_revision": 0
+      }
+    },
+    {
+      "plan_id": "plan-pops",
+      "project_key": "POPS",
+      "status": "changes",
+      "base_revision": 0,
+      "revision": {
+        "author_task_id": "crw-plan-checkout",
+        "changes": [
+          {
+            "node": {
+              "criteria_set_digest": "d43ef9c58605cc4d378f36b1bea16e74e1c4ba9af83e06d67bc1de169a49ddd3",
+              "issue_key": "OPS-1",
+              "kind": "implementation",
+              "node_id": "OPS-1",
+              "title": "Deploy pipeline"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "392ae480a99bbae4a8d35c69ee51046a2416532d69d47aa47549e61abca862fe",
+              "issue_key": "OPS-2",
+              "kind": "implementation",
+              "node_id": "OPS-2",
+              "title": "Alerts"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "02e3269ef7cb48b7d55cfcaf6d157cf3546327cdd8866da929c050df1eb637f5",
+              "issue_key": "OPS-3",
+              "kind": "implementation",
+              "node_id": "OPS-3",
+              "title": "Runbook"
+            },
+            "op": "add_node"
+          },
+          {
+            "node": {
+              "criteria_set_digest": "b3c0c0e266a54e8edd62c495b1d5913c44a60e310abf819b649bb853db15626f",
+              "issue_key": "OPS-4",
+              "kind": "implementation",
+              "node_id": "OPS-4",
+              "title": "Load test"
+            },
+            "op": "add_node"
+          },
+          {
+            "edge": {
+              "edge_id": "e:OPS-1:OPS-2",
+              "from_node_id": "OPS-1",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "OPS-2"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:OPS-1:OPS-4",
+              "from_node_id": "OPS-1",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "OPS-4"
+            },
+            "op": "add_edge"
+          },
+          {
+            "edge": {
+              "edge_id": "e:OPS-2:OPS-3",
+              "from_node_id": "OPS-2",
+              "kind": "integrated",
+              "target_base_ref": "refs/heads/dev",
+              "target_repository": "acme/shop",
+              "to_node_id": "OPS-3"
+            },
+            "op": "add_edge"
+          }
+        ],
+        "expected_parent_revision": 0,
+        "plan_id": "plan-pops",
+        "project_key": "POPS",
+        "request_id": "flow-compile-291564c79436b242",
+        "schema": "dag-plan-revision/1"
+      },
+      "preview": {
+        "nodes": 4,
+        "edges": 3,
+        "changes": {
+          "add_node": 4,
+          "update_node": 0,
+          "retire_node": 0,
+          "add_edge": 3,
+          "retire_edge": 0
+        },
+        "parallel_width": 2,
+        "critical_path": [
+          "OPS-1",
+          "OPS-2",
+          "OPS-3"
+        ],
+        "critical_path_length": 3,
+        "waves": [
+          [
+            "OPS-1"
+          ],
+          [
+            "OPS-2",
+            "OPS-4"
+          ],
+          [
+            "OPS-3"
+          ]
+        ],
+        "issues": [
+          {
+            "key": "OPS-1",
+            "node_id": "OPS-1",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 deploy",
+            "regions": [
+              ".ci/deploy.yml"
+            ],
+            "after": [],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "OPS-2",
+            "node_id": "OPS-2",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M1 deploy",
+            "regions": [
+              ".ci/alerts.yml"
+            ],
+            "after": [
+              "OPS-1"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "OPS-3",
+            "node_id": "OPS-3",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 runbook",
+            "regions": [
+              "docs/runbook.md"
+            ],
+            "after": [
+              "OPS-2"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          },
+          {
+            "key": "OPS-4",
+            "node_id": "OPS-4",
+            "op": "add",
+            "kind": "implementation",
+            "milestone": "M2 runbook",
+            "regions": [
+              "tools/load/"
+            ],
+            "after": [
+              "OPS-1"
+            ],
+            "size_fit": "executor",
+            "size_reason": "fits_executor",
+            "issue_size": "ok"
+          }
+        ],
+        "groups": [],
+        "milestones": [
+          {
+            "milestone": "M1 deploy",
+            "issues": 2
+          },
+          {
+            "milestone": "M2 runbook",
+            "issues": 2
+          }
+        ],
+        "size_unreviewed": [],
+        "external_after": [],
+        "retired": [],
+        "request_id": "flow-compile-291564c79436b242",
+        "expected_parent_revision": 0
+      }
+    }
+  ]
+}

@@ -13,12 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
 const flowUsage = `usage: crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] <script.js>`
 
-// RunCLI is `crw flow`: the run command over the fake backend (the App Server backend and the rest of the flow
+// RunCLI is `crw flow`: the run command over the fake backend and the compile command (the App Server backend and the rest of the flow
 // commands arrive with their own issues). It prints the run's result as JSON on stdout and exits 0 when the script
 // completed, 1 when it ended in script_error, and 2 for a command line it cannot use.
 func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -30,12 +31,16 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, flowUsage)
+		fmt.Fprintln(stdout, compile.Usage)
 		return 0
 	case "run":
 		return runCmd(ctx, args[1:], stdout, stderr)
+	case "compile":
+		return compile.RunCLI(ctx, args[1:], os.Stdin, stdout, stderr)
 	}
 	fmt.Fprintln(stderr, flowUsage)
-	fmt.Fprintf(stderr, "crw flow: error: argument command: invalid choice: %q (choose from 'run')\n", args[0])
+	fmt.Fprintln(stderr, compile.Usage)
+	fmt.Fprintf(stderr, "crw flow: error: argument command: invalid choice: %q (choose from 'run', 'compile')\n", args[0])
 	return 2
 }
 
