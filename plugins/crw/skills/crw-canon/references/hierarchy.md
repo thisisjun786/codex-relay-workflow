@@ -80,7 +80,7 @@ Approvals and limits travel down without widening. The user's restrictions, appr
 pause or cancel hold in the scope they were given, and being linked to a level above is neither an
 expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)).
 The role decides what goal a task opens, never the other way round. An initiative lead opens none and
-runs no automatic loop, and an issue child keeps its own goal and its implementation loop. What a project
+runs no automatic loop, and an issue child keeps its own goal and its implementation loop. What a
 project orchestrator opens is not this section's fact to hold: it is the decision
 [Start policy](../../crw-run/references/start-policy.md#roles-and-the-goal-each-one-opens) records,
 that record has already changed once, and it is read there rather than remembered. A coordination
