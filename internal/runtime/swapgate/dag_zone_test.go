@@ -269,3 +269,72 @@ func TestAReleaseCarriesOnlyTheZoneArrivalAlone(t *testing.T) {
 		t.Fatal("a running daemon still refuses the removal of the zone")
 	}
 }
+
+// R04 (CRW-1212, TestFlowZoneUpgradeFromOldZone for the flow journal tables and the agent execution tables alike): the zone grows by appended statements. A store whose zone ends before the flow journal and the agent execution tables is, to a build that declares them, the arrival of part of the zone:
+// refused until the OPS-4.5 route is taken, and agreed once this build has opened the store. A build that does not declare them reads a store that has them as the zone leaving in part, which is not refused.
+func TestFlowZoneUpgradeFromOldZone(t *testing.T) {
+	ctx := context.Background()
+	newTables := []string{"flow_runs", "flow_calls", "flow_events", "flow_spawn_decisions", "flow_step_decisions", "dag_agent_executions", "dag_agent_closures"}
+	state := filepath.Join(t.TempDir(), "state")
+	path := filepath.Join(state, "relay.sqlite3")
+	testsupport.Create(t, path, "", "go")
+	s, err := store.Open(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// the zone as the build before this one left it: the new tables, with their indexes and triggers, are not there
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := len(newTables) - 1; i >= 0; i-- {
+		if _, err := db.Exec("DROP TABLE " + newTables[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	declared := swapgate.DeclaredSchema(ctx)
+	held := swapgate.StoreSchema(ctx, state, "")
+	cell := swapgate.SchemaCell(held, declared)
+	canon := golden.Canon(cell)
+	if record.Get(cell, "answer") != swapgate.ExtendsZone || !refuses(t, cell) || !strings.Contains(canon, "flow_runs") || !strings.Contains(canon, "dag_agent_executions") || !strings.Contains(canon, "--backup-state-to") {
+		t.Fatalf("an old zone against a build that adds the flow and agent tables: %s", canon)
+	}
+
+	// this build opens the store and it agrees
+	s, err = store.Open(ctx, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opened := swapgate.StoreSchema(ctx, state, "")
+	if got := swapgate.SchemaCell(opened, declared); record.Get(got, "answer") != swapgate.Agrees {
+		t.Fatalf("a store this build opened: %s", golden.Canon(got))
+	}
+
+	// the build before this one declares the zone without them: it opens a store that has them and does not refuse it
+	var without record.Object
+	for _, field := range golden.Obj(record.Get(declared, "objects")) {
+		named := false
+		for _, table := range newTables {
+			named = named || strings.Contains(field.Key, table)
+		}
+		if !named {
+			without = append(without, field)
+		}
+	}
+	if len(without) == 0 || len(without) >= len(golden.Obj(record.Get(declared, "objects"))) {
+		t.Fatalf("the earlier declaration holds %d of %d objects", len(without), len(golden.Obj(record.Get(declared, "objects"))))
+	}
+	narrows := swapgate.SchemaCell(opened, declaring(without))
+	if record.Get(narrows, "answer") != swapgate.NarrowsZone || refuses(t, narrows) {
+		t.Fatalf("an earlier build against a store that has the new tables: %s", golden.Canon(narrows))
+	}
+}

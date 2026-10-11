@@ -1438,6 +1438,306 @@ BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_revalidation_prem
 	`CREATE TRIGGER IF NOT EXISTS dag_revalidation_premerge_rowid_minus1_guard AFTER INSERT ON dag_revalidation_premerge
 WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_revalidation_premerge')
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_revalidation_premerge.rowid'); END`,
+	// CRW-1212 (R04): the flow journal and the agent execution rows, appended to the ledger. Every table below is append-only (a <table>_no_update and a <table>_no_delete trigger: a state change is a row
+	// added, never a row edited), has the identity guard of CRW-835 (<table>_<key>_not_null: a key column refuses NULL, with the text the earlier guards give) and the no-replace guards of CRW-974 (one
+	// <table>_<key>_guard per unique key in the template store.zoneKeyGuardSQL writes, and the three rowid guards of a rowid table), so a raw INSERT OR REPLACE rewrites none of them. The tables are
+	// created, and their guards installed, by the same CREATE ... IF NOT EXISTS steps every open runs: a zone ledger that stops before them is extended by the open that finds a step missing, in one
+	// transaction, and keeps every row it holds. Nothing here changes relay-sqlite.sql, and no key points at a v1 table: a foreign key points inside the zone only.
+	//
+	// The flow journal (flow_runs, flow_calls, flow_events, flow_spawn_decisions, flow_step_decisions). One run process writes it, a batch in one transaction, and a dispatch intent in a transaction of its
+	// own before any byte is sent. flow_runs is the identity of a run: the workflow and the digests of the script, its helpers and its arguments, the plan revision it pinned, the actor and the
+	// nonce of the coordinator epoch it holds, and the run it resumes. Vocabularies that later issues extend (call kinds, call events, event kinds, rule ids) are not CHECKs: a shipped statement is never edited.
+	`CREATE TABLE IF NOT EXISTS flow_runs (
+    run_id              TEXT PRIMARY KEY CHECK (run_id <> ''),
+    workflow            TEXT NOT NULL CHECK (workflow <> ''),
+    script_digest       TEXT NOT NULL CHECK (script_digest <> ''),
+    helper_digests_json TEXT NOT NULL,
+    args_digest         TEXT NOT NULL,
+    plan_id             TEXT NOT NULL,
+    plan_revision       INTEGER NOT NULL CHECK (plan_revision >= 0),
+    actor_task_id       TEXT NOT NULL CHECK (actor_task_id <> ''),
+    epoch_nonce         TEXT NOT NULL,
+    resume_from         TEXT NOT NULL DEFAULT '',
+    started_at          TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_no_update BEFORE UPDATE ON flow_runs
+BEGIN SELECT RAISE(ABORT, 'flow_runs rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_no_delete BEFORE DELETE ON flow_runs
+BEGIN SELECT RAISE(ABORT, 'flow_runs rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_run_id_not_null BEFORE INSERT ON flow_runs
+WHEN NEW.run_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'flow_runs.run_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_pk_guard BEFORE INSERT ON flow_runs
+WHEN EXISTS (SELECT 1 FROM flow_runs WHERE run_id = NEW.run_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_runs.run_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_rowid_guard BEFORE INSERT ON flow_runs
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM flow_runs WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_runs.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_rowid_minus1_mark_guard BEFORE INSERT ON flow_runs
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'flow_runs';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'flow_runs' WHERE EXISTS (SELECT 1 FROM flow_runs WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_runs_rowid_minus1_guard AFTER INSERT ON flow_runs
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'flow_runs')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_runs.rowid'); END`,
+	// flow_calls is one row per call event, never updated: the dispatch intent (prepared, thread_requested, fork_requested, turn_requested are committed before the request is sent), the terminal event and
+	// the effect proof it carries. The key is the call and the event's place in its sequence. Input and result are kept as their digest and their bytes (a large result lives in a content-addressed file
+	// and the row names it). The proof columns are the commit and its parent, the tree digest, the verification record digest, the acceptance and the integration batch an effect rests on; the worktree
+	// columns record what a prepared event allocated (fresh or restore, path, start commit, the restored pending tree and the verified snapshot digest) and held_tree the snapshot a held event took.
+	`CREATE TABLE IF NOT EXISTS flow_calls (
+    call_id             TEXT NOT NULL CHECK (call_id <> ''),
+    event_seq           INTEGER NOT NULL CHECK (event_seq >= 1),
+    run_id              TEXT NOT NULL REFERENCES flow_runs (run_id),
+    path                TEXT NOT NULL,
+    position            INTEGER NOT NULL CHECK (position >= 0),
+    kind                TEXT NOT NULL CHECK (kind <> ''),
+    role                TEXT NOT NULL DEFAULT '',
+    input_digest        TEXT NOT NULL DEFAULT '',
+    input_snapshot      TEXT NOT NULL DEFAULT '',
+    event               TEXT NOT NULL CHECK (event <> ''),
+    operation           TEXT NOT NULL DEFAULT '',
+    result_digest       TEXT NOT NULL DEFAULT '',
+    result_bytes        BLOB,
+    result_artifact     TEXT NOT NULL DEFAULT '',
+    commit_sha          TEXT NOT NULL DEFAULT '',
+    commit_parent       TEXT NOT NULL DEFAULT '',
+    tree_digest         TEXT NOT NULL DEFAULT '',
+    verification_digest TEXT NOT NULL DEFAULT '',
+    acceptance_id       TEXT NOT NULL DEFAULT '',
+    batch_id            TEXT NOT NULL DEFAULT '',
+    thread_id           TEXT NOT NULL DEFAULT '',
+    turn_id             TEXT NOT NULL DEFAULT '',
+    plan_id             TEXT NOT NULL DEFAULT '',
+    node_id             TEXT NOT NULL DEFAULT '',
+    attempt             INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+    execution_id        TEXT NOT NULL DEFAULT '',
+    worktree_kind       TEXT NOT NULL DEFAULT '' CHECK (worktree_kind IN ('', 'fresh', 'restore')),
+    worktree_path       TEXT NOT NULL DEFAULT '',
+    start_commit        TEXT NOT NULL DEFAULT '',
+    pending_tree        TEXT NOT NULL DEFAULT '',
+    snapshot_digest     TEXT NOT NULL DEFAULT '',
+    input_state         TEXT NOT NULL DEFAULT '' CHECK (input_state IN ('', 'delivered', 'not_delivered')),
+    held_tree           TEXT NOT NULL DEFAULT '',
+    tokens              INTEGER NOT NULL DEFAULT 0 CHECK (tokens >= 0),
+    detail_json         TEXT NOT NULL DEFAULT '',
+    recorded_at         TEXT NOT NULL,
+    PRIMARY KEY (call_id, event_seq)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_no_update BEFORE UPDATE ON flow_calls
+BEGIN SELECT RAISE(ABORT, 'flow_calls rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_no_delete BEFORE DELETE ON flow_calls
+BEGIN SELECT RAISE(ABORT, 'flow_calls rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_call_id_not_null BEFORE INSERT ON flow_calls
+WHEN NEW.call_id IS NULL OR NEW.event_seq IS NULL
+BEGIN SELECT RAISE(ABORT, 'flow_calls.call_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_pk_guard BEFORE INSERT ON flow_calls
+WHEN EXISTS (SELECT 1 FROM flow_calls WHERE call_id = NEW.call_id AND event_seq = NEW.event_seq)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_calls.call_id, flow_calls.event_seq'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_rowid_guard BEFORE INSERT ON flow_calls
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM flow_calls WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_calls.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_rowid_minus1_mark_guard BEFORE INSERT ON flow_calls
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'flow_calls';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'flow_calls' WHERE EXISTS (SELECT 1 FROM flow_calls WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_calls_rowid_minus1_guard AFTER INSERT ON flow_calls
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'flow_calls')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_calls.rowid'); END`,
+	// flow_events are the run's own rows besides its calls: phase, log, status and signal rows, the upward report and delivery rows, the summary notices, and the rows that rebind a resumed run (worktree_restored,
+	// hold_cleared, revision_superseded, release_rebind). seq counts up within a run. The rule that a summary id has at most one notice is the writer's, checked in the transaction that writes the row.
+	`CREATE TABLE IF NOT EXISTS flow_events (
+    run_id       TEXT NOT NULL CHECK (run_id <> '') REFERENCES flow_runs (run_id),
+    seq          INTEGER NOT NULL CHECK (seq >= 1),
+    kind         TEXT NOT NULL CHECK (kind <> ''),
+    call_id      TEXT NOT NULL DEFAULT '',
+    node_id      TEXT NOT NULL DEFAULT '',
+    subject      TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL,
+    PRIMARY KEY (run_id, seq)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_no_update BEFORE UPDATE ON flow_events
+BEGIN SELECT RAISE(ABORT, 'flow_events rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_no_delete BEFORE DELETE ON flow_events
+BEGIN SELECT RAISE(ABORT, 'flow_events rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_run_id_not_null BEFORE INSERT ON flow_events
+WHEN NEW.run_id IS NULL OR NEW.seq IS NULL
+BEGIN SELECT RAISE(ABORT, 'flow_events.run_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_pk_guard BEFORE INSERT ON flow_events
+WHEN EXISTS (SELECT 1 FROM flow_events WHERE run_id = NEW.run_id AND seq = NEW.seq)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_events.run_id, flow_events.seq'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_rowid_guard BEFORE INSERT ON flow_events
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM flow_events WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_events.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_rowid_minus1_mark_guard BEFORE INSERT ON flow_events
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'flow_events';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'flow_events' WHERE EXISTS (SELECT 1 FROM flow_events WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_events_rowid_minus1_guard AFTER INSERT ON flow_events
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'flow_events')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_events.rowid'); END`,
+	// flow_spawn_decisions keeps every decision to spawn or not to spawn, to replan or skip, and to flush a batch, with the rule that made it and the evidence it rested on; the native spawns the hook
+	// recorded are imported here with the pair that was requested and the pair that was applied. flow_step_decisions keeps the tier decisions: the rule id, the evidence ids and the checkpoint a
+	// fresh executor starts from.
+	`CREATE TABLE IF NOT EXISTS flow_spawn_decisions (
+    decision_id       TEXT PRIMARY KEY CHECK (decision_id <> ''),
+    run_id            TEXT NOT NULL REFERENCES flow_runs (run_id),
+    kind              TEXT NOT NULL CHECK (kind <> ''),
+    call_id           TEXT NOT NULL DEFAULT '',
+    node_id           TEXT NOT NULL DEFAULT '',
+    rule_id           TEXT NOT NULL DEFAULT '',
+    decision          TEXT NOT NULL CHECK (decision <> ''),
+    reason            TEXT NOT NULL DEFAULT '',
+    requested_model   TEXT NOT NULL DEFAULT '',
+    requested_effort  TEXT NOT NULL DEFAULT '',
+    applied_model     TEXT NOT NULL DEFAULT '',
+    applied_effort    TEXT NOT NULL DEFAULT '',
+    tool_use_id       TEXT NOT NULL DEFAULT '',
+    evidence_json     TEXT NOT NULL,
+    decided_at        TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_no_update BEFORE UPDATE ON flow_spawn_decisions
+BEGIN SELECT RAISE(ABORT, 'flow_spawn_decisions rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_no_delete BEFORE DELETE ON flow_spawn_decisions
+BEGIN SELECT RAISE(ABORT, 'flow_spawn_decisions rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_decision_id_not_null BEFORE INSERT ON flow_spawn_decisions
+WHEN NEW.decision_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'flow_spawn_decisions.decision_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_pk_guard BEFORE INSERT ON flow_spawn_decisions
+WHEN EXISTS (SELECT 1 FROM flow_spawn_decisions WHERE decision_id = NEW.decision_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_spawn_decisions.decision_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_rowid_guard BEFORE INSERT ON flow_spawn_decisions
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM flow_spawn_decisions WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_spawn_decisions.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_rowid_minus1_mark_guard BEFORE INSERT ON flow_spawn_decisions
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'flow_spawn_decisions';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'flow_spawn_decisions' WHERE EXISTS (SELECT 1 FROM flow_spawn_decisions WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_spawn_decisions_rowid_minus1_guard AFTER INSERT ON flow_spawn_decisions
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'flow_spawn_decisions')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_spawn_decisions.rowid'); END`,
+	`CREATE TABLE IF NOT EXISTS flow_step_decisions (
+    step_id         TEXT PRIMARY KEY CHECK (step_id <> ''),
+    run_id          TEXT NOT NULL REFERENCES flow_runs (run_id),
+    node_id         TEXT NOT NULL CHECK (node_id <> ''),
+    from_tier       TEXT NOT NULL DEFAULT '',
+    to_tier         TEXT NOT NULL DEFAULT '',
+    rule_id         TEXT NOT NULL CHECK (rule_id <> ''),
+    evidence_json   TEXT NOT NULL,
+    checkpoint_head TEXT NOT NULL DEFAULT '',
+    checkpoint_tree TEXT NOT NULL DEFAULT '',
+    decided_at      TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_no_update BEFORE UPDATE ON flow_step_decisions
+BEGIN SELECT RAISE(ABORT, 'flow_step_decisions rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_no_delete BEFORE DELETE ON flow_step_decisions
+BEGIN SELECT RAISE(ABORT, 'flow_step_decisions rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_step_id_not_null BEFORE INSERT ON flow_step_decisions
+WHEN NEW.step_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'flow_step_decisions.step_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_pk_guard BEFORE INSERT ON flow_step_decisions
+WHEN EXISTS (SELECT 1 FROM flow_step_decisions WHERE step_id = NEW.step_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_step_decisions.step_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_rowid_guard BEFORE INSERT ON flow_step_decisions
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM flow_step_decisions WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_step_decisions.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_rowid_minus1_mark_guard BEFORE INSERT ON flow_step_decisions
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'flow_step_decisions';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'flow_step_decisions' WHERE EXISTS (SELECT 1 FROM flow_step_decisions WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS flow_step_decisions_rowid_minus1_guard AFTER INSERT ON flow_step_decisions
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'flow_step_decisions')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: flow_step_decisions.rowid'); END`,
+	// The agent execution kind (R04). A node released on the agent surface has no managed start, no relationship, no standby and no dag_releases row: its release is a dag_agent_executions row of kind initial,
+	// which carries the release fact (the manifest digest, the coordinator epoch and the time), the role and tier, and the actor, in the transaction that reserves the slot and writes the input manifest. A
+	// row is never edited: a later attempt (correction, tier_step, parent_handover) is a row that names the one it supersedes, so a node's rows are a chain, and the CURRENT execution is the last row of the chain when
+	// no dag_agent_closures row closes it. The chain cannot branch: one row per node has no predecessor, and a row is the predecessor of at most one row. What the run observes of the execution later
+	// (the thread, the worktree, the pair that wrote) is in the call rows of the flow journal; the columns here hold what was known when the row was decided, '' where nothing was.
+	// The frozen execution, release, acceptance, verified-head and integration tables never hold a row of an agent node (TestNoAgentRowInFrozenTables).
+	`CREATE TABLE IF NOT EXISTS dag_agent_executions (
+    execution_id            TEXT PRIMARY KEY CHECK (execution_id <> ''),
+    plan_id                 TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id                 TEXT NOT NULL CHECK (node_id <> ''),
+    attempt                 INTEGER NOT NULL CHECK (attempt >= 1),
+    kind                    TEXT NOT NULL CHECK (kind IN ('initial', 'correction', 'tier_step', 'parent_handover')),
+    manifest_digest         TEXT NOT NULL REFERENCES dag_input_manifests (manifest_digest),
+    role                    TEXT NOT NULL CHECK (role <> ''),
+    tier                    TEXT NOT NULL CHECK (tier <> ''),
+    author_model            TEXT NOT NULL DEFAULT '',
+    author_effort           TEXT NOT NULL DEFAULT '',
+    thread_id               TEXT NOT NULL DEFAULT '',
+    worktree                TEXT NOT NULL DEFAULT '',
+    base_sha                TEXT NOT NULL DEFAULT '',
+    run_id                  TEXT NOT NULL DEFAULT '',
+    actor_task_id           TEXT NOT NULL CHECK (actor_task_id <> ''),
+    coordinator_epoch       INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    decided_at              TEXT NOT NULL,
+    supersedes_execution_id TEXT REFERENCES dag_agent_executions (execution_id),
+    CHECK (kind = 'initial' OR supersedes_execution_id IS NOT NULL),
+    CHECK (supersedes_execution_id IS NULL OR supersedes_execution_id <> execution_id)
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_agent_executions_node ON dag_agent_executions (plan_id, node_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_agent_executions_root ON dag_agent_executions (plan_id, node_id) WHERE supersedes_execution_id IS NULL`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_agent_executions_successor ON dag_agent_executions (supersedes_execution_id) WHERE supersedes_execution_id IS NOT NULL`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_no_update BEFORE UPDATE ON dag_agent_executions
+BEGIN SELECT RAISE(ABORT, 'dag_agent_executions rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_no_delete BEFORE DELETE ON dag_agent_executions
+BEGIN SELECT RAISE(ABORT, 'dag_agent_executions rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_execution_id_not_null BEFORE INSERT ON dag_agent_executions
+WHEN NEW.execution_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_agent_executions.execution_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_pk_guard BEFORE INSERT ON dag_agent_executions
+WHEN EXISTS (SELECT 1 FROM dag_agent_executions WHERE execution_id = NEW.execution_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_executions.execution_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_root_key_guard BEFORE INSERT ON dag_agent_executions
+WHEN NEW.supersedes_execution_id IS NULL AND EXISTS (SELECT 1 FROM dag_agent_executions WHERE plan_id = NEW.plan_id AND node_id = NEW.node_id AND supersedes_execution_id IS NULL)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_executions.plan_id, dag_agent_executions.node_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_successor_key_guard BEFORE INSERT ON dag_agent_executions
+WHEN NEW.supersedes_execution_id IS NOT NULL AND EXISTS (SELECT 1 FROM dag_agent_executions WHERE supersedes_execution_id = NEW.supersedes_execution_id AND supersedes_execution_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_executions.supersedes_execution_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_rowid_guard BEFORE INSERT ON dag_agent_executions
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_agent_executions WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_executions.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_rowid_minus1_mark_guard BEFORE INSERT ON dag_agent_executions
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_executions';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_agent_executions' WHERE EXISTS (SELECT 1 FROM dag_agent_executions WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_rowid_minus1_guard AFTER INSERT ON dag_agent_executions
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_executions')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_executions.rowid'); END`,
+	// dag_agent_closures ends an execution or an acceptance (the acceptance kinds arrive with R05): one row per subject, and a closed execution is no longer current. slot_released says whether the same
+	// transaction returned the slot the node held (a recovery hold closes nothing and keeps its slot).
+	`CREATE TABLE IF NOT EXISTS dag_agent_closures (
+    subject_kind      TEXT NOT NULL CHECK (subject_kind IN ('execution', 'acceptance')),
+    subject_id        TEXT NOT NULL CHECK (subject_id <> ''),
+    state             TEXT NOT NULL CHECK (state IN ('cancelled', 'escalated', 'superseded', 'revoked')),
+    slot_released     INTEGER NOT NULL DEFAULT 0 CHECK (slot_released IN (0, 1)),
+    actor_task_id     TEXT NOT NULL CHECK (actor_task_id <> ''),
+    coordinator_epoch INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    reason            TEXT NOT NULL CHECK (reason <> ''),
+    closed_at         TEXT NOT NULL,
+    PRIMARY KEY (subject_kind, subject_id)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_no_update BEFORE UPDATE ON dag_agent_closures
+BEGIN SELECT RAISE(ABORT, 'dag_agent_closures rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_no_delete BEFORE DELETE ON dag_agent_closures
+BEGIN SELECT RAISE(ABORT, 'dag_agent_closures rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_subject_id_not_null BEFORE INSERT ON dag_agent_closures
+WHEN NEW.subject_kind IS NULL OR NEW.subject_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_agent_closures.subject_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_pk_guard BEFORE INSERT ON dag_agent_closures
+WHEN EXISTS (SELECT 1 FROM dag_agent_closures WHERE subject_kind = NEW.subject_kind AND subject_id = NEW.subject_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_closures.subject_kind, dag_agent_closures.subject_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_rowid_guard BEFORE INSERT ON dag_agent_closures
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_agent_closures WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_closures.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_rowid_minus1_mark_guard BEFORE INSERT ON dag_agent_closures
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_closures';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_agent_closures' WHERE EXISTS (SELECT 1 FROM dag_agent_closures WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_closures_rowid_minus1_guard AFTER INSERT ON dag_agent_closures
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_closures')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_closures.rowid'); END`,
 }
 
 // zoneKeyGuardName finds the key guards among the zone's triggers: a guard's name ends in _guard (CRW-974).
