@@ -311,7 +311,7 @@ more sections, and the model names are in this file and nowhere else.
 EXAMPLE ONLY, like the file above: the pairs are a host's decision, not defaults.
 
 - **Exactly one pair per role.** Every one of the six roles is declared, each with one `model` and
-  `reasoningEffort` (or a `pairs` list of one, and the optional `autoCompactTokenLimit`). A thread's pair never
+  `reasoningEffort` (or a `pairs` list of one, and the optional `autoCompactTokenLimit`, which a flow run keeps in its role table, gives the thread it creates and shows in `crw flow roles`). A thread's pair never
   changes, so a role with two pairs, a missing role, or a name that is not one of the six refuses the file when
   it is read.
 - **A reviewer is not an author's family.** `reviewer` and `reviewer-final` must run on a model whose family is

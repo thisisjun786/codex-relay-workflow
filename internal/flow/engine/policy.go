@@ -22,6 +22,9 @@ type RoleSpec struct {
 	// executor-t1), read-only for every other role.
 	Sandbox      string
 	ModelAliases []string
+	// AutoCompactTokenLimit is the pair's optional model_auto_compact_token_limit; nil leaves the host's own
+	// auto-compaction threshold in place. The backend sets it on the thread it creates.
+	AutoCompactTokenLimit *int64
 }
 
 // Sandboxes of an engine thread.
@@ -196,6 +199,14 @@ func roleFamily(role string) string {
 	return role
 }
 
+func cloneLimit(p *int64) *int64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 // PolicyFromExecution is the role table of an operator's execution policy file: the agent-roles section gives each
 // role its pair and model aliases, the agent-aliases section (or the design's table) gives the alias table. The
 // source and the file's digest are kept for the run record.
@@ -208,7 +219,7 @@ func PolicyFromExecution(p execution.Policy, source string) (*Policy, error) {
 	for _, role := range declared.Roles {
 		out.Roles[role.Name] = RoleSpec{
 			Family: roleFamily(role.Name), Pair: Pair{Model: role.Pair.Model, Effort: role.Pair.Effort},
-			Sandbox: roleSandbox(role.Name), ModelAliases: slices.Clone(role.Aliases),
+			Sandbox: roleSandbox(role.Name), ModelAliases: slices.Clone(role.Aliases), AutoCompactTokenLimit: cloneLimit(role.Pair.AutoCompactTokenLimit),
 		}
 	}
 	for _, row := range declared.Aliases {

@@ -432,3 +432,54 @@ return { step, t1, bare }`)
 		t.Errorf("the call carries the decision: %+v", prepared)
 	}
 }
+
+// A pair's autoCompactTokenLimit is part of the role table: the policy snapshot, the thread specification the backend
+// receives and the roles report carry it, and a pair without one carries none.
+func TestAutoCompactTokenLimitReachesTheThreadAndTheReport(t *testing.T) {
+	text := strings.Replace(policyFile("claude-haiku", "xhigh"),
+		`"executor": {"model": "claude-haiku", "reasoningEffort": "xhigh"}`,
+		`"executor": {"model": "claude-haiku", "reasoningEffort": "xhigh", "autoCompactTokenLimit": 550000}`, 1)
+	if text == policyFile("claude-haiku", "xhigh") {
+		t.Fatal("the fixture did not change")
+	}
+	table := loadPolicy(t, text)
+	if got := table.Roles["executor"].AutoCompactTokenLimit; got == nil || *got != 550000 {
+		t.Fatalf("the role table drops the limit: %v", got)
+	}
+	if table.Roles["reviewer"].AutoCompactTokenLimit != nil {
+		t.Fatal("a pair without a limit carries none")
+	}
+	h := newHarness(t)
+	h.cfg.Policy = table
+	specs := map[string]ThreadSpec{}
+	h.fake.StartHook = func(spec ThreadSpec) (ThreadInfo, error) {
+		specs[spec.Role] = spec
+		return ThreadInfo{ID: "thr_" + spec.CallID, Pair: spec.Pair}, nil
+	}
+	h.run(`
+await agent.call('build', { agentType: 'executor', label: 'build' })
+await agent.call('review', { agentType: 'reviewer', label: 'review' })
+return 1`)
+	if got := specs["executor"].AutoCompactTokenLimit; got == nil || *got != 550000 {
+		t.Errorf("the executor thread is created without the limit: %+v", specs["executor"])
+	}
+	if specs["reviewer"].AutoCompactTokenLimit != nil {
+		t.Errorf("the reviewer thread has no limit: %+v", specs["reviewer"])
+	}
+	exec, err := execution.FromBytes([]byte(text), "policy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := DescribePolicy(table, exec)
+	var seen bool
+	for _, r := range report.Roles {
+		if r.Role == "executor" {
+			seen = r.AutoCompactTokenLimit != nil && *r.AutoCompactTokenLimit == 550000
+		} else if r.AutoCompactTokenLimit != nil {
+			t.Errorf("%s reports a limit it does not have", r.Role)
+		}
+	}
+	if !seen || !strings.Contains(report.Text(), "autoCompactTokenLimit 550000") {
+		t.Errorf("the roles report omits the limit:\n%s", report.Text())
+	}
+}

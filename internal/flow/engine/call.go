@@ -504,7 +504,7 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 	}
 	if p.resume == nil {
 		c.event(EvThreadRequested, map[string]any{"cwd": p.opts.Cwd})
-		info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: p.opts.Cwd})
+		info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: p.opts.Cwd, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
 		if err != nil {
 			return c.fromError(ctx, err)
 		}

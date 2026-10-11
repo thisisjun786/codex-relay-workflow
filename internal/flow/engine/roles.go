@@ -15,6 +15,8 @@ type RoleReport struct {
 	ReasoningEffort string   `json:"reasoningEffort"`
 	Sandbox         string   `json:"sandbox"`
 	Aliases         []string `json:"aliases"`
+	// AutoCompactTokenLimit is the pair's model_auto_compact_token_limit, absent when the pair declares none.
+	AutoCompactTokenLimit *int64 `json:"autoCompactTokenLimit,omitempty"`
 }
 
 // AliasReport is one row of the alias table in a PolicyReport.
@@ -52,7 +54,7 @@ func DescribePolicy(table *Policy, exec execution.Policy) PolicyReport {
 		if !ok {
 			continue
 		}
-		report.Roles = append(report.Roles, RoleReport{Role: name, Family: spec.Family, Model: spec.Pair.Model, ReasoningEffort: spec.Pair.Effort, Sandbox: spec.Sandbox, Aliases: spec.ModelAliases})
+		report.Roles = append(report.Roles, RoleReport{Role: name, Family: spec.Family, Model: spec.Pair.Model, ReasoningEffort: spec.Pair.Effort, Sandbox: spec.Sandbox, Aliases: spec.ModelAliases, AutoCompactTokenLimit: spec.AutoCompactTokenLimit})
 	}
 	for _, row := range table.Aliases {
 		report.Aliases = append(report.Aliases, AliasReport{Key: row.Key, Effort: row.Effort, Isolation: row.Isolation, Role: row.Role, Refuse: row.Cause, Detail: row.Detail})
@@ -70,7 +72,11 @@ func (r PolicyReport) Text() string {
 	}
 	fmt.Fprintf(&b, "mode: %s\n\nroles:\n", r.Mode)
 	for _, role := range r.Roles {
-		fmt.Fprintf(&b, "  %-15s %s at %s (%s, %s) aliases: %s\n", role.Role, role.Model, role.ReasoningEffort, role.Family, role.Sandbox, strings.Join(role.Aliases, ", "))
+		limit := ""
+		if role.AutoCompactTokenLimit != nil {
+			limit = fmt.Sprintf(" autoCompactTokenLimit %d", *role.AutoCompactTokenLimit)
+		}
+		fmt.Fprintf(&b, "  %-15s %s at %s (%s, %s)%s aliases: %s\n", role.Role, role.Model, role.ReasoningEffort, role.Family, role.Sandbox, limit, strings.Join(role.Aliases, ", "))
 	}
 	b.WriteString("\naliases:\n")
 	for _, row := range r.Aliases {
