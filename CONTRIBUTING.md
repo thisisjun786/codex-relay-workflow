@@ -11,8 +11,8 @@ plugin; `docs/plugin-packaging.md` describes the package and what may sit in its
 root. Start from `dev` on a short-lived branch. Use a separate worktree when another
 task owns the checkout, and preserve its uncommitted work. Read the target skill
 and linked references before editing. Shared workflow rules belong in
-`plugins/crw/skills/crw-plan/references/integrations.md`; operation-specific guidance
-belongs with that skill.
+`plugins/crw/skills/crw-canon/references/` (indexed by `plugins/crw/skills/crw-canon/SKILL.md`);
+operation-specific guidance belongs with that skill.
 
 Keep each change focused on one coherent unit under [the work-unit rules](POLICY.md#work-units-review-and-integration). A PR explains the triggering problem,
 expected behavior and acceptance example even when there is a Linear link; internal

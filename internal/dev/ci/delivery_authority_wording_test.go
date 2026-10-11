@@ -79,7 +79,7 @@ func TestDeliveryAuthority_OtherSkillsPointNotRestate(t *testing.T) {
 	for _, rel := range []string{
 		"plugins/crw/skills/crw-pabcd/SKILL.md",
 		"plugins/crw/skills/crw-pabcd/references/phase-plan.md",
-		"plugins/crw/skills/crw-plan/references/integrations.md",
+		"plugins/crw/skills/crw-canon/references/delivery.md",
 		"plugins/crw/skills/crw-run/references/task-packet.md",
 	} {
 		data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(rel)))
@@ -109,7 +109,7 @@ func TestDeliveryAuthority_PacketSurfacesDoNotRedefineTheApproval(t *testing.T) 
 	for _, rel := range []string{
 		"plugins/crw/skills/crw-run/references/task-packet.md",
 		"plugins/crw/skills/crw-run/references/dispatch-verification.md",
-		"plugins/crw/skills/crw-plan/references/integrations.md",
+		"plugins/crw/skills/crw-canon/references/delivery.md",
 	} {
 		data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(rel)))
 		if err != nil {

@@ -1469,7 +1469,7 @@ own documents, under `docs/relay/`. Read them when changing the relay, not when 
 
 The message form both relations share is one of them. `relay-envelope/1` is defined in the
 relay's own `docs/relay/envelope.md`, with the workflow rule in
-[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
+[the message both relations are read by](../../crw-canon/references/hierarchy.md#the-message-both-relations-are-read-by).
 Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
 a report upward is transported and read back and nothing further is measured on that relation -
 a supervisor agreeing, acting or confirming is not a fact the relay holds; and what discharges a

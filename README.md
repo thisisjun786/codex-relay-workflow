@@ -28,7 +28,7 @@ live Codex hook or Desktop compatibility.
 | [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using its own checks and minimal counterexamples |
 | [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt and plan bounded, behavior-preserving repairs |
 
-The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC routing. Keep the skills together because their references link to one another.
+The shared references in [crw-canon](plugins/crw/skills/crw-canon/SKILL.md) own Linear document authority and the other rules that more than one skill reads. Keep the skills together because their references link to one another.
 
 | Component of `crw` | Purpose |
 |---|---|
@@ -138,7 +138,7 @@ replaces its Python-era Stop settings, once).
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
 | Run repository checks | The Go toolchain `go.mod` names |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
-| Use the shared workflow | Separately installed CXC skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
+| Use the shared workflow | Separately installed CXC skills referenced by the [shared references](plugins/crw/skills/crw-canon/SKILL.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
 | Receive automatic completion reports | An installed runtime, a trusted Stop hook and verified host capability; installing these skills alone does not enable delivery |
 
@@ -191,7 +191,7 @@ go run -tags dev ./cmd/crw-dev skills link --dest "$skills_dest" --check
 
 The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after the manifest version is recorded again and the plugin is installed. That version carries the digest of the packaged bytes, so the version `codex plugin list` shows names the payload and not only the release.
 
-None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-plan/references/integrations.md#delivery-reach-and-current-usability).
+None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-canon/references/delivery.md#delivery-reach-and-current-usability).
 
 ## Maintain
 
@@ -273,7 +273,7 @@ reviews results, checks CI, and performs authorized integration. Internal
 subagents assist within those tasks and do not replace the independent child.
 
 Independent child tasks run under the shared
-[Default independent execution](plugins/crw/skills/crw-plan/references/integrations.md#default-independent-execution)
+[Default independent execution](plugins/crw/skills/crw-canon/references/delivery.md#default-independent-execution)
 settings unless the request chooses otherwise. A child running `crw-loop` owns its own
 goal and phases; an explicit non-Loop or no-goal assignment keeps the agreed workflow
 without one. The coordinator's launch job is small: apply those settings through the
@@ -319,7 +319,7 @@ into dependent issues. Non-PR research or design keeps a verified result instead
 Initiatives represent goals; product family is a project label, while an issue's
 repository label identifies its actual edit target. Project names need no product prefix,
 and views remain the user's choice. See the shared
-[Linear operating model](plugins/crw/skills/crw-plan/references/integrations.md#linear-operating-model).
+[Linear operating model](plugins/crw/skills/crw-canon/references/linear-model.md#linear-operating-model).
 
 `crw-next` distinguishes choosing a first step from choosing what follows a
 delivery. It restates an ambiguous request to resolve intent and picks one
@@ -351,7 +351,7 @@ require Jun. Skills, bridge and relay all deliver to this repository on base `de
 an external contribution arrives as an ordinary pull request, and a dependent pull
 request may target its prerequisite branch. Releasing a verified dev commit and
 advancing main to it requires Jun's explicit release authorization.
-See [Default dev integration](plugins/crw/skills/crw-plan/references/integrations.md#default-dev-integration)
+See [Default dev integration](plugins/crw/skills/crw-canon/references/delivery.md#default-dev-integration)
 for destination, delivery, and release boundaries. [Merge readiness](plugins/crw/skills/crw-run/references/merge-readiness.md)
 checks current CI, actual review coverage, and unresolved findings without requiring
 a particular reviewer or repository-management app. Full-project execution continues

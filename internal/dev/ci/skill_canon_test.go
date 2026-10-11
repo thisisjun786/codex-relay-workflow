@@ -1,0 +1,544 @@
+//go:build dev
+
+package ci
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+// The reference-only skill crw-canon holds the sections that more than one skill reads. These tests
+// prove where they live, that nothing else repeats them, that no consumer in the repository still
+// points at their old place, and the contents that make the library usable: the level table, the
+// role keys and the never-implicit skill.
+
+const (
+	canonSkillDir = "plugins/crw/skills/crw-canon/"
+	canonRefDir   = canonSkillDir + "references/"
+	planIntegrate = "plugins/crw/skills/crw-plan/references/integrations.md"
+)
+
+// canonSection is one heading that lives in a file of crw-canon/references.
+type canonSection struct{ File, Heading string }
+
+// canonMoved is every heading that moved out of crw-plan/references (integrations.md and
+// design-explanation.md) into crw-canon/references. The title of design-explanation.md stands for
+// the whole file; its other headings are ordinary words and are not scanned for.
+var canonMoved = []canonSection{
+	{"hierarchy.md", "Scope of each level"},
+	{"hierarchy.md", "The message both relations are read by"},
+	{"hierarchy.md", "Direct coordination between project orchestrators"},
+	{"release-gate.md", "The release gate"},
+	{"schedule-contract.md", "Schedule baseline contract"},
+	{"linear-model.md", "Linear operating model"},
+	{"linear-model.md", "Issue-to-PR mapping"},
+	{"linear-model.md", "Record writes and returned proposals"},
+	{"linear-model.md", "Resolve the implementation repository"},
+	{"linear-model.md", "Implementation Done"},
+	{"linear-model.md", "Linear holds canonical documents"},
+	{"linear-model.md", "Where each document type is canonical"},
+	{"linear-model.md", "Classify an existing document"},
+	{"linear-model.md", "Keep the two sides consistent"},
+	{"linear-model.md", "When the implementing repository changes"},
+	{"linear-model.md", "Initiative body standard"},
+	{"linear-model.md", "Use the available Linear capability"},
+	{"delivery.md", "Workflow ownership"},
+	{"delivery.md", "Completion follow-up in an existing execution workflow"},
+	{"delivery.md", "Default independent execution"},
+	{"delivery.md", "Default parent start policy"},
+	{"delivery.md", "Publish for review when the work is reviewable"},
+	{"delivery.md", "Default dev integration"},
+	{"delivery.md", "Whether a relay holds this assignment"},
+	{"delivery.md", "Durable cross-task delivery"},
+	{"delivery.md", "Installation and operations have one owner"},
+	{"delivery.md", "Review evidence is independent of the provider"},
+	{"delivery.md", "Evidence and handoff"},
+	{"delivery.md", "Delivery reach and current usability"},
+	{"execution-roles.md", "Execution settings by role"},
+	{"design-explanation.md", "Explaining a design"},
+	{"skill-family.md", "Skill names under each installation"},
+}
+
+// planningOnlyHeadings is every heading crw-plan/references/integrations.md keeps: the sections that
+// only planning reads.
+var planningOnlyHeadings = []string{
+	"Linear and implementation workflow integration",
+	"Resolve the project target",
+	"Project parent binding",
+	"Establish the link",
+	"Set the app presentation and record",
+	"Continue from the fixed project",
+	"Child pair by issue type",
+	"Classify the issue by its kind of work",
+	"Bundles",
+	"The extended line",
+	"The record at release",
+	"Review the classification and change the table",
+	"The place for a quota rule",
+}
+
+var atxHeadingLine = regexp.MustCompile("^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
+
+// headingsOf is the ATX heading texts of a Markdown document in order, outside fenced code.
+func headingsOf(text string) []string {
+	var out []string
+	fence := ""
+	for _, line := range lines(text) {
+		if marker := fenceMarker(strings.TrimLeft(line, " ")); marker != "" {
+			switch {
+			case fence == "":
+				fence = marker
+			case marker[0] == fence[0] && len(marker) >= len(fence):
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
+		if m := atxHeadingLine.FindStringSubmatch(line); m != nil {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// fenceMarker is the run of three or more backticks or tildes that opens or closes a fence, or "".
+func fenceMarker(line string) string {
+	for _, c := range []byte{'`', '~'} {
+		n := 0
+		for n < len(line) && line[n] == c {
+			n++
+		}
+		if n >= 3 {
+			return line[:n]
+		}
+	}
+	return ""
+}
+
+// trackedTextFiles is the repository files of the kinds a pointer into a skill can live in.
+func trackedTextFiles(root string) ([]string, error) {
+	files, err := repositoryFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, name := range files {
+		switch filepath.Ext(name) {
+		case ".md", ".go", ".json", ".yaml":
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+// sharedSectionOutsideCanonErrors: each moved heading is in its canon file once and in no other
+// Markdown document; the planning file keeps exactly its own sections.
+func sharedSectionOutsideCanonErrors(root string) []string {
+	var errs []string
+	files, err := repositoryFiles(root)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	moved := map[string]string{}
+	for _, s := range canonMoved {
+		moved[s.Heading] = s.File
+		data, err := os.ReadFile(filepath.Join(root, canonRefDir, s.File))
+		if err != nil {
+			errs = append(errs, canonRefDir+s.File+": "+err.Error())
+			continue
+		}
+		count := 0
+		for _, h := range headingsOf(string(data)) {
+			if h == s.Heading {
+				count++
+			}
+		}
+		if count != 1 {
+			errs = append(errs, canonRefDir+s.File+": heading "+s.Heading+" appears "+strconv.Itoa(count)+" times, want once")
+		}
+	}
+	for _, name := range files {
+		if filepath.Ext(name) != ".md" || strings.HasPrefix(name, canonSkillDir) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			continue
+		}
+		for _, h := range headingsOf(string(data)) {
+			if file, ok := moved[h]; ok && name != planIntegrate {
+				errs = append(errs, name+": heading "+h+" belongs to crw-canon/references/"+file)
+			}
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, planIntegrate)); err != nil {
+		errs = append(errs, planIntegrate+": "+err.Error())
+	} else {
+		got := headingsOf(string(data))
+		for _, h := range got {
+			if file, ok := moved[h]; ok {
+				errs = append(errs, planIntegrate+": heading "+h+" belongs to crw-canon/references/"+file)
+			}
+		}
+		if !slices.Equal(got, planningOnlyHeadings) {
+			errs = append(errs, planIntegrate+": headings "+strings.Join(got, " | ")+"; want only the planning sections "+strings.Join(planningOnlyHeadings, " | "))
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "plugins/crw/skills/crw-plan/references/design-explanation.md")); err == nil {
+		errs = append(errs, "plugins/crw/skills/crw-plan/references/design-explanation.md: moved to crw-canon/references")
+	}
+	return errs
+}
+
+func TestNoSharedSectionOutsideCanon(t *testing.T) {
+	t.Run("the checked-in tree", func(t *testing.T) {
+		if errs := sharedSectionOutsideCanonErrors(repoRoot()); len(errs) > 0 {
+			t.Errorf("%s", strings.Join(errs, "\n"))
+		}
+	})
+	t.Run("fixture: a repeated heading, a missing one and an extra planning section fail", func(t *testing.T) {
+		r := newRepo(t)
+		for _, s := range canonMoved {
+			if s.File == "hierarchy.md" {
+				continue
+			}
+			r.write(canonRefDir+s.File, "# "+s.Heading+"\n")
+		}
+		r.write(canonRefDir+"hierarchy.md", "# Scope of each level\n\n## Direct coordination between project orchestrators\n")
+		r.write(planIntegrate, "# Linear and implementation workflow integration\n\n## The release gate\n")
+		r.write("docs/other.md", "## Direct coordination between project orchestrators\n")
+		r.commit()
+		joined := strings.Join(sharedSectionOutsideCanonErrors(r.root), "\n")
+		for _, want := range []string{
+			"hierarchy.md: heading The message both relations are read by appears 0 times",
+			"docs/other.md: heading Direct coordination between project orchestrators belongs to crw-canon/references/hierarchy.md",
+			planIntegrate + ": heading The release gate belongs to crw-canon/references/release-gate.md",
+			planIntegrate + ": headings Linear and implementation workflow integration | The release gate; want only the planning sections",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("errors lack %q:\n%s", want, joined)
+			}
+		}
+	})
+}
+
+// formerSlugs are the anchors of headings that were renamed on the move, with the canon file that
+// holds the section now.
+var formerSlugs = []canonSection{
+	{"hierarchy.md", "Supervisor, parent and child scope"},
+	{"hierarchy.md", "Direct coordination between parents"},
+}
+
+// movedSlugs is the anchor of every moved heading, and of every heading it was renamed from, with the
+// canon file that now holds it.
+func movedSlugs() (slugs []string, files []string) {
+	for _, s := range append(append([]canonSection{}, canonMoved...), formerSlugs...) {
+		slugs = append(slugs, anchorSlug(s.Heading))
+		files = append(files, s.File)
+	}
+	return slugs, files
+}
+
+var canonLink = regexp.MustCompile("crw-canon/references/([A-Za-z0-9_.-]+\\.md)#([^\\s)>\"'`\\]]+)")
+
+// consumerErrors: no tracked .md, .go, .json or .yaml file points at an anchor that moved out of the
+// planning integrations file or at the old place of design-explanation.md, every link into
+// crw-canon/references names a heading that exists, and the consumers the issue names carry the new
+// location.
+func consumerErrors(root string, mustPoint []string) []string {
+	files, err := trackedTextFiles(root)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	var errs []string
+	slugs, canonFiles := movedSlugs()
+	var oldLinks, sameFile []*regexp.Regexp
+	for _, slug := range slugs {
+		oldLinks = append(oldLinks, regexp.MustCompile(`integrations\.md#`+regexp.QuoteMeta(slug)+`(?:[^A-Za-z0-9_-]|$)`))
+		sameFile = append(sameFile, regexp.MustCompile(`\(#`+regexp.QuoteMeta(slug)+`\)`))
+	}
+	anchors := map[string]map[string]bool{}
+	for _, name := range files {
+		if strings.HasPrefix(name, "internal/dev/ci/") && (strings.HasSuffix(name, "skill_canon_test.go") || strings.HasSuffix(name, "size_rules_test.go")) {
+			continue // these tests quote the old places on purpose
+		}
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			continue
+		}
+		for i, line := range lines(string(data)) {
+			where := name + ":" + strconv.Itoa(i+1) + ": "
+			for j, re := range oldLinks {
+				if re.MatchString(line) {
+					errs = append(errs, where+"points at integrations.md#"+slugs[j]+", which moved to crw-canon/references/"+canonFiles[j])
+				}
+			}
+			if name == planIntegrate {
+				for j, re := range sameFile {
+					if re.MatchString(line) {
+						errs = append(errs, where+"links to (#"+slugs[j]+"), which moved to crw-canon/references/"+canonFiles[j])
+					}
+				}
+			}
+			if !strings.HasPrefix(name, canonSkillDir) && strings.Contains(line, "design-explanation.md") && !strings.Contains(line, "crw-canon") {
+				errs = append(errs, where+"design-explanation.md moved to crw-canon/references")
+			}
+			for _, m := range canonLink.FindAllStringSubmatch(line, -1) {
+				file, slug := m[1], strings.TrimRight(m[2], ".,;:")
+				if anchors[file] == nil {
+					target, err := os.ReadFile(filepath.Join(root, canonRefDir, file))
+					if err != nil {
+						errs = append(errs, where+"links to crw-canon/references/"+file+", which cannot be read")
+						anchors[file] = map[string]bool{}
+						continue
+					}
+					anchors[file] = markdownAnchors(string(target))
+				}
+				if !anchors[file][slug] {
+					errs = append(errs, where+"crw-canon/references/"+file+" has no anchor #"+slug)
+				}
+			}
+		}
+	}
+	for _, name := range mustPoint {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			errs = append(errs, name+": "+err.Error())
+		} else if !strings.Contains(string(data), "crw-canon") {
+			errs = append(errs, name+": does not name crw-canon, where the shared sections live")
+		}
+	}
+	return errs
+}
+
+// namedConsumers are the consumers outside the skills that the shared sections' move changes.
+var namedConsumers = []string{
+	"AGENTS.md",
+	"CONTRIBUTING.md",
+	"README.md",
+	"docs/plugin-packaging.md",
+	"docs/relay/dag-scheduler.md",
+	"internal/dev/ci/delivery_authority_wording_test.go",
+}
+
+func TestSharedSectionConsumersMoved(t *testing.T) {
+	t.Run("the checked-in tree", func(t *testing.T) {
+		if errs := consumerErrors(repoRoot(), namedConsumers); len(errs) > 0 {
+			t.Errorf("%s", strings.Join(errs, "\n"))
+		}
+	})
+	t.Run("fixture: an old anchor, a dead canon anchor and the old design path fail", func(t *testing.T) {
+		r := newRepo(t)
+		r.write(canonRefDir+"release-gate.md", "# Release gate\n\n## The release gate\n")
+		r.write(planIntegrate, "# T\n\n[a](#the-release-gate)\n")
+		r.write("docs/a.md", "[x](../plugins/crw/skills/crw-plan/references/integrations.md#the-release-gate)\n[y](../plugins/crw/skills/crw-canon/references/release-gate.md#nowhere)\n[z](../plugins/crw/skills/crw-plan/references/design-explanation.md)\n[ok](../plugins/crw/skills/crw-canon/references/release-gate.md#the-release-gate)\n")
+		r.write("AGENTS.md", "plain\n")
+		r.commit()
+		joined := strings.Join(consumerErrors(r.root, []string{"AGENTS.md"}), "\n")
+		for _, want := range []string{
+			planIntegrate + ":3: links to (#the-release-gate)",
+			"docs/a.md:1: points at integrations.md#the-release-gate",
+			"docs/a.md:2: crw-canon/references/release-gate.md has no anchor #nowhere",
+			"docs/a.md:3: design-explanation.md moved",
+			"AGENTS.md: does not name crw-canon",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("errors lack %q:\n%s", want, joined)
+			}
+		}
+		if strings.Contains(joined, "docs/a.md:4") {
+			t.Errorf("a live canon link was reported:\n%s", joined)
+		}
+	})
+}
+
+// tableRows is the data rows of the first Markdown table in text whose header's first cell is first.
+func tableRows(text, first string) [][]string {
+	var rows [][]string
+	in := false
+	for _, line := range lines(text) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			if in {
+				break
+			}
+			continue
+		}
+		cells := strings.Split(strings.Trim(trimmed, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if !in {
+			if cells[0] == first {
+				in = true
+			}
+			continue
+		}
+		if strings.Trim(cells[0], "-: ") == "" {
+			continue
+		}
+		rows = append(rows, cells)
+	}
+	return rows
+}
+
+var (
+	inlineCode    = regexp.MustCompile("`[^`]*`")
+	linkTarget    = regexp.MustCompile(`\]\([^)]*\)`)
+	relayRoleWord = regexp.MustCompile(`(?i)\b(supervisor|parent|child)\b`)
+	issueChild    = regexp.MustCompile(`(?i)\bissue child(ren)?\b`)
+	relayRoleID   = regexp.MustCompile("`(supervisor|parent|child)`")
+	junTalks      = regexp.MustCompile(`(?i)manager[^.\n]*\btalks? with Jun|\bJun talks with the manager`)
+)
+
+func TestHierarchyTableRoleIds(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(), canonRefDir, "hierarchy.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	rows := tableRows(text, "Level")
+	want := []struct{ level, relay, korean string }{
+		{"manager", "", "관리"},
+		{"initiative lead", "`supervisor`", "부모"},
+		{"project orchestrator", "`parent`", "자식"},
+		{"issue child", "`child`", "이슈 child"},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("level table has %d rows, want %d: %v", len(rows), len(want), rows)
+	}
+	for i, w := range want {
+		row := rows[i]
+		if len(row) < 3 {
+			t.Fatalf("row %d has %d cells: %v", i+1, len(row), row)
+		}
+		if row[0] != w.level {
+			t.Errorf("row %d level = %q, want %q", i+1, row[0], w.level)
+		}
+		if w.relay == "" {
+			// The manager is the store seat; it is no initiative lead, project orchestrator or issue child.
+			if relayRoleID.MatchString(row[1]) {
+				t.Errorf("manager row names a relay role id: %q", row[1])
+			}
+		} else if row[1] != w.relay {
+			t.Errorf("%s relay role id = %q, want %q", w.level, row[1], w.relay)
+		}
+		if row[2] != w.korean {
+			t.Errorf("%s Korean = %q, want %q", w.level, row[2], w.korean)
+		}
+	}
+	if !junTalks.MatchString(text) {
+		t.Errorf("hierarchy.md does not say that Jun talks with the manager")
+	}
+	// The relay role words appear in code font, in the table, and nowhere else in hierarchy.md.
+	var prose []string
+	for _, line := range lines(text) {
+		if strings.HasPrefix(strings.TrimSpace(line), "|") {
+			continue
+		}
+		if relayRoleWord.MatchString(issueChild.ReplaceAllString(linkTarget.ReplaceAllString(inlineCode.ReplaceAllString(line, ""), "]"), "")) {
+			prose = append(prose, strings.TrimSpace(line))
+		}
+	}
+	if len(prose) > 0 {
+		t.Errorf("hierarchy.md uses the relay words outside code font and the table:\n%s", strings.Join(prose, "\n"))
+	}
+	if n := utf8.RuneCountInString(text); n < 2000 {
+		t.Errorf("hierarchy.md is only %d characters", n)
+	}
+}
+
+// modelNames is what execution-roles.md must not name: a model, a model family or an effort word.
+var modelNames = regexp.MustCompile(`(?i)haiku|sonnet|opus|fable|gpt-?[0-9]|\bSOL\b|\bluna\b|gemini|\bglm|kimi|qwen|xhigh`)
+
+func TestExecutionRolesNamesRoleKeysOnly(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(), canonRefDir, "execution-roles.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if found := modelNames.FindAllString(text, -1); len(found) > 0 {
+		t.Errorf("execution-roles.md names models or efforts: %v", found)
+	}
+	for _, key := range []string{"supervisor", "parent", "child", "architect", "executor", "explorer", "reviewer"} {
+		if !strings.Contains(text, "`"+key+"`") {
+			t.Errorf("execution-roles.md does not name the policy key `%s` in code font", key)
+		}
+	}
+	if rows := tableRows(text, "Policy key"); len(rows) < 7 {
+		t.Errorf("execution-roles.md key table has %d rows, want the 3 relay and 4 agent roles", len(rows))
+	}
+	t.Run("fixture: the model pattern", func(t *testing.T) {
+		if !modelNames.MatchString("the child runs on Sonnet") || !modelNames.MatchString("gpt-6-1") || modelNames.MatchString("the `child` policy key") {
+			t.Errorf("model name pattern is wrong")
+		}
+	})
+}
+
+func TestCanonSkillNeverImplicit(t *testing.T) {
+	root := repoRoot()
+	yaml, err := os.ReadFile(filepath.Join(root, canonSkillDir, "agents/openai.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := regexp.MustCompile(`(?m)^policy:\n  allow_implicit_invocation: false$`)
+	if !policy.Match(yaml) || strings.Contains(string(yaml), "allow_implicit_invocation: true") {
+		t.Errorf("crw-canon/agents/openai.yaml does not set policy.allow_implicit_invocation: false:\n%s", yaml)
+	}
+	skill, err := os.ReadFile(filepath.Join(root, canonSkillDir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(skill), "---\nname: crw-canon\n") {
+		t.Errorf("crw-canon/SKILL.md does not start with the frontmatter name crw-canon")
+	}
+	descriptions, err := skillDescriptions(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := utf8.RuneCountInString(descriptions["crw-canon"]); n == 0 || n > maxDescriptionRunes {
+		t.Errorf("crw-canon description has %d characters, want 1-%d", n, maxDescriptionRunes)
+	}
+	// The index links every reference file, and the skill holds nothing else in its root.
+	entries, err := os.ReadDir(filepath.Join(root, canonRefDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !strings.Contains(string(skill), "(references/"+e.Name()+")") {
+			t.Errorf("crw-canon/SKILL.md does not link references/%s", e.Name())
+		}
+	}
+	for _, s := range canonMoved {
+		if !strings.Contains(string(skill), "(references/"+s.File+")") {
+			t.Errorf("crw-canon/SKILL.md does not link references/%s", s.File)
+		}
+	}
+	top, err := os.ReadDir(filepath.Join(root, canonSkillDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range top {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{"SKILL.md", "agents", "references"}) {
+		t.Errorf("crw-canon holds %v, want SKILL.md, agents and references", names)
+	}
+	// It joins the skills CRW wrote itself, so the skillport check does not look for a record.
+	record, err := os.ReadFile(filepath.Join(root, "internal/dev/skillport/record.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(record), `"crw-canon"`) {
+		t.Errorf("crw-canon is not in skillport.OwnSkills")
+	}
+}

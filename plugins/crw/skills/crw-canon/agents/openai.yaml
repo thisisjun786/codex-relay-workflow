@@ -1,0 +1,6 @@
+interface:
+  display_name: "CRW Canon"
+  short_description: "Shared reference library of the CRW skills; not invoked by itself"
+  default_prompt: "Read $crw-canon only through the link of the skill that needs one of its reference files."
+policy:
+  allow_implicit_invocation: false

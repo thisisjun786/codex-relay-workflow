@@ -37,11 +37,11 @@ Three rules follow, and every section below keeps them.
 One parent coordinates one project; one independent child owns one issue and its delivery, one issue per
 delivery today under the repository's [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
 under the shared
-[supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+[scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level).
 Run and goal mode have the same project scope. Goal mode adds the parent's host goal, automatic
 continuation and goal completion decision. Use [crw-run](../SKILL.md) for operation selection, project
 binding, ownership, parallel scheduling, task packets, delivery verification and authorized integration,
-with its linked [shared rules](../../crw-plan/references/integrations.md) and applicable
+with its linked [shared rules](../../crw-canon/SKILL.md) and applicable
 [operations](operations.md). These are operations within this same parent, not a request to start
 another coordinator or recursively invoke skills.
 
@@ -84,7 +84,7 @@ dispatching or correcting anything. An unavailable relay is recorded as such, ne
 to direct, and direct sends are never counted as relay completion evidence.
 
 A goal is not what makes the role: the parent is the task bound to the project ID under
-[supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+[scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 so opening or closing one changes what wakes this task rather than which level it is. Load the `crw-dev*`
 skills for development and review work as applicable.
 
@@ -162,7 +162,7 @@ unsupported actions stay unsupported.
 
 This lifecycle is the project parent's. A supervisor's goal is not defined here, and nothing in this file
 transfers to initiative scope; the roles themselves are in
-[Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+[Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level).
 
 ## Preflight before starting workers
 

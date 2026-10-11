@@ -6,7 +6,7 @@ value the adjudication can settle is never put to the user as a question; a valu
 is asked before anything is created rather than after.
 
 This reference belongs to [crw-run](../SKILL.md#prepare-and-dispatch). The standing cap and its
-precedence are in [Default parent start policy](../../crw-plan/references/integrations.md#default-parent-start-policy),
+precedence are in [Default parent start policy](../../crw-canon/references/delivery.md#default-parent-start-policy),
 and the goal side of the compatibility field is in
 [Parent goal lifecycle](goal-mode.md#record-the-start-adjudication).
 Nothing here adds a store, a questionnaire, a planning document or a scheduler: the fields below
@@ -18,7 +18,7 @@ past this project are read from the records that already own them.
 
 Three roles run this workflow, each bound to one Linear level, and the role decides what kind of
 goal the task opens. The bindings themselves are in
-[Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope);
+[Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level);
 what follows is the goal convention those roles carry.
 
 | Role | Native goal | Implementation loop | What it never takes |
@@ -67,7 +67,7 @@ The id, that directory and the authorization behind them are read from the host 
 Linear record rather than from here.
 
 This is a readback, not an authority. The child default is owned by
-[Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)
+[Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution)
 and the role model policy by its own issue, while the value a run actually reads is the roles
 section of the host's own execution policy; where any of them disagrees with this paragraph, they
 win and this paragraph is stale. Nothing in this file changes a model, a permission, a worktree, a

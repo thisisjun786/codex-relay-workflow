@@ -9,7 +9,7 @@ Find claims or behaviors that cannot both hold under the same stated conditions.
 
 ## Connect the sources and checks
 
-Read [Integrations](../crw-plan/references/integrations.md). Resolve the target Linear project, canonical documents, linked issues, accepted decisions, and relevant repository evidence. Read full text and record IDs, dates/revisions, and source anchors. Do not infer the rule from issue status or a copied local summary.
+Read the shared [Linear model](../crw-canon/references/linear-model.md). Resolve the target Linear project, canonical documents, linked issues, accepted decisions, and relevant repository evidence. Read full text and record IDs, dates/revisions, and source anchors. Do not infer the rule from issue status or a copied local summary.
 
 If only a local file or pasted artifact is supplied, audit that bounded input and label its canonical Linear link unknown. Missing connector access can yield a partial audit; it cannot establish cross-document consistency. Do not create or migrate documents simply to run the check.
 
@@ -18,7 +18,7 @@ Run the checks that answer the question at hand. Each is a step of this audit:
 | Question | Check |
 |---|---|
 | Did we understand the request and its scope? | When materially ambiguous, restate the request and its scope from the conversation and records and confirm the reading before auditing; ask only when the evidence cannot settle it |
-| Do documents disagree about the same fact/rule? | List every document that states it, then settle which one is the rule by [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical); an accepted decision recorded on the item supersedes the body it changes, and the others are stale copies or a difference of scope. If two sources that are each canonical for their own scope still require incompatible behavior, that is the finding: report both sources and do not pick one |
+| Do documents disagree about the same fact/rule? | List every document that states it, then settle which one is the rule by [where each document type is canonical](../crw-canon/references/linear-model.md#where-each-document-type-is-canonical); an accepted decision recorded on the item supersedes the body it changes, and the others are stale copies or a difference of scope. If two sources that are each canonical for their own scope still require incompatible behavior, that is the finding: report both sources and do not pick one |
 | Is a factual premise unsupported or false? | Trace the premise to its source and verify it there; use `crw-search` for current/public sources, and report an unverified premise as an evidence gap |
 | Does an evaluation independently test its claim? | Ask whether the implementation and the scorer could agree without any outside truth; acceptance evidence must come from something other than the implementation's own assumption |
 | Would a fresh reader recover the same rule? | When a blind comprehension check is needed and delegation is available, give the text without its surrounding context to a context-free reviewer through helper delegation (`crw role helper dispatch`) and compare the rule it recovers with the intended one |
@@ -27,18 +27,18 @@ Do not relabel a same-context read as an independent check.
 
 For code, use `crw-dev` and the relevant verification owner. `crw-loop`, `crw-pabcd` and the helper role policy own authorized implementation, loops, and helper routing; this audit does not start a loop or create a competing workflow. Return bounded findings to `crw-check` or `crw-run` when called by them.
 
-Where this audit runs as a sub-task or bounded helper, its record changes are returned and not written: the record ID, the revision read, the reason, the smallest sufficient change and its evidence go to the caller, which decides and writes, under [record writes and returned proposals](../crw-plan/references/integrations.md#record-writes-and-returned-proposals).
+Where this audit runs as a sub-task or bounded helper, its record changes are returned and not written: the record ID, the revision read, the reason, the smallest sufficient change and its evidence go to the caller, which decides and writes, under [record writes and returned proposals](../crw-canon/references/linear-model.md#record-writes-and-returned-proposals).
 
 ## Establish what must hold
 
-Read the target and relevant dependencies. Pin assumptions, units, time windows, population/scope, state/version, and decision authority. Distinguish approved requirements from proposals and implementation choices. Where two documents state the same fact differently, [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical) decides which one is the rule and which is a copy that went stale; recency does not. Derive invariants from those contracts or independently justified facts, not from the function being tested.
+Read the target and relevant dependencies. Pin assumptions, units, time windows, population/scope, state/version, and decision authority. Distinguish approved requirements from proposals and implementation choices. Where two documents state the same fact differently, [where each document type is canonical](../crw-canon/references/linear-model.md#where-each-document-type-is-canonical) decides which one is the rule and which is a copy that went stale; recency does not. Derive invariants from those contracts or independently justified facts, not from the function being tested.
 
 State a suspected contradiction as: **given these conditions, rule A requires X, while claim or behavior B requires not-X**. If conditions differ, investigate that mismatch before declaring a contradiction. Missing evidence, uncertainty, a tradeoff, a documented exception, and a changed requirement are distinct outcomes.
 
 Use [Counterexample patterns](references/counterexamples.md) when selecting a numerical, state-transition, evaluation, or cross-document probe. Apply only patterns justified by the actual contract.
 
 When auditing status or delivery invariants, use
-[Implementation Done](../crw-plan/references/integrations.md#implementation-done):
+[Implementation Done](../crw-canon/references/linear-model.md#implementation-done):
 one current delivery and its actual landing on the intended target for new implementation,
 reconciled combined delivery coverage for legacy multi-PR scope, and verified result for
 non-PR work. Existing accepted operational criteria remain binding. Test a reference or partial merge against a complete
@@ -61,4 +61,4 @@ When none is found, state the examined scope and remaining evidence limits. Miss
 
 Under an existing management assignment, record results in the linked Linear coordination document, link the canonical rules, and read it back. Use a separate audit document only when prior authorization or an explicit recording request covers that document; do not ask again for authorization already granted. A bounded helper returns the record to its coordinator. A standalone read-only audit returns the proposed record. Recording findings does not authorize rewriting requirements or changing issue status.
 
-Use the full assignment's authorization from [Integrations](../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow). In an existing execution workflow, return evidence-backed corrections to the `crw-loop`/`crw-run` owner for implementation and recheck without another user permission round. Standalone audits return proposals. Route authorized planning corrections to `crw-plan`; a finding alone does not authorize new scope.
+Use the full assignment's authorization from [Integrations](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow). In an existing execution workflow, return evidence-backed corrections to the `crw-loop`/`crw-run` owner for implementation and recheck without another user permission round. Standalone audits return proposals. Route authorized planning corrections to `crw-plan`; a finding alone does not authorize new scope.

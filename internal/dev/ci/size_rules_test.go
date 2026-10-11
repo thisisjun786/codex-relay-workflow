@@ -1,0 +1,214 @@
+//go:build dev
+
+package ci
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+// The size rules are procedure sentences of the skills: crw-define sizes an initiative, crw-plan sizes
+// projects, milestones and issues, and crw-add-issue tells its caller when a limit is passed. Each
+// test reads the skill text that carries the rule and holds it to the numbers the code fixes.
+
+// sectionOf is the body of the first heading with the given text, up to the next heading of the same
+// or a higher level, outside fenced code. It is empty when the heading is absent.
+func sectionOf(text, heading string) string {
+	var out []string
+	level := 0
+	fence := ""
+	for _, line := range lines(text) {
+		if marker := fenceMarker(strings.TrimLeft(line, " ")); marker != "" {
+			switch {
+			case fence == "":
+				fence = marker
+			case marker[0] == fence[0] && len(marker) >= len(fence):
+				fence = ""
+			}
+		} else if fence == "" {
+			if m := atxHeadingLine.FindStringSubmatch(line); m != nil {
+				body := strings.TrimLeft(line, " ")
+				n := len(body) - len(strings.TrimLeft(body, "#"))
+				switch {
+				case level == 0 && m[1] == heading:
+					level = n
+					continue
+				case level != 0 && n <= level:
+					return strings.Join(out, "\n")
+				}
+			}
+		}
+		if level != 0 {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// normalized is text with every run of whitespace reduced to one space.
+func normalized(text string) string { return strings.Join(strings.Fields(text), " ") }
+
+func readRepoText(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(), path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// wordingMissing is the patterns the text does not match.
+func wordingMissing(text string, patterns []string) []string {
+	var missing []string
+	for _, p := range patterns {
+		if !regexp.MustCompile(p).MatchString(text) {
+			missing = append(missing, p)
+		}
+	}
+	return missing
+}
+
+// dagLimit is a limit constant of internal/relay/dag/model.go.
+func dagLimit(t *testing.T, name string) int {
+	t.Helper()
+	data := readRepoText(t, "internal/relay/dag/model.go")
+	m := regexp.MustCompile(`(?m)^\s*` + name + `\s*=\s*(\d+)`).FindStringSubmatch(data)
+	if m == nil {
+		t.Fatalf("internal/relay/dag/model.go has no %s", name)
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
+// laterSizeFields are the fields and the proposer that later issues bring into the documents; the size
+// sentences of this change state today's facts only.
+var laterSizeFields = regexp.MustCompile(`size_fit|size_reason|size-fit|\bgroup:`)
+
+func TestPlanSizeRulesWording(t *testing.T) {
+	if got := dagLimit(t, "MaxNodes"); got != 64 {
+		t.Fatalf("the plan limit MaxNodes is %d; the size rules say 64", got)
+	}
+	plan := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-plan/SKILL.md"), "Size rules"))
+	if plan == "" {
+		t.Fatal("crw-plan/SKILL.md has no Size rules section")
+	}
+	t.Run("crw-plan sizes projects, milestones and issues", func(t *testing.T) {
+		missing := wordingMissing(plan, []string{
+			`(?i)project[^.]*one integration target`,
+			`at most 64 issues`,
+			"`MaxNodes`",
+			`4-20 recommended`,
+			`(?i)edit-region map[^.]*named artifacts`,
+			`(?i)milestone[^.]*one observable result`,
+			`at most 8 issues recommended`,
+			`over 12 issues[^.]*split`,
+			`(?i)issue is a concept bundle`,
+			`(?i)wish to parallelize never splits an issue`,
+			"`crw skill issue-size check`",
+			"`ok`", "`over_line`", "`over_line_accepted`",
+			`(?i)exception record`,
+			`(?i)concept questions`,
+			`(?i)never by the count alone|no count alone`,
+			`(?i)no model name and no (reasoning )?effort`,
+		})
+		if len(missing) > 0 {
+			t.Errorf("crw-plan Size rules lack: %s\n%s", strings.Join(missing, "\n  "), plan)
+		}
+	})
+	t.Run("the section carries no model name and no later field", func(t *testing.T) {
+		stripped := strings.ReplaceAll(strings.ToLower(plan), "no model name and no effort", "")
+		if found := modelNames.FindString(stripped); found != "" {
+			t.Errorf("Size rules names %q", found)
+		}
+		if found := laterSizeFields.FindString(plan); found != "" {
+			t.Errorf("Size rules names %q, which a later issue brings in", found)
+		}
+	})
+	t.Run("crw-define sizes an initiative", func(t *testing.T) {
+		define := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-define/SKILL.md"), "Size rules"))
+		if define == "" {
+			t.Fatal("crw-define/SKILL.md has no Size rules section")
+		}
+		missing := wordingMissing(define, []string{
+			`(?i)initiative is one outcome`,
+			`(?i)list[^.]*projects`,
+			`(?i)artifacts? (that )?one project hands to another|hands? to another`,
+			`(?i)run in parallel`,
+			`(?i)order`,
+			`(?i)observable finish condition (for|of) each project`,
+			`at most 8 projects (in flight|running at the same time)`,
+			`(?i)recommended`,
+		})
+		if len(missing) > 0 {
+			t.Errorf("crw-define Size rules lack: %s\n%s", strings.Join(missing, "\n  "), define)
+		}
+		if found := laterSizeFields.FindString(define); found != "" {
+			t.Errorf("Size rules names %q, which a later issue brings in", found)
+		}
+	})
+}
+
+// addIssueCallers are the callers crw-add-issue names.
+var addIssueCallers = []string{`project orchestrator`, `initiative lead`, `user`}
+
+func TestAddIssueCallersNamed(t *testing.T) {
+	text := readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")
+	callers := normalized(sectionOf(text, "Who calls"))
+	if callers == "" {
+		t.Fatal("crw-add-issue/SKILL.md has no Who calls section")
+	}
+	for _, caller := range addIssueCallers {
+		if !strings.Contains(callers, caller) {
+			t.Errorf("Who calls does not name the %s", caller)
+		}
+	}
+	missing := wordingMissing(callers, []string{
+		`(?i)executor[^.]*report[^.]*defect[^.]*receipt`,
+		`(?i)region map entry`,
+	})
+	if len(missing) > 0 {
+		t.Errorf("Who calls lacks: %s\n%s", strings.Join(missing, "\n  "), callers)
+	}
+	t.Run("the description is one job in at most 300 characters", func(t *testing.T) {
+		descriptions, err := skillDescriptions(repoRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := utf8.RuneCountInString(descriptions["crw-add-issue"]); n == 0 || n > maxDescriptionRunes {
+			t.Errorf("crw-add-issue description has %d characters, want 1-%d", n, maxDescriptionRunes)
+		}
+	})
+}
+
+func TestAddIssueAdvisoryLimitsWording(t *testing.T) {
+	text := readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")
+	if got := dagLimit(t, "MaxNodes"); got != 64 {
+		t.Fatalf("the plan limit MaxNodes is %d; crw-add-issue says 64", got)
+	}
+	advisory := normalized(sectionOf(text, "Tell the caller about the limits"))
+	if advisory == "" {
+		t.Fatal("crw-add-issue/SKILL.md has no section Tell the caller about the limits")
+	}
+	missing := wordingMissing(advisory, []string{
+		`(?i)advisory`,
+		`(?i)project[^.;]*more than 64 issues`,
+		`(?i)milestone[^.;]*more than 12 issues`,
+		`(?i)sentence of this procedure[^.]*not a warning (of|from) an executable`,
+	})
+	if len(missing) > 0 {
+		t.Errorf("the advisory section lacks: %s\n%s", strings.Join(missing, "\n  "), advisory)
+	}
+	// The procedure ends with the readiness check.
+	last := normalized(sectionOf(text, "Check, write, read back"))
+	if !strings.Contains(last, "`crw skill issue-ready check`") {
+		t.Errorf("the closing section does not run `crw skill issue-ready check`")
+	}
+	if found := laterSizeFields.FindString(text); found != "" {
+		t.Errorf("crw-add-issue names %q, which a later issue brings in", found)
+	}
+}
