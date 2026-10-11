@@ -39,7 +39,7 @@ Do not invent the answer to make the item look filled. A question the repository
 
 ## Tell the caller about the limits
 
-A plan holds at most 64 issues in a project (the plan refuses more) and a milestone is split above 12 issues. Count the target project's and milestone's issues before writing. When the new issue would put the project at more than 64 issues or the milestone at more than 12 issues, say so to the caller in the report and leave the choice of a split to the caller or to [crw-plan](../crw-plan/SKILL.md). This is advisory: a sentence of this procedure, not a warning of an executable, and it blocks nothing.
+A plan revision holds at most 64 live nodes (the plan refuses more; a retired node leaves the count), and a milestone is split above 12 issues. Count the issues of the target project's plan that are live, not every issue the Linear project ever had, and the target milestone's issues, before writing. When the new issue would put the plan at more than 64 issues or the milestone at more than 12 issues, say so to the caller in the report and leave the choice of a split to the caller or to [crw-plan](../crw-plan/SKILL.md). This is advisory: a sentence of this procedure, not a warning of an executable, and it blocks nothing.
 
 ## Check, write, read back
 

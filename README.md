@@ -228,12 +228,12 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 ## Usage
 
 ```text
-$crw-run [Linear project] 실행하지 말고 이 프로젝트 부모로 연결만 해줘.
+$crw-run [Linear project] 실행하지 말고 이 프로젝트의 project orchestrator로 연결만 해줘.
 $crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
 $crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
-$crw-run [Linear project link] 부모 goal을 열어서 끝까지 진행해줘. (goal mode)
+$crw-run [Linear project link] project orchestrator goal을 열어서 끝까지 진행해줘. (goal mode)
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-status 중간점검. 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.

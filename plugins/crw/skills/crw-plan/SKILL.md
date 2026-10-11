@@ -64,7 +64,7 @@ as an explicit planning dependency, not an invented checkout assignment.
 
 Size is judged by concept; the numbers say when to look again.
 
-- A project is what one project orchestrator finishes: one integration target and at most 64 issues (the plan's `MaxNodes`, `internal/relay/dag/model.go`), 4-20 recommended. Split a project when its edit-region map divides into groups joined only by named artifacts; keep heavily overlapping regions in one project.
+- A project is what one project orchestrator finishes. Each of its issues is delivered into one integration target, and a project may span repositories (one issue per repository delivery, as above), so the target is the issue's and not the project's. The plan the project orchestrator runs holds at most 64 live issues: `MaxNodes` (`internal/relay/dag/model.go`) bounds the live nodes of one plan revision, and a retired node leaves that count, so issues the plan has retired do not count against it. Of a Linear project's issues, 4-20 is recommended, and that recommendation is advice, not the runtime bound. Split a project when its edit-region map divides into groups joined only by named artifacts; keep heavily overlapping regions in one project.
 - A milestone is one observable result, at most 8 issues recommended; a milestone over 12 issues is split.
 - An issue is a concept bundle, decided with [issue boundaries](references/issue-boundaries.md); the wish to parallelize never splits an issue.
 - For every issue, run `crw skill issue-size check` and record its answer (`ok`, `over_line` or `over_line_accepted`) in the issue, with the exception record the report returns when there is one. Answer the report's concept questions and judge by them: no count alone splits an issue or keeps one together.

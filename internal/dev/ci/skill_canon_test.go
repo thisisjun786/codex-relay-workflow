@@ -3,6 +3,8 @@
 package ci
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The reference-only skill crw-canon holds the sections that more than one skill reads. These tests
@@ -586,5 +591,157 @@ func TestKoreanLevelWordsOnlyInHierarchyTable(t *testing.T) {
 	delivery := readRepoText(t, canonRefDir+"delivery.md")
 	if !strings.Contains(delivery, "(hierarchy.md#the-levels)") {
 		t.Errorf("delivery.md does not point Korean reports at the level table (hierarchy.md#the-levels)")
+	}
+}
+
+// The two kinds of key in execution-roles.md are held by two different implementations: the host's
+// execution policy (internal/bridge/execution) accepts the relay roles and refuses any other key, and
+// the helper role store (internal/role) holds the agent roles. The document's Kind column and its
+// get_capabilities rule have to follow that split, not a table of seven keys.
+func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
+	text := readRepoText(t, canonRefDir+"execution-roles.md")
+	kinds := map[string]string{}
+	for _, row := range tableRows(text, "Policy key") {
+		if len(row) < 2 {
+			t.Fatalf("key table row %v has no Kind cell", row)
+		}
+		kinds[strings.Trim(row[0], "`")] = row[1]
+	}
+	var helperKeys []string
+	for _, r := range role.Roles() {
+		helperKeys = append(helperKeys, string(r))
+	}
+	relayKeys := []string{execution.Supervisor, execution.Parent, execution.Child}
+	if len(kinds) != len(relayKeys)+len(helperKeys) {
+		t.Errorf("the key table names %d keys, the two policies hold %d relay and %d helper roles", len(kinds), len(relayKeys), len(helperKeys))
+	}
+	acceptsKey := func(key string) error {
+		body := `{"model":"m","reasoningEffort":"e"}`
+		if key == execution.Supervisor {
+			body = `{}`
+		}
+		_, err := execution.FromBytes([]byte(fmt.Sprintf(`{"roles":{%s:%s}}`, mustJSON(key), body)), "policy")
+		return err
+	}
+	for _, key := range relayKeys {
+		if err := acceptsKey(key); err != nil {
+			t.Errorf("the host execution policy refuses the relay role %q: %v", key, err)
+		}
+		if kinds[key] != "relay role" {
+			t.Errorf("%q is a role of the host execution policy; its Kind is %q, want \"relay role\"", key, kinds[key])
+		}
+	}
+	for _, key := range helperKeys {
+		if err := acceptsKey(key); err == nil {
+			t.Errorf("the host execution policy accepts %q, which the table lists as a helper role", key)
+		}
+		if kinds[key] != "agent role" {
+			t.Errorf("%q is a role of the helper store; its Kind is %q, want \"agent role\"", key, kinds[key])
+		}
+	}
+	t.Run("the get_capabilities rule is about relay roles only", func(t *testing.T) {
+		for _, para := range strings.Split(text, "\n\n") {
+			if !strings.Contains(para, "get_capabilities") && !strings.Contains(para, "host's policy does not declare") {
+				continue
+			}
+			if !strings.Contains(para, "relay role") {
+				t.Errorf("a paragraph that sends a reader to get_capabilities or the host policy does not say it is about the relay roles:\n%s", para)
+			}
+			for _, key := range helperKeys {
+				if strings.Contains(para, "`"+key+"`") {
+					t.Errorf("a paragraph that sends a reader to get_capabilities or the host policy names the helper role `%s`:\n%s", key, para)
+				}
+			}
+		}
+	})
+	t.Run("helper settings are read and recovered through crw role helper", func(t *testing.T) {
+		if !strings.Contains(normalized(text), "`crw role helper`") {
+			t.Errorf("execution-roles.md does not send helper role settings to `crw role helper`")
+		}
+	})
+}
+
+func mustJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+// The level nouns are what an instruction uses; the Korean words of the level table are shown to a
+// reader. Current skill metadata and the usage examples follow the same table: 부모 is the initiative
+// lead there, so a description that calls the project orchestrator 부모 names the wrong level.
+func TestCurrentSurfacesUseNoLevelWordOfTheOldMapping(t *testing.T) {
+	root := repoRoot()
+	var found []string
+	skills, err := filepath.Glob(filepath.Join(root, "plugins/crw/skills/*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []string
+	for _, dir := range skills {
+		files = append(files, filepath.Join(dir, "SKILL.md"), filepath.Join(dir, "agents/openai.yaml"))
+		refs, _ := filepath.Glob(filepath.Join(dir, "references/*.md"))
+		files = append(files, refs...)
+	}
+	files = append(files, filepath.Join(root, "README.md"))
+	for _, path := range files {
+		rel, _ := filepath.Rel(root, path)
+		if filepath.ToSlash(rel) == canonRefDir+"hierarchy.md" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for i, line := range lines(string(data)) {
+			// `자식 pair` is the label an issue body already carries for the child pair line, a literal and not a level.
+			if regexp.MustCompile(`부모|자식`).MatchString(strings.ReplaceAll(line, "자식 pair", "")) {
+				found = append(found, filepath.ToSlash(rel)+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+			}
+		}
+	}
+	if len(found) > 0 {
+		t.Errorf("Korean level words of the level table outside it (name the level by its noun):\n%s", strings.Join(found, "\n"))
+	}
+}
+
+// A historical record cites the file and the line range it read at its own revision. A line range
+// that the file it now names cannot have, because the file is shorter, is a citation that was
+// rewritten without being re-read.
+var rangeCitation = regexp.MustCompile("`([A-Za-z0-9_./-]*(?:hierarchy|delivery|linear-model|release-gate|schedule-contract|execution-roles|design-explanation|skill-family)\\.md)`\\s*\\(?(\\d+)(?: to (\\d+))?")
+
+func TestCitedLineRangesExistInTheCitedCanonFile(t *testing.T) {
+	root := repoRoot()
+	var bad []string
+	err := filepath.WalkDir(filepath.Join(root, "docs"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range rangeCitation.FindAllStringSubmatch(string(data), -1) {
+			target, err := os.ReadFile(filepath.Join(root, canonRefDir, filepath.Base(m[1])))
+			if err != nil {
+				continue
+			}
+			count := len(lines(string(target)))
+			for _, n := range m[2:] {
+				if v, _ := strconv.Atoi(n); v > count {
+					rel, _ := filepath.Rel(root, path)
+					bad = append(bad, fmt.Sprintf("%s cites %s at line %s; the file has %d lines", filepath.ToSlash(rel), m[1], n, count))
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) > 0 {
+		t.Errorf("cited line numbers that the file cannot have:\n%s", strings.Join(bad, "\n"))
 	}
 }

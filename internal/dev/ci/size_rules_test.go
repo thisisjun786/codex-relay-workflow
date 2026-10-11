@@ -3,6 +3,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The size rules are procedure sentences of the skills: crw-define sizes an initiative, crw-plan sizes
@@ -99,10 +103,10 @@ func TestPlanSizeRulesWording(t *testing.T) {
 	}
 	t.Run("crw-plan sizes projects, milestones and issues", func(t *testing.T) {
 		missing := wordingMissing(plan, []string{
-			`(?i)project[^.]*one integration target`,
-			`at most 64 issues`,
+			`(?i)integration target`,
+			fmt.Sprintf(`at most %d (live )?issues`, dag.MaxNodes),
 			"`MaxNodes`",
-			`4-20 recommended`,
+			`4-20 (is )?recommended`,
 			`(?i)edit-region map[^.]*named artifacts`,
 			`(?i)milestone[^.]*one observable result`,
 			`at most 8 issues recommended`,
@@ -196,7 +200,7 @@ func TestAddIssueAdvisoryLimitsWording(t *testing.T) {
 	}
 	missing := wordingMissing(advisory, []string{
 		`(?i)advisory`,
-		`(?i)project[^.;]*more than 64 issues`,
+		fmt.Sprintf(`(?i)(project|plan)[^.;]*more than %d issues`, dag.MaxNodes),
 		`(?i)milestone[^.;]*more than 12 issues`,
 		`(?i)sentence of this procedure[^.]*not a warning (of|from) an executable`,
 	})
@@ -234,5 +238,69 @@ func TestAddIssueInitiativeLeadHandsTheBodyToTheOwner(t *testing.T) {
 	write := normalized(sectionOf(text, "Check, write, read back"))
 	if !regexp.MustCompile(`(?i)write intent[^.]*(from )?(a|the) project orchestrator or (a|the) user`).MatchString(write) {
 		t.Errorf("Check, write, read back does not limit the write to a project orchestrator or the user:\n%s", write)
+	}
+}
+
+// planNodes is the revision that adds the nodes n000.. to a plan.
+func planNodes(from, to int) []dag.Change {
+	var changes []dag.Change
+	for i := from; i < to; i++ {
+		id := fmt.Sprintf("n%03d", i)
+		changes = append(changes, dag.Change{Op: dag.OpAddNode, Node: &dag.Node{NodeID: id, IssueKey: "CRW-" + id, Kind: dag.NodeNonPR, CriteriaSetDigest: testsupport.Dig("criteria " + id)}})
+	}
+	return changes
+}
+
+// MaxNodes bounds the live nodes of one plan revision, not the issues a Linear project ever held:
+// a retired node leaves the count. The size rules say what the bound counts, because a project of
+// sixty finished issues and five open ones is not over it.
+func TestPlanLimitIsTheLiveNodesOfOneRevision(t *testing.T) {
+	first := dag.Revision{PlanID: "p", ProjectKey: "k", Changes: planNodes(0, dag.MaxNodes)}
+	state, _, violations := dag.Apply(dag.State{}, first)
+	if len(violations) > 0 {
+		t.Fatalf("%d live nodes: %v", dag.MaxNodes, violations)
+	}
+	replaced := dag.Revision{PlanID: "p", ProjectKey: "k", ExpectedParent: state.Revision,
+		Changes: append([]dag.Change{{Op: dag.OpRetireNode, NodeID: "n000"}}, planNodes(dag.MaxNodes, dag.MaxNodes+1)...)}
+	if _, _, violations := dag.Apply(state, replaced); len(violations) > 0 {
+		t.Errorf("retiring one node and adding one is refused: %v", violations)
+	}
+	over := dag.Revision{PlanID: "p", ProjectKey: "k", ExpectedParent: state.Revision, Changes: planNodes(dag.MaxNodes, dag.MaxNodes+1)}
+	if _, _, violations := dag.Apply(state, over); len(violations) == 0 || violations[0].Rule != dag.RuleLimitExceeded {
+		t.Errorf("a 65th live node is not refused with %s: %v", dag.RuleLimitExceeded, violations)
+	}
+	live := regexp.MustCompile(`(?i)\blive\b`)
+	retired := regexp.MustCompile(`(?i)retired`)
+	plan := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-plan/SKILL.md"), "Size rules"))
+	var bullet string
+	for _, b := range strings.Split(plan, "- ") {
+		if strings.Contains(b, "`MaxNodes`") {
+			bullet = b
+		}
+	}
+	if bullet == "" || !live.MatchString(bullet) || !retired.MatchString(bullet) {
+		t.Errorf("the project size rule does not say that MaxNodes bounds the live nodes of one plan revision, a retired node leaving the count:\n%s", bullet)
+	}
+	advisory := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md"), "Tell the caller about the limits"))
+	if !live.MatchString(advisory) || !retired.MatchString(advisory) {
+		t.Errorf("the add-issue advisory counts every issue of the project, not the live nodes of its plan:\n%s", advisory)
+	}
+}
+
+// A project may span repositories (one issue per repository delivery, linear-model.md), so the
+// integration target of the size rule is the target of each issue's delivery, not one per project.
+func TestPlanSizeRuleKeepsMultiRepositoryProjects(t *testing.T) {
+	plan := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-plan/SKILL.md"), "Size rules"))
+	var bullet string
+	for _, b := range strings.Split(plan, "- ") {
+		if strings.HasPrefix(b, "A project") {
+			bullet = b
+		}
+	}
+	if !regexp.MustCompile(`(?i)repositor`).MatchString(bullet) {
+		t.Errorf("the project size rule does not say how it reads for a project spanning repositories:\n%s", bullet)
+	}
+	if regexp.MustCompile(`(?i)one integration target and at most`).MatchString(bullet) {
+		t.Errorf("the project size rule requires one integration target per project, which the multi-repository rule of the same skill permits:\n%s", bullet)
 	}
 }
