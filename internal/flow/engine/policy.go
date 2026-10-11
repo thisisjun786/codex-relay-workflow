@@ -50,8 +50,8 @@ type AliasRule struct {
 }
 
 // Policy is the role table an engine resolves calls against. Its content is the operator's execution policy file
-// (F02 loads it); nothing in the engine ships a default pair for a real role. FakePolicy is the table of the fake
-// backend.
+// (PolicyFromExecution reads it); nothing in the engine ships a default pair for a real role. FakePolicy is the table of
+// the fake backend.
 type Policy struct {
 	Roles map[string]RoleSpec
 	// Aliases are the rows of the alias table. Of the rows that match a call, the one that names the most of effort
