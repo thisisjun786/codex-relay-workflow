@@ -284,6 +284,14 @@ func (r *run) take(rec Object) (Object, int, string) {
 			}
 			r.step("take over an empty staging directory", true, field("detail", why), field("clearedOwnFiles", strs(cleared)))
 		default:
+			if says, readable := claimSays(r.environment); decision == staging.Keep && readable && says == staging.Complete && !protected {
+				if _, _, why := rollbackTarget(rec, r.environment); why == "" {
+					// A runtime this host installed, promoted and then left (a rollback moved the host off it): selecting it
+					// again is a rollback to it, under the same gate, with nothing rebuilt (CRW-1267).
+					standing = append(standing, field("repair", "this runtime finished installing here and the host record lists it, so the host returns to it with crw install rollback "+r.environment+
+						" (add --backup-state-to DIR when the swap gate reads the additive zone or ordinary indexes arriving, as the update that first brought it in did)"))
+				}
+			}
 			result, code := refusedResult(r.command, why, "an existing runtime directory is never overwritten. Only a directory carrying a claim this command wrote, whose owner is established gone and which nothing is using, is removed. Nothing was written to the host record.", standing...)
 			return result, code, ""
 		}

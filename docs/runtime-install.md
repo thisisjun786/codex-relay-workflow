@@ -561,6 +561,19 @@ before returning. Taking the reading inside the promotion lock narrows the windo
 own length; it cannot close it, because that lock excludes other runs of this command and says
 nothing to a supervisor.
 
+Every command that moves the pointer reads this one gate with the same cells: `install`, `update`, a
+promotion an interrupted run left to finish, and `rollback`, to the outgoing selection or to a named
+runtime directory. None of them opens the store for writing, so a swap the gate allows leaves the
+store's bytes as they were. An allowed `EXTENDS_ZONE` or `EXTENDS_INDEX` (below) therefore means that
+the store still lacks those objects after the swap: the candidate creates them itself on its first
+write-open (decision 74, D-01: `store.Open` runs the zone statements after the v1 script on every
+writable open, and a command that declares itself read-only does not), and the OPS-4.5 backup the
+route takes is the copy of the store as it was before that. The candidate names which of its objects
+are the zone's (`zone` in `crw doctor declared-schema --json`), and the gate counts those together
+with the zone the asking `crw` knows, so the same store and the same candidate give the same answer
+whichever `crw` runs the command: an older `crw` that rolls back to a newer runtime directory reads
+the newer zone arriving as `EXTENDS_ZONE`, as that runtime's own `crw` does on the update.
+
 ### Why the schema reading compares statements and not versions
 
 The relay declares schema version 1, has never raised it, and grows its schema through separate
@@ -651,11 +664,12 @@ it too, and a rerun needs a new destination.
 
 The route carries the zone arriving alone. A running daemon, an open attempt, a cell that could not be read, another schema object arriving or
 leaving, or any object defined differently (a `dag_*` object included) still refuses with the acknowledgement as without it, and no backup is
-taken for a swap that does not happen. The zone's objects are the ones the build's own zone statements create, not whatever starts with `dag_`: an
-object this build does not know, or a later step of the zone ledger, is a plain `EXTENDS` or `DIFFERS` until a build that knows it is the one asking.
-The acknowledgement where nothing arrives is not a refusal and takes no backup. The route exists in a build that carries it: the installed
-`current/bin/crw` of an earlier build reads the same arrival as a plain `EXTENDS`, so the update is run with the new build's binary from the archive
-(the documented path).
+taken for a swap that does not happen. The zone's objects are the ones zone statements create, those of the asking build and those the
+candidate names as its zone, not whatever starts with `dag_`: an object neither names is a plain `EXTENDS` or `DIFFERS`. The acknowledgement
+where nothing arrives is not a refusal and takes no backup. A candidate that names no zone, or a `crw` that does not read the name, leaves
+only the asking build's zone to decide, and an installed `current/bin/crw` of an earlier build then reads a newer zone arriving as a plain
+`EXTENDS`; the command is run with the newer build's own binary, the archive's `crw` for an update (the documented path) and `<dir>/bin/crw`
+for a rollback to `<dir>`.
 
 **The zone leaves (`NARROWS_ZONE`).** Returning to a runtime that does not declare the zone, on an update, on a promotion an interrupted run left to
 finish, or on a rollback that moves the pointer, is not refused for that reason: the zone is additive, so an older runtime opens a store that has
@@ -805,6 +819,21 @@ nothing written when the record moved it, and then applies a promotion's gate, o
 second-owner rules, commits the selection before the link, and proves the pointer it placed. The
 runtime it leaves stays installed and becomes the outgoing selection, so a second rollback returns
 to it. Where there is no outgoing selection, a bare rollback refuses and writes nothing.
+
+A rollback reads the [same swap gate](#reading-whether-it-is-safe-to-swap) as an update, so returning
+to a runtime that brings the additive zone or ordinary indexes to a store without them takes the same
+`--backup-state-to DIR` the update that first brought it in took.
+
+**Back to the newer runtime after a rollback.** `crw install rollback <dir> --backup-state-to DIR`,
+with `<dir>` the newer runtime directory the rollback left, selects it again: the directory is still
+installed and its claim is settled, so nothing is rebuilt. `crw install update` from the same archive
+does not, because the directory it would build already exists, finished and selected by nothing; its
+refusal (`stagingDecision: KEEP`) names this rollback under `repair`. The backup is needed when the
+store still lacks what the newer runtime declares (it never opened the store for writing between the
+update and the rollback); without it the refusal names the route, and where nothing arrives the flag
+takes no backup. A `crw` that does not read the zone a candidate names reads a newer zone arriving as
+a plain `EXTENDS` ([the route](#why-the-schema-reading-compares-statements-and-not-versions)); run
+the rollback with the newer runtime's own `<dir>/bin/crw` then.
 
 The target has to be a Go runtime (`bin/crw`) launchable as it stands, judged without running
 it, and its claim has to be settled, or unsettled with nobody holding it where the record shows a

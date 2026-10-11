@@ -4744,7 +4744,9 @@ a build that adds the zone reads `EXTENDS_ZONE` against a store without it and r
 `--backup-state-to DIR`, which takes the OPS-4.5 backup of the whole state directory itself (copy only, byte for byte, after the daemon and in-flight
 cells pass and before the swap, recorded beside the backup); a build without the zone reads `NARROWS_ZONE` against a store that has it and is not
 refused; every other difference, a `dag_*` object defined differently included, refuses as before with the acknowledgement as without it
-([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). The model, the commands and the one
+([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). The zone's objects are those the
+asking build's zone statements create together with those the candidate names as its zone (`zone` in `crw doctor declared-schema --json`,
+CRW-1267), so an older `crw` rolling back to a newer runtime reads the newer zone arriving as that runtime's own `crw` does. The model, the commands and the one
 new refusal reason, `plan_revision_conflict`, are in [DAG plans](../relay/dag-plans.md).
 
 Where: internal/relay/store/dag_zone.go, store.go (`open`); internal/runtime/swapgate/swapgate.go (`DeclaredSchema`, `SchemaCell`,
