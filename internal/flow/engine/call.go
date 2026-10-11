@@ -335,7 +335,7 @@ func (c *callRun) event(ev string, data map[string]any) Event {
 	c.lastSeq, c.lastEvent = row.Seq, ev
 	c.mu.Unlock()
 	if err := journalErr(c.e.j); err != nil {
-		c.e.fail(ErrKindEngine, fmt.Errorf("the journal cannot be written: %w", err))
+		c.e.journalFailed(err)
 	}
 	return row
 }
@@ -348,7 +348,7 @@ func (c *callRun) journalDown() (CallResult, bool) {
 	if err == nil {
 		return CallResult{}, false
 	}
-	c.e.fail(ErrKindEngine, fmt.Errorf("the journal cannot be written: %w", err))
+	c.e.journalFailed(err)
 	c.mu.Lock()
 	seq := c.lastSeq
 	c.mu.Unlock()

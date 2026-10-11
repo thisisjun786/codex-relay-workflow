@@ -15,8 +15,8 @@ import (
 // RecoverEnv is engine.RecoverEnv of the shipped binary: it opens the relay store the run's journal is persisted in (the
 // state directory the operator named, else the relay's own selection for the control socket) and connects to the App Server
 // control socket the run's host listens on. The store is opened for writing, because a recovery appends rows; a store that
-// does not exist is an error, never a new empty store. The journal commits every row as it is appended, and Close ends the
-// connection, the journal and the store.
+// does not exist is an error, never a new empty store. The rows of the recovery are committed together by Close (in one
+// transaction, so a recovery that cannot be stored leaves nothing behind), which also ends the connection and the store.
 func RecoverEnv(ctx context.Context, req engine.RecoverEnvRequest) (engine.RecoverSetup, error) {
 	socket := req.Socket
 	if socket == "" {
@@ -48,7 +48,7 @@ func RecoverEnv(ctx context.Context, req engine.RecoverEnvRequest) (engine.Recov
 			return engine.RecoverSetup{}, fmt.Errorf("no run in the store at %s holds call %s", db, req.CallID)
 		}
 	}
-	j, err := Open(ctx, st, run, Identity{}, Options{Immediate: true})
+	j, err := Open(ctx, st, run, Identity{}, Options{})
 	if err != nil {
 		_ = st.Close()
 		return engine.RecoverSetup{}, err

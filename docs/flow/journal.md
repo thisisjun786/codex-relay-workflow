@@ -99,6 +99,6 @@ request id (`ops.RequestID`).
 
 The binary installs `engine.RecoverEnv`: it opens the relay store (`--state DIR`, else `CODEX_SESSION_RELAY_STATE`, else the
 relay's discovery for the control socket) and connects to the App Server control socket (`--socket PATH`, else the default one).
-It finds the run that holds the call (or takes `--run`), opens its journal with every row committed as it is appended, and runs
-the recovery of [script.md](script.md#journal). The command exits 0 when it recovered the call, 1 when the proof does not hold
+It finds the run that holds the call (or takes `--run`), opens its journal, runs the recovery of [script.md](script.md#journal)
+and commits the rows of the recovery together, in one transaction, when it ends. The command exits 0 when it recovered the call, 1 when the proof does not hold
 (nothing is appended but the sighting of a closed connection), and 2 for a command line, a store or a call it cannot use.

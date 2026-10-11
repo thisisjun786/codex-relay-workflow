@@ -41,8 +41,7 @@ type Identity struct {
 type Options struct {
 	// Now is the clock of the rows' recorded_at; nil is time.Now.
 	Now func() time.Time
-	// Immediate commits every row as it is appended, instead of batching the rows that are not intents. The recover command
-	// uses it.
+	// Immediate commits every row as it is appended, instead of batching the rows that are not intents.
 	Immediate bool
 }
 

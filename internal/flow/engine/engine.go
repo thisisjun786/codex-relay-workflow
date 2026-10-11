@@ -306,6 +306,9 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	// run's last one.
 	e.cancel()
 	e.inflight.Wait()
+	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
+		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
+	}
 	e.undeliveredM.Lock()
 	for _, r := range e.undelivered {
 		e.results = append(e.results, r)
@@ -583,6 +586,16 @@ func (e *Engine) recorded(callID string) bool {
 	}
 	return false
 }
+
+// journalFailed ends the run because a row could not be stored. It may be called from any goroutine: the calls in flight are
+// cancelled at once, and the run's failure is set on the loop's goroutine (the run reports the journal's error at its end in
+// any case).
+func (e *Engine) journalFailed(err error) {
+	e.cancel()
+	e.loop.Post(nil, func() { e.fail(ErrKindEngine, journalError(err)) })
+}
+
+func journalError(err error) error { return fmt.Errorf("the journal cannot be written: %w", err) }
 
 // escalateUnknown writes the dispatch_unknown escalation of a call once.
 func (e *Engine) escalateUnknown(c *callRun, detail string) {
