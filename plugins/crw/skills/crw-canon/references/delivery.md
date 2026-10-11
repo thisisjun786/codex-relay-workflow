@@ -38,7 +38,7 @@ Recover the existing task first. A replacement is routine only when task creatio
 
 Write instructions sent to child tasks in English, including initial assignments,
 review corrections, active-turn steer messages, resumes, and restoration blocks. The same applies
-to a supervisor's instructions to a parent and to messages between peer parents.
+to an initiative lead's instructions to a project orchestrator and to messages between peer project orchestrators.
 Translate the actionable instructions without changing their scope or acceptance
 criteria; preserve exact identifiers, URLs, paths, code, and necessary source quotes.
 A child also works and writes in English: its own messages and final return, its commit
@@ -48,13 +48,12 @@ its host, its workflow or the last thing it read leaned toward, and children of 
 answering in different languages. Exact identifiers, quotations and code stay as they are.
 Keep task titles under the existing Korean title convention, and keep user-facing
 reports and Linear records in Korean unless explicitly requested otherwise. A child writes neither
-of those: it returns proposed Linear changes for its parent to write, and the parent reports to the
+of those: it returns proposed Linear changes for its project orchestrator to write, and the project orchestrator reports to the
 user. This language rule applies to future messages; it does not require resending old prompts
 or waking existing tasks merely to change their language.
-Name the three levels the same way in both registers. A Korean report or record calls them 감독 세션,
-부모 세션 and 자식 세션, spelled out where prose first introduces the role and shortened to 감독, 부모
-and 자식 after that or in a one-line label, while the English instruction keeps the role words those
-records are keyed on. They are one role in two registers, so neither version needs a gloss.
+A Korean report or record names a level by the Korean column of [the level table](hierarchy.md#the-levels)
+and by nothing else, while the English instruction keeps the level nouns of its first column; the table
+is the one place either register is set.
 
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the child pair recorded for its issue under [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type), with `crw-loop` as its workflow, and owns its own host goal, goalplan, and FSM. That pair is one the declared policy lists for the child role, read from it at the time of the call under [Execution settings by role](execution-roles.md#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default: `crw-loop` as the workflow and, for the pair, the one the issue body's child pair line records, or the table's answer where the issue has no line. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 

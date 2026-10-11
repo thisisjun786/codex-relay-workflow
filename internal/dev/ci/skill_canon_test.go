@@ -542,3 +542,49 @@ func TestCanonSkillNeverImplicit(t *testing.T) {
 		t.Errorf("crw-canon is not in skillport.OwnSkills")
 	}
 }
+
+// koreanLevelWord is a Korean word for a level: the level table's Korean column and the older
+// session words for the same levels.
+var koreanLevelWord = regexp.MustCompile(`감독|부모|자식|관리`)
+
+// The Korean words for the levels are the Korean column of the one level table in hierarchy.md. No
+// other file of the shared library names the levels in Korean, so a Korean report or record cannot
+// read one level under the word another file gives it; the delivery rule for Korean reports points at
+// that table instead.
+func TestKoreanLevelWordsOnlyInHierarchyTable(t *testing.T) {
+	root := repoRoot()
+	var found []string
+	err := filepath.WalkDir(filepath.Join(root, canonSkillDir), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == canonRefDir+"hierarchy.md" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range lines(string(data)) {
+			if koreanLevelWord.MatchString(line) {
+				found = append(found, rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) > 0 {
+		t.Errorf("Korean level words outside the hierarchy.md level table:\n%s", strings.Join(found, "\n"))
+	}
+	delivery := readRepoText(t, canonRefDir+"delivery.md")
+	if !strings.Contains(delivery, "(hierarchy.md#the-levels)") {
+		t.Errorf("delivery.md does not point Korean reports at the level table (hierarchy.md#the-levels)")
+	}
+}
