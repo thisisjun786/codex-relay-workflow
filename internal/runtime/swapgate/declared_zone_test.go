@@ -129,3 +129,44 @@ func TestTheDeclaredSchemaNamesItsZone(t *testing.T) {
 		}
 	}
 }
+
+// A zone name the candidate gives never authorizes a departure, and counts for an arrival only when it names an object
+// the candidate declares (CRW-1267 d1). A candidate that answers its own objects without a non-zone table the store
+// holds and names that table as its zone reads NARROWS, the departure no runtime can read, refused with or without the
+// OPS-4.5 backup, exactly as when it names no zone; objects leave as the zone's only by this build's own zone.
+func TestACandidateZoneNameNeverReleasesADeparture(t *testing.T) {
+	v1, zone := declaredParts(t)
+	whole := join(v1, zone)
+	legacy := object("table legacy_data", "CREATE TABLE legacy_data (id INTEGER PRIMARY KEY, body TEXT)")
+	later := object("table later_zone_step", "CREATE TABLE IF NOT EXISTS later_zone_step (id INTEGER PRIMARY KEY)")
+
+	cases := []struct {
+		name      string
+		held      record.Object
+		candidate record.Object
+		answer    string
+	}{
+		{"a non-zone table leaving, named by the candidate as its zone", join(whole, legacy), declaringZone(whole, append(keysOf(zone), "table legacy_data")), swapgate.Narrows},
+		{"a non-zone table leaving, the candidate naming only it", join(whole, legacy), declaringZone(whole, []string{"table legacy_data"}), swapgate.Narrows},
+		{"a newer zone object leaving, named by the candidate that does not declare it", join(whole, later), declaringZone(whole, append(keysOf(zone), "table later_zone_step")), swapgate.Narrows},
+		{"a name the candidate does not declare carries no arrival", whole, declaringZone(join(whole, later), []string{"table later_zone_step_other"}), swapgate.Extends},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cell := swapgate.SchemaCell(heldBy(tc.held), tc.candidate)
+			if record.Get(cell, "answer") != tc.answer || !refuses(t, cell) {
+				t.Fatalf("answer %v, refuses %v; want %s, refused\n%s", record.Get(cell, "answer"), refuses(t, cell), tc.answer, golden.Canon(cell))
+			}
+			cells := map[string]record.Object{
+				"daemon":      swapgate.Cell("STOPPED", true, "stopped", nil, false),
+				"inFlight":    swapgate.Cell(swapgate.NoAttempts, true, "none", nil, swapgate.NoAttempts),
+				"storeSchema": cell,
+			}
+			for _, release := range []*swapgate.Release{nil, {Backup: record.Object{{Key: "made", Value: true}}}} {
+				if verdict := swapgate.DecideWithRelease(cells, release); record.Get(verdict, "verdict") == swapgate.Allowed {
+					t.Fatalf("allowed with release %v: %s", release, golden.Canon(verdict))
+				}
+			}
+		})
+	}
+}

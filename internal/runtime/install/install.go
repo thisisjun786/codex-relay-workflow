@@ -287,9 +287,13 @@ func (r *run) take(rec Object) (Object, int, string) {
 			if says, readable := claimSays(r.environment); decision == staging.Keep && readable && says == staging.Complete && !protected {
 				if _, _, why := rollbackTarget(rec, r.environment); why == "" {
 					// A runtime this host installed, promoted and then left (a rollback moved the host off it): selecting it
-					// again is a rollback to it, under the same gate, with nothing rebuilt (CRW-1267).
-					standing = append(standing, field("repair", "this runtime finished installing here and the host record lists it, so the host returns to it with crw install rollback "+r.environment+
-						" (add --backup-state-to DIR when the swap gate reads the additive zone or ordinary indexes arriving, as the update that first brought it in did)"))
+					// again is a rollback to it, under the same gate, with nothing rebuilt (CRW-1267). The rollback is run
+					// with that runtime's own binary: the installed current/bin/crw is the runtime the host returned to, which
+					// may predate the zone this runtime names and read its arrival as a plain EXTENDS the backup does not release.
+					standing = append(standing, field("repair", "this runtime finished installing here and the host record lists it, so the host returns to it with its own binary: "+
+						filepath.Join(r.environment, "bin", Binary)+" install rollback "+r.environment+" --backup-state-to DIR (DIR a new directory for the OPS-4.5 copy of the state directory, "+
+						"taken when the swap gate reads the additive zone or ordinary indexes arriving, as the update that first brought it in did, and not where nothing arrives). "+
+						"The installed current/bin/crw is the runtime the host returned to and may not read the zone this runtime names"))
 				}
 			}
 			result, code := refusedResult(r.command, why, "an existing runtime directory is never overwritten. Only a directory carrying a claim this command wrote, whose owner is established gone and which nothing is using, is removed. Nothing was written to the host record.", standing...)

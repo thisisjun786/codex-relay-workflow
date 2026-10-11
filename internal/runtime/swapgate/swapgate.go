@@ -254,21 +254,26 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 		if err != nil {
 			return Cell(reading.Unreadable, false, "which schema objects belong to the additive DAG zone could not be derived: "+err.Error(), command, nil)
 		}
-		// The zone is what this build's zone statements create together with what the candidate names as its own
-		// (CRW-1267): a build older than the candidate does not know the zone objects the candidate appends, and the
-		// candidate creates every one it names on its first write-open, so the answer does not depend on which crw asks.
-		zone := make(map[string]bool, len(known)+len(named))
+		// An arrival is the zone's when this build's zone statements create it or the candidate names it as its own zone
+		// among the objects it declares (CRW-1267): a build older than the candidate does not know the zone objects the
+		// candidate appends, and the candidate creates every one it names on its first write-open, so the answer does not
+		// depend on which crw asks. A departure is the zone's only by this build's own zone: a name the candidate gives
+		// describes an object it creates, never one it leaves behind, so no candidate answer turns the loss of an object
+		// into the zone's departure.
+		arriving := make(map[string]bool, len(known)+len(named))
 		for name := range known {
-			zone[name] = true
+			arriving[name] = true
 		}
 		for _, name := range named {
-			zone[name] = true
+			if _, declares := declared[name]; declares {
+				arriving[name] = true
+			}
 		}
 		zoneEvidence := append(evidenceValue, record.Object{{Key: "zoneOnly", Value: true}}...)
 		switch {
-		case len(lost) > 0 && inZone(lost, zone):
+		case len(lost) > 0 && inZone(lost, known):
 			return Cell(NarrowsZone, true, "the store holds objects of the additive DAG zone that this candidate does not declare: "+strings.Join(lost, ", ")+". An older runtime opens such a store and ignores the zone's tables (D-01), so returning to it loses nothing and is not refused; the zone stays in the store and a newer runtime reads it again.", command, zoneEvidence)
-		case len(added) > 0 && inZone(added, zone):
+		case len(added) > 0 && inZone(added, arriving):
 			return Cell(ExtendsZone, true, "the candidate declares objects of the additive DAG zone that the store does not hold: "+strings.Join(added, ", ")+". Nothing in the store is lost or rewritten, and the candidate creates them on its first write-open (D-01). OPS-4.5 still requires a copied backup of the whole state directory first, so this refuses unless the command is run with --backup-state-to DIR: it copies the state directory (copy only, byte for byte) after the daemon and in-flight cells pass and before the swap, records the copy, and then allows the swap.", command, zoneEvidence)
 		}
 	}
@@ -343,7 +348,7 @@ var zoneObjects = sync.OnceValues(func() (map[string]bool, error) {
 
 // namedZone is the zone a candidate names in its declared schema (DeclaredSchema's "zone"): a list of schema object keys.
 // A candidate built before the zone was named says nothing (absent or null), which names no object; any other form is not
-// read, and ok is false.
+// read, and ok is false. SchemaCell counts a name only for an object the candidate declares and only for its arrival.
 func namedZone(value any) (names []string, ok bool) {
 	if value == nil {
 		return nil, true

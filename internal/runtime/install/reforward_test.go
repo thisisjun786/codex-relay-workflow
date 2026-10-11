@@ -3,6 +3,7 @@ package install_test
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,11 +111,17 @@ func TestARolledBackHostReturnsToTheSameNewerRuntimeWithOneCommand(t *testing.T)
 		t.Fatalf("rollback: exit %d, pointer %s\n%s", code, h.pointerTarget(t), golden.Canon(back))
 	}
 
-	// L4: the same update again keeps the finished runtime directory and names the way back to it
+	// L4: the same update again keeps the finished runtime directory and names the way back to it, run with the newer
+	// runtime's own binary: the installed current/bin/crw is now the older runtime, which need not read the zone the
+	// newer runtime names (CRW-1267 d2)
 	again, code := install.Install(context.Background(), o, "update", install.Source{From: second})
 	repair, _ := at(again, "repair").(string)
-	if code != install.Refused || at(again, "stagingDecision") != staging.Keep || !strings.Contains(repair, "crw install rollback "+next) || !strings.Contains(repair, "--backup-state-to") || h.pointerTarget(t) != old {
+	advised := filepath.Join(next, "bin", "crw")
+	if code != install.Refused || at(again, "stagingDecision") != staging.Keep || !strings.Contains(repair, advised+" install rollback "+next+" --backup-state-to ") || h.pointerTarget(t) != old {
 		t.Fatalf("update again: exit %d, pointer %s\n%s", code, h.pointerTarget(t), golden.Canon(again))
+	}
+	if info, err := os.Stat(advised); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("the advised binary %s is not an executable file: %v", advised, err)
 	}
 
 	// L4b: rollback <newer dir> without the backup names the route; with it, the host is on the newer runtime again
