@@ -1,6 +1,6 @@
 ---
 name: crw-plan
-description: "Decompose an agreed goal into Linear projects, useful milestones, and implementation issues that each carry one concept bundle, in one planning operation. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup and scoped plan updates; use crw-run for dispatch and crw-check for implementation drift."
+description: "Decompose an agreed goal into Linear projects, milestones and issues, each issue one concept bundle. Use for product planning, a roadmap or 기획, and scoped plan updates. Initiative definition is crw-define's, dispatch crw-run's, drift crw-check's."
 ---
 
 # CRW Plan

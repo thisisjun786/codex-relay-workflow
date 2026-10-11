@@ -1,5 +1,13 @@
 ### Implementation-Unit Documents
 
+The numbered plan documents of a unit are workspace-local execution evidence: the plan as it
+is carried out in this checkout. Each one quotes the Linear issue and documents it implements
+(the ID and the revision read), which stay canonical under
+[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents),
+and never replaces them. A product decision is made and recorded in Linear; a plan document
+points to it, and where the two disagree the Linear record wins and the plan document is
+amended at the next P. This file owns the format of the numbered documents.
+
 Full documentation routine (P concretizes the docs, A audits them as a hard gate, D
 archives to `_fin/`, plus the mainstream design-doc/RFC translation table):
 [Implementation log](../../crw-dev-scaffolding/references/implementation-log.md).

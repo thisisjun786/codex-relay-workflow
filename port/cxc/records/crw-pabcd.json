@@ -50,14 +50,18 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1130 (post-evaluation): the Delegation model starts from the CRW binding (DISPATCH-MANAGED-01 is applied before any dispatch of an independent lane; a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane) and the thread and subagent choice is scoped to unmanaged work; the dispatch-surfaces reference is read before every authorized dispatch. Oracle: pabcd/SKILL.md Delegation model and pabcd/references/dispatch-surfaces.md:25-31. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word, and separates the detector result from what the handler injects (the un-armed loop-arm mandate before the hint, the interview-entry policy, the goal-mode drop of an I hint and the P-to-interview promotion, the un-armed loop-arm mandate, the interview-entry policy, passive re-injection in an armed session).",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1130 (post-evaluation): the Delegation model starts from the CRW binding (DISPATCH-MANAGED-01 is applied before any dispatch of an independent lane; a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane) and the thread and subagent choice is scoped to unmanaged work; the dispatch-surfaces reference is read before every authorized dispatch. Oracle: pabcd/SKILL.md Delegation model and pabcd/references/dispatch-surfaces.md:25-31. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word, and separates the detector result from what the handler injects (the un-armed loop-arm mandate before the hint, the interview-entry policy, the goal-mode drop of an I hint and the P-to-interview promotion, the un-armed loop-arm mandate, the interview-entry policy, passive re-injection in an armed session). CRW-1219: the description drops the plan and requirements triggers (crw-plan, crw-define and crw-interview own them), and the parent-exclusion paragraph is one pointer to hierarchy.md.",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"Use for class-scaled Plan-Audit-Build-Check-Done work. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, plan this, 기획, 단계별로, 요구사항 정리.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Codex-native PABCD loop (Interview/Plan/Audit/Build/Check/Done) with class-scaled depth.\"\n"
+          ],
+          "new": [
+            "description: \"Use for class-scaled Plan-Audit-Build-Check-Done work on one task. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, 단계별로.\"\n"
           ]
         },
         {
@@ -74,10 +78,8 @@
           "new": [
             "P here plans one task's implementation; crw-plan decomposes a goal into Linear\n",
             "projects, milestones and issues. C verifies this task's implementation; crw-check\n",
-            "compares delivered work with canonical Linear documents and issue criteria. A\n",
-            "crw-run project parent never follows this procedure and creates no implementation\n",
-            "goalplan or FSM, including in crw-run goal mode. A task's host goal running PABCD\n",
-            "is distinct from that parent goal.\n",
+            "compares delivered work with canonical Linear documents and issue criteria.\n",
+            "Which level runs this procedure, and what goal each level opens, is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level).\n",
             "\n"
           ]
         },
@@ -141,7 +143,7 @@
             "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
           ],
           "new": [
-            "With no active host goal, you can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal; crw-run parent goal mode runs no PABCD. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.\n"
+            "With no active host goal, you can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.\n"
           ]
         },
         {
@@ -476,8 +478,21 @@
     },
     {
       "file": "references/implementation-units.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1219: the numbered plan documents are written as workspace-local execution evidence that quotes the Linear canon, and this file owns their format.",
       "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The numbered plan documents of a unit are workspace-local execution evidence: the plan as it\n",
+            "is carried out in this checkout. Each one quotes the Linear issue and documents it implements\n",
+            "(the ID and the revision read), which stay canonical under\n",
+            "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents),\n",
+            "and never replaces them. A product decision is made and recorded in Linear; a plan document\n",
+            "points to it, and where the two disagree the Linear record wins and the plan document is\n",
+            "amended at the next P. This file owns the format of the numbered documents.\n",
+            "\n"
+          ]
+        },
         {
           "line": 5,
           "old": [
@@ -547,7 +562,7 @@
     },
     {
       "file": "references/phase-control.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left. CRW-1219: the documents planUnit names are written as workspace-local execution evidence that quotes the Linear canon.",
       "hunks": [
         {
           "line": 20,
@@ -556,6 +571,17 @@
           ],
           "new": [
             "Accepted prefixes include `$crw-pabcd`,\n"
+          ]
+        },
+        {
+          "line": 50,
+          "new": [
+            "The numbered documents `planUnit` names are workspace-local execution evidence: each quotes the\n",
+            "Linear issue and documents it implements, which stay canonical under\n",
+            "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents).\n",
+            "The gate checks that the unit exists and holds numbered documents, not what they decide; their\n",
+            "format is [Implementation units](implementation-units.md).\n",
+            "\n"
           ]
         },
         {
@@ -588,13 +614,11 @@
           ]
         },
         {
-          "line": 90,
+          "line": 91,
           "old": [
-            "`A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires\n",
             "`auditResidual`.\n"
           ],
           "new": [
-            "`A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires\n",
             "`auditResidual`, and a round whose recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` also requires\n",
             "`auditBlockers`: one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N.\n"
           ]

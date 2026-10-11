@@ -20,7 +20,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Separate task Interview from crw-define initiative discovery without granting phase or Linear-write authority. State the boundary to crw-define in the description, so a request routes to the skill that owns it.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Separate task Interview from crw-define initiative discovery without granting phase or Linear-write authority. State the boundary to crw-define in the description, so a request routes to the skill that owns it. CRW-1219: the description names one job, takes the clarifying-question and catalog-discovery triggers and the requirements-clarification trigger from crw-pabcd, and sends initiative intent to crw-define.",
       "hunks": [
         {
           "line": 3,
@@ -30,7 +30,7 @@
             "  short-description: \"Persistent I-phase clarification with contradiction tracking.\"\n"
           ],
           "new": [
-            "description: \"Use for CRW Interview mode: persistent IPABCD I-phase requirements discovery, contradiction hunting, focused user questions, question/answer evidence recording, and readiness gating before Plan. It clarifies one task's requirements inside its PABCD loop; defining a Linear initiative's goal and scope is crw-define's. Triggers: interview, 인터뷰, requirements clarification, ambiguity, contradiction scan, ask me questions, I phase, crw-interview.\"\n"
+            "description: \"Use for one task's requirements interview: the PABCD I phase, clarifying questions, contradiction scan, catalog discovery for a vague domain, and readiness before Plan. Initiative intent is crw-define's. Triggers: interview, 인터뷰, 요구사항 정리, ambiguity, crw-interview.\"\n"
           ]
         },
         {

@@ -1,6 +1,6 @@
 ---
 name: crw-pabcd
-description: "Use for class-scaled Plan-Audit-Build-Check-Done work. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, plan this, 기획, 단계별로, 요구사항 정리."
+description: "Use for class-scaled Plan-Audit-Build-Check-Done work on one task. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, 단계별로."
 ---
 
 # PABCD Workflow
@@ -19,10 +19,8 @@ crw-dev is canonical for work class, C0/C1 fast-path, proof, and safety.
 
 P here plans one task's implementation; crw-plan decomposes a goal into Linear
 projects, milestones and issues. C verifies this task's implementation; crw-check
-compares delivered work with canonical Linear documents and issue criteria. A
-crw-run project parent never follows this procedure and creates no implementation
-goalplan or FSM, including in crw-run goal mode. A task's host goal running PABCD
-is distinct from that parent goal.
+compares delivered work with canonical Linear documents and issue criteria.
+Which level runs this procedure, and what goal each level opens, is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level).
 
 ## Interview Trigger
 
@@ -89,7 +87,7 @@ IDLE ──→ P ──→ A ──→ B ──→ C ──→ D ──→ IDLE
          └──────┴──────┴────→ I (Interview, context preserved)
 ```
 
-With no active host goal, you can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal; crw-run parent goal mode runs no PABCD. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.
+With no active host goal, you can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.
 
 ## Phase Control / Orchestrate
 

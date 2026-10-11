@@ -72,6 +72,8 @@ The schedule verdict is a separate field and never a row of this table. A code r
 
 ## Find contradictions
 
+Actors: manager, initiative lead, orchestrator. Each reads and reports; a task that runs this as a sub-task returns its findings to its caller, which writes any record (see [Bounded helper](#bounded-helper)).
+
 Find claims or behaviors that cannot both hold under the same stated conditions. Anchor the rules and accepted decisions in canonical Linear documents, and return reproducible contradictions or precise evidence gaps, not a list of dislikes.
 
 If only a local file or pasted artifact is supplied, audit that bounded input and label its canonical Linear link unknown. Missing connector access can yield a partial audit; it cannot establish cross-document consistency. Do not create or migrate documents simply to run the check.

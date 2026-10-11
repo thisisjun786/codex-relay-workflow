@@ -1,9 +1,9 @@
 # Surfaces
 
 What each judged surface is measured against, and what exempts it. The rules themselves belong to
-the [shared references](../../crw-canon/SKILL.md); these rows only say which test to apply.
+the [shared references](../../crw-canon/SKILL.md); these rows only say which test to apply (the Diagnose job) and, in the last column, when a gap is clear enough for the Supplement job to write.
 
-| Surface | Applicable target | Not a defect | A clear supplement requires |
+| Surface | Applicable target | Not a defect | A clear supplement (Supplement job) requires |
 |---|---|---|---|
 | `저장소` repository label | One edit-target label per implementation issue, named after the repository with the exact URL as its description ([Linear operating model](../../crw-canon/references/linear-model.md#linear-operating-model)) | Non-development work and an unresolved target may leave the group empty; reference-only and legacy repositories belong in context links; a preserved historical multi-repository case is not forced to a single value | Every input that names a repository names the same one, none of them disagrees, and at least one of the agreeing inputs is the current delivery (its pull request where one exists, otherwise its task branch) or the existing assignment; the value already exists in the group. A majority is not agreement. Never copy project labels onto issues |
 | Explicit repository address | The owner/repo or URL kept in the issue body beside the label ([Resolve the implementation repository](../../crw-canon/references/linear-model.md#resolve-the-implementation-repository)) | The same non-development and unresolved-target cases; research or design with no code target needs no remote at all | The address is quotable from the label description, the current delivery (its pull request where one exists) or the assignment, and none of them disagree |

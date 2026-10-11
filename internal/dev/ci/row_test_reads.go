@@ -33,4 +33,7 @@ var rowTestReads = []rowTestRead{
 	{"TestNoSharedSectionOutsideCanon", "internal/dev/ci", []string{"plugins/crw/skills/crw-canon/", "plugins/crw/skills/crw-plan/references/integrations.md"}, nil},
 	{"TestAddIssueCallersNamed", "internal/dev/ci", []string{"plugins/crw/skills/crw-add-issue/SKILL.md"}, nil},
 	{"TestSkillDescriptionLength", "internal/dev/ci", []string{"plugins/crw/skills/"}, []string{"triggerAmbiguity[13]", "sizeHotspots[4]"}},
+	{"TestPabcdHasNoPlanTriggers", "internal/dev/ci", []string{"plugins/crw/skills/crw-pabcd/SKILL.md", "plugins/crw/skills/crw-plan/SKILL.md", "plugins/crw/skills/crw-define/SKILL.md", "plugins/crw/skills/crw-interview/SKILL.md"}, nil},
+	{"TestRefactorHasNoWriteProcedure", "internal/dev/ci", []string{"plugins/crw/skills/crw-refactor/SKILL.md", "plugins/crw/skills/crw-refactor/references/candidate-record.md"}, nil},
+	{"TestTidyJobsSeparated", "internal/dev/ci", []string{"plugins/crw/skills/crw-tidy/SKILL.md", "plugins/crw/skills/crw-tidy/references/surfaces.md"}, nil},
 }

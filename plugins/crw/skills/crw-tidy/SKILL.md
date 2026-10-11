@@ -1,23 +1,34 @@
 ---
 name: crw-tidy
-description: "Find documents and issues that fall short of already-agreed authoring and management rules, and supplement the gaps whose evidence is clear within the requested scope. Use for a rule-conformance sweep or a tidy pass; crw-check owns delivery against criteria and contradictions, and crw-plan owns changing the rules themselves."
+description: "Diagnose, read-only, which documents and issues fall short of already-agreed authoring and management rules; Supplement the clear gaps only as the owner of that body. Use for a rule-conformance sweep or tidy pass; crw-check owns delivery and contradictions, crw-plan the rules themselves."
 ---
 
 # CRW Tidy
 
-Compare Linear records against the rules already agreed for writing and managing them, and close the gaps whose evidence is unambiguous. Tidy judges a record against a rule that already exists; it never decides what the rule should be. A check-only request stays read-only, and a request to find and tidy carries the clear supplements in that scope through to the write without asking again for each one.
+Compare Linear records against the rules already agreed for writing and managing them, and close the gaps whose evidence is unambiguous. Tidy judges a record against a rule that already exists; it never decides what the rule should be. It has two jobs, kept under two headings because they have different actors:
 
-## Connect the sources
+| Job | Who runs it | Writes |
+|---|---|---|
+| [Diagnose](#diagnose) | any actor | nothing |
+| [Supplement](#supplement) | only the owner of the body being written | the one field being supplemented |
+
+A request to check, review or diagnose stays at the first job. A request to find and tidy also carries the second, for the bodies the caller owns, without asking again for each clear gap.
+
+## Diagnose
+
+Diagnose is read-only and any actor may run it: the user, the manager, an initiative lead, a project orchestrator, or a task asked to. It ends in a disposition for every judged item, the gaps written up as proposals, and a report.
+
+### Connect the sources
 
 Read the shared [Linear model](../crw-canon/references/linear-model.md) first. It owns the rules this skill judges against, and restating them here would create the second copy that goes stale. Use the current connector as [Use the available Linear capability](../crw-canon/references/linear-model.md#use-the-available-linear-capability) describes, exhausting pagination before calling anything absent. Use `crw-recall` to locate a decision whose record you cannot find, and restate the requested scope and confirm it when it is genuinely ambiguous. A missing or failing connector produces a partial audit that names its unread scope, never an assumed clean result.
 
-## Pin the scope and the rules
+### Pin the scope and the rules
 
 Record the initiative, project, issues and documents you were asked about, each by stable ID with its updated-at, and for every implementation issue its delivery (the pull request when one exists, otherwise the task branch and its head) and the existing assignment alongside its body. Those three inputs are what the repository surfaces are judged on, so read them before judging rather than after.
 
 Fix the rule source in the same pass. A rule is already agreed when Integrations states it, when an accepted Linear decision carries it with an ID and a date you can cite, or when the user's own later correction supersedes either of those with a traceable source and date, which [Linear holds canonical documents](../crw-canon/references/linear-model.md#linear-holds-canonical-documents) allows even before the canonical document catches up. Anything else is a candidate rule: name it, route it to [crw-plan](../crw-plan/SKILL.md), and judge no record against it. An issue status, an assistant proposal and a newer local draft are none of them decisions.
 
-## Judge the surfaces
+### Judge the surfaces
 
 Six surfaces are in scope: the `저장소` repository label, the explicit repository address in the body, the required body sections and linked documents, the project an implementation issue belongs to, an approved decision the record has not yet reflected, and the release readiness of an unreleased implementation issue. [Surfaces](references/surfaces.md) holds each one's applicable target, its named exceptions, and the condition that makes a gap clear enough to supplement.
 
@@ -26,7 +37,7 @@ Give every judged item one disposition:
 | Disposition | What it means |
 |---|---|
 | Conforms | The rule applies and the record already satisfies it |
-| Gap | The rule applies and the record falls short of it. Whether that gap is written or only proposed is decided separately, under [Supplement within authority](#supplement-within-authority) |
+| Gap | The rule applies and the record falls short of it. Whether the gap is closed or only proposed is the next job's decision, under [Supplement](#supplement) |
 | Exception | The rule's own text exempts this record: non-development work, an unresolved target, or a preserved historical multi-repository case |
 | Conflict | Sources that should agree do not, so no supplement follows from the evidence |
 | Unverified | A partial listing, a read failure, an unknown-result write, missing access, or corroborating evidence the rule requires that does not exist yet, left the question open |
@@ -35,11 +46,19 @@ Where more than one row could apply, take them in this order: Exception when the
 
 An exception is not a defect and is reported as the exception it is. A conflict is recorded with the disagreeing sources and the decision that would settle it; do not resolve it by taking whichever reading needs the smallest edit. Unverified is the honest outcome when a read failed or the evidence a judgement needs is simply not there yet, and it never becomes "no violation found".
 
-## Supplement within authority
+## Supplement
 
-The request wording sets the authority. Check-only wording returns proposals and writes nothing at all. A request to find and tidy, or a tidy step inside an assignment that already authorizes record updates under [Completion follow-up](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow), authorizes the clear supplements across the pinned scope, so do not re-ask item by item for permission already given. Explicit read-only, report-only or narrower limits win. No wording extends tidy to closing, deleting or reorganising issues, or to introducing a rule.
+Supplement writes, and only the owner of the body being written runs it, under the levels' record ownership in [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level):
 
-Every gap is either written or proposed, and none is dropped for being awkward. Write one only when its content is quotable from an accepted source and its target is within the current assignment's write authority. Quotable but out of authority is a proposal rather than a write: a project- or issue-scoped assignment does not write the parent initiative's body, which belongs to its supervisor under [Scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level). Content you would have to compose is a proposal too, carrying the passage you propose so its owner can accept it without starting over.
+- the initiative lead for an initiative body;
+- the project orchestrator for a project or issue body (an issue child returns its proposal to it);
+- the manager for a store-wide sweep, which is requested through `crw manage`.
+
+Any other actor that finds a gap hands the owner the proposal Diagnose produced, carrying the passage it proposes, and writes nothing, as [record writes and returned proposals](../crw-canon/references/linear-model.md#record-writes-and-returned-proposals) says.
+
+The request wording sets the authority. Check-only wording returns proposals and writes nothing at all. A request to find and tidy, or a tidy step inside an assignment that already authorizes record updates under [Completion follow-up](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow), authorizes the clear supplements across the pinned scope for the bodies its owner holds, so do not re-ask item by item for permission already given. Explicit read-only, report-only or narrower limits win. No wording extends tidy to closing, deleting or reorganising issues, or to introducing a rule.
+
+Every gap is either written or proposed, and none is dropped for being awkward. Write one only when its content is quotable from an accepted source and its target is a body its owner holds. Quotable but held by another level is a proposal rather than a write: a project orchestrator does not write the initiative's body, which belongs to its initiative lead. Content you would have to compose is a proposal too, carrying the passage you propose so its owner can accept it without starting over.
 
 Write in this order, one item at a time. Read the record again immediately before the write and judge against that read; where the intended end state already holds, record that it conforms and write nothing. Change only the field being supplemented, preserving the body, the other labels, the relations and the history. Read the record back and confirm from the returned record rather than by searching its text. After an ambiguous result, read existing state before repeating a create, and report an unknown result as unknown. Re-running the same request over unchanged records therefore writes nothing and creates no duplicate label, comment or document. Where the pre-write read differs from the pinned scan someone else has moved the record: re-judge it on what you just read, and leave the field they touched alone for this pass rather than overwriting their change.
 
