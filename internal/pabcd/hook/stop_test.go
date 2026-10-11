@@ -85,17 +85,18 @@ func stopStateBytes(t *testing.T, cwd string) string {
 
 const stopTail = "\nC→D requires checkOutput+exitCode. D is not a resting state; close the cycle back to IDLE."
 
-// The block text of every phase, byte for byte (hook.ts:1523-1537, 1577-1631 after R23, R33 and the cli table).
+// The block text of every phase of a session without a bound goalplan, byte for byte (hook.ts:1523-1537, 1577-1631 after R23, R33 and the cli table;
+// CRW-1189: without a binding the workPhaseId and testReceiptPath keys the oracle showed with a marker are left out).
 func TestStopBlockTextOfEveryPhase(t *testing.T) {
 	head := func(p, label string) string {
 		return "[crw — continue PABCD] You are mid-cycle at " + p + " (" + label + ") with an active goal.\n" +
 			"Do the real work of this phase, then self-advance with the concrete next command:\n"
 	}
 	want := map[state.Phase]string{
-		state.PhaseP: head("P", "PLAN") + "`CRW pabcd orchestrate A --session rec-s1 --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"diff-level plan written with files and acceptance criteria\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
-		state.PhaseA: head("A", "AUDIT") + "`CRW pabcd orchestrate B --session rec-s1 --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit loop closed: blockers folded into plan\",\"auditOutput\":\"<reviewer verdict tail>\",\"auditVerdict\":\"pass|near-pass\",\"auditResidual\":\"<near-pass only: residual blockers + disposition>\",\"auditBlockers\":\"<only when the review recorded blockers=N: replace with one {blocker,disposition,reason} object per blocker, disposition folded|rebutted>\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
-		state.PhaseB: head("B", "BUILD") + "`CRW pabcd orchestrate C --session rec-s1 --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
-		state.PhaseC: head("C", "CHECK") + "`CRW pabcd orchestrate D --session rec-s1 --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"checks passed\",\"checkOutput\":\"<test tail>\",\"exitCode\":0,\"testReceiptPath\":\"<bound goalplan only: crw pabcd receipt test output path>\",\"workPhaseId\":\"<bound goalplan only>\"}'`" + stopTail,
+		state.PhaseP: head("P", "PLAN") + "`CRW pabcd orchestrate A --session rec-s1 --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"diff-level plan written with files and acceptance criteria\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\"}'`" + stopTail,
+		state.PhaseA: head("A", "AUDIT") + "`CRW pabcd orchestrate B --session rec-s1 --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit loop closed: blockers folded into plan\",\"auditOutput\":\"<reviewer verdict tail>\",\"auditVerdict\":\"pass|near-pass\",\"auditResidual\":\"<near-pass only: residual blockers + disposition>\",\"auditBlockers\":\"<only when the review recorded blockers=N: replace with one {blocker,disposition,reason} object per blocker, disposition folded|rebutted>\"}'`" + stopTail,
+		state.PhaseB: head("B", "BUILD") + "`CRW pabcd orchestrate C --session rec-s1 --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\"}'`" + stopTail,
+		state.PhaseC: head("C", "CHECK") + "`CRW pabcd orchestrate D --session rec-s1 --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"checks passed\",\"checkOutput\":\"<test tail>\",\"exitCode\":0}'`" + stopTail,
 		state.PhaseD: head("D", "DONE") + "`CRW pabcd orchestrate reset --session rec-s1` after the DONE summary is recorded" + stopTail,
 	}
 	for phase, text := range want {
@@ -112,7 +113,7 @@ func TestStopWin32CommandsUseTheAttestFile(t *testing.T) {
 	cwd, env := stopRig(t, "active")
 	stopInFlight(t, cwd, state.PhaseB)
 	reason := stopBlockReason(t, StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "win32", env))
-	want := "`'{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\",\"workPhaseId\":\"<bound goalplan only>\"}' | Set-Content -Encoding utf8 .crw/attest.json` then `CRW pabcd orchestrate C --session rec-s1 --attest-file .crw/attest.json`"
+	want := "`'{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\"}' | Set-Content -Encoding utf8 .crw/attest.json` then `CRW pabcd orchestrate C --session rec-s1 --attest-file .crw/attest.json`"
 	if !strings.Contains(reason, "\n"+want+"\n") {
 		t.Errorf("win32 reason %q", reason)
 	}
