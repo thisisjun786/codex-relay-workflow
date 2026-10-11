@@ -21,7 +21,9 @@ import (
 //     (dag_acceptance_revalidations): no new generation and no new child. Anything else that is stale cannot be made current by ruling the old output again, so a re-validation of such a node is refused
 //     before it writes a row that would only look like progress;
 //   - a result that must be reworked goes back to the SAME child as the next generation of the same relationship, through dag-correct, and never to a new child. Redefining the node, which does make a new
-//     child, is a new relationship that supersedes the old one (contract 5, decision D-08): the parent's decision, never the scheduler's, so a node whose relationship has ended is routed to it and not corrected;
+//     child, is a new relationship that supersedes the old one (contract 5, decision D-08): the parent's decision, never the scheduler's, so a node whose relationship has ended is routed to it and not corrected.
+//     The SAME-child rule is the rule of a relationship node. An agent node has no child: its next attempt is another execution of the same node (route agent_correction, AgentCorrect), and a change of its
+//     criteria alone is judged again on the same head by a new reviewer call (route revalidate, acceptAgent);
 //   - a node that already landed is never run again (E-20). It is not stale, so nothing above it marks it; and no correction is prepared for it or recorded as its own, because what its upstream changed is
 //     carried by a successor node of a new plan revision.
 //
@@ -35,6 +37,9 @@ const (
 	ActionCorrect = "correct"
 	// ActionHold: nothing to do on this node now: it rests on a stale predecessor or on an input that is not there, its relationship is paused, or a correction of it is already under way.
 	ActionHold = "hold"
+	// ActionAgentCorrection: the output of an accepted agent node must be reworked. An agent node has no child to send a correction to: the next attempt of the SAME node is another agent execution (AgentCorrect,
+	// agent_lifecycle.go), a row of kind correction, and the node's lane runs again.
+	ActionAgentCorrection = "agent_correction"
 	// ActionRedefine: the relationship has ended, so there is no child to correct. Reworking the output is a redefinition: a new relationship that supersedes the old one.
 	ActionRedefine = "redefine"
 )
@@ -391,6 +396,12 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 		return "", "", err
 	}
 	life := lifeOf(snap, n)
+	// an accepted agent node stands on no relationship: its route is its own (routeAgentNode)
+	current, hasCurrent, err := tolerantAcceptanceOf(ctx, q, plan, n.NodeID)
+	if err != nil {
+		return "", "", err
+	}
+	agentNode := hasCurrent && current.agent != nil
 	switch {
 	case !life.active():
 		// the plan holds the node (paused, or the whole plan paused; an ended node is not judged stale at all): ruling, accepting and correcting it are refused until the plan lets it run (lifecycle.go)
@@ -401,6 +412,8 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 		return action, detail, nil
 	case missing != "":
 		return ActionHold, missing + ": the output cannot be ruled again or corrected as it stands, and a manifest cannot be built, until the edge is satisfied", nil
+	case agentNode:
+		return s.routeAgentNode(ctx, q, plan, snap, n, st)
 	case !found || rel.Superseded || rel.Status == "archived" || rel.Status == "cancelled":
 		return ActionRedefine, fmt.Sprintf("the relationship of %s has ended, so there is no child to send a correction to: reworking this output is a redefinition of the node, a new relationship registered with supersedes (contract 5, decision D-08), "+
 			"which the parent decides and which makes a new child", n.NodeID), nil
@@ -468,6 +481,36 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 	}
 	return ActionCorrect, fmt.Sprintf("the output of %s must be reworked (%s). It goes to the same child as generation %d of relationship %s: dag-correct --prepare, then a needs_changes ruling carrying its instruction as the restoration "+
 		"finding or a generation opened by hand, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, next, short(rel.ID), short(acc.AcceptanceID), ruling), nil
+}
+
+// routeAgentNode is the route of a stale accepted agent node whose predecessors are current, whose inputs are all there and which the plan lets run. There is no relationship to be ended or paused, no
+// generation to be open and nothing to redefine: the node's next attempt is another execution of the same node. A change of the criteria alone, with everything the node consumed still current, is judged
+// again on the same head (revalidate: a new reviewer call under the plan's criteria and dag-accept --supersedes, which writes a new acceptance row of the same execution and no execution row). Everything else
+// is a result that must be reworked (agent_correction: AgentCorrect closes the acceptance and releases a correction attempt).
+func (s *Scheduler) routeAgentNode(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, st *Stale) (action, detail string, err error) {
+	acceptance := ""
+	if current, has, err := tolerantAcceptanceOf(ctx, q, plan, n.NodeID); err != nil {
+		return "", "", err
+	} else if has {
+		acceptance = short(current.AcceptanceID)
+	}
+	why := st.Cause
+	if st.Cause == CauseCriteriaChanged {
+		changed, unavailable, err := s.consumedChange(ctx, q, plan, snap, n)
+		if err != nil {
+			return "", "", err
+		}
+		switch {
+		case changed == nil && unavailable == "":
+			return ActionRevalidate, fmt.Sprintf("only the criteria of %s changed: what it consumed and its output are as they were. Judge the same head again with a new reviewer call under the plan's criteria and accept it again with "+
+				"dag-accept --supersedes %s: a new acceptance row of the same execution and head, with no new execution", n.NodeID, acceptance), nil
+		case changed == nil:
+			return ActionHold, unavailable + ": the output cannot be judged again as it stands, and a correction cannot be released until the inputs are there again", nil
+		}
+		why = st.Cause + " and " + changed.Cause
+	}
+	return ActionAgentCorrection, fmt.Sprintf("the output of %s must be reworked (%s). It is the next attempt of the same node: AgentCorrect closes the acceptance %s (superseded) and releases a correction attempt "+
+		"(a new worktree, the executor tier the policy starts from) whose lane runs again; accept the reworked result with dag-accept, which follows the closed acceptance", n.NodeID, why, acceptance), nil
 }
 
 // withRoute is the stale reading with its route: a copy, because the verdict the memo holds is shared by every question asked of one pass.
