@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // CRW-1212 (R04): the agent surface of dag-release, the union readers executionOf and releaseOf, the cross-kind exclusion, and the cases of the cancelled CRW-1003 that concern it (d1, d2, d4, P3).
@@ -434,6 +437,96 @@ func TestAgentSecondPacketNoPendingManagedStartLimit(t *testing.T) {
 	}
 }
 
+// Fix round 2: an agent node is judged without the issue-level ownership of a managed start. A managed start in flight for the issue that no release of this node made, or an open relationship of
+// another node of the issue, holds that other node, not this one: the node-level exclusion (live_relationship_execution) is what keeps a node to one kind of execution. The judgement before the
+// transaction and the one inside it apply the same rule.
+func TestAgentReleaseBesideManagedRecordsOfTheIssue(t *testing.T) {
+	t.Parallel()
+	plan := func(k *releaseKit) {
+		k.putPlan("rp", 0, "rp-r1", issueNode("P1", dag.NodeNonPR, "CRW-F"), issueNode("P2", dag.NodeNonPR, "CRW-F"), issueNode("P3", dag.NodeNonPR, "CRW-F"))
+	}
+	t.Run("a pending managed start of the issue", func(t *testing.T) {
+		k := newReleaseKit(t)
+		plan(k)
+		k.mustReleaseAgent("rp", "P1")
+		k.managedRow("m-unrelated", "CRW-F", "reserved", "")
+		if _, err := k.releaseAgent("rp", "P2"); err != nil {
+			t.Fatalf("agent P2 beside a pending managed start of the issue: %v", err)
+		}
+		// the managed surface still meets the limit
+		if r, ok := k.read("rp").find("P3"); !ok || r.Reason != SkipAlreadyOwned {
+			t.Fatalf("the reading of P3 = %+v, want %s", r, SkipAlreadyOwned)
+		}
+	})
+	t.Run("an open relationship of another node of the issue", func(t *testing.T) {
+		k := newReleaseKit(t)
+		plan(k)
+		if res := k.mustRelease("rp", "P1"); !res.Bound || res.RelationshipID == "" {
+			t.Fatalf("managed P1 = %+v", res)
+		}
+		res, err := k.releaseAgent("rp", "P2")
+		if err != nil {
+			t.Fatalf("agent P2 beside the relationship of P1: %v", err)
+		}
+		if res.Replayed || res.ExecutionID == "" || res.SlotID == "" {
+			t.Fatalf("agent P2 = %+v", res)
+		}
+		// P1 itself is still not given to an agent
+		if _, err := k.releaseAgent("rp", "P1"); err == nil || !strings.Contains(err.Error(), LiveRelationshipExecution) {
+			t.Fatalf("agent P1 over its relationship: %v", err)
+		}
+		// and a managed release of P3 is still refused for the issue's open relationship
+		if _, err := k.release("rp", "P3"); err == nil {
+			t.Fatal("managed P3 was released beside the open relationship of P1")
+		}
+	})
+}
+
+// Fix round 2: a release refused at the reservation leaves nothing of the release: no input manifest, no execution row, no slot. The conflict row the refusal records is the refusal's record and
+// stays. Both refusals of the reservation are covered: the ceilings are full, and another parent holds the node's slot subject.
+func TestAgentReleaseRefusedReservationWritesNoRelease(t *testing.T) {
+	t.Parallel()
+	t.Run("capacity", func(t *testing.T) {
+		k := newReleaseKit(t)
+		releasePlan(k.fixture, "rp")
+		k.holdSlots(6)
+		before := k.rows()
+		_, err := k.releaseAgent("rp", "A")
+		if refusalReason(err) != "capacity_exhausted" {
+			t.Fatalf("release with the ceilings full: %v", err)
+		}
+		after := k.rows()
+		if after.manifests != before.manifests || after.slots != before.slots || k.count("SELECT COUNT(*) FROM dag_agent_executions") != 0 {
+			t.Fatalf("a refused release left rows: before %+v after %+v, %d executions", before, after, k.count("SELECT COUNT(*) FROM dag_agent_executions"))
+		}
+		if after.conflicts != before.conflicts+1 {
+			t.Fatalf("the refusal recorded %d conflict rows", after.conflicts-before.conflicts)
+		}
+	})
+	t.Run("a foreign slot", func(t *testing.T) {
+		k := newReleaseKit(t)
+		releasePlan(k.fixture, "rp")
+		ctx := context.Background()
+		now := k.clock()
+		if err := storeseed.InsertScopeBinding(ctx, k.s, store.ScopeBindingsRow{BindingID: "bind-other", Role: "parent", ScopeKind: "project", ScopeKey: "OTHER", TaskID: "other-parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Reserve(ctx, capacity.Reservation{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ParentTask: "other-parent", Project: "OTHER", ReservedBy: "other-parent"}); err != nil {
+			t.Fatal(err)
+		}
+		before := k.rows()
+		_, err := k.releaseAgent("rp", "A")
+		var refused *store.RefusedError
+		if !errors.As(err, &refused) {
+			t.Fatalf("release under another parent's slot: %v", err)
+		}
+		after := k.rows()
+		if after.manifests != before.manifests || after.slots != before.slots || k.count("SELECT COUNT(*) FROM dag_agent_executions") != 0 {
+			t.Fatalf("a refused release left rows: before %+v after %+v", before, after)
+		}
+	})
+}
+
 func tryExec(db *sql.DB, statement string) error {
 	_, err := db.Exec(statement)
 	return err
@@ -559,7 +652,7 @@ func TestAgentReservationUsesFrozenReleaseManifest(t *testing.T) {
 	reserve := func(node, manifest string) error {
 		var out error
 		if err := k.s.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
-			out = k.sched.reserveFrozen(txCtx, k.s.Q(txCtx), "P-TEST", "fz", node, manifest, "parent")
+			out = k.sched.reserveFrozen(txCtx, k.s.Q(txCtx), "P-TEST", "fz", node, manifest, "parent", nil)
 			return nil
 		}); err != nil {
 			t.Fatal(err)

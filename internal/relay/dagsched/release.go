@@ -197,7 +197,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		return out, err
 	}
 	// 2. a new release, judged on plain reads
-	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req)
+	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req, false)
 	if err != nil {
 		return out, err
 	}
@@ -257,7 +257,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			return nil
 		}
 		// a refusal is returned after the transaction (and the conflict row a refusal recorded commits with it); any other failure rolls everything back.
-		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, body, opts, actor)); err != nil {
+		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, body, opts, actor, false)); err != nil {
 			return err
 		} else if refused != nil {
 			stash = refused
@@ -336,8 +336,9 @@ type releaseJudgement struct {
 
 // judgeNodeRelease is step 2 of Release, shared with the agent surface (ReleaseAgent): the reading, the freshness of pinned pull requests, the criteria, and the manifest built and verified, hashing
 // included. A node that is neither ready nor waiting only for capacity is answered with its reading (notReady), and what is done about it is the caller's: a relationship release may be the replay of
-// a concurrent one, the agent surface has its own record to look for.
-func (s *Scheduler) judgeNodeRelease(ctx context.Context, q store.Querier, plan, node, actor string, req ReleaseRequest) (releaseJudgement, *NodeReading, error) {
+// a concurrent one, the agent surface has its own record to look for. agent judges the node for the agent surface: the reading does not hold it by the issue-level ownership of a managed start
+// (ReadyOptions.AgentNode).
+func (s *Scheduler) judgeNodeRelease(ctx context.Context, q store.Querier, plan, node, actor string, req ReleaseRequest, agent bool) (releaseJudgement, *NodeReading, error) {
 	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
 		return releaseJudgement{}, nil, err
@@ -356,7 +357,7 @@ func (s *Scheduler) judgeNodeRelease(ctx context.Context, q store.Querier, plan,
 		}
 		base = &BaseRef{Repository: req.Base.Repository, Ref: req.Base.Ref, SHA: tip.SHA}
 	}
-	reading, err := s.Ready(ctx, q, plan, ReadyOptions{})
+	reading, err := s.Ready(ctx, q, plan, readyFor(node, agent, false))
 	if err != nil {
 		return releaseJudgement{}, nil, err
 	}
@@ -437,9 +438,10 @@ func (s *Scheduler) checkCriteria(n dag.SnapNode, criteria []Criterion) error {
 }
 
 // rejudge repeats, under the lock, what the store half of the judgement said before it (a plan revision, an acceptance or a registration may have moved in between): the node is
-// still ready or waiting only for capacity, the manifest still matches the node's slice, criteria and incoming edges, every input still stands, and nobody owns the issue.
-func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node string, body map[string]any, opts VerifyOptions, actor string) error {
-	reading, err := s.Ready(ctx, q, plan, ReadyOptions{SkipArtifactBytes: true})
+// still ready or waiting only for capacity, the manifest still matches the node's slice, criteria and incoming edges, every input still stands, and nobody owns the issue (for a managed start:
+// the agent surface judges the node under the same rule as judgeNodeRelease did, agent).
+func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node string, body map[string]any, opts VerifyOptions, actor string, agent bool) error {
+	reading, err := s.Ready(ctx, q, plan, readyFor(node, agent, true))
 	if err != nil {
 		return err
 	}
@@ -479,7 +481,17 @@ func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node str
 	}
 	// Nothing asks again here whether the issue already has an open relationship or a managed start in flight: Ready, called first on this same transaction, runs those two queries in resourceHold before it
 	// lets a node be ready, or wait only for a slot, and rejudge returns above for any other reading; the store has one connection and nothing is written between, so a node that got here passed both.
+	// (An agent release asks neither: an agent is given the node, not the issue.)
 	return nil
+}
+
+// readyFor is the reading a release judges a node on: the agent surface names the node (ReadyOptions.AgentNode), and the judgement under the lock leaves the artifact bytes, hashed before, unread.
+func readyFor(node string, agent, skipBytes bool) ReadyOptions {
+	opts := ReadyOptions{SkipArtifactBytes: skipBytes}
+	if agent {
+		opts.AgentNode = node
+	}
+	return opts
 }
 
 // reserve is the capacity decision of a release. The DAG owns the standing-cap clamp, which capacity.Reserve does not know, so a reading with no free slot is recorded here as the
@@ -937,7 +949,7 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 		return s.agentReplay(ctx, cur)
 	}
 	// 2. a new release, judged on plain reads: the managed release's judgement, and the owner rule of the regions the node shares with the other nodes of its issue
-	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req)
+	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req, true)
 	if err != nil {
 		return out, err
 	}
@@ -1002,7 +1014,7 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 				return nil
 			}
 		}
-		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, j.body, j.opts, actor)); err != nil {
+		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, j.body, j.opts, actor, true)); err != nil {
 			return err
 		} else if refused != nil {
 			stash = refused
@@ -1023,6 +1035,14 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 			stash = refused
 			return nil
 		}
+		// the slot first, from the frozen manifest (the stored row, or the body this release stores under the digest): a refused reservation returns with the conflict row it recorded and nothing
+		// of the release, so the manifest, the slot and the execution row are written together or not at all
+		if refused, err := asRefusal(s.reserveFrozen(txCtx, tx, project, plan, node, j.digest, actor, j.body)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
+			return nil
+		}
 		stored, err := json.Marshal(j.body)
 		if err != nil {
 			return err
@@ -1030,11 +1050,9 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 		if _, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(txCtx, stored); err != nil {
 			return err
 		}
-		if refused, err := asRefusal(s.reserveFrozen(txCtx, tx, project, plan, node, j.digest, actor)); err != nil {
+		// the row now stored under the digest is the frozen record the slot was reserved from; anything else rolls the release back, slot included
+		if _, err := frozenManifestNode(txCtx, tx, node, j.digest, nil); err != nil {
 			return err
-		} else if refused != nil {
-			stash = refused
-			return nil
 		}
 		if s.testAfterReserve != nil {
 			if err := s.testAfterReserve(); err != nil {
@@ -1067,26 +1085,40 @@ func insertAgentExecution(ctx context.Context, q store.Querier, e AgentExecution
 	return err
 }
 
-// reserveFrozen reserves the node's slot from the FROZEN release manifest: the node the slot is for is the one the stored manifest was built for (its node_id), read back and digest-checked from
-// dag_input_manifests, and not the live node of the plan, which a plan revision may have changed or retired since the manifest was built. A manifest that is not stored, or that does not
-// read back as the digest it is stored under, or that is of another node than the one released, reserves nothing and refuses (revision_mismatch: the frozen record is the authority and it is not there).
-func (s *Scheduler) reserveFrozen(ctx context.Context, q store.Querier, project, plan, node, digest, actor string) error {
+// reserveFrozen reserves the node's slot from the FROZEN release manifest: the node the slot is for is the one the manifest was built for (its node_id), and not the live node of the plan, which a
+// plan revision may have changed or retired since the manifest was built. The manifest is the row stored under the digest, read back and digest-checked from dag_input_manifests, or, while no row is
+// stored there, the body the release stores under the digest in the same transaction (pending), which must digest to it: the reservation comes before the manifest is written, so a refused
+// reservation leaves no manifest behind. A manifest that is neither, or that does not read back as the digest it is stored under, or that is of another node than the one released, reserves nothing
+// and refuses (revision_mismatch: the frozen record is the authority and it is not there).
+func (s *Scheduler) reserveFrozen(ctx context.Context, q store.Querier, project, plan, node, digest, actor string, pending map[string]any) error {
+	frozen, err := frozenManifestNode(ctx, q, node, digest, pending)
+	if err != nil {
+		return err
+	}
+	return s.reserve(ctx, q, project, plan, frozen, actor, digest)
+}
+
+// frozenManifestNode is the node of the frozen release manifest (see reserveFrozen), or the revision_mismatch refusal that says why there is none.
+func frozenManifestNode(ctx context.Context, q store.Querier, node, digest string, pending map[string]any) (string, error) {
 	body, stored, err := dag.ReadManifestOn(ctx, q, digest)
 	if err != nil {
 		var corrupt *dag.CorruptError
 		if errors.As(err, &corrupt) {
-			return refuse(contract.RefusalRevisionMismatch, "%s", corrupt.Detail)
+			return "", refuse(contract.RefusalRevisionMismatch, "%s", corrupt.Detail)
 		}
-		return err
+		return "", err
 	}
 	if !stored {
-		return refuse(contract.RefusalRevisionMismatch, "the manifest %s of the release of %s is not stored, so no slot is reserved for it", digest, node)
+		if pending == nil || dag.ManifestDigest(pending) != digest {
+			return "", refuse(contract.RefusalRevisionMismatch, "the manifest %s of the release of %s is not stored, so no slot is reserved for it", digest, node)
+		}
+		body = pending
 	}
 	frozen := textOf(body["node_id"])
 	if frozen == "" || frozen != node {
-		return refuse(contract.RefusalRevisionMismatch, "the manifest %s was built for node %q, not for %s: no slot is reserved for it", digest, frozen, node)
+		return "", refuse(contract.RefusalRevisionMismatch, "the manifest %s was built for node %q, not for %s: no slot is reserved for it", digest, frozen, node)
 	}
-	return s.reserve(ctx, q, project, plan, frozen, actor, digest)
+	return frozen, nil
 }
 
 // agentReplay answers a release that is already recorded: the current execution, with the slot it holds, and no write.
