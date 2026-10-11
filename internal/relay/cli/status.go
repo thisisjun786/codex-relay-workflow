@@ -138,12 +138,19 @@ func snapshot(ctx context.Context, s *store.Store, relationship string) (contrac
 		state := colText(row, "state")
 		if (state == stQueued || state == stDeferredBusy || state == stWithheldPreSend) && !pyvalue.Truthy(col(row, "hold_reason")) {
 			recipient, owner := colText(row, "recipient_task_id"), colText(row, "relationship_id")
-			reading, seen := paced[owner+"\x00"+recipient]
+			// An event the hour already counts is a retry that adds no distinct event, which the hour cap
+			// does not refuse: the reading is kept for the pair and for that answer.
+			counted, err := s.SubjectCounted(ctx, store.SendSubject{EventID: event}, math.Floor(now/rateWindowSeconds)*rateWindowSeconds)
+			if err != nil {
+				return nil, err
+			}
+			key := owner + "\x00" + recipient + "\x00" + strconv.FormatBool(counted)
+			reading, seen := paced[key]
 			if !seen {
-				if reading, err = sendPacing(ctx, s, owner, recipient, now); err != nil {
+				if reading, err = sendPacing(ctx, s, owner, recipient, now, counted); err != nil {
 					return nil, err
 				}
-				paced[owner+"\x00"+recipient] = reading
+				paced[key] = reading
 			}
 			pacing = pacingHolding(reading, col(row, "next_eligible_at"))
 		}
@@ -328,8 +335,9 @@ func currentGrant(ctx context.Context, s *store.Store, turn string, tenure any) 
 
 // sendPacing is send_pacing with RetryPolicy.pacing: the recipient's gap since its latest send, and
 // the hour count of the distinct events the delivery's own relationship has sent, against the cap of the
-// relationship's class (the delivery package owns the rule).
-func sendPacing(ctx context.Context, s *store.Store, relationship, recipient string, now float64) (contract.OrderedObject, error) {
+// relationship's class (the delivery package owns the rule). counted says the delivery's event is already one
+// of those events: its retry adds none, so the hour cap does not hold it.
+func sendPacing(ctx context.Context, s *store.Store, relationship, recipient string, now float64, counted bool) (contract.OrderedObject, error) {
 	window := math.Floor(now/rateWindowSeconds) * rateWindowSeconds
 	reach := rateWindowSeconds * (1 + math.Floor(minSendIntervalSeconds/rateWindowSeconds))
 	last, err := s.One(ctx, "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?   AND window_start BETWEEN ? AND ?", recipient, window-reach, window)
@@ -358,7 +366,7 @@ func sendPacing(ctx context.Context, s *store.Store, relationship, recipient str
 		l, _ := pyNumber(lastSend)
 		gapEnds = l + minSendIntervalSeconds
 	}
-	if sends >= capacity {
+	if sends >= capacity && !counted {
 		reopens := window + rateWindowSeconds
 		if g, ok := gapEnds.(float64); ok && g > reopens {
 			return append(contract.OrderedObject{{Key: "reason", Value: hourlyCap}, {Key: "reopensAt", Value: g}}, reading...), nil
