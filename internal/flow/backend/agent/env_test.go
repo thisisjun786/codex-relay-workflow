@@ -340,18 +340,6 @@ func (e *env) flowRows(event string) []engine.Event {
 	return out
 }
 
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // jsonEqualAny compares two values as JSON documents.
 func jsonEqualAny(t *testing.T, a, b any) bool {
 	t.Helper()
