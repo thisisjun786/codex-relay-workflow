@@ -9,6 +9,7 @@ the script format, the loader, the globals, call identity, the call result and t
 crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] <script.js>
 crw flow run --script JS [--plan-only=false --backend fake] [--args JSON] [--journal]
 crw flow roles [--json]
+crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
 crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...
 ```
 
@@ -198,7 +199,7 @@ The calls of a run share an agent pool (`--pool`, default 6): at most that many 
 | `handle` | Opaque `crwh1:<run>:<call_id>`; non-null once a thread exists for the call. It resolves through the journal to the call's thread and last turn. |
 | `status` | `completed`, `null_model`, `held`, `refused`, `unknown` or `superseded`. |
 | `output` | The schema-valid object (or the text of a call without a schema); non-null only when `status` is `completed`. |
-| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`. |
+| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`, `recovery_hold`. |
 | `meta` | `role`, `requestedPair`, `configuredPair`, `threadId`, `turnIds`, `repairUsed`, `tokens`, `startSeq`, `endSeq` (the last two are absent under `crw flow run`, see above). |
 
 A failed or interrupted turn, and an RPC error to the thread or turn request, is classified by its `codexErrorInfo`: the
@@ -209,7 +210,10 @@ rate limit also pauses the run), `sessionBudgetExceeded` is `held` with `budget_
 not list is `held` with `host_infra_unknown`. An interrupt the engine did not send is `held` with `host_interrupted_external`.
 A request that failed without an answer (a lost connection, a timeout) ends `unknown` with `dispatch_unknown`; on the fake
 backend the call writes `outcome_unknown`, and on the App Server backend it writes no terminal row at all, so its last row
-stays the intent that was sent and the reconcile pass decides it. Only `null_model` can be evidence for a tier step.
+stays the intent that was sent and the reconcile pass decides it ([Reconcile and recovery](#reconcile-and-recovery)). The node
+of such a call is in `recovery_hold`: every later call of the node (a fresh call, a continuation of the unknown call's handle)
+ends `held` with `recovery_hold` and sends nothing, and `crw.tierStep` for the node throws. Only `null_model` can be
+evidence for a tier step.
 
 A turn the engine interrupts - the turns in flight when a usage or rate limit pauses the run - is journaled first
 (`interrupt_requested`, reason `engine_paused`) and ends `held` with reason `engine_paused`, whatever the host reports for
@@ -334,7 +338,77 @@ the path and digest of the execution policy file.
 A backend that places calls adds to a call's rows: the `allocation` member of `prepared` (below), `fork_requested` and
 `fork_started` in place of `thread_requested` and `thread_started` for a continuation that runs in a restored worktree, and
 `interrupt_requested` before a turn the engine interrupts. Flow rows named `escalation` carry a `reason` (`quota_or_rate`,
-`restore_snapshot_mismatch`) with the call and node they stopped.
+`restore_snapshot_mismatch`, `dispatch_unknown`) with the call and node they stopped.
+
+The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
+`cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous
+request absent and sent it again), `at`, the wall time of the intent in milliseconds, and `owner`, the run process that
+holds the connection the request goes out on; `fork_requested` also carries the source thread, `through_turn_id` and the
+`prefix` the fork must hold. `turn_requested` carries the turn's input (without its marker line) and `resend` on a turn that
+is sent again.
+
+## Reconcile and recovery
+
+A request that was sent and got no answer, or a run process that died after an intent row or after a send, leaves a call whose
+last row is an intent: `thread_requested`, `fork_requested`, `turn_requested` or `turn_started`. A call whose last row is
+terminal - a held call included - is never looked up on the host. `Reconcile` (`internal/flow/engine`) looks up every other
+call of the run, and the calls whose `outcome_unknown` it left standing, before a resume goes on and before a node starts a new
+attempt. It finds a call only by what the 0.154 host returns: the exact `cwd` and the `appServer` source of `thread/list`
+(every page), `Thread.parentThreadId` null, `Thread.createdAt` not earlier than the intent minus five minutes, for a fork
+`Thread.forkedFromId`, and for a turn the `clientId` of its `userMessage` item (then the first input line) read with
+`thread/turns/list` (`itemsView: full`, every page) and `thread/items/list`. `developerInstructions` and `threadSource` are not
+identity: the host does not return them.
+
+- **`thread_requested` without `thread_started`.** A candidate that holds any turn is foreign: no turn of the call is sent
+  before `thread_started` is recorded. Candidates without a turn are interchangeable containers; the one with the earliest
+  `createdAt` (then the lowest id) is adopted - `thread_started` with `recovered: true` and the evidence - and the others are
+  archived, each with an `orphan_thread` flow row.
+- **`fork_requested` without `fork_started`.** The same with candidates whose `forkedFromId` is the recorded source thread. A
+  fork carries the copied prefix, so a candidate is adopted only when its turns are exactly the recorded prefix: the same
+  number, the same order, each matching by turn id or marker, all ended and all read in full. A turn after the boundary, a
+  reordered or different prefix, or a prefix turn that cannot be read in full is foreign or unreadable.
+- **No candidate.** The request is absent only when it is proven finished: the connection that carried it is closed (the
+  backend's own record of the connection the frame went out on, or the death of the run process that held it) and a second
+  complete listing taken at least two minutes after that close - the creation grace of `internal/relay/managed` - is still
+  empty. Reconcile records when it first saw the connection closed (`creation_closed_seen`) and waits for the grace. Then, and
+  only then, the call sends the request again under the same call id and cwd with the next `send` ordinal
+  (`creation_resendable` records the proof); a thread of the first request that shows up later still holds no turn and is
+  archived as an orphan at the next pass. A request that was never written needs no grace. While the connection is open and the
+  answer pending the pass waits and sends nothing; if the answer is still missing when the wait ends the call stays open.
+- **`turn_requested(k)` without `turn_started`.** A turn whose marker is `<call_id>/t<k>` is adopted (`turn_started`, recovered).
+  Only when every turn examined is read in full, none carries the marker and the thread is idle is the turn sent again with the
+  same identity; a turn that stays `notLoaded` or `summary`, or an active thread whose running turn has no marker, is not an
+  absence.
+- **`turn_started`.** A running turn is attached to again (the call waits for it, no new turn), an ended turn is read and
+  harvested, a failed or interrupted one is classified by `codexErrorInfo`, and a turn the host does not list or cannot read is
+  unknown.
+
+What the pass cannot establish - a listing or a history that cannot be completed, a foreign or unreadable candidate, an absence
+without the proof, a running turn without the marker - appends `outcome_unknown` (reason `dispatch_unknown`), writes the
+`dispatch_unknown` escalation naming the node and puts the node in `recovery_hold`: no request is sent again, no new attempt
+starts, no tier step is taken. Each resume runs the pass again over the calls whose outcome is unknown; a pass that establishes the
+outcome appends the recovered rows after `outcome_unknown` and the hold ends.
+
+`crw flow recover CALL --adopt THREAD|TURN | --absent` is the only manual way out of a hold. `--absent` reads the host again
+with a complete listing and history and accepts the call only when the proofs above hold (turnless candidates only, an
+exact-prefix fork, a closed connection with the grace passed, or for a turn no marker and an idle thread); it appends
+`recovery_cleared` with the evidence and then the rows the proof establishes, and exits 1 without appending anything but the
+sighting of a closed connection when it does not hold. `--adopt` names the thread (at the call's cwd, a root thread of the
+source, for a fork a fork of the recorded source) or the turn (on the call's thread, carrying the call's marker when it has
+one) that is the call's, and records that an operator chose it. The command needs the run's journal; this build keeps the
+journal in memory, so no process can open another's and the command says so until the journal is stored.
+
+A new attempt starts after the turn of the attempt it replaces has ended: a call the previous process left running on the node is
+interrupted with `turn/interrupt`, the interruption is confirmed with `thread/read`, and only then is its call ended
+`superseded` (reason `superseded_by_attempt`) and the new thread started. A turn that cannot be confirmed interrupted holds the
+new call.
+
+A run resumes a journal with `Config.Resume` (`ResumeOptions` set the grace and polling timings of the reconcile pass). The
+pass runs before the script, a call the journal ended `completed`, `null_model`, `refused` or `outcome_unknown` with the same
+prompt, schema and pair is not run again - its result is replayed - and a call that reconcile decided goes on from where it
+stopped: the adopted thread gets its first turn, a creation proven absent is sent again, an adopted turn is waited for or
+harvested and then validated and repaired like any turn. A held call is not replayed. The other conditions of resuming a
+position (effect proofs, snapshots, joins) belong to the resume rule and are not decided here.
 
 ## The App Server backend
 
@@ -361,6 +435,12 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 - An executor turn never carries a `cwd`: a turn `cwd` moves the thread's working directory for that turn and every later one, so
   an executor's directory is fixed by `thread/start` or `thread/fork` alone. An architect turn carries its call's directory.
 - If a run pauses, the turns in flight are interrupted with `turn/interrupt`; the same request is sent for a cancelled run.
+- The backend is the host side of reconcile (`engine.ReconHost`): it lists threads by cwd and `appServer` source to the end of the
+  cursor, reads turns in full, archives an orphan, and says what is known about a creation request
+  (`CreationState`). For every `thread/start` and `thread/fork` it records the connection the frame went out on before it is
+  written (`Client.ConnectionID`) and names its own process on the intent (`Config.Owner`; by default the pid and the kernel
+  start time). A request of this process is closed when that connection is no longer the client's; a request of another process
+  is closed when the process is gone (`Config.OwnerAlive`; a process it cannot prove gone is alive).
 
 ### Working directories
 
