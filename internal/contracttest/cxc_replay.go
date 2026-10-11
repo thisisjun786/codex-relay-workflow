@@ -40,13 +40,19 @@ func cxcClosedNetwork() (env []string) {
 	return env
 }
 
-// cxcSandboxConfig names the isolated crw configuration of the test process (testsupport.SandboxConfig) as the
-// case's CRW_CONFIG (CRW-1265): its sandbox_root is the temporary directory the case root lies in, and the
-// system temporary locations a long case uses are its project roots, so a hook that asks the sandbox-root rule
-// about the case's workspace gets the verdict it gets on every host. The case's own configuration home is
-// observed (home), so the file stays outside it. A process that did not isolate adds nothing.
-func cxcSandboxConfig() []string {
-	if path := testsupport.SandboxConfig(); path != "" {
+// sandboxConfigEnv names a crw configuration whose sandbox_root is the directory the case roots lie in as the
+// case's CRW_CONFIG (CRW-1265): the system temporary locations a long case uses are its project roots, so a
+// hook that asks the sandbox-root rule about the case's workspace gets the verdict it gets on every host. The
+// case's own configuration home is observed (home), so the file stays outside it. It is the file a firing wrote
+// for its scratch directory (sandboxConfig, FireHooks), else the isolated configuration of the test process
+// (testsupport.SandboxConfig), whose sandbox_root is the temporary directory; a process that did neither adds
+// nothing.
+func (r *cxcReplayer) sandboxConfigEnv() []string {
+	path := r.sandboxConfig
+	if path == "" {
+		path = testsupport.SandboxConfig()
+	}
+	if path != "" {
 		return []string{"CRW_CONFIG=" + path}
 	}
 	return nil
@@ -75,6 +81,9 @@ type cxcReplayer struct {
 	mutate  func(id string, got *cxccorpus.Expect)
 	// seed puts a harness's own files into each case root and takes them out before it is observed.
 	seed func(c *cxccorpus.Case, env []string) (undo func() error, err error)
+	// sandboxConfig is the crw configuration a firing wrote for its scratch directory (FireHooks); "" in
+	// the replay of TestDomain/cxc.
+	sandboxConfig string
 }
 
 func newCXCReplayer(root, crw string) (*cxcReplayer, error) {
@@ -211,7 +220,7 @@ func (r *cxcReplayer) Setup(c *cxccorpus.Case, s cxccorpus.Scenario) error {
 	link := func(target, dir, name string) error { return os.Symlink(target, filepath.Join(c.Root, dir, name)) }
 	if r.light {
 		c.Env = append(c.Env, "CRW_BIN="+filepath.Join(c.Root, "bin", "crw"))
-		c.Env = append(append(c.Env, cxcClosedNetwork()...), cxcSandboxConfig()...)
+		c.Env = append(append(c.Env, cxcClosedNetwork()...), r.sandboxConfigEnv()...)
 		return errors.Join(link(r.crw, "bin", "crw"), link(r.git, "bin", "git"), cxccorpus.InstallStubs(c, s.Given, func(name string) error {
 			return os.WriteFile(filepath.Join(c.Root, "stubs", name), []byte("#!/bin/sh\nexit 127\n"), 0o755)
 		}))
@@ -221,7 +230,7 @@ func (r *cxcReplayer) Setup(c *cxccorpus.Case, s cxccorpus.Scenario) error {
 	}
 	rec := filepath.Join(c.Root, ".rec")
 	c.Env = append(c.Env, "CRW_BIN="+filepath.Join(c.Root, "bin", "crw"), cxcRecDir+"="+rec, "CXC_REC_LOG="+filepath.Join(rec, "calls.jsonl"), "CXC_REC_GIT="+r.git)
-	c.Env = append(append(c.Env, cxcClosedNetwork()...), cxcSandboxConfig()...)
+	c.Env = append(append(c.Env, cxcClosedNetwork()...), r.sandboxConfigEnv()...)
 	return cxccorpus.InstallStubs(c, s.Given, func(name string) error { return link(r.exe, "stubs", name) })
 }
 
