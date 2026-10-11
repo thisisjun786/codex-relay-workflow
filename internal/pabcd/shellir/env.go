@@ -119,6 +119,14 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	if err := w.writersBesideModules(); err != nil {
 		return Result{}, err
 	}
+	if w.prefixUnknown {
+		// A name the text does not spell may be BASH_ENV, ENV or another startup variable (printf -v "$N$M" with N=BASH_ and M=ENV): the
+		// scripts the text runs may start with an exit function from a file, so none of them is given the proof, wherever the
+		// assignment stands and whether or not the text used the proof itself (CRW-1165).
+		for i := range w.out {
+			w.out[i].ExitTainted = true
+		}
+	}
 	if w.exitUsed && w.prefixUnknown {
 		// The form was taken as proof, and the text assigns variables by names it does not spell (read "$N", printf -v "$N", export
 		// "$N"): one of them may be a table that defines a function or an alias named exit (zsh functions, aliases), which the walk cannot

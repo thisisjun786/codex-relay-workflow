@@ -1295,7 +1295,9 @@ func (s *state) cd(args []Word) {
 		return
 	}
 	target := args[0].Value
-	if target == "" || strings.HasPrefix(target, "-") || strings.Contains(target, "..") {
+	// zsh reads an operand that starts with + (or -) as an entry of the directory stack, cd +0 being the directory it is in, and one
+	// that starts with = as the path of a command: none is the literal directory (CRW-1165).
+	if target == "" || strings.HasPrefix(target, "-") || strings.HasPrefix(target, "+") || strings.HasPrefix(target, "=") || strings.Contains(target, "..") {
 		s.dir = unknownDir(s.dir)
 		return
 	}

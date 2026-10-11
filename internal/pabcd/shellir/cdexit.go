@@ -181,8 +181,11 @@ func cdExitForm(c *syntax.BinaryCmd) bool {
 	if !ok || len(cd.Args) != 2 || !plainLit(cd.Args[0], "cd") {
 		return false
 	}
+	// An operand that starts with - is an option or an entry of the directory stack (cd -, zsh cd -N), one with + is a stack entry in
+	// zsh (cd +0 is the directory it is in, and succeeds), and one with = the path of a command (zsh's =name): none is the literal
+	// directory (CRW-1165).
 	target, ok := literalPlainWord(cd.Args[1])
-	if !ok || target == "" || strings.HasPrefix(target, "-") {
+	if !ok || target == "" || strings.ContainsAny(target[:1], "-+=") {
 		return false
 	}
 	ex, ok := bareStmt(c.Y)
