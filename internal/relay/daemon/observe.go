@@ -136,6 +136,13 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 	default:
 		order, floor = slices.Concat(others[:1], staged, others[1:]), 2
 	}
+	if woken := Woken(ctx); len(woken) > 0 {
+		// The children whose Stop woke this tick (CRW-1210): their turns are read first, in the order the
+		// deal gave them, ahead of the longest-waiting turns of the others.
+		slices.SortStableFunc(order, func(a, b read) int {
+			return cmp.Compare(b2i(!slices.Contains(woken, a.p.child)), b2i(!slices.Contains(woken, b.p.child)))
+		})
+	}
 	share := max(1, d.Policy.MinRelationshipShare, budget/len(work))
 	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}
 	// Whatever ends the loop (the budget, the time, a failure), the failed and interrupted ends it has read are
@@ -180,6 +187,13 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 		}
 	}
 	return nil
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // readHost asks the host about one turn under the instant the pass's time bound ends the read, when it has one. Only

@@ -54,6 +54,9 @@ const (
 	staleAfterSeconds      = 900.0
 )
 
+// maxSendsPerOrchestratorHour is the cap of a relationship of class orchestrator.
+const maxSendsPerOrchestratorHour = 60
+
 // clockNow is SystemClock.now(): exact microseconds, as datetime.timestamp() computes them.
 var clockNow = func() float64 { return float64(time.Now().UnixMicro()) / 1e6 }
 
@@ -324,7 +327,8 @@ func currentGrant(ctx context.Context, s *store.Store, turn string, tenure any) 
 }
 
 // sendPacing is send_pacing with RetryPolicy.pacing: the recipient's gap since its latest send, and
-// the hour count of the delivery's own relationship (the delivery package owns the rule).
+// the hour count of the distinct events the delivery's own relationship has sent, against the cap of the
+// relationship's class (the delivery package owns the rule).
 func sendPacing(ctx context.Context, s *store.Store, relationship, recipient string, now float64) (contract.OrderedObject, error) {
 	window := math.Floor(now/rateWindowSeconds) * rateWindowSeconds
 	reach := rateWindowSeconds * (1 + math.Floor(minSendIntervalSeconds/rateWindowSeconds))
@@ -336,17 +340,25 @@ func sendPacing(ctx context.Context, s *store.Store, relationship, recipient str
 	if err != nil {
 		return nil, err
 	}
+	capacity := int64(maxSendsPerHour)
+	orchestrator, err := s.RelationshipIsOrchestrator(ctx, relationship)
+	if err != nil {
+		return nil, err
+	}
+	if orchestrator {
+		capacity = maxSendsPerOrchestratorHour
+	}
 	var lastSend any
 	if last != nil {
 		lastSend = col(last, "last")
 	}
-	reading := contract.OrderedObject{{Key: "sends", Value: sends}, {Key: "cap", Value: int64(maxSendsPerHour)}, {Key: "windowStart", Value: int64(window)}}
+	reading := contract.OrderedObject{{Key: "sends", Value: sends}, {Key: "cap", Value: capacity}, {Key: "windowStart", Value: int64(window)}}
 	var gapEnds any
 	if lastSend != nil {
 		l, _ := pyNumber(lastSend)
 		gapEnds = l + minSendIntervalSeconds
 	}
-	if sends >= maxSendsPerHour {
+	if sends >= capacity {
 		reopens := window + rateWindowSeconds
 		if g, ok := gapEnds.(float64); ok && g > reopens {
 			return append(contract.OrderedObject{{Key: "reason", Value: hourlyCap}, {Key: "reopensAt", Value: g}}, reading...), nil

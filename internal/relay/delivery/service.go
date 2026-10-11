@@ -323,7 +323,8 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // delivery holds a line for longer than one backoff at a time.
 //
 // It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), then the
-// state DeferredBusy, now and the hourly cap: see busyHeadArgs. A candidate is behind the head when the
+// state DeferredBusy, now and the two hourly caps (the orchestrator class's, then the ordinary one):
+// see busyHeadArgs. A candidate is behind the head when the
 // head's key is smaller than its own, compared as row values in the order eligibleOrder sorts.
 //
 // CRW-904 adds recipient_thread_id and next_eligible_at to what this names, so the idle edge can hold a
@@ -337,7 +338,7 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // opened, so losing the line when the old deadline passes would hand that turn to a younger delivery
 // instead (d1). The claim spends the wake as it begins the attempt, so a woken head holds the line for
 // exactly as long as the wake it was given is unspent, and never past the claim.
-const busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible_at, first_seen_at, created_at, event_id FROM (" +
+var busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible_at, first_seen_at, created_at, event_id FROM (" +
 	"SELECT b.recipient_task_id AS recipient_task_id, b.recipient_thread_id AS recipient_thread_id, b.next_eligible_at AS next_eligible_at, be.first_seen_at AS first_seen_at, b.created_at AS created_at, b.event_id AS event_id," +
 	" ROW_NUMBER() OVER (PARTITION BY b.recipient_task_id ORDER BY be.first_seen_at, b.created_at, b.event_id) AS rn" +
 	" FROM deliveries b JOIN events be ON be.event_id = b.event_id JOIN relationships br ON br.relationship_id = b.relationship_id" +
@@ -346,12 +347,12 @@ const busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligib
 	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR (bw.event_id IS NOT NULL AND bw.spent_at IS NULL))" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
-	" AND COALESCE(bs.spent, 0) < ?) WHERE rn = 1)"
+	" AND COALESCE(bs.spent, 0) < CASE WHEN " + store.OrchestratorParentSQL("br.parent_task_id") + " THEN ? ELSE ? END) WHERE rn = 1)"
 
 // busyHeadArgs are the arguments of busyHeadSQL at now.
 func (d *Service) busyHeadArgs(now float64) []any {
 	window, _ := d.Policy.RateWindows(now)
-	return append(store.RelationshipSendsArgs(window), DeferredBusy, now, d.Policy.MaxSendsPerRelationshipPerHour)
+	return append(store.RelationshipSendsArgs(window), DeferredBusy, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
 }
 
 // behindBusyHead reports whether an older delivery to this delivery's recipient is waiting out a busy
@@ -492,8 +493,9 @@ func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWa
 }
 
 // eligibility is the join and predicate of a due delivery and their arguments at now (the four
-// stamps of the window's two counts, the seven of the busy heads, then the predicate's). A delivery whose relationship has
-// already spent its hourly budget for the recipient is not due until the window reopens: it would
+// stamps of the window's two counts, the eight of the busy heads, then the predicate's). A delivery whose relationship has
+// already spent its hourly budget for the recipient (the cap of its relationship class: an orchestrator's
+// own, or the ordinary one) is not due until the window reopens: it would
 // only be refused, and a runaway relationship's refused rows must not take the attempts its calm
 // siblings need. The count is read against the live policy cap, so a cap raised mid-window takes
 // effect on the next tick. The spent counts are one grouped read joined to the candidates, not an
@@ -509,8 +511,8 @@ func (d *Service) eligibility(now float64) (string, string, []any) {
 		" LEFT JOIN " + busyHeadSQL + " bh ON bh.recipient_task_id = d.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < (e.first_seen_at, d.created_at, d.event_id)" +
 		" LEFT JOIN delivery_wakes dw ON dw.event_id = d.event_id"
 	args := append(store.RelationshipSendsArgs(window), d.busyHeadArgs(now)...)
-	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.MaxSendsPerRelationshipPerHour)
-	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < ? AND bh.event_id IS NULL", args
+	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
+	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < CASE WHEN " + store.OrchestratorParentSQL("r.parent_task_id") + " THEN ? ELSE ? END AND bh.event_id IS NULL", args
 }
 
 // dueFrom is what the due-delivery reads select from: a delivery with its relationship and event.
@@ -661,7 +663,8 @@ type superseded struct {
 func (s *superseded) Error() string { return "superseded: " + s.reason }
 
 // pacing reads send_pacing on the ctx-aware querier: the recipient's gap since its latest send of
-// any relationship, and the hour count of the relationship's own sends to that recipient.
+// any relationship, and the hour count of the relationship's own distinct events sent to that recipient,
+// against the cap of the relationship's class.
 func (d *Service) pacing(ctx context.Context, relationship, recipient string, now float64) (Obj, error) {
 	window, earliest := d.Policy.RateWindows(now)
 	last, err := one(ctx, d.Store, "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ? AND window_start BETWEEN ? AND ?", recipient, earliest, window)
@@ -672,12 +675,16 @@ func (d *Service) pacing(ctx context.Context, relationship, recipient string, no
 	if err != nil {
 		return nil, err
 	}
+	orchestrator, err := d.Store.RelationshipIsOrchestrator(ctx, relationship)
+	if err != nil {
+		return nil, err
+	}
 	var lastAt *float64
 	if last != nil && !last.N("last") {
 		v := last.F("last")
 		lastAt = &v
 	}
-	return d.Policy.Pacing(now, sends, lastAt), nil
+	return d.Policy.PacingAt(now, sends, d.Policy.HourlyCapFor(orchestrator), lastAt), nil
 }
 
 // SendRefusal is send_refusal: why relationship may not wake recipient at now, or "".
