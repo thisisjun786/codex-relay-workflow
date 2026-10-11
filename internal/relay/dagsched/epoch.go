@@ -208,6 +208,12 @@ func liveNodeState(state string) bool {
 // parent are not handed over here (dag-restart reports such a node as needing an operator). The order of the judgement matters: the successor is resolved and validated first, on every
 // call, because the node's own derived state reads the replaced relationship as closed and says nothing about the successor.
 func (s *Scheduler) Adopt(ctx context.Context, plan, node, actor string) (AdoptResult, error) {
+	return s.AdoptWith(ctx, plan, node, actor, AdoptOptions{})
+}
+
+// AdoptWith is Adopt with the facts of the adoption the store does not hold (AdoptOptions). A node whose current execution is an agent execution (R07) is adopted by a parent_handover row of the agent
+// chain (adoptAgent): the same manifest, worktree and thread, no operator, and an acceptance that stands. A node of the relationship side is adopted as the paragraph above says.
+func (s *Scheduler) AdoptWith(ctx context.Context, plan, node, actor string, opt AdoptOptions) (AdoptResult, error) {
 	out := AdoptResult{PlanID: plan, NodeID: node}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
@@ -217,6 +223,15 @@ func (s *Scheduler) Adopt(ctx context.Context, plan, node, actor string) (AdoptR
 		_, n, err := liveNode(txCtx, tx, plan, node)
 		if err != nil {
 			return err
+		}
+		if agent, live, err := currentAgentExecution(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if live {
+			// a node never holds a current execution on both sides (cross_kind_execution is refused here as everywhere)
+			if _, _, err := executionOf(txCtx, tx, plan, node); err != nil {
+				return err
+			}
+			return s.adoptAgent(txCtx, tx, plan, node, actor, agent, opt, &out)
 		}
 		if _, has, err := loadActiveAcceptance(txCtx, tx, plan, node); err != nil {
 			return err
@@ -330,9 +345,14 @@ func (s *Scheduler) fenceCapBasis(ctx context.Context, q store.Querier, scopeKin
 
 // Object is the adoption as the relay prints it (dag-adopt).
 func (r AdoptResult) Object() contract.OrderedObject {
-	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaAdopt}, {Key: "plan_id", Value: r.PlanID}, {Key: "node_id", Value: r.NodeID},
+	out := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: SchemaAdopt}, {Key: "plan_id", Value: r.PlanID}, {Key: "node_id", Value: r.NodeID},
 		{Key: "relationship_id", Value: r.RelationshipID}, {Key: "from_relationship_id", Value: optionalText(r.FromRelationshipID)}, {Key: "child_task_id", Value: r.ChildTaskID},
 		{Key: "execution_generation", Value: r.Generation}, {Key: "replayed", Value: r.Replayed}}
+	if r.ExecutionKind != "" {
+		// the handover of an agent node: the row of its execution chain, and no relationship
+		out = append(out, contract.Field{Key: "execution_kind", Value: r.ExecutionKind}, contract.Field{Key: "execution_id", Value: r.ExecutionID})
+	}
+	return out
 }
 
 // What a restarted or replacement parent does with a node it finds in the store (dag-restart).
@@ -426,6 +446,9 @@ func frozenParent(ctx context.Context, q store.Querier, plan, node string) (stri
 
 func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor string, n NodeReading, out *RestartNode) error {
 	out.Resume = ResumeNone
+	if agent, err := s.resumeOfAgent(ctx, q, plan, actor, n, out); err != nil || agent {
+		return err
+	}
 	switch n.State {
 	case StateCreationUnknown, StateReleasing:
 		parent, err := frozenParent(ctx, q, plan, n.NodeID)
@@ -501,6 +524,11 @@ func (r RestartReport) Object() contract.OrderedObject {
 			{Key: "reason", Value: optionalText(n.Reason)}, {Key: "resume", Value: n.Resume}, {Key: "resume_detail", Value: optionalText(n.ResumeDetail)},
 			{Key: "relationship_id", Value: optionalText(n.RelationshipID)}, {Key: "parent_task_id", Value: optionalText(n.ParentTaskID)}, {Key: "child_task_id", Value: optionalText(n.ChildTaskID)},
 			{Key: "execution_generation", Value: n.Generation}, {Key: "detail", Value: optionalText(n.Detail)}}
+	}
+	for i, n := range r.Nodes {
+		if n.Agent != nil {
+			nodes[i] = append(nodes[i].(contract.OrderedObject), contract.Field{Key: "agent", Value: n.Agent.object()})
+		}
 	}
 	coordinator := contract.OrderedObject{{Key: "claimed", Value: r.Claimed}, {Key: "holds", Value: r.Holds}}
 	if r.Claimed {

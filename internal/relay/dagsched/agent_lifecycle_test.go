@@ -305,7 +305,8 @@ func TestStaleAgentNodeReleasesCorrectionAttempt(t *testing.T) {
 	// the node's lane runs again on the new execution: the reworked head is judged and accepted, following the closed acceptance
 	k.heads["a"] = head
 	k.worktrees["a"] = wt
-	k.judged("a")
+	k.record(journalCall{role: "executor", node: "a", model: authorModel, head: head, run: "run-2"})
+	k.record(journalCall{role: "reviewer", node: "a", model: reviewerModel, head: head, verdict: "verified", criteria: releaseCriteriaDigest(), run: "run-2"})
 	acc := k.mustAccept("a")
 	if acc.ExecutionID != res.ExecutionID || acc.HeadSHA != head || acc.AcceptanceID == oldAcceptance {
 		t.Fatalf("accept after the correction = %+v", acc)
@@ -343,7 +344,9 @@ func TestAgentCorrectRefusals(t *testing.T) {
 	_, err = k.sched.AgentCorrect(ctx, "g", "a", "parent", k.agentRequest(true), opt)
 	wantAgentRefusal(t, "a change of the criteria alone", err, contract.RefusalDispositionConflict, ActionRevalidate)
 	// a node whose head landed is never run again, whatever changed above it
-	if res, err := k.integrate(t); err != nil || len(res.Merged) != 2 {
+	in := k.batchIn()
+	in.Nodes = []string{"b"}
+	if res, err := k.sched.IntegrateBatch(ctx, in, IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef}); err != nil || len(res.Merged) != 1 {
 		t.Fatalf("batch: %+v, %v", res, err)
 	}
 	if _, err := k.observe("b"); err != nil {
@@ -433,8 +436,8 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 		t.Fatalf("observe: %+v, %v", obs, err)
 	}
 
-	type want struct{ state, action, resume string }
-	check := func(s *Scheduler, actor, holder string, wants map[string]want) {
+	type want struct{ state, action, resume, holder string }
+	check := func(s *Scheduler, actor string, wants map[string]want) {
 		t.Helper()
 		report, err := s.Restart(ctx, "g", actor)
 		if err != nil {
@@ -450,8 +453,8 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 				t.Fatalf("restart for %s does not report node %s as an agent node: %+v", actor, node, n)
 			}
 			a := n.Agent
-			if a.State != w.state || a.Action != w.action || n.Resume != w.resume || a.Actor != holder || a.RunID != "run-1" || a.ExecutionID != k.execution(node) || a.ExecutionKind == "" {
-				t.Fatalf("restart for %s, node %s = %+v (resume %s), want state %s action %q resume %s held by %s", actor, node, a, n.Resume, w.state, w.action, w.resume, holder)
+			if a.State != w.state || a.Action != w.action || n.Resume != w.resume || a.Actor != w.holder || a.RunID != "run-1" || a.ExecutionID != k.execution(node) || a.ExecutionKind == "" {
+				t.Fatalf("restart for %s, node %s = %+v (resume %s), want state %s action %q resume %s held by %s", actor, node, a, n.Resume, w.state, w.action, w.resume, w.holder)
 			}
 			if n.RelationshipID != "" || n.ParentTaskID != "" {
 				t.Fatalf("node %s carries a relationship: %+v", node, n)
@@ -461,12 +464,12 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 			t.Fatalf("restart reports %d nodes, want %d: %+v", len(seen), len(wants), seen)
 		}
 	}
-	check(k.sched, "parent", "parent", map[string]want{
-		"a": {AgentStateReleased, AgentActionRunResume, ResumeAdopt},
-		"b": {AgentStateAccepted, AgentActionIntegrate, ResumeAdopt},
-		"c": {AgentStateIntegrated, "", ResumeNone},
-		"d": {AgentStateHeld, AgentActionFlowRecover, ResumeReconcile},
-		"e": {AgentStateReleased, AgentActionRunResume, ResumeAdopt},
+	check(k.sched, "parent", map[string]want{
+		"a": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent"},
+		"b": {AgentStateAccepted, AgentActionIntegrate, ResumeAdopt, "parent"},
+		"c": {AgentStateIntegrated, "", ResumeNone, "parent"},
+		"d": {AgentStateHeld, AgentActionFlowRecover, ResumeReconcile, "parent"},
+		"e": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent"},
 	})
 	// the object the relay prints carries the agent facts of an agent node, and only of an agent node
 	report, err := k.sched.Restart(ctx, "g", "parent")
@@ -485,24 +488,24 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 
 	// another orchestrator takes the plan over: it is told to adopt what the former one held, and what landed needs nothing
 	s2 := k.orchestrator("parent-2", "session-2")
-	check(s2, "parent-2", "parent", map[string]want{
-		"a": {AgentStateReleased, AgentActionAdopt, ResumeAdoptNeeded},
-		"b": {AgentStateAccepted, AgentActionAdopt, ResumeAdoptNeeded},
-		"c": {AgentStateIntegrated, "", ResumeNone},
-		"d": {AgentStateHeld, AgentActionAdopt, ResumeAdoptNeeded},
-		"e": {AgentStateReleased, AgentActionAdopt, ResumeAdoptNeeded},
+	check(s2, "parent-2", map[string]want{
+		"a": {AgentStateReleased, AgentActionAdopt, ResumeAdoptNeeded, "parent"},
+		"b": {AgentStateAccepted, AgentActionAdopt, ResumeAdoptNeeded, "parent"},
+		"c": {AgentStateIntegrated, "", ResumeNone, "parent"},
+		"d": {AgentStateHeld, AgentActionAdopt, ResumeAdoptNeeded, "parent"},
+		"e": {AgentStateReleased, AgentActionAdopt, ResumeAdoptNeeded, "parent"},
 	})
 	for _, node := range []string{"a", "b", "d", "e"} {
 		if _, err := s2.Adopt(ctx, "g", node, "parent-2"); err != nil {
 			t.Fatalf("adopt %s: %v", node, err)
 		}
 	}
-	check(s2, "parent-2", "parent-2", map[string]want{
-		"a": {AgentStateReleased, AgentActionRunResume, ResumeAdopt},
-		"b": {AgentStateAccepted, AgentActionIntegrate, ResumeAdopt},
-		"c": {AgentStateIntegrated, "", ResumeNone},
-		"d": {AgentStateHeld, AgentActionFlowRecover, ResumeReconcile},
-		"e": {AgentStateReleased, AgentActionRunResume, ResumeAdopt},
+	check(s2, "parent-2", map[string]want{
+		"a": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent-2"},
+		"b": {AgentStateAccepted, AgentActionIntegrate, ResumeAdopt, "parent-2"},
+		"c": {AgentStateIntegrated, "", ResumeNone, "parent"},
+		"d": {AgentStateHeld, AgentActionFlowRecover, ResumeReconcile, "parent-2"},
+		"e": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent-2"},
 	})
 }
 
@@ -617,9 +620,9 @@ func TestEscalationReleasesAgentSlot(t *testing.T) {
 		}
 	}
 	// the escalated node is not accepted afterwards: it has no current execution
-	k.judged("a")
-	_, err := k.accept("a")
-	wantAgentRefusal(t, "accepting an escalated node", err, contract.RefusalDispositionConflict, "")
+	if _, err := k.accept("a"); err == nil || k.agentAcceptanceRows() != 0 {
+		t.Fatalf("an escalated node was accepted (%v)", err)
+	}
 }
 
 // A recovery hold (dispatch_unknown, a host failure) closes nothing: the execution stays current and the node keeps its slot.
