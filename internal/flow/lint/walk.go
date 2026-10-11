@@ -52,13 +52,23 @@ type state struct {
 	pend map[*binding]pending
 }
 
-// pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node, its phase and
-// the call (one call's promise may be held by more than one name, as in q = p = crw.review(...)).
+// pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node, its phase, the
+// call (one call's promise may be held by more than one name, as in q = p = crw.review(...)) and the paths on which its
+// completion still counts. A build, commit or land of the node that starts after the call begins a new generation of
+// the node: the earlier call's promise settles for the head before it, so its completion neither makes the new head
+// committed, verified or reviewed nor takes a started land back. paths says whether that generation is still the
+// node's on every path that meets at the point (current), on none (superseded), or on some (both bits).
 type pending struct {
-	slot string
-	ev   uint8
-	call *ast.CallExpression
+	slot  string
+	ev    uint8
+	call  *ast.CallExpression
+	paths uint8
 }
+
+const (
+	pathCurrent uint8 = 1 << iota
+	pathSuperseded
+)
 
 func newState() *state {
 	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}, pend: map[*binding]pending{}}
@@ -108,8 +118,11 @@ func (s *state) join(o *state) {
 		}
 	}
 	for k, v := range o.pend {
-		if _, ok := s.pend[k]; !ok {
+		if have, ok := s.pend[k]; !ok {
 			s.pend[k] = v
+		} else if have.call == v.call {
+			have.paths |= v.paths
+			s.pend[k] = have
 		}
 	}
 	if s.author != o.author {
@@ -567,8 +580,9 @@ func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
 	return nil
 }
 
-// complete marks the event a name's promise stands for as done: the node is in its phase, and no other name that holds
-// the same promise is still pending.
+// complete marks the event a name's promise stands for as done, and no other name that holds the same promise is still
+// pending. The node reaches the event's phase only where the call is of the node's current generation: on every path it
+// is in that phase, on none it stays where it is, and on some it may be in either.
 func (w *walker) complete(bd *binding, st *state) {
 	p, ok := st.pend[bd]
 	if !ok {
@@ -579,7 +593,16 @@ func (w *walker) complete(bd *binding, st *state) {
 			delete(st.pend, k)
 		}
 	}
-	st.phases[p.slot] = p.ev
+	switch p.paths {
+	case pathCurrent:
+		st.phases[p.slot] = p.ev
+	case pathCurrent | pathSuperseded:
+		cur, ok := st.phases[p.slot]
+		if !ok {
+			cur = pBuilt
+		}
+		st.phases[p.slot] = cur | p.ev
+	}
 }
 
 // completeIn completes every pending event whose name appears in n (a function literal may read it when it runs).
@@ -631,13 +654,22 @@ func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral
 			w.s.add(RuleLifecycleOrder, line, "", "%s runs while the node is %s: the order is build, then rounds of commit, verify, review, then land", eventNames[ev], phaseList(cur))
 		}
 	}
+	if ev == pBuilt || ev == pCommitted || ev == pLanded {
+		// A new generation of the node starts with the call, whether or not its promise is awaited.
+		for k, v := range st.pend {
+			if v.slot == slot {
+				v.paths = pathSuperseded
+				st.pend[k] = v
+			}
+		}
+	}
 	if def == nil {
 		st.phases[slot] = ev
 		return
 	}
 	st.phases[slot] = started(ev, cur)
 	for _, bd := range def.bds {
-		st.pend[bd] = pending{slot: slot, ev: ev, call: def.call}
+		st.pend[bd] = pending{slot: slot, ev: ev, call: def.call, paths: pathCurrent}
 	}
 }
 

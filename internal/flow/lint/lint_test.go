@@ -1072,3 +1072,56 @@ return crw.land('n', { head: h2 })`)
 		t.Errorf("one land: %v", r.Diagnostics)
 	}
 }
+
+func TestLintPendingEventCannotUndoAStartedOne(t *testing.T) {
+	const oldReviewPending = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+await crw.verify('n', head)
+const oldReview = crw.review('n', head, null)
+await crw.review('n', head, null)
+`
+	// A review that settles after a land or a commit of its node started belongs to the head before them: it neither
+	// takes back the land nor makes the new head reviewed.
+	for name, c := range map[string]struct {
+		body string
+		rule string
+	}{
+		"a dropped land, then the old review":      {"crw.land('n', { head })\nawait oldReview\nreturn crw.land('n', { head })", RuleLandTwice},
+		"an awaited land, then the old review":     {"await crw.land('n', { head })\nawait oldReview\nreturn crw.land('n', { head })", RuleLandTwice},
+		"a dropped commit, then the old review":    {"crw.commit('n', ex)\nawait oldReview\nreturn crw.land('n', { head })", RuleLandWithoutReview},
+		"a new commit and verify, the old review":  {"const next = await crw.commit('n', ex)\nawait crw.verify('n', next)\nawait oldReview\nreturn crw.land('n', { head: next })", RuleLandWithoutReview},
+		"a rebuild, then the old review":           {"await agent.call('rebuild', { agentType: 'executor', node: 'n', label: 'rebuild' })\nawait oldReview\nreturn crw.land('n', { head })", RuleLandWithoutReview},
+		"a held land awaited, then the old review": {"const first = crw.land('n', { head })\nawait first\nawait oldReview\nreturn crw.land('n', { head })", RuleLandTwice},
+	} {
+		if r := lintStatic(t, oldReviewPending+c.body); !slices.Contains(rules(r), c.rule) {
+			t.Errorf("%s: want %s, got %v", name, c.rule, r.Diagnostics)
+		}
+	}
+	// Held or awaited calls of the current round complete as before, and an old review that settles after a full new
+	// round leaves that round's review in place.
+	for name, body := range map[string]string{
+		"one land after the old review settles": oldReviewPending + "await oldReview\nreturn crw.land('n', { head })",
+		"a full new round, then the old review": oldReviewPending + "const next = await crw.commit('n', ex)\nawait crw.verify('n', next)\nawait crw.review('n', next, null)\nawait oldReview\nreturn crw.land('n', { head: next })",
+		"a held commit, verify and review": `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const c = crw.commit('n', ex)
+const head = await c
+const v = crw.verify('n', head)
+await v
+const r = crw.review('n', head, null)
+await r
+const l = crw.land('n', { head })
+return await l`,
+		"awaited commit, verify, review and land": `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+await crw.verify('n', head)
+await crw.review('n', head, null)
+return crw.land('n', { head })`,
+	} {
+		if r := lintStatic(t, body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+}
