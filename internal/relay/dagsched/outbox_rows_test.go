@@ -407,3 +407,55 @@ func TestSummaryStatusUpToDateUsesSubjectDigest(t *testing.T) {
 		t.Fatalf("after the enqueue: %+v", st)
 	}
 }
+
+// The digest of a row's findings covers each finding whole: the display clips a line at maxFindingLine characters, the digest does not, so two rulings whose findings differ only beyond the clip are two subjects
+// (CRW-1216 after the evaluation, d3). The agent side differs in its finding text only; on the relationship side the same ruled event has its context findings rewritten, which changes nothing else.
+func TestSummaryDigestCoversFindingsBeyondTheDisplayClip(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("the endpoint answers the wrong shape ", 12)
+	if len(long) <= maxFindingLine+40 {
+		t.Fatalf("the test finding is too short to pass the clip: %d", len(long))
+	}
+	for _, side := range []string{"agent", "managed child"} {
+		t.Run(side, func(t *testing.T) {
+			t.Parallel()
+			k := newAgentKit(t, agentSpec{name: "n", files: fileOf("n"), relationship: side == "managed child"})
+			var event string
+			rule := func(tail string) {
+				t.Helper()
+				if side == "agent" {
+					k.reviewWith("n", "needs_changes", defect("D1", "P2", "other", long+tail))
+					return
+				}
+				text := `[{"id":"c1","verdict":"needs_changes","note":"` + long + tail + `"}]`
+				if event == "" {
+					ruleRelationship(k, "n", "one", "needs_changes", 2, text)
+					event = "evt-one-rel-g-n"
+					return
+				}
+				k.exec("UPDATE verdict_context SET findings = ? WHERE event_id = ?", text, event)
+			}
+			if side == "agent" {
+				k.author("n", authorModel)
+			}
+			rule("ALPHA")
+			first := enqueueG(t, k)
+			rule("OMEGA")
+			if st := statusG(t, k); st.UpToDate {
+				t.Fatalf("a finding changed beyond the display clip and the entry still reads up to date: %+v", st)
+			}
+			second := enqueueG(t, k)
+			if second.Replayed || second.Entry.Seq != 2 || second.Entry.SubjectDigest == first.Entry.SubjectDigest || len(second.Superseded) != 1 {
+				t.Fatalf("the finding changed beyond the clip: %+v then %+v", first, second)
+			}
+			// the display stays clipped
+			v := rowOf(t, rowsOf(t, k), "n").Verdict
+			if v == nil || len(v.Findings) != 1 || len([]rune(v.Findings[0])) > maxFindingLine {
+				t.Fatalf("the displayed finding is not clipped: %+v", v)
+			}
+			if again := enqueueG(t, k); !again.Replayed {
+				t.Fatalf("nothing changed and the entry was not replayed: %+v", again)
+			}
+		})
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 // syncVerdictsSQL is the Linear writes a verdict has had, oldest first, for a relationship and an event: what Selection
@@ -45,6 +47,17 @@ func (c *Channel) Selection(ctx context.Context, o Obligation, recipient string,
 			} else {
 				discharge = fmt.Sprintf("the Linear record is %v rather than confirmed", latest["state"])
 			}
+		}
+	}
+	if err == nil && standing != "discharged" {
+		// a relationship a plan runs has no sync_outbox row of its verdict: the plan's confirmed summary entry of the target document is the record
+		summary, e := delivery.PlanSummaryCarriesVerdict(ctx, c.Store.Q(ctx), o.RelationID, event, target)
+		if e != nil {
+			return nil, e
+		}
+		if summary != "" {
+			standing = "discharged"
+			discharge = "the plan summary entry " + summary + " that carries the verdict is confirmed"
 		}
 	}
 	prior, err := c.PriorReport(ctx, o.ID)

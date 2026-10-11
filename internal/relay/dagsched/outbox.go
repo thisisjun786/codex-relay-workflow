@@ -239,9 +239,21 @@ const (
 	maxFindingRows = 12
 )
 
+// findingLine is the finding as the text of the summary shows it: one line, clipped. It is display only: the digest of a row's findings is taken over the whole lines (findingsOf), so a finding that
+// differs beyond the clip is another subject.
 func findingLine(s string) string { return clip(oneLine(s), maxFindingLine) }
 
-func digestOfFindings(lines []string) string { return shaOf([]byte(strings.Join(lines, "\n"))) }
+// findingsOf is the displayed lines of a row's findings (one line each, clipped) and the digest of the whole lines (one line each, not clipped).
+func findingsOf(whole []string) (lines []string, digest string) {
+	for _, w := range whole {
+		lines = append(lines, findingLine(w))
+	}
+	oneLines := make([]string, len(whole))
+	for i, w := range whole {
+		oneLines[i] = oneLine(w)
+	}
+	return lines, shaOf([]byte(strings.Join(oneLines, "\n")))
+}
 
 // relationshipRowVerdict is the newest ruling over the relationships the plan bound to the node: the ruled event's generation and revision, the criteria set and findings of its context, the generation a
 // needs_changes ruling opened, the child, and how many times the event was ruled (the journal keeps each ruling an earlier one was replaced by).
@@ -268,12 +280,11 @@ func relationshipRowVerdict(ctx context.Context, q store.Querier, relationships 
 		return nil, err
 	}
 	v.Ruling = 1 + superseded
-	v.Findings = relationshipFindings(findings)
-	v.FindingsDigest = digestOfFindings(v.Findings)
+	v.Findings, v.FindingsDigest = findingsOf(relationshipFindings(findings))
 	return v, nil
 }
 
-// relationshipFindings are the findings a ruling recorded (verdict_context.findings, a JSON list), one line each as the verdict summary of the relationship outbox wrote them: the criterion, its verdict and
+// relationshipFindings are the findings a ruling recorded (verdict_context.findings, a JSON list), one whole line each as the verdict summary of the relationship outbox wrote them: the criterion, its verdict and
 // its note. A text that is not a list of objects is kept whole as one line, so an unexpected shape is visible and is part of the digest.
 func relationshipFindings(text string) []string {
 	if strings.TrimSpace(text) == "" {
@@ -281,7 +292,7 @@ func relationshipFindings(text string) []string {
 	}
 	var list []map[string]any
 	if err := json.Unmarshal([]byte(text), &list); err != nil {
-		return []string{findingLine(text)}
+		return []string{text}
 	}
 	lines := make([]string, 0, len(list))
 	for _, f := range list {
@@ -289,7 +300,7 @@ func relationshipFindings(text string) []string {
 		if note := fieldText(f["note"]); note != "" {
 			line += " — " + note
 		}
-		lines = append(lines, findingLine(line))
+		lines = append(lines, line)
 	}
 	return lines
 }
@@ -338,6 +349,7 @@ func agentRowVerdict(ctx context.Context, q store.Querier, plan, node string, at
 		}
 		_ = json.Unmarshal([]byte(detail), &seen)
 		v := &RowVerdict{Verdict: doc.Verdict, Revision: commit, Generation: attempts[execution], CriteriaSet: seen.CriteriaDigest, Ruling: 1}
+		var whole []string
 		for _, d := range doc.Defects {
 			line := d.Ref + ": " + d.Severity + " " + d.Kind
 			if d.File != "" {
@@ -346,9 +358,9 @@ func agentRowVerdict(ctx context.Context, q store.Querier, plan, node string, at
 			if d.Finding != "" {
 				line += " — " + d.Finding
 			}
-			v.Findings = append(v.Findings, findingLine(line))
+			whole = append(whole, line)
 		}
-		v.FindingsDigest = digestOfFindings(v.Findings)
+		v.Findings, v.FindingsDigest = findingsOf(whole)
 		return v, rows.Err()
 	}
 	return nil, rows.Err()

@@ -9,8 +9,13 @@ re-sends a correction or makes a second summary, because every command here writ
 The summary states [the progress query](dag-progress.md) of the plan and, under it, one row per issue: the stage, the newest verdict with its revision, the gist of its findings, the acceptance and the integration
 batch ([the issue rows](#the-issue-rows)). The relay's log is the canonical plan and Linear is its projection (contract 1.3, decision D-13): this queue carries the projection and decides nothing about the plan.
 
-The queue is the Linear projection of every issue a plan runs. `sync_outbox` is the projection of a relationship that no plan runs: a verdict on a relationship a plan runs (the plan's `dag_node_executions` names it)
-enqueues no `sync_outbox` row, since the issue's row in the plan's summary states that verdict. The `sync_outbox` table and its drain stay as they are for the relationships outside a plan.
+The queue is the Linear projection of every issue a plan runs. `sync_outbox` is the projection of a relationship that no plan runs: a verdict on a relationship a plan runs (the plan's `dag_node_executions` names it
+and the plan still holds the node, that is, `dag_nodes` has a live version of it) enqueues no `sync_outbox` row, since the issue's row in the plan's summary states that verdict. A relationship of a node the plan retired or
+replaced is no plan relationship: no row of any summary states its verdict, so its verdict keeps its `sync_outbox` row. The `sync_outbox` table and its drain stay as they are for the relationships outside a plan.
+
+The supervisor reads the record of a verdict for its discharge: for a relationship a plan runs that record is the plan's summary, so a confirmed entry of the relationship's `coordination_document` target that was enqueued at
+or after the instant the verdict was decided discharges the verdict's obligation (`delivery.PlanSummaryCarriesVerdict`, read next to the confirmed `sync_outbox` row by `Reportable`, `ReportableCurrent` and `Selection`). An entry that
+is not confirmed, one enqueued before the verdict, one of another document and one of a node the plan no longer holds does not discharge it.
 
 ## The queue
 
@@ -135,7 +140,7 @@ the correction it queued, the child and the findings) and the acceptance and the
 ## The subject digest
 
 `subject_digest` is the sha256 of the version tag `dag-summary-subject/2`, the progress digest and the normalised render of every row: the issue, its stage, the newest verdict with its generation, revision, criteria set,
-ruling, queued correction and child, the digest of its findings, the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
+ruling, queued correction and child, the digest of its findings (taken over every finding whole: the text of the summary clips a finding line for display, the digest does not), the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
 `dag-summary-enqueue` (the replay comparison) and `dag-summary-status` (`up_to_date`) call it. So a verdict or a finding that changes while the node stays in its stage is another subject: `up_to_date` reads false
 until the plan is enqueued again, and the enqueue appends a new entry and supersedes the open one. Nothing changed is one subject, and the entry is answered with `replayed: true`. The progress document is not
 changed by the rows: `dag-summary-status` prints the fields it printed, and `progress_digest` is still the digest of the progress document.
