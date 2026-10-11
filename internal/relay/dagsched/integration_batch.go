@@ -865,9 +865,12 @@ func retryCandidates(batch, survivors []Candidate, removed []removedCandidate, s
 // retryNotProvenSet merges the retry set on top of the verified survivors and verifies the whole set once (CRW-1026, d3).
 // The survivors keep their verified commits: the retry merges on the survivors' head, and any other answer (a retry candidate
 // that no longer merges cleanly, a failing verification) resets the worktree to that head and answers false, so the branch,
-// the issued record and the merge commits stay the ones the survivors were verified at. A conflict-deferred candidate of the
-// set (one a cascade excluded) that still conflicts is the exception: it is left out with what depends on it in the set, and the
-// rest is merged again, so a conflict that stays does not sink the retry of the others.
+// the issued record and the merge commits stay the ones the survivors were verified at. The conflict-deferred candidates of the
+// set (ones a cascade excluded) never cost the others their retry: one that still conflicts is left out with what depends on it
+// in the set and the rest is merged again; when another candidate of the set conflicts, or the set fails verification, while
+// deferred candidates are in it, they are all left out with what depends on them and the rest is merged again, and verified
+// once more after a failing verification. The set without them is the one the retry takes when no deferred candidate is
+// retried, so taking them in never loses a recovery, and a second verification happens only when one of them was in a failing set.
 func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, batch, kept []Candidate, commits []string, removed []removedCandidate) (retryOutcome, bool, error) {
 	edges, err := w.s.Successors(ctx, w.in.Plan)
 	if err != nil {
@@ -892,10 +895,36 @@ func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, batch, kept
 	} else if err := w.reset(ctx, survivors); err != nil {
 		return retryOutcome{}, false, err
 	}
-	// the survivors' merge commits, one per survivor; none when nothing survived
-	var all []string
+	// leave takes the given candidates out of the retry set with every candidate of the set that depends on them
+	leave := func(nodes []string) {
+		gone := map[string]bool{}
+		for _, node := range nodes {
+			gone[node] = true
+			for _, n := range transitiveSuccessors(edges, node) {
+				gone[n] = true
+			}
+		}
+		var next []Candidate
+		for _, c := range retry {
+			if !gone[c.NodeID] {
+				next = append(next, c)
+			}
+		}
+		retry = next
+	}
+	// deferredIn is the conflict-deferred candidates still in the retry set
+	deferredIn := func() []string {
+		var out []string
+		for _, c := range retry {
+			if deferredNodes[c.NodeID] {
+				out = append(out, c.NodeID)
+			}
+		}
+		return out
+	}
 	for {
-		all = append([]string{}, commits[:len(kept)]...)
+		// the survivors' merge commits, one per survivor; none when nothing survived
+		all := append([]string{}, commits[:len(kept)]...)
 		var conflicted *Candidate
 		for i := range retry {
 			c := retry[i]
@@ -910,39 +939,32 @@ func (w *integrationWorktree) retryNotProvenSet(ctx context.Context, batch, kept
 			all = append(all, commit)
 		}
 		if conflicted == nil {
-			break
-		}
-		if !deferredNodes[conflicted.NodeID] {
-			return retryOutcome{}, false, w.reset(ctx, survivors)
-		}
-		// a deferred candidate that still conflicts is left out with what depends on it, and the rest is merged again
-		gone := map[string]bool{conflicted.NodeID: true}
-		for _, n := range transitiveSuccessors(edges, conflicted.NodeID) {
-			gone[n] = true
-		}
-		var next []Candidate
-		for _, c := range retry {
-			if !gone[c.NodeID] {
-				next = append(next, c)
+			rec, dig, pass, err := w.verify(ctx)
+			if err != nil {
+				return retryOutcome{}, false, err
+			}
+			if pass {
+				set := append(append([]Candidate{}, kept...), retry...)
+				return retryOutcome{set: set, commits: all, record: rec, digest: dig, retried: retry}, true, nil
 			}
 		}
-		retry = next
 		if err := w.reset(ctx, survivors); err != nil {
 			return retryOutcome{}, false, err
+		}
+		switch {
+		case conflicted != nil && deferredNodes[conflicted.NodeID]:
+			// a deferred candidate that still conflicts is left out with what depends on it
+			leave([]string{conflicted.NodeID})
+		case len(deferredIn()) > 0:
+			// another candidate conflicts, or the set fails, while deferred candidates are in it: the set without them is retried
+			leave(deferredIn())
+		default:
+			return retryOutcome{}, false, nil
 		}
 		if len(retry) == 0 {
 			return retryOutcome{}, false, nil
 		}
 	}
-	rec, dig, pass, err := w.verify(ctx)
-	if err != nil {
-		return retryOutcome{}, false, err
-	}
-	if !pass {
-		return retryOutcome{}, false, w.reset(ctx, survivors)
-	}
-	set := append(append([]Candidate{}, kept...), retry...)
-	return retryOutcome{set: set, commits: all, record: rec, digest: dig, retried: retry}, true, nil
 }
 
 // firstFailingPrefix is the smallest k such that the first k candidates fail verification, found by bisection over the

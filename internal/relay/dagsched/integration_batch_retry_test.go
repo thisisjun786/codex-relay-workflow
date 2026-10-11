@@ -498,3 +498,93 @@ func TestIntegrationBatchRetryLeavesOutADeferredDependantThatStillConflicts(t *t
 		t.Fatalf("split %v; want e left out and d verification_failed", got)
 	}
 }
+
+// fallbackKit is six candidates in node-id order, a to f, with the edges b -> e and b -> f. c adds bad.txt and shared.txt and
+// fails alone; d is the repair; e adds shared.txt, so the first pass defers e; the bisection removes b (not proven failing: it
+// fails only beside a before the repair) and cascades e and f out as depends_on_b, then c. The survivors are a and d. f adds
+// f.txt and other.txt; eFiles is what e commits besides shared.txt.
+func fallbackKit(t *testing.T, eFiles map[string]string) *batchKit {
+	t.Helper()
+	e := map[string]string{"shared.txt": "e\n"}
+	for path, body := range eFiles {
+		e[path] = body
+	}
+	return retryKitOf(t, []batchNode{
+		{name: "a", files: map[string]string{"a.txt": "a\n"}},
+		{name: "b", files: map[string]string{"b.txt": "b\n"}},
+		{name: "c", files: map[string]string{"bad.txt": "c\n", "shared.txt": "c\n"}},
+		{name: "d", files: map[string]string{"repair.txt": "d\n"}},
+		{name: "e", files: e},
+		{name: "f", files: map[string]string{"f.txt": "f\n", "other.txt": "f\n"}},
+	}, [][2]string{{"b", "e"}, {"b", "f"}})
+}
+
+// treeFiles is the set of file paths in a commit's tree.
+func treeFiles(k *batchKit, commit string) map[string]bool {
+	out := map[string]bool{}
+	for _, path := range strings.Split(k.repo.git("ls-tree", "-r", "--name-only", commit), "\n") {
+		out[path] = true
+	}
+	return out
+}
+
+// A conflict-deferred candidate never costs the retry of the others: e merges in the retry set but f, a plain retried candidate,
+// then conflicts with it (both add other.txt). The set is merged again without e, so b and f still recover beside the survivors
+// a and d as they do when deferred candidates are not retried at all, and e stays out.
+func TestIntegrationBatchRetryKeepsTheOthersWhenAPlainCandidateConflictsWithADeferredOne(t *testing.T) {
+	k := fallbackKit(t, map[string]string{"e.txt": "e\n", "other.txt": "e\n"})
+	var runs int
+	res, err := k.runRetryBatch(t, true, &runs)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,b,d,f" {
+		t.Fatalf("merged %v (split %v); want a, b, d and f", got, splitReasons(res))
+	}
+	if got := splitReasons(res); len(got) != 2 || got["c"] != "verification_failed" || got["e"] == "" {
+		t.Fatalf("split %v; want c verification_failed and e left out", got)
+	}
+	tree := treeFiles(k, res.NewHead)
+	if !tree["f.txt"] || tree["e.txt"] || tree["bad.txt"] {
+		t.Fatalf("the branch holds %v; want f.txt without e.txt and bad.txt", tree)
+	}
+	if res.Verification.HeadCommit != res.NewHead || res.Verification.Result != "pass" {
+		t.Fatalf("the issued record names %s with %q; want a pass of %s", res.Verification.HeadCommit, res.Verification.Result, res.NewHead)
+	}
+}
+
+// A conflict-deferred candidate that breaks the retry set does not sink it either: e merges but brings worse.txt, so the set
+// fails; the set without e is verified once more and b and f recover. That second verification is the only one the deferred
+// candidates can add: two more than the batch without the retry.
+func TestIntegrationBatchRetryKeepsTheOthersWhenADeferredCandidateFailsTheSet(t *testing.T) {
+	fails := func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, "worse.txt"))
+		return repairFails(dir) || err == nil
+	}
+	eFiles := map[string]string{"worse.txt": "e\n"}
+	var off, on int
+	if _, err := fallbackKit(t, eFiles).runRetryBatchWith(t, false, fails, &off); err != nil {
+		t.Fatalf("flag off: %v", err)
+	}
+	k := fallbackKit(t, eFiles)
+	res, err := k.runRetryBatchWith(t, true, fails, &on)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if got := mergedNodes(res); strings.Join(got, ",") != "a,b,d,f" {
+		t.Fatalf("merged %v (split %v); want a, b, d and f", got, splitReasons(res))
+	}
+	if got := splitReasons(res); len(got) != 2 || got["c"] != "verification_failed" || got["e"] == "" {
+		t.Fatalf("split %v; want c verification_failed and e left out", got)
+	}
+	if on-off != 2 {
+		t.Fatalf("the retry started %d verifications more than the batch without it; want 2 (the set with e, then without it)", on-off)
+	}
+	tree := treeFiles(k, res.NewHead)
+	if tree["worse.txt"] || !tree["f.txt"] {
+		t.Fatalf("the branch holds %v; want f.txt without worse.txt", tree)
+	}
+	if res.Verification.HeadCommit != res.NewHead || res.Verification.Result != "pass" {
+		t.Fatalf("the issued record names %s with %q; want a pass of %s", res.Verification.HeadCommit, res.Verification.Result, res.NewHead)
+	}
+}
