@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 )
 
 // This file is the reconcile pass of dispatch intents (engine.dispatch.reconcile, F05). A request that was sent and got no
@@ -349,17 +351,20 @@ func (s *callState) intentState() bool {
 // open is a call that stopped between an intent and its outcome: its last row is not terminal.
 func (s *callState) open() bool { return s.terminal == "" && s.intentState() }
 
-// held is a call whose outcome was left unknown and has not been cleared since.
+// held is a call whose outcome was left unknown and has not been cleared since: the call `crw flow recover` accepts. The rows
+// are read by internal/flow/callstate, the reading `dag-restart` shares, so the command a report names is the one that accepts
+// the call; a state that was opened in memory (Recover) is not held.
 func (s *callState) held() bool {
-	if s.terminal != EvOutcomeUnknown || !s.intentState() {
-		return false
+	return s.terminal == EvOutcomeUnknown && callstate.Classify(callstateRows(s.rows)) == callstate.RecoveryHold
+}
+
+// callstateRows are a call's rows as callstate reads them.
+func callstateRows(rows []Event) []callstate.Row {
+	out := make([]callstate.Row, len(rows))
+	for i, ev := range rows {
+		out[i] = callstate.Row{Event: ev.Event, Reason: rowStr(ev.Data, "reason")}
 	}
-	for i := len(s.rows) - 1; i >= 0; i-- {
-		if s.rows[i].Event == EvOutcomeUnknown {
-			return rowStr(s.rows[i].Data, "reason") == ReasonDispatchUnknown
-		}
-	}
-	return false
+	return out
 }
 
 // callStates groups the agent-call rows of a run by call id, in order of first appearance.

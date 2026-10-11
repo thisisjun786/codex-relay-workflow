@@ -215,9 +215,10 @@ func modes() []mode {
 		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"map", false, runRepoMap},
 		{"flow", false, func(c invocation) int {
-			// The engine names no store and no network client: the binary installs what `crw flow recover` works on, the
-			// relay store the run's journal is persisted in and the App Server connection of its host.
+			// The engine names no store and no network client: the binary installs what `crw flow recover` and `crw flow resume` work on,
+			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
+			engine.ResumeEnv = journal.ResumeEnv
 			return lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 		}},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},

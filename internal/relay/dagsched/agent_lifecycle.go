@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -53,7 +54,7 @@ const (
 	AgentStateIntegrated = "integrated"
 	AgentStateHeld       = "held"
 
-	AgentActionRunResume   = "run resume"
+	AgentActionFlowResume  = "crw flow resume"
 	AgentActionFlowRecover = "crw flow recover"
 	AgentActionAdopt       = "dag-adopt"
 	AgentActionIntegrate   = "dag-integrate"
@@ -599,45 +600,75 @@ func agentWorkOf(ctx context.Context, q store.Querier, cur AgentExecution) ([]st
 	return ids, nil
 }
 
-// agentCallHeld is whether a call of the work the execution holds is unresolved: its newest event (the row of the greatest event_seq of that call) is neither terminal nor a refusal, so the run does not know where
-// the call stands (a dispatch whose answer never came, a host failure, a turn requested and never ended). Calls are judged one by one: the completion of another call, of the same execution or of the one a
-// handover continues, says nothing of an unresolved one, which stays until a later event of its own settles it. The journal of a store that has none holds nothing.
-func agentCallHeld(ctx context.Context, q store.Querier, plan, node string, cur AgentExecution) (bool, error) {
+// agentCalls is what the journal says of the calls of the work an execution holds, judged one by one: Recover is set when one
+// of them is in recovery hold (its outcome was left unknown and nobody has cleared it), which only `crw flow recover` settles;
+// Resume is set when one is unresolved in any other way (a dispatch intent whose answer never came, a call whose hold was
+// cleared, a call that ended held for an engine pause, a budget stop or a host failure), which the resume of the run goes on
+// with. The completion of another call, of the same execution or of the one a handover continues, says nothing of an
+// unresolved one, which stays until a later event of its own settles it. The reading is internal/flow/callstate, the one
+// `crw flow recover` accepts a call by, so the command a report names is the command that takes the call. The journal of a
+// store that has none holds nothing.
+type agentCalls struct{ Recover, Resume bool }
+
+func agentCallStates(ctx context.Context, q store.Querier, plan, node string, cur AgentExecution) (agentCalls, error) {
+	var out agentCalls
 	has, err := tableExists(ctx, q, "flow_calls")
 	if err != nil || !has {
-		return false, err
+		return out, err
 	}
 	ids, err := agentWorkOf(ctx, q, cur)
 	if err != nil {
-		return false, err
+		return out, err
 	}
 	args := []any{plan, node}
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	rows, err := q.QueryContext(ctx, "SELECT c.event FROM flow_calls c WHERE c.kind = 'agent' AND c.plan_id = ? AND c.node_id = ? AND c.execution_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+")"+
-		" AND c.event_seq = (SELECT MAX(l.event_seq) FROM flow_calls l WHERE l.call_id = c.call_id)", args...)
+	rows, err := q.QueryContext(ctx, "SELECT c.call_id, c.event, COALESCE(c.detail_json, '') FROM flow_calls c WHERE c.kind = 'agent' AND c.call_id IN"+
+		" (SELECT m.call_id FROM flow_calls m WHERE m.kind = 'agent' AND m.plan_id = ? AND m.node_id = ? AND m.execution_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+"))"+
+		" ORDER BY c.call_id, c.event_seq", args...)
 	if err != nil {
-		return false, err
+		return out, err
 	}
 	defer rows.Close()
-	for rows.Next() {
-		var event string
-		if err := rows.Scan(&event); err != nil {
-			return false, err
+	var call string
+	var calls []callstate.Row
+	settle := func() {
+		switch callstate.Classify(calls) {
+		case callstate.RecoveryHold:
+			out.Recover = true
+		case callstate.Unsettled:
+			out.Resume = true
 		}
-		switch event {
-		case "completed", "null_model", "refused", "superseded":
-		default:
-			return true, nil
-		}
+		calls = calls[:0]
 	}
-	return false, rows.Err()
+	for rows.Next() {
+		var id, event, detail string
+		if err := rows.Scan(&id, &event, &detail); err != nil {
+			return out, err
+		}
+		if id != call {
+			settle()
+			call = id
+		}
+		var d struct {
+			Reason string `json:"reason"`
+		}
+		if detail != "" {
+			_ = json.Unmarshal([]byte(detail), &d)
+		}
+		calls = append(calls, callstate.Row{Event: event, Reason: d.Reason})
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	settle()
+	return out, nil
 }
 
 // resumeOfAgent fills the report of a node whose current execution is an agent execution and answers whether it did (a node of the relationship side is the caller's). The state is released (the execution
 // runs), accepted (an acceptance stands on it), integrated (the accepted head landed) or held (a call is unresolved: held or of unknown outcome); the actor and the run are the ones the current row names. What is
-// outstanding is resumed by the orchestrator that holds the node: the run resumes a released node, `crw flow recover` settles a held one, the accepted head is integrated and a stale result is corrected; a
+// outstanding is resumed by the orchestrator that holds the node: `crw flow resume` goes on with a released node and with a node whose call is unresolved (an unanswered intent, a cleared hold, a call that ended held), `crw flow recover` settles a node whose call is in recovery hold, the accepted head is integrated and a stale result is corrected; a
 // node another orchestrator holds is adopted first (dag-adopt). A result that landed, or an accepted one with no head to land, needs nothing.
 func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, actor string, n NodeReading, out *RestartNode) (bool, error) {
 	cur, live, err := currentAgentExecution(ctx, q, plan, n.NodeID)
@@ -652,7 +683,7 @@ func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, ac
 	}
 	a := &RestartAgent{ExecutionID: cur.ExecutionID, ExecutionKind: cur.Kind, Attempt: cur.Attempt, Actor: cur.Actor, RunID: cur.RunID, State: AgentStateReleased}
 	out.Agent, out.Resume = a, ResumeNone
-	action := AgentActionRunResume
+	action := AgentActionFlowResume
 	outstanding := true
 	switch n.State {
 	case StateIntegrated:
@@ -674,12 +705,15 @@ func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, ac
 			outstanding = false // a result with no head to land: the acceptance is the node's value
 		}
 	default:
-		held, err := agentCallHeld(ctx, q, plan, n.NodeID, cur)
+		unresolved, err := agentCallStates(ctx, q, plan, n.NodeID, cur)
 		if err != nil {
 			return true, err
 		}
-		if held {
+		switch {
+		case unresolved.Recover:
 			a.State, action = AgentStateHeld, AgentActionFlowRecover
+		case unresolved.Resume:
+			a.State, action = AgentStateHeld, AgentActionFlowResume
 		}
 	}
 	if !outstanding {
@@ -690,9 +724,12 @@ func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, ac
 		a.Action = AgentActionAdopt
 		out.Resume = ResumeAdoptNeeded
 		out.ResumeDetail = "run dag-adopt: execution " + cur.ExecutionID + " is held by " + cur.Actor + " and the actor is the registered parent that replaced it; then " + action
+	case a.State == AgentStateHeld && action == AgentActionFlowRecover:
+		a.Action = action
+		out.Resume, out.ResumeDetail = ResumeReconcile, "a call of execution "+cur.ExecutionID+" is in recovery hold (its outcome is unknown and nobody has cleared it): settle it with "+action+" CALL (--adopt THREAD|TURN | --absent); the run sends nothing for it until then"
 	case a.State == AgentStateHeld:
 		a.Action = action
-		out.Resume, out.ResumeDetail = ResumeReconcile, "a call of execution "+cur.ExecutionID+" is unresolved (it ended held or with an unknown outcome, or never ended): settle it with "+action+" and never call it again"
+		out.Resume, out.ResumeDetail = ResumeReconcile, "a call of execution "+cur.ExecutionID+" is unresolved (a dispatch intent nobody answered, a hold that was cleared, or a call that ended held): go on with "+action+" RUN SCRIPT, which looks it up on the host before the run goes on"
 	default:
 		a.Action = action
 		out.Resume, out.ResumeDetail = ResumeAdopt, "this actor holds execution "+cur.ExecutionID+": "+action

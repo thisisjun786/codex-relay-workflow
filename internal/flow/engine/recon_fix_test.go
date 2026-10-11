@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 )
 
 // Source is the source of the threads the stub host's backend creates.
@@ -110,5 +112,38 @@ func TestRecoverAdoptThreadRefusesAnotherSource(t *testing.T) {
 	}
 	if len(j.Events()) != before {
 		t.Errorf("a refused recovery appended %v", rowKinds(j, before))
+	}
+}
+
+// The events callstate names are the engine's, and callState.held() is callstate's recovery hold: the one reading `dag-restart`
+// and `crw flow recover` share.
+func TestCallstateReadsTheEnginesEvents(t *testing.T) {
+	for engine, shared := range map[string]string{
+		EvPrepared: callstate.Prepared, EvThreadRequested: callstate.ThreadRequested, EvThreadStarted: callstate.ThreadStarted,
+		EvForkRequested: callstate.ForkRequested, EvForkStarted: callstate.ForkStarted, EvTurnRequested: callstate.TurnRequested,
+		EvTurnStarted: callstate.TurnStarted, EvInterruptRequested: callstate.Interrupt, EvCompleted: callstate.Completed,
+		EvNullModel: callstate.NullModel, EvHeld: callstate.Held, EvRefused: callstate.Refused, EvOutcomeUnknown: callstate.OutcomeUnknown,
+		EvSuperseded: callstate.Superseded, EvRecoveryCleared: callstate.RecoveryCleared, ReasonDispatchUnknown: callstate.DispatchUnknown,
+	} {
+		if engine != shared {
+			t.Errorf("engine %q, callstate %q", engine, shared)
+		}
+	}
+	row := func(ev string, reason string) Event {
+		return Event{Kind: KindCall, CallID: "c1", Op: "agent", Event: ev, Data: map[string]any{"reason": reason}}
+	}
+	hold := []Event{row(EvPrepared, ""), row(EvThreadRequested, ""), row(EvOutcomeUnknown, ReasonDispatchUnknown)}
+	cleared := append(append([]Event(nil), hold...), row(EvRecoveryCleared, ""))
+	open := hold[:2]
+	for name, c := range map[string]struct {
+		rows []Event
+		held bool
+	}{"hold": {hold, true}, "cleared": {cleared, false}, "open intent": {open, false}} {
+		if got := stateOf("c1", c.rows).held(); got != c.held {
+			t.Errorf("%s: held() is %v", name, got)
+		}
+		if got := callstate.Classify(callstateRows(c.rows)) == callstate.RecoveryHold; got != c.held {
+			t.Errorf("%s: callstate says hold %v", name, got)
+		}
 	}
 }

@@ -107,6 +107,17 @@ func (k *agentKit) slotReleasedBy(node string) (by, reason string) {
 // callIn records a call of the node's current execution that stops at an event: a terminal one ("outcome_unknown", "held", "completed") or, for "", the dispatch intent of a turn that never got an answer.
 func (k *agentKit) callIn(node, terminal string) {
 	k.t.Helper()
+	rows := []string{"prepared", "turn_requested"}
+	if terminal != "" {
+		rows = append(rows, terminal)
+	}
+	k.callRows(node, rows...)
+}
+
+// callRows records the rows of one call of the node's current execution, in order. A row is an event name, or event:reason for a row that carries a reason (outcome_unknown:dispatch_unknown); an outcome_unknown with no
+// reason named carries dispatch_unknown, the only reason the engine gives it.
+func (k *agentKit) callRows(node string, events ...string) string {
+	k.t.Helper()
 	k.calls++
 	id := fmt.Sprintf("call-%d", k.calls)
 	if k.count("SELECT COUNT(*) FROM flow_runs WHERE run_id = 'run-1'") == 0 {
@@ -114,15 +125,19 @@ func (k *agentKit) callIn(node, terminal string) {
 			"run-1", "project-lane", dig("script"), "{}", dig("args"), "g", 1, "parent", "nonce", "", k.clock())
 	}
 	execution := k.execution(node)
-	row := func(seq int, event string) {
-		k.exec("INSERT INTO flow_calls (call_id, event_seq, run_id, path, position, kind, role, event, plan_id, node_id, execution_id, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-			id, seq, "run-1", "executor:"+node, 0, "agent", "executor", event, "g", node, execution, k.clock())
+	for i, ev := range events {
+		event, reason, _ := strings.Cut(ev, ":")
+		if event == "outcome_unknown" && reason == "" {
+			reason = "dispatch_unknown"
+		}
+		detail := ""
+		if reason != "" {
+			detail = fmt.Sprintf(`{"reason":%q}`, reason)
+		}
+		k.exec("INSERT INTO flow_calls (call_id, event_seq, run_id, path, position, kind, role, event, plan_id, node_id, execution_id, detail_json, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+			id, i+1, "run-1", "executor:"+node, 0, "agent", "executor", event, "g", node, execution, detail, k.clock())
 	}
-	row(1, "prepared")
-	row(2, "turn_requested")
-	if terminal != "" {
-		row(3, terminal)
-	}
+	return id
 }
 
 func (k *agentKit) rowsOfKind(node, kind string) int {
@@ -469,11 +484,11 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 		}
 	}
 	check(k.sched, "parent", map[string]want{
-		"a": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent"},
+		"a": {AgentStateReleased, AgentActionFlowResume, ResumeAdopt, "parent"},
 		"b": {AgentStateAccepted, AgentActionIntegrate, ResumeAdopt, "parent"},
 		"c": {AgentStateIntegrated, "", ResumeNone, "parent"},
 		"d": {AgentStateHeld, AgentActionFlowRecover, ResumeReconcile, "parent"},
-		"e": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent"},
+		"e": {AgentStateReleased, AgentActionFlowResume, ResumeAdopt, "parent"},
 	})
 	// the object the relay prints carries the agent facts of an agent node, and only of an agent node
 	report, err := k.sched.Restart(ctx, "g", "parent")
@@ -481,7 +496,7 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	printed := fmt.Sprintf("%v", report.Object())
-	for _, w := range []string{"crw flow recover", "run resume", "run-1", "held", "integrated"} {
+	for _, w := range []string{"crw flow recover", "crw flow resume", "run-1", "held", "integrated"} {
 		if !strings.Contains(printed, w) {
 			t.Fatalf("the printed report lacks %q: %s", w, printed)
 		}
@@ -505,11 +520,11 @@ func TestRestartReportsAgentNodes(t *testing.T) {
 		}
 	}
 	check(s2, "parent-2", map[string]want{
-		"a": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent-2"},
+		"a": {AgentStateReleased, AgentActionFlowResume, ResumeAdopt, "parent-2"},
 		"b": {AgentStateAccepted, AgentActionIntegrate, ResumeAdopt, "parent-2"},
 		"c": {AgentStateIntegrated, "", ResumeNone, "parent"},
 		"d": {AgentStateHeld, AgentActionFlowRecover, ResumeReconcile, "parent-2"},
-		"e": {AgentStateReleased, AgentActionRunResume, ResumeAdopt, "parent-2"},
+		"e": {AgentStateReleased, AgentActionFlowResume, ResumeAdopt, "parent-2"},
 	})
 }
 
@@ -874,7 +889,54 @@ func TestRestartKeepsAnUnresolvedCallWhenAnotherCallCompletes(t *testing.T) {
 	// a later event of the SAME call settles it
 	k.exec("INSERT INTO flow_calls (call_id, event_seq, run_id, path, position, kind, role, event, plan_id, node_id, execution_id, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
 		unresolved, 4, "run-1", "executor:a", 0, "agent", "executor", "completed", "g", "a", k.execution("a"), k.clock())
-	if state, action := stateOf(s2, "parent-2"); state != AgentStateReleased || action != AgentActionRunResume {
-		t.Fatalf("restart after the call was settled = %s/%s, want released/%s", state, action, AgentActionRunResume)
+	if state, action := stateOf(s2, "parent-2"); state != AgentStateReleased || action != AgentActionFlowResume {
+		t.Fatalf("restart after the call was settled = %s/%s, want released/%s", state, action, AgentActionFlowResume)
+	}
+}
+
+// dag-restart names the command that takes the call, by the state of the call: a call whose outcome was left unknown and not
+// cleared is settled by `crw flow recover`; a dispatch intent nobody answered, a call whose hold was cleared and a call that
+// ended held for another reason are gone on with by `crw flow resume`. The reading is the one `crw flow recover` accepts a call
+// by (internal/flow/callstate), so the two cannot disagree.
+func TestRestartNamesTheCommandOfEachCallState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	specs := []agentSpec{{name: "hold", files: fileOf("hold")}, {name: "open", files: fileOf("open")}, {name: "cleared", files: fileOf("cleared")},
+		{name: "held", files: fileOf("held")}, {name: "done", files: fileOf("done")}, {name: "other", files: fileOf("other")}}
+	k := newAgentKit(t, specs...)
+	k.callRows("hold", "prepared", "thread_requested", "outcome_unknown")
+	k.callRows("open", "prepared", "thread_requested", "thread_started", "turn_requested")
+	k.callRows("cleared", "prepared", "thread_requested", "outcome_unknown", "recovery_cleared")
+	k.callRows("held", "prepared", "thread_requested", "thread_started", "turn_requested", "turn_started", "held:engine_paused")
+	k.callRows("done", "prepared", "thread_requested", "thread_started", "turn_requested", "turn_started", "completed")
+	k.callRows("other", "prepared", "thread_requested", "outcome_unknown:other")
+	report, err := k.sched.Restart(ctx, "g", "parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type want struct{ state, action, detail string }
+	wants := map[string]want{
+		"hold":    {AgentStateHeld, "crw flow recover", "crw flow recover CALL"},
+		"open":    {AgentStateHeld, "crw flow resume", "crw flow resume RUN SCRIPT"},
+		"cleared": {AgentStateHeld, "crw flow resume", "crw flow resume RUN SCRIPT"},
+		"held":    {AgentStateHeld, "crw flow resume", "crw flow resume RUN SCRIPT"},
+		"other":   {AgentStateHeld, "crw flow resume", "crw flow resume RUN SCRIPT"},
+		"done":    {AgentStateReleased, "crw flow resume", "this actor holds execution"},
+	}
+	for _, n := range report.Nodes {
+		w, ok := wants[n.NodeID]
+		if !ok {
+			continue
+		}
+		delete(wants, n.NodeID)
+		if n.Agent == nil || n.Agent.State != w.state || n.Agent.Action != w.action || !strings.Contains(n.ResumeDetail, w.detail) {
+			t.Errorf("node %s: %+v, detail %q, want %s/%q naming %q", n.NodeID, n.Agent, n.ResumeDetail, w.state, w.action, w.detail)
+		}
+		if w.action == "crw flow recover" && strings.Contains(n.ResumeDetail, "crw flow resume") {
+			t.Errorf("node %s: a call in recovery hold is not resumed: %q", n.NodeID, n.ResumeDetail)
+		}
+	}
+	if len(wants) != 0 {
+		t.Errorf("restart does not report %v", wants)
 	}
 }
