@@ -396,3 +396,22 @@ return [a, b, c].map((r) => r.status + '/' + r.reason)`
 		t.Errorf("%d requests after a changed input, want the changed call's thread and turn on top of %d", n, sent)
 	}
 }
+
+// A reconcile pass whose context ends decides nothing: the error it read is the cancellation, not the host, so no
+// outcome_unknown is written for it.
+func TestCancelledReconcileDecidesNothing(t *testing.T) {
+	j := NewMemoryJournal()
+	add := func(ev string, data map[string]any) {
+		j.Append(Event{RunID: "r", Kind: KindCall, CallID: "c1", Path: "root", Position: 1, Op: "agent", Label: "a", Event: ev, Data: data})
+	}
+	add(EvPrepared, map[string]any{"role": "executor", "node": "n1"})
+	add(EvThreadRequested, map[string]any{"cwd": "/w/a1", "send": 1, "at": int64(1000), "owner": "p1"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := len(j.Events())
+	host := &stubHost{listErr: ctx.Err(), creation: CreationClosed}
+	rep, err := Reconcile(ctx, j, ReconcileConfig{RunID: "r", Host: host})
+	if !errors.Is(err, context.Canceled) || len(rep.ByCall) != 0 || len(j.Events()) != before {
+		t.Errorf("%v / %v / rows %v", err, rep.ByCall, rowKinds(j, before))
+	}
+}

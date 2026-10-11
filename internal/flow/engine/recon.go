@@ -444,6 +444,10 @@ func Reconcile(ctx context.Context, j Journal, cfg ReconcileConfig) (*Reconcilia
 		go func() {
 			defer wg.Done()
 			p := r.observe(ctx, st)
+			if ctx.Err() != nil {
+				// a pass that was cancelled decides nothing: an error it read is the cancellation, not the host
+				return
+			}
 			rec := r.apply(ctx, st, p)
 			mu.Lock()
 			res.ByCall[st.id] = rec
@@ -646,7 +650,7 @@ func (r *reconciler) observeCreate(ctx context.Context, st *callState) plan {
 					return r.unknown(st, "the connection of the %s request closed at %s; a second complete listing is due at %s", kind, seenAt.UTC().Format(time.RFC3339), due.UTC().Format(time.RFC3339))
 				}
 				if err := r.cfg.Wait(ctx, due.Sub(r.cfg.Now())); err != nil {
-					return r.unknown(st, "waiting for the creation grace: %v", err)
+					return plan{pending: true} // the pass was cancelled: the grace has not passed, nothing is decided
 				}
 				res = scan()
 				continue
