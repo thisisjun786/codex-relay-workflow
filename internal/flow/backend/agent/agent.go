@@ -43,6 +43,12 @@ type Config struct {
 	Prompt func(role string) (string, error)
 	// PollEvery and InterruptWait override the defaults (a test shortens them).
 	PollEvery, InterruptWait time.Duration
+	// Owner names the process the backend lives in (ProcessOwner when empty); every creation intent records it.
+	Owner string
+	// OwnerAlive says whether the process an owner names can still hold a connection (ProcessAlive when nil).
+	OwnerAlive func(owner string) bool
+	// Source is the Thread.source of the threads the backend creates (DefaultSource when empty).
+	Source string
 }
 
 // Backend is the engine.Backend that runs calls on the App Server. It also places calls (engine.Placer), forks threads
@@ -61,6 +67,8 @@ var (
 	_ engine.Placer     = (*Backend)(nil)
 	_ engine.Forker     = (*Backend)(nil)
 	_ engine.Reconciled = (*Backend)(nil)
+	_ engine.Owned      = (*Backend)(nil)
+	_ engine.ReconHost  = (*Backend)(nil)
 )
 
 // New returns a backend.
@@ -80,6 +88,15 @@ func New(cfg Config) (*Backend, error) {
 	if cfg.InterruptWait <= 0 {
 		cfg.InterruptWait = DefaultInterruptWait
 	}
+	if cfg.Owner == "" {
+		cfg.Owner = ProcessOwner()
+	}
+	if cfg.OwnerAlive == nil {
+		cfg.OwnerAlive = ProcessAlive
+	}
+	if cfg.Source == "" {
+		cfg.Source = DefaultSource
+	}
 	return &Backend{cfg: cfg, client: cfg.Client, threads: cfg.Threads, tokenTotal: map[string]engine.Tokens{}}, nil
 }
 
@@ -88,6 +105,7 @@ func New(cfg Config) (*Backend, error) {
 // notifications only to subscribed connections, so without the hold the second turn of a call - a repair, a fix - would
 // never be heard on the bus.
 func (b *Backend) hold(ctx context.Context, thread string) error {
+	b.threads.Add(thread)
 	if b.client.ThreadHeld(thread) {
 		return nil
 	}

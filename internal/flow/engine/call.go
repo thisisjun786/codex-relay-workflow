@@ -155,6 +155,8 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 			data["cause"] = p.refusal.Cause
 		}
 		c.deliverNow(c.terminal(EvRefused, StatusRefused, p.refusal.Reason, data))
+	} else if c.replay != nil {
+		c.deliverNow(*c.replay)
 	} else {
 		s.e.inflight.Add(1)
 		go func() {
@@ -311,6 +313,11 @@ type callRun struct {
 	placeReq  PlaceRequest
 	// cwd is the working directory of the call's thread once it is known.
 	cwd string
+	// rec is what reconcile decided for the call of a resumed run; replay is the result of a call the journal already
+	// ended with the same input; send is the send ordinal of the creation request (0 is the first).
+	rec    *Recovery
+	replay *CallResult
+	send   int
 
 	// mu guards what an interrupt from another goroutine reads and writes: the last row, the turn in flight and the
 	// engine's intent to interrupt it.
@@ -333,6 +340,9 @@ func (c *callRun) event(ev string, data map[string]any) Event {
 // prepare writes the call's intent row before anything is sent.
 func (c *callRun) prepare() {
 	p := c.plan
+	if c.e.cfg.Resume != nil && p.refusal == nil && c.resumePrior() {
+		return
+	}
 	d := map[string]any{
 		"role": p.role, "family": p.spec.Family, "model": p.spec.Pair.Model, "effort": p.spec.Pair.Effort,
 		"requested_model": p.requested.Model, "requested_effort": p.requested.Effort,
@@ -473,10 +483,14 @@ func mustJSON(v any) []byte {
 
 // gate stops a call that would send a request while the run is paused or over its token ceiling.
 func (c *callRun) gate(ctx context.Context) (CallResult, bool) {
-	if c.e.nodeStopped(c.plan.node) {
-		data := map[string]any{"input_state": c.inputState(), "detail": "the node was stopped: a restored worktree changed after it was verified"}
+	if reason := c.e.nodeStopReason(c.plan.node); reason != "" {
+		detail := "the node was stopped: a restored worktree changed after it was verified"
+		if reason == ReasonRecoveryHold {
+			detail = "the node is in recovery_hold: a call of it has an outcome that is not known, so nothing more is sent for it"
+		}
+		data := map[string]any{"input_state": c.inputState(), "detail": detail}
 		c.heldSnapshot(ctx, data)
-		return c.terminal(EvHeld, StatusHeld, ReasonRestoreSnapshotMismatch, data), true
+		return c.terminal(EvHeld, StatusHeld, reason, data), true
 	}
 	reason := c.e.pauseReason()
 	if reason == "" {
@@ -528,9 +542,14 @@ func (c *callRun) fromError(ctx context.Context, err error) CallResult {
 	case errors.As(err, &rpc):
 		return c.fromDisposition(ctx, ClassifyHostFailure(rpc.CodexErrorInfo), rpc.Message)
 	}
+	// A request nobody can account for holds the node: nothing is sent again, no new attempt starts and no tier step is
+	// taken for it until reconcile or an operator establishes the outcome.
+	c.e.stopNode(c.plan.node, ReasonRecoveryHold)
 	if r, ok := c.e.cfg.Backend.(Reconciled); ok && r.LeavesLostRequestsOpen() {
+		// reconcile decides the call and escalates if it cannot; until then the outcome is open, not unknown
 		return c.leaveOpen(ReasonDispatchUnknown)
 	}
+	c.e.escalateUnknown(c, err.Error())
 	return c.terminal(EvOutcomeUnknown, StatusUnknown, ReasonDispatchUnknown, map[string]any{"error": err.Error()})
 }
 
@@ -587,6 +606,16 @@ func (c *callRun) beginTurn(ctx context.Context, op string) (context.Context, fu
 	}
 }
 
+// setIntent records the reason of an interrupt the engine requested for the turn before the process stopped.
+func (c *callRun) setIntent(reason string) {
+	if reason == "" {
+		return
+	}
+	c.mu.Lock()
+	c.intent = reason
+	c.mu.Unlock()
+}
+
 // interrupted is the reason the engine interrupted the call's last turn for, "" when it did not.
 func (c *callRun) interrupted() string {
 	c.mu.Lock()
@@ -632,7 +661,7 @@ func (c *callRun) placementProblem(ctx context.Context, err error) CallResult {
 	case c.aborted(ctx):
 		return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
 	case errors.As(err, &mismatch):
-		c.e.stopNode(c.plan.node)
+		c.e.stopNode(c.plan.node, ReasonRestoreSnapshotMismatch)
 		c.mu.Lock()
 		last := c.lastEvent
 		c.mu.Unlock()
@@ -669,8 +698,11 @@ func (c *callRun) pairCheck(info ThreadInfo) (CallResult, bool) {
 // startThread creates the call's thread.
 func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	e, p := c.e, c.plan
-	if res, stop := c.establish(ctx); stop {
-		return res, true
+	if c.rec == nil {
+		// a creation sent again runs in the directory the first request was made for: it exists, and nothing is made
+		if res, stop := c.establish(ctx); stop {
+			return res, true
+		}
 	}
 	cwd := p.opts.Cwd
 	var placement Placement
@@ -680,8 +712,9 @@ func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 			cwd = placement.Path
 		}
 	}
-	c.event(EvThreadRequested, map[string]any{"cwd": cwd})
-	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
+	send := max(1, c.send)
+	c.event(EvThreadRequested, c.creationIntent(map[string]any{"cwd": cwd}, send))
+	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -702,13 +735,16 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 	if !ok {
 		return c.terminal(EvRefused, StatusRefused, ReasonPolicyRefused, map[string]any{"detail": "the backend cannot fork a thread"}), true
 	}
-	if res, stop := c.establish(ctx); stop {
-		return res, true
+	if c.rec == nil {
+		if res, stop := c.establish(ctx); stop {
+			return res, true
+		}
 	}
 	cwd := c.placement.Path
-	c.event(EvForkRequested, map[string]any{"thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "prefix": threadPrefix(e.j, p.resume.ThreadID, p.resume.ThroughTurnID), "cwd": cwd})
+	send := max(1, c.send)
+	c.event(EvForkRequested, c.creationIntent(map[string]any{"thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "prefix": threadPrefix(e.j, p.resume.ThreadID, p.resume.ThroughTurnID), "cwd": cwd}, send))
 	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
-		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
+		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -721,10 +757,15 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 }
 
 // threadPrefix is the turns of a thread through throughTurn, in order, as the journal recorded them: each turn's id and
-// its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold.
+// its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold. A thread that was itself forked starts
+// with the turns it inherited (the prefix its fork request recorded, which is the whole history through its boundary), and
+// only then come the turns its own calls ran; a turn an operator replaced is not part of the history.
 func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 	owner := map[string]string{}
 	events := j.Events()
+	replaced := replacedTurns(events)
+	var inherited []map[string]any
+	forkReq := map[string]Event{}
 	for _, ev := range events {
 		if ev.Kind != KindCall {
 			continue
@@ -734,26 +775,73 @@ func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 			if t, _ := ev.Data["thread_id"].(string); t != "" {
 				owner[ev.CallID] = t
 			}
+		case EvForkRequested:
+			forkReq[ev.CallID] = ev
 		case EvThreadStarted, EvForkStarted:
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
+			if t, _ := ev.Data["thread_id"].(string); ev.Event == EvForkStarted && t == threadID && inherited == nil {
+				for _, p := range prefixOf(forkReq[ev.CallID].Data) {
+					inherited = append(inherited, map[string]any{"turn_id": p.TurnID, "op": p.Op})
+				}
+			}
 		}
 	}
-	var out []map[string]any
+	out := inherited
 	for _, ev := range events {
 		if ev.Kind != KindCall || ev.Event != EvTurnStarted || owner[ev.CallID] != threadID {
 			continue
 		}
 		id, _ := ev.Data["turn_id"].(string)
+		if replaced[id] {
+			continue
+		}
 		op, _ := ev.Data["op"].(string)
 		out = append(out, map[string]any{"turn_id": id, "op": op})
-		if id == throughTurn {
-			break
+	}
+	for i, p := range out {
+		if p["turn_id"] == throughTurn {
+			return out[:i+1]
+		}
+	}
+	return out
+}
+
+// replacedTurns are the turns an operator's adoption replaced (turn_started rows with `replaces`): the call follows the
+// turn that replaced them.
+func replacedTurns(events []Event) map[string]bool {
+	out := map[string]bool{}
+	for _, ev := range events {
+		if ev.Kind == KindCall && ev.Event == EvTurnStarted {
+			if old := rowStr(ev.Data, "replaces"); old != "" {
+				out[old] = true
+			}
 		}
 	}
 	return out
 }
 
 const repairInstruction = "Your previous answer did not satisfy the output schema: %s\nAnswer again with only a JSON value that satisfies the schema."
+
+// creationIntent adds to a thread_requested or fork_requested row what reconcile needs: the send ordinal, the intended
+// wall time (the identity of a thread is bounded by it) and the process that holds the connection the request goes on.
+func (c *callRun) creationIntent(data map[string]any, send int) map[string]any {
+	data["send"] = send
+	data["at"] = c.e.cfg.Now().UnixMilli()
+	if o, ok := c.e.cfg.Backend.(Owned); ok {
+		data["owner"] = o.Owner()
+	}
+	return data
+}
+
+// recoveredTurn is a turn of a recovered call that was already sent: the loop takes its outcome instead of sending.
+type recoveredTurn struct {
+	k       int
+	op      string
+	turnID  string
+	running bool
+	outcome *TurnOutcome
+	intent  string
+}
 
 // execute runs the call against the backend: thread, turns, schema validation with one repair turn.
 func (c *callRun) execute(ctx context.Context) CallResult {
@@ -777,48 +865,134 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 			return c.terminal(EvRefused, StatusRefused, ReasonSchemaNotStrict, map[string]any{"detail": "the schema cannot be compiled"})
 		}
 	}
+	if c.rec != nil && c.rec.Action == RecoverPending {
+		return c.leaveOpen(ReasonDispatchUnknown)
+	}
 	if res, stop := c.gate(ctx); stop {
 		return res
 	}
-	switch {
-	case p.resume == nil:
-		if res, stop := c.startThread(ctx); stop {
+	k, input := 1, p.prompt
+	var pre *recoveredTurn
+	if c.rec != nil {
+		var res CallResult
+		var stop bool
+		if res, stop, k, input, pre = c.recover(ctx); stop {
 			return res
 		}
-	case c.placement != nil && c.placement.Fork:
-		if res, stop := c.forkThread(ctx); stop {
+	} else {
+		if res, stop := c.supersedePrior(ctx); stop {
 			return res
 		}
-	default:
-		c.threadID, c.configured = p.resume.ThreadID, p.resume.Configured
+		switch {
+		case p.resume == nil:
+			if res, stop := c.startThread(ctx); stop {
+				return res
+			}
+		case c.placement != nil && c.placement.Fork:
+			if res, stop := c.forkThread(ctx); stop {
+				return res
+			}
+		default:
+			c.threadID, c.configured = p.resume.ThreadID, p.resume.Configured
+		}
 	}
+	return c.turnLoop(ctx, resolved, k, input, pre)
+}
 
-	input := p.prompt
-	for k := 1; ; k++ {
-		if res, stop := c.gate(ctx); stop {
-			return res
+// recover goes on with a call whose reconcile decided it: the thread it adopted, the creation it sends again, the turn
+// that is its own, or the turn that was proven absent. It returns the turn the loop begins with.
+func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int, input string, pre *recoveredTurn) {
+	rec, p := c.rec, c.plan
+	switch rec.Action {
+	case RecoverThreadReady:
+		c.threadID, c.configured, c.cwd = rec.ThreadID, rec.Pair, rec.Cwd
+		res, stop = c.pairCheck(ThreadInfo{ID: rec.ThreadID, Pair: rec.Pair, Cwd: rec.Cwd})
+		return res, stop, 1, p.prompt, nil
+	case RecoverResendCreate:
+		c.send = rec.Send
+		if rec.Kind == "fork" {
+			res, stop = c.forkThread(ctx)
+		} else {
+			res, stop = c.startThread(ctx)
 		}
-		if k == 1 && c.placement != nil && c.placement.Kind == PlaceRestore {
-			if placer, ok := e.cfg.Backend.(Placer); ok {
-				if err := placer.Recheck(ctx, *c.placement); err != nil {
-					return c.placementProblem(ctx, err)
+		return res, stop, 1, p.prompt, nil
+	}
+	info, _ := LookupCall(c.e.j, c.id)
+	c.threadID, c.configured, c.cwd = info.ThreadID, info.Configured, info.Cwd
+	own := CallEvents(c.e.j, c.id)
+	replaced := replacedTurns(own)
+	for _, ev := range own {
+		if ev.Event == EvPrepared {
+			c.turnIDs = nil
+		}
+		if ev.Event == EvTurnStarted {
+			if !replaced[rowStr(ev.Data, "turn_id")] {
+				c.turnIDs = append(c.turnIDs, rowStr(ev.Data, "turn_id"))
+			}
+			c.delivered = true
+		}
+	}
+	if rec.Action == RecoverResendTurn {
+		return CallResult{}, false, rec.K, rec.Input, nil
+	}
+	return CallResult{}, false, rec.K, rec.Input, &recoveredTurn{k: rec.K, op: rec.Op, turnID: rec.TurnID, running: rec.Running, outcome: rec.Outcome, intent: rec.InterruptReason}
+}
+
+// turnLoop runs the turns of a call from turn k: each is sent after its intent row, and a turn that was already sent (pre)
+// is taken from the host instead.
+func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k int, input string, pre *recoveredTurn) CallResult {
+	e, p := c.e, c.plan
+	resend := c.rec != nil && c.rec.Action == RecoverResendTurn
+	for ; ; k++ {
+		var out TurnOutcome
+		var err error
+		repair := k > 1
+		if pre != nil {
+			// The turn was sent before the process stopped: no request, no gate, no intent row.
+			repair = pre.k > 1
+			c.repairUsed = c.repairUsed || repair
+			if pre.running {
+				host, _ := e.cfg.Backend.(ReconHost)
+				turnCtx, endTurn := c.beginTurn(ctx, pre.op)
+				c.setIntent(pre.intent)
+				out, err = host.AwaitTurn(turnCtx, c.threadID, pre.turnID, pre.op)
+				endTurn()
+			} else {
+				c.setIntent(pre.intent)
+				out = *pre.outcome
+			}
+			pre = nil
+		} else {
+			if res, stop := c.gate(ctx); stop {
+				return res
+			}
+			if k == 1 && c.placement != nil && c.placement.Kind == PlaceRestore {
+				if placer, ok := e.cfg.Backend.(Placer); ok {
+					if err := placer.Recheck(ctx, *c.placement); err != nil {
+						return c.placementProblem(ctx, err)
+					}
 				}
 			}
+			op := fmt.Sprintf("%s/t%d", c.id, k)
+			intent := map[string]any{"k": k, "op": op, "input": input}
+			if resend {
+				intent["resend"] = true
+				resend = false
+			}
+			c.event(EvTurnRequested, intent)
+			c.repairUsed = c.repairUsed || repair
+			turnCtx, endTurn := c.beginTurn(ctx, op)
+			out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
+				CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
+				Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair,
+				Started: func(turnID string) {
+					c.turnIDs = append(c.turnIDs, turnID)
+					c.delivered = true
+					c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turnID})
+				},
+			})
+			endTurn()
 		}
-		op := fmt.Sprintf("%s/t%d", c.id, k)
-		c.event(EvTurnRequested, map[string]any{"k": k, "op": op})
-		repair := k > 1
-		turnCtx, endTurn := c.beginTurn(ctx, op)
-		out, err := e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
-			CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
-			Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair,
-			Started: func(turnID string) {
-				c.turnIDs = append(c.turnIDs, turnID)
-				c.delivered = true
-				c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turnID})
-			},
-		})
-		endTurn()
 		if err != nil {
 			return c.fromError(ctx, err)
 		}

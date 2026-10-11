@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // This file is the fake's model of the thread methods a flow backend uses: thread/start, thread/read, thread/list,
@@ -73,6 +75,10 @@ type TurnPlan struct {
 	Silent bool
 	// SummaryOnly makes thread/turns/list return the turn with itemsView "summary" and no items.
 	SummaryOnly bool
+	// Detached keeps the turn running when the connection it was started on ends, as a host's turn does.
+	Detached bool
+	// NotLoaded makes thread/turns/list return the turn with itemsView "notLoaded" and no items, whatever view is asked.
+	NotLoaded bool
 	// ItemsListError answers thread/items/list for this turn with this error member.
 	ItemsListError map[string]any
 	// Tokens is the turn's token usage; the zero value is a small fixed usage.
@@ -116,6 +122,10 @@ type ThreadView struct {
 	Config                map[string]any
 	StartParams           map[string]any
 	ForkedFromID          string
+	ParentThreadID        string
+	Source                string
+	Archived              bool
+	CreatedAt             int64
 	Turns                 []TurnView
 }
 
@@ -140,6 +150,8 @@ type turnState struct {
 	startedAt int64
 	endedAt   int64
 	interrupt chan struct{}
+	// detached keeps the turn running when the connection it was started on ends.
+	detached bool
 }
 
 type threadState struct {
@@ -153,6 +165,9 @@ type threadState struct {
 	config    map[string]any
 	start     map[string]any
 	forkedOf  string
+	parent    string
+	source    string
+	archived  bool
 	created   int64
 	turns     []*turnState
 	active    *turnState
@@ -175,6 +190,12 @@ type Threads struct {
 	dropAll      bool
 	interrupted  []string
 	unsubscribed []string
+	archivedIDs  []string
+	clock        func() time.Time
+	listPage     int
+	handled      map[string]int
+	detachNext   bool
+	drops        map[string][]func(n int, params map[string]any) bool
 }
 
 // Threads installs (once) and returns the thread model of the server.
@@ -185,20 +206,77 @@ func (s *Server) Threads() *Threads {
 		s.mu.Unlock()
 		return t
 	}
-	t := &Threads{server: s, byID: map[string]*threadState{}, subs: map[string][]*Conn{}, seq: 1790000000}
+	t := &Threads{server: s, byID: map[string]*threadState{}, subs: map[string][]*Conn{}, seq: 1790000000,
+		handled: map[string]int{}, drops: map[string][]func(int, map[string]any) bool{}}
 	s.threads = t
 	s.mu.Unlock()
-	s.HandleConn("thread/start", t.handleStart)
+	s.HandleConn("thread/start", t.guarded("thread/start", t.handleStart))
 	s.HandleConn("thread/resume", t.handleResume)
-	s.HandleConn("thread/fork", t.handleFork)
+	s.HandleConn("thread/fork", t.guarded("thread/fork", t.handleFork))
 	s.HandleConn("thread/unsubscribe", t.handleUnsubscribe)
 	s.HandleConn("thread/read", t.handleRead)
 	s.HandleConn("thread/list", t.handleList)
+	s.HandleConn("thread/archive", t.handleArchive)
 	s.HandleConn("thread/turns/list", t.handleTurnsList)
 	s.HandleConn("thread/items/list", t.handleItemsList)
-	s.HandleConn("turn/start", t.handleTurnStart)
+	s.HandleConn("turn/start", t.guarded("turn/start", t.handleTurnStart))
 	s.HandleConn("turn/interrupt", t.handleInterrupt)
 	return t
+}
+
+// Clock makes the createdAt of every thread the model makes read from fn (whole seconds), so that a test whose engine
+// runs on a fake clock sees threads created at that clock's time. Without it a thread's createdAt is a counter.
+func (t *Threads) Clock(fn func() time.Time) {
+	t.mu.Lock()
+	t.clock = fn
+	t.mu.Unlock()
+}
+
+// ListPageSize caps the page size of thread/list at n (0: no cap), so that a listing takes several pages.
+func (t *Threads) ListPageSize(n int) {
+	t.mu.Lock()
+	t.listPage = n
+	t.mu.Unlock()
+}
+
+// DropAck makes the host act on a request and then lose the answer: when(n, params) is asked for each thread/start,
+// thread/fork or turn/start request (n counts the requests of that method from 1), and for a request it accepts, the
+// request has its effect (the thread is made, the turn runs) and the connection is closed instead of answered.
+func (t *Threads) DropAck(method string, when func(n int, params map[string]any) bool) {
+	t.mu.Lock()
+	t.drops[method] = append(t.drops[method], when)
+	t.mu.Unlock()
+}
+
+// guarded wraps a handler with the ack-loss rules of its method.
+func (t *Threads) guarded(method string, h ConnHandler) ConnHandler {
+	return func(c *Conn, raw json.RawMessage) Reply {
+		params := decode(raw)
+		t.mu.Lock()
+		t.handled[method]++
+		n := t.handled[method]
+		rules := slices.Clone(t.drops[method])
+		t.mu.Unlock()
+		drop := false
+		for _, when := range rules {
+			drop = drop || when(n, params)
+		}
+		if drop {
+			// the turn of a request whose answer is lost still runs: the host does not stop it with the connection
+			t.mu.Lock()
+			t.detachNext = true
+			t.mu.Unlock()
+		}
+		reply := h(c, raw)
+		t.mu.Lock()
+		t.detachNext = false
+		t.mu.Unlock()
+		if drop && reply.Error == nil && reply.ErrorObject == nil {
+			reply.Result = nil
+			reply.Close = &CloseFrame{Code: websocket.StatusInternalError, Reason: "ack lost"}
+		}
+		return reply
+	}
 }
 
 // OnTurn decides every turn/start from now on.
@@ -262,7 +340,8 @@ func (t *Threads) Interrupts() []string {
 
 func (th *threadState) view() ThreadView {
 	v := ThreadView{ID: th.id, Cwd: th.cwd, Model: th.model, Effort: th.effort, Sandbox: th.sandbox, Ephemeral: th.ephemeral,
-		DeveloperInstructions: th.dev, Config: th.config, StartParams: th.start, ForkedFromID: th.forkedOf}
+		DeveloperInstructions: th.dev, Config: th.config, StartParams: th.start, ForkedFromID: th.forkedOf,
+		ParentThreadID: th.parent, Source: th.source, Archived: th.archived, CreatedAt: th.created}
 	for _, tu := range th.turns {
 		v.Turns = append(v.Turns, TurnView{ID: tu.id, Status: tu.status, Text: tu.text, ClientID: tu.clientID, Params: tu.params})
 	}
@@ -272,6 +351,14 @@ func (th *threadState) view() ThreadView {
 func (t *Threads) tick() int64 {
 	t.seq++
 	return t.seq
+}
+
+// createdAt is the createdAt of a thread made now. The caller holds the lock.
+func (t *Threads) createdAt() int64 {
+	if t.clock != nil {
+		return t.clock().Unix()
+	}
+	return t.tick()
 }
 
 func str(m map[string]any, key string) string {
@@ -335,7 +422,7 @@ func (t *Threads) create(c *Conn, params map[string]any) *threadState {
 	th := &threadState{
 		id: fmt.Sprintf("thr-fake-%03d", t.nextID), cwd: str(params, "cwd"), model: str(params, "model"),
 		effort: configString(config, "model_reasoning_effort"), sandbox: str(params, "sandbox"),
-		dev: str(params, "developerInstructions"), config: config, start: params, created: t.tick(),
+		dev: str(params, "developerInstructions"), config: config, start: params, created: t.createdAt(), source: "appServer",
 	}
 	th.ephemeral, _ = params["ephemeral"].(bool)
 	if th.model == "" {
@@ -379,15 +466,22 @@ func (t *Threads) threadObject(th *threadState, withTurns bool) map[string]any {
 			turns = append(turns, tu.object(true))
 		}
 	}
-	var forked any
+	var forked, parent any
 	if th.forkedOf != "" {
 		forked = th.forkedOf
+	}
+	if th.parent != "" {
+		parent = th.parent
+	}
+	status := map[string]any{"type": "idle"}
+	if th.active != nil {
+		status = map[string]any{"type": "active", "activeFlags": []any{}}
 	}
 	return map[string]any{
 		"id": th.id, "cliVersion": CLIVersion, "createdAt": th.created, "updatedAt": th.created + int64(len(th.turns)),
 		"cwd": th.cwd, "ephemeral": th.ephemeral, "modelProvider": "openai", "model": model, "reasoningEffort": effort,
-		"preview": preview, "projectId": nil, "sessionId": "session-" + th.id, "source": "appServer",
-		"status": map[string]any{"type": "idle"}, "turns": turns, "forkedFromId": forked, "parentThreadId": nil,
+		"preview": preview, "projectId": nil, "sessionId": "session-" + th.id, "source": th.source,
+		"status": status, "turns": turns, "forkedFromId": forked, "parentThreadId": parent,
 		"name": nil, "path": nil, "threadSource": nil,
 	}
 }
@@ -546,12 +640,43 @@ func (t *Threads) handleList(c *Conn, raw json.RawMessage) Reply {
 	params := decode(raw)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	var cwds []string
+	switch v := params["cwd"].(type) {
+	case string:
+		cwds = []string{v}
+	case []any:
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				cwds = append(cwds, s)
+			}
+		}
+	}
+	var kinds []string
+	if list, ok := params["sourceKinds"].([]any); ok {
+		for _, e := range list {
+			if s, ok := e.(string); ok {
+				kinds = append(kinds, s)
+			}
+		}
+	}
+	wantArchived, _ := params["archived"].(bool)
 	var matched []*threadState
 	for _, th := range t.all {
-		if cwd := str(params, "cwd"); cwd != "" && th.cwd != cwd {
+		if len(cwds) > 0 && !slices.Contains(cwds, th.cwd) {
+			continue
+		}
+		if len(kinds) > 0 && !slices.Contains(kinds, th.source) {
+			continue
+		}
+		if th.archived != wantArchived {
 			continue
 		}
 		matched = append(matched, th)
+	}
+	if t.listPage > 0 {
+		if l, ok := params["limit"].(float64); !ok || int(l) > t.listPage || l <= 0 {
+			params["limit"] = float64(t.listPage)
+		}
 	}
 	from, to, next := page(len(matched), params)
 	data := []any{}
@@ -559,6 +684,27 @@ func (t *Threads) handleList(c *Conn, raw json.RawMessage) Reply {
 		data = append(data, t.threadObject(th, false))
 	}
 	return Reply{Result: map[string]any{"data": data, "nextCursor": next, "backwardsCursor": nil}}
+}
+
+// handleArchive archives a thread: it leaves the default listing and nothing else changes.
+func (t *Threads) handleArchive(c *Conn, raw json.RawMessage) Reply {
+	params := decode(raw)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	th, ok := t.byID[str(params, "threadId")]
+	if !ok {
+		return errorReply(map[string]any{"code": -32600, "message": "thread not found: " + str(params, "threadId")})
+	}
+	th.archived = true
+	t.archivedIDs = append(t.archivedIDs, th.id)
+	return Reply{Result: map[string]any{}}
+}
+
+// Archived returns the thread ids thread/archive was received for, in order.
+func (t *Threads) Archived() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.archivedIDs)
 }
 
 func (t *Threads) handleTurnsList(c *Conn, raw json.RawMessage) Reply {
@@ -579,7 +725,7 @@ func (t *Threads) handleTurnsList(c *Conn, raw json.RawMessage) Reply {
 	from, to, next := page(len(turns), params)
 	data := []any{}
 	for _, tu := range turns[from:to] {
-		full := str(params, "itemsView") == "full" && !tu.plan.SummaryOnly
+		full := str(params, "itemsView") == "full" && !tu.plan.SummaryOnly && !tu.plan.NotLoaded
 		o := tu.object(full)
 		if tu.plan.SummaryOnly {
 			o["itemsView"] = "summary"
@@ -648,7 +794,7 @@ func (t *Threads) handleTurnStart(c *Conn, raw json.RawMessage) Reply {
 	}
 	tu := &turnState{
 		id: fmt.Sprintf("turn-%s-%d", th.id, req.N), status: "inProgress", plan: plan, params: params, text: req.Text,
-		clientID: req.ClientID, startedAt: t.tick(), interrupt: make(chan struct{}),
+		clientID: req.ClientID, startedAt: t.tick(), interrupt: make(chan struct{}), detached: t.detachNext || plan.Detached,
 	}
 	user := map[string]any{"type": "userMessage", "id": "u-" + tu.id, "content": []any{map[string]any{"type": "text", "text": req.Text, "text_elements": []any{}}}}
 	if req.ClientID != "" {
@@ -686,17 +832,21 @@ func (t *Threads) handleInterrupt(c *Conn, raw json.RawMessage) Reply {
 // run plays a turn's timeline after turn/start was answered.
 func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 	plan := tu.plan
+	connDone := conn.Done()
+	if tu.detached {
+		connDone = nil
+	}
 	t.notify(th.id, plan.Silent, Notification{Method: "turn/started", Params: map[string]any{"threadId": th.id, "turn": tu.object(false)}})
 	interrupted := plan.Interrupted
 	if plan.Hang {
 		if plan.IgnoreInterrupt {
-			<-conn.Done()
+			<-connDone
 			return
 		}
 		select {
 		case <-tu.interrupt:
 			interrupted = true
-		case <-conn.Done():
+		case <-connDone:
 			return
 		}
 	} else if plan.Gate != nil {
@@ -704,7 +854,7 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 		case <-plan.Gate:
 		case <-tu.interrupt:
 			interrupted = true
-		case <-conn.Done():
+		case <-connDone:
 			return
 		}
 	} else if plan.Delay > 0 {
@@ -714,7 +864,7 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 		case <-timer.C:
 		case <-tu.interrupt:
 			interrupted = true
-		case <-conn.Done():
+		case <-connDone:
 			return
 		}
 	}

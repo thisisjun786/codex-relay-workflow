@@ -40,7 +40,7 @@ func (b *Backend) StartThread(ctx context.Context, spec engine.ThreadSpec) (engi
 	if err != nil {
 		return engine.ThreadInfo{}, err
 	}
-	raw, err := b.client.Call(ctx, "thread/start", params)
+	raw, err := b.sendCreation(ctx, spec.CallID, spec.Send, "thread/start", params)
 	if err != nil {
 		return engine.ThreadInfo{}, requestError(err)
 	}
@@ -66,7 +66,7 @@ func (b *Backend) ForkThread(ctx context.Context, spec engine.ForkSpec) (engine.
 	if spec.ThroughTurnID != "" {
 		params["lastTurnId"] = spec.ThroughTurnID
 	}
-	raw, err := b.client.Call(ctx, "thread/fork", params)
+	raw, err := b.sendCreation(ctx, spec.CallID, spec.Send, "thread/fork", params)
 	if err != nil {
 		return engine.ThreadInfo{}, requestError(err)
 	}

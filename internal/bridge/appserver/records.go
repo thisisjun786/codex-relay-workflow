@@ -181,6 +181,8 @@ type Client struct {
 	closeFrame    func(*websocket.Conn) error
 	mu            sync.Mutex
 	conn          *websocket.Conn
+	connSeq       uint64
+	connID        uint64
 	counter       uint64
 	pending       map[string]pending
 	requests      []RequestRecord
@@ -255,6 +257,18 @@ func (c *Client) BoundAckOn(method string, duration time.Duration) {
 
 // Info is the initialize result of the current connection (rpc.py AppServer.info).
 func (c *Client) Info() map[string]any { c.mu.Lock(); defer c.mu.Unlock(); return c.info }
+
+// ConnectionID identifies the connection the client holds now: every connection it makes has an id of its own, ids are
+// never reused, and 0 means the client holds none. A request sent on a connection whose id is no longer the current one
+// (or 0) was carried by a connection that is closed.
+func (c *Client) ConnectionID() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return 0
+	}
+	return c.connID
+}
 
 // SocketPath is the unix socket this client dials.
 func (c *Client) SocketPath() string { return c.socket }

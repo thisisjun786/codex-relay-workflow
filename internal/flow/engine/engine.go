@@ -65,6 +65,18 @@ type Config struct {
 	Now func() time.Time
 	// Workflows resolves workflow(name) and workflow({scriptPath}) for the one nesting level; nil refuses nesting.
 	Workflows func(name, scriptPath string) (*script.Program, error)
+	// Resume, when set, makes this run a resume of the journal: every call of the run whose last row is an intent is
+	// reconciled against the host before the script starts (Reconcile), a call the journal already ended with the same
+	// input is not run again, and a call that reconcile decided goes on from where it stopped. The full replay rule (F07)
+	// is not part of this: only the calls' own journal rows and input digests are compared.
+	Resume *ResumeOptions
+}
+
+// ResumeOptions are the timings of the reconcile pass of a resumed run; a zero value takes the default.
+type ResumeOptions struct {
+	// Wait waits for d or until ctx ends (the creation grace, the poll for a connection that is still open); nil sleeps.
+	Wait                        func(ctx context.Context, d time.Duration) error
+	Grace, Skew, OpenWait, Poll time.Duration
 }
 
 // CallMeta is the meta field of a CallResult.
@@ -135,9 +147,21 @@ type Engine struct {
 	turnsM         sync.Mutex
 	turns          map[*callRun]struct{}
 	quotaEscalated atomic.Bool
-	// stopped are the nodes a restore_snapshot_mismatch stopped.
+	// stopped are the nodes that take no more work, by the reason: a restore_snapshot_mismatch, or a recovery_hold (a call of
+	// the node has an outcome nobody can prove).
 	stoppedM sync.Mutex
-	stopped  map[string]bool
+	stopped  map[string]string
+	// recovery is what reconcile decided for the calls of a resumed run; startSeq is the first row this run's calls write,
+	// and every row before it belongs to a process that no longer exists (or to the reconcile pass that read them).
+	recovery map[string]*Recovery
+	startSeq int
+	// claimed are the calls of the previous process that a position of the resumed script took over (resumePrior): they go
+	// on in this process, so a new attempt of their node does not supersede them.
+	claimedM sync.Mutex
+	claimed  map[string]bool
+	// escalated are the calls whose dispatch_unknown escalation was written by this run.
+	escalatedM sync.Mutex
+	escalated  map[string]bool
 
 	// Everything below is touched only by the loop goroutine.
 	fatalKind string
@@ -195,7 +219,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	// A run that resumes a journal read the policy under another digest before: the change is journaled before any live
 	// call, and only calls that start a thread afterwards take the new pairs.
 	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
-	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
+	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
 		"meta": json.RawMessage(prog.MetaJSON), "policy_source": cfg.Policy.Source, "policy_digest": cfg.Policy.Digest,
 	}})
@@ -205,6 +229,14 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		}})
 	}
 
+	e.startSeq = started.Seq
+	if cfg.Resume != nil {
+		e.resume(ctx)
+		// what reconcile appended is the journal's state too: the calls are compared with every row written so far
+		if rows := e.j.Events(); len(rows) > 0 {
+			e.startSeq = rows[len(rows)-1].Seq + 1
+		}
+	}
 	root := &pathState{id: RootPath}
 	main, err := e.newScriptVM(prog, root, 0, args)
 	if err != nil {
@@ -419,27 +451,93 @@ func (e *Engine) tokensUnmeasured(c *callRun, turnID string) {
 	}
 }
 
-// stopNode ends the node's work for the rest of the run; nodeStopped asks whether it was. A call without a node is never
-// stopped.
-func (e *Engine) stopNode(node string) {
+// stopNode ends the node's work for the rest of the run for a reason; nodeStopped asks whether it was. A call without a
+// node is never stopped.
+func (e *Engine) stopNode(node, reason string) {
 	if node == "" {
 		return
 	}
 	e.stoppedM.Lock()
 	if e.stopped == nil {
-		e.stopped = map[string]bool{}
+		e.stopped = map[string]string{}
 	}
-	e.stopped[node] = true
+	if e.stopped[node] == "" {
+		e.stopped[node] = reason
+	}
 	e.stoppedM.Unlock()
 }
 
-func (e *Engine) nodeStopped(node string) bool {
+func (e *Engine) nodeStopped(node string) bool { return e.nodeStopReason(node) != "" }
+
+// nodeStopReason is the reason a node was stopped for, "" when it was not.
+func (e *Engine) nodeStopReason(node string) string {
 	if node == "" {
-		return false
+		return ""
 	}
 	e.stoppedM.Lock()
 	defer e.stoppedM.Unlock()
 	return e.stopped[node]
+}
+
+// claim records that the resumed script took over a call of the previous process; claimedCall asks whether it did.
+func (e *Engine) claim(id string) {
+	e.claimedM.Lock()
+	if e.claimed == nil {
+		e.claimed = map[string]bool{}
+	}
+	e.claimed[id] = true
+	e.claimedM.Unlock()
+}
+
+func (e *Engine) claimedCall(id string) bool {
+	e.claimedM.Lock()
+	defer e.claimedM.Unlock()
+	return e.claimed[id]
+}
+
+// resume reconciles the journal's open calls against the host before anything else runs, and holds every node that has a
+// call with an outcome nobody can prove.
+func (e *Engine) resume(ctx context.Context) {
+	e.recovery = map[string]*Recovery{}
+	if host, ok := e.cfg.Backend.(ReconHost); ok {
+		o := e.cfg.Resume
+		wait := o.Wait
+		if wait == nil {
+			wait = SleepWait
+		}
+		// a context that ends mid-pass ends the run's calls too; what the pass decided before that is kept
+		rep, _ := Reconcile(ctx, e.j, ReconcileConfig{RunID: e.runID, Host: host, Now: e.cfg.Now, Wait: wait, Grace: o.Grace, Skew: o.Skew, OpenWait: o.OpenWait, Poll: o.Poll})
+		if rep != nil {
+			e.recovery = rep.ByCall
+		}
+		for _, rec := range e.recovery {
+			if rec.Action == RecoverPending {
+				e.stopNode(rec.Node, ReasonRecoveryHold)
+			}
+		}
+	}
+	for node := range RecoveryHolds(e.j, e.runID) {
+		e.stopNode(node, ReasonRecoveryHold)
+	}
+}
+
+// escalateUnknown writes the dispatch_unknown escalation of a call once.
+func (e *Engine) escalateUnknown(c *callRun, detail string) {
+	e.escalatedM.Lock()
+	if e.escalated == nil {
+		e.escalated = map[string]bool{}
+	}
+	done := e.escalated[c.id]
+	e.escalated[c.id] = true
+	e.escalatedM.Unlock()
+	if done {
+		return
+	}
+	c.mu.Lock()
+	last := c.lastEvent
+	c.mu.Unlock()
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvEscalation,
+		Data: map[string]any{"reason": ReasonDispatchUnknown, "node": c.plan.node, "call_id": c.id, "detail": detail, "last_event": last}})
 }
 
 // callID derives a call's id from its identity, so it is the same on every run and resume.

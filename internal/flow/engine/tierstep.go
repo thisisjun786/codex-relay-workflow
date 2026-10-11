@@ -13,6 +13,13 @@ import (
 // arrive with the issue that owns crw.tierStep, so checkpoint is null here and the evidence argument is recorded by
 // its digest only.
 func (s *scriptVM) tierStep(call goja.FunctionCall) goja.Value {
+	// A node that holds a call with an unknown outcome (recovery_hold), or that a changed restore stopped, takes no tier
+	// step: the step would let the next build run on the node while a request of it may still be at work on the host.
+	if node, ok := call.Argument(0).Export().(string); ok {
+		if reason := s.e.nodeStopReason(node); reason != "" {
+			s.throwType("crw.tierStep: node %q takes no tier step (%s)", node, reason)
+		}
+	}
 	path, position := s.open("crw.tierStep")
 	id := s.e.callID(path.id, position)
 	stepID := "step_" + id[len("c_"):]

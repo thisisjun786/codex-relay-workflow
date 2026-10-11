@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const helloScript = "../../../testdata/flow/hello.js"
@@ -128,4 +129,49 @@ func TestFlowRunWorkflowFromSibling(t *testing.T) {
 	if code != 0 || !strings.Contains(out, `"value": 42`) {
 		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
 	}
+}
+
+// crw flow recover CALL (--adopt ID | --absent): the command line is checked before anything is read, a build without a
+// stored journal says so, and with a journal and a host the result is printed (exit 0) or the missing proof is told (exit 1).
+func TestFlowRecoverCommandLine(t *testing.T) {
+	for name, c := range map[string]struct {
+		args []string
+		code int
+		err  string
+	}{
+		"no call":        {[]string{"recover", "--absent"}, 2, "exactly one call id"},
+		"two calls":      {[]string{"recover", "c1", "c2", "--absent"}, 2, "exactly one call id"},
+		"no mode":        {[]string{"recover", "c1"}, 2, "exactly one of --adopt and --absent"},
+		"both modes":     {[]string{"recover", "c1", "--absent", "--adopt", "t1"}, 2, "exactly one of --adopt and --absent"},
+		"no journal":     {[]string{"recover", "c1", "--absent"}, 2, "keeps a run's journal in memory"},
+		"flags after":    {[]string{"recover", "c1", "--adopt", "t1"}, 2, "keeps a run's journal in memory"},
+		"unknown flag":   {[]string{"recover", "c1", "--force"}, 2, "flag provided but not defined"},
+		"help":           {[]string{"recover", "--help"}, 0, "usage: crw flow recover"},
+		"top-level help": {[]string{"--help"}, 0, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, out, errOut := runFlow(t, c.args...)
+			if code != c.code || !strings.Contains(errOut+out, c.err) {
+				t.Errorf("exit %d (want %d)\nstdout %q\nstderr %q", code, c.code, out, errOut)
+			}
+		})
+	}
+	if _, out, _ := runFlow(t, "--help"); !strings.Contains(out, "crw flow recover") {
+		t.Errorf("the usage does not list recover: %q", out)
+	}
+	t.Run("with a journal and a host", func(t *testing.T) {
+		j := heldJournal(EvThreadRequested)
+		host := &stubHost{threads: []HostThread{{ID: "t-new", Cwd: "/w/a1", Source: "appServer", CreatedAt: time.UnixMilli(1000), Status: "idle"}}}
+		RecoverEnv = func(ctx context.Context, runID string) (Journal, ReconHost, error) { return j, host, nil }
+		defer func() { RecoverEnv = nil }()
+		code, out, errOut := runFlow(t, "recover", "--run", "r", "c1", "--absent")
+		if code != 0 || !strings.Contains(out, `"action": "thread_ready"`) || !strings.Contains(out, `"threadId": "t-new"`) {
+			t.Fatalf("exit %d stdout %q stderr %q", code, out, errOut)
+		}
+		// nothing is held any more: the same command is refused with exit 1
+		code, _, errOut = runFlow(t, "recover", "--run", "r", "c1", "--absent")
+		if code != 1 || !strings.Contains(errOut, "not in recovery_hold") {
+			t.Errorf("exit %d stderr %q", code, errOut)
+		}
+	})
 }
