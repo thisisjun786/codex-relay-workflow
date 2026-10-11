@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -185,5 +186,131 @@ func TestRecordCallProofsNeverResend(t *testing.T) {
 	h.run(body)
 	if n := count(); n != 2 {
 		t.Errorf("a run that resumes nothing: %d rows", n)
+	}
+}
+
+// The rows of a call that reopened after a terminal row restore no result: the terminal row belongs to an earlier attempt of
+// the call id, and the newest prepared (or recovery_cleared, or intent) row says the call is open again.
+func TestReplayRestoresNothingFromAReopenedCall(t *testing.T) {
+	row := func(seq int, ev string, data map[string]any) Event {
+		return Event{Seq: seq, RunID: "r", Kind: KindCall, CallID: "c_1", Path: "root", Position: 1, Op: "agent", Event: ev, Data: data}
+	}
+	first := []Event{
+		row(1, EvPrepared, map[string]any{"role": "executor"}), row(2, EvThreadRequested, nil), row(3, EvThreadStarted, map[string]any{"thread_id": "t1"}),
+		row(4, EvTurnRequested, nil), row(5, EvTurnStarted, map[string]any{"turn_id": "u1"}),
+		row(6, EvCompleted, map[string]any{"result": `"old"`}),
+	}
+	if r, ok := RestoreCallResult("r", "c_1", first, false); !ok || r.Status != StatusCompleted || string(r.Output) != `"old"` {
+		t.Fatalf("a completed call restores its result: %+v %v", r, ok)
+	}
+	cases := map[string][]Event{
+		"a new attempt prepared":    append(slices.Clone(first), row(7, EvPrepared, map[string]any{"role": "executor"}), row(8, EvThreadRequested, nil), row(9, EvThreadStarted, map[string]any{"thread_id": "t2"})),
+		"only the new prepared row": append(slices.Clone(first), row(7, EvPrepared, map[string]any{"role": "executor"})),
+		"a recovered unknown outcome": {
+			row(1, EvPrepared, nil), row(2, EvThreadRequested, nil), row(3, EvOutcomeUnknown, map[string]any{"reason": ReasonDispatchUnknown}),
+			row(4, EvRecoveryCleared, map[string]any{"mode": "adopt", "thread_id": "t1"}), row(5, EvThreadStarted, map[string]any{"thread_id": "t1", "recovered": true}),
+		},
+	}
+	for name, rows := range cases {
+		if r, ok := RestoreCallResult("r", "c_1", rows, false); ok {
+			t.Errorf("%s: restored %s with the sequence numbers %d..%d", name, r.Status, r.Meta.StartSeq, r.Meta.EndSeq)
+		}
+	}
+	// the new attempt ends: its own terminal row is the result, with its own metadata
+	again := append(slices.Clone(first), row(7, EvPrepared, map[string]any{"role": "executor"}), row(8, EvThreadStarted, map[string]any{"thread_id": "t2"}),
+		row(9, EvCompleted, map[string]any{"result": `"new"`}))
+	r, ok := RestoreCallResult("r", "c_1", again, false)
+	if !ok || string(r.Output) != `"new"` || r.Meta.ThreadID != "t2" || r.Meta.StartSeq != 7 || r.Meta.EndSeq != 9 {
+		t.Errorf("%+v %v", r, ok)
+	}
+}
+
+// A completed agent call at a position does not stand for a tierStep a resumed script records at the same position: the
+// decision of the tierStep is journaled.
+func TestTierStepIsRecordedWhereAnAgentCallCompleted(t *testing.T) {
+	h := newHarness(t)
+	h.run(`const a = await agent.call('build', { agentType: 'executor', node: 'n1', label: 'a' }); return a.status`)
+	h.cfg.Resume = &ResumeOptions{}
+	res := h.run(`const s = crw.tierStep('n1', { reason: 'null_model twice' }); return await s`)
+	var step struct{ ID string }
+	if err := json.Unmarshal(res.Value, &step); err != nil || step.ID == "" {
+		t.Fatalf("%s %v (%s)", res.Value, err, res.Error)
+	}
+	var rows []Event
+	for _, ev := range h.journal.Events() {
+		if ev.Kind == KindCall && ev.Op == "crw.tierStep" && ev.Event == EvCompleted {
+			rows = append(rows, ev)
+		}
+	}
+	if len(rows) != 1 || rows[0].Data["step_decision"] != step.ID {
+		t.Errorf("the step %q has no journal row: %+v", step.ID, rows)
+	}
+}
+
+// finishFailJournal stores everything but the run's finished row, and reports that failure as a persistent journal does.
+type finishFailJournal struct {
+	*MemoryJournal
+	failed bool
+}
+
+func (f *finishFailJournal) Append(e Event) Event {
+	if e.Kind == KindRun && e.Event == "finished" {
+		f.failed = true
+	}
+	return f.MemoryJournal.Append(e)
+}
+
+func (f *finishFailJournal) Err() error {
+	if f.failed {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// A journal that fails on the run's last row ends the run with its error: the caller is not told the run completed.
+func TestRunEndsWithTheErrorOfItsFinalWrite(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Journal = &finishFailJournal{MemoryJournal: h.journal}
+	res := h.run(`const a = await agent.call('build', { agentType: 'executor', node: 'n1', label: 'a' }); return a.status`)
+	if res.Status != RunScriptError || res.ErrorKind != ErrKindEngine || !strings.Contains(res.Error, "journal cannot be written") {
+		t.Errorf("%s %s %q", res.Status, res.ErrorKind, res.Error)
+	}
+}
+
+// snapFailBackend is the fake backend with a placer whose snapshot always fails (the object store of the worktree is full).
+type snapFailBackend struct {
+	*Fake
+	dir string
+}
+
+func (p *snapFailBackend) Place(req PlaceRequest) (Placement, error) {
+	if req.Family != "executor" || req.Continues != nil {
+		return Placement{Kind: PlaceContinued}, nil
+	}
+	return Placement{Kind: PlaceFresh, Attempt: 1, Path: p.dir, Start: "0123456789abcdef0123456789abcdef01234567"}, nil
+}
+func (p *snapFailBackend) Establish(context.Context, PlaceRequest, Placement) error { return nil }
+func (p *snapFailBackend) Recheck(context.Context, Placement) error                 { return nil }
+func (p *snapFailBackend) Snapshot(context.Context, string) (string, error) {
+	return "", errors.New("write-tree: no space left on device")
+}
+
+// An executor whose pending tree cannot be captured does not end completed: the script sees a held call that names the
+// worktree failure, and the row carries the error, instead of a success no effect proof can stand on.
+func TestExecutorWhosePendingTreeCannotBeCapturedIsHeld(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Backend = &snapFailBackend{Fake: h.fake, dir: t.TempDir()}
+	res := h.run(`const b = await agent.call('build', { agentType: 'executor', node: 'n1', label: 'build' }); return [b.status, b.reason]`)
+	var got []string
+	if err := json.Unmarshal(res.Value, &got); err != nil || !slices.Equal(got, []string{"held", "worktree_failed"}) {
+		t.Fatalf("%s %v (%s)", res.Value, err, res.Error)
+	}
+	rows := h.callRows("build")
+	last := rows[len(rows)-1]
+	if last.Event != EvHeld || !strings.Contains(rowStr(last.Data, "pending_tree_error"), "no space left") {
+		t.Errorf("%s %v", last.Event, last.Data)
+	}
+	if _, has := last.Data["pending_tree"]; has {
+		t.Errorf("a held row records no pending tree: %v", last.Data)
 	}
 }

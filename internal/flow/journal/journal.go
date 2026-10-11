@@ -506,7 +506,8 @@ func splitMeta(raw string) (meta, data map[string]any, err error) {
 // ReadCallResult restores the CallResult of one call from its flow_calls rows and from nothing else: the output is the
 // canonical result bytes the completed row stored, the status and reason are those of the call's last terminal event (held
 // included, which has no output), and the meta is the references the rows carry. The host is not asked and no other table is
-// read. ok is false when the call has no prepared row and a terminal row in the store.
+// read. ok is false when the call has no prepared row, or its newest attempt (the rows from the last prepared row on) has no
+// terminal row: a call that is open again has no result, and the terminal row of an earlier attempt is not its result.
 func ReadCallResult(ctx context.Context, st *store.Store, runID, callID string, omitSeq bool) (res engine.CallResult, ok bool, err error) {
 	rows, err := readCalls(ctx, st, `WHERE run_id = ? AND call_id = ?`, runID, callID)
 	if err != nil {

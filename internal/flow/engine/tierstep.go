@@ -33,7 +33,7 @@ func (s *scriptVM) tierStep(call goja.FunctionCall) goja.Value {
 		args = append(args, raw)
 	}
 	argsJSON, _ := json.Marshal(args)
-	if s.e.recorded(id) {
+	if s.e.recorded(id, "crw.tierStep") {
 		// a resumed run does not record a call the journal already holds: the step decision is the one it recorded
 		return s.stepResult(path, position, stepID)
 	}

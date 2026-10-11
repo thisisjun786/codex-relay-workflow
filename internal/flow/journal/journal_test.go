@@ -411,3 +411,36 @@ func TestJournalRefusesWhatItCannotStore(t *testing.T) {
 		t.Errorf("a run without an actor: %v", j2.Err())
 	}
 }
+
+// A call id that began a new attempt after a terminal row has no stored result until the new attempt ends: the stored reader
+// does not return the earlier attempt's output with the new attempt's thread.
+func TestStoredReaderIgnoresATerminalRowOfAnEarlierAttempt(t *testing.T) {
+	st, path := newStore(t)
+	j := newJournal(t, st)
+	j.Append(engine.Event{RunID: runID, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "t", "script_digest": "d", "args_digest": "a"}})
+	row := func(event string, data map[string]any) {
+		j.Append(engine.Event{RunID: runID, Kind: engine.KindCall, CallID: "c_again", Path: "root", Position: 1, Op: "agent", Label: "x", Event: event, Data: data})
+	}
+	prepared := map[string]any{"role": "executor", "node": "n1"}
+	row(engine.EvPrepared, prepared)
+	row(engine.EvThreadRequested, nil)
+	row(engine.EvThreadStarted, map[string]any{"thread_id": "thr_1"})
+	row(engine.EvCompleted, map[string]any{"result": `"old"`})
+	row(engine.EvPrepared, prepared)
+	row(engine.EvThreadRequested, nil)
+	row(engine.EvThreadStarted, map[string]any{"thread_id": "thr_2"})
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := ReadCallResult(ctx, openStore(t, path), runID, "c_again", false); err != nil || ok {
+		t.Fatalf("a call that is open again has no result: %v %v %s", ok, err, asJSON(t, got))
+	}
+	row(engine.EvCompleted, map[string]any{"result": `"new"`})
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := ReadCallResult(ctx, openStore(t, path), runID, "c_again", false)
+	if err != nil || !ok || string(got.Output) != `"new"` || got.Meta.ThreadID != "thr_2" || got.Meta.StartSeq >= got.Meta.EndSeq {
+		t.Errorf("%v %v %s", ok, err, asJSON(t, got))
+	}
+}

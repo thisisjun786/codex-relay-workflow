@@ -20,7 +20,8 @@ saw. A row is never updated.
   loses at most the result rows after the last intent, and the reconcile pass finds those on the host from the intent that is
   stored.
 - A journal that cannot store a row keeps the first error (`Err`) and keeps its rows in memory only. The engine sends nothing
-  whose intent row could not be stored, and ends the run with that error.
+  whose intent row could not be stored, and ends the run with that error. The run's own `finished` row is written with the rows
+  still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed.
 - `flow_runs` holds the identity of the run: the workflow, the digests of the script, its helpers and its arguments, and what the
   caller gives the journal (`Identity`: the plan and its revision, the actor task, the epoch nonce, the run it resumes). It is
   written with the first `started` row; a resumed run reuses it.
@@ -43,9 +44,12 @@ row reads the same live and after a restart.
 
 `journal.ReadCallResult` (and `engine.RestoreCallResult`, which it calls) restores the CallResult of a call from its `flow_calls`
 rows and from nothing else: `output` is the stored canonical result bytes, `status` and `reason` are those of the last terminal
-event (a held call too, whose `output` is `null`), and `meta` is the references the rows carry (role, requested and configured
+event of the call's newest attempt (a held call too, whose `output` is `null`), and `meta` is the references the rows carry (role, requested and configured
 pair, thread, turns, repair, tokens, and the sequence numbers of the first and the last row). The host is not asked and no other
-table is read; a resumed run replays the calls it replays through the same function. Which calls a resume replays and where it
+table is read. A call has a result only while it is ended: a `prepared` row starts an attempt, and a thread or turn intent, a
+started thread or turn, or a `recovery_cleared` row after a terminal row makes the call open again, so the terminal row of an
+earlier attempt is never returned with the thread and sequence numbers of a later one (`ok` is false until the new attempt ends).
+A resumed run replays the calls it replays through the same function. Which calls a resume replays and where it
 starts the suffix of live calls is the resume rule (F07), not this page.
 
 ## The working snapshot
@@ -57,8 +61,14 @@ rule hides; a file that is ignored and not tracked is in neither the snapshot no
 neither read for content nor written: it holds only what was staged, and an executor leaves nothing staged. (The one thing read
 from it is which entries are skip-worktree and absent from disk, so that a sparse checkout is not a deletion.)
 
+The snapshot reads the directory it is given, exactly as given: a worktree whose name ends in a space is a worktree, and no path
+that git prints is used in its place. `ops.Scope` asks git for `--name-status -z` records, so a changed path that begins with a
+space keeps it.
+
 A completed or held executor call records the snapshot of its worktree on its terminal row, as `pending_tree` (P) or `p_held`
-(P_held). `crw.commit` commits that recorded tree as it is: `ops.Commit` makes the commit with `commit-tree` on the recorded tree
+(P_held). An executor turn that ended but whose worktree cannot be snapshotted is not completed: the call is held for
+`worktree_failed`, its row carries `pending_tree_error` (and `p_held` when a second attempt at the snapshot succeeds), and the
+script sees a held call instead of a success no commit or proof can stand on. `crw.commit` commits that recorded tree as it is: `ops.Commit` makes the commit with `commit-tree` on the recorded tree
 and the recorded parent, moves `HEAD` with a compare-and-swap `update-ref` (a `HEAD` that is no longer the parent refuses the
 commit), and then sets the real index alone to the new `HEAD` (the working files are not touched, so whatever differs from the
 snapshot stays visible as a change). The path that a snapshot changes against its base and that lies outside the declared edit
@@ -78,6 +88,10 @@ as such:
 - The `HEAD` must be the last recorded commit of the chain. A `HEAD` that is not, because someone committed or reset, is a
   foreign commit: the calls a recorded commit on `HEAD`'s history covers stay proven, and the first call after the last recorded
   commit that is on the chain, and every later call, are not.
+- A recorded commit covers the calls whose state it carries: its row names the tree it committed, and that tree is the pending
+  tree (or P_held) of the latest call that recorded it before the commit; the calls up to and including that call are covered.
+  A call recorded after it, or any call when the committed tree is no call's pending tree, is not covered by that commit,
+  whatever the sequence order says.
 - The calls that no valid commit covers are judged by the snapshot of the worktree: it is valid when it is the tree of the last
   recorded commit, the pending tree P of a build or fix journaled after that commit, or the P_held of an executor call held after
   it. A call is proven when the snapshot is its own P (or an earlier call's, which leaves the later calls unproven). A snapshot
@@ -92,7 +106,8 @@ passing record of the current integration head, the same command and the same ra
 same integration range and criteria digest (`crw.reviewerFinal`).
 
 **Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold` and `tierStep` only record a fact. A call with a completed row
-is not sent again, whatever else is true; a call without one is executed live under the same call id and the same idempotent
+of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
+agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent
 request id (`ops.RequestID`).
 
 ## `crw flow recover`

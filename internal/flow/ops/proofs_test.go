@@ -579,3 +579,48 @@ func TestNodeWithoutWorktreeIsAnError(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// A commit proves only the calls whose pending tree it carries: crw.commit of P1 after the fix t2 recorded P2 covers t1 and
+// not t2. With the working files back at P1, the fix is not in the commit and not in the worktree, so t2 is not proven.
+func TestCommitOfAnEarlierTreeDoesNotCoverALaterCall(t *testing.T) {
+	f := newFx(t)
+	f.edit("a.txt", "built\n")
+	p1 := f.complete("t1")
+	f.prepare("t2", engine.PlaceContinued, f.wt, "")
+	f.edit("src/c.txt", "fixed\n")
+	p2 := f.complete("t2")
+	if p1 == p2 {
+		t.Fatal("the two pending trees must differ")
+	}
+	res, err := Commit(ctx, ExecGit("git"), f.wt, CommitRequest{Tree: p1, Parent: gitIn(t, f.wt, "rev-parse", "HEAD"), Message: "crw.commit k1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.add(engine.Event{Kind: engine.KindCall, CallID: "k1", Op: OpCommit, Event: engine.EvCompleted,
+		Data: map[string]any{"node": f.node, "commit": res.Commit, "parent": res.Parent, "tree": res.Tree}})
+	f.edit("src/c.txt", "gamma\n") // the working files are P1 again
+	np := f.prove()
+	if np.Snapshot != p1 {
+		t.Fatalf("snapshot %s, want P1 %s", np.Snapshot, p1)
+	}
+	expectProven(t, np, map[string]bool{"t1": true, "t2": false})
+	if !np.Calls[0].Committed || np.Calls[1].Committed {
+		t.Errorf("only t1 is covered by the commit of P1: %+v", np.Calls)
+	}
+	if np.InvalidFrom != "t2" {
+		t.Errorf("invalid from %q", np.InvalidFrom)
+	}
+	// a later commit of P2 covers both
+	res2, err := Commit(ctx, ExecGit("git"), f.wt, CommitRequest{Tree: p2, Parent: res.Commit, Message: "crw.commit k2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.add(engine.Event{Kind: engine.KindCall, CallID: "k2", Op: OpCommit, Event: engine.EvCompleted,
+		Data: map[string]any{"node": f.node, "commit": res2.Commit, "parent": res2.Parent, "tree": res2.Tree}})
+	f.edit("src/c.txt", "fixed\n")
+	np = f.prove()
+	expectProven(t, np, map[string]bool{"t1": true, "t2": true})
+	if !np.Calls[0].Committed || !np.Calls[1].Committed {
+		t.Errorf("the commit of P2 covers both calls: %+v", np.Calls)
+	}
+}

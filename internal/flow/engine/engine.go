@@ -325,6 +325,11 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	res.Phases = e.phases
 	res.Logs = e.logs
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+	// the finished row is written with the rows still buffered: when that write fails the run did not end on disk, and the
+	// caller is told so instead of getting a completed run
+	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
+		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
+	}
 	return res, nil
 }
 
@@ -567,14 +572,16 @@ func (e *Engine) resume(ctx context.Context) {
 	}
 }
 
-// recorded reports whether the journal of a resumed run already holds the completed row of a call that only records a fact
-// (crw.tierStep): such a call is not recorded again. A run that does not resume a journal records every call.
-func (e *Engine) recorded(callID string) bool {
+// recorded reports whether the journal of a resumed run already holds the completed row of op, a call that only records a fact
+// (crw.tierStep), at callID: such a call is not recorded again. The row must be the record of op itself: the call id is
+// positional, and a completed call of another operation at the position (an agent call of the earlier script) is not the
+// record of this one. A run that does not resume a journal records every call.
+func (e *Engine) recorded(callID, op string) bool {
 	if e.cfg.Resume == nil {
 		return false
 	}
 	for _, ev := range CallEvents(e.j, callID) {
-		if ev.Seq < e.startSeq && ev.Event == EvCompleted {
+		if ev.Seq < e.startSeq && ev.Op == op && ev.Event == EvCompleted {
 			return true
 		}
 	}

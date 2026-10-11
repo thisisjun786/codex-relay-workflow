@@ -105,7 +105,20 @@ func RestoreCallResult(runID, callID string, rows []Event, omitSeq bool) (CallRe
 	return r.res, ok
 }
 
+// reopensCall is a non-terminal row that makes a call open again after a terminal one (see stateOf).
+func reopensCall(ev string) bool {
+	switch ev {
+	case EvThreadRequested, EvForkRequested, EvThreadStarted, EvForkStarted, EvTurnRequested, EvTurnStarted, EvRecoveryCleared:
+		return true
+	}
+	return false
+}
+
 func restoreRows(runID, callID string, rows []Event, omitSeq bool) (restored, bool) {
+	// The result is that of the call's newest attempt: a prepared row starts an attempt, and a row that opens the call again
+	// (a thread or turn intent, a started thread or turn, a recovery_cleared after an unknown outcome) ends the terminal
+	// state the rows had reached (the same rule as stateOf). A call that is open now has no result, and the terminal row of
+	// an earlier attempt is never combined with the metadata of a later one.
 	var prep, term Event
 	for _, ev := range rows {
 		if ev.Kind != KindCall || ev.CallID != callID {
@@ -113,9 +126,11 @@ func restoreRows(runID, callID string, rows []Event, omitSeq bool) (restored, bo
 		}
 		switch {
 		case ev.Event == EvPrepared:
-			prep = ev
+			prep, term = ev, Event{}
 		case isTerminal(ev.Event):
 			term = ev
+		case reopensCall(ev.Event):
+			term = Event{}
 		}
 	}
 	if prep.Seq == 0 || term.Seq == 0 {

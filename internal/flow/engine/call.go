@@ -560,17 +560,32 @@ func (c *callRun) heldSnapshot(ctx context.Context, data map[string]any) {
 // pendingTree adds the pending tree P to the data of a completed executor call: the working snapshot of the call's worktree
 // at the moment its turn ended, which crw.commit later commits as it is and which the effect proof of the call compares
 // the worktree with. A call that runs in no worktree of the backend's (a reviewer, a backend without a placer) has none.
-func (c *callRun) pendingTree(ctx context.Context, data map[string]any) {
+// It returns the error of a snapshot that could not be made; the call then has no pending tree to record.
+func (c *callRun) pendingTree(ctx context.Context, data map[string]any) error {
 	placer, ok := c.e.cfg.Backend.(Placer)
 	if !ok || c.cwd == "" || c.plan.spec.Family != "executor" {
-		return
+		return nil
 	}
 	snap, err := placer.Snapshot(ctx, c.cwd)
 	if err != nil {
 		data["pending_tree_error"] = err.Error()
-		return
+		return err
 	}
 	data["pending_tree"] = snap
+	return nil
+}
+
+// pendingTreeLost ends an executor call whose turn completed but whose worktree could not be snapshotted: the exact-tree
+// commit and the effect proof need the pending tree, so the call is not reported completed. It is held for the worktree
+// failure with the error on the row (pending_tree_error); the snapshot is tried once more as P_held, which stands in for the
+// pending tree when git recovers. A run that was cancelled ends the call superseded, as every other call.
+func (c *callRun) pendingTreeLost(ctx context.Context, err error, data map[string]any) CallResult {
+	if c.aborted(ctx) {
+		return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
+	}
+	held := map[string]any{"input_state": c.inputState(), "detail": "the pending tree could not be captured: " + err.Error(), "pending_tree_error": data["pending_tree_error"]}
+	c.heldSnapshot(ctx, held)
+	return c.terminal(EvHeld, StatusHeld, ReasonWorktreeFailed, held)
 }
 
 // fromError ends the call with the disposition of a request that failed.
@@ -1077,7 +1092,9 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 		result, verr := c.validate(out.Text, resolved)
 		if verr == nil {
 			data := map[string]any{"result": string(result), "result_digest": digestJSON(result), "tokens": c.tokens, "repair_used": c.repairUsed}
-			c.pendingTree(ctx, data)
+			if err := c.pendingTree(ctx, data); err != nil {
+				return c.pendingTreeLost(ctx, err, data)
+			}
 			return c.terminal(EvCompleted, StatusCompleted, "", data)
 		}
 		if repair {

@@ -340,10 +340,28 @@ func (p Prover) Node(ctx context.Context, events []engine.Event, node string) (*
 		np.LastCommit = chain[k]
 	}
 	onChain := k >= 0 && k == len(chain)-1 && np.Head == chain[k]
-	// commit index (1-based among the recorded commits) of the first one after a call's row
+	// A recorded commit covers the calls whose state it carries. Its row names the tree it committed; that tree is the pending
+	// tree P (or P_held) of the latest call that recorded it before the commit, and the calls up to and including that one
+	// are in the commit (each later state of the worktree grew out of the earlier ones). A call recorded after that one, or
+	// a commit of a tree no call recorded, covers nothing of the calls it follows: a later commit is not proof of the
+	// calls that precede it by sequence alone.
+	covers := func(cm engine.Event, c *attemptCall) bool {
+		tree := str(cm.Data, "tree")
+		if tree == "" || cm.Seq <= c.termSeq {
+			return false
+		}
+		latest := 0
+		for _, m := range mine {
+			if m.termSeq < cm.Seq && m.pending == tree {
+				latest = max(latest, m.termSeq)
+			}
+		}
+		return latest > 0 && c.termSeq <= latest
+	}
+	// commit index (1-based among the recorded commits) of the first one that covers the call
 	var covering = func(c *attemptCall) int {
 		for i, cm := range commits {
-			if cm.Seq > c.termSeq {
+			if covers(cm, c) {
 				return i + 1
 			}
 		}
