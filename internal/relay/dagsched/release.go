@@ -87,8 +87,8 @@ const (
 	releaseVolatileLimit          = 512
 )
 
-// DecodeReleaseRequest reads the request strictly: an unknown field, a missing text, a list over its bound or a trailing document is refused.
-func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
+// decodeReleaseDocument reads the release request document strictly: an unknown field or a trailing document is refused.
+func decodeReleaseDocument(raw []byte) (ReleaseRequest, error) {
 	var req ReleaseRequest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -97,6 +97,15 @@ func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "the release request holds more than one document")
+	}
+	return req, nil
+}
+
+// DecodeReleaseRequest reads the request strictly: an unknown field, a missing text, a list over its bound or a trailing document is refused.
+func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
+	req, err := decodeReleaseDocument(raw)
+	if err != nil {
+		return ReleaseRequest{}, err
 	}
 	blank := func(name, v string) error {
 		if strings.TrimSpace(v) == "" {
@@ -183,95 +192,25 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	} else if found {
 		return s.replay(ctx, plan, node, actor, row)
 	}
+	// 1b. a node an agent holds is not given to a managed child (R04: one kind of current execution per node)
+	if err := refuseLiveAgentExecution(ctx, q, plan, node); err != nil {
+		return out, err
+	}
 	// 2. a new release, judged on plain reads
-	snap, n, err := liveNode(ctx, q, plan, node)
+	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req)
 	if err != nil {
 		return out, err
 	}
-	var base *BaseRef
-	if n.Kind == dag.NodeImplementation {
-		if req.Base == nil {
-			return out, refuse(contract.RefusalMalformedReceipt, "an implementation node starts from a base: the request names its repository and ref")
-		}
-		if s.Tips == nil {
-			return out, errors.New("this scheduler has no target reader, so it cannot read the tip the child starts from")
-		}
-		tip, err := s.Tips.Tip(ctx, req.Base.Repository, req.Base.Ref)
-		if err != nil {
-			return out, err
-		}
-		base = &BaseRef{Repository: req.Base.Repository, Ref: req.Base.Ref, SHA: tip.SHA}
-	}
-	reading, err := s.Ready(ctx, q, plan, ReadyOptions{})
-	if err != nil {
-		return out, err
-	}
-	if s.testAfterReading != nil {
-		s.testAfterReading()
-	}
-	r, known := reading.find(node)
-	if !known {
-		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
-	}
-	if r.Disposition != DispReady && r.Reason != DeferNoCapacity {
+	if notReady != nil {
 		// a concurrent call may have decided the release since the replay-first read: then this call is its replay, not a refusal.
 		if row, found, err := latestRelease(ctx, q, plan, node); err != nil {
 			return out, err
 		} else if found {
 			return s.replay(ctx, plan, node, actor, row)
 		}
-		return out, refusalOfReading(r)
+		return out, refusalOfReading(*notReady)
 	}
-	if err := s.checkCriteria(n, req.Criteria); err != nil {
-		return out, err
-	}
-	preds, err := s.pinnedPredecessors(ctx, q, plan, incomingEdges(snap, node))
-	if err != nil {
-		return out, err
-	}
-	if err := s.freshness(ctx, plan, actor, preds); err != nil {
-		return out, err
-	}
-	if s.testAfterFreshness != nil {
-		s.testAfterFreshness()
-	}
-	opts := VerifyOptions{ArtifactRoots: req.ArtifactRoots}
-	in := ManifestInput{Base: base, Volatile: req.Volatile, RuleVersion: req.RuleVersion, CreatedByTaskID: actor, CreatedAt: s.now()}
-	body, blocked, err := s.BuildManifest(ctx, q, plan, snap, n, in, opts)
-	if err != nil {
-		return out, err
-	}
-	if len(blocked) > 0 {
-		return out, refusalOfFinding(blocked[0])
-	}
-	if err := s.pinnedInputKeep(ctx, plan, body, opts); err != nil {
-		return out, err
-	}
-	if findings, err := s.VerifyManifest(ctx, q, plan, snap, n, body, opts); err != nil {
-		return out, err
-	} else if len(findings) > 0 {
-		return out, refusalOfFinding(findings[0])
-	}
-	// E-10 binds the acceptance whose pull request was read to the one the manifest consumes: a predecessor accepted again while the forge was being read is a different head that was
-	// never checked.
-	checked := map[string]bool{}
-	for _, p := range preds {
-		checked[p.Acceptance.AcceptanceID] = true
-	}
-	for _, e := range incomingEdges(snap, node) {
-		if !e.PinsCodeHead {
-			continue
-		}
-		if acceptance := inputAcceptance(body, e.EdgeID); !checked[acceptance] {
-			return out, refuse(contract.RefusalDispositionConflict, "the manifest rests on acceptance %s for the pinned edge %s, whose pull request the relay did not read: the predecessor's acceptance changed while the release was judged; repeat it", acceptance, e.EdgeID)
-		}
-	}
-	for _, p := range preds {
-		if !restsOn(body, p.Acceptance.AcceptanceID) {
-			return out, refuse(contract.RefusalDispositionConflict, "the acceptance of %s changed while its pull request %s#%d was being read; repeat the release so the current head is checked", p.Acceptance.NodeID, p.Forge, p.Number)
-		}
-	}
-	digest, _ := body["manifest_digest"].(string)
+	snap, n, base, body, digest, opts := j.snap, j.n, j.base, j.body, j.digest, j.opts
 	// The request id is derived from the manifest alone, or, when the node's release of this very manifest was closed, from the closed request: a released managed request id is refused for good, so the
 	// release that follows a close of the same manifest takes a successor id.
 	requestID, closedBase := ReleaseRequestID(plan, node, digest), ""
@@ -303,6 +242,12 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			return err
 		} else if open {
 			concurrent = true
+			return nil
+		}
+		if refused, err := asRefusal(refuseLiveAgentExecution(txCtx, tx, plan, node)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
 			return nil
 		}
 		if base, _, err := closedChainEnd(txCtx, tx, plan, node, digest); err != nil {
@@ -376,6 +321,107 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	}
 	recorded = true
 	return s.startAndBind(ctx, plan, node, actor, out, raw, false)
+}
+
+// releaseJudgement is what a release judges on plain reads before it decides anything: the plan as read, the node, the base an implementation node starts from, and the input manifest built
+// and verified for it (its digest included).
+type releaseJudgement struct {
+	snap   dag.Snapshot
+	n      dag.SnapNode
+	base   *BaseRef
+	body   map[string]any
+	digest string
+	opts   VerifyOptions
+}
+
+// judgeNodeRelease is step 2 of Release, shared with the agent surface (ReleaseAgent): the reading, the freshness of pinned pull requests, the criteria, and the manifest built and verified, hashing
+// included. A node that is neither ready nor waiting only for capacity is answered with its reading (notReady), and what is done about it is the caller's: a relationship release may be the replay of
+// a concurrent one, the agent surface has its own record to look for.
+func (s *Scheduler) judgeNodeRelease(ctx context.Context, q store.Querier, plan, node, actor string, req ReleaseRequest) (releaseJudgement, *NodeReading, error) {
+	snap, n, err := liveNode(ctx, q, plan, node)
+	if err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	var base *BaseRef
+	if n.Kind == dag.NodeImplementation {
+		if req.Base == nil {
+			return releaseJudgement{}, nil, refuse(contract.RefusalMalformedReceipt, "an implementation node starts from a base: the request names its repository and ref")
+		}
+		if s.Tips == nil {
+			return releaseJudgement{}, nil, errors.New("this scheduler has no target reader, so it cannot read the tip the child starts from")
+		}
+		tip, err := s.Tips.Tip(ctx, req.Base.Repository, req.Base.Ref)
+		if err != nil {
+			return releaseJudgement{}, nil, err
+		}
+		base = &BaseRef{Repository: req.Base.Repository, Ref: req.Base.Ref, SHA: tip.SHA}
+	}
+	reading, err := s.Ready(ctx, q, plan, ReadyOptions{})
+	if err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	if s.testAfterReading != nil {
+		s.testAfterReading()
+	}
+	r, known := reading.find(node)
+	if !known {
+		return releaseJudgement{}, nil, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
+	}
+	if r.Disposition != DispReady && r.Reason != DeferNoCapacity {
+		// the caller decides: a concurrent call may have decided the release since the replay-first read (then this call is its replay), or the node is refused
+		return releaseJudgement{}, &r, nil
+	}
+	if err := s.checkCriteria(n, req.Criteria); err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	preds, err := s.pinnedPredecessors(ctx, q, plan, incomingEdges(snap, node))
+	if err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	if err := s.freshness(ctx, plan, actor, preds); err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	if s.testAfterFreshness != nil {
+		s.testAfterFreshness()
+	}
+	opts := VerifyOptions{ArtifactRoots: req.ArtifactRoots}
+	in := ManifestInput{Base: base, Volatile: req.Volatile, RuleVersion: req.RuleVersion, CreatedByTaskID: actor, CreatedAt: s.now()}
+	body, blocked, err := s.BuildManifest(ctx, q, plan, snap, n, in, opts)
+	if err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	if len(blocked) > 0 {
+		return releaseJudgement{}, nil, refusalOfFinding(blocked[0])
+	}
+	if err := s.pinnedInputKeep(ctx, plan, body, opts); err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	if findings, err := s.VerifyManifest(ctx, q, plan, snap, n, body, opts); err != nil {
+		return releaseJudgement{}, nil, err
+	} else if len(findings) > 0 {
+		return releaseJudgement{}, nil, refusalOfFinding(findings[0])
+	}
+	// E-10 binds the acceptance whose pull request was read to the one the manifest consumes: a predecessor accepted again while the forge was being read is a different head that was
+	// never checked.
+	checked := map[string]bool{}
+	for _, p := range preds {
+		checked[p.Acceptance.AcceptanceID] = true
+	}
+	for _, e := range incomingEdges(snap, node) {
+		if !e.PinsCodeHead {
+			continue
+		}
+		if acceptance := inputAcceptance(body, e.EdgeID); !checked[acceptance] {
+			return releaseJudgement{}, nil, refuse(contract.RefusalDispositionConflict, "the manifest rests on acceptance %s for the pinned edge %s, whose pull request the relay did not read: the predecessor's acceptance changed while the release was judged; repeat it", acceptance, e.EdgeID)
+		}
+	}
+	for _, p := range preds {
+		if !restsOn(body, p.Acceptance.AcceptanceID) {
+			return releaseJudgement{}, nil, refuse(contract.RefusalDispositionConflict, "the acceptance of %s changed while its pull request %s#%d was being read; repeat the release so the current head is checked", p.Acceptance.NodeID, p.Forge, p.Number)
+		}
+	}
+	digest, _ := body["manifest_digest"].(string)
+	return releaseJudgement{snap: snap, n: n, base: base, body: body, digest: digest, opts: opts}, nil, nil
 }
 
 // checkCriteria is B-10 at release: the criteria the child will be registered with are the plan's.
@@ -788,4 +834,288 @@ func (s *Scheduler) awaitBound(ctx context.Context, plan, node string, out Relea
 		}
 	}
 	return out, false, nil
+}
+
+// The agent surface of dag-release (R04, CRW-1212). A node released on it is run by an agent of the flow engine, not by a managed Codex child, so there is no managed-start request, no relationship, no
+// standby turn, no dag_release_requests row and no dag_releases row: the release is ONE row of dag_agent_executions, of kind initial, which records the release fact (the manifest digest, the coordinator epoch and
+// the time), together with the slot reservation and the input manifest, in one transaction. Nothing of an agent node is written into a frozen table.
+//
+// The actor is the registered parent of the plan's project and holds the plan's coordinator epoch (the fence), exactly as for a managed release. The judgement of the node is the managed release's
+// (judgeNodeRelease: readiness, the freshness of pinned pull requests, the criteria, the manifest built and verified), so an agent is given the node only on the inputs a child would be. What
+// differs is what is not asked: the managed start has no scope owner (duplicate_scope_owner is the registry's rule for a relationship) and an issue has no pending managed start to wait for
+// (managed_start_one_pending_issue), so several nodes of one issue are released side by side, and the places they take are settled by the owner rule of their declarations (agentRegionOwners).
+//
+// Releasing is idempotent: a node whose agent execution is current answers it again. A node whose last execution a closure ended is released again as a new row of the chain (attempt + 1, superseding the
+// closed one).
+
+// AgentReleaseOptions are the facts of an agent release that neither the plan nor the manifest hold.
+type AgentReleaseOptions struct {
+	// Role and Tier name the agent that runs the node (the role key and the tier of the flow engine's policy); "executor" and "executor" when empty.
+	Role, Tier string
+	// RunID is the flow run the release belongs to, and Worktree the worktree the execution was allocated; both may be empty (a release made by hand).
+	RunID, Worktree string
+}
+
+// AgentReleaseResult is what ReleaseAgent answers.
+type AgentReleaseResult struct {
+	PlanID, NodeID, ManifestDigest, ExecutionID, SlotID string
+	Kind, Role, Tier, Actor, DecidedAt                  string
+	Attempt, Epoch                                      int64
+	Replayed                                            bool
+}
+
+// DecodeAgentReleaseRequest reads the release request of the agent surface. It is the dag-release-request/1 document, read strictly, of which the surface uses the base, the rule version, the volatile
+// inputs, the criteria and the artifact roots; the endpoints of a managed start (parent, child, allowed_recipients) are refused rather than dropped, since nothing starts a child.
+func DecodeAgentReleaseRequest(raw []byte) (ReleaseRequest, error) {
+	req, err := decodeReleaseDocument(raw)
+	if err != nil {
+		return ReleaseRequest{}, err
+	}
+	if req.Schema != SchemaReleaseRequest {
+		return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "the release request schema is %s", SchemaReleaseRequest)
+	}
+	if req.Parent.HostID != "" || req.Parent.Title != "" || req.Parent.Settings != nil || req.Child.HostID != "" || req.Child.Title != "" || req.Child.Settings != nil || len(req.AllowedRecipients) > 0 {
+		return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "the agent surface starts no managed child: the release request carries no parent, child or allowed_recipients")
+	}
+	for _, list := range []struct {
+		name   string
+		n, max int
+		empty  bool
+	}{{"criteria", len(req.Criteria), releaseCriteriaLimit, false}, {"artifact_roots", len(req.ArtifactRoots), releaseArtifactRootsLimit, true}, {"volatile", len(req.Volatile), releaseVolatileLimit, true}} {
+		if list.n == 0 && !list.empty {
+			return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "%s has no entry; at least one is required", list.name)
+		}
+		if list.n > list.max {
+			return ReleaseRequest{}, refuse(contract.RefusalMalformedReceipt, "%s has %d entries; the limit is %d", list.name, list.n, list.max)
+		}
+	}
+	return req, nil
+}
+
+func (o AgentReleaseOptions) resolved() (AgentReleaseOptions, error) {
+	if strings.TrimSpace(o.Role) == "" {
+		o.Role = "executor"
+	}
+	if strings.TrimSpace(o.Tier) == "" {
+		o.Tier = "executor"
+	}
+	for name, v := range map[string]string{"role": o.Role, "tier": o.Tier, "run id": o.RunID, "worktree": o.Worktree} {
+		if v != strings.TrimSpace(v) || dag.HasControl(v) {
+			return o, refuse(contract.RefusalMalformedReceipt, "the %s %q has whitespace around it or a control character in it", name, v)
+		}
+	}
+	return o, nil
+}
+
+// ReleaseAgent gives a ready node to an agent (see the comment above). It is idempotent and never writes a second row for a node whose execution is current.
+func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, req ReleaseRequest, opt AgentReleaseOptions) (out AgentReleaseResult, err error) {
+	out = AgentReleaseResult{PlanID: plan, NodeID: node}
+	if opt, err = opt.resolved(); err != nil {
+		return out, err
+	}
+	// 0. a session that does not hold the plan's epoch decides nothing, and is told nothing about the node (the transaction below checks again, where it writes)
+	q := s.Store.Q(ctx)
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
+	var project string
+	if has, err := queryOne(ctx, q, "SELECT project_key FROM dag_plans WHERE plan_id = ?", []any{plan}, &project); err != nil {
+		return out, err
+	} else if !has {
+		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no revision", plan)
+	}
+	if err := requireProjectParent(ctx, q, project, actor); err != nil {
+		return out, err
+	}
+	// 1. the node is not given to an agent while the relationship side holds it, and an agent execution that is current is answered again
+	if err := refuseLiveRelationshipExecution(ctx, q, plan, node); err != nil {
+		return out, err
+	}
+	if cur, live, err := currentAgentExecution(ctx, q, plan, node); err != nil {
+		return out, err
+	} else if live {
+		return s.agentReplay(ctx, cur)
+	}
+	// 2. a new release, judged on plain reads: the managed release's judgement, and the owner rule of the regions the node shares with the other nodes of its issue
+	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req)
+	if err != nil {
+		return out, err
+	}
+	if notReady != nil {
+		// a concurrent call may have decided the release since the replay-first read: then this call is its replay, not a refusal.
+		if cur, live, err := currentAgentExecution(ctx, q, plan, node); err != nil {
+			return out, err
+		} else if live {
+			return s.agentReplay(ctx, cur)
+		}
+		return out, refusalOfReading(*notReady)
+	}
+	if err := agentRegionOwners(ctx, q, plan, j.snap, j.n); err != nil {
+		return out, err
+	}
+	end, hasEnd, err := agentChainEnd(ctx, q, plan, node)
+	if err != nil {
+		return out, err
+	}
+	attempt, supersedes := int64(1), ""
+	if hasEnd {
+		attempt, supersedes = end.Attempt+1, end.ExecutionID
+	}
+	row := AgentExecution{ExecutionID: AgentExecutionID(plan, node, j.digest, attempt), PlanID: plan, NodeID: node, Attempt: attempt, Kind: AgentInitial, ManifestDigest: j.digest, Role: opt.Role, Tier: opt.Tier,
+		Worktree: opt.Worktree, RunID: opt.RunID, Actor: actor, Epoch: s.ExpectedEpoch, Supersedes: supersedes}
+	if j.base != nil {
+		row.BaseSHA = j.base.SHA
+	}
+	if s.testBetweenReadAndIntent != nil {
+		s.testBetweenReadAndIntent()
+	}
+	// 3. the release: the manifest, the slot and the execution row in one transaction
+	var stash error
+	var concurrent *AgentExecution
+	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
+		if err := refuseLiveRelationshipExecution(txCtx, tx, plan, node); err != nil {
+			stash = err
+			return nil
+		}
+		// at most one execution of a node is current: another call that released it first is the concurrent release this call answers
+		if cur, live, err := currentAgentExecution(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if live {
+			concurrent = &cur
+			return nil
+		}
+		if now, _, err := agentChainEnd(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if now.ExecutionID != end.ExecutionID {
+			stash = refuse(contract.RefusalDispositionConflict, "the executions of %s changed while the release was judged; repeat the release", node)
+			return nil
+		}
+		if err := releaseGate(txCtx, tx, plan, node, j.digest); err != nil {
+			if refused, ferr := asRefusal(err); ferr != nil {
+				return ferr
+			} else if refused != nil {
+				stash = refused
+				return nil
+			}
+		}
+		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, j.body, j.opts, actor)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
+			return nil
+		}
+		snap, n, err := stillLive(txCtx, tx, plan, node)
+		if err != nil {
+			if refused, ferr := asRefusal(err); ferr != nil {
+				return ferr
+			} else if refused != nil {
+				stash = refused
+				return nil
+			}
+		}
+		if refused, err := asRefusal(agentRegionOwners(txCtx, tx, plan, snap, n)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
+			return nil
+		}
+		stored, err := json.Marshal(j.body)
+		if err != nil {
+			return err
+		}
+		if _, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(txCtx, stored); err != nil {
+			return err
+		}
+		if refused, err := asRefusal(s.reserveFrozen(txCtx, tx, project, plan, node, j.digest, actor)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
+			return nil
+		}
+		if s.testAfterReserve != nil {
+			if err := s.testAfterReserve(); err != nil {
+				return err
+			}
+		}
+		row.DecidedAt = s.now()
+		return insertAgentExecution(txCtx, tx, row)
+	})
+	if err != nil {
+		return out, err
+	}
+	if stash != nil {
+		return out, stash
+	}
+	if concurrent != nil {
+		return s.agentReplay(ctx, *concurrent)
+	}
+	return s.agentResult(ctx, s.Store.Q(ctx), row, false)
+}
+
+func insertAgentExecution(ctx context.Context, q store.Querier, e AgentExecution) error {
+	var supersedes any
+	if e.Supersedes != "" {
+		supersedes = e.Supersedes
+	}
+	_, err := q.ExecContext(ctx, "INSERT INTO dag_agent_executions (execution_id, plan_id, node_id, attempt, kind, manifest_digest, role, tier, author_model, author_effort, thread_id, worktree, base_sha, run_id,"+
+		" actor_task_id, coordinator_epoch, decided_at, supersedes_execution_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		e.ExecutionID, e.PlanID, e.NodeID, e.Attempt, e.Kind, e.ManifestDigest, e.Role, e.Tier, e.AuthorModel, e.AuthorEffort, e.ThreadID, e.Worktree, e.BaseSHA, e.RunID, e.Actor, e.Epoch, e.DecidedAt, supersedes)
+	return err
+}
+
+// reserveFrozen reserves the node's slot from the FROZEN release manifest: the node the slot is for is the one the stored manifest was built for (its node_id), read back and digest-checked from
+// dag_input_manifests, and not the live node of the plan, which a plan revision may have changed or retired since the manifest was built. A manifest that is not stored, or that does not
+// read back as the digest it is stored under, or that is of another node than the one released, reserves nothing and refuses (revision_mismatch: the frozen record is the authority and it is not there).
+func (s *Scheduler) reserveFrozen(ctx context.Context, q store.Querier, project, plan, node, digest, actor string) error {
+	body, stored, err := dag.ReadManifestOn(ctx, q, digest)
+	if err != nil {
+		var corrupt *dag.CorruptError
+		if errors.As(err, &corrupt) {
+			return refuse(contract.RefusalRevisionMismatch, "%s", corrupt.Detail)
+		}
+		return err
+	}
+	if !stored {
+		return refuse(contract.RefusalRevisionMismatch, "the manifest %s of the release of %s is not stored, so no slot is reserved for it", digest, node)
+	}
+	frozen := textOf(body["node_id"])
+	if frozen == "" || frozen != node {
+		return refuse(contract.RefusalRevisionMismatch, "the manifest %s was built for node %q, not for %s: no slot is reserved for it", digest, frozen, node)
+	}
+	return s.reserve(ctx, q, project, plan, frozen, actor, digest)
+}
+
+// agentReplay answers a release that is already recorded: the current execution, with the slot it holds, and no write.
+func (s *Scheduler) agentReplay(ctx context.Context, cur AgentExecution) (AgentReleaseResult, error) {
+	return s.agentResult(ctx, s.Store.Q(ctx), cur, true)
+}
+
+func (s *Scheduler) agentResult(ctx context.Context, q store.Querier, e AgentExecution, replayed bool) (AgentReleaseResult, error) {
+	out := AgentReleaseResult{PlanID: e.PlanID, NodeID: e.NodeID, ManifestDigest: e.ManifestDigest, ExecutionID: e.ExecutionID, Kind: e.Kind, Role: e.Role, Tier: e.Tier, Actor: e.Actor,
+		Attempt: e.Attempt, Epoch: e.Epoch, DecidedAt: e.DecidedAt, Replayed: replayed}
+	if !replayed {
+		// the row as stored (its time was taken inside the transaction)
+		stored, err := scanAgentExecution(q.QueryRowContext(ctx, "SELECT "+agentExecutionColumns+" FROM dag_agent_executions WHERE execution_id = ?", e.ExecutionID))
+		if err != nil {
+			return out, err
+		}
+		out.DecidedAt = stored.DecidedAt
+	}
+	slot, err := s.slotOf(ctx, q, e.PlanID, e.NodeID)
+	out.SlotID = slot
+	return out, err
+}
+
+// Object is the result as the relay prints it (dag-release --surface agent).
+func (r AgentReleaseResult) Object() contract.OrderedObject {
+	return contract.OrderedObject{
+		{Key: "ok", Value: true}, {Key: "schema", Value: "dag-release/1"}, {Key: "surface", Value: "agent"}, {Key: "plan_id", Value: r.PlanID}, {Key: "node_id", Value: r.NodeID},
+		{Key: "manifest_digest", Value: optionalText(r.ManifestDigest)}, {Key: "execution_id", Value: optionalText(r.ExecutionID)}, {Key: "kind", Value: optionalText(r.Kind)},
+		{Key: "attempt", Value: r.Attempt}, {Key: "role", Value: optionalText(r.Role)}, {Key: "tier", Value: optionalText(r.Tier)}, {Key: "slot_id", Value: optionalText(r.SlotID)},
+		{Key: "actor", Value: optionalText(r.Actor)}, {Key: "coordinator_epoch", Value: r.Epoch}, {Key: "decided_at", Value: optionalText(r.DecidedAt)}, {Key: "replayed", Value: r.Replayed},
+	}
 }
