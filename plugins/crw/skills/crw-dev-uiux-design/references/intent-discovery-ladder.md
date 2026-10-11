@@ -2,8 +2,9 @@
 
 Use this ladder only when UX-INTENT-01 step 2 fails (one fork was insufficient)
 or the user explicitly wants guided exploration. The compact flow in SKILL.md §1
-(Design Read → ONE clarifying fork → proceed) is the default; this ladder is the
-optional deepening path.
+(Design Read → ONE fork put to the caller → proceed) is the default; this ladder is the
+optional deepening path. Its questions go to the caller; where no user is present, record the
+assumption instead of asking.
 
 Rules:
 - Use binary/ternary choices, not open-ended questions.

@@ -83,7 +83,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. CRW-1219: the intent protocol asks the caller, or records an assumption when no user is present, instead of asking the user directly.",
       "hunks": [
         {
           "line": 4,
@@ -91,6 +91,26 @@
             "metadata:\n",
             "  last-verified: \"2026-07-14\"\n",
             "  short-description: \"Design judgment for vague briefs, UX states, typography, layout patterns, logos, and brand vocabulary.\"\n"
+          ]
+        },
+        {
+          "line": 125,
+          "old": [
+            "2. If one decision still blocks the direction, ask ONE best clarifying fork with binary/ternary choices.\n",
+            "3. Proceed from the answer; if the user does not answer and the task can continue, choose the most domain-correct default and state the assumption. On EXPRESSIVE surfaces (landing/consumer/creative/AI-product), that default is the No-Brief Default Direction below (UX-DEFAULT-ISM-01); quiet surfaces keep quiet domain-correct defaults.\n"
+          ],
+          "new": [
+            "2. If one decision still blocks the direction, ask the caller, or record an assumption when no user is present: offer ONE best fork with binary/ternary choices.\n",
+            "3. Proceed from the answer; if nobody answers and the task can continue, choose the most domain-correct default and state the assumption. On EXPRESSIVE surfaces (landing/consumer/creative/AI-product), that default is the No-Brief Default Direction below (UX-DEFAULT-ISM-01); quiet surfaces keep quiet domain-correct defaults.\n"
+          ]
+        },
+        {
+          "line": 291,
+          "old": [
+            "If the brief is ambiguous, follow UX-INTENT-01: Design Read → ONE clarifying fork → proceed.\n"
+          ],
+          "new": [
+            "If the brief is ambiguous, follow UX-INTENT-01: Design Read → ONE fork put to the caller (an assumption when no user is present) → proceed.\n"
           ]
         }
       ]
@@ -103,6 +123,24 @@
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-dev-uiux-design to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/intent-discovery-ladder.md",
+      "reason": "CRW-1219: the ladder's questions go to the caller, and an assumption is recorded where no user is present.",
+      "hunks": [
+        {
+          "line": 5,
+          "old": [
+            "(Design Read → ONE clarifying fork → proceed) is the default; this ladder is the\n",
+            "optional deepening path.\n"
+          ],
+          "new": [
+            "(Design Read → ONE fork put to the caller → proceed) is the default; this ladder is the\n",
+            "optional deepening path. Its questions go to the caller; where no user is present, record the\n",
+            "assumption instead of asking.\n"
           ]
         }
       ]

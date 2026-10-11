@@ -25,7 +25,7 @@ live Codex hook or Desktop compatibility.
 | [crw-run-initiative](plugins/crw/skills/crw-run-initiative/SKILL.md) | Lead an initiative's approved projects through their project orchestrators, and own the midpoint check |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Read-only report of where work stands by level, with progress against the agreed schedule, and the one next action when asked |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery, find contradictions with minimal counterexamples, judge the schedule, and return in-scope corrections to managed tasks |
-| [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt and plan bounded, behavior-preserving repairs |
+| [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt, read-only, and recommend bounded, behavior-preserving repairs; a chosen repair becomes a Linear issue through crw-add-issue |
 
 The shared references in [crw-canon](plugins/crw/skills/crw-canon/SKILL.md) own Linear document authority and the other rules that more than one skill reads. Keep the skills together because their references link to one another.
 
@@ -239,7 +239,7 @@ $crw-status 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요
 $crw-run-initiative 중간점검. 승인된 프로젝트들을 확인하고 이미 승인된 범위의 대기 중인 일을 진행시킨 뒤 보고해줘.
 $crw-check [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 $crw-refactor [initiative cycle or project] 완료 근거와 변경 코드를 확인하고 구조적 부채 후보를 3개 이내로 추천해줘. 진단과 계획까지만.
-$crw-refactor 추천한 1번을 구현하고 검증해줘. 관련 없는 개선은 남겨두고 머지와 배포는 하지 마.
+$crw-refactor 추천한 1번을 crw-add-issue로 Linear 이슈로 만들어줘. 관련 없는 개선은 남겨두고 머지와 배포는 하지 마.
 ```
 
 These are invocation examples, not requests to execute while reading this file.

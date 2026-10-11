@@ -1,6 +1,6 @@
 ---
 name: crw-define
-description: "Explore an idea and define a goal-based Linear initiative: purpose, desired change, success evidence, scope, and open decisions. Use when intent or an initiative needs definition; hand an agreed goal to crw-plan for projects and issues. Definition alone does not create an execution plan. This defines Linear initiative intent; discovering one task's requirements inside its PABCD loop is crw-interview's."
+description: "Define one goal-based Linear initiative: purpose, desired change, success evidence, scope and open decisions. Hand an agreed goal to crw-plan for projects and issues. A task's own requirements are crw-interview's. Triggers: define an initiative, 이니셔티브 정의, 아이디어 정리."
 ---
 
 # CRW Define
@@ -15,6 +15,9 @@ and an initiative lead begins only from the explicit designation in
 [Initiative supervision](../crw-run/references/initiative-supervision.md).
 
 ## Recover the intent
+
+This is where an initiative's intent is asked about. One task's own requirements, inside its PABCD loop,
+are [crw-interview](../crw-interview/SKILL.md)'s.
 
 Read the request, accepted decisions, and existing initiative and linked documents.
 Reuse stable IDs and distinguish the user's words, accepted choices, suggestions,

@@ -9,7 +9,7 @@ The shared library of the plugin. It is reference-only: it has no procedure of i
 
 | File | What it decides | Read by |
 |---|---|---|
-| [hierarchy.md](references/hierarchy.md) | The levels (manager, initiative lead, project orchestrator, issue child), the one table that maps them to the relay role ids and Jun's Korean words, who owns and writes what at each level, how messages and direct coordination between project orchestrators work, and where each level's size is set | `crw-run`, `crw-run-initiative`, `crw-plan`, `crw-define`, `crw-check`, `crw-status`, `crw-tidy` |
+| [hierarchy.md](references/hierarchy.md) | The levels (manager, initiative lead, project orchestrator, issue child), the one table that maps them to the relay role ids and Jun's Korean words, who owns and writes what at each level, how messages and direct coordination between project orchestrators work, and where each level's size is set | `crw-run`, `crw-run-initiative`, `crw-plan`, `crw-define`, `crw-check`, `crw-status`, `crw-tidy`, `crw-loop`, `crw-pabcd` |
 | [linear-model.md](references/linear-model.md) | How goals, projects and issues relate in Linear, which document is canonical where, who writes which record, when an issue is Done, how the implementation repository is resolved | `crw-define`, `crw-plan`, `crw-add-issue`, `crw-run`, `crw-run-initiative`, `crw-status`, `crw-check`, `crw-tidy`, `crw-refactor` |
 | [release-gate.md](references/release-gate.md) | When an issue may be released to an issue child, and the one bypass | `crw-add-issue`, `crw-plan`, `crw-run`, `crw-tidy` |
 | [schedule-contract.md](references/schedule-contract.md) | The field names, sources and value words of a recorded schedule | `crw-plan`, `crw-status`, `crw-check` |

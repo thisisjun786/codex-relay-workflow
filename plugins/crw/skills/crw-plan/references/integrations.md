@@ -179,8 +179,8 @@ Load the existing owner for the requested operation:
 | Execute an initiative's approved projects through their existing parents, or run its midpoint check | [crw-run-initiative](../../crw-run-initiative/SKILL.md), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-check](../../crw-check/SKILL.md#find-contradictions) |
-| Diagnose structural debt after a verified cycle and plan bounded repairs; execute only selected authorized work | [crw-refactor](../../crw-refactor/SKILL.md) |
-| Find records that fall short of the agreed authoring rules and supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
+| Diagnose structural debt after a verified cycle, read-only, and recommend bounded repairs; a chosen repair is added as an issue through crw-add-issue | [crw-refactor](../../crw-refactor/SKILL.md) |
+| Find records that fall short of the agreed authoring rules, and have the owner of the body supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,

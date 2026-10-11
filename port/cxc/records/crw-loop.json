@@ -32,24 +32,23 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer. CRW-1130 (post-evaluation): DISPATCH-MANAGED-01 added before DISPATCH-SURFACE-01 (a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane; an unresolved binding is not permission to go unmanaged), DISPATCH-SURFACE-01 and its parallel-lane request sentence scoped to unmanaged work, and the router row points to the binding check first. Oracle: loop/SKILL.md DISPATCH-SURFACE-01.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer. CRW-1130 (post-evaluation): DISPATCH-MANAGED-01 added before DISPATCH-SURFACE-01 (a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane; an unresolved binding is not permission to go unmanaged), DISPATCH-SURFACE-01 and its parallel-lane request sentence scoped to unmanaged work, and the router row points to the binding check first. Oracle: loop/SKILL.md DISPATCH-SURFACE-01. CRW-1219: the description is one task's loop and sends a Linear project or initiative request to crw-run, and the parent-exclusion paragraph is one pointer to hierarchy.md.",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"Use for scoped PABCD completion loops. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first.\"\n",
             "metadata:\n",
             "  short-description: \"Agent-led scoped completion with durable plans and evidence.\"\n"
+          ],
+          "new": [
+            "description: \"Use for one task's scoped PABCD completion loop. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. A Linear project or initiative request goes to crw-run. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first.\"\n"
           ]
         },
         {
           "line": 28,
           "new": [
-            "A `$crw-loop` request with a Linear project scope and coordination intent routes\n",
-            "to crw-run goal mode before activating this implementation loop. The project\n",
-            "parent never follows the crw-loop/crw-pabcd procedure: it creates no implementation\n",
-            "goalplan or FSM, including when it holds a parent goal. This skill runs one task's\n",
-            "authorized objective; a task host goal and a crw-run parent goal have different\n",
-            "procedures.\n",
+            "This skill runs one task's authorized objective. A request that names a Linear project or initiative is [crw-run](../crw-run/SKILL.md)'s, and which level runs this loop and what goal each level opens is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level).\n",
             "\n"
           ]
         },
@@ -166,12 +165,12 @@
     },
     {
       "file": "agents/openai.yaml",
-      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy.",
+      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy. CRW-1219: the default prompt sends a Linear project request to crw-run instead of naming crw-run goal mode.",
       "hunks": [
         {
           "line": 4,
           "new": [
-            "  default_prompt: \"Use $crw-loop to complete this task with a scoped PABCD loop; route Linear project coordination to crw-run goal mode.\"\n"
+            "  default_prompt: \"Use $crw-loop to complete this task with a scoped PABCD loop; a Linear project request goes to crw-run.\"\n"
           ]
         }
       ]

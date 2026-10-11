@@ -47,6 +47,13 @@ sentence: plan/devlog paths, changed files, commands with exit codes, and eviden
 ledger paths when present. The runtime gate remains form-only for `did`; this is the
 agent discipline that makes later audit possible.
 
+The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a Linear issue, each quotes the
+Linear issue and documents it implements, which stay canonical under
+[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents);
+standalone work with no Linear issue quotes the original request and the repository's own contract documents and creates no issue for it.
+The gate checks that the unit exists and holds numbered documents, not what they decide; their
+format is [Implementation units](implementation-units.md).
+
 **ATTEST-SHAPE-01 (STRICT):** every `--attest` object carries `from` and `to`
 naming the edge it advances. The parser coerces before any gate runs
 (`attest.ts` `coerceAttest`), so an attest without them is refused on EVERY

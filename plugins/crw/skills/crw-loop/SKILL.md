@@ -1,6 +1,6 @@
 ---
 name: crw-loop
-description: "Use for scoped PABCD completion loops. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first."
+description: "Use for one task's scoped PABCD completion loop. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. A Linear project or initiative request goes to crw-run. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first."
 ---
 
 # crw-loop — Scoped completion
@@ -23,12 +23,7 @@ Apply the current request's authority before choosing a mode:
   If missing intent or authority prevents progress, report it; do not silently
   enlarge the scope. Do not enter Interview while a host goal is active.
 
-A `$crw-loop` request with a Linear project scope and coordination intent routes
-to crw-run goal mode before activating this implementation loop. The project
-parent never follows the crw-loop/crw-pabcd procedure: it creates no implementation
-goalplan or FSM, including when it holds a parent goal. This skill runs one task's
-authorized objective; a task host goal and a crw-run parent goal have different
-procedures.
+This skill runs one task's authorized objective. A request that names a Linear project or initiative is [crw-run](../crw-run/SKILL.md)'s, and which level runs this loop and what goal each level opens is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level).
 
 A **leaf** — a spawned subagent — never opens a host goal, runs `crw pabcd orchestrate`, or
 spawns; it follows its packet and reports. A dispatched **task** is not a leaf: it owns

@@ -21,7 +21,7 @@ Use these fields to make a candidate reviewable. Keep evidence proportional to t
 | Same-cause reach | How sibling sites were sought, what was found and what remains unexamined |
 | Verification | Baseline reproduction/checks, known failures, required negative controls, preserved behavior and observable maintenance benefit |
 | Independence and reversal | Separate delivery boundary, dependencies, how the repair can be reverted, and any coupling preventing independent reversal |
-| Execution owner | Project parent and candidate-owning undelivered issue/task, a proposed new issue after merged delivery (a defect inside a finished issue's own promise reopens that issue instead; see [Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads)), or the direct implementation owner explicitly chosen by the user; a proposed owner is not a dispatch |
+| Execution owner | The project's orchestrator and the candidate-owning undelivered issue, or a proposed new issue after merged delivery, added through [crw-add-issue](../../crw-add-issue/SKILL.md) (a defect inside a finished issue's own promise reopens that issue instead; see [Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads)); a proposed owner is not a dispatch |
 | Recommendation | Do now, defer to a named trigger, or measure an uncertainty first; cite an existing issue when one already owns it |
 
 ## Baseline versus result

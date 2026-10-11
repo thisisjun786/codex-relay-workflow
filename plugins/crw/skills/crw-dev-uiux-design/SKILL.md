@@ -119,8 +119,8 @@ Default navigation architecture by work shape; read `references/responsive-nav.m
 
 When the user's design request is vague ("깔끔하게 해줘", "모던하게", "just make it look good"), do not produce generic output. Run the compact ambiguity flow (UX-INTENT-01):
 1. Produce the Design Read from §2 using available signals.
-2. If one decision still blocks the direction, ask ONE best clarifying fork with binary/ternary choices.
-3. Proceed from the answer; if the user does not answer and the task can continue, choose the most domain-correct default and state the assumption. On EXPRESSIVE surfaces (landing/consumer/creative/AI-product), that default is the No-Brief Default Direction below (UX-DEFAULT-ISM-01); quiet surfaces keep quiet domain-correct defaults.
+2. If one decision still blocks the direction, ask the caller, or record an assumption when no user is present: offer ONE best fork with binary/ternary choices.
+3. Proceed from the answer; if nobody answers and the task can continue, choose the most domain-correct default and state the assumption. On EXPRESSIVE surfaces (landing/consumer/creative/AI-product), that default is the No-Brief Default Direction below (UX-DEFAULT-ISM-01); quiet surfaces keep quiet domain-correct defaults.
 
 > Skip this section if the user provided explicit design specs or this is a ≤5-line patch.
 
@@ -285,7 +285,7 @@ When no brief exists at all, the sanctioned replacement for these generic
 defaults is the named kit in §1 UX-DEFAULT-ISM-01 — deliberate, domain-gated,
 and stated as an assumption; it is not an exemption from this discipline.
 
-If the brief is ambiguous, follow UX-INTENT-01: Design Read → ONE clarifying fork → proceed.
+If the brief is ambiguous, follow UX-INTENT-01: Design Read → ONE fork put to the caller (an assumption when no user is present) → proceed.
 
 ### DESIGN.md persistence
 If the project needs persistent design tokens across sessions, save the Design Read as a full `DESIGN.md` in the project root. Format spec: `references/design-system-bootstrap.md § DESIGN.md Format`.
