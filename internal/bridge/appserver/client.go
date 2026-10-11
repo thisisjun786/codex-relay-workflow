@@ -61,6 +61,8 @@ func (c *Client) connect(ctx context.Context) error {
 	ws.SetReadLimit(int64(c.maxFrame))
 	c.mu.Lock()
 	c.conn = ws
+	c.connSeq++
+	c.connID = c.connSeq
 	c.mu.Unlock()
 	go c.receive(ws)
 	handshake := map[string]any{"clientInfo": map[string]any{"name": "codex_thread_bridge", "version": BridgeVersion}, "capabilities": map[string]any{"experimentalApi": true}}

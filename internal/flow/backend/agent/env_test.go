@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,6 +100,15 @@ type hookJournal struct {
 	after func(engine.Event)
 	// before sees a row before it is appended.
 	before func(engine.Event)
+	// frozen drops every row from now on: the process that wrote them is dead.
+	frozen bool
+}
+
+// freeze makes the journal ignore every later row, as a killed process writes none.
+func (j *hookJournal) freeze() {
+	j.mu.Lock()
+	j.frozen = true
+	j.mu.Unlock()
 }
 
 func (j *hookJournal) Append(e engine.Event) engine.Event {
@@ -107,6 +117,12 @@ func (j *hookJournal) Append(e engine.Event) engine.Event {
 	j.mu.Unlock()
 	if before != nil {
 		before(e)
+	}
+	j.mu.Lock()
+	frozen := j.frozen
+	j.mu.Unlock()
+	if frozen {
+		return e
 	}
 	out := j.MemoryJournal.Append(e)
 	if after != nil {
@@ -145,7 +161,17 @@ type env struct {
 	runID   string
 	pool    int
 	budget  int64
+	// now is the clock the engine reads (nil is the real one); resume makes the next runs resumes of the journal.
+	now    func() time.Time
+	resume *engine.ResumeOptions
+	// alive says which run processes are still alive (nil: the real check).
+	alive func(owner string) bool
+	// opts are the timings of a resumed run (resumeRun).
+	opts *engine.ResumeOptions
+	// killable, when set, is the backend the runs use: a process that can be killed (killAfter, killBefore).
+	killable *killable
 
+	cfg   envConfig
 	gitMu sync.Mutex
 	calls []gitCall
 }
@@ -154,7 +180,11 @@ type envOption func(*envConfig)
 
 type envConfig struct {
 	poll, interruptWait time.Duration
+	owner               string
 }
+
+// withOwner names the process the first backend lives in.
+func withOwner(owner string) envOption { return func(c *envConfig) { c.owner = owner } }
 
 // withInterruptWait sets how long the backend waits for an interrupted turn to end.
 func withInterruptWait(d time.Duration) envOption { return func(c *envConfig) { c.interruptWait = d } }
@@ -196,11 +226,36 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.backend, err = agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: registry, PollEvery: cfg.poll, InterruptWait: cfg.interruptWait})
+	e.backend, err = agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: registry, PollEvery: cfg.poll, InterruptWait: cfg.interruptWait,
+		Owner: cfg.owner, OwnerAlive: e.ownerAlive})
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.cfg = cfg
 	return e
+}
+
+func (e *env) ownerAlive(owner string) bool {
+	if e.alive != nil {
+		return e.alive(owner)
+	}
+	return agent.ProcessAlive(owner)
+}
+
+// restart replaces the backend and its connection by those of a new run process named owner: the old process is dead, its
+// connection is closed, and everything it did is on the host and in the journal.
+func (e *env) restart(owner string) {
+	e.t.Helper()
+	_ = e.client.Close()
+	e.alive = func(o string) bool { return o == e.backend.Owner() }
+	e.client = appserver.New(e.host.SocketPath, appserver.DefaultBounds, agent.ClientOption(e.owned))
+	e.t.Cleanup(func() { _ = e.client.Close() })
+	b, err := agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: e.owned, PollEvery: e.cfg.poll, InterruptWait: e.cfg.interruptWait,
+		Owner: owner, OwnerAlive: e.ownerAlive})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.backend = b
 }
 
 // gitCalls returns the git commands the allocator ran so far.
@@ -225,7 +280,11 @@ func (e *env) worktreeAdds() int {
 func (e *env) plan(fn func(fakehost.TurnRequest) fakehost.TurnPlan) { e.threads.OnTurn(fn) }
 
 func (e *env) config() engine.Config {
-	return engine.Config{Backend: e.backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget}
+	var backend engine.Backend = e.backend
+	if e.killable != nil {
+		backend = e.killable
+	}
+	return engine.Config{Backend: backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget, Now: e.now, Resume: e.resume}
 }
 
 // run executes the script body and returns its result.
@@ -364,4 +423,33 @@ func asRPC(err error, target **appserver.RPCError) bool { return errors.As(err, 
 func str(m map[string]any, key string) string {
 	s, _ := m[key].(string)
 	return s
+}
+
+// killable is a backend whose process can be killed: once dead it sends nothing more.
+type killable struct {
+	*agent.Backend
+	dead atomic.Bool
+}
+
+var errKilled = &engine.TransportError{Err: errors.New("the process was killed")}
+
+func (k *killable) StartThread(ctx context.Context, spec engine.ThreadSpec) (engine.ThreadInfo, error) {
+	if k.dead.Load() {
+		return engine.ThreadInfo{}, errKilled
+	}
+	return k.Backend.StartThread(ctx, spec)
+}
+
+func (k *killable) ForkThread(ctx context.Context, spec engine.ForkSpec) (engine.ThreadInfo, error) {
+	if k.dead.Load() {
+		return engine.ThreadInfo{}, errKilled
+	}
+	return k.Backend.ForkThread(ctx, spec)
+}
+
+func (k *killable) RunTurn(ctx context.Context, spec engine.TurnSpec) (engine.TurnOutcome, error) {
+	if k.dead.Load() {
+		return engine.TurnOutcome{}, errKilled
+	}
+	return k.Backend.RunTurn(ctx, spec)
 }

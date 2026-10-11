@@ -160,6 +160,10 @@ func LookupCall(j Journal, callID string) (CallInfo, bool) {
 		}
 		if st, ok := terminalEvents[e.Event]; ok {
 			info.Terminal = st
+		} else {
+			// A row that is not terminal after a terminal one (reconcile's recovered rows after an unknown outcome) reopens
+			// the call.
+			info.Terminal = ""
 		}
 	}
 	return info, found

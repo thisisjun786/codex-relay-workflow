@@ -40,6 +40,8 @@ const (
 	// the one the restore verified: it sent nothing further and its node stops with an escalation. Every later call of
 	// the node in the run ends held with this reason, sending nothing.
 	ReasonRestoreSnapshotMismatch = "restore_snapshot_mismatch"
+	// ReasonRecoveryHold ends a call whose node holds a call with an unknown outcome (recovery_hold): nothing was sent.
+	ReasonRecoveryHold = "recovery_hold"
 )
 
 // ThreadSpec is what a thread is created with. Every engine thread is persistent.
@@ -59,6 +61,9 @@ type ThreadSpec struct {
 	Placement Placement
 	// AutoCompactTokenLimit is the role's model_auto_compact_token_limit, nil when its pair declares none.
 	AutoCompactTokenLimit *int64
+	// Send is the send ordinal of the creation request: 1 for the first, one more for each time reconcile proved the
+	// previous one absent and sent it again.
+	Send int
 }
 
 // ThreadInfo is what the backend reads back about a created thread: its id and the pair it is configured with.
@@ -263,6 +268,8 @@ type ForkSpec struct {
 	SourceThreadID        string
 	ThroughTurnID         string
 	AutoCompactTokenLimit *int64
+	// Send is the send ordinal of the creation request (see ThreadSpec).
+	Send int
 }
 
 // Forker is implemented by a backend that can fork a thread at a turn into another directory.
