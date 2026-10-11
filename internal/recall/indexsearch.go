@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // RRFScore fuses zero-based lane ranks; nil is the oracle's undefined rank.
@@ -224,7 +226,7 @@ func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
 		}
 	}
 	if math.IsNaN(opts.Limit) || math.IsInf(opts.Limit, 0) {
-		return ChatSearchResult{}, fmt.Errorf("the index limit %s is not a finite number", memoryNumberText(opts.Limit))
+		return ChatSearchResult{}, fmt.Errorf("the index limit %s is not a finite number", jsnode.NumberString(opts.Limit))
 	}
 	opts.Limit = math.Max(math.Floor(opts.Limit), 0)
 	started := time.Now()
@@ -254,7 +256,7 @@ func queryIndex(db *RwDb, opts IndexQueryOptions) (ChatSearchResult, error) {
 	}
 	result := ChatSearchResult{Hits: []ChatHit{}, Warnings: []string{}, Mode: "index"}
 	if truncated {
-		result.Warnings = append(result.Warnings, "truncated at limit "+memoryNumberText(opts.Limit)+" — raise --limit or narrow the query")
+		result.Warnings = append(result.Warnings, "truncated at limit "+jsnode.NumberString(opts.Limit)+" — raise --limit or narrow the query")
 	}
 	if meta.Warning != "" {
 		result.Warnings = append(result.Warnings, meta.Warning)
@@ -341,7 +343,7 @@ func queryIndexContext(db *RwDb, path string, ord, n float64, includeSynthetic b
 // checkFiniteNowMs refuses a clock override that is no finite number.
 func checkFiniteNowMs(nowMs float64) error {
 	if math.IsNaN(nowMs) || math.IsInf(nowMs, 0) {
-		return fmt.Errorf("nowMs %s is not a finite number", memoryNumberText(nowMs))
+		return fmt.Errorf("nowMs %s is not a finite number", jsnode.NumberString(nowMs))
 	}
 	return nil
 }

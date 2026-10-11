@@ -24,6 +24,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -73,7 +74,7 @@ func canonical(path string) (string, error) {
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(path)
-	return source.DecodeUTF8([]byte(resolved)), err
+	return jsnode.DecodeUTF8([]byte(resolved)), err
 }
 
 // probeOutputLimit is the default maxBuffer of execFileSync: a probe whose stdout and stderr together pass it fails.
@@ -97,7 +98,7 @@ func git(p prober, cwd string, args ...string) (string, error) {
 	} else {
 		out, err = source.Probe(cwd, o, args...)
 	}
-	return text.Trim(source.DecodeUTF8(out)), err
+	return text.Trim(jsnode.DecodeUTF8(out)), err
 }
 
 // prober is how one resolution runs git: the zero value as the command-line verbs always have, with a ctx owned by it.
@@ -456,27 +457,11 @@ func Bind(cwd, sessionID, target string) (string, error) {
 // where encoding/json escapes them. A backslash and the byte after it are copied together, so an escaped backslash before
 // "u2028" stays text.
 func encode(b Binding) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(b); err != nil {
+	out, err := jsnode.Stringify(b, "  ")
+	if err != nil {
 		return nil, err
 	}
-	in, out := buf.Bytes(), make([]byte, 0, buf.Len())
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
+	return append(out, '\n'), nil
 }
 
 // publish writes data as path without ever replacing a file that is there: the whole content goes into an exclusive temp

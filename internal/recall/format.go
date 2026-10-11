@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -81,7 +82,7 @@ func topicTokensWith(h MemoryHit, re *regexp.Regexp) []string {
 	out := []string{}
 	seen := map[string]bool{}
 	for _, s := range re.FindAllString(h.Relpath+" "+h.Excerpt, -1) {
-		s = Lower(s)
+		s = jsnode.Lower(s)
 		if !seen[s] {
 			seen[s] = true
 			out = append(out, s)
@@ -137,7 +138,7 @@ func FormatMemoryResult(r MemorySearchResult, nowMs ...float64) string {
 	if len(nowMs) > 0 {
 		now = nowMs[0]
 	}
-	lines := []string{fmt.Sprintf("# %d memory hits (%d files scanned, %sms)", len(r.Hits), r.ScannedFiles, memoryNumberText(r.ElapsedMs))}
+	lines := []string{fmt.Sprintf("# %d memory hits (%d files scanned, %sms)", len(r.Hits), r.ScannedFiles, jsnode.NumberString(r.ElapsedMs))}
 	if len(r.Hits) == 0 {
 		lines = append(lines, "(no matches)")
 	}
@@ -155,7 +156,7 @@ func FormatMemoryResult(r MemorySearchResult, nowMs ...float64) string {
 			cwd = " {" + *h.Cwd + "}"
 		}
 		if age := AgeDays(h.UpdatedAt, now); age != nil {
-			ageBit = " [age: " + memoryNumberText(*age) + "d]"
+			ageBit = " [age: " + jsnode.NumberString(*age) + "d]"
 		}
 		if newer := newerRelpathWith(h, r.Hits, re); newer != nil {
 			newerBit = " [newer: " + *newer + "]"

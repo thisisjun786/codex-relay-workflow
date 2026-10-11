@@ -14,9 +14,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -116,7 +116,7 @@ func registrationRegister(role NativeRoleName, homes []string, fail func(registr
 	if err != nil {
 		return RegistrationResult{}, err
 	}
-	decoded := source.DecodeUTF8(prior)
+	decoded := jsnode.DecodeUTF8(prior)
 	if prior != nil && decoded == string(content) {
 		return RegistrationResult{Path: path}, nil
 	}
@@ -130,7 +130,7 @@ func registrationRegister(role NativeRoleName, homes []string, fail func(registr
 }
 
 func registrationQuote(value string) string {
-	b, _ := Stringify(value, "") // a typed string is always serializable
+	b, _ := jsnode.Stringify(value, "") // a typed string is always serializable
 	return string(b)
 }
 func registrationDigest(value string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(value))) }
@@ -247,7 +247,7 @@ func registrationCreate(path string, content []byte, fail func(registrationStep)
 			if readErr != nil {
 				return RegistrationResult{}, readErr
 			}
-			if prior != nil && source.DecodeUTF8(prior) == string(content) {
+			if prior != nil && jsnode.DecodeUTF8(prior) == string(content) {
 				return RegistrationResult{Path: path}, nil
 			}
 		}
@@ -278,7 +278,7 @@ func registrationUpdate(role NativeRoleName, path string, prior, content []byte,
 	if err := registrationUnchanged(role, path, prior); err != nil {
 		return RegistrationResult{}, err
 	}
-	backup := path + ".backup-" + registrationDigest(source.DecodeUTF8(prior))
+	backup := path + ".backup-" + registrationDigest(jsnode.DecodeUTF8(prior))
 	if err := registrationExclusive(backup, prior, fail); err != nil {
 		if !errors.Is(err, fs.ErrExist) {
 			return RegistrationResult{}, err

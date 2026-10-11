@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,10 +8,10 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -60,7 +58,7 @@ func ResolveSession(cwd string, explicit *string) (*string, error) {
 	var best *string
 	var bestMtime float64
 	for _, entry := range entries {
-		name := source.DecodeUTF8([]byte(entry.Name()))
+		name := jsnode.DecodeUTF8([]byte(entry.Name()))
 		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".tmp") {
 			continue
 		}
@@ -148,7 +146,7 @@ func SiblingRoots(cwd string, process host.LookupEnv) []string {
 			if !entry.IsDir() || entry.Name() == "node_modules" || entry.Name() == "AppData" {
 				continue
 			}
-			roots = append(roots, filepath.Join(home, source.DecodeUTF8([]byte(entry.Name()))))
+			roots = append(roots, filepath.Join(home, jsnode.DecodeUTF8([]byte(entry.Name()))))
 		}
 	}
 	abs, err := filepath.Abs(cwd)
@@ -322,31 +320,8 @@ func pendingLedgerEventCount(cwd, sessionID string) int {
 	return len(events) + len(damaged)
 }
 
-// Same compact JSON.stringify string rules as state.stringify, kept local because
-// the state encoder is private. Escaped backslashes stay paired during the pass.
+// statusJSON is the compact JSON.stringify of value (jsnode.Stringify) as a string.
 func statusJSON(value any) (string, error) {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return "", err
-	}
-	in := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
-	out := make([]byte, 0, len(in))
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out = append(out, "\u2028"...)
-			i += 5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out = append(out, "\u2029"...)
-			i += 5
-		default:
-			out = append(out, in[i], in[i+1])
-			i++
-		}
-	}
-	return string(out), nil
+	b, err := jsnode.Stringify(value, "")
+	return string(b), err
 }

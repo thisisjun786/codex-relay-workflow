@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -175,7 +176,7 @@ func RunHook(ctx context.Context, in io.Reader, stdout io.Writer, env host.Looku
 	if guidancerecord.SilentCompact(env, raw, providerLeg, line) {
 		return 0
 	}
-	out := "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":" + quote(line) + "}}\n"
+	out := "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":" + jsnode.JSString(line) + "}}\n"
 	n, err := io.Copy(stdout, strings.NewReader(out))
 	// Only a line written whole, by a hook that was not cancelled, counts as said.
 	if err == nil && n == int64(len(out)) && ctx.Err() == nil {

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // parseRemoteURL is the bounded WHATWG subset consumed by repo-key.ts:44-46.
@@ -122,7 +124,7 @@ func remoteAuthority(s string, special, file bool) (string, bool) {
 		// Lower each rune separately: UTS46 never applies JS's contextual Final_Sigma.
 		var b strings.Builder
 		for _, r := range label {
-			b.WriteString(Lower(string(r)))
+			b.WriteString(jsnode.Lower(string(r)))
 		}
 		label = b.String()
 		if !isASCII(label) {

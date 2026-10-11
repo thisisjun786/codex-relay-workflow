@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // The oracle argv facade and the oracle hook entry (CRW-828). The product reaches the job verbs through RunParsedCLI after the relay validated the
@@ -63,7 +65,7 @@ func ReadCLIStdin(in io.Reader) string {
 	if err != nil {
 		return ""
 	}
-	raw := decodeUTF8(b)
+	raw := jsnode.DecodeUTF8(b)
 	if len(utf16.Encode([]rune(raw))) > MaxCLIStdinBytes {
 		return ""
 	}

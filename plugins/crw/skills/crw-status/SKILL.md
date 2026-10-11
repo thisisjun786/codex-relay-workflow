@@ -37,6 +37,9 @@ is [Midpoint check](references/midpoint-check.md). Progress against the agreed s
 [Schedule progress](references/schedule-progress.md), and it is a default part of a midpoint or
 status report rather than an extra a user has to request.
 
+The morning report of a night batch is written by `crw manage batch report` in the form of
+[Night batch report](references/night-batch-report.md).
+
 ## Resolve what to report on
 
 Take the target from the current request, then its explicit links, then this task's verified

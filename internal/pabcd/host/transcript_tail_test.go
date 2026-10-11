@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // bigTranscript is a 64 MiB transcript (sparse, so the test writes only its tail) that ends with tail.
@@ -131,7 +133,7 @@ func oldReadTranscriptTail(path string, maxBytes int) string {
 	if err != nil {
 		return ""
 	}
-	return decodeUTF8(data[max(0, len(data)-maxBytes):])
+	return jsnode.DecodeUTF8(data[max(0, len(data)-maxBytes):])
 }
 
 // TestReadTranscriptTailDecodesAsBefore is CRW-1160 end condition 2: short, long, invalid UTF-8 and rune-split

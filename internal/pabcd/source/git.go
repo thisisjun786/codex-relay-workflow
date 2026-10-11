@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // GitEnv is base without the variables that point git at another repository (inherited, they would redirect
@@ -239,7 +239,7 @@ type statusRecord struct {
 func parseStatusZ(out []byte) []statusRecord {
 	var fields [][]uint16
 	for _, field := range bytes.Split(out, []byte{0}) {
-		fields = append(fields, utf16.Encode([]rune(decodeUTF8(field))))
+		fields = append(fields, utf16.Encode([]rune(jsnode.DecodeUTF8(field))))
 	}
 	fields = fields[:len(fields)-1] // what follows the last NUL is an unterminated field, which is dropped
 	var records []statusRecord
@@ -258,44 +258,4 @@ func parseStatusZ(out []byte) []statusRecord {
 		records = append(records, rec)
 	}
 	return records
-}
-
-// DecodeUTF8 is decodeUTF8 for a caller that reads paths and git output the way Node does.
-func DecodeUTF8(b []byte) string { return decodeUTF8(b) }
-
-// decodeUTF8 decodes b as Node's Buffer.toString("utf8") does: each maximal invalid subpart becomes one U+FFFD
-// (the WHATWG rule), where Go's own conversion emits one per byte.
-func decodeUTF8(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	var sb strings.Builder
-	for len(b) > 0 {
-		r, n := utf8.DecodeRune(b)
-		if r == utf8.RuneError && n == 1 {
-			n = maximalSubpart(b)
-		}
-		sb.WriteRune(r)
-		b = b[n:]
-	}
-	return sb.String()
-}
-
-// maximalSubpart is the length of the longest prefix of b, whose first rune is invalid, that could begin a
-// well-formed sequence: the lead byte plus the following bytes that some completion with 0x80 keeps valid.
-func maximalSubpart(b []byte) int {
-	want := 1
-	switch c := b[0]; {
-	case c >= 0xC2 && c <= 0xDF:
-		want = 2
-	case c >= 0xE0 && c <= 0xEF:
-		want = 3
-	case c >= 0xF0 && c <= 0xF4:
-		want = 4
-	}
-	n := 1
-	for n < min(want, len(b)) && utf8.Valid(append(slices.Clone(b[:n+1]), bytes.Repeat([]byte{0x80}, want-n-1)...)) {
-		n++
-	}
-	return n
 }

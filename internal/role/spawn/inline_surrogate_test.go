@@ -3,6 +3,7 @@ package spawn
 import (
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -38,7 +39,7 @@ func TestSpawnInlineMentionedFoldersKeepsLoneSurrogateNames(t *testing.T) {
 	}
 }
 
-// spawnInlineLowerJS is String.prototype.toLowerCase: it must keep a lone surrogate's bytes
+// jsnode.Lower is String.prototype.toLowerCase: it must keep a lone surrogate's bytes
 // while it lowercases around it, and keep the U+0130 and final-sigma rules.
 func TestSpawnInlineLowerJSPreservesLoneSurrogates(t *testing.T) {
 	wtf8 := "\xed\xa0\x80" // U+D800 as the WTF-8 pyjson keeps for a lone surrogate
@@ -60,8 +61,8 @@ func TestSpawnInlineLowerJSPreservesLoneSurrogates(t *testing.T) {
 		{"\u03a3" + wtf8, "\u03c3" + wtf8},
 	}
 	for _, c := range cases {
-		if got := spawnInlineLowerJS(c.in); got != c.want {
-			t.Errorf("spawnInlineLowerJS(%q) = %q, want %q", c.in, got, c.want)
+		if got := jsnode.Lower(c.in); got != c.want {
+			t.Errorf("jsnode.Lower(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
