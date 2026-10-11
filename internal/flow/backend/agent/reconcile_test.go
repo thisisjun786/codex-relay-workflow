@@ -725,6 +725,10 @@ func turnText(params map[string]any) string {
 func TestMixedFailuresSamePathAndParallel(t *testing.T) {
 	e := newEnv(t, withOwner("proc-1"))
 	e.useClock()
+	// One call runs at a time. The parallel paths stay three paths with three positions, but the request whose answer is lost
+	// closes the connection every call shares, and a call that had a request in flight on it would then be unknown too, which
+	// is true of the host and would make the statuses depend on timing.
+	e.pool = 1
 	badRequest := fakehost.ErrorWithInfo(-32600, "the request is malformed", "badRequest")
 	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
 		switch {

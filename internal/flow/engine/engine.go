@@ -485,11 +485,11 @@ func (e *Engine) resume(ctx context.Context) {
 		if wait == nil {
 			wait = SleepWait
 		}
-		rep, err := Reconcile(ctx, e.j, ReconcileConfig{RunID: e.runID, Host: host, Now: e.cfg.Now, Wait: wait, Grace: o.Grace, Skew: o.Skew, OpenWait: o.OpenWait, Poll: o.Poll})
+		// a context that ends mid-pass ends the run's calls too; what the pass decided before that is kept
+		rep, _ := Reconcile(ctx, e.j, ReconcileConfig{RunID: e.runID, Host: host, Now: e.cfg.Now, Wait: wait, Grace: o.Grace, Skew: o.Skew, OpenWait: o.OpenWait, Poll: o.Poll})
 		if rep != nil {
 			e.recovery = rep.ByCall
 		}
-		_ = err
 		for _, rec := range e.recovery {
 			if rec.Action == RecoverPending {
 				e.stopNode(rec.Node, ReasonRecoveryHold)

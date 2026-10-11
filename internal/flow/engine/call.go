@@ -545,10 +545,11 @@ func (c *callRun) fromError(ctx context.Context, err error) CallResult {
 	// A request nobody can account for holds the node: nothing is sent again, no new attempt starts and no tier step is
 	// taken for it until reconcile or an operator establishes the outcome.
 	c.e.stopNode(c.plan.node, ReasonRecoveryHold)
-	c.e.escalateUnknown(c, err.Error())
 	if r, ok := c.e.cfg.Backend.(Reconciled); ok && r.LeavesLostRequestsOpen() {
+		// reconcile decides the call and escalates if it cannot; until then the outcome is open, not unknown
 		return c.leaveOpen(ReasonDispatchUnknown)
 	}
+	c.e.escalateUnknown(c, err.Error())
 	return c.terminal(EvOutcomeUnknown, StatusUnknown, ReasonDispatchUnknown, map[string]any{"error": err.Error()})
 }
 
@@ -603,6 +604,16 @@ func (c *callRun) beginTurn(ctx context.Context, op string) (context.Context, fu
 		c.mu.Unlock()
 		cancel(nil)
 	}
+}
+
+// setIntent records the reason of an interrupt the engine requested for the turn before the process stopped.
+func (c *callRun) setIntent(reason string) {
+	if reason == "" {
+		return
+	}
+	c.mu.Lock()
+	c.intent = reason
+	c.mu.Unlock()
 }
 
 // interrupted is the reason the engine interrupted the call's last turn for, "" when it did not.
@@ -905,17 +916,14 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			// The turn was sent before the process stopped: no request, no gate, no intent row.
 			repair = pre.k > 1
 			c.repairUsed = c.repairUsed || repair
-			if pre.intent != "" {
-				c.mu.Lock()
-				c.intent = pre.intent
-				c.mu.Unlock()
-			}
 			if pre.running {
 				host, _ := e.cfg.Backend.(ReconHost)
 				turnCtx, endTurn := c.beginTurn(ctx, pre.op)
+				c.setIntent(pre.intent)
 				out, err = host.AwaitTurn(turnCtx, c.threadID, pre.turnID, pre.op)
 				endTurn()
 			} else {
+				c.setIntent(pre.intent)
 				out = *pre.outcome
 			}
 			pre = nil

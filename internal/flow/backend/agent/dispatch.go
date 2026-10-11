@@ -30,7 +30,11 @@ func creationKey(callID string, send int) string { return fmt.Sprintf("%s#%d", c
 // written. A request that was never written leaves no record: the host certainly did not receive it.
 func (b *Backend) sendCreation(ctx context.Context, callID string, send int, method string, params map[string]any) (json.RawMessage, error) {
 	key := creationKey(callID, send)
-	ctx = appserver.WithSendHook(ctx, func(string) {
+	ctx = appserver.WithSendHook(ctx, func(sent string) {
+		// the hook also sees the handshake's own request when the call has to connect first
+		if sent != method {
+			return
+		}
 		b.mu.Lock()
 		b.sent[key] = b.client.ConnectionID()
 		b.mu.Unlock()
