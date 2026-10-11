@@ -11,13 +11,12 @@ import (
 // outage: the push is deferred, the acceptance, integration, observation and integrated count are unaffected, and the same
 // push completes once the remote accepts it.
 func TestServerErrorOnPushDefersOnlyThePush(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)
 	hook := filepath.Join(remote, "hooks", "pre-receive")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'error: The requested URL returned error: 503' >&2\nexit 1\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, hook, "#!/bin/sh\necho 'error: The requested URL returned error: 503' >&2\nexit 1\n")
 	k.acceptByCommit("a")
 	k.acceptByCommit("b")
 	ctx := context.Background()

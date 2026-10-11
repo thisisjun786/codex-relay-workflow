@@ -13,6 +13,7 @@ import (
 // (mergeturn.SameRepository), so every git spelling of the accepted repository holds the correction, a linked
 // worktree included, and an unrelated repository does not.
 func TestACorrectionIsHeldByEveryGitSpellingOfTheAcceptedRepository(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

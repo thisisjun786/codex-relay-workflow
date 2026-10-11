@@ -133,6 +133,9 @@ func TestPromptSubmitLegReadsTheRegistryRole(t *testing.T) {
 	bind("b5", "child", "issue", "CRW-4", "thread-both", "active", nil)
 	bind("b6", "parent", "project", "P-2", "thread-both", "active", nil)
 	bind("b7", "parent", "project", "P-3", "thread-paused-parent", "paused", nil)
+	bind("b8", "supervisor", "initiative", "I-1", "thread-supervisor", "active", nil)
+	bind("b9", "supervisor", "initiative", "I-2", "thread-sup-parent", "active", nil)
+	bind("b10", "parent", "project", "P-4", "thread-sup-parent", "active", nil)
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +161,9 @@ func TestPromptSubmitLegReadsTheRegistryRole(t *testing.T) {
 		{"an unregistered session with a single-task loop", "thread-nobody2", "Run crw-loop for this task", recipe, false},
 		{"a replaced binding is no role", "thread-replaced", "Start crw-loop for the migration project.", pointer, false},
 		{"two roles are no role", "thread-both", "Run crw-loop for this task", recipe, false},
+		// CRW-386: a supervisor seat is a coordinating seat like the parent (decision 6) and gets the pointer without the parent's wording.
+		{"a bound supervisor asking for a single-task loop", "thread-supervisor", "Run crw-loop for this task", pointer, false},
+		{"a supervisor that also holds a parent seat is no role", "thread-sup-parent", "Run crw-loop for this task", recipe, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

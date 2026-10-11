@@ -4,7 +4,6 @@
   "identical": [
     "hook__session-start-healing-declared-features__baseline_empty_workspace",
     "hook__session-start-healing-declared-features__features_list_failure_is_silent",
-    "hook__session-start-healing-declared-features__mtime_cache_hit_skips_codex",
     "hook__session-start-healing-declared-features__opted_out_marker_skips_without_codex_call"
   ],
   "intentionally-changed": [

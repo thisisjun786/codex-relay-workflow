@@ -132,7 +132,7 @@ func TestGitIdentityRefusesProbeOutputOverOneMiB(t *testing.T) {
 	t.Setenv("FAKE_ROOT", root)
 	for stderr, ok := range map[int]bool{1<<20 - 1000: true, 1 << 20: false} {
 		t.Setenv("FAKE_STDERR", fmt.Sprint(stderr))
-		w, err := gitIdentity(t.TempDir())
+		w, err := gitIdentity(prober{}, t.TempDir())
 		if ok != (err == nil) || (ok && w != worktree{root, root, root}) || (!ok && err.Error() != "Cannot resolve source Git worktree identity.") {
 			t.Fatalf("%d bytes of stderr: %+v, %v", stderr, w, err)
 		}

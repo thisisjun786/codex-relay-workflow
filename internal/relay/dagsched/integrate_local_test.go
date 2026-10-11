@@ -9,6 +9,7 @@ import (
 // there and counted as integrated by the progress reading. The completion is the observation and the parent's merged
 // mark, not a merged pull request.
 func TestLocalIntegrationCountsAsIntegratedWithoutAPullRequest(t *testing.T) {
+	t.Parallel()
 	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")

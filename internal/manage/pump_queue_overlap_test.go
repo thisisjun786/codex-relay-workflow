@@ -530,6 +530,7 @@ func pumpOverlapRunIn(t *testing.T, e *Env, shape pumpOverlapShape, kinds []stri
 // clock, and the parent sets the homes once, so the combinations run side by side.
 func TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants(t *testing.T) {
 	coreTempHome(t)
+	pumpSignalTestQuiet(t)
 	for _, shape := range pumpOverlapShapes() {
 		for _, kinds := range pumpOverlapCombos(len(shape.records)) {
 			t.Run(shape.name+"/"+strings.Join(kinds, "+"), func(t *testing.T) {

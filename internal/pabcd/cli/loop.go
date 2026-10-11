@@ -238,6 +238,9 @@ func RunLoopCliContext(ctx context.Context, args LoopCliArgs) (LoopCliResult, er
 	if args.Verb == LoopVerbInit {
 		return loopInit(args)
 	}
+	if args.Verb == LoopVerbUnbind {
+		return loopUnbind(ctx, args)
+	}
 	if loopIsMutatingVerb(args.Verb) {
 		return loopRunMutating(ctx, args)
 	}

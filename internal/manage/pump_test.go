@@ -23,11 +23,13 @@ var pumpTestNow = time.Date(2026, 10, 7, 3, 0, 0, 0, time.UTC)
 func pumpTestEnv(t *testing.T, now *time.Time) *Env {
 	t.Helper()
 	coreTempHome(t)
+	pumpSignalTestQuiet(t)
 	return pumpTestEnvHomeless(t, now)
 }
 
-// pumpTestEnvHomeless is the same Env without the temporary homes: for a parallel subtest, which may
-// not call t.Setenv, whose parent test calls coreTempHome once for all of them. The code under a
+// pumpTestEnvHomeless is the same Env without the temporary homes and without the quiet signal
+// sources: for a parallel subtest, which may not call t.Setenv or assign a package variable, whose
+// parent test calls coreTempHome and pumpSignalTestQuiet once for all of them. The code under a
 // pump round reads no environment variable of its own (the state directory comes from the
 // configuration), so the subtests share the parent's homes and keep their own state directories.
 func pumpTestEnvHomeless(t *testing.T, now *time.Time) *Env {
