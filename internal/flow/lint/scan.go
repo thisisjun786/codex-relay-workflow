@@ -128,7 +128,7 @@ func (s *scanner) agent(call *agentCall) {
 	// That the stepDecision it states is that id, still, is judged along the function's paths (walker.agent).
 	if call.role == "executor-t1" && !call.resume {
 		if _, ok := call.opts["stepDecision"]; !ok {
-			s.add(RuleTierStepDecision, call.line, call.label, "an executor-t1 call needs stepDecision: the id crw.tierStep returned in this function (a fresh executor-t1 thread starts only after a recorded step decision)")
+			s.add(RuleTierStepDecision, call.line, call.label, "an executor-t1 call needs stepDecision: the id crw.tierStep returned on its path (a fresh executor-t1 thread starts only after a recorded step decision)")
 		}
 	}
 }

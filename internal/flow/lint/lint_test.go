@@ -583,6 +583,57 @@ try {
 return 1`); !r.OK() {
 		t.Errorf("%v", r.Diagnostics)
 	}
+	// A break or continue that leaves through a finally block reaches its loop's exit with the state the block left.
+	r = lintText(t, prefix+`
+await crw.verify('n', head)
+await crw.review('n', head, null)
+while (true) {
+  try { break } finally { await crw.land('n', { head }) }
+}
+return crw.land('n', { head })`)
+	wantRules(t, r, RuleLandTwice)
+	if len(r.Diagnostics) != 1 || r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 11 {
+		t.Errorf("the second land is after the loop, line 11: %+v", r.Diagnostics)
+	}
+	for name, body := range map[string]string{
+		"a review in the finally block of a break": `
+while (true) {
+  try { break } finally { await crw.verify('n', head); await crw.review('n', head, null) }
+}
+return crw.land('n', { head })`,
+		"a review in the finally block of a continue": `
+for (let i = 0; i < 1; i++) {
+  try { continue } finally { await crw.verify('n', head); await crw.review('n', head, null) }
+}
+return crw.land('n', { head })`,
+		"a throw the handler takes": `
+try { throw new Error('caught') }
+catch (e) { await crw.verify('n', head); await crw.review('n', head, null) }
+finally { await crw.land('n', { head }) }
+return 1`,
+		"a return in the finally block replaces the break": `
+await crw.verify('n', head)
+await crw.review('n', head, null)
+while (true) {
+  try { break } finally { await crw.land('n', { head }); return 'landed' }
+}
+return crw.land('n', { head })`,
+	} {
+		if r := lintText(t, prefix+body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// A throw no handler takes reaches the finally block with its own state.
+	r = lintText(t, prefix+`
+await crw.verify('n', head)
+await crw.review('n', head, null)
+try {
+  await crw.land('n', { head })
+  throw new Error('after the land')
+} finally {
+  await crw.land('n', { head })
+}`)
+	wantRules(t, r, RuleLandTwice)
 }
 
 // What a stepDecision reads is the id crw.tierStep returned and still holds when the call runs.
@@ -601,9 +652,12 @@ if (args.deep) step = await crw.tierStep('n', {})
 return ` + call,
 		"declared without a value": `let step
 return ` + call,
-		"a decision of another function": `const step = await crw.tierStep('n', {})
-async function go() { return ` + call + ` }
-return go()`,
+		"a decision of the parent path in a parallel branch": `const step = await crw.tierStep('n', {})
+const out = await parallel([async () => ` + call + `])
+return out[0]`,
+		"a decision of the parent path in a pipeline stage": `const step = await crw.tierStep('n', {})
+const out = await pipeline(['a'], (x) => ` + call + `)
+return out[0]`,
 	} {
 		r := lintText(t, body)
 		if !slices.Contains(rules(r), RuleTierStepDecision) {
@@ -629,9 +683,26 @@ return ` + call,
 		"read through a second name": `const first = await crw.tierStep('n', {})
 const step = { id: first.id }
 return ` + call,
+		// A plain function call runs on the caller's path: what a helper reads from its closure or a parameter is for
+		// the dry run to judge.
+		"a helper that reads the decision from its closure": `const step = await crw.tierStep('n', {})
+async function build() { return ` + call + ` }
+return build()`,
+		"a helper that takes the decision as a parameter": `async function build(step) { return ` + call + ` }
+const step = await crw.tierStep('n', {})
+return build(step)`,
+		"a pipeline stage that decides on its own path": `const out = await pipeline(['a'], async (x) => {
+  const step = await crw.tierStep('n', { x })
+  return ` + call + `
+})
+return out[0]`,
 	} {
-		if r := lintText(t, body); slices.Contains(rules(r), RuleTierStepDecision) && r.Diagnostics[0].Source == sourceStatic {
+		r := lintText(t, body)
+		if slices.Contains(rules(r), RuleTierStepDecision) && r.Diagnostics[0].Source == sourceStatic {
 			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+		if strings.HasPrefix(name, "a helper") && (!r.OK() || r.DryRun != "ran") {
+			t.Errorf("%s: the dry run sees the decision on the call's path: %v (%s)", name, r.Diagnostics, r.DryRun)
 		}
 	}
 	// The trace refuses an id that no crw.tierStep returned on the path, however the script came by it.
@@ -727,10 +798,22 @@ func TestLintLabelInLoopOnlyWhenShownTwice(t *testing.T) {
 		"a continue before the call":    "for (let i = 0; i < 2; i++) {\n  if (i === 0) continue\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
 		"a counter written in the body": "for (let i = 0; i < 2; i++) {\n  i = 5\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
 		"a conditional expression":      "for (let i = 0; i < 2; i++) {\n  i ? await agent('look', { agentType: 'explorer', label: 'look' }) : 0\n}\nreturn 1",
+		"a do-while of one round":       "do {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n} while (false)\nreturn 1",
+		"a do-while that stops at once": "let n = 0\ndo {\n  n++\n  await agent('look', { agentType: 'explorer', label: 'look' })\n} while (n < 1)\nreturn n",
 	} {
 		if r := lintText(t, body); !r.OK() {
 			t.Errorf("%s: %v", name, r.Diagnostics)
 		}
+	}
+	// A do-while that runs twice repeats its label; the text does not show it, the dry run does.
+	r := lintText(t, "let n = 0\ndo {\n  n++\n  await agent('look', { agentType: 'explorer', label: 'look' })\n} while (n < 2)\nreturn n")
+	if len(r.Diagnostics) != 1 || r.Diagnostics[0].Rule != RuleLabelDuplicate || r.Diagnostics[0].Source != sourceTrace {
+		t.Errorf("a do-while of two rounds: %v", r.Diagnostics)
+	}
+	// After its first round a do-while's label is used: a call after the loop with the same label repeats it.
+	r = lintText(t, "do {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n} while (false)\nreturn agent('again', { agentType: 'explorer', label: 'look' })")
+	if len(r.Diagnostics) != 1 || r.Diagnostics[0].Rule != RuleLabelDuplicate || r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 5 {
+		t.Errorf("a label after a do-while: %v", r.Diagnostics)
 	}
 	for name, body := range map[string]string{
 		"two rounds":        "for (let i = 0; i < 2; i++) {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",

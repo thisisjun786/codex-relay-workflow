@@ -42,8 +42,9 @@ type state struct {
 	phases map[string]uint8
 	labels map[string]bool
 	author string
-	// steps are the bindings whose value, on every path that reaches the point, comes from a crw.tierStep call made
-	// before it on the same function's path.
+	// steps are the bindings of the function whose value, on every path that reaches the point, comes from a
+	// crw.tierStep call made before it on the same path, or from a parameter (what the caller passes is for the dry run
+	// to judge).
 	steps map[*binding]bool
 }
 
@@ -123,11 +124,32 @@ type exit struct {
 	isLoop            bool
 }
 
-// tryCtx collects, while the body of a try statement is walked, the states a handler or the finally block can start
-// from: thrown are the states after each call (any call may throw), abrupt the states at a return, throw, break or
-// continue.
+// tryCtx collects, while a try statement is walked, the states that leave its body or handler abruptly, by where they
+// go: throws are the states after each call (any call may throw) and at a throw statement, returns the states at a
+// return, and jumps the states at a break or continue whose loop or switch encloses the try statement. exitDepth is the
+// number of enclosing exits when the statement starts: a break or continue to one of those leaves the statement.
 type tryCtx struct {
-	thrown, abrupt *state
+	exitDepth       int
+	throws, returns *state
+	jumps           []*pendingJump
+}
+
+// pendingJump is a break (or continue) to the exit at index exit that waits for the finally block.
+type pendingJump struct {
+	exit int
+	cont bool
+	st   *state
+}
+
+func (c *tryCtx) jump(exit int, cont bool) *state {
+	for _, j := range c.jumps {
+		if j.exit == exit && j.cont == cont {
+			return j.st
+		}
+	}
+	j := &pendingJump{exit: exit, cont: cont, st: newState()}
+	c.jumps = append(c.jumps, j)
+	return j.st
 }
 
 // loopCtx is an enclosing loop whose body is certain to run its calls at least twice: guard is the conditional depth
@@ -139,8 +161,11 @@ type loopCtx struct {
 
 // walker walks the body of one function in evaluation order.
 type walker struct {
-	s     *scanner
-	fn    *fnInfo
+	s  *scanner
+	fn *fnInfo
+	// lanes are the functions that run on a child path of the function that creates them: the functions in the
+	// arguments of parallel, pipeline and crw.dag.
+	lanes map[*fnInfo]bool
 	life  bool
 	exits []*exit
 	tries []*tryCtx
@@ -156,14 +181,20 @@ type walker struct {
 
 // flow checks lifecycle, labels and reviewer family over the body of every function.
 func (s *scanner) flow() {
+	lanes := s.laneFunctions()
 	for _, fn := range s.a.order {
-		w := &walker{s: s, fn: fn}
+		w := &walker{s: s, fn: fn, lanes: lanes}
 		w.life = w.hasLifecycle()
 		w.collectNodes()
 		start := newState()
 		start.live = true
 		for k, v := range w.initial {
 			start.phases[k] = v
+		}
+		for _, b := range fn.scope.vars {
+			if b.kind == "param" {
+				start.steps[b] = true
+			}
 		}
 		switch f := fn.node.(type) {
 		case *ast.FunctionLiteral:
@@ -179,6 +210,49 @@ func (s *scanner) flow() {
 			}
 		}
 	}
+}
+
+// laneFunctions finds the functions that run on a child path: every function in the arguments of a parallel, pipeline
+// or crw.dag call.
+func (s *scanner) laneFunctions() map[*fnInfo]bool {
+	a := s.a
+	lanes := map[*fnInfo]bool{}
+	var mark func(n any)
+	mark = func(n any) {
+		if f := a.fns[n]; f != nil {
+			lanes[f] = true
+		}
+		for _, c := range children(n) {
+			mark(c)
+		}
+	}
+	var find func(n any)
+	find = func(n any) {
+		if c, ok := n.(*ast.CallExpression); ok {
+			obj, name := a.callee(c)
+			if a.global(c.Callee, "parallel") || a.global(c.Callee, "pipeline") || obj == "crw" && name == "dag" {
+				for _, arg := range c.ArgumentList {
+					mark(arg)
+				}
+			}
+		}
+		for _, c := range children(n) {
+			find(c)
+		}
+	}
+	find(a.prog)
+	return lanes
+}
+
+// crossesLane reports whether a function between the walked one and owner (the walked one included) runs on a child
+// path: then a name of owner holds a value of another path.
+func (w *walker) crossesLane(owner *fnInfo) bool {
+	for f := w.fn; f != nil && f != owner; f = f.parent {
+		if w.lanes[f] {
+			return true
+		}
+	}
+	return false
 }
 
 // walkOwn visits the nodes of the function that are not in a function nested in it.
@@ -352,17 +426,32 @@ func (w *walker) guarded(f func()) {
 	w.guard--
 }
 
-// abrupt records the state at a return, throw, break or continue for the finally block of the enclosing try.
-func (w *walker) abrupt(st *state) {
+// noteThrow records a state an exception may leave from (after a call, at a throw statement) for the handler or the
+// finally block of the innermost try.
+func (w *walker) noteThrow(st *state) {
 	if len(w.tries) > 0 {
-		w.tries[len(w.tries)-1].abrupt.join(st)
+		w.tries[len(w.tries)-1].throws.join(st)
 	}
 }
 
-// noteThrow records the state after a call as one a handler may start from.
-func (w *walker) noteThrow(st *state) {
+// noteReturn records the state at a return for the finally block of the innermost try.
+func (w *walker) noteReturn(st *state) {
 	if len(w.tries) > 0 {
-		w.tries[len(w.tries)-1].thrown.join(st)
+		w.tries[len(w.tries)-1].returns.join(st)
+	}
+}
+
+// jumpTo delivers the state at a break or continue to the exit at index i: through the finally block of the innermost
+// try when the jump leaves that try, else to the exit itself.
+func (w *walker) jumpTo(i int, cont bool, st *state) {
+	if n := len(w.tries); n > 0 && w.tries[n-1].exitDepth > i {
+		w.tries[n-1].jump(i, cont).join(st)
+		return
+	}
+	if cont {
+		w.exits[i].continues.join(st)
+	} else {
+		w.exits[i].breaks.join(st)
 	}
 }
 
@@ -386,7 +475,10 @@ func (w *walker) setStep(id *ast.Identifier, holds bool, st *state) {
 	}
 }
 
-// derives reports whether an expression is, or reads a name that currently holds, the result of crw.tierStep.
+// derives reports whether an expression is, or reads a name that currently holds, the result of crw.tierStep. A name of
+// an enclosing function holds what that function gave it, which a plain call leaves on the same path: the text does
+// not show what it holds when the call runs, so it counts, and the dry run judges the id. Across a parallel, pipeline
+// or crw.dag function it is a value of another path and does not count.
 func (w *walker) derives(e ast.Expression, st *state) bool {
 	a := w.s.a
 	found := false
@@ -399,7 +491,7 @@ func (w *walker) derives(e ast.Expression, st *state) bool {
 		case *ast.FunctionLiteral, *ast.ArrowFunctionLiteral:
 			return
 		case *ast.Identifier:
-			if b := a.refs[x]; b != nil && st.steps[b] {
+			if b := a.refs[x]; b != nil && (st.steps[b] || b.owner != w.fn && b.owner != nil && !w.crossesLane(b.owner)) {
 				found = true
 			}
 		case *ast.CallExpression:
@@ -431,11 +523,11 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 		w.stmts(s.List, st)
 	case *ast.ReturnStatement:
 		w.expr(s.Argument, st)
-		w.abrupt(st)
+		w.noteReturn(st)
 		st.kill()
 	case *ast.ThrowStatement:
 		w.expr(s.Argument, st)
-		w.abrupt(st)
+		w.noteThrow(st)
 		st.kill()
 	case *ast.IfStatement:
 		w.expr(s.Test, st)
@@ -450,17 +542,12 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	case *ast.LabelledStatement:
 		w.stmt(s.Statement, st)
 	case *ast.BranchStatement:
-		w.abrupt(st)
+		cont := s.Token == token.CONTINUE
 		for i := len(w.exits) - 1; i >= 0; i-- {
-			e := w.exits[i]
-			if s.Token == token.CONTINUE && !e.isLoop {
+			if cont && !w.exits[i].isLoop {
 				continue
 			}
-			if s.Token == token.CONTINUE {
-				e.continues.join(st)
-			} else {
-				e.breaks.join(st)
-			}
+			w.jumpTo(i, cont, st)
 			break
 		}
 		st.kill()
@@ -481,16 +568,7 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	case *ast.WhileStatement:
 		w.loop(s.Test, nil, s.Body, !truthy(s.Test), 0, st)
 	case *ast.DoWhileStatement:
-		// The body runs once before the test.
-		once := w.pushExit(true)
-		w.stmt(s.Body, st)
-		w.popExit()
-		st.join(once.continues)
-		w.expr(s.Test, st)
-		first := st.clone()
-		w.loop(s.Test, nil, s.Body, true, 0, first)
-		st.join(once.breaks)
-		st.join(first)
+		w.doWhile(s, st)
 	case *ast.ForInStatement:
 		w.expr(s.Source, st)
 		w.loop(nil, nil, s.Body, true, 0, st)
@@ -532,18 +610,22 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	}
 }
 
-// try walks a try statement. A handler may start from the state before the try or after any call in its body. The
-// finally block runs once for the paths that leave the body normally (and go on after the statement) and once for the
-// paths that leave it abruptly with the state they had at the return, throw, break or continue.
+// try walks a try statement. A handler may start from the state before the try or from any state an exception leaves
+// the body with; it takes those exceptions, and only what it throws itself goes on. The finally block runs once for
+// the paths that end the body or the handler normally (and go on after the statement) and once for each kind of abrupt
+// completion that is still pending (a throw, a return, a break or continue to each exit), from the state that
+// completion had; when the block ends normally the completion goes on where it was going with the block's state, and
+// a return, throw, break or continue of the block itself replaces it.
 func (w *walker) try(s *ast.TryStatement, st *state) {
 	pre := st.clone()
-	ctx := &tryCtx{thrown: newState(), abrupt: newState()}
+	ctx := &tryCtx{exitDepth: len(w.exits), throws: newState(), returns: newState()}
 	w.tries = append(w.tries, ctx)
 	w.guarded(func() {
 		w.stmts(s.Body.List, st)
 		if s.Catch != nil {
 			c := pre.clone()
-			c.join(ctx.thrown)
+			c.join(ctx.throws)
+			ctx.throws = newState()
 			if s.Catch.Body != nil {
 				w.stmts(s.Catch.Body.List, c)
 			}
@@ -551,23 +633,57 @@ func (w *walker) try(s *ast.TryStatement, st *state) {
 		}
 	})
 	w.tries = w.tries[:len(w.tries)-1]
-	if len(w.tries) > 0 {
-		w.tries[len(w.tries)-1].thrown.join(ctx.thrown)
-	}
-	if s.Finally == nil {
-		w.abrupt(ctx.abrupt)
-		return
-	}
-	if !ctx.abrupt.dead() {
-		fin := ctx.abrupt.clone()
-		w.stmts(s.Finally.List, fin)
-		// A return or throw in the finally block overrides the one that reached it; either way the state that
-		// leaves the finally block goes on to the enclosing try's own finally block.
-		if len(w.tries) > 0 {
-			w.tries[len(w.tries)-1].abrupt.join(fin)
+	resume := func(pending *state, goOn func(*state)) {
+		if pending.dead() {
+			return
+		}
+		fin := pending.clone()
+		if s.Finally != nil {
+			w.stmts(s.Finally.List, fin)
+		}
+		if !fin.dead() {
+			goOn(fin)
 		}
 	}
-	w.stmts(s.Finally.List, st)
+	resume(ctx.throws, w.noteThrow)
+	resume(ctx.returns, w.noteReturn)
+	for _, j := range ctx.jumps {
+		resume(j.st, func(fin *state) { w.jumpTo(j.exit, j.cont, fin) })
+	}
+	if s.Finally != nil {
+		w.stmts(s.Finally.List, st)
+	}
+}
+
+// doWhile walks a do-while loop to a fixed point. The body runs once before the test, so the state after the loop is
+// one the body has run on; whether it runs again is the test's, so a label the first round used is not repeated by the
+// text unless the loop is endless and has no way out of a round early.
+func (w *walker) doWhile(s *ast.DoWhileStatement, st *state) {
+	certain := truthy(s.Test) && !leavesEarly(s.Body)
+	w.loops = append(w.loops, loopCtx{certain: certain, guard: w.guard})
+	entry := st.clone()
+	head := entry.clone()
+	breaks := newState()
+	var out *state
+	for i := 0; i < 4; i++ {
+		cur := head.clone()
+		e := w.pushExit(true)
+		w.stmt(s.Body, cur)
+		w.popExit()
+		cur.join(e.continues)
+		w.expr(s.Test, cur)
+		breaks.join(e.breaks)
+		out = cur
+		next := entry.clone()
+		next.join(cur)
+		if next.equal(head) {
+			break
+		}
+		head = next
+	}
+	w.loops = w.loops[:len(w.loops)-1]
+	out.join(breaks)
+	*st = *out
 }
 
 // leavesEarly reports whether a loop body has a break, a continue, a return or a throw outside the functions nested in
@@ -862,7 +978,7 @@ func (w *walker) agent(call *agentCall, st *state) {
 	}
 	if call.role == "executor-t1" && !call.resume {
 		if sd, ok := call.opts["stepDecision"]; ok && !w.derives(sd, st) {
-			w.s.add(RuleTierStepDecision, call.line, call.label, "the stepDecision of an executor-t1 call must be the id crw.tierStep returned on the same path, earlier in this function and not overwritten since; this one does not come from a crw.tierStep call that reaches it")
+			w.s.add(RuleTierStepDecision, call.line, call.label, "the stepDecision of an executor-t1 call must be the id crw.tierStep returned on the same path before it and not overwritten since; this one does not come from a crw.tierStep call that reaches it (a decision of the path that starts a parallel, pipeline or crw.dag function is not the path that function runs on)")
 		}
 	}
 	if a.reviewCall(call) {
