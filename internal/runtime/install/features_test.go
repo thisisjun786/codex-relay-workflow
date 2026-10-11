@@ -582,14 +582,6 @@ func TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe(t *testing.T) {
 	// and its 5 minute probe running.
 	leave, leaveNow := context.WithCancel(context.Background())
 	exited := make(chan struct{})
-	t.Cleanup(func() {
-		leaveNow()
-		select {
-		case <-exited:
-		case <-time.After(30 * time.Second):
-			t.Error("the enable did not return after its recording ended")
-		}
-	})
 	featureEvidenceContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
 		evidenceCtx, end := context.WithCancel(ctx)
 		context.AfterFunc(leave, end)
@@ -598,6 +590,16 @@ func TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe(t *testing.T) {
 	}
 	h := newFeatureHome(t, "")
 	h.env = h.env.With("CRW1150_FAKE_VERSION_HANG", "1")
+	// Registered after newFeatureHome so that it runs first (t.Cleanup is last in, first out): the recording ends
+	// and the enable returns while the test home still exists.
+	t.Cleanup(func() {
+		leaveNow()
+		select {
+		case <-exited:
+		case <-time.After(30 * time.Second):
+			t.Error("the enable did not return after its recording ended")
+		}
+	})
 	type answer struct {
 		code        int
 		out, errOut string

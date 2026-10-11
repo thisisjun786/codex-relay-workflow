@@ -366,7 +366,7 @@ five `nice -n 19` spinners of eight busy threads, killed afterwards, through the
 | `13ad71d83`, the stall test ended by the `featureEvidenceContext` seam, spinners warmed 30 s | 33, 43 | 80 of 80 (four tests, the deadline test included) |
 | `13ad71d83`, again, spinners warmed until load1 reached 48 | 48, 49 | 80 of 80 |
 
-Commits after `13ad71d83` change only this document. The spinners at `nice 19` do not slow a `nice 12`
+After `13ad71d83` the code changes only in the failure-path cleanup of `TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe` (it ends the recording and waits for the enable before the test home is removed); the timed assertions and the product code are the ones proven above, and the branch also merged dev. The spinners at `nice 19` do not slow a `nice 12`
 test as much as the host's other runs did, so this is a load proof, and the failure itself was seen
 only in the unspun runs above (44 s for the evidence test, 51 s for the fork test). The temporary root
 is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`.
