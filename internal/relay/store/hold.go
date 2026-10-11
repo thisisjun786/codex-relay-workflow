@@ -244,6 +244,21 @@ func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	return s, err
 }
 
+// CheckReadable is the first half of openForRead for a reader that opens the store itself, through
+// the read-only opener (journal-tail): the store's resolved database path, an absent store refused as
+// store_absent and a partial one (a write gate or an ownership mirror beside no database) refused as
+// the fence refuses it. It creates, locks and changes nothing.
+func CheckReadable(path string) error {
+	resolved, err := refuseLiveState(path)
+	if err != nil {
+		return err
+	}
+	if storeAbsent(resolved) {
+		return &RefusedError{Reason: ReasonStoreAbsent, Detail: "no relay store exists at " + pathlibSpelling(path) + "; a read-only command never creates one"}
+	}
+	return partialStore(resolved)
+}
+
 // storeAbsent is the one state a writer, never a reader, may initialize: no database, no
 // ownership mirror and no write gate (decision 30).
 func storeAbsent(resolved string) bool {

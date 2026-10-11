@@ -68,6 +68,11 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 	section, block := "", ""
 	for i := 0; i < len(raw); i++ {
 		line := raw[i]
+		// A blank or comment-only line carries no key: it neither ends a block nor a section (a comment inside a step's with
+		// block must not drop the node-version after it, CRW-1191).
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
 		if line != "" && !strings.HasPrefix(line, " ") {
 			if m := localWorkflowTopKey.FindStringSubmatch(line); m != nil && !localWorkflowTopKeys[m[1]] {
 				return nil, fmt.Errorf("ci.yml sets %s at the top level, which the local plan does not read", m[1])

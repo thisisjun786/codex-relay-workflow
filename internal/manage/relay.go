@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
@@ -16,6 +17,11 @@ import (
 // relayHelperStderrLimit is how much of a relay command's stderr an error carries: the
 // first bytes, so a command that fails loudly cannot fill a log with its noise.
 const relayHelperStderrLimit = 2000
+
+// relayHelperWaitDelay is how long a relay command's output may stay open after the command ended
+// or was killed (a child it left holding the pipes). Past it the run is an error (exec.ErrWaitDelay
+// or the context's own), never an answer read from a pipe that was still open.
+const relayHelperWaitDelay = time.Second
 
 // relayHelperUnresolvedError is the refusal of a relay run whose state directory the
 // relay's own doctor answer did not supply. Its message names the refusal, and it keeps
@@ -239,6 +245,10 @@ func (e *Env) relayHelperRun(ctx context.Context, cfg *Config, argv ...string) (
 	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = stderr
+	// A command killed at its context's end may leave a child that keeps its output open; Wait then
+	// gives up on the output after relayHelperWaitDelay instead of holding the caller (the pump's
+	// bounded capacity read) until that child ends.
+	cmd.WaitDelay = relayHelperWaitDelay
 	err := cmd.Run()
 	if err == nil {
 		return stdout.Bytes(), 0, stderr.excerpt(), nil

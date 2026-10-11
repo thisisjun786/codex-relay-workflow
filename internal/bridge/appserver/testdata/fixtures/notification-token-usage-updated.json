@@ -1,0 +1,24 @@
+{
+  "method": "thread/tokenUsage/updated",
+  "params": {
+    "threadId": "thread-a",
+    "tokenUsage": {
+      "last": {
+        "cachedInputTokens": 128,
+        "inputTokens": 1024,
+        "outputTokens": 256,
+        "reasoningOutputTokens": 64,
+        "totalTokens": 1280
+      },
+      "modelContextWindow": 272000,
+      "total": {
+        "cachedInputTokens": 128,
+        "inputTokens": 1024,
+        "outputTokens": 256,
+        "reasoningOutputTokens": 64,
+        "totalTokens": 1280
+      }
+    },
+    "turnId": "turn-a1"
+  }
+}

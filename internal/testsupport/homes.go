@@ -5,12 +5,22 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+)
+
+// The content snapshot's walk limits (CRW-1182). A link followed below a watched directory is walked within them: a walk past
+// the depth limit, the entry budget or the byte budget is an error, so Verify never takes an incomplete snapshot as complete.
+// The byte budget covers the regular files a walk reads (a file behind a link counts once per link that reaches it).
+const (
+	snapshotMaxDepth   = 32
+	snapshotMaxEntries = 4096
+	snapshotMaxBytes   = 64 << 20
 )
 
 // AccountHomes is the set of account homes one test hands to the code under test: HOME, CODEX_HOME and
@@ -102,31 +112,34 @@ func topLevelNames(dir string) string {
 	return strings.Join(names, ",")
 }
 
-// Contents is the recursive snapshot of each watched directory, one line per path, with an absent directory
-// marked. The recursion covers every directory the code could take for an account home except HOME, which
-// contributes its top-level names as Listing lists them. An entry it cannot read is marked in its line, the walk
-// goes on past it, and the error names every such entry: an unreadable entry is no state, and the same error
-// before and after a run would hide a change to it.
+// Contents is the recursive snapshot of each watched directory, one line per path, with an absent directory marked. The
+// recursion covers every directory the code could take for an account home except HOME, which contributes its top-level
+// names as Listing lists them. A link below a watched directory is followed to the directory or file it names and walked
+// within the limits (CRW-1182): a link is recorded with its target (and a followed target's mode), a dangling link with "(dangling)", a link back to a
+// directory above it with "(cycle)", and a link to a directory already walked with "(alias of <first link>)". An entry the
+// walk cannot read is marked in its line, the walk goes on past it, and the error names every such entry: an unreadable
+// entry is no state, and the same error before and after a run would hide a change to it. A walk past a limit (the depth,
+// entry or byte budget) is an error too, and it ends that directory's walk.
 func (h *AccountHomes) Contents() (string, error) {
 	parts := []string{}
 	var errs []error
-	unreadable := func(name string, err error) string {
-		errs = append(errs, fmt.Errorf("%s: %w", name, err))
-		return name + " unreadable"
-	}
 	for _, dir := range h.dirs() {
 		label := h.label(dir)
-		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		info, err := os.Lstat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
 			parts = append(parts, label+": absent")
 			continue
-		} else if err != nil {
-			parts = append(parts, unreadable(label, err))
+		}
+		if err != nil {
+			parts = append(parts, label+" unreadable")
+			errs = append(errs, fmt.Errorf("%s: %w", label, err))
 			continue
 		}
 		if dir == h.Home {
 			entries, err := os.ReadDir(dir)
 			if err != nil {
-				parts = append(parts, unreadable(label, err))
+				parts = append(parts, label+" unreadable")
+				errs = append(errs, fmt.Errorf("%s: %w", label, err))
 				continue
 			}
 			names := make([]string, 0, len(entries))
@@ -136,71 +149,254 @@ func (h *AccountHomes) Contents() (string, error) {
 			parts = append(parts, label+": "+strings.Join(names, ","))
 			continue
 		}
-		// The walk starts at the physical directory. A watched directory that is itself a symlink keeps its own line
-		// (mode and target), and one spelled through a link followed by ".." names the directory the kernel resolves:
-		// WalkDir does not follow a link at its root and joins child paths lexically (filepath.Join folds the ".."),
-		// so a root left as spelled would read a lexical counterpart, or none, instead of the home itself.
-		var entries []string
-		info, err := os.Lstat(dir)
-		if err != nil {
-			parts = append(parts, unreadable(label, err))
-			continue
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(dir)
-			if err != nil {
-				parts = append(parts, unreadable(label, err))
-				continue
-			}
-			entries = append(entries, label+" "+info.Mode().String()+" -> "+target)
-		}
-		root, err := filepath.EvalSymlinks(dir)
-		if err != nil {
-			parts = append(parts, strings.Join(append(entries, unreadable(label, err)), "\n"))
-			continue
-		}
-		// Every error reaches the callback, which marks the entry and goes on: returning it would end the walk of
-		// this directory, and the entries after it would go unread.
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			name := label
-			if rel, relErr := filepath.Rel(root, path); relErr == nil && rel != "." {
-				name += "/" + filepath.ToSlash(rel)
-			}
-			if err != nil {
-				// A directory whose listing fails is reported a second time after its own line; the walk skips
-				// what it could not list and goes on with its siblings.
-				entries = append(entries, unreadable(name, err))
-				return nil
-			}
-			info, err := d.Info()
-			if err != nil {
-				entries = append(entries, unreadable(name, err))
-				return nil
-			}
-			entry := name + " " + info.Mode().String()
-			switch {
-			case info.Mode().IsRegular():
-				raw, err := os.ReadFile(path)
-				if err != nil {
-					entries = append(entries, unreadable(entry, err))
-					return nil
-				}
-				sum := sha256.Sum256(raw)
-				entry += " sha256:" + hex.EncodeToString(sum[:])
-			case info.Mode()&os.ModeSymlink != 0:
-				target, err := os.Readlink(path)
-				if err != nil {
-					entries = append(entries, unreadable(entry, err))
-					return nil
-				}
-				entry += " -> " + target
-			}
-			entries = append(entries, entry)
-			return nil
-		})
-		parts = append(parts, strings.Join(entries, "\n"))
+		w := walkHomeDir(label, dir, info)
+		parts = append(parts, strings.Join(w.lines, "\n"))
+		errs = append(errs, w.errs...)
 	}
 	return strings.Join(parts, "\n"), errors.Join(errs...)
+}
+
+// walkHomeDir walks one watched directory. A watched directory that is itself a link keeps its own line (mode and target)
+// and a dangling one ends there; the directory it names is walked under the same label. The walk starts at the physical
+// directory the spelling resolves to, because a link followed by ".." names the directory the kernel resolves, and a root
+// left as spelled would read a lexical counterpart, or none, instead of the home itself. The root is made absolute before it
+// is resolved: a relative root would resolve to a relative path while a link with an absolute target resolves to an absolute
+// one, and the two spellings of one directory would be two keys of the cycle and alias tests.
+func walkHomeDir(label, dir string, info fs.FileInfo) *snapshotWalk {
+	w := &snapshotWalk{walked: map[string]string{}}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(dir)
+		if err != nil {
+			w.fail(label, err)
+			return w
+		}
+		line := label + " " + info.Mode().String() + " -> " + target
+		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+			w.add(line + " (dangling)")
+			return w
+		}
+		w.add(line)
+	}
+	abs := dir
+	if !filepath.IsAbs(dir) {
+		// Prefixed, not filepath.Abs: Abs cleans the path and would fold a ".." after a link lexically (see above).
+		wd, err := os.Getwd()
+		if err != nil {
+			w.fail(label, err)
+			return w
+		}
+		abs = wd + string(filepath.Separator) + dir
+	}
+	root, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		w.fail(label, err)
+		return w
+	}
+	w.entry(label, root, nil, 0)
+	return w
+}
+
+// snapshotWalk is the walk of one watched directory: its lines, its errors, the real directories walked so far (with the
+// first link that reached each, for the alias mark) and the bytes read.
+type snapshotWalk struct {
+	lines   []string
+	errs    []error
+	walked  map[string]string
+	bytes   int64
+	stopped bool
+}
+
+// snapshotListed is a test seam: it is told how many entries one directory read returned, so a test can show that the read
+// of a directory is bounded by the remaining entry budget. Production leaves it nil.
+var snapshotListed func(path string, n int)
+
+func (w *snapshotWalk) add(line string) { w.lines = append(w.lines, line) }
+
+// fail marks an entry the walk could not read and records the error.
+func (w *snapshotWalk) fail(name string, err error) {
+	w.lines = append(w.lines, name+" unreadable")
+	w.errs = append(w.errs, fmt.Errorf("%s: %w", name, err))
+}
+
+// stop ends the walk with an error that names the entry at which a limit was reached.
+func (w *snapshotWalk) stop(name, what string) {
+	if !w.stopped {
+		w.stopped = true
+		w.errs = append(w.errs, fmt.Errorf("%s: %s, the snapshot is incomplete", name, what))
+	}
+}
+
+// entry records the path named name at depth directories below the root. path is absolute and physical: names are joined
+// below a directory the walk resolved, and a link is followed by os.Stat, never by joining its target. ancestors are the real
+// directories that contain path on this walk, the cycle test of a link.
+func (w *snapshotWalk) entry(name, path string, ancestors []string, depth int) {
+	if w.stopped {
+		return
+	}
+	if len(w.lines) >= snapshotMaxEntries {
+		w.stop(name, fmt.Sprintf("more than %d entries", snapshotMaxEntries))
+		return
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		w.fail(name, err)
+		return
+	}
+	line := name + " " + info.Mode().String()
+	switch {
+	case info.Mode().IsRegular():
+		if sum, ok := w.digest(line, path, info.Size()); ok {
+			w.add(line + " sha256:" + sum)
+		}
+	case info.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(path)
+		if err != nil {
+			w.fail(line, err)
+			return
+		}
+		w.link(name, line+" -> "+target, path, ancestors, depth)
+	case info.IsDir():
+		if first, seen := w.walked[path]; seen {
+			// Only a link walked this directory before (a directory is reached through its own parent once): its contents
+			// are already in the snapshot under that link's name.
+			w.add(line + " (alias of " + first + ")")
+			return
+		}
+		w.add(line)
+		w.walked[path] = name
+		w.children(name, path, append(slices.Clip(ancestors), path), depth)
+	default:
+		w.add(line)
+	}
+}
+
+// link records a link found below a watched directory and, when it names a directory, walks that directory. A cycle is a
+// directory the link's own ancestors already contain; an alias is a directory walked earlier, through another link or as a
+// plain directory. A link to a regular file is read through the link; a link to anything else (a FIFO, a device, a socket) is
+// recorded with the target's mode and never opened, since opening it could block or read without end. A followed target's
+// mode is part of its link's line, "(target <mode>)", since the target can lie outside every watched directory and no other
+// line records it.
+func (w *snapshotWalk) link(name, line, path string, ancestors []string, depth int) {
+	st, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		w.add(line + " (dangling)")
+		return
+	}
+	if err != nil {
+		w.fail(line, err)
+		return
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		w.fail(line, err)
+		return
+	}
+	if !st.IsDir() {
+		if !st.Mode().IsRegular() {
+			w.add(line + " (target " + st.Mode().String() + ", not read)")
+			return
+		}
+		line += " (target " + st.Mode().String() + ")"
+		if sum, ok := w.digest(line, real, st.Size()); ok {
+			w.add(line + " sha256:" + sum)
+		}
+		return
+	}
+	if slices.Contains(ancestors, real) {
+		w.add(line + " (cycle)")
+		return
+	}
+	if first, seen := w.walked[real]; seen {
+		w.add(line + " (alias of " + first + ")")
+		return
+	}
+	w.add(line + " (target " + st.Mode().String() + ")")
+	w.walked[real] = name
+	w.children(name, real, append(slices.Clip(ancestors), real), depth)
+}
+
+// children records the entries of the directory path, which sits depth directories below the root; a linked directory counts
+// as one directory level like a plain one.
+func (w *snapshotWalk) children(name, path string, ancestors []string, depth int) {
+	if depth > snapshotMaxDepth {
+		w.stop(name, fmt.Sprintf("past the depth limit of %d directories", snapshotMaxDepth))
+		return
+	}
+	list, over, err := readDirBounded(path, snapshotMaxEntries-len(w.lines))
+	if snapshotListed != nil {
+		snapshotListed(path, len(list))
+	}
+	if err != nil {
+		w.fail(name, err)
+		return
+	}
+	if over {
+		w.stop(name, fmt.Sprintf("more than %d entries", snapshotMaxEntries))
+		return
+	}
+	for _, e := range list {
+		if w.stopped {
+			return
+		}
+		w.entry(name+"/"+e.Name(), filepath.Join(path, e.Name()), ancestors, depth+1)
+	}
+}
+
+// readDirBounded lists the directory path in name order, reading at most room entries and one more as the overflow
+// sentinel, so a directory with a great many children costs the budget and not its whole listing. Each child records at least
+// one line, so more children than room is past the entry budget whatever they are; over then reports it and the list is
+// not walked.
+func readDirBounded(path string, room int) (list []os.DirEntry, over bool, err error) {
+	if room < 0 {
+		return nil, true, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	for len(list) <= room {
+		batch, e := f.ReadDir(room + 1 - len(list))
+		list = append(list, batch...)
+		if errors.Is(e, io.EOF) {
+			break
+		}
+		if e != nil {
+			return nil, false, e
+		}
+	}
+	if len(list) > room {
+		return list, true, nil
+	}
+	slices.SortFunc(list, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return list, false, nil
+}
+
+// digest is the sha256 of the regular file at path, read within the byte budget.
+func (w *snapshotWalk) digest(line, path string, size int64) (string, bool) {
+	if w.bytes+size > snapshotMaxBytes {
+		w.stop(line, fmt.Sprintf("more than %d bytes read", snapshotMaxBytes))
+		return "", false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		w.fail(line, err)
+		return "", false
+	}
+	defer f.Close()
+	// The read is capped at the remaining budget, so a file that grew since its size was taken cannot exceed it.
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, snapshotMaxBytes-w.bytes+1))
+	w.bytes += n
+	if w.bytes > snapshotMaxBytes {
+		w.stop(line, fmt.Sprintf("more than %d bytes read", snapshotMaxBytes))
+		return "", false
+	}
+	if err != nil {
+		w.fail(line, err)
+		return "", false
+	}
+	return hex.EncodeToString(h.Sum(nil)), true
 }
 
 // Verify reports through fail when the state differs from the one Rebase took, or when the content snapshot could

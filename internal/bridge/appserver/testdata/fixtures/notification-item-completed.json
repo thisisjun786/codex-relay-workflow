@@ -1,0 +1,14 @@
+{
+  "method": "item/completed",
+  "params": {
+    "completedAtMs": 1790000041000,
+    "item": {
+      "id": "item-1",
+      "phase": "final_answer",
+      "text": "{\"verdict\":\"pass\"}",
+      "type": "agentMessage"
+    },
+    "threadId": "thread-a",
+    "turnId": "turn-a1"
+  }
+}

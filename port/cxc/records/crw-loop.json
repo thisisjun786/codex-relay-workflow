@@ -184,7 +184,7 @@
     },
     {
       "file": "references/durable-goalplan.md",
-      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit. CRW-1111: retain the steering idempotency, missing-row retry and stored annotate-note contract.",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit. CRW-1111: retain the steering idempotency, missing-row retry and stored annotate-note contract. CRW-146: list `loop unbind`, the CRW addition that releases a session's goalplan slug from rest (with the chat command `orchestrate unbind`); the oracle has no such verb.",
       "hunks": [
         {
           "line": 22,
@@ -221,6 +221,13 @@
           "line": 105,
           "old": [
             "- `crw goalplan *` — deprecated alias for the same behavior during migration.\n"
+          ],
+          "new": [
+            "- `crw pabcd loop unbind --session <id> [--cwd <path>]` — release the goalplan slug the session is bound to, for a plan bound by mistake. It\n",
+            "  clears only the session's slug (and the Stop guard's work-phase pointer for it), leaves the goalplan file and its ledger untouched, and\n",
+            "  appends one `unbound` row to the transition ledger; afterwards `update_goal` complete no longer reads a bound goalplan. It runs from IDLE only\n",
+            "  and a repeat is a no-op. A session stranded in a phase is first closed with `crw pabcd orchestrate reset --session <id>` (which keeps the\n",
+            "  slug), then released with this verb. The chat command `orchestrate unbind` is the same release. This verb is not listed in `loop --help`.\n"
           ]
         },
         {

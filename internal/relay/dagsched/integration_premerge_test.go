@@ -19,6 +19,7 @@ func premergeIntDropRecord(k *batchKit, node string) {
 // TestPremergeIntegrationMergesTheJudgedAndHoldsTheRest: a plan with a candidate that has a passing record and one that has
 // none merges the first, reports the second in split with premerge_missing, and moves the branch for the first only.
 func TestPremergeIntegrationMergesTheJudgedAndHoldsTheRest(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	k.acceptByCommit("a")
 	k.acceptByCommit("b")
@@ -46,6 +47,7 @@ func TestPremergeIntegrationMergesTheJudgedAndHoldsTheRest(t *testing.T) {
 // TestPremergeIntegrationNamedCandidateWithoutRecordRefuses: dag-integrate --node names the held candidate, which refuses
 // with its premerge_* name and merges nothing.
 func TestPremergeIntegrationNamedCandidateWithoutRecordRefuses(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	k.acceptByCommit("a")
 	k.acceptByCommit("b")

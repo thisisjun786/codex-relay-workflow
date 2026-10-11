@@ -11,11 +11,13 @@ import (
 // promptRoleReadBudget bounds the registry read: the hook answers the host's prompt, so a slow store is no role evidence.
 const promptRoleReadBudget = 2 * time.Second
 
-// registryPromptRole is the production role reader of the UserPromptSubmit leg (CRW-1084; the CRW-386 seam): the roles the
-// relay registry's live scope bindings give this hook session, read only through store.SessionScopeRoles. A session bound only as
-// a parent is a project parent, one bound only as a child is a dispatched task; no binding, both roles, any other role, or a
-// store that cannot be selected or read is unknown, so the prompt's own scope words decide and nothing is claimed.
-func registryPromptRole(_, sessionID string) pabcdhook.PromptRole {
+// RegistryPromptRole is the production role reader of the hook legs that withhold the loop from a coordinating seat (CRW-1084
+// for UserPromptSubmit; CRW-386 for Stop, the SessionStart map affordance and the compaction restore): the roles the relay
+// registry's live scope bindings give this hook session, read only through store.SessionScopeRoles (no registry write, no store
+// created or migrated). A session bound only as a parent is a project parent, only as a supervisor a supervisor seat, only as a
+// child a dispatched task; no binding, two or more roles, any other role, or a store that cannot be selected or read within the
+// read budget is unknown, so the oracle's behavior holds and nothing is claimed.
+func RegistryPromptRole(_, sessionID string) pabcdhook.PromptRole {
 	selection, err := store.ResolveStateDir("", "")
 	if err != nil {
 		return pabcdhook.PromptRoleUnknown
@@ -29,6 +31,8 @@ func registryPromptRole(_, sessionID string) pabcdhook.PromptRole {
 	switch roles[0] {
 	case "parent":
 		return pabcdhook.PromptRoleParent
+	case "supervisor":
+		return pabcdhook.PromptRoleSupervisor
 	case "child":
 		return pabcdhook.PromptRoleTask
 	}

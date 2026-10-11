@@ -128,10 +128,14 @@ func (c *session) answer(ctx context.Context, message envelope, reply Reply) {
 			ThreadID string `json:"threadId"`
 		}
 		_ = json.Unmarshal(message.Params, &params)
+		raised := map[string]any{"threadId": params.ThreadID, "turnId": "turn-waiting", "command": []string{"rm", "-rf", "/"}}
+		if reply.SchemaParams {
+			raised = SchemaServerParams(method, params.ThreadID, "turn-waiting")
+		}
 		c.send(ctx, map[string]any{
-			"id":     c.server.nextServerRequest(method),
+			"id":     c.server.nextServerRequest(method, raised),
 			"method": method,
-			"params": map[string]any{"threadId": params.ThreadID, "turnId": "turn-waiting", "command": []string{"rm", "-rf", "/"}},
+			"params": raised,
 		})
 	}
 	if reply.Close != nil {

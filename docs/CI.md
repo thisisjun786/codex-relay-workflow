@@ -312,6 +312,18 @@ reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`,
 again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit
 (they differ by 20 s or more from run to run), move packages, and compare medians.
 
+`relay/dagsched` is the largest test package (about 38k lines of tests), and under host load it once
+ran past the 10 minute budget of its binary (CRW-1190). Its time went to building a store for every
+fixture (the frozen schema, its fence and the DAG zone's DDL, each statement parsed again by every
+connection) and to about 160 tests that ran one after another; no test of it sleeps. A fixture without
+an App Server socket is now a copy of one prepared store with its takeover mirror re-homed, the stub
+verifier carries its helper variables in the script instead of `t.Setenv`, and the tests that write an
+executable do so under `syscall.ForkLock`, so 121 more tests run in parallel; the 43 that remain
+sequential set the process environment, change the directory or assign a package variable. Measured on one host (load 16 to 25, the test binary of the package, three runs each,
+alternating): wall clock 103, 83, 82 s before and 47, 52, 37 s after; user plus system CPU 142, 156, 146 s
+before and 114, 128, 117 s after. Under five `nice -n 19` spinners, `make test-part TEST_PART=1` took 69, 75
+and 40 s with `relay/dagsched` at 53, 60 and 25 s, against the 600 s of its budget, so the budget stays.
+
 ## Leftover isolation trees
 
 Nothing removes a `crw-relay-test-*` directory a run leaves: a test binary killed by `go test -timeout` or by

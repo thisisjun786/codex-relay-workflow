@@ -117,9 +117,15 @@ func zoneFillerInsert(t *testing.T, db *sql.DB, g nullKeyGuard, keyValue string)
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", g.table, strings.Join(columns, ","), strings.Join(values, ","))
 }
 
+// zoneQuerier is a connection or an open transaction: the preservation checks read the table through the
+// transaction a statement ran in, before it is rolled back, so a rollback cannot hide a change the statement made.
+type zoneQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 // zoneTableContents is every row of table, in rowid order, each value as its type and value (a NULL stays
 // distinguishable from an empty string), so two readings of the table are equal exactly when its content is.
-func zoneTableContents(t *testing.T, db *sql.DB, table string) []string {
+func zoneTableContents(t *testing.T, db zoneQuerier, table string) []string {
 	t.Helper()
 	rows, err := db.Query("SELECT * FROM " + table + " ORDER BY rowid")
 	if err != nil {

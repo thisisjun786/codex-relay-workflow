@@ -12,6 +12,7 @@ import (
 // TestPremergeCLIRecordFileEditedAfterAcceptChangesNothing (CRW-952 c3): the record file is read once, at accept. Editing
 // it and then deleting it leaves the stored text and its digest unchanged, which is what every later judgment reads.
 func TestPremergeCLIRecordFileEditedAfterAcceptChangesNothing(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
 	raw := premergeRaw(t, premergeRecordOf(t, k))

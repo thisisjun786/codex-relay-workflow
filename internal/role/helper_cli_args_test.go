@@ -96,6 +96,9 @@ func TestHelperArgsFlagValues(t *testing.T) {
 		{[]string{"set", "reviewer", "--prompt"}, "--prompt requires a value"},
 		{[]string{"set", "reviewer", "--model", "--effort", "high"}, "--model requires a value; write a value that starts with '-' as --model=<value>"},
 		{[]string{"set", "reviewer", "--prompt", "--global"}, "--prompt requires a value; write a value that starts with '-' as --prompt=<value>"},
+		// CRW-581 (superseded by CRW-1117): the dash-led value '--model' of --prompt is refused, so the trailing --global is never
+		// taken as the scope and nothing is written; the value form --prompt=--model is the way to write it.
+		{[]string{"set", "reviewer", "--prompt", "--model", "--global"}, "--prompt requires a value; write a value that starts with '-' as --prompt=<value>"},
 		{[]string{"set", "reviewer", "--mode"}, "--mode requires a value"},
 		{[]string{"set", "reviewer", "--effort"}, "--effort requires a value"},
 		{[]string{"set", "reviewer", "--fallback-model"}, "--fallback-model requires a value"},
@@ -111,6 +114,8 @@ func TestHelperArgsFlagValues(t *testing.T) {
 		want HelperArgs
 	}{
 		{[]string{"set", "reviewer", "--prompt=--terse"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{PromptOverride: Some("--terse")}}},
+		// CRW-581 (superseded by CRW-1117): a value-form flag takes the dash-led text, and the trailing --global is the selector.
+		{[]string{"set", "reviewer", "--prompt=--model", "--global"}, HelperArgs{Action: "set", Role: Reviewer, Scope: ScopeGlobal, Patch: RolePatch{PromptOverride: Some("--model")}}},
 		{[]string{"set", "reviewer", "--model=m1", "--effort=high"}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{Model: Some("m1"), Effort: Some(EffortHigh)}}},
 		{[]string{"set", "reviewer", "--prompt="}, HelperArgs{Action: "set", Role: Reviewer, Patch: RolePatch{PromptOverride: Some("")}}},
 		{[]string{"set", "executor", "--mode", "model", "--model", "m1"}, HelperArgs{Action: "set", Role: Executor, Patch: RolePatch{Mode: Some(ModeModel), Model: Some("m1")}}},

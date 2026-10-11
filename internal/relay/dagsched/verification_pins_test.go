@@ -107,6 +107,7 @@ func pinnedKeys(t *testing.T, repo *gitRepo, head string) VerificationKeys {
 }
 
 func TestCommitVerificationKeysReadTheDeclaredPinsOfTheCommit(t *testing.T) {
+	t.Parallel()
 	repo, head := pinnedCommit(t, fullDeclaration())
 	keys := pinnedKeys(t, repo, head)
 	want := declaredAll()
@@ -131,6 +132,7 @@ func TestCommitVerificationKeysReadTheDeclaredPinsOfTheCommit(t *testing.T) {
 }
 
 func TestDeclaredToolPinsOfTheRepositoryTree(t *testing.T) {
+	t.Parallel()
 	// the real files of this repository: a format change that stops the reader from finding a pin is caught here
 	root := filepath.Join("..", "..", "..")
 	read := func(path string) ([]byte, bool, error) {
@@ -225,6 +227,7 @@ func TestJudgeVerificationRecordRequiresTheDeclaredPins(t *testing.T) {
 // A record of an older tree (its ci.yml has no setup-node) stays valid without a node pin, and a tree that declares nothing
 // requires nothing; a node pin the older tree never declared is still a pin the record must keep consistent with its tools.
 func TestJudgeVerificationRecordOlderTreesNeedNoNodePin(t *testing.T) {
+	t.Parallel()
 	repo, head := pinnedCommit(t, map[string]string{"go.mod": pinnedGoMod, "scripts/ci/secrets.sh": pinnedSecrets, ".github/workflows/ci.yml": pinnedCINoNode})
 	keys := pinnedKeys(t, repo, head)
 	noNode := declaredAll()
@@ -245,6 +248,7 @@ func TestJudgeVerificationRecordOlderTreesNeedNoNodePin(t *testing.T) {
 // Keys that were not built from a commit say nothing about what the commit declares: the judge refuses rather than accept
 // every record: there is no caller that waives the declaration (CRW-1026).
 func TestJudgeVerificationRecordKeysWithoutADeclaration(t *testing.T) {
+	t.Parallel()
 	repo, head := pinnedCommit(t, fullDeclaration())
 	keys := pinnedKeys(t, repo, head)
 	raw := sealPinned(t, repo, head, keys, copyPins(declaredAll()), copyPins(declaredAll()))
@@ -266,6 +270,7 @@ func TestJudgeVerificationRecordKeysWithoutADeclaration(t *testing.T) {
 // The acceptance path reads the declaration of the commit it accepts: a record without the pins is refused there and a
 // record with them is accepted.
 func TestCommitAcceptanceRefusesARecordWithoutThePinsOfTheCommit(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.repo.git("checkout", "-q", "-b", "pinned", k.base)
 	for path, body := range fullDeclaration() {
@@ -308,6 +313,7 @@ func TestCommitAcceptanceRefusesARecordWithoutThePinsOfTheCommit(t *testing.T) {
 // collected and a record without the node pin, or with another, is refused. A setup-node step whose node-version cannot be
 // read is an error, never "no Node declaration".
 func TestDeclaredNodePinsDoNotDependOnTheOrderOfAStepsKeys(t *testing.T) {
+	t.Parallel()
 	withFirst := "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - with:\n          node-version: '24.20.0'\n        uses: actions/setup-node@v4\n"
 	files := fullDeclaration()
 	files[".github/workflows/ci.yml"] = withFirst
@@ -367,6 +373,7 @@ func refusedPinRecord(t *testing.T, repo *gitRepo, head string, keys Verificatio
 // A setup-node step whose uses value is a quoted scalar is the same step as an unquoted one: its node-version is required,
 // and a record without the node pin, or with another, is refused (verification round 2, finding 1).
 func TestDeclaredNodePinsOfAQuotedSetupNodeStep(t *testing.T) {
+	t.Parallel()
 	for name, uses := range map[string]string{
 		"double quotes":        `"actions/setup-node@v4"`,
 		"single quotes":        `'actions/setup-node@v4'`,
@@ -398,6 +405,7 @@ func TestDeclaredNodePinsOfAQuotedSetupNodeStep(t *testing.T) {
 // require block entry with a comment, a CRLF file, a quoted module path. Each form yields the pins, and a record without
 // them, or with other versions, is refused (verification round 2, finding 2).
 func TestDeclaredGoModPinsInEveryRequireForm(t *testing.T) {
+	t.Parallel()
 	for name, goMod := range map[string]string{
 		"single-line require": "module example.com/m\n\ngo 1.27\n\ntoolchain go1.27.1\n\nrequire honnef.co/go/tools v0.8.1\n",
 		"indirect in a block": "module example.com/m\n\ngo 1.27\n\ntoolchain go1.27.1\n\nrequire (\n\tgolang.org/x/sys v0.47.0\n\thonnef.co/go/tools v0.8.1 // indirect\n)\n",
@@ -448,6 +456,7 @@ func TestDeclaredGoModPinsInEveryRequireForm(t *testing.T) {
 // A setup-node step ends with the step: the with block of a later job (a reusable workflow call), of a later step or of the
 // job itself never stands in for the node-version the setup-node step lacks (verification round 2, finding 3).
 func TestSetupNodeCannotTakeTheWithOfAnotherStepOrJob(t *testing.T) {
+	t.Parallel()
 	for name, ci := range map[string]string{
 		"the next job's with": "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n" +
 			"  b:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      node-version: '24.20.0'\n",
@@ -482,6 +491,7 @@ func TestSetupNodeCannotTakeTheWithOfAnotherStepOrJob(t *testing.T) {
 // or refuses the declaration, so a record without the node pin, or with a self-consistent wrong one, is never judged against
 // a declaration that silently lost the step (verification round 3, d2).
 func TestDeclaredNodePinsRefuseABlockScalarSetupNodeUse(t *testing.T) {
+	t.Parallel()
 	for name, header := range map[string]string{
 		"folded, stripped": ">-",
 		"folded":           ">",
@@ -516,6 +526,7 @@ func TestDeclaredNodePinsRefuseABlockScalarSetupNodeUse(t *testing.T) {
 // an assignment the reader cannot read is an error: a real scan_version never reads as "the tool is not declared"
 // (verification round 3, d3).
 func TestDeclaredGitleaksPinInEveryAssignmentForm(t *testing.T) {
+	t.Parallel()
 	for name, line := range map[string]string{
 		"plain":                     "scan_version=8.30.1\n",
 		"single quotes":             "scan_version='8.30.1'\n",

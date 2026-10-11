@@ -116,6 +116,7 @@ func (a *acceptRefreshKit) refreshRows() int {
 // A head the ruling did not fix, with no checkout to prove it in, is malformed_receipt; a checkout that lacks one of the three
 // commits is merge_target_unreadable. Neither writes anything.
 func TestAcceptProvesARefreshedHeadInTheCheckout(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	a.refresh("other.txt")
 	if _, err := a.acceptWith(""); refusalReason(err) != "malformed_receipt" || !strings.Contains(err.Error(), "--checkout") {
@@ -133,6 +134,7 @@ func TestAcceptProvesARefreshedHeadInTheCheckout(t *testing.T) {
 // A clean refresh is accepted and its proof row is written with it, naming the ruled head, the accepted head and the base tip; two
 // refreshes in a row are one proof.
 func TestAcceptRecordsTheProofOfARefreshChain(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	a.refresh("other-one.txt")
 	head := a.refresh("other-two.txt")
@@ -165,6 +167,7 @@ func TestAcceptRecordsTheProofOfARefreshChain(t *testing.T) {
 // conflict by hand and pushed that head. No flag names a head, so the call cannot call the hand-resolved head the ruled one; the
 // relay refuses it as tree_differs and writes nothing.
 func TestAcceptRefusesAHandResolvedHeadTheRulingDidNotFix(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	a.resolveByHand()
 	_, err := a.acceptWith(a.repo.path)
@@ -178,6 +181,7 @@ func TestAcceptRefusesAHandResolvedHeadTheRulingDidNotFix(t *testing.T) {
 
 // A head that is not the ruled head plus merges of the base (a commit of its own on top) is refused with the proof's own code.
 func TestAcceptRefusesAHeadWithCommitsBeyondTheMerges(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	a.repo.git("checkout", "-q", "feature")
 	head := a.repo.commit("extra.txt", "a change after the ruling\n")
@@ -195,6 +199,7 @@ func TestAcceptRefusesAHeadWithCommitsBeyondTheMerges(t *testing.T) {
 // With no record of the ruled head the call is what it was: the head the forge shows is accepted, no checkout is read, no proof row
 // is written and the new members of the answer are empty.
 func TestAcceptWithoutARulingRecordIsAsItWas(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKitWith(t, false)
 	head := a.refresh("other.txt")
 	res, err := a.acceptWith("")
@@ -205,6 +210,7 @@ func TestAcceptWithoutARulingRecordIsAsItWas(t *testing.T) {
 
 // P == N needs no checkout and writes no proof row; the ruled head is reported.
 func TestAcceptAtTheRuledHeadNeedsNoCheckout(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	res, err := a.acceptWith("")
 	if err != nil || res.HeadSHA != a.p || res.VerifiedHead != a.p || res.RefreshID != "" || res.Manual != nil || a.refreshRows() != 0 {
@@ -238,6 +244,7 @@ func (a *acceptRefreshKit) correct(p2 string) string {
 
 // A refused proof leaves the acceptance it would have replaced active, and a proved one replaces it and stores its proof.
 func TestAcceptSupersedeKeepsTheOldAcceptanceWhenTheProofIsRefused(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	first, err := a.acceptWith("")
 	if err != nil {
@@ -263,6 +270,7 @@ func TestAcceptSupersedeKeepsTheOldAcceptanceWhenTheProofIsRefused(t *testing.T)
 }
 
 func TestAcceptSupersedeStoresTheProofOfTheCorrectedHead(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	first, err := a.acceptWith("")
 	if err != nil {
@@ -285,6 +293,7 @@ func TestAcceptSupersedeStoresTheProofOfTheCorrectedHead(t *testing.T) {
 
 // The answer's manual_paths member is null when no refresh was proved and a list (empty: a path no rule proved refuses the acceptance) when one was.
 func TestAcceptManualPathsAreNullWithoutAProof(t *testing.T) {
+	t.Parallel()
 	if got := acceptManualPaths(nil); got != nil {
 		t.Fatalf("manual_paths without a proof = %#v, want null", got)
 	}
@@ -298,6 +307,7 @@ func TestAcceptManualPathsAreNullWithoutAProof(t *testing.T) {
 // (CRW-731): a pull request that moves to another head, or a base branch that advances, after the proof is refused and writes
 // neither the acceptance nor the proof row.
 func TestAcceptRefusesWhenThePullRequestMovesAfterTheProof(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	a.refresh("other.txt")
 	a.sched.testBeforeAcceptTx = func() { a.resolveByHand() }
@@ -314,6 +324,7 @@ func TestAcceptRefusesWhenThePullRequestMovesAfterTheProof(t *testing.T) {
 // while it was read in the verdict and the problems of the snapshot, not as an error, and its head, base, state and draft fields come from the pinned read. A snapshot that is stale or unknown writes
 // neither the acceptance nor the proof row, whatever the four fields say.
 func TestAcceptRefusesWhenTheReadAgainIsStaleOrUnknown(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, verdict, code, reason, text string }{
 		{"stale", evidence.Stale, evidence.CandidateMoved, "merge_candidate_moved", "moved while it was read"},
 		{"unknown", evidence.UnknownVerdict, "collection_failed", "", "could not be read completely"},
@@ -338,6 +349,7 @@ func TestAcceptRefusesWhenTheReadAgainIsStaleOrUnknown(t *testing.T) {
 }
 
 func TestAcceptRefusesWhenTheBaseBranchAdvancesAfterTheProof(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	a.refresh("other.txt")
 	a.sched.testBeforeAcceptTx = func() { a.repo.commit("later.txt", "dev moved on\n") }
