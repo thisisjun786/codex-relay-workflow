@@ -164,6 +164,8 @@ type AdoptResult struct {
 	PlanID, NodeID, RelationshipID, FromRelationshipID, ChildTaskID string
 	Generation                                                      int64
 	Replayed                                                        bool
+	// ExecutionID and ExecutionKind name the handover row of an agent node (R07); both are "" for a relationship node.
+	ExecutionID, ExecutionKind string
 }
 
 // relationshipWord is the relay's state word for a relationship (the view the node states read; no clock is involved).
@@ -348,6 +350,8 @@ type RestartNode struct {
 	Resume, ResumeDetail                                 string
 	RelationshipID, ParentTaskID, ChildTaskID            string
 	Generation                                           int64
+	// Agent is set for a node whose current execution is an agent execution (R07).
+	Agent *RestartAgent
 }
 
 // RestartReport is what the store says to a parent that starts again: the plan, who holds its epoch, and, for every node somebody owns, what to do with it. It is a reading: it
