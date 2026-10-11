@@ -441,6 +441,8 @@ func (a *analysis) resolvePattern(t any, sc *scope, fn *fnInfo, write bool) {
 	case *ast.Identifier:
 		if write {
 			a.ref(p, sc, fn, false, true, nil)
+		} else {
+			a.refs[p] = sc.lookup(string(p.Name))
 		}
 	case *ast.ArrayPattern:
 		for _, e := range p.Elements {
@@ -453,6 +455,8 @@ func (a *analysis) resolvePattern(t any, sc *scope, fn *fnInfo, write bool) {
 			case *ast.PropertyShort:
 				if write {
 					a.ref(&pp.Name, sc, fn, false, true, nil)
+				} else {
+					a.refs[&pp.Name] = sc.lookup(string(pp.Name.Name))
 				}
 				a.resolve(pp.Initializer, sc, fn)
 			case *ast.PropertyKeyed:

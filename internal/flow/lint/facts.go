@@ -1,10 +1,12 @@
 package lint
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dop251/goja/ast"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -105,16 +107,6 @@ func (a *analysis) bindingKind(b *binding, depth int) kind {
 	return k
 }
 
-// holdsTierStep reports whether a name is given the result of crw.tierStep somewhere, so its value may be a step.
-func (a *analysis) holdsTierStep(b *binding) bool {
-	for _, e := range b.assigned {
-		if a.exprKind(e) == kTierStep {
-			return true
-		}
-	}
-	return false
-}
-
 // staticString is the value of a string literal, an untagged template without substitutions, or a const bound to one.
 func (a *analysis) staticString(e ast.Expression) (string, bool) {
 	switch x := e.(type) {
@@ -152,9 +144,12 @@ type agentCall struct {
 	labelStatic bool
 	// role is the role the call resolves to when every option that decides it is static; refusal is why it resolves to
 	// none.
-	role    string
-	family  string
-	refusal *engine.Refusal
+	role   string
+	family string
+	// modelFamily is the vendor family of the model the role's pair runs ("claude", "gpt"): what a review's independence
+	// is judged on.
+	modelFamily string
+	refusal     *engine.Refusal
 }
 
 // agentFacts reads the options of an agent call.
@@ -227,5 +222,72 @@ func (a *analysis) resolveRole(call *agentCall, policy *engine.Policy) {
 		call.refusal = refusal
 		return
 	}
-	call.role, call.family = r.Role, r.Spec.Family
+	call.role, call.family, call.modelFamily = r.Role, r.Spec.Family, execution.ModelFamily(r.Spec.Pair.Model)
+}
+
+// resumeFamily is the model family of the thread a resume option continues, as far as the text shows: the thread keeps
+// the pair of the call that started it. It is "" when the option is not a handle of a single agent.call whose pair is
+// static.
+func (a *analysis) resumeFamily(e ast.Expression, policy *engine.Policy, depth int) string {
+	if depth > 8 || policy == nil || e == nil {
+		return ""
+	}
+	switch x := e.(type) {
+	case *ast.AwaitExpression:
+		return a.resumeFamily(x.Argument, policy, depth+1)
+	case *ast.DotExpression:
+		if x.Identifier.Name == "handle" || x.Identifier.Name == "output" {
+			return a.resumeFamily(x.Left, policy, depth+1)
+		}
+	case *ast.CallExpression:
+		call, ok := a.agentFacts(x, nil, policy)
+		if !ok {
+			return ""
+		}
+		if call.resume {
+			return a.resumeFamily(call.opts["resume"], policy, depth+1)
+		}
+		return call.modelFamily
+	case *ast.Identifier:
+		b := a.refs[x]
+		if b == nil || b.opaque || len(b.assigned) == 0 {
+			return ""
+		}
+		family := a.resumeFamily(b.assigned[0], policy, depth+1)
+		for _, v := range b.assigned[1:] {
+			if a.resumeFamily(v, policy, depth+1) != family {
+				return ""
+			}
+		}
+		return family
+	}
+	return ""
+}
+
+// nodeKey names the executor node an expression stands for, so two expressions that read the same node get the same
+// key: a static string by its value, a name by its binding, a property by its path, anything else by its text. A missing
+// expression is "".
+func (a *analysis) nodeKey(e ast.Expression) string {
+	if e == nil {
+		return ""
+	}
+	if v, ok := a.staticString(e); ok {
+		return "s:" + v
+	}
+	switch x := e.(type) {
+	case *ast.Identifier:
+		if b := a.refs[x]; b != nil {
+			return fmt.Sprintf("b%p", b)
+		}
+		return "g:" + string(x.Name)
+	case *ast.DotExpression:
+		return a.nodeKey(x.Left) + "." + string(x.Identifier.Name)
+	case *ast.AwaitExpression:
+		return a.nodeKey(x.Argument)
+	}
+	lo, hi := int(e.Idx0())-1, int(e.Idx1())-1
+	if lo >= 0 && hi <= len(a.src) && lo <= hi {
+		return "x:" + a.src[lo:hi]
+	}
+	return "?"
 }

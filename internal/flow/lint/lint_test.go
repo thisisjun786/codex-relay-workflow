@@ -440,3 +440,313 @@ func TestLintCLI(t *testing.T) {
 		t.Errorf("roles: exit %d\n%s", code, out)
 	}
 }
+
+// A node has its own lifecycle: the phase of one node says nothing about another's.
+func TestLintLifecyclePerNode(t *testing.T) {
+	const lane = `
+async function lane(node) {
+  const ex = await agent.call('build', { agentType: 'executor', node, label: 'build:' + node })
+  const head = await crw.commit(node, ex)
+  const ci = await crw.verify(node, head)
+  await crw.review(node, head, ci)
+  return crw.land(node, { head })
+}
+`
+	for name, body := range map[string]string{
+		"two nodes one after the other": lane + "await lane('a')\nreturn lane('b')",
+		"two nodes in one body": `
+const a = await agent.call('build a', { agentType: 'executor', node: 'a', label: 'build:a' })
+const ha = await crw.commit('a', a)
+await crw.verify('a', ha)
+await crw.review('a', ha, null)
+await crw.land('a', { head: ha })
+const b = await agent.call('build b', { agentType: 'executor', node: 'b', label: 'build:b' })
+const hb = await crw.commit('b', b)
+await crw.verify('b', hb)
+await crw.review('b', hb, null)
+return crw.land('b', { head: hb })`,
+		"interleaved nodes": `
+const a = await agent.call('build a', { agentType: 'executor', node: 'a', label: 'build:a' })
+const b = await agent.call('build b', { agentType: 'executor', node: 'b', label: 'build:b' })
+const ha = await crw.commit('a', a)
+const hb = await crw.commit('b', b)
+await crw.verify('b', hb)
+await crw.verify('a', ha)
+await crw.review('a', ha, null)
+await crw.review('b', hb, null)
+await crw.land('a', { head: ha })
+return crw.land('b', { head: hb })`,
+	} {
+		if r := lintText(t, body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	for name, row := range map[string]struct{ body, rule string }{
+		"a land of another node than the reviewed one": {`
+const a = await agent.call('build a', { agentType: 'executor', node: 'a', label: 'build:a' })
+const b = await agent.call('build b', { agentType: 'executor', node: 'b', label: 'build:b' })
+const ha = await crw.commit('a', a)
+await crw.verify('a', ha)
+await crw.review('a', ha, null)
+return crw.land('b', { head: ha })`, RuleLandWithoutReview},
+		"a review of another node than the verified one": {`
+const a = await agent.call('build a', { agentType: 'executor', node: 'a', label: 'build:a' })
+const b = await agent.call('build b', { agentType: 'executor', node: 'b', label: 'build:b' })
+const ha = await crw.commit('a', a)
+await crw.commit('b', b)
+await crw.verify('a', ha)
+return crw.review('b', ha, null)`, RuleLifecycleOrder},
+		"the second land of one node": {`
+const a = await agent.call('build a', { agentType: 'executor', node: 'a', label: 'build:a' })
+const b = await agent.call('build b', { agentType: 'executor', node: 'b', label: 'build:b' })
+const ha = await crw.commit('a', a)
+await crw.verify('a', ha)
+await crw.review('a', ha, null)
+await crw.land('a', { head: ha })
+await crw.land('b', { head: ha })
+return crw.land('a', { head: ha })`, RuleLandTwice},
+	} {
+		r := lintText(t, row.body)
+		if !slices.Contains(rules(r), row.rule) {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// The trace keeps a phase for each node of a path as well.
+	row := func(op, node string) engine.Event {
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvCompleted, Op: op, Path: "root", Data: map[string]any{"node": node}}
+	}
+	build := func(node string) engine.Event {
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build:" + node, Data: map[string]any{"family": "executor", "role": "executor", "node": node}}
+	}
+	round := func(node string) []engine.Event {
+		return []engine.Event{row("crw.commit", node), row("crw.verify", node), row("crw.review", node), row("crw.land", node)}
+	}
+	for name, row := range map[string]struct {
+		events []engine.Event
+		want   []string
+	}{
+		"nodes one after the other": {append(append([]engine.Event{build("a")}, round("a")...), append([]engine.Event{build("b")}, round("b")...)...), nil},
+		"a land of another node":    {[]engine.Event{build("a"), build("b"), row("crw.commit", "a"), row("crw.verify", "a"), row("crw.review", "a"), row("crw.land", "b")}, []string{RuleLandWithoutReview}},
+	} {
+		got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, row.events, nil)})
+		if !slices.Equal(got, row.want) {
+			t.Errorf("trace, %s: %v, want %v", name, got, row.want)
+		}
+	}
+}
+
+// A return or throw in a try body reaches the finally block with the state it had there.
+func TestLintLifecycleThroughFinally(t *testing.T) {
+	const prefix = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+`
+	if r := lintText(t, prefix+`
+try {
+  await crw.verify('n', head)
+  await crw.review('n', head, null)
+  return 'reviewed'
+} finally {
+  await crw.land('n', { head })
+}`); !r.OK() {
+		t.Errorf("a land in finally after a completed review: %v", r.Diagnostics)
+	}
+	r := lintText(t, prefix+`
+try {
+  await crw.verify('n', head)
+  await crw.review('n', head, null)
+  await crw.land('n', { head })
+  return 'landed'
+} finally {
+  await crw.land('n', { head })
+}`)
+	wantRules(t, r, RuleLandTwice)
+	// The order after the statement is the order of the paths that reach it.
+	r = lintText(t, prefix+`
+try {
+  await crw.verify('n', head)
+  await crw.review('n', head, null)
+} finally {
+  await crw.land('n', { head })
+}
+return crw.land('n', { head })`)
+	wantRules(t, r, RuleLandTwice)
+	// A handler may start after any call of the body.
+	if r := lintText(t, prefix+`
+try {
+  await crw.verify('n', head)
+  await crw.review('n', head, null)
+  throw new Error('late')
+} catch (e) {
+  await crw.land('n', { head })
+}
+return 1`); !r.OK() {
+		t.Errorf("%v", r.Diagnostics)
+	}
+}
+
+// What a stepDecision reads is the id crw.tierStep returned and still holds when the call runs.
+func TestLintTierStepProvenance(t *testing.T) {
+	const call = `agent.call('go', { agentType: 'executor-t1', stepDecision: step.id, label: 't1' })`
+	for name, body := range map[string]string{
+		"overwritten before the call": `let step = await crw.tierStep('n', {})
+step = { id: 'not-a-decision' }
+return ` + call,
+		"assigned after the call": `let step = { id: 'early' }
+const out = await ` + call + `
+step = await crw.tierStep('n', {})
+return out`,
+		"only on one branch": `let step = { id: 'x' }
+if (args.deep) step = await crw.tierStep('n', {})
+return ` + call,
+		"declared without a value": `let step
+return ` + call,
+		"a decision of another function": `const step = await crw.tierStep('n', {})
+async function go() { return ` + call + ` }
+return go()`,
+	} {
+		r := lintText(t, body)
+		if !slices.Contains(rules(r), RuleTierStepDecision) {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+			continue
+		}
+		static := false
+		for _, d := range r.Diagnostics {
+			static = static || d.Source == sourceStatic
+		}
+		if !static {
+			t.Errorf("%s: the text shows it: %v", name, r.Diagnostics)
+		}
+	}
+	for name, body := range map[string]string{
+		"a decision on every branch": `let step
+if (args && args.deep) step = await crw.tierStep('n', { deep: true })
+else step = await crw.tierStep('n', {})
+return ` + call,
+		"overwritten by another decision": `let step = await crw.tierStep('n', {})
+step = await crw.tierStep('n', { again: true })
+return ` + call,
+		"read through a second name": `const first = await crw.tierStep('n', {})
+const step = { id: first.id }
+return ` + call,
+	} {
+		if r := lintText(t, body); slices.Contains(rules(r), RuleTierStepDecision) && r.Diagnostics[0].Source == sourceStatic {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// The trace refuses an id that no crw.tierStep returned on the path, however the script came by it.
+	prepared := func(path, step string) engine.Event {
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: path, Label: "t1", Data: map[string]any{"role": "executor-t1", "family": "executor", "step_decision": step, "explicit_label": true}}
+	}
+	decided := func(path, step string) engine.Event {
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvCompleted, Op: "crw.tierStep", Path: path, Data: map[string]any{"step_decision": step}}
+	}
+	for name, row := range map[string]struct {
+		events []engine.Event
+		want   []string
+	}{
+		"an id the path decided":     {[]engine.Event{decided("root", "step_1"), prepared("root", "step_1")}, nil},
+		"an id nothing decided":      {[]engine.Event{prepared("root", "made-up")}, []string{RuleTierStepDecision}},
+		"an id decided later":        {[]engine.Event{prepared("root", "step_1"), decided("root", "step_1")}, []string{RuleTierStepDecision}},
+		"an id of another path":      {[]engine.Event{decided("root", "step_1"), prepared("root/1:0", "step_1")}, []string{RuleTierStepDecision}},
+		"no id (the engine refuses)": {[]engine.Event{prepared("root", "")}, nil},
+	} {
+		got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, row.events, nil)})
+		if !slices.Equal(got, row.want) {
+			t.Errorf("trace, %s: %v, want %v", name, got, row.want)
+		}
+	}
+}
+
+// A review is independent by the model family of its pair, whatever the role is called, and a continuation keeps the
+// pair of its thread.
+func TestLintReviewerModelFamily(t *testing.T) {
+	// In the placeholder table the executor and the explorer run models of one family, the reviewer another.
+	r := lintText(t, `
+await agent.call('build', { agentType: 'executor', label: 'build' })
+return agent.call('review the change', { agentType: 'explorer', label: 'review:build' })`)
+	wantRules(t, r, RuleReviewerFamily)
+	if r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 4 {
+		t.Errorf("%+v", r.Diagnostics)
+	}
+	r = lintText(t, `
+const ex = await agent.call('build', { agentType: 'executor', label: 'build' })
+return agent.call('review the change', { resume: ex.handle, label: 'review:build' })`)
+	wantRules(t, r, RuleReviewerFamily)
+	if r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 4 {
+		t.Errorf("a continuation of the author's thread: %+v", r.Diagnostics)
+	}
+	// A continuation of a reviewer's thread is a reviewer's call; a continuation of a fix round that is not a review
+	// is not judged.
+	for name, body := range map[string]string{
+		"a reviewer continued": `
+await agent.call('build', { agentType: 'executor', label: 'build' })
+const rv = await agent.call('review', { agentType: 'reviewer', label: 'review:build' })
+return agent.call('and again', { resume: rv.handle, label: 'review:again' })`,
+		"a fix round": `
+const ex = await agent.call('build', { agentType: 'executor', label: 'build' })
+return agent.call('fix', { resume: ex.handle, label: 'fix:1' })`,
+	} {
+		if r := lintText(t, body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// The trace judges the pair each call was configured with: a continuation of the author's thread, and a role of
+	// the author's model family under another name.
+	call := func(label, role, family, model, resumeOf string) engine.Event {
+		d := map[string]any{"role": role, "family": family, "model": model, "explicit_label": true}
+		if resumeOf != "" {
+			d["resume_of"] = resumeOf
+		}
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: label, Data: d}
+	}
+	author := call("build", "executor", "executor", "anthropic/claude-haiku-5", "")
+	for name, row := range map[string]struct {
+		events []engine.Event
+		want   []string
+	}{
+		"another family":            {[]engine.Event{author, call("review:build", "reviewer", "reviewer", "gpt-6.1-sol", "")}, nil},
+		"the explorer's model":      {[]engine.Event{author, call("review:build", "explorer", "explorer", "anthropic/claude-haiku-5", "")}, []string{RuleReviewerFamily}},
+		"a continuation of author":  {[]engine.Event{author, call("review:build", "executor", "executor", "anthropic/claude-haiku-5", "c_1")}, []string{RuleReviewerFamily}},
+		"a continuation of a judge": {[]engine.Event{author, call("review:build", "reviewer", "reviewer", "gpt-6.1-sol", "c_2")}, nil},
+	} {
+		got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, row.events, nil)})
+		if !slices.Equal(got, row.want) {
+			t.Errorf("trace, %s: %v, want %v", name, got, row.want)
+		}
+	}
+}
+
+// A label in a loop is a duplicate by the text only when the text shows the call runs twice.
+func TestLintLabelInLoopOnlyWhenShownTwice(t *testing.T) {
+	for name, body := range map[string]string{
+		"a loop of one round":           "for (let i = 0; i < 1; i++) {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a call behind a condition":     "for (let i = 0; i < 2; i++) {\n  if (i === 0) await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a loop over an unknown list":   "for (const x of args.items || []) {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a while loop":                  "let n = 0\nwhile (n < 1) {\n  n++\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn n",
+		"a continue before the call":    "for (let i = 0; i < 2; i++) {\n  if (i === 0) continue\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a counter written in the body": "for (let i = 0; i < 2; i++) {\n  i = 5\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a conditional expression":      "for (let i = 0; i < 2; i++) {\n  i ? await agent('look', { agentType: 'explorer', label: 'look' }) : 0\n}\nreturn 1",
+	} {
+		if r := lintText(t, body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	for name, body := range map[string]string{
+		"two rounds":        "for (let i = 0; i < 2; i++) {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"an inclusive test": "for (let i = 0; i <= 1; i++) {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a list literal":    "for (const x of ['a', 'b']) {\n  await agent('look', { agentType: 'explorer', label: 'look' })\n}\nreturn 1",
+		"a nested loop":     "for (let i = 0; i < 2; i++) {\n  for (const x of args.items || []) {\n    await agent('look', { agentType: 'explorer', label: 'look' })\n  }\n  await agent('again', { agentType: 'explorer', label: 'again' })\n}\nreturn 1",
+	} {
+		r := lintText(t, body)
+		if name == "a nested loop" {
+			if len(r.Diagnostics) != 1 || r.Diagnostics[0].Label != "again" || r.Diagnostics[0].Source != sourceStatic {
+				t.Errorf("%s: only the call outside the unknown loop is shown twice: %v", name, r.Diagnostics)
+			}
+			continue
+		}
+		if len(r.Diagnostics) != 1 || r.Diagnostics[0].Rule != RuleLabelDuplicate || r.Diagnostics[0].Source != sourceStatic {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+}

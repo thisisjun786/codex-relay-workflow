@@ -118,7 +118,6 @@ func (s *scanner) checkResult(e ast.Expression, rule, what string, line int) {
 }
 
 func (s *scanner) agent(call *agentCall) {
-	a := s.a
 	if r, ok := call.opts["resume"]; ok {
 		s.checkResult(r, RuleResumeArg, "agent.call resume", call.line)
 	}
@@ -126,41 +125,12 @@ func (s *scanner) agent(call *agentCall) {
 		s.add(RuleAliasAmbiguous, call.line, call.label, "%s", strings.TrimPrefix(call.refusal.Detail, "alias_ambiguous: "))
 	}
 	// An executor-t1 call carries the stepDecision crw.tierStep returned on its own path. A continuation inherits it.
+	// That the stepDecision it states is that id, still, is judged along the function's paths (walker.agent).
 	if call.role == "executor-t1" && !call.resume {
-		sd, ok := call.opts["stepDecision"]
-		switch {
-		case !ok:
+		if _, ok := call.opts["stepDecision"]; !ok {
 			s.add(RuleTierStepDecision, call.line, call.label, "an executor-t1 call needs stepDecision: the id crw.tierStep returned in this function (a fresh executor-t1 thread starts only after a recorded step decision)")
-		case !a.derivesFromTierStep(sd, call.fn):
-			s.add(RuleTierStepDecision, call.line, call.label, "the stepDecision of an executor-t1 call must be the id crw.tierStep returned on the same path (the same function); this one does not come from a crw.tierStep call there")
 		}
 	}
-}
-
-// derivesFromTierStep reports whether an expression reads a name that crw.tierStep's result is assigned to in fn.
-func (a *analysis) derivesFromTierStep(e ast.Expression, fn *fnInfo) bool {
-	found := false
-	var visit func(n any)
-	visit = func(n any) {
-		if found || n == nil {
-			return
-		}
-		switch x := n.(type) {
-		case *ast.Identifier:
-			if b := a.refs[x]; b != nil && b.owner == fn && a.holdsTierStep(b) {
-				found = true
-			}
-		case *ast.CallExpression:
-			if obj, name := a.callee(x); obj == "crw" && name == "tierStep" {
-				found = true
-			}
-		}
-		for _, c := range children(n) {
-			visit(c)
-		}
-	}
-	visit(e)
-	return found
 }
 
 // dag checks the lane function and the onSignal function of crw.dag: they read no outer let that is assigned again.

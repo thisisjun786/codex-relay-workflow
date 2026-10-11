@@ -160,12 +160,12 @@ func (p *Policy) RoleKey(name string) bool {
 // xhigh -> reviewer-final, otherwise reviewer; haiku without isolation is ambiguous).
 func FakePolicy() *Policy {
 	roles := map[string]RoleSpec{
-		"architect":      {Family: "architect", Pair: Pair{"fake-opus", "high"}, ModelAliases: []string{"opus"}},
-		"executor":       {Family: "executor", Pair: Pair{"fake-haiku", "xhigh"}, ModelAliases: []string{"haiku"}},
-		"executor-t1":    {Family: "executor", Pair: Pair{"fake-sonnet", "xhigh"}, ModelAliases: []string{"sonnet"}},
-		"reviewer":       {Family: "reviewer", Pair: Pair{"fake-sol", "high"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
-		"reviewer-final": {Family: "reviewer", Pair: Pair{"fake-sol", "xhigh"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
-		"explorer":       {Family: "explorer", Pair: Pair{"fake-haiku", "high"}, ModelAliases: []string{"haiku"}},
+		"architect":      {Family: "architect", Pair: Pair{"claude-fake-opus", "high"}, ModelAliases: []string{"opus"}},
+		"executor":       {Family: "executor", Pair: Pair{"claude-fake-haiku", "xhigh"}, ModelAliases: []string{"haiku"}},
+		"executor-t1":    {Family: "executor", Pair: Pair{"claude-fake-sonnet", "xhigh"}, ModelAliases: []string{"sonnet"}},
+		"reviewer":       {Family: "reviewer", Pair: Pair{"gpt-fake-sol", "high"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
+		"reviewer-final": {Family: "reviewer", Pair: Pair{"gpt-fake-sol", "xhigh"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
+		"explorer":       {Family: "explorer", Pair: Pair{"claude-fake-haiku", "high"}, ModelAliases: []string{"haiku"}},
 	}
 	for name, spec := range roles {
 		spec.Sandbox = roleSandbox(name)

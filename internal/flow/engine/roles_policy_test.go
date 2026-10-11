@@ -342,7 +342,7 @@ func TestPolicyLoadedFromEnvironmentIsRecordedInTheRun(t *testing.T) {
 	}
 	// No variable: the fake backend's placeholders.
 	t.Setenv(execution.EnvPolicy, "")
-	if table, _, err = LoadPolicy(); err != nil || table.Source != "" || table.Roles["executor"].Pair.Model != "fake-haiku" {
+	if table, _, err = LoadPolicy(); err != nil || table.Source != "" || table.Roles["executor"].Pair.Model != "claude-fake-haiku" {
 		t.Fatalf("%v %+v", err, table)
 	}
 }
