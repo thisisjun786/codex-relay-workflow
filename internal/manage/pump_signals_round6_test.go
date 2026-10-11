@@ -392,7 +392,7 @@ func TestRelayHelperRunReturnsAtItsDeadlineDespiteAnOpenPipe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, _, _, err := (&Env{Executable: helper}).relayHelperRun(ctx, "relay", "doctor")
+	_, _, _, err := (&Env{Executable: helper}).relayHelperRun(ctx, nil, "relay", "doctor")
 	if err == nil {
 		t.Fatal("the stuck helper answered")
 	}

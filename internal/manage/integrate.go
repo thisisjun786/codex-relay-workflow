@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -76,6 +77,17 @@ func integrateSection(cfg *Config) (integrator.Config, error) {
 	return section.Resolved()
 }
 
+// integrateChildEnv is the environment the integration queue's commands start with: nil (the
+// process's own) when the configuration names no tool root and no --config file, else that
+// environment with the configuration file and the tool roots in place, build_work made first.
+func integrateChildEnv(cfg *Config) ([]string, error) {
+	probe := exec.Command("true")
+	if err := coreChildEnv(probe, cfg); err != nil {
+		return nil, err
+	}
+	return probe.Env, nil
+}
+
 var integrateCommand = Command{
 	Name:    "integrate",
 	Summary: "merge the gated heads of the integration queue onto dev, verify and push fast-forward only",
@@ -112,6 +124,15 @@ func integrateRun(ctx context.Context, e *Env, args []string) int {
 		cfg.IntervalSeconds = int(flags.interval / time.Second)
 	}
 	runner := integrateRunner(cfg)
+	// The record-version and verification commands start the go tool: they get the configured tool
+	// roots and the configuration file this command was started with (CRW-958). With nothing
+	// configured the runner keeps the process environment.
+	env, err := integrateChildEnv(coreDefaults(e))
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage integrate: error: %v\n", err)
+		return usageExit
+	}
+	runner.Env = env
 	if e.Now != nil {
 		runner.Now = e.Now
 	}
