@@ -176,6 +176,11 @@ func PausesRun(reason string) bool {
 	return reason == "host_infra_usageLimitExceeded" || reason == "host_infra_rateLimitExceeded"
 }
 
+// CodexErrorFlowBinding is the CodexErrorInfo a backend gives the *RPCError of a turn it did not send because the flow binding of
+// its thread (F14) could not be written. It is not a variant the host knows: the call is held, host_config_flow_binding, with
+// nothing sent, and the operator repairs the flow-bound directory (it is the current user's, mode 0700, no symlink) and resumes.
+const CodexErrorFlowBinding = "flow_binding"
+
 // ClassifyHostFailure maps a failed turn's, or an RPC error's, codexErrorInfo to a status and reason
 // (engine.agentPrimitive.hostFailureMap). Only explicit answers are classified: a transport error never reaches
 // here. A failure that carries no codexErrorInfo, or one the table does not list, is held host_infra_unknown, never
@@ -187,6 +192,8 @@ func ClassifyHostFailure(codexErrorInfo string) Disposition {
 		d.Status, d.Reason = StatusHeld, "host_infra_"+codexErrorInfo
 	case codexErrorInfo == "sessionBudgetExceeded":
 		d.Status, d.Reason = StatusHeld, ReasonBudgetExhausted
+	case codexErrorInfo == CodexErrorFlowBinding:
+		d.Status, d.Reason = StatusHeld, "host_config_"+codexErrorInfo
 	case codexErrorInfo == "badRequest" || codexErrorInfo == "unauthorized" || codexErrorInfo == "sandboxError":
 		d.Status, d.Reason = StatusRefused, "host_config_"+codexErrorInfo
 	case codexErrorInfo == "cyberPolicy" || codexErrorInfo == "misalignmentPolicyViolation":
