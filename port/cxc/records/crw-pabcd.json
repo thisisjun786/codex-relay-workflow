@@ -265,16 +265,16 @@
           ]
         },
         {
-          "line": 371,
+          "line": 372,
           "new": [
-            "\n",
             "Dispatch is the default procedure, not a prohibition. When the user's current request\n",
             "explicitly asks for a direct native spawn (for example \"native, without dispatch\"), spawn\n",
             "it as asked, for any role (explorer, executor, reviewer or architect): the spawn hook\n",
             "allows it and marks it unmanaged (its notice reads \"This direct spawn is not managed by\n",
             "first-fallback tracking\"), and an unmanaged spawn creates no managed receipt. Do not\n",
             "refuse such a request because of this section; it removes no capability and changes\n",
-            "neither the managed spawn's receipt and marker rules nor the hook's decision.\n"
+            "neither the managed spawn's receipt and marker rules nor the hook's decision.\n",
+            "\n"
           ]
         },
         {
@@ -478,16 +478,16 @@
     },
     {
       "file": "references/implementation-units.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1219: the numbered plan documents are written as workspace-local execution evidence that quotes the Linear canon, and this file owns their format.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1219: the numbered plan documents are written as workspace-local execution evidence that quotes the Linear canon where the work has an issue (standalone work quotes its request and the repository's contract documents), and this file owns their format.",
       "hunks": [
         {
           "line": 3,
           "new": [
             "The numbered plan documents of a unit are workspace-local execution evidence: the plan as it\n",
-            "is carried out in this checkout. Each one quotes the Linear issue and documents it implements\n",
+            "is carried out in this checkout. Where the work has a Linear issue, each one quotes the Linear issue and documents it implements\n",
             "(the ID and the revision read), which stay canonical under\n",
             "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents),\n",
-            "and never replaces them. A product decision is made and recorded in Linear; a plan document\n",
+            "and never replaces them. Standalone work with no Linear issue quotes the original request and the repository's own contract documents instead, and creates no issue to have something to cite. A product decision is made and recorded in Linear; a plan document\n",
             "points to it, and where the two disagree the Linear record wins and the plan document is\n",
             "amended at the next P. This file owns the format of the numbered documents.\n",
             "\n"
@@ -562,7 +562,7 @@
     },
     {
       "file": "references/phase-control.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left. CRW-1219: the documents planUnit names are written as workspace-local execution evidence that quotes the Linear canon.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left. CRW-1219: the documents planUnit names are written as workspace-local execution evidence that quotes the Linear canon where the work has an issue (standalone work quotes its request and the repository's contract documents).",
       "hunks": [
         {
           "line": 20,
@@ -576,9 +576,10 @@
         {
           "line": 50,
           "new": [
-            "The numbered documents `planUnit` names are workspace-local execution evidence: each quotes the\n",
+            "The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a Linear issue, each quotes the\n",
             "Linear issue and documents it implements, which stay canonical under\n",
-            "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents).\n",
+            "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents);\n",
+            "standalone work with no Linear issue quotes the original request and the repository's own contract documents and creates no issue for it.\n",
             "The gate checks that the unit exists and holds numbered documents, not what they decide; their\n",
             "format is [Implementation units](implementation-units.md).\n",
             "\n"

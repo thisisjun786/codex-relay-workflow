@@ -1,10 +1,10 @@
 ### Implementation-Unit Documents
 
 The numbered plan documents of a unit are workspace-local execution evidence: the plan as it
-is carried out in this checkout. Each one quotes the Linear issue and documents it implements
+is carried out in this checkout. Where the work has a Linear issue, each one quotes the Linear issue and documents it implements
 (the ID and the revision read), which stay canonical under
 [Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents),
-and never replaces them. A product decision is made and recorded in Linear; a plan document
+and never replaces them. Standalone work with no Linear issue quotes the original request and the repository's own contract documents instead, and creates no issue to have something to cite. A product decision is made and recorded in Linear; a plan document
 points to it, and where the two disagree the Linear record wins and the plan document is
 amended at the next P. This file owns the format of the numbered documents.
 

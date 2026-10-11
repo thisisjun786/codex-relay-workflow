@@ -118,6 +118,7 @@ func TestPabcdHasNoPlanTriggers(t *testing.T) {
 // workspace-local execution evidence that quotes the Linear canon, and say nowhere that devlog is the canon of a product
 // decision. The plan-document format has one link target, implementation-units.md.
 func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
+	issueFree := regexp.MustCompile(`(?i)\b(no|without|has no|have no|lacks?)\b[^.]{0,30}\bLinear (issue|record)`)
 	canonical := regexp.MustCompile(`(?i)devlog[^.]{0,120}\b(canonical|source of truth|SoT)\b|\b(canonical|source of truth|SoT)\b[^.]{0,120}devlog`)
 	for _, file := range []string{
 		"plugins/crw/skills/crw-pabcd/references/implementation-units.md",
@@ -132,6 +133,34 @@ func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
 		}
 		if m := canonical.FindString(text); m != "" {
 			t.Errorf("%s makes devlog a canon: %q", file, m)
+		}
+	}
+	// Standalone PABCD has no Linear issue and no CRW execution binding (crw-loop says so); a plan document of that work
+	// cannot quote an issue, so each file gives it another source and creates no issue for the citation.
+	if loop := flat(splitRead(t, loopSkillFile)); !issueFree.MatchString(loop) {
+		t.Fatalf("%s no longer allows standalone PABCD without a Linear issue; revisit this check", loopSkillFile)
+	}
+	for _, file := range []string{
+		"plugins/crw/skills/crw-pabcd/references/implementation-units.md",
+		"plugins/crw/skills/crw-pabcd/references/phase-control.md",
+	} {
+		text := flat(splitRead(t, file))
+		sentence := ""
+		for _, s := range strings.SplitAfter(text, ". ") {
+			if issueFree.MatchString(s) {
+				sentence = s
+				break
+			}
+		}
+		if sentence == "" {
+			t.Errorf("%s requires the Linear citation of every plan document and has no rule for work with no Linear issue", file)
+			continue
+		}
+		if !regexp.MustCompile(`(?i)request|repository`).MatchString(sentence) {
+			t.Errorf("%s: the rule for work with no Linear issue names no other source: %q", file, sentence)
+		}
+		if regexp.MustCompile(`(?i)\b(create|open|invent)s?\b[^.]{0,40}\bissue`).MatchString(sentence) && !regexp.MustCompile(`(?i)\b(no|not|never|without)\b[^.]{0,30}\b(create|open|invent)|\b(create|open|invent)s?\s+(no|not)\b`).MatchString(sentence) {
+			t.Errorf("%s asks work with no Linear issue to create one: %q", file, sentence)
 		}
 	}
 	if !strings.Contains(flat(splitRead(t, "plugins/crw/skills/crw-pabcd/references/phase-control.md")), "linear-holds-canonical-documents") {
@@ -188,6 +217,29 @@ func TestRefactorHasNoWriteProcedure(t *testing.T) {
 	if handoff := flat(sectionOf(skill, "Hand a selected candidate to the project path")); !strings.Contains(handoff, "](../crw-add-issue/SKILL.md)") || !strings.Contains(handoff, "crw-run") {
 		t.Errorf("%s has no section that hands a selected candidate to crw-add-issue and the project path through crw-run", refactorSkillFile)
 	}
+	// The callers of crw-add-issue are the project orchestrator, which registers, the initiative lead, which hands a drafted
+	// body to it, and the user. A manager (or initiative lead) selecting a repair is therefore not a registrant: the handoff
+	// must route the drafted issue to the orchestrator of the project that owns the code.
+	callers := flat(sectionOf(splitRead(t, "plugins/crw/skills/crw-add-issue/SKILL.md"), "Who calls"))
+	if !regexp.MustCompile(`(?i)project orchestrator[^.]*regist`).MatchString(callers) {
+		t.Fatal("crw-add-issue no longer names the project orchestrator as its registering caller; revisit this check")
+	}
+	handoff := flat(sectionOf(skill, "Hand a selected candidate to the project path"))
+	routed := false
+	for _, s := range strings.SplitAfter(handoff, ". ") {
+		lower := strings.ToLower(s)
+		if !strings.Contains(lower, "manager") && !strings.Contains(lower, "initiative lead") {
+			continue
+		}
+		if !strings.Contains(lower, "orchestrator") || !regexp.MustCompile(`regist|hand`).MatchString(lower) {
+			t.Errorf("%s: a sentence puts the manager or initiative lead on crw-add-issue without the project orchestrator that registers the issue: %q", refactorSkillFile, s)
+			continue
+		}
+		routed = true
+	}
+	if !routed {
+		t.Errorf("%s does not hand the drafted issue of a manager-origin repair to the project's orchestrator", refactorSkillFile)
+	}
 	for _, gone := range []string{"direct implementation owner", "explicitly chosen by the user"} {
 		if strings.Contains(flat(record), gone) {
 			t.Errorf("%s still names an in-skill execution owner (%q)", refactorRecordFile, gone)
@@ -226,14 +278,32 @@ func TestTidyJobsSeparated(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"initiative lead for an initiative body",
-		"project orchestrator for a project or issue body",
-		"manager for a store-wide sweep",
+		"initiative lead",
+		"project orchestrator",
+		"manager",
 		"Read the record again immediately before the write",
 	} {
 		if !strings.Contains(supplement, want) {
 			t.Errorf("the Supplement section lacks %q", want)
 		}
+	}
+	// hierarchy.md gives each Linear body to one level and the manager only the store seat, so the manager's store-wide
+	// sweep is requested through crw manage and sends every supplement to the owner of its body; it writes no other
+	// level's record itself.
+	hierarchy := flat(splitRead(t, "plugins/crw/skills/crw-canon/references/hierarchy.md"))
+	if !strings.Contains(hierarchy, "the initiative, project and issue records belong to the levels below it") {
+		t.Fatal("hierarchy.md no longer keeps the initiative, project and issue records below the manager; revisit this check")
+	}
+	managerBullet := ""
+	for _, line := range strings.Split(sectionOf(skill, "Supplement"), "\n") {
+		if strings.HasPrefix(line, "- ") && strings.Contains(line, "manager") {
+			managerBullet = flat(line)
+		}
+	}
+	if managerBullet == "" {
+		t.Error("the Supplement section does not say what the manager's store-wide sweep does")
+	} else if !strings.Contains(managerBullet, "crw manage") || !strings.Contains(managerBullet, "owner") || !regexp.MustCompile(`send|hand|route`).MatchString(managerBullet) || regexp.MustCompile(`(?i)\bthe manager for\b`).MatchString(managerBullet) {
+		t.Errorf("the manager's store-wide sweep is not routed through crw manage to the owner of each body: %q", managerBullet)
 	}
 	// The write order, the read-back and the authority rule are Supplement's, so they appear once, there.
 	if got := strings.Count(flat(skill), "Read the record again immediately before the write"); got != 1 {

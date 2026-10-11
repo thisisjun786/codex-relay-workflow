@@ -10,7 +10,7 @@ Compare Linear records against the rules already agreed for writing and managing
 | Job | Who runs it | Writes |
 |---|---|---|
 | [Diagnose](#diagnose) | any actor | nothing |
-| [Supplement](#supplement) | only the owner of the body being written | the one field being supplemented |
+| [Supplement](#supplement) | the owner of the body being written; the manager's store-wide sweep sends each supplement to its owner | the one field being supplemented, in the owner's own record |
 
 A request to check, review or diagnose stays at the first job. A request to find and tidy also carries the second, for the bodies the caller owns, without asking again for each clear gap.
 
@@ -52,7 +52,7 @@ Supplement writes, and only the owner of the body being written runs it, under t
 
 - the initiative lead for an initiative body;
 - the project orchestrator for a project or issue body (an issue child returns its proposal to it);
-- the manager for a store-wide sweep, which is requested through `crw manage`.
+- the manager runs a store-wide sweep, which is requested through `crw manage`: the manager holds the store seat and no Linear body, so it sends each supplement to the owner of that body through `crw manage` and writes none itself. A body with no owner bound stays a proposal in the sweep report for Jun.
 
 Any other actor that finds a gap hands the owner the proposal Diagnose produced, carrying the passage it proposes, and writes nothing, as [record writes and returned proposals](../crw-canon/references/linear-model.md#record-writes-and-returned-proposals) says.
 
