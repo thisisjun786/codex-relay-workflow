@@ -56,6 +56,10 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 	if dispatchIs(b["action"], "report") && (dispatchIs(b["outcome"], "failed") || dispatchIs(b["outcome"], "task_failed")) {
 		gate := dispatchHandoffGate(ctx, env, h)
 		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+			b, err := createdBindAgentPath(ctx, env, d, b)
+			if err != nil {
+				return DispatchResult{}, err
+			}
 			r, err := dispatchReport(d, b, gate)
 			if err == nil && dispatchIs(d.Status, "stopped") {
 				r = dispatchPolicyStopCleanup(d, r)
@@ -64,7 +68,7 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 		})
 	}
 	if dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "complete") {
-		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, createdCheckComplete)
+		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, createdCheckComplete(ctx, env))
 	}
 	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "created") {
 		return RunDispatch(cwd, input, env)
@@ -82,6 +86,10 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 	return func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error) {
 		a := &d.Attempts[len(d.Attempts)-1]
 		issued, tool, prior := a.SpawnIssued, a.ToolUseID, a.Receipt
+		b, err := createdBindAgentPath(ctx, env, d, b)
+		if err != nil {
+			return DispatchResult{}, err
+		}
 		if _, err := dispatchReport(d, b, nil); err != nil {
 			return DispatchResult{}, err
 		}
@@ -128,7 +136,7 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		}
 		correlation := "unissued"
 		if issued {
-			if correlation, err = createdCheckTie(ctx, env, d, a, agent, native.FirstMessage); err != nil {
+			if correlation, err = createdCheckTie(ctx, env, d, a, agent, native); err != nil {
 				return DispatchResult{}, err
 			}
 		}
@@ -172,8 +180,10 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 // use id in the parent's rollout (createdCheckSpawnResult): naming this child ties it ("spawn-result"); a failed call or one
 // that returned another child refuses the report; no readable result leaves the child "unverified", which cannot satisfy an
 // independent review.
-func createdCheckTie(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, agent, first string) (string, error) {
-	if first != "" {
+func createdCheckTie(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, agent string, native createdCheckIdentity) (string, error) {
+	// A child forked from this session starts with a copy of its history, so its first user message is the parent's and carries
+	// no marker of this attempt; only the host's result of the issued call (below) ties such a child (CRW-1260).
+	if first := native.FirstMessage; first != "" && createdForkedFrom(ctx, native.RolloutPath) != d.SessionID {
 		if !managedSpawnCarries(first, d.ID, a.ID) {
 			return "", errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
 		}
@@ -270,13 +280,19 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 
 // createdCheckComplete is the complete report at the checked boundary: an independent review is complete only through a child
 // tied to its issued spawn (receipt correlation spawn-result). Every other check is the ledger's.
-func createdCheckComplete(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
-	a := d.Attempts[len(d.Attempts)-1]
-	if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "spawn-result") {
-		return DispatchResult{}, errors.New("this child is not tied to its issued spawn, so it cannot satisfy independent review; " +
-			"report created again once the host shows the issued spawn's result, or close it with outcome stopped")
+func createdCheckComplete(ctx context.Context, env host.LookupEnv) dispatchReporter {
+	return func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+		a := d.Attempts[len(d.Attempts)-1]
+		if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "spawn-result") {
+			return DispatchResult{}, errors.New("this child is not tied to its issued spawn, so it cannot satisfy independent review; " +
+				"report created again once the host shows the issued spawn's result, or close it with outcome stopped")
+		}
+		b, err := createdBindAgentPath(ctx, env, d, b)
+		if err != nil {
+			return DispatchResult{}, err
+		}
+		return dispatchReport(d, b, nil)
 	}
-	return dispatchReport(d, b, nil)
 }
 
 // dispatchPolicyStopCleanup marks the outstanding cleanup of a child a policy stop left recorded: the dispatch is stopped by
@@ -473,6 +489,9 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	cleanup := dispatchIs(d.Status, "stopped") && a.AgentID != nil && !createdCheckClosed(&d, len(d.Attempts)-1)
 	if !dispatchIs(d.Status, "active") && !cleanup {
 		return dispatchResult(&d, nil, ""), nil
+	}
+	if b, err = createdBindAgentPath(ctx, env, &d, b); err != nil {
+		return DispatchResult{}, err
 	}
 	if !dispatchIs(b["executionState"], "stopped") || a.AgentID == nil || !dispatchIs(b["agentId"], *a.AgentID) {
 		return DispatchResult{}, errors.New("recorded child must be stopped and identified")
