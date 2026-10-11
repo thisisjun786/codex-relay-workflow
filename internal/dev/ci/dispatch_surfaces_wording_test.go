@@ -178,3 +178,35 @@ func TestDispatchSurfaces_WorkerEvidenceNamesTheLocationTheGateReads(t *testing.
 		}
 	}
 }
+
+// CRW-1257 (real-environment trial r1, S5-s6): "the main session uses dispatch before its first native call" read as a ban, and a model
+// refused the user's explicit "native, no dispatch" request that the spawn hook allows. The section makes dispatch the default and says in
+// one paragraph what the hook does with a direct spawn; the SessionStart notice carries the same rule (internal/role).
+func TestDispatchSurfaces_ConfiguredFallbackIsTheDefaultNotAProhibition(t *testing.T) {
+	text := readSkillText(t, "plugins/crw/skills/crw-pabcd/references/delegation.md")
+	i := strings.Index(text, "## Configured first fallback")
+	if i < 0 {
+		t.Fatal("no Configured first fallback section")
+	}
+	section := text[i:]
+	if j := strings.Index(section[3:], " ## "); j >= 0 {
+		section = section[:j+3]
+	}
+	for _, want := range []string{
+		"Dispatch is the default procedure, not a prohibition.",
+		"explicitly asks for a direct native spawn",
+		"for any role (explorer, executor, reviewer or architect)",
+		"the spawn hook allows it and marks it unmanaged",
+		"This direct spawn is not managed by first-fallback tracking",
+		"an unmanaged spawn creates no managed receipt",
+		"Do not refuse such a request",
+		"it removes no capability",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Configured first fallback section lacks %q", want)
+		}
+	}
+	if strings.Contains(section, "before its first native call.") {
+		t.Error("the section still states the dispatch rule as an unqualified precondition of the first native call")
+	}
+}
