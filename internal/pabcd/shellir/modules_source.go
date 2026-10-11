@@ -29,7 +29,7 @@ var (
 		`|\b(os|shutil|posix|pathlib)\s*\.\s*(copy|move|rename|renames|replace|link|symlink|extract|open)\b` +
 		`|\bfrom\s+(shutil|os|posix)\s+import\s*\(|\bfrom\s+(shutil|os|posix)\s+import\s+[^\n]*\b(copy|move|rename|renames|replace|link|symlink)\b` +
 		`|\bopen\s*\([^)]*["'][rbtU]*[wax+][a-z+]*["']`)
-	reGetattrCall = regexp.MustCompile(`\b(getattr|setattr|delattr|vars)\s*\(\s*([A-Za-z_][A-Za-z_0-9]*)\b`)
+	reGetattrCall = regexp.MustCompile(`\b(getattr|setattr|delattr|vars)\s*\(\s*(?:\(\s*)*([A-Za-z_][A-Za-z_0-9]*)\b`)
 )
 
 // moduleSourceRefusal is "" for a source whose imports stay in the inventory, else what the source does, in a few words.
@@ -43,6 +43,9 @@ func moduleSourceRefusal(src string) string {
 	if lexed.nonASCIICode {
 		return "uses a name with non-ASCII characters outside a string, which Python folds to other names (sys can be written as another spelling)"
 	}
+	if lexed.fUnsure {
+		return "holds an f-string the reader does not split (a comment in a replacement field, or a backslash before a brace or N)"
+	}
 	if m := reAttrSys.FindString(lexed.code); m != "" {
 		return "reaches sys as an attribute of another module (" + strings.Join(strings.Fields(m), "") + "), which is sys.path by another name"
 	}
@@ -55,13 +58,17 @@ func moduleSourceRefusal(src string) string {
 	return ""
 }
 
+// reAttrAfter is what may stand between a name and the dot of an attribute of the object a bracket around it gives: (sys), ((sys)),
+// (s := sys), (sys or x), [sys][0], (sys, x)[0], {'k': sys}['k'] (CRW-1187). The name with no bracket after it is the plain s.path.
+const reAttrAfter = `(?:[^()\[\]{}]*[)\]}]|\s*\[[^\[\]\n]*\])*\s*\.\s*`
+
 // reAttrSys: a name sys that is an attribute (os.sys, a.b.sys): the module sys under another module's name.
 var reAttrSys = regexp.MustCompile(`\.\s*sys\b`)
 
 // moduleSourceRefusalOf is the scans of moduleSourceRefusal on one text, with the statements of the source.
 func moduleSourceRefusalOf(src string, stmts []string) string {
 	// aliases maps each name the source gives to sys, importlib or builtins to the module (import sys as s, import importlib).
-	aliases := map[string]string{"sys": "sys", "importlib": "importlib", "builtins": "builtins"}
+	aliases := map[string]string{"sys": "sys", "importlib": "importlib", "builtins": "builtins", "__builtins__": "builtins"}
 	for _, stmt := range stmts {
 		if what := pyImportStatement(stmt, aliases); what != "" {
 			return what
@@ -71,19 +78,19 @@ func moduleSourceRefusalOf(src string, stmts []string) string {
 		qa := regexp.QuoteMeta(a)
 		switch mod {
 		case "sys":
-			if m := regexp.MustCompile(`\b` + qa + `\s*\.\s*(` + importSysAttrs + `)\b`).FindStringSubmatch(src); m != nil {
+			if m := regexp.MustCompile(`\b` + qa + reAttrAfter + `(` + importSysAttrs + `)\b`).FindStringSubmatch(src); m != nil {
 				if m[1] == "__dict__" {
 					return "reads the namespace of sys (" + a + ".__dict__)"
 				}
 				return "uses sys." + m[1] + " (as " + a + "." + m[1] + ")"
 			}
 		case "importlib", "builtins":
-			if m := regexp.MustCompile(`\b` + qa + `\s*\.\s*__dict__\b`).FindString(src); m != "" {
+			if m := regexp.MustCompile(`\b` + qa + reAttrAfter + `__dict__\b`).FindString(src); m != "" {
 				return "reads the namespace of " + mod + " (" + a + ".__dict__)"
 			}
 		}
 		if mod == "importlib" {
-			for _, m := range regexp.MustCompile(`\b`+qa+`\s*\.\s*([A-Za-z_]\w*)`).FindAllStringSubmatch(src, -1) {
+			for _, m := range regexp.MustCompile(`\b`+qa+reAttrAfter+`([A-Za-z_]\w*)`).FindAllStringSubmatch(src, -1) {
 				if !importlibPlainAttrs[m[1]] {
 					return "uses importlib." + m[1] + " (as " + a + "." + m[1] + ")"
 				}
@@ -95,7 +102,7 @@ func moduleSourceRefusalOf(src string, stmts []string) string {
 			return "reads " + mod + " by name (" + m[1] + "(" + m[2] + ", ...))"
 		}
 	}
-	if what := dynamicImportCall(src, aliases); what != "" {
+	if what := dynamicImportCall(src, stmts, aliases); what != "" {
 		return what
 	}
 	if m := reLoaderPaths.FindString(src); m != "" {
@@ -127,135 +134,278 @@ type pyLexed struct {
 	stmts []string
 	// view is the source without its comments, with each explicit line join (a backslash before a line end) read as one space.
 	view string
-	// code is view with the text of every string that is not an f-string blanked (an f-string holds expressions): what a name or an
-	// attribute in code is matched against, so that a word in a string (a mock.patch target) is not taken for a use of it.
+	// code is view with the text of every string that is not an f-string (or a t-string) blanked: an f-string holds expressions, and
+	// it is kept whole. What a name or an attribute in code is matched against, so that a word in a string (a mock.patch target) is not
+	// taken for a use of it.
 	code string
-	// nonASCIICode is whether a character outside ASCII stands in code (outside a string and a comment).
+	// nonASCIICode is whether a character outside ASCII stands in code: outside a string and a comment, or in the expression of a
+	// replacement field of an f-string.
 	nonASCIICode bool
+	// fUnsure is whether an f-string holds a form whose split the reader does not follow: a comment in a replacement field, or a
+	// backslash before a brace or before N (\N{...} is an escape in one string and a replacement field in a raw one).
+	fUnsure bool
+}
+
+// pyLexer is the state of pyLex.
+type pyLexer struct {
+	src             string
+	i               int
+	view, cur, code strings.Builder
+	out             pyLexed
+}
+
+// put writes a byte of code (or a byte of an f-string, which is kept whole) to the statement and both views.
+func (l *pyLexer) put(b byte) {
+	l.view.WriteByte(b)
+	l.cur.WriteByte(b)
+	l.code.WriteByte(b)
+}
+
+// putString writes a byte of a string: the statement and the view keep it, the code view keeps it only for an f-string.
+func (l *pyLexer) putString(b byte, keep bool) {
+	l.view.WriteByte(b)
+	l.cur.WriteByte(b)
+	if keep || b == '\n' {
+		l.code.WriteByte(b)
+	} else {
+		l.code.WriteByte(' ')
+	}
+}
+
+// pyStringPrefixes are the prefixes of a string literal, lower case; f and t make it a string with replacement fields.
+var pyStringPrefixes = map[string]bool{"": true, "r": true, "u": true, "b": true, "br": true, "rb": true, "f": true, "fr": true, "rf": true, "t": true, "tr": true, "rt": true}
+
+// stringPrefix is the prefix of the string whose quote is at i, lower case: the whole name before the quote when it is a string prefix,
+// else "" (a name such as if or else before a quote is a keyword, and the string has no prefix).
+func stringPrefix(src string, i int) string {
+	j := i
+	for j > 0 && (isPyLetter(src[j-1]) || src[j-1] >= '0' && src[j-1] <= '9' || src[j-1] == '_' || src[j-1] >= 0x80) {
+		j--
+	}
+	p := strings.ToLower(src[j:i])
+	if pyStringPrefixes[p] {
+		return p
+	}
+	return ""
+}
+
+// closes is whether the string of quote (triple or not) ends at l.i.
+func (l *pyLexer) closes(quote byte, triple bool) bool {
+	s, i := l.src, l.i
+	if s[i] != quote {
+		return false
+	}
+	return !triple || (i+2 < len(s) && s[i+1] == quote && s[i+2] == quote)
+}
+
+// str reads the string whose quote is at l.i. inF: the string stands in a replacement field of an f-string, which is kept whole.
+func (l *pyLexer) str(inF bool) {
+	s, n := l.src, len(l.src)
+	quote := s[l.i]
+	prefix := stringPrefix(s, l.i)
+	fields := strings.ContainsAny(prefix, "ft")
+	triple := l.i+2 < n && s[l.i+1] == quote && s[l.i+2] == quote
+	width := 1
+	if triple {
+		width = 3
+	}
+	for k := 0; k < width; k++ {
+		l.put(quote)
+	}
+	l.i += width
+	if fields {
+		l.fLiteral(quote, triple, true)
+		return
+	}
+	keep := inF
+	for l.i < n {
+		d := s[l.i]
+		if d == '\\' && l.i+1 < n {
+			l.putString(d, keep)
+			l.putString(s[l.i+1], keep)
+			l.i += 2
+			continue
+		}
+		if l.closes(quote, triple) {
+			for k := 0; k < width; k++ {
+				l.put(quote)
+			}
+			l.i += width
+			return
+		}
+		if d == '\n' && !triple {
+			return // the interpreter refuses the source
+		}
+		l.putString(d, keep)
+		l.i++
+	}
+}
+
+// fLiteral reads the text of an f-string from l.i to its closing quote (top) or, in a format spec (top false), to the brace that ends
+// the replacement field the spec belongs to. A replacement field is read by fField (PEP 701: its expression may hold strings in any
+// quote, the quote of the f-string too).
+func (l *pyLexer) fLiteral(quote byte, triple, top bool) {
+	s, n := l.src, len(l.src)
+	width := 1
+	if triple {
+		width = 3
+	}
+	for l.i < n {
+		d := s[l.i]
+		switch {
+		case d == '\\' && l.i+1 < n:
+			if e := s[l.i+1]; e == '{' || e == '}' || e == 'N' {
+				l.out.fUnsure = true
+			}
+			l.put(d)
+			l.put(s[l.i+1])
+			l.i += 2
+		case l.closes(quote, triple):
+			if top {
+				for k := 0; k < width; k++ {
+					l.put(quote)
+				}
+				l.i += width
+			}
+			return // a spec that meets the quote leaves it to the literal around it (the interpreter refuses the source)
+		case d == '\n' && !triple:
+			return
+		case d == '{' && l.i+1 < n && s[l.i+1] == '{' && top:
+			l.put(d)
+			l.put(d)
+			l.i += 2
+		case d == '{':
+			l.put(d)
+			l.i++
+			l.fField(quote, triple)
+		case d == '}' && !top:
+			l.put(d)
+			l.i++
+			return
+		default:
+			l.put(d)
+			l.i++
+		}
+	}
+}
+
+// fField reads the expression of a replacement field from l.i to the brace that ends it, with its format spec.
+func (l *pyLexer) fField(quote byte, triple bool) {
+	s, n := l.src, len(l.src)
+	depth := 0
+	for l.i < n {
+		d := s[l.i]
+		switch {
+		case d == '\'' || d == '"':
+			l.str(true)
+		case d == '#':
+			l.out.fUnsure = true
+			l.put(d)
+			l.i++
+		case d == '(' || d == '[' || d == '{':
+			depth++
+			l.put(d)
+			l.i++
+		case (d == ')' || d == ']') && depth > 0:
+			depth--
+			l.put(d)
+			l.i++
+		case d == '}':
+			l.put(d)
+			l.i++
+			if depth == 0 {
+				return
+			}
+			depth--
+		case d == ':' && depth == 0:
+			l.put(d)
+			l.i++
+			l.fLiteral(quote, triple, false)
+			return
+		default:
+			if d >= 0x80 {
+				l.out.nonASCIICode = true
+			}
+			l.put(d)
+			l.i++
+		}
+	}
 }
 
 // pyLex reads a Python source: strings (single, double and triple quoted, with any prefix, a backslash keeping the next character in
-// the string, as in raw strings too), comments, explicit line joins, brackets. A single-quoted string that meets a line end ends
-// there (the interpreter refuses such a source, and nothing runs). It does not parse Python: an unbalanced source gives statements that
-// are cut where a bracket count says, and that only moves where an import statement is seen; the scans read the whole text as well.
+// the string, as in raw strings too; f-strings and t-strings with their replacement fields), comments, explicit line joins, brackets. A
+// single-quoted string that meets a line end ends there (the interpreter refuses such a source, and nothing runs). It does not parse
+// Python: an unbalanced source gives statements that are cut where a bracket count says, and that only moves where an import statement
+// is seen; the scans read the whole text as well.
 func pyLex(src string) pyLexed {
-	var out pyLexed
-	var view, cur, code strings.Builder
+	l := &pyLexer{src: src}
 	depth := 0
 	flush := func() {
-		if s := strings.TrimSpace(cur.String()); s != "" {
-			out.stmts = append(out.stmts, s)
+		if s := strings.TrimSpace(l.cur.String()); s != "" {
+			l.out.stmts = append(l.out.stmts, s)
 		}
-		cur.Reset()
-	}
-	put := func(b byte) {
-		view.WriteByte(b)
-		cur.WriteByte(b)
-		code.WriteByte(b)
-	}
-	// putString writes a byte of a string: the statement and the view keep it, the code view keeps it only for an f-string.
-	putString := func(b byte, keep bool) {
-		view.WriteByte(b)
-		cur.WriteByte(b)
-		if keep || b == '\n' {
-			code.WriteByte(b)
-		} else {
-			code.WriteByte(' ')
-		}
+		l.cur.Reset()
 	}
 	n := len(src)
-	i := 0
 	if strings.HasPrefix(src, "\xef\xbb\xbf") {
-		i = 3 // a byte order mark is no name
+		l.i = 3 // a byte order mark is no name
 	}
-	for i < n {
-		c := src[i]
+	for l.i < n {
+		c := src[l.i]
 		switch {
 		case c == '#':
-			for i < n && src[i] != '\n' {
-				i++
+			for l.i < n && src[l.i] != '\n' {
+				l.i++
 			}
-		case c == '\\' && i+1 < n && (src[i+1] == '\n' || (src[i+1] == '\r' && i+2 < n && src[i+2] == '\n')):
-			if src[i+1] == '\r' {
-				i++
+		case c == '\\' && l.i+1 < n && (src[l.i+1] == '\n' || (src[l.i+1] == '\r' && l.i+2 < n && src[l.i+2] == '\n')):
+			if src[l.i+1] == '\r' {
+				l.i++
 			}
-			i += 2
-			put(' ')
+			l.i += 2
+			l.put(' ')
 		case c == '\'' || c == '"':
-			quote := c
-			// An f-prefix (rf, fr, f) makes the text of the string code that is evaluated: the code view keeps it.
-			keep := (i > 0 && (src[i-1] == 'f' || src[i-1] == 'F')) || (i > 1 && (src[i-2] == 'f' || src[i-2] == 'F') && isPyLetter(src[i-1]))
-			triple := i+2 < n && src[i+1] == quote && src[i+2] == quote
-			width := 1
-			if triple {
-				width = 3
-			}
-			for k := 0; k < width; k++ {
-				put(quote)
-			}
-			i += width
-			for i < n {
-				d := src[i]
-				if d == '\\' && i+1 < n {
-					putString(d, keep)
-					putString(src[i+1], keep)
-					i += 2
-					continue
-				}
-				if d == quote && (!triple || (i+2 < n && src[i+1] == quote && src[i+2] == quote)) {
-					for k := 0; k < width; k++ {
-						put(quote)
-					}
-					i += width
-					break
-				}
-				if d == '\n' && !triple {
-					break
-				}
-				putString(d, keep)
-				i++
-			}
+			l.str(false)
 		case c == '(' || c == '[' || c == '{':
 			depth++
-			put(c)
-			i++
+			l.put(c)
+			l.i++
 		case c == ')' || c == ']' || c == '}':
 			if depth > 0 {
 				depth--
 			}
-			put(c)
-			i++
+			l.put(c)
+			l.i++
 		case c == '\n':
-			view.WriteByte(c)
-			code.WriteByte(c)
+			l.view.WriteByte(c)
+			l.code.WriteByte(c)
 			if depth == 0 {
 				flush()
 			} else {
-				cur.WriteByte(' ')
+				l.cur.WriteByte(' ')
 			}
-			i++
+			l.i++
 		case c == ';' && depth == 0:
-			view.WriteByte(c)
-			code.WriteByte(c)
+			l.view.WriteByte(c)
+			l.code.WriteByte(c)
 			flush()
-			i++
-		case c == ':' && depth == 0 && !(i+1 < n && src[i+1] == '='):
-			view.WriteByte(c)
-			code.WriteByte(c)
+			l.i++
+		case c == ':' && depth == 0 && !(l.i+1 < n && src[l.i+1] == '='):
+			l.view.WriteByte(c)
+			l.code.WriteByte(c)
 			flush()
-			i++
+			l.i++
 		default:
 			if c >= 0x80 {
-				out.nonASCIICode = true
+				l.out.nonASCIICode = true
 			}
-			put(c)
-			i++
+			l.put(c)
+			l.i++
 		}
 	}
 	flush()
-	out.view = view.String()
-	out.code = code.String()
-	return out
+	l.out.view = l.view.String()
+	l.out.code = l.code.String()
+	return l.out
 }
 
 // isPyLetter is whether a byte can be part of a string prefix.
@@ -271,9 +421,10 @@ var (
 )
 
 // dynamicImportCall refuses __import__ and import_module (and the names the source gives them) with anything but one plain module name: a
-// name built at run time can be sys, importlib or a module found outside the inventory by a path the source set up. A name that is only
-// imported or listed in an import statement is no call.
-func dynamicImportCall(src string, aliases map[string]string) string {
+// name built at run time can be sys, importlib or a module found outside the inventory by a path the source set up. A name that is not
+// called stands only in an import statement ((__import__)(...), [__import__][0](...) and an argument are references that are called
+// elsewhere).
+func dynamicImportCall(src string, stmts []string, aliases map[string]string) string {
 	names := []string{"__import__", "import_module"}
 	for a, mod := range aliases {
 		if mod == "importfn" {
@@ -285,21 +436,30 @@ func dynamicImportCall(src string, aliases map[string]string) string {
 	}
 	re := regexp.MustCompile(`\b(` + strings.Join(names, "|") + `)\b`)
 	for _, loc := range re.FindAllStringIndex(src, -1) {
-		name := src[loc[0]:loc[1]]
 		rest := src[loc[1]:]
-		if strings.HasPrefix(strings.TrimLeft(rest, " \t"), "(") {
-			if !reSimpleCall.MatchString(rest) {
-				return "imports a module by a name built at run time (" + name + ")"
-			}
+		if strings.HasPrefix(strings.TrimLeft(rest, " \t"), "(") && !reSimpleCall.MatchString(rest) {
+			return "imports a module by a name built at run time (" + src[loc[0]:loc[1]] + ")"
+		}
+	}
+	for _, stmt := range stmts {
+		if reImportStmt.MatchString(stmt) {
 			continue
 		}
-		prev := strings.TrimRight(src[:loc[0]], " \t\r\n")
-		if !strings.HasSuffix(prev, "import") && !strings.HasSuffix(prev, " as") && !strings.HasSuffix(prev, ",") && !strings.HasSuffix(prev, "(") && !strings.HasSuffix(prev, "\\") {
-			return "refers to " + name + " other than in an import statement"
+		for _, loc := range re.FindAllStringIndex(stmt, -1) {
+			if !strings.HasPrefix(strings.TrimLeft(stmt[loc[1]:], " \t"), "(") {
+				return "refers to " + stmt[loc[0]:loc[1]] + " other than in an import statement"
+			}
 		}
 	}
 	return ""
 }
+
+// reImportStmt is a whole import statement as pyLex gives it: import a, b as c / from a.b import (c, d as e).
+var reImportStmt = regexp.MustCompile(`^(?:import\s+[\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*\s*,?|from\s+\.*[\w.]*\s+import\s+(?:\(\s*)?[\w\s,*]*(?:\)\s*)?)$`)
+
+// builtinsByName are the builtins that reach an attribute or a namespace by a name given at run time: under another name, the scans for
+// them do not see the call.
+var builtinsByName = map[string]bool{"getattr": true, "setattr": true, "delattr": true, "vars": true, "globals": true, "locals": true, "eval": true, "exec": true, "compile": true}
 
 var sysCodeNames = map[string]bool{"path": true, "pycache_prefix": true, "meta_path": true, "path_hooks": true, "path_importer_cache": true, "__dict__": true}
 
@@ -354,8 +514,17 @@ func pyImportStatement(stmt string, aliases map[string]string) string {
 				if n[0] == "machinery" || n[0] == "util" || n[0] == "*" {
 					return "imports importlib." + n[0]
 				}
-				if n[0] == "import_module" && len(n) == 3 && n[1] == "as" {
+				if (n[0] == "import_module" || n[0] == "__import__") && len(n) == 3 && n[1] == "as" {
 					aliases[n[2]] = "importfn"
+				}
+			}
+		case mod == "builtins":
+			for _, n := range names {
+				if n[0] == "__import__" && len(n) == 3 && n[1] == "as" {
+					aliases[n[2]] = "importfn"
+				}
+				if builtinsByName[n[0]] && len(n) == 3 && n[1] == "as" {
+					return "imports builtins." + n[0] + " under another name (" + n[2] + ")"
 				}
 			}
 		case mod == "sys":
