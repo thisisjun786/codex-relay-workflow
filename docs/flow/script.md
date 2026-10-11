@@ -326,13 +326,14 @@ it opens after that stops it for good: no position, journal row or host request 
 
 ## Journal
 
-The journal is in memory in this build; the store persistence arrives with the flow journal tables. Each call journals the
+`crw flow run` keeps the journal in memory; a run that must survive its process writes it to the relay store's flow tables
+([journal.md](journal.md) says how, and what a worktree proof reads from it). Each call journals the
 rows `prepared` (written before anything is sent, with the role, pair, node, `stepDecision` and, for a continuation, the
 thread it continues and what it inherited), `thread_requested`, `thread_started`, `turn_requested`, `turn_started` and one
 terminal row (`completed`, `null_model`, `held`, `refused`, `outcome_unknown` or `superseded`). A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
-classified. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
+classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
 the path and digest of the execution policy file.
 
 A backend that places calls adds to a call's rows: the `allocation` member of `prepared` (below), `fork_requested` and
@@ -399,13 +400,19 @@ exact-prefix fork, a closed connection with the grace passed, or for a turn no m
 sighting of a closed connection when it does not hold. `--adopt` names the thread (at the call's cwd, a root thread of the
 backend's source - the `appServer` source reconcile lists by - for a fork a fork of the recorded source) or the turn (on the
 call's thread, carrying the call's marker when it has one) that is the call's, and records that an operator chose it; the chosen
-turn is written as a `turn_started` row (`replaces` names the turn the call had recorded), so the next resume follows it. The command needs the run's journal; this build keeps the
-journal in memory, so no process can open another's and the command says so until the journal is stored.
+turn is written as a `turn_started` row (`replaces` names the turn the call had recorded), so the next resume follows it. The command works on the run's stored journal and its host: the binary opens the relay store (`--state DIR`, else
+`CODEX_SESSION_RELAY_STATE`, else the relay's discovery for the control socket) and connects to the App Server control socket
+(`--socket PATH`, else the default one); `--run RUN` names the run, and without it the run that holds the call is used. A store
+that does not exist is an error, never a new store.
 
 A new attempt starts after the turn of the attempt it replaces has ended: a call the previous process left running on the node
 (one whose position the resumed script has not taken over) is interrupted with `turn/interrupt`, the interruption is confirmed with `thread/read`, and only then is its call ended
 `superseded` (reason `superseded_by_attempt`) and the new thread started. A turn that cannot be confirmed interrupted holds the
-new call.
+new call. A call is either taken over by its position of the resumed script or ended superseded by a new attempt, never both:
+the two decisions are made under one lock, the first stands, and a position that is reached after its call was superseded runs
+as a call of its own (the same call id, a new `prepared` row), so a call has one terminal row for each attempt. A new attempt
+keeps the call id of its position and so its `<call_id>/t<k>` operation marker; one thread never receives a marker twice, and
+two threads that carry the same marker are two attempts.
 
 A run resumes a journal with `Config.Resume` (`ResumeOptions` set the grace and polling timings of the reconcile pass). The
 pass runs before the script, a call the journal ended `completed`, `null_model`, `refused` or `outcome_unknown` with the same

@@ -13,6 +13,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -212,7 +214,12 @@ func modes() []mode {
 		}},
 		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"map", false, runRepoMap},
-		{"flow", false, func(c invocation) int { return lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr) }},
+		{"flow", false, func(c invocation) int {
+			// The engine names no store and no network client: the binary installs what `crw flow recover` works on, the
+			// relay store the run's journal is persisted in and the App Server connection of its host.
+			engine.RecoverEnv = journal.RecoverEnv
+			return lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
+		}},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
 		{"version", true, showVersion}, {"--version", false, showVersion},
 	}

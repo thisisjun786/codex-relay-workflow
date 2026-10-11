@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
 // GitFunc runs one git command with `git -C dir args...` and returns its trimmed standard output. The allocator
@@ -60,104 +61,12 @@ var identity = []string{
 	"GIT_COMMITTER_NAME=crw-flow", "GIT_COMMITTER_EMAIL=crw-flow@localhost",
 }
 
-// Snapshot is the working snapshot of a worktree: the tree object id of every file the worktree holds that git does not
-// ignore (tracked, modified and untracked), computed in a throwaway index so the worktree's own index and HEAD are
-// untouched. Two worktrees with the same files have the same snapshot, whatever their HEAD.
+// Snapshot is the working snapshot of a worktree (ops.Snapshot): the tree object id of every file the worktree holds that
+// git does not ignore (tracked, modified and untracked), computed in a private index that starts from HEAD, so the
+// worktree's own index and HEAD are untouched. Two worktrees with the same files have the same snapshot, whatever their HEAD.
+// The pending tree P of a call and the proofs that compare a worktree with it use this one function.
 func (a *Allocator) Snapshot(ctx context.Context, path string) (string, error) {
-	dir, err := os.MkdirTemp("", "crw-snapshot-")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(dir)
-	index := filepath.Join(dir, "index")
-	env := []string{"GIT_INDEX_FILE=" + index}
-	if err := a.seedIndex(ctx, path, index, env); err != nil {
-		return "", err
-	}
-	if err := a.clearIndexFlags(ctx, path, env); err != nil {
-		return "", err
-	}
-	if _, err := a.git(ctx, path, env, throwaway("add", "--all")...); err != nil {
-		return "", err
-	}
-	tree, err := a.git(ctx, path, env, throwaway("write-tree")...)
-	if err != nil {
-		return "", err
-	}
-	return tree, nil
-}
-
-// throwaway is a git command that runs against the throwaway index: it never writes a split index, so the copy is rewritten
-// whole into GIT_INDEX_FILE and no shared index file is added to the worktree's git directory.
-func throwaway(args ...string) []string {
-	return append([]string{"-c", "core.splitIndex=false"}, args...)
-}
-
-// seedIndex starts the throwaway index from the worktree's own index, so every tracked file stays in the snapshot even
-// when an ignore rule matches it (git add --all skips an ignored file only when it is untracked); clearIndexFlags then
-// takes off the flags that would hide a file's content. The copy keeps the original's modification time: git trusts an
-// entry whose stat matches its file unless the entry is as new as the index file, and a copy stamped with the time of the
-// copy would hide an edit made in the second the original was written. A worktree with no index
-// yet starts from its HEAD, and one with neither starts empty.
-func (a *Allocator) seedIndex(ctx context.Context, path, index string, env []string) error {
-	real, err := a.git(ctx, path, nil, "rev-parse", "--path-format=absolute", "--git-path", "index")
-	if err == nil {
-		if info, statErr := os.Stat(real); statErr == nil {
-			if data, readErr := os.ReadFile(real); readErr == nil {
-				if err := os.WriteFile(index, data, 0o600); err != nil {
-					return err
-				}
-				return os.Chtimes(index, info.ModTime(), info.ModTime())
-			}
-		}
-	}
-	if _, err := a.git(ctx, path, nil, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
-		return nil
-	}
-	_, err = a.git(ctx, path, env, throwaway("read-tree", "HEAD")...)
-	return err
-}
-
-// flagBatch bounds how many paths one update-index command names.
-const flagBatch = 500
-
-// clearIndexFlags clears, in the throwaway index, the per-entry flags the copy of the worktree's index carries over and
-// that make git add skip a file's content: assume-unchanged on every entry, and skip-worktree on every entry whose file is
-// in the worktree. A skip-worktree entry whose file is absent (a sparse checkout) keeps its flag and is held with its
-// index content; it is not a deletion. The worktree's own index keeps its flags.
-func (a *Allocator) clearIndexFlags(ctx context.Context, path string, env []string) error {
-	listing, err := a.git(ctx, path, env, throwaway("ls-files", "-v", "-z")...)
-	if err != nil {
-		return err
-	}
-	var assumed, skipped []string
-	for _, entry := range strings.Split(listing, "\x00") {
-		if len(entry) < 3 || entry[1] != ' ' {
-			continue
-		}
-		tag, name := entry[0], entry[2:]
-		if tag >= 'a' && tag <= 'z' {
-			assumed = append(assumed, name)
-		}
-		if tag == 'S' || tag == 's' {
-			if _, statErr := os.Lstat(filepath.Join(path, filepath.FromSlash(name))); statErr == nil {
-				skipped = append(skipped, name)
-			}
-		}
-	}
-	for _, set := range []struct {
-		flag  string
-		names []string
-	}{{"--no-assume-unchanged", assumed}, {"--no-skip-worktree", skipped}} {
-		for len(set.names) > 0 {
-			n := min(len(set.names), flagBatch)
-			if _, err := a.git(ctx, path, env, throwaway(append([]string{"update-index", set.flag, "--"}, set.names[:n]...)...)...); err != nil {
-				return err
-			}
-			set.names = set.names[n:]
-		}
-	}
-	return nil
+	return ops.Snapshot(ctx, ops.GitFunc(a.git), path)
 }
 
 // Head is the commit a worktree's HEAD is at, read from git.

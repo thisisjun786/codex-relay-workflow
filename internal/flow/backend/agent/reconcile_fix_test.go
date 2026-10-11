@@ -2,9 +2,11 @@ package agent_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -133,6 +135,133 @@ return r.length`)
 	if rows := e.rowsOf("old", engine.EvSuperseded); len(rows) != 1 || rows[0].Data["reason"] != engine.ReasonSupersededByAttempt {
 		t.Errorf("the old attempt's rows %v", kinds(e.rows("old")))
 	}
+	// the old attempt's turn and the new attempt's turn: two turn/start requests, one on each thread, none sent twice
+	e.expectOneTurnPerOperationOnEachThread(2)
+	if n := e.markerCount(calls(res)["new"].CallID + "/t1"); n != 1 {
+		t.Errorf("the new attempt's operation was sent %d times", n)
+	}
+	cancel()
+	select {
+	case <-dead:
+	case <-time.After(30 * time.Second):
+		t.Error("the first process's run did not end")
+	}
+}
+
+// expectOneTurnPerOperationOnEachThread is the count of the end condition: a new attempt keeps the call id of the position it
+// replaces and so its `<call_id>/t<k>` marker, which makes the marker alone unable to tell a resend from a new attempt; the
+// two are told apart by the thread. Every (thread, operation) pair received exactly one turn/start, and the host received
+// want turn/start requests in all.
+func (e *env) expectOneTurnPerOperationOnEachThread(want int) {
+	e.t.Helper()
+	seen := map[string]int{}
+	for _, r := range e.requests("turn/start") {
+		seen[fmt.Sprint(r.Params["threadId"])+" "+fmt.Sprint(r.Params["clientUserMessageId"])]++
+	}
+	for key, n := range seen {
+		if n != 1 {
+			e.t.Errorf("%d turn/start requests for thread+operation %q, want 1", n, key)
+		}
+	}
+	if got := e.count("turn/start"); got != want {
+		e.t.Errorf("%d turn/start requests, want %d (%v)", got, want, seen)
+	}
+}
+
+// The resumed script reaches the old position only after an await, while a parallel path starts a new attempt of the same node:
+// the new attempt ends the old call superseded (it interrupts the live turn first), and the position that comes later does not
+// pick the ended call up again. It runs as a call of its own, so the old call has one terminal row per attempt, no held row
+// follows the superseded one, and the work of the position is done.
+func TestSupersedeAndLateClaimGiveOneTerminalRow(t *testing.T) {
+	e := newEnv(t, withOwner("proc-1"))
+	e.useClock()
+	gate := make(chan struct{})
+	var hung atomic.Bool
+	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
+		switch {
+		case strings.Contains(r.Text, "first attempt") && hung.CompareAndSwap(false, true):
+			// only the first attempt's turn hangs: the position's later run on a thread of its own answers
+			return fakehost.TurnPlan{Hang: true, Detached: true}
+		case strings.Contains(r.Text, "plan v2"):
+			// the resumed path is held at its first call until the new attempt of the other path has superseded the old call
+			return fakehost.TurnPlan{Message: passMessage, Gate: gate}
+		}
+		return fakehost.TurnPlan{Message: passMessage}
+	})
+	started := make(chan struct{})
+	var once, openGate sync.Once
+	e.journal.onAfter(func(ev engine.Event) {
+		if ev.Kind != engine.KindCall {
+			return
+		}
+		if ev.Event == engine.EvTurnStarted && ev.Label == "old" {
+			once.Do(func() { close(started) })
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dead := make(chan *engine.Result, 1)
+	go func() {
+		dead <- e.runWith(ctx, `const r = await parallel([
+  async () => {
+    await agent.call('plan v1', { agentType: 'executor', node: 'n0', label: 'plan' })
+    return agent.call('first attempt', { agentType: 'executor', node: 'n1', label: 'old' })
+  },
+])
+return r.length`)
+	}()
+	select {
+	case <-started:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the first attempt's turn did not start")
+	}
+	e.journal.freeze()
+	e.thaw()
+	e.journal.onAfter(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvSuperseded {
+			openGate.Do(func() { close(gate) })
+		}
+	})
+	e.restart("proc-2")
+	firstThread := ""
+	for _, th := range e.threads.All() {
+		if len(th.Turns) > 0 && th.Turns[0].Status == "inProgress" {
+			firstThread = th.ID
+		}
+	}
+	if firstThread == "" {
+		t.Fatal("no thread has a running turn")
+	}
+	res := e.resumeRun(`const r = await parallel([
+  async () => {
+    await agent.call('plan v2', { agentType: 'executor', node: 'n0', label: 'plan' })
+    return agent.call('first attempt', { agentType: 'executor', node: 'n1', label: 'old' })
+  },
+  async () => agent.call('second attempt', { agentType: 'executor', node: 'n1', label: 'new' }),
+])
+return r.map((c) => c.status)`)
+	by := calls(res)
+	for _, label := range []string{"plan", "old", "new"} {
+		if by[label].Status != engine.StatusCompleted {
+			t.Errorf("%s: %s; rows %v", label, callStatus(by[label]), kinds(e.rows(label)))
+		}
+	}
+	// one terminal row per attempt of the old position: the superseded row of the first attempt, then the new attempt's own
+	var terminals []string
+	for _, r := range e.rows("old") {
+		switch r.Event {
+		case engine.EvCompleted, engine.EvNullModel, engine.EvHeld, engine.EvRefused, engine.EvOutcomeUnknown, engine.EvSuperseded:
+			terminals = append(terminals, r.Event)
+		}
+	}
+	if !slices.Equal(terminals, []string{engine.EvSuperseded, engine.EvCompleted}) {
+		t.Errorf("terminal rows of the old position %v, want [superseded completed]; rows %v", terminals, kinds(e.rows("old")))
+	}
+	if got := e.threads.Interrupts(); !slices.Equal(got, []string{firstThread}) {
+		t.Errorf("interrupted threads %v, want only the first attempt's [%s]", got, firstThread)
+	}
+	// plan v1, first attempt, plan v2, second attempt and the late position's own run: five turns, none sent twice to a thread
+	e.expectOneTurnPerOperationOnEachThread(5)
 	cancel()
 	select {
 	case <-dead:
