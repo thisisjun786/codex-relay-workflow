@@ -69,11 +69,26 @@ func renderVerdictSummary(r Relationship, event Row, verdict string, findings []
 	return strings.Join(lines, "\n")
 }
 
-// VerdictSync is the SyncHook record_verdict calls inside its transaction.
+// ownedByPlanSummary is whether the verdict of this relationship is projected to Linear by the plan's summary outbox (dagsched/outbox.go, docs/relay/dag-outbox.md) and so owes no sync_outbox row:
+// the store holds the summary outbox and a plan runs the relationship (the row of dag_node_executions every release, correction and replacement of a plan node leaves). A relationship that no plan runs
+// owes its verdict to the coordination document as it always did. A store without either table is a store without a plan.
+func ownedByPlanSummary(ctx context.Context, s *store.Store, relationshipID string) (bool, error) {
+	tables, err := one(ctx, s, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('dag_node_executions', 'dag_summary_outbox')")
+	if err != nil || tables.I("n") != 2 {
+		return false, err
+	}
+	bound, err := one(ctx, s, "SELECT 1 AS bound FROM dag_node_executions WHERE relationship_id = ? LIMIT 1", relationshipID)
+	return bound != nil, err
+}
+
+// VerdictSync is the SyncHook record_verdict calls inside its transaction. A relationship a DAG plan runs enqueues nothing: its verdict is a row of the plan's summary outbox (CRW-1216).
 func VerdictSync(s *store.Store, clock Clock) SyncHook {
 	return func(ctx context.Context, r Relationship, event Row, verdict string, findings []any, record Obj, digest any, ruling int64) error {
 		target, err := one(ctx, s, "SELECT * FROM sync_targets WHERE relationship_id = ? AND target = ?", r.ID, coordinationDocument)
 		if err != nil || target == nil {
+			return err
+		}
+		if owned, err := ownedByPlanSummary(ctx, s, r.ID); err != nil || owned {
 			return err
 		}
 		var identityRuling any
