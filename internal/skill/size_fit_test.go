@@ -193,6 +193,13 @@ func TestSizeFitNeverRefuses(t *testing.T) {
 }
 
 // An input that cannot be read is the only non-zero answer, the way issue-size has it.
+func TestSizeFitTrailingWhitespaceIsFine(t *testing.T) {
+	code, _, errOut := call([]string{"size-fit"}, `{"report":{"issue":"X","decision":"ok"}}`+" \n\t\n")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+}
+
 func TestSizeFitUnreadableInput(t *testing.T) {
 	good := sizeReportOf(t, "CRW-FIT", 3, "", nil)
 	cases := map[string]string{
@@ -202,6 +209,9 @@ func TestSizeFitUnreadableInput(t *testing.T) {
 		"unknown answer":        `{"report":{"issue":"X","decision":"grade_L"}}`,
 		"negative count":        sizeFitInput(good, map[string]any{"steps": -1}, false),
 		"unknown field":         `{"report":{"issue":"X","decision":"ok"},"grade":"L"}`,
+		"extra closing brace":   `{"report":{"issue":"X","decision":"ok"}}}`,
+		"extra closing bracket": `{"report":{"issue":"X","decision":"ok"}}]`,
+		"second value":          `{"report":{"issue":"X","decision":"ok"}} {}`,
 	}
 	for name, input := range cases {
 		code, out, errOut := call([]string{"size-fit"}, input)

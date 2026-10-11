@@ -10,7 +10,8 @@
 // order edges, and each member stays a node of its own. The planner (CRW-1037) decides which issues overlap
 // and in which order; compile moves that result into edges and judges the plan it makes: more than 64 issues, a
 // cycle, two issues whose edit regions overlap with no order between them, and a group of more than four are
-// refused. size_fit, size_reason and the issue-size answer are carried as they are, and an issue that answers
+// refused; so are a cycle through prerequisites of more than one project, an issue key held by two projects, and the root of the
+// repository as an edit region. size_fit, size_reason and the issue-size answer are carried as they are, and an issue that answers
 // over_line with neither a bundle reason nor a split is shown as size_unreviewed (it is never refused).
 package compile
 
@@ -134,6 +135,9 @@ func cleanRegion(r Region) (Region, error) {
 	clean := path.Clean(p)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return r, fmt.Errorf("region path %q leaves the repository", r.Path)
+	}
+	if clean == "." {
+		return r, fmt.Errorf("region path %q is the root of the repository: name the trees or files the issue edits, as the scheduler takes no region for the whole repository", r.Path)
 	}
 	r.Path = clean
 	if r.Kind == "" {

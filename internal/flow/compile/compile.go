@@ -50,12 +50,19 @@ func Compile(in Input, opts Options) (*Result, error) {
 		} else {
 			plans[id] = true
 		}
-		for _, is := range p.Issues {
-			if _, dup := owner[is.Key]; !dup {
+		for j, is := range p.Issues {
+			first, dup := owner[is.Key]
+			switch {
+			case !dup:
 				owner[is.Key] = p.Key
+			case first != p.Key:
+				// one issue is one executor's work in one project: a key held twice makes the owner of an external prerequisite ambiguous
+				refusals = append(refusals, Refusal{Project: p.Key, Rule: "input", Path: fmt.Sprintf("%s.issues[%d].key", path, j),
+					Detail: fmt.Sprintf("issue %s is already held by project %s: an issue belongs to one project", is.Key, first)})
 			}
 		}
 	}
+	refusals = append(refusals, crossProjectCycle(in, owner)...)
 	res := &Result{Schema: OutputSchema, Initiative: in.Initiative}
 	for i, p := range in.Projects {
 		if p.Key == "" {
@@ -69,6 +76,59 @@ func Compile(in Input, opts Options) (*Result, error) {
 		return nil, &Refused{Refusals: refusals}
 	}
 	return res, nil
+}
+
+// crossProjectCycle refuses a handoff whose prerequisites form a cycle through more than one project: every project compiles a plan of
+// its own, so the cycle would pass each plan's check and leave the projects waiting for each other. A cycle inside one project is
+// that project's own refusal.
+func crossProjectCycle(in Input, owner map[string]string) []Refusal {
+	var keys []string
+	var edges []pair
+	seen := map[pair]bool{}
+	add := func(from, to string) {
+		if e := (pair{from, to}); from != to && !seen[e] {
+			seen[e] = true
+			edges = append(edges, e)
+		}
+	}
+	for _, p := range in.Projects {
+		members := map[string][]string{}
+		var groups []string
+		for _, is := range p.Issues {
+			if owner[is.Key] != p.Key {
+				continue // a duplicate: refused already
+			}
+			keys = append(keys, is.Key)
+			for _, a := range is.After {
+				if owner[a] != "" {
+					add(a, is.Key)
+				}
+			}
+			if is.Group != "" {
+				if _, ok := members[is.Group]; !ok {
+					groups = append(groups, is.Group)
+				}
+				members[is.Group] = append(members[is.Group], is.Key)
+			}
+		}
+		for _, g := range groups {
+			for k := 1; k < len(members[g]); k++ {
+				add(members[g][k-1], members[g][k])
+			}
+		}
+	}
+	cycle := findCycle(keys, edges)
+	if cycle == "" {
+		return nil
+	}
+	projects := map[string]bool{}
+	for _, k := range strings.Split(cycle, " -> ") {
+		projects[owner[k]] = true
+	}
+	if len(projects) < 2 {
+		return nil
+	}
+	return []Refusal{{Rule: "cycle", Path: "$.projects", Detail: fmt.Sprintf("issues %s form a cycle across the projects of the handoff; a plan is a DAG and so is the handoff", cycle)}}
 }
 
 func planID(p Project) string {
@@ -463,12 +523,12 @@ type baseView struct {
 	liveByKey map[string]dag.NodeVersion
 	liveByID  map[string]dag.NodeVersion
 	usedNode  map[string]bool
-	liveEdge  map[pair]dag.EdgeRow // by node ids
+	liveEdges []dag.EdgeRow // every live edge by edge id: a plan may hold several between one pair of nodes
 	usedEdge  map[string]bool
 }
 
 func readBase(s dag.State) baseView {
-	h := baseView{liveByKey: map[string]dag.NodeVersion{}, liveByID: map[string]dag.NodeVersion{}, usedNode: map[string]bool{}, liveEdge: map[pair]dag.EdgeRow{}, usedEdge: map[string]bool{}}
+	h := baseView{liveByKey: map[string]dag.NodeVersion{}, liveByID: map[string]dag.NodeVersion{}, usedNode: map[string]bool{}, usedEdge: map[string]bool{}}
 	for _, n := range s.Nodes {
 		h.usedNode[n.NodeID] = true
 		if n.RetiredRev == 0 {
@@ -479,9 +539,10 @@ func readBase(s dag.State) baseView {
 	for _, e := range s.Edges {
 		h.usedEdge[e.EdgeID] = true
 		if e.RetiredRev == 0 {
-			h.liveEdge[pair{e.FromNodeID, e.ToNodeID}] = e
+			h.liveEdges = append(h.liveEdges, e)
 		}
 	}
+	sort.Slice(h.liveEdges, func(i, j int) bool { return h.liveEdges[i].EdgeID < h.liveEdges[j].EdgeID })
 	return h
 }
 
@@ -589,14 +650,9 @@ func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusa
 		counts.RetireNode++
 	}
 	// edges
-	var liveEdges []pair
-	for e := range h.liveEdge {
-		liveEdges = append(liveEdges, e)
-	}
-	sort.Slice(liveEdges, func(i, j int) bool { return h.liveEdge[liveEdges[i]].EdgeID < h.liveEdge[liveEdges[j]].EdgeID })
-	for _, e := range liveEdges {
-		row := h.liveEdge[e]
-		if w, ok := want[e]; ok && sameEdge(row.Edge, w) {
+	for _, row := range h.liveEdges { // by edge id; the first edge of a pair that is what the handoff wants stays, any other is retired
+		e := pair{row.FromNodeID, row.ToNodeID}
+		if w, ok := want[e]; ok && edgeIDs[e] == "" && sameEdge(row.Edge, w) {
 			edgeIDs[e] = row.EdgeID
 			continue
 		}
@@ -615,7 +671,7 @@ func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusa
 		return wanted[i].to < wanted[j].to
 	})
 	for _, e := range wanted {
-		if _, kept := edgeIDs[e]; kept {
+		if edgeIDs[e] != "" {
 			continue
 		}
 		spec := want[e]

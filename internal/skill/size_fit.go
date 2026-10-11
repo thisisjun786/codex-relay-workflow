@@ -134,8 +134,8 @@ func readSizeFit(raw []byte) (SizeFitInput, error) {
 	if err := dec.Decode(&file); err != nil {
 		return SizeFitInput{}, err
 	}
-	if dec.More() {
-		return SizeFitInput{}, errors.New("more than one JSON value")
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return SizeFitInput{}, errors.New("more than one JSON value, or text after the document")
 	}
 	for name, n := range map[string]*int{"edit_regions": file.Counts.EditRegions, "contract_packages": file.Counts.ContractPackages, "steps": file.Counts.Steps, "verify_minutes": file.Counts.VerifyMinutes} {
 		if n != nil && *n < 0 {

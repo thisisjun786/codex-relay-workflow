@@ -683,3 +683,113 @@ func TestBaseFromLog(t *testing.T) {
 		t.Error("a log that does not start at revision 1 was read")
 	}
 }
+
+// Verification fix round 1 (CRW-1203): the checks that hold across the projects of one handoff, a plan whose base holds two edges
+// between one pair of nodes, and the root of the repository as a region.
+
+func twoProjects(a, b []Issue) Input {
+	return Input{Schema: InputSchema, Projects: []Project{
+		{Key: "P1", Target: target, Issues: a},
+		{Key: "P2", Target: target, Issues: b},
+	}}
+}
+
+func TestCycleAcrossProjectsRefused(t *testing.T) {
+	t.Run("two issues of two projects wait for each other", func(t *testing.T) {
+		r := mustRefuse(t, twoProjects([]Issue{iss("A", after("B"))}, []Issue{iss("B", after("A"))}), nil)
+		if !r.Has("cycle") || !strings.Contains(r.Error(), "A -> B -> A") {
+			t.Fatalf("refusal %v", r)
+		}
+	})
+	t.Run("a cycle through three projects and a group", func(t *testing.T) {
+		in := Input{Schema: InputSchema, Projects: []Project{
+			{Key: "P1", Target: target, Issues: []Issue{iss("A", after("C")), iss("A2")}},
+			{Key: "P2", Target: target, Issues: []Issue{iss("B", after("A"))}},
+			{Key: "P3", Target: target, Issues: []Issue{iss("C", after("B"))}},
+		}}
+		if r := mustRefuse(t, in, nil); !r.Has("cycle") {
+			t.Fatalf("refusal %v", r)
+		}
+	})
+	t.Run("a handoff across projects without a cycle compiles", func(t *testing.T) {
+		res, err := Compile(twoProjects([]Issue{iss("A")}, []Issue{iss("B", after("A"))}), Options{})
+		if err != nil || len(res.Plans) != 2 {
+			t.Fatalf("%v", err)
+		}
+	})
+	t.Run("a cycle inside one project is refused once", func(t *testing.T) {
+		r := mustRefuse(t, twoProjects([]Issue{iss("A", after("B")), iss("B", after("A"))}, []Issue{iss("C")}), nil)
+		n := 0
+		for _, f := range r.Refusals {
+			if f.Rule == "cycle" {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("%d cycle refusals: %v", n, r)
+		}
+	})
+}
+
+func TestIssueKeyInTwoProjectsRefused(t *testing.T) {
+	r := mustRefuse(t, twoProjects([]Issue{iss("X")}, []Issue{iss("X"), iss("Y")}), nil)
+	if !r.Has("input") || !strings.Contains(r.Error(), "X") || !strings.Contains(r.Error(), "P1") {
+		t.Fatalf("refusal %v", r)
+	}
+	// distinct plan ids do not make the key two issues
+	in := twoProjects([]Issue{iss("X")}, []Issue{iss("X")})
+	in.Projects[0].PlanID, in.Projects[1].PlanID = "plan-1", "plan-2"
+	if r := mustRefuse(t, in, nil); !r.Has("input") {
+		t.Fatalf("refusal %v", r)
+	}
+}
+
+func TestBaseWithTwoEdgesOfOnePair(t *testing.T) {
+	node := func(id string) *dag.Node {
+		return &dag.Node{NodeID: id, IssueKey: id, Kind: dag.NodeImplementation, Title: "issue " + id, CriteriaSetDigest: criteriaDigest([]string{"criterion of " + id})}
+	}
+	edge := func(id string) *dag.Edge {
+		return &dag.Edge{EdgeID: id, FromNodeID: "A", ToNodeID: "B", Kind: dag.EdgeIntegrated, TargetRepository: target.Repository, TargetBaseRef: target.BaseRef}
+	}
+	seed := dag.Revision{PlanID: "plan-px", ProjectKey: "PX", RequestID: "seed", AuthorTaskID: "t", Changes: []dag.Change{
+		{Op: dag.OpAddNode, Node: node("A")}, {Op: dag.OpAddNode, Node: node("B")},
+		{Op: dag.OpAddEdge, Edge: edge("e:A:B")}, {Op: dag.OpAddEdge, Edge: edge("second-edge")},
+	}}
+	base, _, vs := dag.Apply(dag.State{PlanID: "plan-px"}, seed)
+	if len(vs) > 0 {
+		t.Skipf("the DAG does not take two edges of one pair (%v): nothing to prove", vs)
+	}
+	bases := map[string]dag.State{"plan-px": base}
+
+	t.Run("an issue that left retires every edge it had", func(t *testing.T) {
+		p := compileOne(t, project(iss("A")), bases)
+		ops := changeOps(p)
+		if fmt.Sprint(ops["retire_edge"]) != "[e:A:B second-edge]" || fmt.Sprint(ops["retire_node"]) != "[B]" {
+			t.Fatalf("changes %v", ops)
+		}
+		fold(t, base, p)
+	})
+	t.Run("the edge the handoff still wants is kept once, the other retired", func(t *testing.T) {
+		p := compileOne(t, project(iss("A"), iss("B", after("A"))), bases)
+		ops := changeOps(p)
+		if fmt.Sprint(ops["retire_edge"]) != "[second-edge]" || len(ops["add_edge"]) != 0 {
+			t.Fatalf("changes %v", ops)
+		}
+		fold(t, base, p)
+	})
+}
+
+func TestRegionOfTheRepositoryRootRefused(t *testing.T) {
+	for _, r := range []string{"./", ".", "a/..", "x/../"} {
+		in := project(iss("A", regions(r)))
+		if res := mustRefuse(t, in, nil); !res.Has("input") || !strings.Contains(res.Error(), "region") {
+			t.Errorf("%q: refusal %v", r, res)
+		}
+	}
+	// the structured form too
+	a := iss("A")
+	a.Regions = []Region{{Path: ".", Kind: "tree"}}
+	if res := mustRefuse(t, project(a), nil); !res.Has("input") {
+		t.Errorf("refusal %v", res)
+	}
+}
