@@ -32,12 +32,6 @@ func (k *ticker) tick(ctx context.Context) (Report, error) {
 	return Report{}, nil
 }
 
-func (k *ticker) count() int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return len(k.starts)
-}
-
 // A managed child's Stop wakes the daemon: the next tick runs once the debounce has passed and does not
 // wait for the poll interval, which here is far longer than the test.
 func TestWakeRunsTickWithoutPollInterval(t *testing.T) {
