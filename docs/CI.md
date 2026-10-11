@@ -337,6 +337,7 @@ package again. Whole-package times, same host, same command, load 20 to 37:
 | the 375 overlap combinations as parallel subtests | 146 s at load 19 |
 | and the pre-merge tests copy a built repository pair | 128 s and 138 s |
 | and the tests' temporary root in `/dev/shm` | 47 s and 43 s |
+| the same, after merging dev at `fc5e5bd87` (1106 top-level tests, 95 more from CRW-692's pump signal tests) | 51.8 s at load 17 to 44 |
 
 - The overlap combinations (CRW-991) are parallel subtests: each has its own state directory, fake bridge and
   clock, and the parent sets the homes once, because `t.Setenv` is refused in a parallel test
@@ -349,7 +350,8 @@ package again. Whole-package times, same host, same command, load 20 to 37:
   copy is the repository the build made.
 - `TestMain` puts `TMPDIR` on `/dev/shm` when a script run from there executes, so state directories, stores
   and repositories need no disk. The tests assert no durability that an fsync gives. `CRW_MANAGE_TEST_DISK_TMP=1`
-  keeps `TMPDIR` as the caller set it, which is the slower 128 to 138 s row.
+  keeps `TMPDIR` as the caller set it, which is the slower row: 128 to 138 s before the merge, 211 s after it
+  (load 25 to 17, the host busier than for the earlier runs).
 
 ## Leftover isolation trees
 
