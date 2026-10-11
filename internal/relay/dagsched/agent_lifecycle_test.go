@@ -24,10 +24,14 @@ func (k *agentKit) orchestrator(actor, nonce string) *Scheduler {
 	return s
 }
 
-// reviseNode revises the plan with a changed node.
+// reviseNode revises the plan with a changed implementation node.
 func (k *agentKit) reviseNode(node string, edit func(n doc)) {
+	k.reviseNodeKind(node, dag.NodeImplementation, edit)
+}
+
+func (k *agentKit) reviseNodeKind(node, kind string, edit func(n doc)) {
 	k.t.Helper()
-	n := relNode(node, dag.NodeImplementation)
+	n := relNode(node, kind)
 	edit(n)
 	rev := int(k.snapshot("g").Revision)
 	k.putPlan("g", rev, fmt.Sprintf("g-r%d", rev+1), doc{"op": dag.OpUpdateNode, "node": n})
@@ -652,5 +656,94 @@ func TestHoldKeepsAgentSlot(t *testing.T) {
 	}
 	if len(k.closures()) != 0 {
 		t.Fatalf("closures = %v after holds", k.closures())
+	}
+}
+
+// A node that went back with its acceptance (it has no head to land) reserves a slot again for its correction attempt, as a release does, and a reservation the capacity refuses writes nothing: the acceptance
+// is not closed.
+func TestStaleNonImplementationAgentNodeReservesItsSlotAgain(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	build := func() *agentKit {
+		k := newAgentKit(t, agentSpec{name: "doc", nonPR: true, unreleased: true})
+		k.release("doc")
+		k.record(journalCall{role: "architect", node: "doc", model: authorModel})
+		k.record(journalCall{role: "reviewer", node: "doc", model: reviewerModel, verdict: "verified", criteria: releaseCriteriaDigest()})
+		if res, err := k.sched.Accept(ctx, "g", "doc", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"}}); err != nil || !res.SlotReleased {
+			t.Fatalf("accept: %+v, %v", res, err)
+		}
+		k.reviseNodeKind("doc", dag.NodeNonPR, func(n doc) { n["title"] = "doc, redefined" })
+		return k
+	}
+
+	// the capacity has no free slot: the correction is refused whole
+	full := build()
+	full.holdSlots(2)
+	full.declareLimit("project", "P-TEST", "runs", 1)
+	if _, err := full.sched.AgentCorrect(ctx, "g", "doc", "parent", full.agentRequest(false), AgentReleaseOptions{}); refusalReason(err) != string(contract.RefusalCapacityExhausted) {
+		t.Fatalf("correction without a free slot = %v, want capacity_exhausted", err)
+	}
+	if len(full.closures()) != 0 || full.rowsOfKind("doc", AgentCorrection) != 0 {
+		t.Fatalf("a refused correction wrote closures %v or a row", full.closures())
+	}
+
+	k := build()
+	res, err := k.sched.AgentCorrect(ctx, "g", "doc", "parent", k.agentRequest(false), AgentReleaseOptions{})
+	if err != nil || res.Kind != AgentCorrection || res.SlotID == "" || res.SlotID == k.releases["doc"].SlotID {
+		t.Fatalf("correct = %+v, %v", res, err)
+	}
+	if state, _ := k.slotOf("doc"); state != "held" || k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = 'g/doc'") != 2 {
+		t.Fatalf("slot = %s, want a second tenure held", state)
+	}
+	if got := k.closures(); len(got) != 1 || !strings.HasPrefix(got[0], "acceptance:superseded:0:stale:") {
+		t.Fatalf("closures = %v", got)
+	}
+}
+
+// After a handover the new orchestrator gives a node up, and the slot goes back as the task that reserved it: the closure is the return, with no reservation a ceiling could refuse.
+func TestHandoverAgentSlotReturnedAsHolderByAClose(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	k := newAgentKit(t, agentSpec{name: "a", files: fileOf("a")})
+	s2 := k.orchestrator("parent-2", "session-2")
+	k.holdSlots(2)
+	k.declareLimit("project", "P-TEST", "runs", 1)
+	if _, err := s2.AgentClose(ctx, "g", "a", "parent-2", AgentCloseInput{Reason: AgentEscalationSizeSplit}); refusalReason(err) != string(contract.RefusalScopeRoleMismatch) {
+		t.Fatalf("closing a node the orchestrator has not adopted = %v, want scope_role_mismatch (the execution is held by the previous parent)", err)
+	}
+	if _, err := s2.Adopt(ctx, "g", "a", "parent-2"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s2.AgentClose(ctx, "g", "a", "parent-2", AgentCloseInput{Reason: AgentEscalationSizeSplit})
+	if err != nil || !res.Closed || !res.SlotReleased {
+		t.Fatalf("close by the new orchestrator = %+v, %v", res, err)
+	}
+	if by, reason := k.slotReleasedBy("a"); by != "parent" || reason != "dag_agent_escalated" {
+		t.Fatalf("slot returned as %q for %q, want the holder parent for dag_agent_escalated", by, reason)
+	}
+}
+
+// dag-restart names what a stale accepted agent node is owed: a correction attempt for a result that must be reworked, a new review for a change of the criteria alone.
+func TestRestartReportsStaleAgentNodes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	specs := []agentSpec{{name: "a", files: fileOf("a")}, {name: "b", files: fileOf("b")}}
+	k := newAgentKit(t, specs...)
+	k.acceptAll(specs...)
+	k.reviseNode("a", func(n doc) { n["title"] = "a, redefined" })
+	k.reviseNode("b", func(n doc) { n["criteria_set_digest"] = dig("another criterion") })
+	report, err := k.sched.Restart(ctx, "g", "parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"a": AgentActionCorrect, "b": AgentActionRereview}
+	for _, n := range report.Nodes {
+		if n.Agent == nil || n.Agent.State != AgentStateAccepted || n.Agent.Action != want[n.NodeID] || n.Resume != ResumeAdopt || n.State != StateStale {
+			t.Fatalf("restart for node %s = %+v (resume %s, state %s), want accepted and %q", n.NodeID, n.Agent, n.Resume, n.State, want[n.NodeID])
+		}
+		delete(want, n.NodeID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("restart does not report %v", want)
 	}
 }

@@ -58,6 +58,7 @@ const (
 	AgentActionAdopt       = "dag-adopt"
 	AgentActionIntegrate   = "dag-integrate"
 	AgentActionCorrect     = "agent correction"
+	AgentActionRereview    = "re-review"
 )
 
 // The reasons a slot goes back with when an execution is closed.
@@ -648,14 +649,18 @@ func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, ac
 		a.State, outstanding = AgentStateIntegrated, false
 	case StateAccepted, StateStale:
 		a.State, action = AgentStateAccepted, AgentActionIntegrate
-		if n.State == StateStale {
-			action = AgentActionCorrect
-		}
 		na, found, err := acceptanceOf(ctx, q, plan, n.NodeID)
 		if err != nil {
 			return true, err
 		}
-		if n.State == StateAccepted && (!found || na.Agent.Head == "") {
+		switch {
+		case n.State == StateStale && n.Stale != nil && n.Stale.Action == ActionAgentCorrection:
+			action = AgentActionCorrect
+		case n.State == StateStale && n.Stale != nil && n.Stale.Action == ActionRevalidate:
+			action = AgentActionRereview
+		case n.State == StateStale:
+			outstanding = false // the route says hold: nothing to do on this node until what it waits for is repaired (the reading's detail names it)
+		case !found || na.Agent.Head == "":
 			outstanding = false // a result with no head to land: the acceptance is the node's value
 		}
 	default:
