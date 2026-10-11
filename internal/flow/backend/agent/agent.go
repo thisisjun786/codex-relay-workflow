@@ -25,7 +25,7 @@ import (
 // Default timings of a backend.
 const (
 	// DefaultPollEvery is how long a turn waits for a notification before it reads the turn from the host.
-	DefaultPollEvery = 3 * time.Second
+	DefaultPollEvery = 10 * time.Second
 	// DefaultInterruptWait is how long an interrupted turn is waited for before the call gives up on its answer.
 	DefaultInterruptWait = 15 * time.Second
 )
