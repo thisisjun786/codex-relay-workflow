@@ -4,10 +4,18 @@ A DAG plan's Linear summary is written by the project's parent with its own Line
 durable, ordered queue the parent drains: one table in the DAG zone and seven commands. A summary that is lost, refused or overtaken is recovered by writing a summary again. It never re-runs a child,
 re-sends a correction or makes a second summary, because every command here writes the summary table and no other. This page is the normative description. It follows the DAG execution contract
 (CRW-182) sections 1.3 and 7.6, the metrics of 8.6 and decision D-17: the relationship outbox (`sync_outbox`, [the relay README](README.md)) cannot hold a project summary, because
-`sync_outbox.relationship_id` is NOT NULL, so a project-level outbox is a new table. `sync_outbox` keeps its relationship-level role and is not touched.
+`sync_outbox.relationship_id` is NOT NULL, so a project-level outbox is a new table.
 
-The summary states [the progress query](dag-progress.md) of the plan. The relay's log is the canonical plan and Linear is its projection (contract 1.3, decision D-13): this queue carries the projection
-and decides nothing about the plan.
+The summary states [the progress query](dag-progress.md) of the plan and, under it, one row per issue: the stage, the newest verdict with its revision, the gist of its findings, the acceptance and the integration
+batch ([the issue rows](#the-issue-rows)). The relay's log is the canonical plan and Linear is its projection (contract 1.3, decision D-13): this queue carries the projection and decides nothing about the plan.
+
+The queue is the Linear projection of every issue a plan runs. `sync_outbox` is the projection of a relationship that no plan runs: a verdict on a relationship a plan runs (the plan's `dag_node_executions` names it
+and the plan still holds the node, that is, `dag_nodes` has a live version of it) enqueues no `sync_outbox` row, since the issue's row in the plan's summary states that verdict. A relationship of a node the plan retired or
+replaced is no plan relationship: no row of any summary states its verdict, so its verdict keeps its `sync_outbox` row. The `sync_outbox` table and its drain stay as they are for the relationships outside a plan.
+
+The supervisor reads the record of a verdict for its discharge: for a relationship a plan runs that record is the plan's summary, so a confirmed entry of the relationship's `coordination_document` target that was enqueued at
+or after the instant the verdict was decided, and made at a plan revision where the node the relationship is bound to was live, discharges the verdict's obligation (`delivery.PlanSummaryCarriesVerdict`, read next to the confirmed `sync_outbox` row by `Reportable`, `ReportableCurrent` and `Selection`). An entry that
+is not confirmed, one enqueued before the verdict, one of another document and one made at a plan revision where the node was not live does not discharge it. An entry made while the node was live keeps discharging after the plan retires or replaces the node.
 
 ## The queue
 
@@ -22,7 +30,7 @@ An entry is keyed by the decision it states, the document, the plan revision and
 | `summary_id` | `sum-` and the first 32 hex digits of the sha256 of the canonical JSON of the plan, the document, the plan revision, the subject digest and the `seq`: the key as one value |
 | `plan_id`, `project_key`, `document` | the stream (the project is the plan's, copied) |
 | `plan_revision`, `seq` | the plan's head revision when the entry was made, and the entry's place in the stream |
-| `subject_digest`, `state_digest` | the decision the entry states: the digest of the progress document it was made from (it contains the revision, the state digest and every node's stage), and the plan's state digest |
+| `subject_digest`, `state_digest` | the decision the entry states: the digest of the progress document it was made from together with the issue rows ([the subject digest](#the-subject-digest)), and the plan's state digest |
 | `summary`, `summary_sha256` | the text of the summary and its digest |
 | `state` | `pending`, `claimed`, `confirmed`, `failed`, `superseded` |
 | `attempts`, `last_error` | failures recorded and the last one's text |
@@ -110,11 +118,39 @@ confirmed entry answers its record (`replayed: true`) and checks nothing more: a
 **Fail** and **retry** are the recovery of one entry. A failed write goes back to pending and the next claim is the same entry again (only the newest open entry can be claimed, so nothing else is retried). The eighth failure
 parks the entry as `failed` and a claim of it is refused until `dag-summary-retry`, which touches that entry only.
 
+## The issue rows
+
+A row is the state of one live node of the plan, for an agent node and for a node a managed child runs (an oversized issue) alike. It is read in the transaction that writes the entry, from the progress itself (the stage,
+the acceptance of `acceptanceOf`, the executions of both sides) and from the side that ran the node:
+
+| Part of the row | Where it is read |
+| --- | --- |
+| `stage`, `issue_key`, `kind` | the progress document |
+| surface | `agent` or `relationship`: the side of the node's current execution (`executionOf`); the only side that ever held one when none is current; none when neither applies |
+| newest verdict (`verified` or `needs_changes`) | a managed child: the newest ruling over the relationships the plan bound to the node (`verdicts`, by `decided_at`). An agent: the newest completed reviewer call of the node whose result document carries a verdict (`flow_calls`) |
+| revision and generation | a managed child: the ruled event's revision hash and execution generation. An agent: the commit the reviewer judged and the attempt of the execution it ran in |
+| criteria set, ruling, queued correction, child | a managed child: the criteria set digest and the findings of the ruling's context, how many times the event was ruled, the generation a `needs_changes` ruling opened, and the child thread. An agent: the criteria digest the reviewer's input carried |
+| findings | a managed child: the findings of the ruling, one line each (`id: verdict — note`). An agent: the defects of the verdict document, one line each (`ref: severity kind file:line — finding`) |
+| acceptance | `acceptanceOf` through the progress: the id of the acceptance that stands, whichever side holds it |
+| integration batch | the batch of the newest `marked` row of that acceptance, in the stage table of the relationship side or of the agent side |
+
+An issue nobody ruled on has no verdict; a node nothing ran has no surface. The rows hold what a `sync_outbox` verdict summary held of the issue (the verdict, the generation and revision, the criteria set and ruling,
+the correction it queued, the child and the findings) and the acceptance and the integration the verdict summary could not state.
+
+## The subject digest
+
+`subject_digest` is the sha256 of the version tag `dag-summary-subject/2`, the progress digest and the normalised render of every row: the issue, its stage, the newest verdict with its generation, revision, criteria set,
+ruling, queued correction and child, the digest of its findings (taken over every finding whole: the text of the summary clips a finding line for display, the digest does not), the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
+`dag-summary-enqueue` (the replay comparison) and `dag-summary-status` (`up_to_date`) call it. So a verdict or a finding that changes while the node stays in its stage is another subject: `up_to_date` reads false
+until the plan is enqueued again, and the enqueue appends a new entry and supersedes the open one. Nothing changed is one subject, and the entry is answered with `replayed: true`. The progress document is not
+changed by the rows: `dag-summary-status` prints the fields it printed, and `progress_digest` is still the digest of the progress document.
+
 ## The summary text and its block
 
-The text is a function of the progress document and holds no clock: equal progress is equal text. It names the plan, the project and the revision, the counts of accepted and integrated nodes against the
+The text is a function of the progress document and the issue rows and holds no clock: equal progress and equal rows are equal text. It names the plan, the project and the revision, the counts of accepted and integrated nodes against the
 denominator, the denominator's last change, what the revisions took out of the plan, every stage with its nodes, the blocked nodes with their closed reasons, and every live node with its issue key, kind, stage, reason, the
-plan's lifecycle for it and its pull request.
+plan's lifecycle for it and its pull request. Under that, `Issues` lists the row of every live node: its surface and stage, the newest verdict (`verdict V, generation G, revision R`, the criteria set and the ruling when
+it is not the first), the child, the correction queued, the findings (at most twelve lines, with the count and the digest of all of them), the acceptance and the batch that integrated it; an issue without a verdict reads `no verdict`.
 
 It is written as a block inside a container: HTML comments around a fenced body, the grammar the relationship outbox relies on (JUN-92 measured it for Linear). A connector keeps it as written, with one change that a real Linear save makes ([below](#what-a-linear-save-does-to-a-block)):
 
@@ -185,7 +221,8 @@ connector once the container changed.
 * A summary is only as good as the document it is written into. A document with markers that appear twice, an unclosed block or container, or a block outside its container is `malformed` and no exact-once replacement can repair it:
   the relay never confirms such a document, and a person removes the surplus text. Two sessions of the parent that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
 * A failure has no backoff. The eighth parks the entry, so a parent that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
-* A change of the progress document's content between builds gives a different digest: one extra entry after an upgrade, never a wrong one.
+* A change of the progress document's content, or of the definition of the subject digest, between builds gives a different digest: one extra entry after an upgrade (the next sequence number with the same content), never a wrong one.
+* The rows are read from the relay's records. The relay does not read what Linear shows of an issue and does not decide an issue's status: a row says what the relay holds.
 * The progress replay ([DAG progress](dag-progress.md#rebuilding-the-view)) is not used: a summary states the whole live view, so enqueue reads `Scheduler.Progress` and compares digests. Stale handling and the parent's base refresh are other issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure. A coordinator claim (`dag-coordinator-claim`) does not touch summary tokens: a restarted or replacement session claims again, at once, any entry that reads `claimed` (step 2 of the flow), and that second claim is what kills the old session's token. `coordinator_epoch` is 0 on every entry, so a later fence has the column.
 
 ## The store
@@ -197,8 +234,8 @@ objects as `EXTENDS_ZONE` on a store whose zone predates them (the install comma
 
 ## Calling it from Go
 
-`internal/relay/dagsched`: `Scheduler.EnqueueSummary`, `SummaryStatus`, `ClaimSummary`, `ReconcileSummary`, `CompleteSummary`, `FailSummary`, `RetrySummary`; `SummaryText(Progress)` is the text.
-Each write runs in one composing transaction of the store; `EnqueueSummary` reads `Scheduler.Progress` in the transaction it writes in.
+`internal/relay/dagsched`: `Scheduler.EnqueueSummary`, `SummaryStatus`, `ClaimSummary`, `ReconcileSummary`, `CompleteSummary`, `FailSummary`, `RetrySummary`; `SummaryText(Progress)` is the text of the progress and the entry's text adds the issue rows.
+Each write runs in one composing transaction of the store; `EnqueueSummary` reads `Scheduler.Progress` and the issue rows in the transaction it writes in.
 
 ## Where this page reads the contract
 
