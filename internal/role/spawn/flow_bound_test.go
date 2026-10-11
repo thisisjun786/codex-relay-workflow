@@ -299,6 +299,23 @@ func TestFlowBoundEngineThreadIgnoresTheRoleHeader(t *testing.T) {
 	}
 }
 
+// A failure of the hook itself while it decides a bound thread's spawn refuses it: the ordinary hook's recovery prints nothing,
+// which would allow the spawn.
+func TestFlowBoundHookFailureRefuses(t *testing.T) {
+	r := newFBRig(t)
+	r.bindEngine(fbThreadA, fbCall1, "executor", 1)
+	spawnFlowBoundBeforeDecide = func() { panic("injected") }
+	t.Cleanup(func() { spawnFlowBoundBeforeDecide = func() {} })
+	r.expectRefused(r.spawn(fbThreadA, "tool-1", `{"agent_type":"explorer","message":"TASK: q"}`), bound.ReasonFlowBoundUnavailable)
+	if r.claimCount(fbThreadA) != 0 {
+		t.Fatal("a claim was made")
+	}
+	// a thread no run registered never reaches the decision
+	if out := r.spawn(fbThreadB, "tool-1", `{"agent_type":"explorer","message":"TASK: q"}`); strings.Contains(out, "flow-bound") {
+		t.Fatalf("%q", out)
+	}
+}
+
 // A full-history fork keeps the parent's model and effort, so its pair cannot be set: it is refused with the way out, recorded,
 // and it costs the call nothing.
 func TestFlowBoundFullHistoryForkRefusedWithGuidance(t *testing.T) {

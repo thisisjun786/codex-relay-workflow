@@ -50,6 +50,17 @@ func spawnFlowBound(payload pyjson.Object) (out string, handled bool) {
 		return "", false
 	}
 	session, _ := payload.Get("session_id").(string)
+	// The hook's own recovery (RunSpawnAttachHook) prints nothing, which allows the spawn; a failure here must not: a session whose
+	// id has the form of a thread id may be a bound one, and it is refused.
+	defer func() {
+		if recover() != nil {
+			if bound.ValidThreadID(session) {
+				out, handled = DenyEnvelope(flowBoundReason(bound.ReasonFlowBoundUnavailable, "the hook failed while deciding this spawn")), true
+			} else {
+				out, handled = "", false
+			}
+		}
+	}()
 	res := bound.Lookup(session)
 	switch res.State {
 	case bound.Standalone:
@@ -58,11 +69,6 @@ func spawnFlowBound(payload pyjson.Object) (out string, handled bool) {
 		return DenyEnvelope(flowBoundReason(bound.ReasonFlowBoundUnavailable, "the flow binding of this thread cannot be read ("+res.Err.Error()+
 			"); no native spawn is allowed until the flow-bound directory is repaired")), true
 	}
-	defer func() {
-		if recover() != nil {
-			out, handled = DenyEnvelope(flowBoundReason(bound.ReasonFlowBoundUnavailable, "the hook failed while deciding this spawn")), true
-		}
-	}()
 	e := &flowBoundEvent{res: res, payload: payload, thread: session}
 	return e.decide(), true
 }
@@ -80,7 +86,11 @@ type flowBoundEvent struct {
 
 func (e *flowBoundEvent) line() bound.Line { return e.res.Line }
 
+// spawnFlowBoundBeforeDecide runs before a bound thread's spawn is decided; a test makes it fail.
+var spawnFlowBoundBeforeDecide = func() {}
+
 func (e *flowBoundEvent) decide() string {
+	spawnFlowBoundBeforeDecide()
 	if IsSubagentSpawner(spawnHookView(e.payload)) {
 		return DenyEnvelope(RecurseDenyReason) // a child of a bound thread is a leaf, as anywhere
 	}
