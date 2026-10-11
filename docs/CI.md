@@ -309,6 +309,36 @@ reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`,
 again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit
 (they differ by 20 s or more from run to run), move packages, and compare medians.
 
+### The `internal/manage` test time
+
+`go test ./internal/manage/` ran its 1011 tests one after another and took 829 s on the shared host
+(load 30 to 50 on 20 CPUs, `nice` 12, `-json` log in `/scratch/crw/diag-manage/manage.json`), so the integration's
+10 minute bound for a package was close. The time was not CPU (a 79-test slice used 16% of a CPU): a run makes about 15,500 fsyncs and 5,800
+processes, and each fsync waits behind the other writers of the disk. Method: read the per-test
+`Elapsed` of `go test -json`, take the biggest costs first, count the processes and fsyncs a test makes
+(`strace -f -y -e trace=execve,fsync`, test directories are named after the test), change, and measure the whole
+package again. Whole-package times, same host, same command, load 20 to 37:
+
+| Step | Package time |
+| --- | --- |
+| before (`TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants` alone took 289 s) | 829 s at load 40 |
+| the 375 overlap combinations as parallel subtests | 146 s at load 19 |
+| and the pre-merge tests copy a built repository pair | 128 s and 138 s |
+| and the tests' temporary root in `/dev/shm` | 47 s and 43 s |
+
+- The overlap combinations (CRW-991) are parallel subtests: each has its own state directory, fake bridge and
+  clock, and the parent sets the homes once, because `t.Setenv` is refused in a parallel test
+  (`pumpTestEnvHomeless`). Names, the 375 combinations and every assertion are unchanged. Run it with
+  `-race -gcflags=all=-d=checkptr=0` after a change: with checkptr on, the relay store's own pointer arithmetic
+  stops any test that opens a store.
+- `premergeTestNewRepo` built a git remote and a clone with sixteen git commands per test (the pre-merge tests made 2,917 of
+  the 5,833 processes of a run). It builds each repository spec once, under a directory the run removes, and copies the
+  pair with the checkout's origin pointed at the copy. The commits carry a fixed identity and date, so the
+  copy is the repository the build made.
+- `TestMain` puts `TMPDIR` on `/dev/shm` when a script run from there executes, so state directories, stores
+  and repositories need no disk. The tests assert no durability that an fsync gives. `CRW_MANAGE_TEST_DISK_TMP=1`
+  keeps `TMPDIR` as the caller set it, which is the slower 128 to 138 s row.
+
 ## Leftover isolation trees
 
 Nothing removes a `crw-relay-test-*` directory a run leaves: a test binary killed by `go test -timeout` or by
