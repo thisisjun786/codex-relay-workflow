@@ -27,6 +27,13 @@ type Control struct {
 var acceptControl = (*net.UnixListener).Accept
 
 func ListenControl(ctx context.Context, state string) (*Control, error) {
+	return ListenControlWake(ctx, state, nil)
+}
+
+// ListenControlWake is ListenControl for the daemon's own process: wake is told the thread of every
+// managed child whose turn a served Stop ended (hook.HandleControlWake). It is an internal channel of
+// the process, not a method of the socket (decision 25).
+func ListenControlWake(ctx context.Context, state string, wake func(thread string)) (*Control, error) {
 	info, err := os.Stat(state)
 	if err != nil {
 		return nil, err
@@ -103,7 +110,7 @@ func ListenControl(ctx context.Context, state string) (*Control, error) {
 				}
 				finished := context.AfterFunc(requestCtx, func() { _ = conn.Close() })
 				defer finished()
-				_ = dispatchControl(requestCtx, conn, state)
+				_ = dispatchControl(requestCtx, conn, state, wake)
 			}()
 		}
 		wg.Wait()
@@ -136,6 +143,6 @@ func (c *Control) Close() error {
 // control.sock serves guard-evaluate only, as Python's GuardServer does. Decision-25 ingress
 // is the queued command's own file publication, never a socket method. Delegate exactly to
 // todo 33, including shared state-selection refusals; the handler reads the one request line.
-func dispatchControl(ctx context.Context, conn net.Conn, state string) error {
-	return hook.HandleControl(ctx, conn, state)
+func dispatchControl(ctx context.Context, conn net.Conn, state string, wake func(thread string)) error {
+	return hook.HandleControlWake(ctx, conn, state, wake)
 }

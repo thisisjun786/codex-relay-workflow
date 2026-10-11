@@ -108,15 +108,18 @@ var (
 )
 
 // RetryPolicy is the part of policy.RetryPolicy the assignment view reads: the send budget. The
-// hour count is the relationship's own count of sends to the recipient (the delivery package
-// owns the rule; this is its reading copy), the gap is the recipient's.
+// hour count is the relationship's own count of distinct events sent to the recipient (the delivery
+// package owns the rule; this is its reading copy), against the cap of the relationship's class, the
+// gap is the recipient's.
 type RetryPolicy struct {
 	MinSendIntervalSeconds float64
 	MaxSendsPerHour        int64
+	// MaxSendsPerOrchestratorHour is the cap of a relationship of class orchestrator.
+	MaxSendsPerOrchestratorHour int64
 }
 
 // DefaultRetryPolicy is RetryPolicy().
-var DefaultRetryPolicy = RetryPolicy{MinSendIntervalSeconds: 5, MaxSendsPerHour: 12}
+var DefaultRetryPolicy = RetryPolicy{MinSendIntervalSeconds: 5, MaxSendsPerHour: 12, MaxSendsPerOrchestratorHour: 60}
 
 const rateWindowSeconds = 3600
 
@@ -127,17 +130,21 @@ func (p RetryPolicy) rateWindows(now float64) (int64, int64) {
 	return window, window - reach
 }
 
-// pacing is RetryPolicy.pacing; nil is None.
-func (p RetryPolicy) pacing(now float64, sends any, last any) contract.OrderedObject {
+// pacing is RetryPolicy.pacing for a relationship of class orchestrator or not; nil is None.
+//
+// counted says the event is already one of the distinct events the hour counts: its retry adds none, so the
+// hour cap does not refuse it (a cap of zero still does).
+func (p RetryPolicy) pacing(now float64, sends any, last any, orchestrator, counted bool) contract.OrderedObject {
 	window, _ := p.rateWindows(now)
 	count, _ := toFloat(sends)
+	p.MaxSendsPerHour = p.hourlyCap(orchestrator)
 	reading := contract.OrderedObject{{Key: "sends", Value: numberValue(sends, 0)}, {Key: "cap", Value: p.MaxSendsPerHour}, {Key: "windowStart", Value: window}}
 	var gapEnds *float64
 	if l, ok := toFloat(last); ok && last != nil {
 		g := l + p.MinSendIntervalSeconds
 		gapEnds = &g
 	}
-	if count >= float64(p.MaxSendsPerHour) {
+	if count >= float64(p.MaxSendsPerHour) && (p.MaxSendsPerHour <= 0 || !counted) {
 		if p.MaxSendsPerHour <= 0 {
 			return append(append(contract.OrderedObject{{Key: "reason", Value: "hourly_cap"}, {Key: "reopensAt", Value: nil}}, reading...),
 				contract.Field{Key: "detail", Value: "a cap of zero refuses every send; only a changed policy reopens it"})
@@ -152,6 +159,14 @@ func (p RetryPolicy) pacing(now float64, sends any, last any) contract.OrderedOb
 		return append(contract.OrderedObject{{Key: "reason", Value: "min_send_interval"}, {Key: "reopensAt", Value: *gapEnds}}, reading...)
 	}
 	return nil
+}
+
+// hourlyCap is the cap of the relationship class given.
+func (p RetryPolicy) hourlyCap(orchestrator bool) int64 {
+	if orchestrator {
+		return p.MaxSendsPerOrchestratorHour
+	}
+	return p.MaxSendsPerHour
 }
 
 // pacingHolding is policy.pacing_holding.
@@ -388,6 +403,8 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		"       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"+
 		"         AND h.state = 'host_lost_turn') AS host_lost_attempts,"+
 		"       "+store.RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id")+" AS rate_sends,"+
+		"       "+store.EventCountedSQL("d.event_id")+" AS rate_counted,"+
+		"       "+store.OrchestratorParentSQL("r.parent_task_id")+" AS rate_orchestrator,"+
 		"       (SELECT MAX(last_send_at) FROM recipient_rate"+
 		"         WHERE recipient_task_id = d.recipient_task_id"+
 		"           AND window_start BETWEEN ? AND ?) AS rate_last,"+
@@ -411,7 +428,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		"  LEFT JOIN delivery_supersession sx ON sx.event_id = e.event_id"+
 		"  LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		lifecycleWithholdJoin("lf", "e", "d")+
-		" WHERE e.event_id = ?", append(store.RelationshipSendsArgs(float64(window)), earliest, window, eventID)...)
+		" WHERE e.event_id = ?", append(append(store.RelationshipSendsArgs(float64(window)), store.SendStamp(float64(window)), store.SendStamp(float64(window)+rateWindowSeconds)), earliest, window, eventID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +447,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		}
 		var pacing any
 		if contains(notSentStates, state) && !pyvalue.Truthy(row.Get("hold_reason")) {
-			pacing = pacingHolding(v.Policy.pacing(now, row.Get("rate_sends"), row.Get("rate_last")), row.Get("next_eligible_at"))
+			pacing = pacingHolding(v.Policy.pacing(now, row.Get("rate_sends"), row.Get("rate_last"), pyvalue.Truthy(row.Get("rate_orchestrator")), pyvalue.Truthy(row.Get("rate_counted"))), row.Get("next_eligible_at"))
 		}
 		reading := SettingsHoldReading(holdColumnsOf(row))
 		var settingsHold any

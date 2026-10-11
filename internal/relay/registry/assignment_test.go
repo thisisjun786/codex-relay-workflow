@@ -473,3 +473,34 @@ func Test25_ASG19_the_reason_is_tied_to_the_withhold_by_its_stamp(t *testing.T) 
 		t.Fatal(got)
 	}
 }
+
+// The assignment view's copy of the send budget reads the cap of the relationship's class (CRW-1210): the
+// ordinary twelve, or an orchestrator's sixty, against the distinct events the relationship has sent.
+func TestPacingReadsTheCapOfTheRelationshipsClass(t *testing.T) {
+	t.Parallel()
+	const now = 1_700_000_000.0
+	p := DefaultRetryPolicy
+	for _, c := range []struct {
+		sends        int64
+		orchestrator bool
+		reason       any
+		capacity     int64
+	}{
+		{11, false, nil, 0},
+		{12, false, "hourly_cap", 12},
+		{12, true, nil, 0},
+		{59, true, nil, 0},
+		{60, true, "hourly_cap", 60},
+	} {
+		got := p.pacing(now, c.sends, nil, c.orchestrator, false)
+		if c.reason == nil {
+			if got != nil {
+				t.Errorf("%d sends (orchestrator %v): paced by %v, want none", c.sends, c.orchestrator, got)
+			}
+			continue
+		}
+		if got == nil || got.Get("reason") != c.reason || got.Get("cap") != c.capacity {
+			t.Errorf("%d sends (orchestrator %v): %v, want %v at cap %d", c.sends, c.orchestrator, got, c.reason, c.capacity)
+		}
+	}
+}
