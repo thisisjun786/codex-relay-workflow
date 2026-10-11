@@ -19,6 +19,10 @@ type session struct {
 	conn        *websocket.Conn
 	initialized bool
 	delayed     sync.WaitGroup
+	// ctx is the session's lifetime: a notification pushed after the answer is abandoned with it.
+	ctx context.Context
+	// handle is what a Handler that wants to push later is given.
+	handle *Conn
 }
 
 // envelope is a frame the fake accepted: only the App Server members are read.
@@ -32,6 +36,8 @@ func (c *session) serve(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	defer c.delayed.Wait()
 	defer cancel()
+	c.ctx = ctx
+	c.handle = &Conn{session: c}
 	for {
 		_, raw, err := c.conn.Read(ctx)
 		if err != nil {
@@ -65,7 +71,7 @@ func (c *session) dispatch(ctx context.Context, raw []byte) {
 	if message.ID == nil {
 		return
 	}
-	reply, scripted := c.server.reply(method, message.Params)
+	reply, scripted := c.server.replyOn(c.handle, method, message.Params)
 	switch {
 	case method == "initialize":
 		if !scripted {
@@ -87,6 +93,7 @@ func (c *session) dispatch(ctx context.Context, raw []byte) {
 	}
 	if reply.Delay <= 0 {
 		c.answer(ctx, message, reply)
+		c.after(reply)
 		return
 	}
 	c.delayed.Go(func() {
@@ -96,9 +103,29 @@ func (c *session) dispatch(ctx context.Context, raw []byte) {
 		case <-ctx.Done():
 		case <-timer.C:
 			c.answer(ctx, message, reply)
+			c.after(reply)
 		}
 	})
 }
+
+// after runs the reply's After hook once its answer was written.
+func (c *session) after(reply Reply) {
+	if reply.After != nil {
+		reply.After(c.handle)
+	}
+}
+
+// Conn is one client connection of the fake, as a handler sees it: the way to push a notification to that
+// client after the request that named it was answered.
+type Conn struct{ session *session }
+
+// Notify sends a server-to-client notification on the connection. It is dropped when the connection is gone.
+func (c *Conn) Notify(n Notification) {
+	c.session.send(c.session.ctx, map[string]any{"method": n.Method, "params": orEmpty(n.Params)})
+}
+
+// Done is closed when the connection ends.
+func (c *Conn) Done() <-chan struct{} { return c.session.ctx.Done() }
 
 // parse accepts a JSON object carrying no "jsonrpc" member, or names why it is refused.
 func parse(raw []byte) (envelope, string) {
