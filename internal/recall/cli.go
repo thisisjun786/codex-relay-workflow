@@ -61,6 +61,12 @@ func recallCLIString(values map[string]any, key string) *string {
 	}
 	return &s
 }
+
+// recallCLIQuery joins the query words as Node's process.argv gave them: decoded as UTF-8, a byte outside it one U+FFFD, which is what the
+// rollout and Markdown readers make of the same byte in the text searched. jsnode.Lower keeps an undecoded byte, so the decoding is done here.
+func recallCLIQuery(words []string) string {
+	return jsnode.DecodeUTF8([]byte(strings.Join(words, " ")))
+}
 func recallCLIBool(values map[string]any, key string) bool { return values[key] == true }
 func recallCLIJSON(stdout, stderr io.Writer, value any) int {
 	b, err := jsnode.Stringify(value, "  ")
@@ -97,7 +103,7 @@ func recallCLIChatSearch(args []string, stdout, stderr io.Writer, now time.Time)
 			return recallCLIFail(stderr, err)
 		}
 	}
-	query := text.Trim(strings.Join(parsed.Positionals, " "))
+	query := text.Trim(recallCLIQuery(parsed.Positionals))
 	if query == "" {
 		fmt.Fprintln(stdout, Usage())
 		return 1
@@ -135,7 +141,7 @@ func recallCLIMemorySearch(args []string, stdout, stderr io.Writer, now time.Tim
 	if err != nil {
 		return recallCLIFail(stderr, err)
 	}
-	query := text.Trim(strings.Join(parsed.Positionals, " "))
+	query := text.Trim(recallCLIQuery(parsed.Positionals))
 	if query == "" {
 		fmt.Fprintln(stdout, Usage())
 		return 1
