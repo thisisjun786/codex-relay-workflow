@@ -122,9 +122,14 @@ type CallInfo struct {
 
 // LookupCall reads a call's record from the journal's own rows.
 func LookupCall(j Journal, callID string) (CallInfo, bool) {
+	return lookupCall(j.Events(), callID)
+}
+
+// lookupCall reads a call's record from rows, which may hold the rows of other calls.
+func lookupCall(events []Event, callID string) (CallInfo, bool) {
 	var info CallInfo
 	found := false
-	for _, e := range j.Events() {
+	for _, e := range events {
 		if e.Kind != KindCall || e.CallID != callID {
 			continue
 		}

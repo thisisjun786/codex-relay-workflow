@@ -1178,6 +1178,12 @@ func TestSupersedeInterruptsLiveTurnFirst(t *testing.T) {
 	if row := e.rowsOf("a", engine.EvSuperseded); len(row) != 1 || row[0].Data["reason"] != engine.ReasonSupersededByAttempt {
 		t.Errorf("superseded rows %v", row)
 	}
+	// the interrupted attempt's turn and the new attempt's turn carry the same marker (the position keeps its call id):
+	// two turn/start requests in all, one on each thread
+	e.expectOneTurnPerOperationOnEachThread(2)
+	if n := e.markerCount(calls(res)["a"].CallID + "/t1"); n != 2 {
+		t.Errorf("the position's marker was sent %d times, once for each attempt", n)
+	}
 	// the dead process's run ends once its connection is gone
 	cancel()
 	select {

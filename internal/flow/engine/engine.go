@@ -156,9 +156,13 @@ type Engine struct {
 	recovery map[string]*Recovery
 	startSeq int
 	// claimed are the calls of the previous process that a position of the resumed script took over (resumePrior): they go
-	// on in this process, so a new attempt of their node does not supersede them.
-	claimedM sync.Mutex
-	claimed  map[string]bool
+	// on in this process, so a new attempt of their node does not supersede them. superseding are the calls of the previous
+	// process that a new attempt ends (or ended) superseded. Both are decided under attemptM, so a call is either claimed or
+	// superseded and never both: whichever decision comes first stands, and a later claim of a call that was superseded
+	// runs its position as a call of its own.
+	claimedM   sync.Mutex
+	claimed    map[string]bool
+	superseded map[string]*supersedeOp
 	// escalated are the calls whose dispatch_unknown escalation was written by this run.
 	escalatedM sync.Mutex
 	escalated  map[string]bool
@@ -479,20 +483,64 @@ func (e *Engine) nodeStopReason(node string) string {
 	return e.stopped[node]
 }
 
-// claim records that the resumed script took over a call of the previous process; claimedCall asks whether it did.
-func (e *Engine) claim(id string) {
+// claim records that the resumed script took over a call of the previous process, unless a new attempt has superseded it
+// or is superseding it: it reports whether the call is the position's to go on with. claimedCall asks whether it was claimed.
+func (e *Engine) claim(id string) bool {
 	e.claimedM.Lock()
+	defer e.claimedM.Unlock()
+	if e.superseded[id] != nil {
+		return false
+	}
 	if e.claimed == nil {
 		e.claimed = map[string]bool{}
 	}
 	e.claimed[id] = true
-	e.claimedM.Unlock()
+	return true
 }
 
 func (e *Engine) claimedCall(id string) bool {
 	e.claimedM.Lock()
 	defer e.claimedM.Unlock()
 	return e.claimed[id]
+}
+
+// supersedeOp is the end of one call of the previous process by a new attempt. The call that decided it does the work (the
+// interruption of a turn it may still run, the superseded row); a call that wants the same end waits for it.
+type supersedeOp struct {
+	done chan struct{}
+	err  error
+}
+
+// beginSupersede decides, under the same lock as claim, whether the new attempt ends the call: it may not when the resumed
+// script claimed it (unless it is the call's own position, which never claims itself) and it need not when another attempt
+// already does. owner is set for the one caller that does the work; the others wait on op.done.
+func (e *Engine) beginSupersede(id string, own bool) (op *supersedeOp, owner, skip bool) {
+	e.claimedM.Lock()
+	defer e.claimedM.Unlock()
+	if !own && e.claimed[id] {
+		return nil, false, true
+	}
+	if prior := e.superseded[id]; prior != nil {
+		return prior, false, false
+	}
+	if e.superseded == nil {
+		e.superseded = map[string]*supersedeOp{}
+	}
+	op = &supersedeOp{done: make(chan struct{})}
+	e.superseded[id] = op
+	return op, true, false
+}
+
+// endSupersede finishes the work of the owner. A failed end (a turn that cannot be confirmed interrupted) leaves the call
+// open, so it is forgotten: nothing was decided for it.
+func (e *Engine) endSupersede(id string, op *supersedeOp, err error) {
+	op.err = err
+	if err != nil {
+		e.claimedM.Lock()
+		delete(e.superseded, id)
+		e.claimedM.Unlock()
+	}
+	close(op.done)
 }
 
 // resume reconciles the journal's open calls against the host before anything else runs, and holds every node that has a
