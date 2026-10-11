@@ -2,7 +2,6 @@ package hook
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -89,7 +88,7 @@ func TestCRW1187EveryWorkingImportMechanismIsRefusedByBothGuards(t *testing.T) {
 		crw1187Write(t, lib, map[string]string{"evil.py": "open(" + strconv.Quote(marker) + ", 'w').write('unread code ran')\n"})
 		crw1187Write(t, cwd, map[string]string{"calc.py": "def add(a, b):\n    return a + b\n", "test_calc.py": prelude + src, "pkg/__init__.py": ""})
 		setup := "import py_compile,sys\npy_compile.compile(sys.argv[1] + '/evil.py', cfile=sys.argv[1] + '/evilc.pyc', doraise=True)\n"
-		if out, err := exec.Command(python, "-I", "-B", "-c", setup, lib).CombinedOutput(); err != nil {
+		if out, err := crw1187Isolated(t, python, "-B", "-c", setup, lib).CombinedOutput(); err != nil {
 			t.Fatalf("setup: %v %s", err, out)
 		}
 		cmd := "python3 -B -m unittest"

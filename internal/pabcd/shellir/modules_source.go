@@ -26,16 +26,14 @@ var (
 	reImportEnv     = regexp.MustCompile(`\b(PYTHONPATH|PYTHONPYCACHEPREFIX|PYTHONHOME|PYTHONSTARTUP|PYTHONSAFEPATH)\b`)
 	reSysLiteral    = regexp.MustCompile(`["']sys["']`)
 	reCodeLiteral   = regexp.MustCompile(`["'][^"'\n]*(\.(py|pyc|pyd|so|pth)|__pycache__[^"'\n]*)["']`)
-	// reWriteAPI: a call that writes, copies, moves or links a file, by a name that is not an everyday word (a bare copy, move or replace is a
-	// method of strings and containers) or qualified by os or shutil, or imported from them; open with a write mode.
+	// reWriteAPI: a write, copy, move or link of a file by a name that is not an everyday word (a bare copy, move or replace is a method of
+	// strings and containers), or imported from a writing module (a star import too). The calls through a writing module, an open for
+	// writing and an archive's extract are judged by their operands (moduleSourceWriterRefusal).
 	reWriteAPI = regexp.MustCompile(`\b(write_text|write_bytes|copyfile|copy2|copytree|copymode|copyfileobj|unpack_archive|make_archive|symlink_to|hardlink_to|extractall|truncate|O_WRONLY|O_RDWR|O_CREAT|O_APPEND)\b` +
-		`|\b(os|shutil|posix|pathlib)\s*\.\s*` + writeAPIAttrs + `\b` +
-		`|\.\s*extract\s*\(` +
 		// a path object moved onto an import location (Path('x').rename('late.py'), p.replace(Path('late.py'))): the one operand is a code name
 		// (str.replace has two, so a replace of ".py" in a name is not this)
 		`|\.\s*(rename|replace)\s*\(\s*(?:(?:[\w.]*\bPath|PurePath)\s*\(\s*)?[rbuf]*["'][^"'\n]*(\.(py|pyc|pyd|so|pth)|__pycache__[^"'\n]*)["']\s*\)+` +
-		`|\bfrom\s+(shutil|os|posix)\s+import\s*\(|\bfrom\s+(shutil|os|posix)\s+import\s+[^\n]*\b(copy|move|rename|renames|replace|link|symlink)\b` +
-		`|\bopen\s*\([^)]*["'][rbtU]*[wax+][a-z+]*["']`)
+		`|\bfrom\s+(shutil|os|posix|pathlib)\s+import\s*[(*]|\bfrom\s+(shutil|os|posix)\s+import\s+[^\n]*\b(copy|move|rename|renames|replace|link|symlink)\b`)
 	reGetattrCall = regexp.MustCompile(`\b(getattr|setattr|delattr|vars)\s*\(\s*(?:\(\s*)*([A-Za-z_][A-Za-z_0-9]*)\b`)
 )
 
@@ -95,10 +93,6 @@ func moduleSourceRefusalOf(src string, stmts []string) string {
 			if m := regexp.MustCompile(`\b` + qa + reAttrAfter + `__dict__\b`).FindString(src); m != "" {
 				return "reads the namespace of " + mod + " (" + a + ".__dict__)"
 			}
-		case "writer":
-			if m := regexp.MustCompile(`\b` + qa + `\s*\.\s*` + writeAPIAttrs + `\b`).FindString(src); m != "" && reCodeLiteral.MatchString(src) {
-				return "writes, copies or links a file at an import location (" + strings.Join(strings.Fields(m), "") + " with a name ending .py, .pyc, .so, .pth or in __pycache__)"
-			}
 		}
 		if mod == "importlib" {
 			for _, m := range regexp.MustCompile(`\b`+qa+reAttrAfter+`([A-Za-z_]\w*)`).FindAllStringSubmatch(src, -1) {
@@ -131,10 +125,7 @@ func moduleSourceRefusalOf(src string, stmts []string) string {
 	if m := reImportEnv.FindString(src); m != "" {
 		return "names " + m + ", which redirects imports"
 	}
-	if reCodeLiteral.MatchString(src) && reWriteAPI.MatchString(src) {
-		return "writes, copies or links a file at an import location (a name ending .py, .pyc, .so, .pth or in __pycache__)"
-	}
-	return ""
+	return moduleSourceWriterRefusal(src, aliases)
 }
 
 // pyLexed is a Python source split the way the tokenizer sees it.
@@ -475,7 +466,7 @@ var builtinsByName = map[string]bool{"getattr": true, "setattr": true, "delattr"
 var sysCodeNames = map[string]bool{"path": true, "pycache_prefix": true, "meta_path": true, "path_hooks": true, "path_importer_cache": true, "__dict__": true}
 
 // writerModules are the modules whose attributes write, copy, move or link files: a name the source gives them (import shutil as sh) is
-// matched against the attributes of writeAPIAttrs like the module's own name (CRW-1187).
+// matched against the attributes of writeAPIAttrs like the module's own name, in moduleSourceWriterRefusal (CRW-1187).
 var writerModules = map[string]bool{"os": true, "shutil": true, "posix": true, "pathlib": true}
 
 // pyImportStatement judges an import statement: it names the sys aliases, and refuses a bring-in of an import-path attribute of sys,
