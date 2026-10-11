@@ -1739,10 +1739,10 @@ BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_closures';
 WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_closures')
 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_closures.rowid'); END`,
 	// A chain stays on one node of one plan and runs forward (CRW-1212, verification): the foreign key of supersedes_execution_id only checks that the execution exists, so without this a row of another node
-	// or plan could name A's last row as its predecessor and end A's chain (A would then have no last row, so no current execution), and a successor could be an earlier or the same attempt. The name does
-	// not end in _guard: this is a check on the value, not a key guard (CRW-974 lists the key guards).
+	// or plan could name A's last row as its predecessor and end A's chain (A would then have no last row, so no current execution), and a successor could be an earlier or the same attempt. A predecessor
+	// that does not exist is the foreign key's to refuse. The name does not end in _guard: this is a check on the value, not a key guard (CRW-974 lists the key guards).
 	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_chain_check BEFORE INSERT ON dag_agent_executions
-WHEN NEW.supersedes_execution_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dag_agent_executions p WHERE p.execution_id = NEW.supersedes_execution_id AND p.plan_id = NEW.plan_id AND p.node_id = NEW.node_id AND p.attempt < NEW.attempt)
+WHEN NEW.supersedes_execution_id IS NOT NULL AND EXISTS (SELECT 1 FROM dag_agent_executions p WHERE p.execution_id = NEW.supersedes_execution_id AND NOT (p.plan_id = NEW.plan_id AND p.node_id = NEW.node_id AND p.attempt < NEW.attempt))
 BEGIN SELECT RAISE(ABORT, 'dag_agent_executions.supersedes_execution_id must name an earlier attempt of the same plan and node'); END`,
 }
 
