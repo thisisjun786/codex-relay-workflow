@@ -85,4 +85,3 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 ## Named by the design and outside the set
 
 The design's classification table (relay.added) also names `internal/relay/dagsched/capacity.go` (the slots a node holds), `internal/relay/dagsched/digest.go` (the `Acceptance` record and its digest) and `internal/relay/dagsched/progress_replay.go` (the view over the plan log and acceptance state) as node-scoped readers for R06. None of them spells a frozen table or uses a function that does, so they are not in the computed set and have no row above; R06 moves them with the rows it owns.
-

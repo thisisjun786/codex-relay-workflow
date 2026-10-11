@@ -899,9 +899,9 @@ func (o AgentReleaseOptions) resolved() (AgentReleaseOptions, error) {
 	if strings.TrimSpace(o.Tier) == "" {
 		o.Tier = "executor"
 	}
-	for name, v := range map[string]string{"role": o.Role, "tier": o.Tier, "run id": o.RunID, "worktree": o.Worktree} {
-		if v != strings.TrimSpace(v) || dag.HasControl(v) {
-			return o, refuse(contract.RefusalMalformedReceipt, "the %s %q has whitespace around it or a control character in it", name, v)
+	for _, field := range []struct{ name, value string }{{"role", o.Role}, {"tier", o.Tier}, {"run id", o.RunID}, {"worktree", o.Worktree}} {
+		if field.value != strings.TrimSpace(field.value) || dag.HasControl(field.value) {
+			return o, refuse(contract.RefusalMalformedReceipt, "the %s %q has whitespace around it or a control character in it", field.name, field.value)
 		}
 	}
 	return o, nil
