@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
@@ -51,7 +53,11 @@ func newFixtureAt(t *testing.T, path string) *fixture { return newFixtureOn(t, p
 // newFixtureOn is a fixture over a store created for an App Server socket (a store a real adapter serves must record the socket it serves).
 func newFixtureOn(t *testing.T, path, socket string) *fixture {
 	t.Helper()
-	testsupport.Create(t, path, socket, "go")
+	if socket == "" {
+		copyStoreTemplate(t, path)
+	} else {
+		testsupport.Create(t, path, socket, "go")
+	}
 	s, err := store.Open(context.Background(), path, socket)
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +67,136 @@ func newFixtureOn(t *testing.T, path, socket string) *fixture {
 	f.repo = &dag.Repo{Store: s, Now: f.clock}
 	f.sched = &Scheduler{Store: s, Now: f.clock}
 	return f
+}
+
+// The store template: a go-owned fenced store with no socket, already opened once by this version, so its additive DAG zone and its
+// history indexes are installed and its schema_meta is seeded. Building one costs a few hundred statement parses (the frozen schema's
+// fence, the zone's DDL), which dominated the package's run time when every test paid it; a fixture without a socket is instead a byte
+// copy of the template, re-homed to its own directory (testsupport.Rehome: the copy's physical identity and control socket), and the
+// store.Open that follows finds nothing to install. A copy is a store the test owns alone: the template itself is never opened again.
+var (
+	templateRoot string // the isolation root of the test process (TestMain), which removes it with everything under it
+	template     storeTemplateBuild
+)
+
+// A storeTemplateBuild builds the template once and keeps the outcome. The build runs under the first caller's t, and a failed Create
+// ends that goroutine with t.Fatalf (runtime.Goexit), which sync.Once counts as a completed run: without the deferred record below every
+// later caller would be handed the half-built directory and a nil error, and fail on a missing database instead of on the cause.
+type storeTemplateBuild struct {
+	once sync.Once
+	err  error
+}
+
+// get builds the template at dir (the first call) and returns the recorded outcome (every call). tb is the first caller's t; the build's
+// own failure fails it, and every later caller reads the error.
+func (b *storeTemplateBuild) get(tb testing.TB, dir string) error {
+	tb.Helper()
+	b.once.Do(func() {
+		done := false
+		defer func() {
+			if !done && b.err == nil {
+				b.err = fmt.Errorf("the store template was not built: the first fixture's setup failed (%s)", tb.Name())
+			}
+		}()
+		path := filepath.Join(dir, "relay.sqlite3")
+		testsupport.Create(tb, path, "", "go")
+		s, err := store.Open(context.Background(), path, "")
+		if err != nil {
+			b.err, done = err, true
+			return
+		}
+		b.err, done = s.Close(), true
+	})
+	return b.err
+}
+
+// storeTemplate is the directory holding the template, built by the first fixture that asks (under that fixture's t; a failure fails
+// that test and every later one reads the recorded error).
+func storeTemplate(t *testing.T) (string, error) {
+	t.Helper()
+	dir := filepath.Join(templateRoot, "store-template")
+	return dir, template.get(t, dir)
+}
+
+// copyStoreTemplate puts a copy of the store template at path (see installStoreTemplate) and fails the test when it cannot.
+func copyStoreTemplate(t *testing.T, path string) {
+	t.Helper()
+	dir, err := storeTemplate(t)
+	if err != nil {
+		t.Fatalf("store template: %v", err)
+	}
+	if err := installStoreTemplate(dir, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// installStoreTemplate puts a copy of the template in dir at path and re-homes its mirror the way testsupport.Rehome does (the copy's
+// physical identity and control socket; owner, epoch, phase and store id stay the template's), but without Rehome's three read-only
+// connections: every connection parses the whole schema, and the store.Open that follows validates the mirror against the durable stamp
+// all the same. It keeps testsupport.Create's refusal to initialize over anything: the database must be absent (or an empty regular
+// file), the ownership mirror and the write gate must be absent, and every file is created exclusively, so an existing store, a symlink
+// to one or another store's ownership directory is refused before anything is written and is never truncated or replaced.
+func installStoreTemplate(dir, path string) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	target := filepath.Dir(absolute)
+	flags := os.O_CREATE | os.O_EXCL | os.O_WRONLY
+	if info, e := os.Lstat(absolute); e == nil && info.Mode().IsRegular() && info.Size() == 0 {
+		flags = os.O_WRONLY
+	} else if e == nil || !errors.Is(e, os.ErrNotExist) {
+		return fmt.Errorf("store is not absent: %s exists (%v)", absolute, e)
+	}
+	for _, name := range []string{"takeover.json", "write-gate.lock", "takeover.lock"} {
+		existing := filepath.Join(target, name)
+		if _, e := os.Lstat(existing); e == nil || !errors.Is(e, os.ErrNotExist) {
+			return fmt.Errorf("store is not absent: %s exists (%v)", existing, e)
+		}
+	}
+	record, err := readTemplateRecord(dir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		return err
+	}
+	for _, name := range []string{"relay.sqlite3", "write-gate.lock", "takeover.lock"} {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		dest, mode := filepath.Join(target, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY
+		if name == "relay.sqlite3" {
+			dest, mode = absolute, flags
+		}
+		file, err := os.OpenFile(dest, mode, 0o600)
+		if err != nil {
+			return err
+		}
+		_, err = file.Write(raw)
+		if err = errors.Join(err, file.Close()); err != nil {
+			return err
+		}
+	}
+	if record.Database, err = ownership.Physical(absolute); err != nil {
+		return err
+	}
+	record.RelayRPCSocket = filepath.Join(filepath.Dir(record.Database.RealPath), "control.sock")
+	return ownership.Publish(record.Database.RealPath, record, nil)
+}
+
+func readTemplateRecord(dir string) (ownership.Record, error) {
+	var record ownership.Record
+	raw, err := os.ReadFile(filepath.Join(dir, "takeover.json"))
+	if err != nil {
+		return record, err
+	}
+	err = json.Unmarshal(raw, &record)
+	return record, err
 }
 
 func (f *fixture) clock() string {

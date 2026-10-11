@@ -8,6 +8,7 @@ import (
 // CRW-965 review: a node named twice (--node a --node a) is one candidate. Selecting it twice would merge its head twice
 // in one batch and write its merged mark twice.
 func TestIntegrationBatchCountsADuplicateNodeOnce(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	in := k.batchIn()

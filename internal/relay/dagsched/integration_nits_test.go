@@ -8,6 +8,7 @@ import (
 // CRW-965 (review): a retried all-contained batch with the same identity reports the marks it already recorded and inserts
 // no stage row twice.
 func TestRetriedContainedBatchDoesNotInsertItsMarkTwice(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()
@@ -41,6 +42,7 @@ func TestRetriedContainedBatchDoesNotInsertItsMarkTwice(t *testing.T) {
 
 // CRW-965 (review): a batch for a checkout does not take a candidate accepted for another repository.
 func TestBatchDoesNotTakeACandidateAcceptedForAnotherCheckout(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	other := newGitRepo(t)

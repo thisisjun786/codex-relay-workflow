@@ -10,6 +10,7 @@ import (
 
 // TestPremergeCLIReRegisteredCriteriaMakeTheRecordStaleAtAccept: dag-accept through the binary refuses the old record.
 func TestPremergeCLIReRegisteredCriteriaMakeTheRecordStaleAtAccept(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	raw := premergeRaw(t, premergeRecordOf(t, k))
 	k.invRevise("g", "I", "g-r2", func(n doc) { n["criteria_set_digest"] = dig("re-registered I") })
@@ -23,6 +24,7 @@ func TestPremergeCLIReRegisteredCriteriaMakeTheRecordStaleAtAccept(t *testing.T)
 // read, so dag-integrate names it with the stale refusal the DAG feature already uses (disposition_conflict), not with
 // premerge_criteria_stale. This is the reading the handoff records for the parent to accept (CRW-952 c5 wording).
 func TestPremergeIntegrationReRegisteredCriteriaLeaveTheCandidateOut(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	k.invRevise("g", "a", "g-r2", func(n doc) { n["criteria_set_digest"] = dig("re-registered a") })
