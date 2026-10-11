@@ -1744,6 +1744,128 @@ BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_closures.rowid');
 	`CREATE TRIGGER IF NOT EXISTS dag_agent_executions_chain_check BEFORE INSERT ON dag_agent_executions
 WHEN NEW.supersedes_execution_id IS NOT NULL AND EXISTS (SELECT 1 FROM dag_agent_executions p WHERE p.execution_id = NEW.supersedes_execution_id AND NOT (p.plan_id = NEW.plan_id AND p.node_id = NEW.node_id AND p.attempt < NEW.attempt))
 BEGIN SELECT RAISE(ABORT, 'dag_agent_executions.supersedes_execution_id must name an earlier attempt of the same plan and node'); END`,
+	// The agent acceptance and integration rows (R05, CRW-1213). An agent node's accepted result is a row of dag_agent_acceptances and its node-level integration facts are rows of
+	// dag_agent_integration_stages; the frozen acceptance, verified-head and stage tables never hold a row of an agent node, and dag_integration_observations (keyed by an acceptance id alone, with no
+	// relationship column and no foreign key) is the one frozen table that holds an agent acceptance id (TestAgentStageRowsStayOutOfFrozenTables).
+	//
+	// An acceptance names the execution it accepted and the head the relay read from git, the pre-merge record and the verification record with their digests and bodies (the frozen tables that hold those for a
+	// relationship acceptance reference dag_acceptances, so the bodies live in the row), the criteria set the reviewer saw, the reviewer call recorded by the run with its thread, turn and pair, the digest of the
+	// author pairs observed when it was accepted, and the actor and epoch. A node without a head (a non-implementation node) has '' for the head and for everything the head carries. The key
+	// UNIQUE (execution_id, head, criteria_set_digest) is decided here, because the shipped zone sentence cannot be edited: a re-review under new criteria of the same execution and head (R07) is another
+	// criteria digest, so another row, and the same key again is the same acceptance. Rows follow one another in a chain per node (a row names the one it supersedes; a row is the predecessor of at most one;
+	// one row per node has none), and the CURRENT acceptance of a node is the last row of its chain unless a dag_agent_closures row of kind acceptance ends it.
+	`CREATE TABLE IF NOT EXISTS dag_agent_acceptances (
+    acceptance_id            TEXT PRIMARY KEY CHECK (acceptance_id <> ''),
+    plan_id                  TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id                  TEXT NOT NULL CHECK (node_id <> ''),
+    manifest_digest          TEXT NOT NULL REFERENCES dag_input_manifests (manifest_digest),
+    execution_id             TEXT NOT NULL REFERENCES dag_agent_executions (execution_id),
+    head                     TEXT NOT NULL DEFAULT '',
+    base                     TEXT NOT NULL DEFAULT '',
+    repository               TEXT NOT NULL DEFAULT '',
+    premerge_digest          TEXT NOT NULL DEFAULT '',
+    premerge_json            TEXT NOT NULL DEFAULT '',
+    premerge_evaluated_head  TEXT NOT NULL DEFAULT '',
+    verification_digest      TEXT NOT NULL DEFAULT '',
+    verification_json        TEXT NOT NULL DEFAULT '',
+    tree_sha                 TEXT NOT NULL DEFAULT '',
+    criteria_set_digest      TEXT NOT NULL CHECK (criteria_set_digest <> ''),
+    reviewer_call_id         TEXT NOT NULL CHECK (reviewer_call_id <> ''),
+    reviewer_thread_id       TEXT NOT NULL DEFAULT '',
+    reviewer_turn_id         TEXT NOT NULL DEFAULT '',
+    reviewer_model           TEXT NOT NULL CHECK (reviewer_model <> ''),
+    reviewer_effort          TEXT NOT NULL DEFAULT '',
+    author_pairs_digest      TEXT NOT NULL CHECK (author_pairs_digest <> ''),
+    accepted_by_task_id      TEXT NOT NULL CHECK (accepted_by_task_id <> ''),
+    coordinator_epoch        INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    accepted_at              TEXT NOT NULL,
+    supersedes_acceptance_id TEXT REFERENCES dag_agent_acceptances (acceptance_id),
+    CHECK (supersedes_acceptance_id IS NULL OR supersedes_acceptance_id <> acceptance_id),
+    CHECK ((head = '' AND base = '' AND repository = '' AND premerge_digest = '' AND premerge_json = '' AND premerge_evaluated_head = '' AND verification_digest = '' AND verification_json = '' AND tree_sha = '')
+        OR (head <> '' AND base <> '' AND repository <> '' AND premerge_digest <> '' AND premerge_json <> '' AND premerge_evaluated_head <> '' AND verification_digest <> '' AND verification_json <> '' AND tree_sha <> '')),
+    UNIQUE (execution_id, head, criteria_set_digest)
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_agent_acceptances_node ON dag_agent_acceptances (plan_id, node_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_agent_acceptances_root ON dag_agent_acceptances (plan_id, node_id) WHERE supersedes_acceptance_id IS NULL`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_agent_acceptances_successor ON dag_agent_acceptances (supersedes_acceptance_id) WHERE supersedes_acceptance_id IS NOT NULL`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_no_update BEFORE UPDATE ON dag_agent_acceptances
+BEGIN SELECT RAISE(ABORT, 'dag_agent_acceptances rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_no_delete BEFORE DELETE ON dag_agent_acceptances
+BEGIN SELECT RAISE(ABORT, 'dag_agent_acceptances rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_acceptance_id_not_null BEFORE INSERT ON dag_agent_acceptances
+WHEN NEW.acceptance_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_agent_acceptances.acceptance_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_pk_guard BEFORE INSERT ON dag_agent_acceptances
+WHEN EXISTS (SELECT 1 FROM dag_agent_acceptances WHERE acceptance_id = NEW.acceptance_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_acceptances.acceptance_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_effect_key_guard BEFORE INSERT ON dag_agent_acceptances
+WHEN EXISTS (SELECT 1 FROM dag_agent_acceptances WHERE execution_id = NEW.execution_id AND head = NEW.head AND criteria_set_digest = NEW.criteria_set_digest)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_acceptances.execution_id, dag_agent_acceptances.head, dag_agent_acceptances.criteria_set_digest'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_root_key_guard BEFORE INSERT ON dag_agent_acceptances
+WHEN NEW.supersedes_acceptance_id IS NULL AND EXISTS (SELECT 1 FROM dag_agent_acceptances WHERE plan_id = NEW.plan_id AND node_id = NEW.node_id AND supersedes_acceptance_id IS NULL)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_acceptances.plan_id, dag_agent_acceptances.node_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_successor_key_guard BEFORE INSERT ON dag_agent_acceptances
+WHEN NEW.supersedes_acceptance_id IS NOT NULL AND EXISTS (SELECT 1 FROM dag_agent_acceptances WHERE supersedes_acceptance_id = NEW.supersedes_acceptance_id AND supersedes_acceptance_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_acceptances.supersedes_acceptance_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_rowid_guard BEFORE INSERT ON dag_agent_acceptances
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_agent_acceptances WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_acceptances.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_rowid_minus1_mark_guard BEFORE INSERT ON dag_agent_acceptances
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_acceptances';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_agent_acceptances' WHERE EXISTS (SELECT 1 FROM dag_agent_acceptances WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_rowid_minus1_guard AFTER INSERT ON dag_agent_acceptances
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_acceptances')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_acceptances.rowid'); END`,
+	// An acceptance stays on the execution's own node, plan and manifest, and its chain stays on one node of one plan (the foreign keys only check that the rows exist; without these a row of another node
+	// could name A's last acceptance as its predecessor and end A's chain, or accept another node's execution). A row that does not exist is the foreign key's to refuse. Value checks, not key guards: the names do not end in _guard.
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_execution_check BEFORE INSERT ON dag_agent_acceptances
+WHEN EXISTS (SELECT 1 FROM dag_agent_executions e WHERE e.execution_id = NEW.execution_id AND NOT (e.plan_id = NEW.plan_id AND e.node_id = NEW.node_id AND e.manifest_digest = NEW.manifest_digest))
+BEGIN SELECT RAISE(ABORT, 'dag_agent_acceptances.execution_id must name an execution of the same plan and node under the same manifest'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_acceptances_chain_check BEFORE INSERT ON dag_agent_acceptances
+WHEN NEW.supersedes_acceptance_id IS NOT NULL AND EXISTS (SELECT 1 FROM dag_agent_acceptances p WHERE p.acceptance_id = NEW.supersedes_acceptance_id AND NOT (p.plan_id = NEW.plan_id AND p.node_id = NEW.node_id))
+BEGIN SELECT RAISE(ABORT, 'dag_agent_acceptances.supersedes_acceptance_id must name an acceptance of the same plan and node'); END`,
+	// The node-level integration facts of an agent acceptance: the intent that froze it in a batch, the merged mark (marked) and a mark that could not be written yet (mark_pending). The batch-level rows (node_id '': the
+	// batch intent and ref_moved) stay in dag_integration_stages for every batch, agent-only or mixed: they carry no node, no acceptance and no relationship, so they are a fact of the batch.
+	`CREATE TABLE IF NOT EXISTS dag_agent_integration_stages (
+    stage_id      TEXT PRIMARY KEY CHECK (stage_id <> ''),
+    batch_id      TEXT NOT NULL CHECK (batch_id <> ''),
+    plan_id       TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id       TEXT NOT NULL CHECK (node_id <> ''),
+    acceptance_id TEXT NOT NULL REFERENCES dag_agent_acceptances (acceptance_id),
+    execution_id  TEXT NOT NULL REFERENCES dag_agent_executions (execution_id),
+    stage         TEXT NOT NULL CHECK (stage IN ('intent', 'marked', 'mark_pending')),
+    head          TEXT NOT NULL CHECK (head <> ''),
+    detail        TEXT NOT NULL,
+    recorded_by   TEXT NOT NULL CHECK (recorded_by <> ''),
+    recorded_at   TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_agent_integration_stages_batch ON dag_agent_integration_stages (batch_id)`,
+	`CREATE INDEX IF NOT EXISTS dag_agent_integration_stages_acceptance ON dag_agent_integration_stages (acceptance_id)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_no_update BEFORE UPDATE ON dag_agent_integration_stages
+BEGIN SELECT RAISE(ABORT, 'dag_agent_integration_stages rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_no_delete BEFORE DELETE ON dag_agent_integration_stages
+BEGIN SELECT RAISE(ABORT, 'dag_agent_integration_stages rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_stage_id_not_null BEFORE INSERT ON dag_agent_integration_stages
+WHEN NEW.stage_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'dag_agent_integration_stages.stage_id is NULL: a row is addressed by a non-empty id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_pk_guard BEFORE INSERT ON dag_agent_integration_stages
+WHEN EXISTS (SELECT 1 FROM dag_agent_integration_stages WHERE stage_id = NEW.stage_id)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_integration_stages.stage_id'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_rowid_guard BEFORE INSERT ON dag_agent_integration_stages
+WHEN NEW.rowid <> -1 AND EXISTS (SELECT 1 FROM dag_agent_integration_stages WHERE rowid = NEW.rowid)
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_integration_stages.rowid'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_rowid_minus1_mark_guard BEFORE INSERT ON dag_agent_integration_stages
+WHEN NEW.rowid = -1
+BEGIN DELETE FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_integration_stages';
+  INSERT INTO dag_zone_rowid_marks (table_name) SELECT 'dag_agent_integration_stages' WHERE EXISTS (SELECT 1 FROM dag_agent_integration_stages WHERE rowid = -1); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_rowid_minus1_guard AFTER INSERT ON dag_agent_integration_stages
+WHEN NEW.rowid = -1 AND EXISTS (SELECT 1 FROM dag_zone_rowid_marks WHERE table_name = 'dag_agent_integration_stages')
+BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_integration_stages.rowid'); END`,
+	// A stage row names the acceptance of its own plan, node, execution and head: it cannot freeze or mark another node's acceptance.
+	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_acceptance_check BEFORE INSERT ON dag_agent_integration_stages
+WHEN EXISTS (SELECT 1 FROM dag_agent_acceptances a WHERE a.acceptance_id = NEW.acceptance_id AND NOT (a.plan_id = NEW.plan_id AND a.node_id = NEW.node_id AND a.execution_id = NEW.execution_id AND a.head = NEW.head))
+BEGIN SELECT RAISE(ABORT, 'dag_agent_integration_stages.acceptance_id must name the acceptance of the same plan, node, execution and head'); END`,
 }
 
 // zoneKeyGuardName finds the key guards among the zone's triggers: a guard's name ends in _guard (CRW-974).

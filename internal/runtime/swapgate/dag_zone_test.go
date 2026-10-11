@@ -273,8 +273,18 @@ func TestAReleaseCarriesOnlyTheZoneArrivalAlone(t *testing.T) {
 // R04 (CRW-1212, TestFlowZoneUpgradeFromOldZone for the flow journal tables and the agent execution tables alike): the zone grows by appended statements. A store whose zone ends before the flow journal and the agent execution tables is, to a build that declares them, the arrival of part of the zone:
 // refused until the OPS-4.5 route is taken, and agreed once this build has opened the store. A build that does not declare them reads a store that has them as the zone leaving in part, which is not refused.
 func TestFlowZoneUpgradeFromOldZone(t *testing.T) {
+	zoneExtensionUpgrade(t, []string{"flow_runs", "flow_calls", "flow_events", "flow_spawn_decisions", "flow_step_decisions", "dag_agent_executions", "dag_agent_closures"}, "flow_runs", "dag_agent_executions")
+}
+
+// R05 (CRW-1213): the same for the agent acceptance rows and the node-level stages of an agent acceptance, appended after the agent execution tables.
+func TestAgentAcceptanceZoneUpgradeFromOldZone(t *testing.T) {
+	zoneExtensionUpgrade(t, []string{"dag_agent_acceptances", "dag_agent_integration_stages"}, "dag_agent_acceptances", "dag_agent_integration_stages")
+}
+
+// zoneExtensionUpgrade drops the tables from a store this build opened, which is the zone an earlier build left, and checks the swap gate's three answers: a build that declares them against the old zone
+// extends it (refused until the OPS-4.5 route is taken, naming the tables), the build agrees once it has opened the store, and the earlier build's declaration against a store that has them narrows.
+func zoneExtensionUpgrade(t *testing.T, newTables []string, named ...string) {
 	ctx := context.Background()
-	newTables := []string{"flow_runs", "flow_calls", "flow_events", "flow_spawn_decisions", "flow_step_decisions", "dag_agent_executions", "dag_agent_closures"}
 	state := filepath.Join(t.TempDir(), "state")
 	path := filepath.Join(state, "relay.sqlite3")
 	testsupport.Create(t, path, "", "go")
@@ -302,7 +312,11 @@ func TestFlowZoneUpgradeFromOldZone(t *testing.T) {
 	held := swapgate.StoreSchema(ctx, state, "")
 	cell := swapgate.SchemaCell(held, declared)
 	canon := golden.Canon(cell)
-	if record.Get(cell, "answer") != swapgate.ExtendsZone || !refuses(t, cell) || !strings.Contains(canon, "flow_runs") || !strings.Contains(canon, "dag_agent_executions") || !strings.Contains(canon, "--backup-state-to") {
+	mentioned := true
+	for _, table := range named {
+		mentioned = mentioned && strings.Contains(canon, table)
+	}
+	if record.Get(cell, "answer") != swapgate.ExtendsZone || !refuses(t, cell) || !mentioned || !strings.Contains(canon, "--backup-state-to") {
 		t.Fatalf("an old zone against a build that adds the flow and agent tables: %s", canon)
 	}
 
