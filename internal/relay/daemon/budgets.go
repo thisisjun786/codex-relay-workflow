@@ -28,17 +28,22 @@ type Budgets struct {
 //   - MaxSendsPerParentPerTick is at least OrchestratorSends for the parents that are orchestrators, so one
 //     tick reaches the recipients of an orchestrator that runs many issues.
 //
-// The count is bounded by MaxLiveOrchestrators.
+// The count is bounded by MaxLiveOrchestrators. A policy value is only ever raised, and a negative one, which turns
+// its budget off, stays off.
 func (p Policy) BudgetsFor(live, parentShare int) Budgets {
-	n := min(max(live, 0), MaxLiveOrchestrators)
-	b := Budgets{
-		MaxSends:                 max(p.MaxSends, p.OrchestratorSends*n),
-		MaxSendsPerParentPerTick: parentShare,
-		MaxProjects:              max(p.MaxProjects, n),
-		MaxSupervisorSends:       max(p.MaxSupervisorSends, n),
+	b := Budgets{MaxSends: p.MaxSends, MaxSendsPerParentPerTick: parentShare, MaxProjects: p.MaxProjects, MaxSupervisorSends: p.MaxSupervisorSends}
+	n := min(live, MaxLiveOrchestrators)
+	if n <= 0 {
+		return b
 	}
-	if n > 0 {
-		b.MaxSendsPerParentPerTick = max(parentShare, p.OrchestratorSends)
+	raise := func(base *int, least int) {
+		if *base >= 0 {
+			*base = max(*base, least)
+		}
 	}
+	raise(&b.MaxSends, p.OrchestratorSends*n)
+	raise(&b.MaxSendsPerParentPerTick, p.OrchestratorSends)
+	raise(&b.MaxProjects, n)
+	raise(&b.MaxSupervisorSends, n)
 	return b
 }

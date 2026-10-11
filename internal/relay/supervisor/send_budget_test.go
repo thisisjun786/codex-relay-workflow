@@ -29,7 +29,9 @@ func Test259_a_supervisor_send_is_charged_to_its_relationship_and_recipient(t *t
 		t.Fatalf("another relationship's hour count is %d, %v; want 0", got, err)
 	}
 	service := delivery.NewService(f.s, delivery.SystemClock{})
+	// The reporting relationship's parent holds the project, so it is of class orchestrator (CRW-1210).
 	service.Policy.MaxSendsPerRelationshipPerHour = 1
+	service.Policy.MaxSendsPerOrchestratorRelationshipPerHour = 1
 	later := float64(now + 60)
 	if refusal, err := service.SendRefusal(f.ctx, row.RelationshipID, row.RecipientTaskID, later); err != nil || refusal != delivery.HourlyCap {
 		t.Errorf("the reporting relationship, one send into a cap of one: %q, %v; want %s", refusal, err, delivery.HourlyCap)

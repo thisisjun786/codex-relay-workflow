@@ -505,9 +505,11 @@ func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
 		}},
 		{"its relationship has spent the hourly cap on supervisor transports", func(t *testing.T, o *overtaking, rid string, now float64) {
 			stamp := ISOOf(math.Floor(now/3600) * 3600)
-			o.w.exec("INSERT INTO supervisor_messages (message_id, obligation_id, obligation_kind, relationship_id, purpose, kind, sender_task_id, recipient_task_id, subject, packet, state, staged_at, updated_at) VALUES ('m-cap','m-cap','report',?,'p','k','sender',?,'s','{}','sent',?,?)", rid, scaleParent, stamp, stamp)
 			for i := 1; i <= int(o.w.f.delivery.Policy.MaxSendsPerRelationshipPerHour); i++ {
-				o.w.exec("INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message, state, send_attempted, retry_safe, record, sent_at, transport_started_at, observed_at) VALUES (?,'m-cap',?,'m','settled','unknown',0,'{}',?,?,?)", fmt.Sprintf("m-cap-t%d", i), i, stamp, stamp, stamp)
+				// one transport of each of cap messages: the hour counts messages, not transports (CRW-1210).
+				message := fmt.Sprintf("m-cap-%d", i)
+				o.w.exec("INSERT INTO supervisor_messages (message_id, obligation_id, obligation_kind, relationship_id, purpose, kind, sender_task_id, recipient_task_id, subject, packet, state, staged_at, updated_at) VALUES (?,?,'report',?,'p','k','sender',?,'s','{}','sent',?,?)", message, message, rid, scaleParent, stamp, stamp)
+				o.w.exec("INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message, state, send_attempted, retry_safe, record, sent_at, transport_started_at, observed_at) VALUES (?,?,1,'m','settled','unknown',0,'{}',?,?,?)", message+"-t1", message, stamp, stamp, stamp)
 			}
 		}},
 	} {

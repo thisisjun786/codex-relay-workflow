@@ -343,11 +343,12 @@ var busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible
 	" ROW_NUMBER() OVER (PARTITION BY b.recipient_task_id ORDER BY be.first_seen_at, b.created_at, b.event_id) AS rn" +
 	" FROM deliveries b JOIN events be ON be.event_id = b.event_id JOIN relationships br ON br.relationship_id = b.relationship_id" +
 	" LEFT JOIN " + store.RelationshipSpentSQL + " bs ON bs.relationship_id = b.relationship_id AND bs.recipient_task_id = b.recipient_task_id" +
+	" LEFT JOIN " + store.OrchestratorTasksSQL + " bo ON bo.task_id = br.parent_task_id" +
 	" LEFT JOIN delivery_wakes bw ON bw.event_id = b.event_id" +
 	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR (bw.event_id IS NOT NULL AND bw.spent_at IS NULL))" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
-	" AND COALESCE(bs.spent, 0) < CASE WHEN " + store.OrchestratorParentSQL("br.parent_task_id") + " THEN ? ELSE ? END) WHERE rn = 1)"
+	" AND COALESCE(bs.spent, 0) < CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END) WHERE rn = 1)"
 
 // busyHeadArgs are the arguments of busyHeadSQL at now.
 func (d *Service) busyHeadArgs(now float64) []any {
@@ -509,10 +510,11 @@ func (d *Service) eligibility(now float64) (string, string, []any) {
 	window, _ := d.Policy.RateWindows(now)
 	join := " LEFT JOIN " + store.RelationshipSpentSQL + " sbspent ON sbspent.relationship_id = d.relationship_id AND sbspent.recipient_task_id = d.recipient_task_id" +
 		" LEFT JOIN " + busyHeadSQL + " bh ON bh.recipient_task_id = d.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < (e.first_seen_at, d.created_at, d.event_id)" +
+		" LEFT JOIN " + store.OrchestratorTasksSQL + " ot ON ot.task_id = r.parent_task_id" +
 		" LEFT JOIN delivery_wakes dw ON dw.event_id = d.event_id"
 	args := append(store.RelationshipSendsArgs(window), d.busyHeadArgs(now)...)
 	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
-	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < CASE WHEN " + store.OrchestratorParentSQL("r.parent_task_id") + " THEN ? ELSE ? END AND bh.event_id IS NULL", args
+	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END AND bh.event_id IS NULL", args
 }
 
 // dueFrom is what the due-delivery reads select from: a delivery with its relationship and event.

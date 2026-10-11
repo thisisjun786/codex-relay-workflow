@@ -756,3 +756,38 @@ func TestAClockSetBackDoesNotPinTheSameTurnsAtTheFront(t *testing.T) {
 		})
 	}
 }
+
+// A woken tick keeps the observation budget of any other: the woken children are read first, but no more than
+// MaxTurnReads turns are read, and the children the budget leaves out are read by the ticks that follow (CRW-1210).
+func TestThroughputWokenTickKeepsTheReadBudget(t *testing.T) {
+	t.Parallel()
+	ctx, s := throughputStore(t)
+	const relationships = 12
+	for i := range relationships {
+		seedIndexed(t, s, i)
+	}
+	host := &observationHost{status: "inProgress"}
+	d := New(s, host, movingClock(), nil)
+	d.Policy.MaxSends, d.Policy.MaxTurnReads = -1, 4
+	// Three children woke the tick, the last three in the relationships' order, which is what would be read last.
+	woken := []string{name("child", relationships-3), name("child", relationships-2), name("child", relationships-1)}
+	if _, err := d.Tick(WithWoken(ctx, woken)); err != nil {
+		t.Fatal(err)
+	}
+	var first []int
+	for _, turn := range host.reads {
+		first = append(first, indexOf(turn))
+	}
+	if len(first) != 4 || !slices.Equal(first[:3], []int{relationships - 3, relationships - 2, relationships - 1}) {
+		t.Fatalf("a woken tick read %v, want the 3 woken relationships first and 4 reads in all", first)
+	}
+	// The ticks that follow, woken or not, still serve the others: no relationship starves.
+	reads := perTick(t, ctx, d, host, 4)
+	withinTicks(t, "after a woken tick", reads, func() []int {
+		all := []int{}
+		for i := range relationships {
+			all = append(all, i)
+		}
+		return all
+	}(), 4)
+}

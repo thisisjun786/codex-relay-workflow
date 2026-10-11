@@ -7,7 +7,8 @@ import (
 )
 
 // The hour count of one relationship's sends to one recipient is read from rows the relay
-// already writes: nothing is stored for it, so these rows are the whole fixture.
+// already writes: nothing is stored for it, so these rows are the whole fixture. A send is one
+// distinct event (a supervisor message, for transports): the attempts made at it are one send.
 func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_window(t *testing.T) {
 	t.Parallel()
 	s := recordStore(t)
@@ -69,11 +70,13 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 		window                  float64
 		want                    int64
 	}{
-		{"rel-a", "parent", window, 3 + 2},
-		{"rel-a", "child", window, 2},
+		// d-a-parent (three attempts) is one send, and so is m-a-parent (two counted transports).
+		{"rel-a", "parent", window, 1 + 1},
+		{"rel-a", "child", window, 1},
 		{"rel-b", "parent", window, 1},
 		{"rel-b", "child", window, 0},
-		{"rel-c", "parent", window, 2},
+		// d-c-parent: the unknown and the delivered attempt are one event.
+		{"rel-c", "parent", window, 1},
 		{"rel-a", "parent", window - 3600, 1 + 1},
 		{"rel-a", "parent", window + 3600, 1},
 	} {

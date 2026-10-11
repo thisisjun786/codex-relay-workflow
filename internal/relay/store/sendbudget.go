@@ -100,6 +100,12 @@ func OrchestratorParentSQL(parent string) string {
 		" AND orb.role = 'parent' AND orb.scope_kind = 'project' AND orb.status IN ('active','paused') AND orb.superseded_by IS NULL)"
 }
 
+// OrchestratorTasksSQL is a derived table of the tasks that hold the live parent binding of a project
+// (the one column task_id): the join form of OrchestratorParentSQL for a read over many candidate rows,
+// which must not evaluate a correlated condition for each of them (the scheduler's due list).
+const OrchestratorTasksSQL = "(SELECT DISTINCT task_id FROM scope_bindings" +
+	" WHERE role = 'parent' AND scope_kind = 'project' AND status IN ('active','paused') AND superseded_by IS NULL)"
+
 // RelationshipIsOrchestrator is whether relationship is of class orchestrator (OrchestratorParentSQL).
 func (s *Store) RelationshipIsOrchestrator(ctx context.Context, relationship string) (bool, error) {
 	row, err := s.One(ctx, "SELECT "+OrchestratorParentSQL("r.parent_task_id")+" AS orchestrator FROM relationships r WHERE r.relationship_id = ?", relationship)
