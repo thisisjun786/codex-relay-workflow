@@ -117,8 +117,6 @@ func ruleRelationship(k *agentKit, node, label, verdict string, next int64, find
 	return revision
 }
 
-func joined(lines []string) string { return strings.Join(lines, "\n") }
-
 // An agent node and a node a managed child runs both have a row in the summary, each with what the sync_outbox verdict summary held of the issue (the verdict, the revision, the child, the findings) and with
 // the acceptance and the integration the progress document does not carry as text.
 func TestSummaryRendersPerIssueRowForAgentAndOversized(t *testing.T) {

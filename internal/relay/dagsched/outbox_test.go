@@ -65,8 +65,12 @@ func TestSummaryEnqueueIsKeyedAndOrdered(t *testing.T) {
 	if first.Replayed || e1.Seq != 1 || e1.State != SummaryPending || e1.Document != "doc-1" || e1.PlanID != "p1" || e1.ProjectKey != "P-TEST" {
 		t.Fatalf("first entry %+v", e1)
 	}
-	if e1.SubjectDigest != progress.Digest || e1.PlanRevision != progress.Reading.PlanRevision || e1.StateDigest != progress.Reading.StateDigest {
+	// The subject digest is the progress digest together with the issue rows (CRW-1216), so it is not the progress digest alone; the entry that states the plan as it stands is the one SummaryStatus calls up to date.
+	if e1.SubjectDigest == "" || e1.SubjectDigest == progress.Digest || e1.PlanRevision != progress.Reading.PlanRevision || e1.StateDigest != progress.Reading.StateDigest {
 		t.Fatalf("the entry does not state the progress it was made from: %+v vs %s at revision %d", e1, progress.Digest, progress.Reading.PlanRevision)
+	}
+	if st, err := f.sched.SummaryStatus(ctx, "p1", "doc-1", false); err != nil || len(st.Streams) != 1 || !st.Streams[0].UpToDate {
+		t.Fatalf("the entry made from the plan as it stands is not up to date: %+v, %v", st, err)
 	}
 	if !strings.HasPrefix(e1.SummaryID, "sum-") || e1.EnqueuedBy != "parent" || e1.CoordinatorEpoch != 0 {
 		t.Fatalf("identity %+v", e1)
