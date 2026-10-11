@@ -361,11 +361,13 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 	if again, err := otherRelayUnits(u.dir, u.name); err != nil || len(again) > 0 {
 		return u.refuse(UnitSecondOwner, "another unit that runs the relay's start appeared, or the directory could not be read again, while this command waited for the lock; nothing was changed")
 	}
+	// The unit's WorkingDirectory is the state directory, and systemd fails the start before the relay runs when it is
+	// missing, so a registration (a repeated one too) leaves it made.
+	if err := os.MkdirAll(selection.Path, 0o700); err != nil {
+		return u.refuse(UnitUnreadable, "the state directory the unit starts the relay in could not be made: "+err.Error())
+	}
 	wrote := outcome == UnitWouldCreate
 	if wrote {
-		if err := os.MkdirAll(selection.Path, 0o700); err != nil {
-			return u.refuse(UnitUnreadable, "the state directory the unit starts the relay in could not be made: "+err.Error())
-		}
 		if err := record.AtomicWrite(u.path, []byte(wanted)); err != nil {
 			return u.refuse(UnitUnreadable, "the unit could not be written: "+err.Error())
 		}

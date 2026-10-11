@@ -37,3 +37,34 @@ func TestRelayStartedFromHomeRunsInStateDir(t *testing.T) {
 		t.Fatal("the process wrote into the directory the relay was started from")
 	}
 }
+
+// CRW-1265. The child runs in the state directory, so a socket path the caller gave relative to its own
+// directory is handed over absolute, naming the file the caller meant; a state path that is not
+// absolute leaves the child in the caller's directory and the socket as it was given.
+func TestCommandKeepsTheCallersRelativeSocket(t *testing.T) {
+	start := t.TempDir()
+	t.Chdir(start)
+	want, err := filepath.Abs("./app.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	socketOf := func(s *Service) string {
+		cmd, err := s.command("service", "run")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, arg := range cmd.Args {
+			if arg == "--socket" {
+				return cmd.Args[i+1]
+			}
+		}
+		t.Fatalf("no --socket in %v", cmd.Args)
+		return ""
+	}
+	if got := socketOf(&Service{Selection: store.StateSelection{Path: filepath.Join(t.TempDir(), "state")}, Socket: "./app.sock"}); got != want {
+		t.Fatalf("the child got socket %q, want %q", got, want)
+	}
+	if got := socketOf(&Service{Selection: store.StateSelection{Path: "state"}, Socket: "./app.sock"}); got != "./app.sock" {
+		t.Fatalf("a child left in the caller's directory got socket %q", got)
+	}
+}

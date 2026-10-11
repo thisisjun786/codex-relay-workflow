@@ -181,3 +181,24 @@ func TestCheckAllJudgesWorkingRootThenWritableRoots(t *testing.T) {
 		t.Fatalf("no sandbox: %v", err)
 	}
 }
+
+// RootsOf lists every writable root a settings-shaped object carries, and nothing else.
+func TestRootsOfListsEveryWritableRoot(t *testing.T) {
+	object := map[string]any{
+		"cwd":                   "/not/a/root",
+		"runtimeWorkspaceRoots": []any{"/a", 7, "/b"},
+		"writableRoots":         []string{"/c"},
+		"sandbox":               map[string]any{"type": "workspaceWrite", "writableRoots": []any{"/d"}},
+		"sandboxPolicy":         map[string]any{"writableRoots": []any{"/e"}},
+		"config":                map[string]any{"sandbox_workspace_write": map[string]any{"writable_roots": []any{"/f"}}},
+	}
+	if got, want := strings.Join(RootsOf(object), ","), "/a,/b,/c,/d,/e,/f"; got != want {
+		t.Fatalf("roots %s, want %s", got, want)
+	}
+	if got := RootsOf(nil); len(got) != 0 {
+		t.Fatalf("roots of nothing: %v", got)
+	}
+	if got := RootsOf(map[string]any{"sandbox": "workspace-write"}); len(got) != 0 {
+		t.Fatalf("roots of a sandbox mode: %v", got)
+	}
+}

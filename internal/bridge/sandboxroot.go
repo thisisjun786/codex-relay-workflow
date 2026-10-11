@@ -80,3 +80,8 @@ func effectiveSandbox(sandbox string, policy map[string]any, reported ...any) st
 func reportedSandbox(state map[string]any) []any {
 	return []any{pyjson.Map(state["thread"])["sandbox"], state["sandbox"]}
 }
+
+// reportedRoots are the writable roots a thread/read answer reports for its thread.
+func reportedRoots(state map[string]any) []string {
+	return append(sandboxroot.RootsOf(pyjson.Map(state["thread"])), sandboxroot.RootsOf(state)...)
+}

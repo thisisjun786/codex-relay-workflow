@@ -162,3 +162,29 @@ func resumeAt(settings map[string]any, cwd string, sandbox map[string]any) map[s
 	r["model"], r["reasoningEffort"] = settings["model"], settings["reasoningEffort"]
 	return r
 }
+
+// A settings-free resume sends no settings, but the thread keeps the roots it was recorded with and
+// the ones the host reports for it: a safe cwd with the account home among the writable roots is
+// refused before thread/resume, from the record or from the host's answer.
+func TestGuardedSendRefusesInheritedHomeWritableRoots(t *testing.T) {
+	w := sandboxroottest.Fake(t)
+	run := w.Mkdir(t, w.Sandbox, "run")
+	cases := []struct {
+		name     string
+		settings map[string]any
+		hostTop  map[string]any
+	}{
+		{"recorded runtimeWorkspaceRoots hold the home", sandboxSettings(run, []string{run, w.Home}, workspaceWrite()), nil},
+		{"recorded policy writable root is the home", sandboxSettings(run, []string{run}, workspaceWrite(w.Home)), nil},
+		{"host reports the home among the roots", sandboxSettings(run, []string{run}, workspaceWrite()), map[string]any{"runtimeWorkspaceRoots": []any{run, w.Home}}},
+		{"host reports a policy writable root in the home", sandboxSettings(run, []string{run}, workspaceWrite()), map[string]any{"sandbox": workspaceWrite(w.Home)}},
+	}
+	for _, c := range cases {
+		for _, free := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s, settings-free=%v", c.name, free), func(t *testing.T) {
+				receipt, methods := sandboxedSend(t, c.settings, free, idleThread(run), c.hostTop)
+				refusedNothingSent(t, receipt, methods, sandboxroot.RuleAccountHome)
+			})
+		}
+	}
+}

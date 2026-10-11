@@ -40,7 +40,15 @@ func (s *Service) command(args ...string) (*exec.Cmd, error) {
 	}
 	prefix = append(prefix, "--state", s.Selection.Path)
 	if s.Socket != "" {
-		prefix = append(prefix, "--socket", s.Socket)
+		socket := s.Socket
+		// CRW-1265: launch starts the child in the state directory, so a socket path relative to the
+		// caller's directory is made absolute here, before it can mean another file there.
+		if !filepath.IsAbs(socket) && filepath.IsAbs(s.Selection.Path) {
+			if abs, err := filepath.Abs(socket); err == nil {
+				socket = abs
+			}
+		}
+		prefix = append(prefix, "--socket", socket)
 	}
 	return exec.Command(executable, append(prefix, args...)...), nil
 }

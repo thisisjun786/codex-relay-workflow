@@ -533,9 +533,10 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 // resumeRootRefusal asks the sandbox-root rule about a resume (CRW-1265). The cwd is the resume
 // params' cwd, else (also for a settings-free resume) the one thread/read reported. The sandbox is
 // the params' sandbox, else the one the host reported for the thread, else the recorded settings'
-// sandbox, and a sandbox that cannot be told counts as on. The params' runtimeWorkspaceRoots and the
-// writable roots of the sandbox config are writable roots. It returns the refusal object a receipt
-// records, nil when the resume may go out.
+// sandbox, and a sandbox that cannot be told counts as on. The runtimeWorkspaceRoots and the writable
+// roots of the sandbox policy and config are writable roots, from the params, the recorded settings
+// and the host's thread answer alike (a settings-free resume sends none of them but inherits them).
+// It returns the refusal object a receipt records, nil when the resume may go out.
 func resumeRootRefusal(state, th map[string]any, params map[string]any, recorded *delivery.TaskSettings) contract.OrderedObject {
 	cwd, _ := params["cwd"].(string)
 	if cwd == "" {
@@ -553,23 +554,13 @@ func resumeRootRefusal(state, th map[string]any, params map[string]any, recorded
 			break
 		}
 	}
+	// Every source of a writable root counts: the params, the recorded settings (a settings-free
+	// resume sends none of them, and the thread keeps the roots it was recorded with) and what the
+	// host reports for the thread.
 	var writable []string
-	if roots, ok := params["runtimeWorkspaceRoots"].([]any); ok {
-		for _, root := range roots {
-			if text, ok := root.(string); ok {
-				writable = append(writable, text)
-			}
-		}
-	}
-	if config, ok := params["config"].(map[string]any); ok {
-		if section, ok := config["sandbox_workspace_write"].(map[string]any); ok {
-			if roots, ok := section["writable_roots"].([]any); ok {
-				for _, root := range roots {
-					if text, ok := root.(string); ok {
-						writable = append(writable, text)
-					}
-				}
-			}
+	for _, source := range []any{params, recorded.Data, th, state} {
+		if object, ok := plain(source).(map[string]any); ok {
+			writable = append(writable, sandboxroot.RootsOf(object)...)
 		}
 	}
 	var refusal *sandboxroot.Refusal

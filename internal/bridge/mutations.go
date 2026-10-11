@@ -171,6 +171,9 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		}
 		runSandbox := effectiveSandbox(contract.Sandbox, contract.ExpectedPolicy, reportedSandbox(state)...)
 		roots := writableRoots(contract.Roots, contract.ExpectedPolicy)
+		// The roots the thread already has count too: the host reports them, and a resume that names
+		// none keeps them.
+		roots = append(roots, reportedRoots(state)...)
 		if err = sandboxroot.CheckAll(runCWD, roots, runSandbox); err != nil {
 			return rootRefusal("thread/read", err)
 		}

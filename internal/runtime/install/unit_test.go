@@ -558,3 +558,23 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 		t.Fatalf("the restarted relay runs %q (%v), not out of %s", exe, err, updated)
 	}
 }
+
+// CRW-1265. The unit's WorkingDirectory is the state directory: a registration that finds the unit
+// already in place makes the directory again, so a state directory removed since does not leave a unit
+// that fails in systemd's chdir before the relay runs.
+func TestRegisterAgainRecreatesTheStateDirectory(t *testing.T) {
+	t.Parallel()
+	u := newUnitHost(t)
+	u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
+	if err := os.RemoveAll(u.o.State); err != nil {
+		t.Fatal(err)
+	}
+	u.run(install.ServiceOptions{DryRun: true}, install.OK, install.UnitUnchanged)
+	if _, err := os.Stat(u.o.State); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a dry run made the state directory: %v", err)
+	}
+	u.run(install.ServiceOptions{}, install.OK, install.UnitUnchanged)
+	if info, err := os.Stat(u.o.State); err != nil || !info.IsDir() {
+		t.Fatalf("the registration did not make the state directory the unit starts the relay in: %v", err)
+	}
+}

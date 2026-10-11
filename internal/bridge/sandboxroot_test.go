@@ -179,3 +179,30 @@ func TestSendMessageRefusesRecordedHomeCwdBeforeResume(t *testing.T) {
 		t.Fatalf("a thread without a sandbox was refused: receipt=%v err=%v calls=%v", receipt, err, hostMethods(host2))
 	}
 }
+
+// The roots the host reports for a thread are the ones a resume that names none keeps: a safe cwd
+// with the account home among them is refused before thread/resume.
+func TestSendMessageRefusesReportedHomeWritableRoots(t *testing.T) {
+	w := sandboxroottest.Fake(t)
+	run := w.Mkdir(t, w.Sandbox, "run")
+	for name, top := range map[string]map[string]any{
+		"runtimeWorkspaceRoots": {"runtimeWorkspaceRoots": []any{run, w.Home}, "sandbox": map[string]any{"type": "workspaceWrite"}},
+		"policy writable root":  {"sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{w.Home}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, host := testBridge(t)
+			result := map[string]any{"thread": map[string]any{"status": map[string]any{"type": "notLoaded"}, "cwd": run}}
+			for k, v := range top {
+				result[k] = v
+			}
+			host.Respond("thread/read", fakehost.Reply{Result: result})
+			receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "reported-roots", ThreadID: "thread-1", Message: "work", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
+			if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != sandboxroot.Code || receipt["delivery"] != "not_delivered" {
+				t.Fatalf("receipt=%v err=%v", receipt, err)
+			}
+			if host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
+				t.Fatalf("a refused send resumed or started a turn: %v", hostMethods(host))
+			}
+		})
+	}
+}

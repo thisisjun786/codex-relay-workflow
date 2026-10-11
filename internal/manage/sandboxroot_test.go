@@ -89,3 +89,31 @@ func TestRelayHelperRunsInTheStateDirectory(t *testing.T) {
 		t.Fatalf("a missing state directory ran in %s, want the caller's %s", got, wantStart)
 	}
 }
+
+// CRW-1265. The command runs in the state directory, so the paths the caller named relative to its own
+// directory reach it absolute and keep naming the same files.
+func TestRelayHelperKeepsRelativePathsOfTheCaller(t *testing.T) {
+	start := t.TempDir()
+	state := t.TempDir()
+	script := filepath.Join(t.TempDir(), "crw")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(start)
+	e := &Env{Executable: script}
+	stdout, code, _, err := e.relayHelperRun(context.Background(), "relay", "--state", state, "--socket", "./app.sock", "settings-record", "--cwd", "work", "--settings", "@s.json", "--task", "t")
+	if err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	want, _ := filepath.Abs(".")
+	got := strings.Fields(string(stdout))
+	expect := []string{"relay", "--state", state, "--socket", filepath.Join(want, "app.sock"), "settings-record", "--cwd", filepath.Join(want, "work"), "--settings", "@" + filepath.Join(want, "s.json"), "--task", "t"}
+	if strings.Join(got, "\n") != strings.Join(expect, "\n") {
+		t.Fatalf("argv %q, want %q", got, expect)
+	}
+	// The line that stays in the caller's directory is passed as it was.
+	stdout, _, _, _ = e.relayHelperRun(context.Background(), "relay", "--socket", "./app.sock", "doctor")
+	if strings.Join(strings.Fields(string(stdout)), " ") != "relay --socket ./app.sock doctor" {
+		t.Fatalf("the doctor line was rewritten: %q", stdout)
+	}
+}

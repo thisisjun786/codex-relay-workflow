@@ -565,3 +565,37 @@ func SandboxOf(reported any) string {
 	}
 	return Unknown
 }
+
+// RootsOf lists the writable roots a settings-shaped object (a resume's params, a recorded task
+// settings row, a thread/read answer) carries: its runtimeWorkspaceRoots, the writableRoots of its
+// sandbox policy (the object itself, or under "sandbox" or "sandboxPolicy") and the
+// sandbox_workspace_write.writable_roots of its config. The object is a plain map; a nested object
+// that is not one contributes nothing.
+func RootsOf(object map[string]any) []string {
+	var out []string
+	add := func(list any) {
+		switch roots := list.(type) {
+		case []any:
+			for _, root := range roots {
+				if text, ok := root.(string); ok {
+					out = append(out, text)
+				}
+			}
+		case []string:
+			out = append(out, roots...)
+		}
+	}
+	add(object["runtimeWorkspaceRoots"])
+	add(object["writableRoots"])
+	for _, key := range []string{"sandbox", "sandboxPolicy"} {
+		if policy, ok := object[key].(map[string]any); ok {
+			add(policy["writableRoots"])
+		}
+	}
+	if config, ok := object["config"].(map[string]any); ok {
+		if section, ok := config["sandbox_workspace_write"].(map[string]any); ok {
+			add(section["writable_roots"])
+		}
+	}
+	return out
+}

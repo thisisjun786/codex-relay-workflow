@@ -16,13 +16,13 @@ func TestJobSpawnRunsNonCodexCommandInHome(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	run := w.Mkdir(t, w.Sandbox, "run")
 	for name, c := range map[string]struct {
-		ws   string
-		argv []string
+		ws, want string
+		argv     []string
 	}{
-		"workspace is the home":       {w.Home, []string{"sh", "-c", "pwd -P"}},
-		"cd into the home":            {run, []string{"sh", "-c", "cd '" + w.Home + "' && pwd -P"}},
-		"workspace above the home":    {filepath.Dir(w.Home), []string{"sh", "-c", "pwd -P"}},
-		"allowed workspace, no moves": {run, []string{"sh", "-c", "pwd -P"}},
+		"workspace is the home":       {w.Home, w.Home, []string{"sh", "-c", "pwd -P"}},
+		"cd into the home":            {run, w.Home, []string{"sh", "-c", "cd '" + w.Home + "' && pwd -P"}},
+		"workspace above the home":    {filepath.Dir(w.Home), filepath.Dir(w.Home), []string{"sh", "-c", "pwd -P"}},
+		"allowed workspace, no moves": {run, run, []string{"sh", "-c", "pwd -P"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := start(t, c.ws, RunOptions{Command: c.argv})
@@ -30,8 +30,12 @@ func TestJobSpawnRunsNonCodexCommandInHome(t *testing.T) {
 			if got.ExitCode == nil || *got.ExitCode != 0 {
 				t.Fatalf("the job did not run to a zero exit: %+v", got)
 			}
-			if out := strings.TrimSpace(get(t, OutPath(c.ws, rec.ID))); !strings.HasPrefix(out, "/") {
-				t.Fatalf("the job printed %q", out)
+			want, err := filepath.EvalSymlinks(c.want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out := strings.TrimSpace(get(t, OutPath(c.ws, rec.ID))); out != want {
+				t.Fatalf("the job ran in %q, want %q", out, want)
 			}
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -216,13 +217,16 @@ func (e *Env) relayHelperDoctorState(ctx context.Context, socket string) (string
 func (e *Env) relayHelperRun(ctx context.Context, argv ...string) ([]byte, int, string, error) {
 	var stdout bytes.Buffer
 	stderr := &relayHelperStderr{}
-	cmd := exec.CommandContext(ctx, e.Executable, argv...)
 	// CRW-1265: the relay command runs in the relay's state directory, not in the directory the manage
 	// command was started from (often the account home). The directory is the --state the line names, when
-	// it is an existing absolute directory; the doctor line names none and keeps the caller's.
-	if dir := relayHelperDir(argv); dir != "" {
-		cmd.Dir = dir
+	// it is an existing absolute directory; the doctor line names none and keeps the caller's. The paths the
+	// line names relative to the caller's directory are made absolute first, so they still mean the same files.
+	dir := relayHelperDir(argv)
+	if dir != "" {
+		argv = relayHelperAbsolute(argv)
 	}
+	cmd := exec.CommandContext(ctx, e.Executable, argv...)
+	cmd.Dir = dir
 	cmd.Stdout = &stdout
 	cmd.Stderr = stderr
 	// A command killed at its context's end may leave a child that keeps its output open; Wait then
@@ -244,6 +248,36 @@ func (e *Env) relayHelperRun(ctx context.Context, argv ...string) ([]byte, int, 
 		return stdout.Bytes(), exit.ExitCode(), stderr.excerpt(), nil
 	}
 	return stdout.Bytes(), 0, stderr.excerpt(), err
+}
+
+// relayHelperPathFlags are the relay options whose value is a path the caller named relative to its own
+// directory; a settings value is a path only after its "@".
+var relayHelperPathFlags = map[string]bool{"--socket": true, "--cwd": true, "--backup-state-to": true, "--settings": true}
+
+// relayHelperAbsolute is argv with the path values of the options above made absolute against the caller's
+// directory, so a command that runs in the state directory instead reads the paths the caller meant.
+func relayHelperAbsolute(argv []string) []string {
+	out := append([]string(nil), argv...)
+	for i := 0; i+1 < len(out); i++ {
+		if !relayHelperPathFlags[out[i]] {
+			continue
+		}
+		prefix, value := "", out[i+1]
+		if out[i] == "--settings" {
+			var ok bool
+			if value, ok = strings.CutPrefix(value, "@"); !ok {
+				continue
+			}
+			prefix = "@"
+		}
+		if value == "" || filepath.IsAbs(value) {
+			continue
+		}
+		if abs, err := filepath.Abs(value); err == nil {
+			out[i+1] = prefix + abs
+		}
+	}
+	return out
 }
 
 // relayHelperDir is the --state directory of a relay command line when it is an existing absolute directory, else "".
