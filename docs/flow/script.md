@@ -7,6 +7,9 @@ the script format, the loader, the globals, call identity, the call result and t
 
 ```text
 crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] <script.js>
+crw flow run --script JS [--plan-only=false --backend fake] [--args JSON] [--journal]
+crw flow roles [--json]
+crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...
 ```
 
 `--backend fake` runs the script against the in-process fake backend: every turn answers immediately with a value that
@@ -17,6 +20,18 @@ The journal sequence numbers of a call (`meta.startSeq`, `meta.endSeq`) depend o
 calls, so under `crw flow run` neither the `CallResult` the script holds nor the printed result carries them (a value,
 a log line or an error the script builds from a `CallResult` cannot hold them either) and two runs of one script print the
 same bytes; `--journal` adds the journal rows, with those numbers. `testdata/flow/hello.js` is a small script that runs this way.
+
+`--script JS` runs an ad-hoc script given as text instead of a file. Its default is `--plan-only`: the script runs on
+the fake backend only, with no backend named, and the result says `"planOnly": true`. A script that is to run on a
+backend names it and turns plan-only off (`--plan-only=false --backend fake`); `--plan-only` on a script file is a usage
+error. An ad-hoc script has no workflows directory: it imports `crw:lib/<name>` only and nests no workflow.
+
+`crw flow run` reads the execution policy file `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` names once, when it starts, and
+resolves every call against its `agent-roles` and `agent-aliases` sections (see
+[role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The run record keeps the file's
+path and digest. Without the variable the fake backend's placeholder table applies; a file that does not load, or that
+declares no `agent-roles`, is a usage error and never replaced by the placeholders. `crw flow roles` prints the table,
+the source and the digest.
 
 ## File format
 
@@ -101,6 +116,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The child shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a child throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
+| `crw.tierStep(node, evidence)` | Journals a step decision and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. In this build it holds the interface only: the evidence rules, the append-only `flow_step_decisions` row and the checkpoint worktree arrive with the issue that owns the operation, so `checkpoint` is `null` and the evidence is recorded by its digest. |
 
 `opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, and the Claude-style `model`, `effort` and
@@ -117,20 +133,32 @@ and the rest) arrive with the issues that own them.
 
 ## Roles, pairs and aliases
 
-A fresh call names a role with `agentType`. A role has a fixed model and effort (its pair) and a role family: `executor` and
-`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect` and `explorer` are alone. The role table is
-supplied by the policy the run is configured with; the fake backend runs against placeholder pairs.
+A fresh call names a role with `agentType`. A role has a fixed model and effort (its pair), a role family (`executor` and
+`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect` and `explorer` are alone) and a sandbox:
+`workspace-write` for `executor` and `executor-t1`, the only roles that write (to their call's own cwd), `read-only` for
+the others. The role table is the operator's execution policy file, loaded once per run; the fake backend runs against
+placeholder pairs and the same alias table.
 
-- With a role key as `agentType`, a `model` option must be absent, the role's model or an alias of its model family;
-  otherwise the call is `refused` with reason `pair_refused`.
+- With a role key as `agentType`, a `model` option must be absent, the role's model or an alias of its model family
+  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer` and
+  `reviewer-final`); otherwise the call is `refused` with reason `pair_refused`.
 - A call without a role key is looked up in the alias table by (a non-role `agentType` string, else the `model` alias;
-  `effort`; `isolation`): `opus` is `architect`; `haiku` with `isolation: 'worktree'` is `executor`; `sonnet` is `executor-t1`;
-  `ocx-gpt-6-1-sol` with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`. `haiku` without isolation is ambiguous
-  and anything else is not in the table: both are `refused` with reason `policy_refused`.
-- A fresh call's requested `effort` is never applied; a differing one is kept in `meta.requestedPair`.
+  `effort`; `isolation`), the most specific matching row deciding: `opus` is `architect`; `haiku` with
+  `isolation: 'worktree'` is `executor`; `sonnet` is `executor-t1`; `ocx-gpt-6-1-sol` (as `model` or as `agentType`)
+  with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`.
+- `haiku` without isolation is ambiguous. Claude runs it in a shared checkout; a CRW call has a write cwd of its own that
+  no other call shares, so the call is `refused` with reason `policy_refused`, cause `alias_ambiguous` (the intent row
+  and the refusal row carry `cause`), and the detail names both fixes: `isolation: 'worktree'` for a build (role
+  `executor`) and `agentType: 'explorer'` for an investigation. Anything else outside the table is `policy_refused` too.
+- A fresh call's requested `effort` is never applied and never refused; a differing one is kept in `meta.requestedPair`
+  while `meta.configuredPair` is the pair the thread reads back (the role's), for an alias call and for an explicit
+  `agentType` call alike.
 - A fresh `executor-t1` call needs `stepDecision` (the id `crw.tierStep` returned), otherwise it is `refused` with reason
   `missing_step_decision`.
 - The thread's configured pair is read back; a mismatch is `refused` with reason `pair_refused`.
+- The run record (the `started` row) keeps `policy_source` and `policy_digest`, and every intent row the digest and the
+  call's `sandbox`. A run that resumes a journal under a policy of another digest writes `policy_repinned` (`old`, `new`)
+  before its first call; a new thread then takes the new pair, a continuation keeps the pair of its handle.
 
 ## Call identity: path and position
 
@@ -230,6 +258,38 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 (journaled as an `Op: crw.classify` row), so calling it while another call or join of the path has not settled throws
 `CrwPathConcurrencyError` and ends the run `script_error`.
 
+## crw flow lint
+
+`crw flow lint` checks scripts for what the engine cannot refuse early. It reads the text of each script (the body parsed
+with its scopes resolved) and runs it on the fake backend, reading the journal; a finding both find is reported once. It
+exits 0 when every script is clean, 1 when one has a finding or does not load, 2 for a command line it cannot use.
+`--no-dry-run` checks the text only; `--args` gives the dry run its `args`. A dry run that ends in an error of the
+script's own (it reads an arg it was not given, it calls a `crw.*` operation this build does not have) is a note in the
+report, not a finding.
+
+| Rule | What it finds |
+| --- | --- |
+| `lifecycle_land_twice`, `lifecycle_land_without_review`, `lifecycle_order` | A lifecycle automaton per function that calls `crw.commit`, `crw.verify`, `crw.review` or `crw.land`: build once (a rebuild is allowed until the node has landed), then rounds of commit, verify, review, then land at most once, from a completed review. A violation is reported when it is illegal on every path that reaches it. |
+| `reviewer_family_same` | A review call (its prompt is `crw.reviewPacket(...)` or its label starts with `review`) whose role family is the family of the author call before it. |
+| `label_duplicate` | A label used twice on one path, or on a call in a loop (the round goes in the label). Calls without a label do not count. |
+| `executor_t1_without_step_decision` | An `executor-t1` call without a `stepDecision` that `crw.tierStep` returned in the same function (a continuation inherits it from its handle). |
+| `classify_arg`, `resume_arg` | `crw.classify(...)` or `resume:` given something other than an `agent.call` result or its handle: the output of `agent()`, a `.output`, a bare value. |
+| `determinism_stub` | `Date.now()`, `Math.random()`, `new Date()` and `Date()`. |
+| `lane_reads_mutable_let` | A `crw.dag` lane function or `onSignal` function that reads an outer `let` binding that is assigned again anywhere. |
+| `alias_ambiguous` | A `haiku` call without isolation, with the two fixes in the message. |
+| `call_refused`, `path_concurrency`, `load`, `parse` | The dry run's own findings: a call the engine refused, a second outstanding call on a path; a script that does not load. |
+
+The static rules see the text only: a role that depends on a variable is judged on the dry-run trace.
+
+## Parity corpus
+
+`testdata/flow/parity/<name>/` holds Claude workflow scripts as `claude.js` (byte for byte) and their CRW ports as
+`crw.js`, with a `golden.json` of the port's call graph, return value and, per call, the resolved role key, the sandbox,
+`requestedPair` and `configuredPair`. A port differs from the original only by keys added to the options object of
+`agent()` calls (`isolation: 'worktree'`, `agentType: 'explorer'`, `stepDecision`) and one `crw.tierStep` line before a
+`model: 'sonnet'` call; the corpus README gives the reason for every such line and for every line that names
+`ocx-gpt-6-1-sol`.
+
 ## Limits
 
 A step is one uninterrupted stretch of script execution: from the run's start, or from the engine delivering a result, until
@@ -259,7 +319,8 @@ rows `prepared` (written before anything is sent, with the role, pair, node, `st
 thread it continues and what it inherited), `thread_requested`, `thread_started`, `turn_requested`, `turn_started` and one
 terminal row (`completed`, `null_model`, `held`, `refused`, `outcome_unknown` or `superseded`). A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim. The run record
-holds the workflow name, the script digest, the helper digests, the digest of `args` and the meta.
+holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and the path and digest of
+the execution policy file.
 
 ## Dependencies and their supply-chain check
 
