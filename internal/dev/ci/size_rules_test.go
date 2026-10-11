@@ -287,9 +287,54 @@ func TestPlanLimitIsTheLiveNodesOfOneRevision(t *testing.T) {
 	}
 }
 
-// A project may span repositories (one issue per repository delivery, linear-model.md), so the
-// integration target of the size rule is the target of each issue's delivery, not one per project.
-func TestPlanSizeRuleKeepsMultiRepositoryProjects(t *testing.T) {
+// The decided acceptance rule is one integration target per project. Work in several repositories is
+// one project per repository, an initiative holding the projects; an issue never carries a target of
+// its own. targetRuleProblems judges one text and is itself tested with accepted and rejected texts.
+var targetRuleForbidden = []struct{ pattern, why string }{
+	{`(?i)(project|projects) (may|can) (span|involve|own)[^.]*repositor`, "a project spanning repositories"},
+	{`(?i)repositories can belong to one project`, "several repositories in one project"},
+	{`(?i)one project may involve several repositories`, "several repositories in one project"},
+	{`(?i)(keep|keeps) a multi-repository\s+outcome in one project`, "a multi-repository outcome kept in one project"},
+	{`(?i)target is the issue's`, "an integration target belonging to the issue"},
+	{`(?i)issues? (is|are) delivered into (its own|one) integration target`, "an integration target belonging to the issue"},
+	{`(?i)(two|several|more than one|many) integration targets`, "a project with more than one integration target"},
+}
+
+func targetRuleProblems(text string) []string {
+	text = normalized(text)
+	var problems []string
+	for _, f := range targetRuleForbidden {
+		if regexp.MustCompile(f.pattern).MatchString(text) {
+			problems = append(problems, f.why)
+		}
+	}
+	return problems
+}
+
+func TestTargetRuleJudgesOneTargetPerProject(t *testing.T) {
+	accepted := []string{
+		"A project has one integration target and at most 64 live issues.",
+		"Work in several repositories is one project per repository; an initiative holds the projects, each with its own single integration target.",
+	}
+	for _, text := range accepted {
+		if got := targetRuleProblems(text); len(got) > 0 {
+			t.Errorf("the per-project rule is rejected (%v): %s", got, text)
+		}
+	}
+	rejected := []string{
+		"A project has two integration targets.",
+		"A project may span repositories, so the target is the issue's and not the project's.",
+		"Multiple repositories can belong to one project.",
+		"Each of its issues is delivered into one integration target.",
+	}
+	for _, text := range rejected {
+		if got := targetRuleProblems(text); len(got) == 0 {
+			t.Errorf("a project with more than one target is accepted: %s", text)
+		}
+	}
+}
+
+func TestPlanSizeRuleKeepsOneIntegrationTargetPerProject(t *testing.T) {
 	plan := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-plan/SKILL.md"), "Size rules"))
 	var bullet string
 	for _, b := range strings.Split(plan, "- ") {
@@ -297,10 +342,20 @@ func TestPlanSizeRuleKeepsMultiRepositoryProjects(t *testing.T) {
 			bullet = b
 		}
 	}
-	if !regexp.MustCompile(`(?i)repositor`).MatchString(bullet) {
-		t.Errorf("the project size rule does not say how it reads for a project spanning repositories:\n%s", bullet)
+	if !regexp.MustCompile(`(?i)one integration target`).MatchString(bullet) {
+		t.Errorf("the project size rule does not give a project one integration target:\n%s", bullet)
 	}
-	if regexp.MustCompile(`(?i)one integration target and at most`).MatchString(bullet) {
-		t.Errorf("the project size rule requires one integration target per project, which the multi-repository rule of the same skill permits:\n%s", bullet)
+	if !regexp.MustCompile(`(?i)one project per repository`).MatchString(bullet) {
+		t.Errorf("the project size rule does not say that work in several repositories is one project per repository:\n%s", bullet)
+	}
+	for _, path := range []string{
+		"plugins/crw/skills/crw-plan/SKILL.md",
+		"plugins/crw/skills/crw-plan/references/integrations.md",
+		canonRefDir + "linear-model.md",
+		canonRefDir + "hierarchy.md",
+	} {
+		if got := targetRuleProblems(readRepoText(t, path)); len(got) > 0 {
+			t.Errorf("%s contradicts the one integration target per project rule: %v", path, got)
+		}
 	}
 }

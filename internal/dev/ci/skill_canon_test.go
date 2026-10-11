@@ -659,6 +659,68 @@ func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 			t.Errorf("execution-roles.md does not send helper role settings to `crw role helper`")
 		}
 	})
+	t.Run("each helper row names the helper store as its settings source and the operator as its decider", func(t *testing.T) {
+		if got := helperRowProblems(text, helperKeys); len(got) > 0 {
+			t.Errorf("execution-roles.md helper rows: %s", strings.Join(got, "\n  "))
+		}
+	})
+	t.Run("a table that reverts only the settings source and decider of the helper rows is refused", func(t *testing.T) {
+		reverted := text
+		for _, key := range helperKeys {
+			for _, row := range tableRows(reverted, "Policy key") {
+				if strings.Trim(row[0], "`") != key {
+					continue
+				}
+				if len(row) < 5 {
+					t.Fatalf("key table row %v lacks the settings and decider cells", row)
+				}
+				old := "| " + strings.Join(row, " | ") + " |"
+				wrong := "| " + strings.Join(row[:3], " | ") + " | the policy's `" + key + "` entry | the policy |"
+				if !strings.Contains(reverted, old) {
+					t.Fatalf("row %q is not found verbatim in the table", old)
+				}
+				reverted = strings.Replace(reverted, old, wrong, 1)
+			}
+		}
+		if reverted == text {
+			t.Fatal("the fixture changed nothing")
+		}
+		for _, row := range tableRows(reverted, "Policy key") {
+			for _, key := range helperKeys {
+				if strings.Trim(row[0], "`") == key && row[1] != "agent role" {
+					t.Fatalf("the fixture changed the Kind of %q", key)
+				}
+			}
+		}
+		if got := helperRowProblems(reverted, helperKeys); len(got) != 2*len(helperKeys) {
+			t.Errorf("the reverted table reports %d problems, want a settings and a decider problem for each of %d helper rows: %v", len(got), len(helperKeys), got)
+		}
+	})
+}
+
+// A helper role is never read from the host execution policy: its settings are the helper role
+// store's (internal/role Roles, ResolveSpawnConfig), read and reset with crw role helper, and the
+// operator decides them through that command.
+func helperRowProblems(text string, helperKeys []string) []string {
+	rows := map[string][]string{}
+	for _, row := range tableRows(text, "Policy key") {
+		rows[strings.Trim(row[0], "`")] = row
+	}
+	var problems []string
+	for _, key := range helperKeys {
+		row, ok := rows[key]
+		if !ok || len(row) < 5 {
+			problems = append(problems, key+": no row with settings and decider cells")
+			continue
+		}
+		if !strings.Contains(row[3], "`crw role helper`") || !strings.Contains(strings.ToLower(row[3]), "helper role store") {
+			problems = append(problems, key+": settings come from "+row[3]+", not the helper role store read with `crw role helper`")
+		}
+		if !strings.Contains(row[4], "`crw role helper`") || !strings.Contains(strings.ToLower(row[4]), "operator") {
+			problems = append(problems, key+": decided by "+row[4]+", not the operator through `crw role helper`")
+		}
+	}
+	return problems
 }
 
 func mustJSON(v any) string {

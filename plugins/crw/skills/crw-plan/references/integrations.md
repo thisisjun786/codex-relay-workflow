@@ -10,7 +10,8 @@ temporary question or link for another project does not change the persistent
 binding; a change to that binding needs an explicit designation or switch.
 Distinguish Linear project IDs, Codex task/host IDs, Desktop project IDs, and
 repository identity. One repository may support several Linear projects, and
-one project may involve several repositories. Resolve names to stable project
+a project delivers into one integration target, so work in several repositories is one
+project per repository. Resolve names to stable project
 IDs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
 title alone. A rename or changed initiative relation does not change a binding, and a title is not

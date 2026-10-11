@@ -53,8 +53,9 @@ preserving product labels, context links, unrelated fields and history.
 Today's operation is one implementation issue per packet, and that packet delivers that one
 issue: several deliveries for one issue, or one delivery covering several issues, are reconciled
 through `crw-plan` before new dispatch. Split work requiring several deliveries into separate
-issues with explicit dependencies, even within one repository. Keep a multi-repository
-outcome in one project when appropriate, with one issue per repository delivery.
+issues with explicit dependencies, even within one repository. A project has one integration
+target, so a multi-repository outcome is one project per repository, held together by their
+initiative, with one issue per delivery.
 Batches coordinate separate issue/delivery pairs; they do not combine issues into one
 delivery. Referencing a related issue is not claiming to deliver or close it. This is today's
 operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
@@ -138,8 +139,8 @@ stashing, moving or recreating that work. Reconcile ancestry and prerequisites
 without replacing an existing assignment with a freshly cloned default branch.
 For a new task, use a task-owned checkout under the applicable workspace policy.
 
-Work needing PRs in multiple repositories becomes separate dependent issue/PR
-pairs; reading or validating another repository alone does not make it a code
+Work needing PRs in multiple repositories becomes one project per repository, each with its
+own single integration target, and separate dependent issue/PR pairs across them; reading or validating another repository alone does not make it a code
 target. Common projects and standalone issues follow the same resolution rule.
 Research or design with no repository change may explicitly have no code target;
 do not require a remote, branch or Git baseline for that non-PR result.
