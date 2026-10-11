@@ -496,13 +496,15 @@ and never a hold or a failure (I-225). `sends` is the number of distinct events 
 relationship has sent to this recipient this hour (an event tried again counts once; CRW-259 made it
 the relationship's, it was every relationship's sends to the recipient, which a parent with many
 children exhausted, and CRW-1210 made it events, it was attempts) and `cap` is the hour cap of the
-relationship's class; the gap behind `min_send_interval` is still the recipient's. The daemon does
-not attempt a delivery whose relationship has spent its hour: it is not due until the window
-reopens, and the cap is read against the live policy every tick, so a cap raised mid-window
-releases it on the next tick. A
-direct claim (`deliver --event`) is still refused by the cap, before or inside its claim, and tried
-again at the window's end or within a minute, whichever is sooner; `reopensAt` is the window's end
-and does not move from tick to tick.
+relationship's class; the gap behind `min_send_interval` is still the recipient's. The cap holds new
+events, not the retry of an event the hour already counts (the send budget section below): `status`,
+`assignment-show` and the delivery snapshot show no `hourly_cap` for such a retry, and it is held only by
+the recipient's gap, its own backoff and its attempt cap. The daemon does not attempt a new delivery
+whose relationship has spent its hour: it is not due until the window reopens, and the cap is read
+against the live policy every tick, so a cap raised mid-window releases it on the next tick. A
+direct claim (`deliver --event`) of a new event is still refused by the cap, before or inside its claim,
+and tried again at the window's end or within a minute, whichever is sooner; `reopensAt` is the window's
+end and does not move from tick to tick.
 
 `status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
 delivery row could exist, which a paused or unauthorized assignment produces. They have no
@@ -1207,7 +1209,10 @@ longest-waiting turns of the others, except that the first read of each class th
 or other work) is reserved, so a run of woken turns of one class cannot take the budget from the other,
 and the woken turns take at most the reads past those reserved ones: the rest of the read budget goes to
 the order an unwoken tick reads, so the turns nobody woke keep rotating longest-waiting first and each is
-read within a bounded number of ticks, however often the same children wake the daemon. The 20 s tick is
+read within a bounded number of ticks, however often the same children wake the daemon. When the
+observation time bound stops a woken tick before it has made those reserved reads (a woken read that
+takes the whole bound), the tick still makes the reads an unwoken tick would make first, whatever the
+clock says, so a slow child woken again and again does not keep the others from rotating. The 20 s tick is
 the backstop: a wake that is dropped (the
 channel holds 256), or a Stop that ends before the host marks its turn finished, is made up by the
 next tick, and a daemon nobody wakes ticks exactly as before.
