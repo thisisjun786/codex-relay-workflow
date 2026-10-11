@@ -58,7 +58,7 @@ Korean product pages almost always use concrete visual evidence in the first vie
 
 Never ship a Korean-facing product page with only SVG icons and text. If no image source is available, state the gap explicitly rather than filling with gradients or decorative shapes.
 
-## Mockup Production Pipeline (verified 2026-07-09)
+## Mockup Production Pipeline
 
 When a product/device mockup asset is required (product-led heroes, app
 screenshots in scenes):

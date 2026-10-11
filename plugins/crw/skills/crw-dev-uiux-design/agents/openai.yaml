@@ -3,4 +3,4 @@ interface:
   short_description: "Design judgment for vague briefs, UX states, typography, layout patterns, logos, and brand vocabulary."
   default_prompt: "Use $crw-dev-uiux-design to guide this task and verify its result."
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

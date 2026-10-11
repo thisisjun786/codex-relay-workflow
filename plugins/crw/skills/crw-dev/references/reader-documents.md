@@ -8,7 +8,7 @@ runtime gates.
 
 Anything a person reads to understand or decide: reports, explainers, visual
 documents, research reports, PR descriptions, the reader summary at the top of a
-devlog `000_plan.md`, and D-phase summaries. It does not apply to audit artifacts
+a numbered plan document, and D-phase summaries. It does not apply to audit artifacts
 (receipts, ledgers, probe logs, test output, journals): those keep their raw form
 and are linked from the document, never rewritten into prose.
 
@@ -41,7 +41,7 @@ Every heading below it carries what that section establishes, never a bare topic
 ("Cost drops 12% under the selected scenario", not "Analysis"). In a decision document
 or an explanation that is a claim, and the sections walk the reader from the situation
 they accept to the decision being asked (the storyline in
-`dev-visualizer/reference/report-writing.md` REPORT-STORY-01). What those documents
+`crw-dev-visualizer/references/report-writing.md` REPORT-STORY-01). What those documents
 avoid is the narrative 기승전결 that withholds the conclusion until the end, not the
 progression itself.
 
@@ -121,7 +121,7 @@ Visual explainer: question → one figure whose caption states what changes and 
 
 Multi-page report (cover, contents, one-page summary, claim headings, numbered
 exhibits, appendix, notice): the REPORT-* rules and the paged template in
-`dev-visualizer/reference/report-writing.md` and `assets/paged-report.html`.
+`crw-dev-visualizer/references/report-writing.md` and `assets/paged-report.html`.
 
 ## Layer order for polish
 
@@ -132,7 +132,6 @@ pass loses the reader's map.
 
 ## Sources
 
-Patterns adopted from opened sources with dates and licenses:
-`devlog/_plan/260908_narrative_documents/001_sources.md` (Minto Pyramid/SCQA and
-MECE, Korean 두괄식 guidance, Amazon narrative memos, Google design docs, MADR,
-Diátaxis, Anthropic doc-coauthoring, executive-summary skills). No text is vendored.
+Patterns adopted from opened sources: Minto Pyramid/SCQA and MECE, Korean 두괄식
+guidance, Amazon narrative memos, Google design docs, MADR, Diátaxis, Anthropic
+doc-coauthoring and executive-summary skills. No text is vendored.

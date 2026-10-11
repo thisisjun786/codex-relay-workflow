@@ -108,7 +108,7 @@ Before any transformation, validate incoming data:
 
 ### dbt Integration Patterns
 
-Engine landscape (verified 2026-07-02): dbt Core remains the default; dbt Fusion is the separately-documented/licensed current engine (check feature matrix + license before adopting); SQLMesh is a credible active alternative. Lakehouse format: choose Delta vs Iceberg by ecosystem — both active; never claim a "winner".
+Engine landscape: dbt Core remains the default; dbt Fusion is the separately-documented/licensed current engine (check feature matrix + license before adopting); SQLMesh is a credible active alternative. Lakehouse format: choose Delta vs Iceberg by ecosystem — both active; never claim a "winner".
 
 When using dbt for transformations, follow the **staging → intermediate → mart** layer architecture:
 
@@ -369,7 +369,7 @@ Data engineering does not exist in isolation. Cross-reference these skills when 
 | `dev-backend` | Exposing data via API, response envelope shape, pagination | §5 API Response Contract, §2 Layered Architecture |
 | `dev-security` | PII handling, data classification, access controls, audit logging, input validation policy (per dev-security §10 ownership matrix) | §1 Input Validation, §4 Secrets, §8 Pre-Flight |
 | `dev-testing` | Pipeline validation, contract tests for data APIs, CI gates | §2 Backend & API Testing, §3 Contract Testing |
-| `dev-frontend` | Downstream reporting/dashboard consumers, data format expectations | §15 Backend Contract & Security Alignment |
+| `dev-frontend` | Downstream reporting/dashboard consumers, data format expectations | §11 Backend Contract & Security Alignment |
 
 **Integration patterns:**
 - Data APIs preserve the existing/protocol contract and its exceptions (`dev-backend` §5); do not wrap GraphQL, gRPC, SSE, or an established API just to match a sample envelope

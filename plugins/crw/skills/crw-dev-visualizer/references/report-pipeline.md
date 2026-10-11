@@ -106,7 +106,7 @@ The exporter uses an existing local Chromium executable. It does not install a
 browser, select Playwright, or promise font/resource readiness from a fixed wait.
 For dynamic charts, first settle the state using the available browser owner and
 verify that the actual printed values match. The separate `--qa-only` path accepts
-a PDF from any engine, including Aside's own Chromium, and needs no system Chrome.
+a PDF from any engine and needs no system Chrome.
 
 ```sh
 node scripts/export-paged-report.mjs report.html report.pdf --paper-size A4 --json
@@ -202,12 +202,11 @@ referenced evidence. This gate is an explicit command, not a hook-enforced skill
 
 ## Maintenance proof
 
-These checks belong to the upstream CXC v0.2.40 repository; their test files
-are not bundled with this staged skill.
+These checks are the skill's own tests under `tests/`; the `skill-scripts-node` CI job
+runs them.
 
 ```sh
-node --test plugins/codexclaw/test/report-*.test.mjs
-node --test plugins/codexclaw/test/exhibit-contract.test.mjs plugins/codexclaw/test/visualizer-packaging.test.mjs
+node --test plugins/crw/skills/crw-dev-visualizer/tests/*.test.mjs
 ```
 
 These commands run from the repository root and use isolated fixtures. They do not

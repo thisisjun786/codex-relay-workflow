@@ -83,14 +83,39 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. CRW-1219: the intent protocol asks the caller, or records an assumption when no user is present, instead of asking the user directly.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for UI/UX direction and design judgment — vague visual briefs, onboarding, empty/error/loading states, layout vocabulary, typography breaks, favicons, logos, and brand identity choices. Pairs with crw-dev-frontend: this skill decides the design direction, then load crw-dev-frontend to implement it. Triggers: make it look good, modern, clean, aesthetic, onboarding, empty state, error state, favicon, logo, design system, 깔끔하게, 모던하게, 감성적으로.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-14\"\n",
             "  short-description: \"Design judgment for vague briefs, UX states, typography, layout patterns, logos, and brand vocabulary.\"\n"
+          ],
+          "new": [
+            "description: \"UI/UX direction and design judgment: vague visual briefs, onboarding, empty, error and loading states, layout, typography, favicons, logos, brand identity. Hands the chosen direction to crw-dev-frontend. Triggers: make it look good, modern, clean, onboarding, empty state, favicon, logo, 깔끔하게, 모던하게.\"\n"
+          ]
+        },
+        {
+          "line": 49,
+          "old": [
+            "> Gate, §5 Safety Rules, and Family Invariants (FAMILY-SLOP-01, FAMILY-CITE-01,\n",
+            "> FAMILY-PROOF-01) apply to all work governed by this skill. They are not restated here.\n"
+          ],
+          "new": [
+            "> Gate, §5 Safety Rules, and the [Family invariants](../crw-canon/references/skill-family.md#family-invariants)\n",
+            "> (FAMILY-SLOP-01, FAMILY-CITE-01, FAMILY-PROOF-01) apply to all work governed by this skill.\n",
+            "> They are not restated here.\n"
+          ]
+        },
+        {
+          "line": 56,
+          "old": [
+            "| `references/design-isms.md` | User names a style/movement | 16 design movements with CSS signatures, incl. Liquid Glass + Liquid Editorial default kit (2025-2026) + AI Serif Editorial + Organic Capsule (verified 2026-07-09) |\n"
+          ],
+          "new": [
+            "| `references/design-isms.md` | User names a style/movement | 16 design movements with CSS signatures, incl. Liquid Glass + Liquid Editorial default kit (2025-2026) + AI Serif Editorial + Organic Capsule |\n"
           ]
         },
         {
@@ -117,12 +142,123 @@
     },
     {
       "file": "agents/openai.yaml",
-      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-dev-uiux-design to guide this task and verify its result.\"\n"
+          ]
+        },
+        {
+          "line": 5,
+          "old": [
+            "  allow_implicit_invocation: true\n"
+          ],
+          "new": [
+            "  allow_implicit_invocation: false\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/anti-rationalization.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 13,
+          "old": [
+            "| \"The design system wasn't obvious, so I created new tokens\" | Always check package.json first (dev-frontend §12 Design System Detection is MANDATORY). Inventing tokens when an official system exists doubles maintenance. | New CSS custom properties or Tailwind config when MUI/Carbon/shadcn is installed. | Run the DS detection grep before creating any tokens. |\n"
+          ],
+          "new": [
+            "| \"The design system wasn't obvious, so I created new tokens\" | Always check package.json first (dev-frontend §9 Design System Detection is MANDATORY). Inventing tokens when an official system exists doubles maintenance. | New CSS custom properties or Tailwind config when MUI/Carbon/shadcn is installed. | Run the DS detection grep before creating any tokens. |\n"
+          ]
+        },
+        {
+          "line": 20,
+          "old": [
+            "pre-flight companion to dev-frontend §14 (Pre-Flight Checklist), not a\n"
+          ],
+          "new": [
+            "pre-flight companion to dev-frontend §12 (Pre-Flight Checklist), not a\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/color-system.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 36,
+          "old": [
+            "### Practitioner Notes — Hue Budget & Tinted Neutrals (verified 2026-07-07)\n"
+          ],
+          "new": [
+            "### Practitioner Notes — Hue Budget & Tinted Neutrals\n"
+          ]
+        },
+        {
+          "line": 77,
+          "old": [
+            "`dev-frontend/references/core/color-system.md`.\n"
+          ],
+          "new": [
+            "`dev-frontend/references/core/color-tokens.md`.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/compositional-patterns.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 132,
+          "old": [
+            "- **Implementation pointer:** `dev-frontend/references/core/top-bar.md` for overlay states, `color-system.md` for contrast tokens, and `motion.md` for transition restraint.\n"
+          ],
+          "new": [
+            "- **Implementation pointer:** `dev-frontend/references/core/top-bar.md` for overlay states, `color-tokens.md` for contrast tokens, and `motion.md` for transition restraint.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/design-isms.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 100,
+          "old": [
+            "Materials, verified 2026-07-07). Dynamic translucent layer reserved for\n"
+          ],
+          "new": [
+            "Materials). Dynamic translucent layer reserved for\n"
+          ]
+        },
+        {
+          "line": 157,
+          "old": [
+            "The AI-brand serif turn (verified 2026-07-09): display serif at LIGHT weights +\n"
+          ],
+          "new": [
+            "The AI-brand serif turn: display serif at LIGHT weights +\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/form-patterns.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 118,
+          "old": [
+            "- Schema validation: `dev-frontend/SKILL.md` §10 (Zod + react-hook-form)\n"
+          ],
+          "new": [
+            "- Schema validation: `dev-frontend/SKILL.md` §8 (React, Forms, and Accessibility)\n"
           ]
         }
       ]
@@ -141,6 +277,45 @@
             "(Design Read → ONE fork put to the caller → proceed) is the default; this ladder is the\n",
             "optional deepening path. Its questions go to the caller; where no user is present, record the\n",
             "assumption instead of asking.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/product-personalities.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 79,
+          "old": [
+            "Liquid Glass judgment (HIG, verified 2026-07-07): glass is a functional-layer\n"
+          ],
+          "new": [
+            "Liquid Glass judgment (HIG): glass is a functional-layer\n"
+          ]
+        },
+        {
+          "line": 98,
+          "old": [
+            "**Essence:** Precise but humane platform — warm geometric sans, huge whitespace, soft natural imagery, opaque capsule labels. (In-house Feb-2025 rebrand + ABC Dinamo type + Studio Dumbar motion; verified 2026-07-09; STYLE_SAMPLE.)\n"
+          ],
+          "new": [
+            "**Essence:** Precise but humane platform — warm geometric sans, huge whitespace, soft natural imagery, opaque capsule labels. (In-house Feb-2025 rebrand + ABC Dinamo type + Studio Dumbar motion; STYLE_SAMPLE.)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/typography-line-breaks.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 96,
+          "old": [
+            "## Dynamic Rewrap Judgment (verified 2026-07-07)\n"
+          ],
+          "new": [
+            "## Dynamic Rewrap Judgment\n"
           ]
         }
       ]

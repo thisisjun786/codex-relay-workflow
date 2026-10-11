@@ -129,7 +129,7 @@ Retrieval vocabulary: **hidden/minimal navigation** maps to the dated hidden-nav
 - **Maturity:** Emerging
 - **Compatible isms:** Liquid Glass, Organic Capsule, Liquid Editorial, Flat Design, AI Serif Editorial
 - **Direction gate:** Use for media-led stories and full-bleed chapter systems where persistent controls must cross light and dark material. Do not use if contrast can be solved with stable tokens, if state changes flicker, or if the audience needs a conventional high-certainty header.
-- **Implementation pointer:** `dev-frontend/references/core/top-bar.md` for overlay states, `color-system.md` for contrast tokens, and `motion.md` for transition restraint.
+- **Implementation pointer:** `dev-frontend/references/core/top-bar.md` for overlay states, `color-tokens.md` for contrast tokens, and `motion.md` for transition restraint.
 - **Representative sites:** Vero, RISK, Augen
 
 ## Typography Patterns

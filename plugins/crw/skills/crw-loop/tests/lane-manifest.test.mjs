@@ -14,14 +14,14 @@ const lane = (over = {}) => ({
   base: { ref: "dev", sha: "abc1234" },
   head: "def5678",
   status: "running",
-  issue: "lidge-jun/codexclaw#184",
+  issue: "example/repo#184",
   ...over,
 });
-const manifest = (lanes) => ({ repository: "lidge-jun/codexclaw", lanes });
+const manifest = (lanes) => ({ repository: "example/repo", lanes });
 
 test("#184: a complete two-lane manifest validates", () => {
   const r = validateLaneManifest(
-    manifest([lane(), lane({ id: "lane-2", branch: "codex/two", worktree: "/w/two", issue: "lidge-jun/codexclaw#175" })]),
+    manifest([lane(), lane({ id: "lane-2", branch: "codex/two", worktree: "/w/two", issue: "example/repo#175" })]),
   );
   assert.deepEqual(r.errors, []);
   assert.equal(r.ok, true);
@@ -31,7 +31,7 @@ test("#184: a complete two-lane manifest validates", () => {
 test("#184: two active lanes on one issue with no scope is the collision this exists to catch", () => {
   const r = validateLaneManifest(manifest([lane(), lane({ id: "lane-2", branch: "codex/two", worktree: "/w/two" })]));
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => /shares lidge-jun\/codexclaw#184 .*no scope/.test(e)), r.errors.join("|"));
+  assert.ok(r.errors.some((e) => /shares example\/repo#184 .*no scope/.test(e)), r.errors.join("|"));
 });
 
 test("#184: sharing an issue is allowed when each lane names a different part", () => {
@@ -79,11 +79,11 @@ test("#184: a bare issue number is rejected because it is ambiguous across repos
 });
 
 test("#184: duplicate lane ids and duplicate branches are both rejected", () => {
-  const dupId = validateLaneManifest(manifest([lane(), lane({ branch: "codex/two", worktree: "/w/two", issue: "lidge-jun/codexclaw#1" })]));
+  const dupId = validateLaneManifest(manifest([lane(), lane({ branch: "codex/two", worktree: "/w/two", issue: "example/repo#1" })]));
   assert.ok(dupId.errors.some((e) => /duplicates an earlier lane/.test(e)), dupId.errors.join("|"));
 
   const dupBranch = validateLaneManifest(
-    manifest([lane(), lane({ id: "lane-2", worktree: "/w/two", issue: "lidge-jun/codexclaw#1" })]),
+    manifest([lane(), lane({ id: "lane-2", worktree: "/w/two", issue: "example/repo#1" })]),
   );
   assert.ok(dupBranch.errors.some((e) => /already claimed by lane/.test(e)), dupBranch.errors.join("|"));
 });

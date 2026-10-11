@@ -191,7 +191,7 @@ a case whose owner has moved or been reworded before relying on it.
 | S24d | A `mechanical` refresh (hunks resolved by a rule the assignment names, each reproduced) reruns the gates and the deterministic checks over those hunks, and a `manual` one adds an independent check of the hand-resolved hunks only, run by the child's reviewer. A claimed `clean` the helper refuses is read by its reason and never accepted on the child's word: an ordinary edit between the reviewed head and a conflicting merge is caught by accounting for every first-parent commit, and an edit riding inside a merge by `git show --remerge-diff` | The same two owners, and the refusal reasons in [the verdict checks](merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict) | Handoff | added 2026-10-03; same basis, see below |
 | S24e | The handoff compares the changed paths with the declared edit regions (the parent re-checks with `git diff --name-only origin/dev...<head>`, and by hunk where a region covers part of a file) and carries a sibling impact, and a correction's restoration block carries the siblings' landings and the conflicts the parent expects as relay facts, so a task restored after compaction does not assume a base that is not there | [What a handoff discloses](task-packet.md#what-a-handoff-discloses) (`changedPaths`, `siblingImpact`), the verdict checks and the [Restoration block](task-packet.md#restoration-block) | Handoff | added 2026-10-03; same basis, see below |
 | S25 | Where a packet's `Delivery:` covers publication, the child pushes its task branch without stopping for a push approval, because the packet carries the standing grant that `DEV-GIT-PUSH-01` (`crw-dev`) accepts as evidence of an applicable grant, not as a new consent, and it never merges, force-pushes, tags or pushes to `dev` or `main`; a packet that excludes publication carries none and the child pushes nothing | [Default dev integration](../../crw-canon/references/delivery.md#default-dev-integration), the publication bullet of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Approval context | added 2026-10-03; the rule text was read and the identifier search returned no match, a child at the push step was not observed, see below |
-| S25b | A child that needs something only a person can give does not call `request_user_input`, which the PABCD hook denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the CXC source it was ported from, no child's use of the route was observed, see below |
+| S25b | A child that needs something only a person can give does not call `request_user_input`, which the PABCD hook denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the source of the hook it was ported from, no child's use of the route was observed, see below |
 | S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as `crw-loop` states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with the roadmap debt for scope found later | [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases it left open are decided by S25d, see below |
 | S25d | A correction generation, a base-refresh generation and a separated publication step are not the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle, and the `crw-loop` rule text is unchanged | [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution), the Loop bullet of the [Launch packet](task-packet.md#launch-packet) and the workflow bullet of the [Restoration block](task-packet.md#restoration-block) | Default settings | added 2026-10-03; decides the cases S25c left open, from S25c's goalplan record, and no child reading the line was observed, see below |
 | S26 | A task that has to stop its own tests, a child or the parent, stops them by the pid it recorded when it started them or by the process group it created for them, and never by pattern or name (`pkill -f`, `killall`); a long command records its pid from the start or runs under `timeout`, and a process the task did not start is reported with its pid and working directory, not stopped | The `Processes you start:` line of the [Launch packet](task-packet.md#launch-packet) and its line in [First full assignment required fields](task-packet.md#first-full-assignment-required-fields); for the parent, [Observe and verify](../SKILL.md#observe-and-verify) and [Check the verification evidence](merge-readiness.md#check-the-verification-evidence) | Preserved limits | added 2026-10-03; the mechanics were measured on this host's own processes, no child or parent reading the wording has been observed, see below |
@@ -332,14 +332,14 @@ the reviewed head and does not rely on it alone. Not measured: mechanical and ma
 beyond those synthetic merges (no rule-resolved hunk was reproduced by a command), the forge, a
 relay holding a handoff that carries the member, and any child or parent following the text.
 
-S25, S25b and S25c were read on 2026-10-03 against this checkout at dev ced7de60 and the CXC plugin
+S25, S25b and S25c were read on 2026-10-03 against this checkout at dev ced7de60 and the original plugin
 0.2.40+codex.20260929183231. They decide what the packet and the integration text say. None was
 observed on a child that read the new wording: whether a child stops at the push step is to be
 observed in the next real-use run, and a test that matches the wording would show only that the text
 is present.
 
-S25: `DEV-GIT-PUSH-01` is skill prose in `crw-dev`, ported from CXC's `cxc-dev` (the Safety rules
-bullet "Push requires explicit user approval", class ESCALATE). A search of the CXC plugin's
+S25: `DEV-GIT-PUSH-01` is skill prose in `crw-dev`, ported from the original plugin's dev skill (the Safety rules
+bullet "Push requires explicit user approval", class ESCALATE). A search of the original plugin's
 non-Markdown files, hooks and compiled components included, for the rule identifier returned no match. That shows no hook cites it
 by name, not that nothing equivalent exists, so the one mechanism found is the rule text itself: a
 child stops if it reads the rule and follows it. The coordinator's reading of the October child
@@ -350,7 +350,7 @@ and no enforcement. A child can still read the rule first and stop, and "never m
 this text and on the coordinator's review of the pull request, with the merge gate that POLICY.md
 describes. Whether that gate is active on the server was not read back here.
 
-S25b: the hook ported from CXC's `hooks/pre-tool-use-guarding-interview-in-goal.json` denies the
+S25b: the hook ported from the original plugin's `hooks/pre-tool-use-guarding-interview-in-goal.json` denies the
 user-input request while a goal is active (the denial was implemented in that plugin's
 components/pabcd-state/dist/goal-gate.js, read as source and not observed on a host), which is real
 enforcement for the first half of the line. That a `blocked_needs_input` turn then reaches the
@@ -373,7 +373,7 @@ roadmap debt in the next P, and none of the three recorded generation-2 correcti
 recorded implementation-then-publication plan opened a docs-only phase. That is recorded practice,
 not permission. S25c did not decide these cases; S25d does. The rule text stands.
 
-S25d: read on 2026-10-03 against this checkout at dev aae21a98 and the CXC plugin
+S25d: read on 2026-10-03 against this checkout at dev aae21a98 and the original plugin
 0.2.40+codex.20260929183231, and decided on that date within the scope Jun delegated, from the
 record S25c holds and not from a new reading of goalplans. For a multi-cycle loop,
 `LOOP-DOCS-FIRST-01` (`crw-loop`, "Docs-first multi-cycle entry") makes the first work-phase of new

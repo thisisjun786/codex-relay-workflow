@@ -6,7 +6,7 @@ framework wiring, and contrast verification. Palette GENERATION and judgment
 `dev-uiux-design/references/color-system.md` — read it for what colors to
 pick; read this for how to ship them. Runtime theme selection, FOWT
 prevention, and toggle behavior stay in `theme-switching.md`.
-Feature facts below verified 2026-07-07 (MDN/Tailwind/shadcn/W3C, Tier 2).
+Feature facts below come from MDN, Tailwind, shadcn and W3C sources (Tier 2).
 
 ---
 
@@ -45,7 +45,7 @@ never primitives; hardcoded colors in component CSS are a review finding
 }
 ```
 
-## Accent Surface Emphasis (FE-COLOR-ACCENT-SURFACE-01, DEFAULT, verified 2026-07-09)
+## Accent Surface Emphasis (FE-COLOR-ACCENT-SURFACE-01, DEFAULT)
 
 Emphasized/highlighted panels on opaque functional UI use a FLAT emphasis
 channel, never a gradient fill (see `anti-slop.md` FE-GRADIENT-02). Pick exactly

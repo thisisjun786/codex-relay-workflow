@@ -123,10 +123,10 @@ supplies the search discipline underneath it.
 - This protocol is on-demand Tier 3 work; it is selected deliberately and
   nothing auto-loads or auto-runs it.
 
-### Removed cli-jaw tiers (non-goals — do not re-add)
-crw has no server runtime, so the cli-jaw 4-tier ladder does not carry over.
-Do **not** reintroduce any of these removed backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.
-There is no codex-native equivalent and J-10 removed them deliberately.
+### Tiers crw does not provide (non-goals)
+crw has no server runtime, so the search ladder has no server-side tiers.
+Do **not** offer any of these backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.
+There is no codex-native equivalent.
 
 ## For a dispatcher
 

@@ -76,7 +76,7 @@ spacing: "40px+ padding on glass, very generous sections"
 radius: "12-20px"
 signature: "system font, Liquid Glass adapts contextually, specular highlights on motion, generous spacing = luxury"
 ```
-Liquid Glass judgment (HIG, verified 2026-07-07): glass is a functional-layer
+Liquid Glass judgment (HIG): glass is a functional-layer
 material for floating controls/navigation only — never content-layer cards;
 `regular` variant for text-bearing chrome, `clear` only over rich media; the
 system adapts it to reduced-transparency/contrast settings. Vocabulary:
@@ -95,7 +95,7 @@ signature: "macOS-window page metaphor, chips-as-content, Apple-newsroom copy ca
 ```
 
 ### OpenAI (2026 warm-sans organic)
-**Essence:** Precise but humane platform — warm geometric sans, huge whitespace, soft natural imagery, opaque capsule labels. (In-house Feb-2025 rebrand + ABC Dinamo type + Studio Dumbar motion; verified 2026-07-09; STYLE_SAMPLE.)
+**Essence:** Precise but humane platform — warm geometric sans, huge whitespace, soft natural imagery, opaque capsule labels. (In-house Feb-2025 rebrand + ABC Dinamo type + Studio Dumbar motion; STYLE_SAMPLE.)
 ```yaml
 colors: { base: "off-white / near-black, palette inspired by natural environments", imagery: "soft-focus landscape/still-life photography + film grain, some AI-generated texture", accent: "imagery carries color; UI stays neutral" }
 typography: { font: "OpenAI Sans (warm geometric, rounded-approachable) — Geist as open stand-in", headlines: "large but restrained, generous whitespace over scale" }

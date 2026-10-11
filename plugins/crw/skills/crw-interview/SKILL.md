@@ -241,9 +241,9 @@ A chosen `proceed` executes as a real transition — `crw pabcd orchestrate P --
 chat free-pass `orchestrate p`) — never as narration alone: a "moving to Plan" sentence without
 the persisted I->P edge is not Plan entry (ORCH-MANDATE-01, canonical in `crw-loop`).
 
-## Runtime Status (shipped)
+## Interview runtime
 
-The interview runtime is shipped, not planned:
+The interview runtime provides:
 
 - `PostToolUse` auto-capture for `request_user_input` records each question/answer
   round to `.crw/interviews/<sessionId>.jsonl` (`handlePostToolUse`,

@@ -1,6 +1,6 @@
 # Source patterns and reuse ledger
 
-Inspected **2026-09-08** with Aside search, original GitHub pages, API metadata and
+Inspected **2026-09-08** from the original GitHub pages, API metadata and
 pinned source files. This is a dated design/engineering survey, not a dependency
 manifest. The shipped instructions and example are independently authored; no
 upstream code, font binary, artwork or long prose passage is vendored here.

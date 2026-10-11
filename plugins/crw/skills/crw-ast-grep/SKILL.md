@@ -1,6 +1,6 @@
 ---
 name: crw-ast-grep
-description: "Use ast-grep (sg) for AST-aware code search and rewrite across 25 languages. Trigger for structural code matching or deterministic codemods: find every function/call/class/import shaped like X, rewrite console.log to logger.info, strip `as any`, migrate require() to import, find empty catch blocks or missing await, and scan/apply YAML rules. Prefer this over rg/grep when the target is syntax shape rather than text; use rg for string contents, comments, filenames, or regex-style byte searches."
+description: "AST-aware code search and rewrite with ast-grep (sg) across 25 languages: structural matches and deterministic codemods such as every call, import or class shaped like X, console.log to logger.info, YAML rules. Use rg for string contents, comments and filenames."
 ---
 
 # ast-grep

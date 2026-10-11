@@ -33,7 +33,7 @@ Palette modifiers describe color structure, not aesthetic movements. Apply one o
 
 4. **Neutral ramp:** Pick a subtle hue bias from the brand color. Apply it at very low chroma (0.005–0.01) across the gray scale. This gives "warm grays" or "cool grays" that feel cohesive with the brand.
 
-### Practitioner Notes — Hue Budget & Tinted Neutrals (verified 2026-07-07)
+### Practitioner Notes — Hue Budget & Tinted Neutrals
 
 Field-tested extensions to the method above (Korean designer community;
 evidence: repo `devlog/_fin/260707_liquid_glass_motion_trends/000_research.md` §2):
@@ -74,7 +74,7 @@ learning reference only. Contrast stance: **WCAG 2.2 is the compliance gate;
 APCA is advisory** until WCAG 3 (Working Draft as of 2026-07-07) settles.
 Implementation mechanics (token layering, oklch() fallbacks, color-mix(),
 light-dark(), Tailwind/shadcn wiring):
-`dev-frontend/references/core/color-system.md`.
+`dev-frontend/references/core/color-tokens.md`.
 
 ### Dark Mode Token Derivation
 - Do NOT simply invert lightness values. Dark mode has its own logic.

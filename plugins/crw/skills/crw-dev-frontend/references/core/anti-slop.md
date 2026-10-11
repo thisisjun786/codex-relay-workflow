@@ -66,7 +66,7 @@ and Augen's soft-focus imagery are the evidence context. Keep one such field per
 viewport, keep unrelated sibling cards flat, and provide a static poster or
 reduced-motion state.
 
-### Opaque Functional Surfaces (FE-GRADIENT-02, DEFAULT, verified 2026-07-09)
+### Opaque Functional Surfaces (FE-GRADIENT-02, DEFAULT)
 
 A tinted gradient wash on an OPAQUE functional panel — `background:
 linear-gradient(accent-tint, transparent), surface` on cards, panels, sidebars,
@@ -97,7 +97,7 @@ surface tokens; Geist neutral surface + accent border on selected; Stripe Apps
 neutral panel body + small accent bar. Korean premium services (Toss, Kakao,
 Naver, Channel Talk, Daangn — live-measured) all use flat tint/border on
 functional panels; their gradients live only in hero backgrounds and
-illustrations. See `color-system.md` § Accent Surface Emphasis for token
+illustrations. See `color-tokens.md` § Accent Surface Emphasis for token
 recipes.
 
 ## One-Note Theme Ban (FE-ONENOTE-01, DEFAULT)

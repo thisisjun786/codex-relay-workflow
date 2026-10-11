@@ -8,10 +8,6 @@ and never replaces them. Standalone work with no Linear issue quotes the origina
 points to it, and where the two disagree the Linear record wins and the plan document is
 amended at the next P. This file owns the format of the numbered documents.
 
-Full documentation routine (P concretizes the docs, A audits them as a hard gate, D
-archives to `_fin/`, plus the mainstream design-doc/RFC translation table):
-[Implementation log](../../crw-dev-scaffolding/references/implementation-log.md).
-
 **Difflevel roadmap plan (STRICT, DIFFLEVEL-ROADMAP-01):** for any multi-phase unit
 (2+ work-phases), the FIRST P — or the dedicated design-only Phase-0 pass — must
 deliver the entire roadmap concretized: `000_plan.md` (objective, constraints,

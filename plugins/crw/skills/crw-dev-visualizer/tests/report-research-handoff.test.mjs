@@ -200,7 +200,7 @@ test("generation receipt preserves distinct explicit provenance and labels calle
     skillVersion: "visualizer-3",
     packageVersion: "package-9",
     sourceSha: "a".repeat(40),
-    hostAdapter: "aside",
+    hostAdapter: "example-host",
     genre: "research-synthesis",
     templateIds: ["paged-report"],
     recipeIds: ["evidence-table"],

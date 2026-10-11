@@ -1,6 +1,6 @@
 ---
 name: crw-dev-scaffolding
-description: "MUST USE for project setup, feature scaffolding, structural audits, or documentation scaffolding — applies feature-based layout, colocation, public boundary exports, repo-first convention reuse, and source-of-truth doc planning. Triggers: scaffold, scaffolding, new project, init project, new feature, add module, project setup, structure audit, architecture docs, source-of-truth docs, monorepo setup, API docs, 스캐폴딩, 새 프로젝트, 새 기능, 구조 점검, 모듈 추가."
+description: "Project setup, feature scaffolding, structural audits and source-of-truth docs: feature-based layout, colocation, boundary exports, repo-first convention reuse. Triggers: scaffold, scaffolding, new project, new feature, add module, monorepo setup, API docs, 스캐폴딩, 새 프로젝트, 모듈 추가."
 ---
 
 # Dev Scaffolding
@@ -18,7 +18,6 @@ structural audits, or documentation scaffolding.
 
 | File | When to Read | What It Covers |
 |------|-------------|----------------|
-| `references/implementation-log.md` | C2+/multi-phase/cross-session work units | Full devlog routine: decade-numbered plan folders, P-concretize → A-audit → D-archive loop, mainstream design-doc/RFC mapping |
 | `references/api-docs.md` | API documentation generation | OpenAPI 3.1, developer portal, CI doc drift, SDK generation |
 | `references/monorepo-tooling.md` | Setting up or optimizing monorepo builds | Turborepo vs Nx 2026 decision table, task graph for AI agents, CI optimization |
 
@@ -44,16 +43,16 @@ defer to an existing mature convention when one is present (§2). Three pillars:
 Before scaffolding inside an existing repo:
 1. Resolve the repo root from `pwd` / project context / applicable `AGENTS.md`.
 2. Detect existing architecture, docs, plans, changelog, ADR, agent-context, and source-of-truth conventions.
-3. Read existing `README.md`, `AGENTS.md`, `CLAUDE.md`, `devlog/`, `docs/`, `plans/`, `adr/`, `architecture/`, or equivalent source-of-truth docs before proposing new structure.
+3. Read existing `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/`, `plans/`, `adr/`, `architecture/`, or equivalent source-of-truth docs before proposing new structure.
 4. Reuse clear conventions instead of imposing the default pattern.
 5. Show a compact tree before broad additions.
 6. Do not create new project-level docs folders, planning folders, `AGENTS.md`, or extra tooling without approval.
 
 MUST preserve mature repo conventions over the default scaffold pattern.
 
-### CRW-First Durable Docs
+### Source-of-Truth Placement
 
-**Rule (SCAF-SOT-01):** In crw or any repo that already uses durable devlog/source-of-truth conventions, prefer the existing `devlog/` placement, local numbering scheme, and source-of-truth paths before proposing generic `docs/` + `plans/`.
+**Rule (SCAF-SOT-01):** A product decision is canonical in Linear and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the Linear issue instead of restating the decision.
 
 Keep it light:
 - Cross-link scaffold docs to evidence paths (`path:line`, plan file, ADR, current-architecture note) so future workers can audit why files exist.
@@ -64,14 +63,12 @@ Keep it light:
 - Treat source-of-truth placement as part of scaffolding completion: the final audit must say which durable convention was reused or that none existed.
 - Boundary/public-export decisions still route to `dev-architecture` §1 (`ARCH-DECISION-01`, `ARCH-MAP-01`); scaffolding owns file placement and skeleton consistency.
 
-## 2.1 Lightweight Source of Truth (implementation-unit devlog)
+## 2.1 Lightweight Source of Truth
 
-The implementation-unit devlog routine (`devlog/_plan/` units — `pabcd` §Work-Phase
-Loop, UNIT-RESIDENCE-01) is the DEFAULT for C2+ work where the repository uses it.
-C0/C1 follow the record exemptions in `dev` §0.1; do not create a unit just for them. Propose the `docs/`/`plans/`
-architecture docs when:
-
-C0/C1 record exemptions are owned by crw-dev §0.1; this routine does not override them.
+The numbered plan documents of a C2+ unit are workspace-local execution evidence owned by
+[Implementation units](../crw-pabcd/references/implementation-units.md); scaffolding does not
+create or number them. C0/C1 record exemptions are owned by crw-dev §0.1. Propose the
+`docs/`/`plans/` architecture docs when:
 
 - The repo is immature, undocumented, or inconsistent; or
 - The user asks for a durable source-of-truth structure; or
@@ -88,7 +85,7 @@ plans/
   done/                  # completed work summaries
 ```
 
-Folder names are advisory. If the repo already has `devlog/`, `docs/`, `adr/`, `plans/`,
+Folder names are advisory. If the repo already has `docs/`, `adr/`, `plans/`,
 `changelog/`, `architecture/`, or another convention, propose using those instead.
 Also detect optional lightweight source-of-truth files such as `CONTEXT.md`,
 `CONTEXT-MAP.md`, and `docs/adr/`. Reuse them when present. Do not create them unless
@@ -102,22 +99,14 @@ the SoT doc in the SAME unit (C gate, `pabcd` C phase). If the repo has no SoT d
 recommend creating one — once, via the proposal flow above — rather than silently
 working without a source of truth.
 
-Implementation-unit devlog method:
-- Split large work into phase-level documents instead of one huge plan —
-  dependency-ordered (PHASE-SPLIT-01), ALL written to diff-level up front
-  (DIFFLEVEL-ROADMAP-01; both defined in `pabcd`).
-- Keep diff-level plans in files, not chat: exact paths, NEW/MODIFY/DELETE, before/after diffs for MODIFY, complete content for NEW.
-- Keep chat summaries short: explain the phase, show a compact tree/change map, then link the plan file.
-- Move completed plan folders to an archive/done area if the repo already uses that convention.
-
-Phase naming is owned by [Implementation units](../crw-pabcd/references/implementation-units.md)
-(LEXICO-SPLIT-01). Use the existing three-digit convention; do not mix two-digit names.
+Keep diff-level plans in files, not chat; keep chat summaries short: explain the phase,
+show a compact tree/change map, then link the plan file. Phase naming is owned by
+[Implementation units](../crw-pabcd/references/implementation-units.md) (LEXICO-SPLIT-01).
 
 Before creating any new source-of-truth folders, ask concisely: state that no durable docs were found,
 show the proposed tree, give a specific recommendation, and confirm you will not create them without approval.
-This gate governs introducing a convention, not routine unit subfolders in an
-existing devlog/_plan. Create a unit only when required; crw-dev §0.1 does not
-require a new unit for a C0/C1 fast-path record.
+This gate governs introducing a convention, not routine subfolders of a convention the repository
+already has.
 
 ## 2.2 Project Skeleton
 
@@ -201,8 +190,7 @@ Principle: “flat until you can't” — start flat, add a sub-folder only when
 | Python files        | snake_case + suffix   | `stock_price_tool.py`        |
 | Go files            | snake_case            | `stock_price.go`             |
 | Rust files          | snake_case            | `stock_price.rs`             |
-| Plan folders        | `YYMMDD_slug/`        | `260510_feature_bootstrap/`  |
-| Phase docs          | decade-prefixed `NNN_slug.md`, `000_*` is the index (LEXICO-SPLIT-01) | `000_plan.md`, `010_phase1_build.md` |
+| Plan documents      | owned by [Implementation units](../crw-pabcd/references/implementation-units.md) | |
 | Functions (JS/TS)   | camelCase             | `getStockPrice()`            |
 | Functions (Python)  | snake_case            | `get_stock_price()`          |
 | Functions (Go)      | PascalCase (exported) | `GetStockPrice()`            |
@@ -295,7 +283,7 @@ When generating project documentation or scaffolding docs:
 3. Follow the repo's existing source-of-truth convention when one exists
 
 ### Planning Documentation
-1. Follow decade numbering (../pabcd/references/implementation-units.md, LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.
+1. Follow decade numbering ([Implementation units](../crw-pabcd/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.
 2. Each plan entry should capture: title, date, what changed, why, evidence paths
 3. Cross-reference related plan entries within the same work folder when helpful
 

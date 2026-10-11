@@ -37,8 +37,8 @@ h3 { max-width: 60ch; }
 p, li, article, .prose { max-width: 65ch; }
 
 /* Korean: wrap by 어절 (word), never mid-word. Scope to ko ONLY —
-   global keep-all degrades Chinese/Japanese wrapping (verified 2026-07-07,
-   MDN + Naver SmartStudio). */
+   global keep-all degrades Chinese/Japanese wrapping (MDN +
+   Naver SmartStudio). */
 [lang|="ko"] {
   word-break: keep-all;
   overflow-wrap: break-word; /* escape hatch for long 어절 in narrow boxes */
@@ -227,7 +227,7 @@ at 700px. Control break OPPORTUNITIES (`keep-all`, `max-width` in `ch`,
 `text-wrap: balance`) instead of width-specific hacks (`<br>`, media-query
 text swaps).
 
-Korean facts (verified 2026-07-07, Tier-2: MDN, CSSWG Text 4, KLREQ, Chrome
+Korean facts (Tier-2: MDN, CSSWG Text 4, KLREQ, Chrome
 DevRel, Naver SmartStudio):
 
 - With `keep-all`, break opportunities are 어절 (space) boundaries;

@@ -331,7 +331,7 @@ to its parent states the parent's, and its own settings are unaffected by what t
 on; copying the recipient's pair into the sender is how a correction to one level spreads to
 another. The pair to state is the one RECORDED as that task's authorization, which is what a send
 verifies against. For a task whose role declares one pair that is the pair its role's policy declares, read at the time
-of the send rather than from a memory of what the role used to run on; for a child, whose role lists
+of the send rather than from a memory of what the role ran on earlier; for a child, whose role lists
 several pairs, it is whichever of them the task was created on, which its creation receipt and the
 relay's record hold. It is not always a pair the role declares: an exception authorizes one specific model and effort for one role and directory, and
 a task created under a currently valid one legitimately differs from the pairs its role declares.

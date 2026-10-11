@@ -198,7 +198,7 @@ const opacity = useTransform(scrollYProgress, [0, 0.5], [1, 0]);
 
 ### CSS Scroll-Driven Animations (preferred for reveal/progress)
 
-The CSS scroll-driven animations module (MDN, verified 2026-07-07) animates
+The CSS scroll-driven animations module (MDN) animates
 along scroll progress on the compositor — it replaces scroll-listener JS
 (and most `useScroll` cases) for reveals, progress bars, and parallax:
 

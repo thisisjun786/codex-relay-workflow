@@ -60,7 +60,7 @@ Each PR/changeset MUST be scoped to one logical change. Opportunistic rewrites, 
 
 ## 1.5 Necessity Gate & Pre-Write Search Obligation
 
-**DEV-NECESSITY-01 (DEFAULT — ponytail discipline, verified 2026-07-02):** before writing
+**DEV-NECESSITY-01 (DEFAULT — ponytail discipline):** before writing
 ANY code, check the no-code options in order — do nothing / delete / configure / reuse —
 and state which you rejected and why. Frame tasks exclusions-first (what NOT to add)
 before the goal. Never lazy about STRICT domains: trust boundaries, data loss, security,
