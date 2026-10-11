@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -94,6 +95,12 @@ func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSe
 	if match == nil {
 		return nil, nil
 	}
+	// CRW-1265: the child works in the parent's cwd, and the sandbox it runs under is the host's
+	// to set, so it counts as on. A parent opened in the account home, above it or above a project
+	// root cannot spawn a sandboxed child; the refusal says why.
+	if err := managedSpawnRootRefusal(r.cwd); err != nil {
+		return nil, err
+	}
 	for _, field := range []struct{ value, name string }{{session, "sessionId"}, {match[1], "dispatchId"}, {match[2], "attemptId"}} {
 		if _, err := dispatchID(field.value, field.name); err != nil {
 			return nil, err
@@ -108,6 +115,30 @@ func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSe
 		return nil, errors.New("managed spawn attempt is not claimed or no longer current")
 	}
 	return &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: root, rootInfo: r.rootInfo, session: session, dispatch: match[1], attempt: match[2]}, nil
+}
+
+// managedSpawnRootRefusal is CRW-1265's rule for a managed spawn: the child works in the parent's cwd and the sandbox it runs under is
+// the host's to set, so it counts as on. The error wraps the *sandboxroot.Refusal (IsManagedSpawnRootRefusal).
+func managedSpawnRootRefusal(cwd string) error {
+	if err := sandboxroot.Check(cwd, sandboxroot.Unknown); err != nil {
+		return &managedSpawnRefusal{err}
+	}
+	return nil
+}
+
+type managedSpawnRefusal struct{ cause error }
+
+func (e *managedSpawnRefusal) Error() string {
+	return "managed spawn refused: the child would run in the parent's working directory, which a sandboxed Codex may not use: " + e.cause.Error()
+}
+
+func (e *managedSpawnRefusal) Unwrap() error { return e.cause }
+
+// IsManagedSpawnRootRefusal reports whether err is the sandbox-root refusal of a managed spawn (ManagedSpawnResolver.Preview and
+// Named), which a hook answers with a denial and never by leaving the call unmanaged.
+func IsManagedSpawnRootRefusal(err error) bool {
+	var refusal *managedSpawnRefusal
+	return errors.As(err, &refusal)
 }
 
 // Named is the attempt a native V2 spawn call whose message cannot be read names by its task_name (CRW-1260). A V2 task is host
@@ -156,6 +187,10 @@ func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, ro
 				return nil, "", nil
 			}
 		}
+	}
+	// CRW-1265: a call that names its dispatch is a managed spawn like a marked one, and its child works in the parent's cwd too.
+	if err := managedSpawnRootRefusal(r.cwd); err != nil {
+		return nil, "", err
 	}
 	sel := &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: r.root, rootInfo: r.rootInfo, session: session, dispatch: d.ID, attempt: a.ID}
 	return sel, "[CRW-DISPATCH:" + d.ID + ":" + a.ID + "]", nil

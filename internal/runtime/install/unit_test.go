@@ -172,7 +172,7 @@ func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
 	common := relay + " --state " + state + " --socket " + socket
 	want := "# Written by crw install register-service and owned by crw install: change it with that command, not by hand.\n" +
 		"[Unit]\nDescription=CRW relay service (starts the relay service once when the user manager starts)\nX-CRW-Owner=crw-install\n\n" +
-		"[Service]\nType=oneshot\nRemainAfterExit=yes\nTimeoutStartSec=60\nUnsetEnvironment=" + policyVar + " " + scopeVar + "\n" +
+		"[Service]\nType=oneshot\nRemainAfterExit=yes\nTimeoutStartSec=60\nWorkingDirectory=" + state + "\nUnsetEnvironment=" + policyVar + " " + scopeVar + "\n" +
 		"ExecStart=" + common + " service start\nExecStop=-" + common + " service stop\n\n[Install]\nWantedBy=default.target\n"
 	if info, err := os.Stat(u.path()); err != nil || u.text() != want || info.Mode().Perm() != 0o644 {
 		t.Fatalf("unit text:\n%s\nwant:\n%s", u.text(), want)
@@ -556,5 +556,25 @@ func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
 	pid, _ := verb("status")["pid"].(float64)
 	if exe, err := os.Readlink("/proc/" + strconv.Itoa(int(pid)) + "/exe"); err != nil || !strings.HasPrefix(exe, updated+string(filepath.Separator)) {
 		t.Fatalf("the restarted relay runs %q (%v), not out of %s", exe, err, updated)
+	}
+}
+
+// CRW-1265. The unit's WorkingDirectory is the state directory: a registration that finds the unit
+// already in place makes the directory again, so a state directory removed since does not leave a unit
+// that fails in systemd's chdir before the relay runs.
+func TestRegisterAgainRecreatesTheStateDirectory(t *testing.T) {
+	t.Parallel()
+	u := newUnitHost(t)
+	u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
+	if err := os.RemoveAll(u.o.State); err != nil {
+		t.Fatal(err)
+	}
+	u.run(install.ServiceOptions{DryRun: true}, install.OK, install.UnitUnchanged)
+	if _, err := os.Stat(u.o.State); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a dry run made the state directory: %v", err)
+	}
+	u.run(install.ServiceOptions{}, install.OK, install.UnitUnchanged)
+	if info, err := os.Stat(u.o.State); err != nil || !info.IsDir() {
+		t.Fatalf("the registration did not make the state directory the unit starts the relay in: %v", err)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
 	"os"
@@ -40,9 +42,47 @@ func (s *Service) command(args ...string) (*exec.Cmd, error) {
 	}
 	prefix = append(prefix, "--state", s.Selection.Path)
 	if s.Socket != "" {
-		prefix = append(prefix, "--socket", s.Socket)
+		// CRW-1265: launch starts the child in the state directory, so a socket path relative to the
+		// caller's directory is made absolute here, before it can mean another file there.
+		prefix = append(prefix, "--socket", s.callerPath(s.Socket))
 	}
 	return exec.Command(executable, append(prefix, args...)...), nil
+}
+
+// startCommand is the supervisor's command line and environment for Start: the policy the launch
+// resolved goes into the variable it was read from, and the launch id into SettledEnv.
+func (s *Service) startCommand(args []string, policy Object, launch string) (*exec.Cmd, error) {
+	cmd, err := s.command(args...)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = s.environment()
+	if p := pyjson.Text(policy.Get("path")); p != "" {
+		// CRW-1265: a policy this process's environment names relative to the caller's directory is the
+		// file the launch just checked there; the supervisor runs in the state directory, so it gets a
+		// path that names that same file. A recorded path is absolute already (Declare writes it so).
+		if pyjson.Text(policy.Get("source")) == "environment" {
+			p = s.callerPath(p)
+		}
+		cmd.Env = environmentSet(cmd.Env, pyjson.Text(policy.Get("variable")), p)
+	}
+	cmd.Env = environmentSet(cmd.Env, SettledEnv, launch)
+	return cmd, nil
+}
+
+// callerPath is path for a child that launch starts: a path relative to the caller's directory is joined
+// below that directory as raw text (crwconfig.JoinRoot), so a symbolic link followed by ".." still names
+// the directory the kernel resolves and not the one filepath.Clean would name. A path that is absolute,
+// or a child that stays in the caller's directory (a state path that is not absolute), keeps it as given.
+func (s *Service) callerPath(path string) string {
+	if path == "" || filepath.IsAbs(path) || !filepath.IsAbs(s.Selection.Path) {
+		return path
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	return crwconfig.JoinRoot(wd, path)
 }
 func environmentSet(env []string, key, value string) []string {
 	prefix := key + "="
@@ -59,6 +99,12 @@ func (s *Service) environment() []string {
 	if s.Scope.Authority == "isolated" {
 		env = environmentSet(env, ScopeEnv, s.Scope.Root)
 	}
+	// CRW-1265: the child runs in the state directory (launch), so a policy the environment names relative to this
+	// process's directory is handed over as the path that names the same file; the supervisor of `service run` gets
+	// its worker's policy this way, and startCommand sets the variable again from the policy the launch resolved.
+	if value, ok := os.LookupEnv(execution.EnvPolicy); ok && value != "" {
+		env = environmentSet(env, execution.EnvPolicy, s.callerPath(value))
+	}
 	return environmentSet(env, "CODEX_SESSION_RELAY_STATE", s.Selection.Path)
 }
 func (s *Service) launch(cmd *exec.Cmd) error {
@@ -70,6 +116,14 @@ func (s *Service) launch(cmd *exec.Cmd) error {
 		return err
 	}
 	cmd.Stdout, cmd.Stderr = log, log
+	// CRW-1265: the supervisor and the worker run in the relay's state directory, never in the
+	// directory whoever started them stood in (the account home, for a relay started from a login
+	// shell or a user unit): a sandboxed Codex that ever took the daemon's cwd for its root would
+	// make and remove <home>/.git. A state path that is not absolute is left to the caller's cwd,
+	// because --state names it relative to that directory.
+	if filepath.IsAbs(s.Selection.Path) {
+		cmd.Dir = s.Selection.Path
+	}
 	// subprocess.Popen refuses an environment value holding NUL, with the log already opened:
 	// a declaration recording such a path is os.environ's ValueError, not exec's own error.
 	for _, variable := range cmd.Env {
@@ -150,15 +204,10 @@ func (s *Service) Start(ctx context.Context, o Options) (Object, error) {
 	if o.Takeover {
 		args = append(args, "--takeover-scope")
 	}
-	cmd, err := s.command(args...)
+	cmd, err := s.startCommand(args, policy, launch)
 	if err != nil {
 		return nil, err
 	}
-	cmd.Env = s.environment()
-	if p := pyjson.Text(policy.Get("path")); p != "" {
-		cmd.Env = environmentSet(cmd.Env, pyjson.Text(policy.Get("variable")), p)
-	}
-	cmd.Env = environmentSet(cmd.Env, SettledEnv, launch)
 	// Startup answers at supervisor readiness, before the worker publishes its
 	// policy. An inherited pipe preserves that boundary even with a fast Go
 	// worker: the launcher releases publication only after taking its snapshot.

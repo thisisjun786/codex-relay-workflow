@@ -63,7 +63,7 @@ type deliverySeed struct{ Event, Revision, Work string }
 // derived names the values of an answer that follow from the seed artifact's path: the event's
 // revision and id, and the delivery request ids named after the id's first twelve characters.
 func (seed deliverySeed) derived() []golden.Option {
-	return []golden.Option{golden.Substitute(seed.Revision, "<seed-revision>"), golden.Substitute(seed.Event, "<seed-event>"), golden.Substitute("del-"+seed.Event[:12]+"-", "del-<seed-event-12>-")}
+	return []golden.Option{golden.Substitute(filepath.Join(suiteDirectory, "parent"), "/parent"), golden.Substitute(seed.Revision, "<seed-revision>"), golden.Substitute(seed.Event, "<seed-event>"), golden.Substitute("del-"+seed.Event[:12]+"-", "del-<seed-event-12>-")}
 }
 
 // seedTable is one populated table of a store, its rows in rowid order: an integer or a text
@@ -92,6 +92,9 @@ func copyDeliverySeed(t *testing.T, destination string) deliverySeed {
 	t.Helper()
 	root := filepath.Join(suiteDirectory, "oracle-seed")
 	raw := bytes.ReplaceAll(golden.Fixture(t, "delivery-seed.json"), []byte("<suite>"), []byte(suiteDirectory))
+	// The parent task's recorded cwd is a real directory of the suite (CRW-1265); the goldens name it /parent.
+	raw = bytes.ReplaceAll(raw, []byte(`\"/parent\"`), []byte(`\"`+suiteDirectory+`/parent\"`))
+	raw = bytes.ReplaceAll(raw, []byte(`"/parent"`), []byte(`"`+suiteDirectory+`/parent"`))
 	var answer seedAnswer
 	if err := decodeNumbers(raw, &answer); err != nil {
 		t.Fatal(err)

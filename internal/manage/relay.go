@@ -8,10 +8,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // relayHelperStderrLimit is how much of a relay command's stderr an error carries: the
@@ -266,7 +270,19 @@ func coreEnvValues(base []string, cfg *Config) ([]string, bool) {
 func (e *Env) relayHelperRun(ctx context.Context, cfg *Config, argv ...string) ([]byte, int, string, error) {
 	var stdout bytes.Buffer
 	stderr := &relayHelperStderr{}
+	// CRW-1265: the relay command runs in the relay's state directory, not in the directory the manage
+	// command was started from (often the account home). The directory is the --state the line names, when
+	// it is an existing absolute directory; the doctor line names none and keeps the caller's. The paths the
+	// line names relative to the caller's directory are made absolute first, so they still mean the same files.
+	dir := relayHelperDir(argv)
+	if dir != "" {
+		argv = relayHelperAbsolute(argv)
+	}
 	cmd := exec.CommandContext(ctx, e.Executable, argv...)
+	cmd.Dir = dir
+	if dir != "" {
+		cmd.Env = relayHelperEnvironment(os.Environ())
+	}
 	if err := coreChildEnv(cmd, cfg); err != nil {
 		return nil, 0, "", err
 	}
@@ -291,6 +307,85 @@ func (e *Env) relayHelperRun(ctx context.Context, cfg *Config, argv ...string) (
 		return stdout.Bytes(), exit.ExitCode(), stderr.excerpt(), nil
 	}
 	return stdout.Bytes(), 0, stderr.excerpt(), err
+}
+
+// relayHelperPathFlags are the relay options whose value is a path the caller named relative to its own
+// directory; a settings value is a path only after its "@".
+var relayHelperPathFlags = map[string]bool{"--socket": true, "--cwd": true, "--backup-state-to": true, "--settings": true}
+
+// relayHelperAbsolute is argv with the path values of the options above made absolute against the caller's
+// directory, so a command that runs in the state directory instead reads the paths the caller meant.
+func relayHelperAbsolute(argv []string) []string {
+	out := append([]string(nil), argv...)
+	wd, err := os.Getwd()
+	if err != nil {
+		return out
+	}
+	for i := 0; i+1 < len(out); i++ {
+		if !relayHelperPathFlags[out[i]] {
+			continue
+		}
+		prefix, value := "", out[i+1]
+		if out[i] == "--settings" {
+			var ok bool
+			if value, ok = strings.CutPrefix(value, "@"); !ok {
+				continue
+			}
+			prefix = "@"
+		}
+		if value == "" || filepath.IsAbs(value) {
+			continue
+		}
+		out[i+1] = prefix + crwconfig.JoinRoot(wd, value)
+	}
+	return out
+}
+
+// relayHelperEnvironment is env with the relay variables that name a path relative to the caller's
+// directory made absolute against it, the way relayHelperAbsolute treats argv: the execution policy
+// (read after str.strip, as the relay reads it) and the isolated scope directory (a "~" spelling is the
+// relay's to expand, so it is left as it is). Anything else is passed unchanged.
+func relayHelperEnvironment(env []string) []string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return env
+	}
+	out := append([]string(nil), env...)
+	for i, variable := range out {
+		key, value, _ := strings.Cut(variable, "=")
+		switch key {
+		case execution.EnvPolicy:
+			value = pyvalue.Strip(value)
+		case relayScopeEnv:
+			if strings.HasPrefix(value, "~") {
+				continue
+			}
+		default:
+			continue
+		}
+		if value == "" || filepath.IsAbs(value) {
+			continue
+		}
+		out[i] = key + "=" + crwconfig.JoinRoot(wd, value)
+	}
+	return out
+}
+
+// relayScopeEnv is the relay's isolated scope directory variable (service.ScopeEnv).
+const relayScopeEnv = "CODEX_SESSION_RELAY_SCOPE_DIR"
+
+// relayHelperDir is the --state directory of a relay command line when it is an existing absolute directory, else "".
+func relayHelperDir(argv []string) string {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] != "--state" {
+			continue
+		}
+		if info, err := os.Stat(argv[i+1]); err == nil && info.IsDir() && filepath.IsAbs(argv[i+1]) {
+			return argv[i+1]
+		}
+		return ""
+	}
+	return ""
 }
 
 // relayHelperStderr keeps the first relayHelperStderrLimit bytes written to it and

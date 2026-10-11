@@ -22,6 +22,10 @@ const (
 	RootTemp     = "temp_root"
 	RootData     = "data_root"
 	RootManage   = "manage_state"
+	// RootSandbox is the base path a sandboxed Codex runs in (CRW-1265, internal/sandboxroot). It is a
+	// directory the product names, not one it derives from the cache root: moving scratch_root would
+	// move every harness that uses it.
+	RootSandbox = "sandbox_root"
 
 	// RootBuildCache is Go's build cache (GOCACHE), RootModuleCache its module cache
 	// (GOMODCACHE) and RootBuildWork its build work directory (GOTMPDIR). They have no
@@ -38,10 +42,15 @@ const (
 	RootRelayState = "relay_state"
 )
 
+// DefaultSandboxRoot is sandbox_root's default. It is outside the account home, decision C names
+// the host's scratch disk, and the coordinator's sandboxed runs already work below it. It is the one
+// host path product code names (TestNoHostPathOrDeviceNameInProduct allows exactly this line).
+const DefaultSandboxRoot = "/scratch/crw"
+
 // rootOrder is every root, in the order the decided layout lists them: the order
 // Resolve checks them in and the order a caller that prints them walks.
 var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEvidence, RootTemp, RootData, RootManage,
-	RootBuildCache, RootModuleCache, RootBuildWork, RootLog, RootRelayState}
+	RootBuildCache, RootModuleCache, RootBuildWork, RootLog, RootRelayState, RootSandbox}
 
 // RootNames is the root names in the decided order, so a caller that prints the roots
 // has one fixed order to follow. The slice is a copy, so a caller cannot change the
@@ -161,6 +170,7 @@ func resolve(getenv func(string) string, overrides map[string]string, strict boo
 		{RootTemp, rootJoin(temp, "crw"), tempEnv},
 		{RootData, rootJoin(data, "crw", "data"), dataEnv},
 		{RootManage, rootJoin(state, "crw", "manage"), stateEnv},
+		{RootSandbox, DefaultSandboxRoot, false},
 		{RootLog, rootJoin(state, "crw", "logs"), stateEnv},
 		{RootRelayState, rootJoin(state, "codex-session-relay"), stateEnv},
 	} {

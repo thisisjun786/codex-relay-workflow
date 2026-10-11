@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // RecDirEnv names the records directory of a replay case. A process that has it set and is not the
@@ -78,6 +80,11 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 		return nil, err
 	}
 	r.plugin, r.declared, r.mutate, r.light, r.seed = in.Plugin, in.Declared, in.Mutate, in.Light, in.Seed
+	removeConfig, err := r.writeSandboxConfig(in.Scratch)
+	if err != nil {
+		return nil, err
+	}
+	defer removeConfig()
 	ids, fixtures, err := loadCXCFixtures(in.Root)
 	if err != nil {
 		return nil, err
@@ -141,6 +148,31 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 	return results, nil
 }
 
+// writeSandboxConfig writes the crw configuration every case of a firing reads as CRW_CONFIG (CRW-1265): its
+// sandbox_root is the scratch directory the case roots lie in (TMPDIR when scratch is ""), and the system
+// temporary locations the long cases use are its project roots (testsupport.SandboxConfigDocument). A firing
+// runs in crw-dev, which isolates nothing, as well as in a test, so it does not rely on the configuration of
+// the process: without it a case read the rule's default sandbox base, and a scratch directory outside that
+// base refused the managed-dispatch fixtures. The file lies in a directory of its own in scratch, outside every
+// case root; the returned function removes it.
+func (r *cxcReplayer) writeSandboxConfig(scratch string) (remove func(), err error) {
+	base := scratch
+	if base == "" {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "crw-config-")
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "config.json")
+	if err := testsupport.WriteSandboxConfig(path, base); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("the crw configuration of the firing: %w", err)
+	}
+	r.sandboxConfig = path
+	return func() { _ = os.RemoveAll(dir) }, nil
+}
+
 // Probe is a scenario of CRW's own, for a registration the corpus has no fixture for. It is written
 // in crw's names, so it goes through no name substitution, and is judged by Check, not by a
 // recorded expectation.
@@ -164,6 +196,11 @@ func FireProbes(in HookFireInput, probes []Probe) ([]ProbeResult, error) {
 		return nil, err
 	}
 	r.plugin, r.declared, r.light, r.seed = in.Plugin, in.Declared, in.Light, in.Seed
+	removeConfig, err := r.writeSandboxConfig(in.Scratch)
+	if err != nil {
+		return nil, err
+	}
+	defer removeConfig()
 	syscall.Umask(0o022)
 	var out []ProbeResult
 	for _, p := range probes {

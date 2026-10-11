@@ -42,6 +42,14 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	}
 	home := t.TempDir()
 	state := filepath.Join(home, "state")
+	// CRW-1265: a relay delivery that resumes a sandboxed thread asks the sandbox-root rule about the thread's
+	// cwd, which must exist. The recorded scenarios name the parent's cwd /parent; the case's own directory
+	// stands for it (nothing observed or expected carries the path).
+	parent := filepath.Join(home, "parent")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, err
+	}
+	scenario.Given = realisedPaths(scenario.Given, "/parent", parent).(map[string]any)
 	if err := writeFiles(home, scenario.Given["files"]); err != nil {
 		return nil, err
 	}
@@ -285,4 +293,25 @@ func writeFiles(home string, files any) error {
 		}
 	}
 	return nil
+}
+
+// realisedPaths is value with from replaced by to in every string, as a copy.
+func realisedPaths(value any, from, to string) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, one := range v {
+			out[key] = realisedPaths(one, from, to)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, one := range v {
+			out[i] = realisedPaths(one, from, to)
+		}
+		return out
+	case string:
+		return strings.ReplaceAll(v, from, to)
+	}
+	return value
 }

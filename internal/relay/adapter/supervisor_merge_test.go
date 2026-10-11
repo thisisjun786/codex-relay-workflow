@@ -42,6 +42,7 @@ func seedSupervisorCLI(t *testing.T, state, socket string) string {
 		`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',1,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','the work is done','merge','2023-11-14T22:13:20.000000+00:00')`,
 		`INSERT INTO authorized_settings(task_id,settings,source,recorded_at) VALUES ('supervisor','{"sandbox":{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false},"approvalPolicy":"never","cwd":"/workspace/example/codex-session-relay/relay-core","runtimeWorkspaceRoots":["/workspace/example/codex-session-relay/relay-core"],"model":"anthropic/claude-opus-5","reasoningEffort":"xhigh","environments":[{"environmentId":"local","cwd":"/workspace/example/codex-session-relay/relay-core","runtimeWorkspaceRoots":["/workspace/example/codex-session-relay/relay-core"]}]}','creation_result','2023-11-14T22:13:20.000000+00:00')`,
 	} {
+		stmt = strings.ReplaceAll(stmt, "/workspace/example/codex-session-relay/relay-core", worktree)
 		if _, err := s.DB.ExecContext(ctx, stmt); err != nil {
 			t.Fatal(err)
 		}

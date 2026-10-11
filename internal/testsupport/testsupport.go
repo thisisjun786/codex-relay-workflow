@@ -242,6 +242,12 @@ func isolate() (string, error) {
 	if err := RefuseLiveState(); err != nil {
 		return "", errors.Join(err, RemoveTempTree(root))
 	}
+	// CRW-1265: the isolated crw configuration names the temporary directory as the sandbox root (sandboxconfig.go).
+	config := filepath.Join(env["XDG_CONFIG_HOME"], "crw", "config.json")
+	if err := WriteSandboxConfig(config, os.TempDir()); err != nil {
+		return "", errors.Join(err, RemoveTempTree(root))
+	}
+	sandboxConfigFile = config
 	return root, nil
 }
 

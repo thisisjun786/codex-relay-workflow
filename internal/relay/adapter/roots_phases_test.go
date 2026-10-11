@@ -5,9 +5,10 @@ import (
 )
 
 const parentLoaded = "01parent-loaded-elsewhere"
-const rootsCWD = "/workspace/example/tasks/PA"
 
-var recordedRoots = []any{rootsCWD, "/workspace/example/run", "/workspace/example/evidence", "/workspace/example/relay-state"}
+var rootsCWD string
+
+var recordedRoots []any
 
 func rootScenario(write bool, status string, roots []any) scenario {
 	settings := authorized()
@@ -56,13 +57,13 @@ func Test28_BLR_2_ExactLoads(t *testing.T) {
 }
 func Test28_BLR_3_WiderOrUnloadedRootsWithhold(t *testing.T) {
 	t.Parallel()
-	capture(t, rootScenario(false, "idle", []any{rootsCWD, "/workspace/example/elsewhere"}))
+	capture(t, rootScenario(false, "idle", []any{rootsCWD, ws("elsewhere")}))
 	s := rootScenario(false, "idle", []any{rootsCWD})
-	s.answers[1]["thread"].(map[string]any)["environments"] = []any{map[string]any{"environmentId": "local", "cwd": rootsCWD, "runtimeWorkspaceRoots": []any{rootsCWD, "/workspace/example/elsewhere"}}}
+	s.answers[1]["thread"].(map[string]any)["environments"] = []any{map[string]any{"environmentId": "local", "cwd": rootsCWD, "runtimeWorkspaceRoots": []any{rootsCWD, ws("elsewhere")}}}
 	capture(t, s)
 	capture(t, rootScenario(false, "notLoaded", []any{rootsCWD}))
 	s = rootScenario(true, "notLoaded", recordedRoots)
-	s.answers[1]["sandbox"].(map[string]any)["writableRoots"] = []any{"/workspace/example/run"}
+	s.answers[1]["sandbox"].(map[string]any)["writableRoots"] = []any{ws("run")}
 	capture(t, s)
 	for _, change := range []map[string]any{{"model": "someone/else"}, {"reasoningEffort": "low"}} {
 		s = rootScenario(false, "idle", recordedRoots)
@@ -71,7 +72,7 @@ func Test28_BLR_3_WiderOrUnloadedRootsWithhold(t *testing.T) {
 		}
 		capture(t, s)
 	}
-	for _, change := range []map[string]any{{"networkAccess": true}, {"writableRoots": append(append([]any{}, recordedRoots[1:]...), "/workspace/example/elsewhere")}} {
+	for _, change := range []map[string]any{{"networkAccess": true}, {"writableRoots": append(append([]any{}, recordedRoots[1:]...), ws("elsewhere"))}} {
 		s = rootScenario(true, "idle", recordedRoots)
 		for k, v := range change {
 			s.answers[1]["sandbox"].(map[string]any)[k] = v
@@ -79,11 +80,11 @@ func Test28_BLR_3_WiderOrUnloadedRootsWithhold(t *testing.T) {
 		capture(t, s)
 	}
 	s = rootScenario(false, "idle", recordedRoots)
-	s.answers[1]["sandbox"].(map[string]any)["writableRoots"] = []any{"/workspace/example/elsewhere"}
+	s.answers[1]["sandbox"].(map[string]any)["writableRoots"] = []any{ws("elsewhere")}
 	capture(t, s)
 	s = rootScenario(false, "idle", recordedRoots)
-	s.settings["sandbox"] = map[string]any{"type": "dangerFullAccess", "writableRoots": []any{"/workspace/example/run", "/workspace/example/evidence"}}
-	s.answers[1]["sandbox"] = map[string]any{"type": "dangerFullAccess", "writableRoots": []any{"/workspace/example/run"}}
+	s.settings["sandbox"] = map[string]any{"type": "dangerFullAccess", "writableRoots": []any{ws("run"), ws("evidence")}}
+	s.answers[1]["sandbox"] = map[string]any{"type": "dangerFullAccess", "writableRoots": []any{ws("run")}}
 	capture(t, s)
 	s = rootScenario(false, "idle", []any{rootsCWD})
 	s.answers[1]["model"] = "someone/else"
