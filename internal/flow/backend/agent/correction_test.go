@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -347,5 +348,97 @@ func TestPhaselessAnswerAfterPartialStreamIsRead(t *testing.T) {
 				t.Errorf("%d turn reads, want the one read of the host's items", n)
 			}
 		})
+	}
+}
+
+// emptyIndexTree is the tree git builds from the worktree's files in an index that starts empty: every file is hashed, so
+// no stat shortcut can hide an edit.
+func emptyIndexTree(t *testing.T, wt string) string {
+	t.Helper()
+	index := filepath.Join(t.TempDir(), "index")
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", wt}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("add", "--all")
+	return run("write-tree")
+}
+
+// The snapshot copies the worktree's index, and git trusts an entry whose stat matches its file unless the entry is as new
+// as the index file. A copy stamped with the time of the copy would make every entry look old, so a same-size edit made in
+// the second the worktree's index was written would be missed; the copy keeps the original index's modification time.
+func TestSnapshotSeesASameSizeEditMadeInTheSecondOfTheIndexWrite(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	var wt string
+	for attempt := 0; ; attempt++ {
+		if attempt == 30 {
+			t.Fatal("never made an edit in the same second as the index write")
+		}
+		wt = filepath.Join(e.root, fmt.Sprintf("flow-wt-%d", attempt))
+		git(t, e.repo, "worktree", "add", "--detach", "-q", wt, e.base)
+		indexPath := git(t, wt, "rev-parse", "--path-format=absolute", "--git-path", "index")
+		writeFile(t, filepath.Join(wt, "a.txt"), "two\n")
+		idx, err := os.Stat(indexPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Stat(filepath.Join(wt, "a.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if idx.ModTime().Unix() == file.ModTime().Unix() {
+			break
+		}
+	}
+	time.Sleep(1100 * time.Millisecond)
+	got, err := e.alloc.Snapshot(ctx, wt) // before any git status: that command rewrites the index and its mtime
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(git(t, wt, "status", "--porcelain"), "a.txt") {
+		t.Fatal("git status does not see the edit")
+	}
+	if want := emptyIndexTree(t, wt); got != want {
+		t.Errorf("the snapshot is %s, want %s (the tree of the files as they are)", got, want)
+	}
+}
+
+// With core.splitIndex the index copy is split too, and writing it back would leave a new shared index in the worktree's git
+// directory on every snapshot. The snapshot leaves the worktree's git directory alone.
+func TestSnapshotLeavesNoSharedIndexBehind(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	wt := filepath.Join(e.root, "flow-wt")
+	git(t, e.repo, "worktree", "add", "--detach", "-q", wt, e.base)
+	git(t, wt, "config", "core.splitIndex", "true")
+	git(t, wt, "update-index", "--split-index")
+	writeFile(t, filepath.Join(wt, "b.txt"), "new\n")
+	gitDir := git(t, wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	shared := func() []string {
+		names, err := filepath.Glob(filepath.Join(gitDir, "sharedindex.*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return names
+	}
+	before := shared()
+	if len(before) == 0 {
+		t.Fatal("the worktree has no shared index to start from")
+	}
+	got, err := e.alloc.Snapshot(ctx, wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after := shared(); !slices.Equal(before, after) {
+		t.Errorf("shared indexes before %v, after the snapshot %v", before, after)
+	}
+	if want := emptyIndexTree(t, wt); got != want {
+		t.Errorf("the snapshot is %s, want %s", got, want)
 	}
 }

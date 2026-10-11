@@ -77,31 +77,44 @@ func (a *Allocator) Snapshot(ctx context.Context, path string) (string, error) {
 	if err := a.clearIndexFlags(ctx, path, env); err != nil {
 		return "", err
 	}
-	if _, err := a.git(ctx, path, env, "add", "--all"); err != nil {
+	if _, err := a.git(ctx, path, env, throwaway("add", "--all")...); err != nil {
 		return "", err
 	}
-	tree, err := a.git(ctx, path, env, "write-tree")
+	tree, err := a.git(ctx, path, env, throwaway("write-tree")...)
 	if err != nil {
 		return "", err
 	}
 	return tree, nil
 }
 
+// throwaway is a git command that runs against the throwaway index: it never writes a split index, so the copy is rewritten
+// whole into GIT_INDEX_FILE and no shared index file is added to the worktree's git directory.
+func throwaway(args ...string) []string {
+	return append([]string{"-c", "core.splitIndex=false"}, args...)
+}
+
 // seedIndex starts the throwaway index from the worktree's own index, so every tracked file stays in the snapshot even
 // when an ignore rule matches it (git add --all skips an ignored file only when it is untracked); clearIndexFlags then
-// takes off the flags that would hide a file's content. A worktree with no index
+// takes off the flags that would hide a file's content. The copy keeps the original's modification time: git trusts an
+// entry whose stat matches its file unless the entry is as new as the index file, and a copy stamped with the time of the
+// copy would hide an edit made in the second the original was written. A worktree with no index
 // yet starts from its HEAD, and one with neither starts empty.
 func (a *Allocator) seedIndex(ctx context.Context, path, index string, env []string) error {
 	real, err := a.git(ctx, path, nil, "rev-parse", "--path-format=absolute", "--git-path", "index")
 	if err == nil {
-		if data, readErr := os.ReadFile(real); readErr == nil {
-			return os.WriteFile(index, data, 0o600)
+		if info, statErr := os.Stat(real); statErr == nil {
+			if data, readErr := os.ReadFile(real); readErr == nil {
+				if err := os.WriteFile(index, data, 0o600); err != nil {
+					return err
+				}
+				return os.Chtimes(index, info.ModTime(), info.ModTime())
+			}
 		}
 	}
 	if _, err := a.git(ctx, path, nil, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
 		return nil
 	}
-	_, err = a.git(ctx, path, env, "read-tree", "HEAD")
+	_, err = a.git(ctx, path, env, throwaway("read-tree", "HEAD")...)
 	return err
 }
 
@@ -113,7 +126,7 @@ const flagBatch = 500
 // in the worktree. A skip-worktree entry whose file is absent (a sparse checkout) keeps its flag and is held with its
 // index content; it is not a deletion. The worktree's own index keeps its flags.
 func (a *Allocator) clearIndexFlags(ctx context.Context, path string, env []string) error {
-	listing, err := a.git(ctx, path, env, "ls-files", "-v", "-z")
+	listing, err := a.git(ctx, path, env, throwaway("ls-files", "-v", "-z")...)
 	if err != nil {
 		return err
 	}
@@ -138,7 +151,7 @@ func (a *Allocator) clearIndexFlags(ctx context.Context, path string, env []stri
 	}{{"--no-assume-unchanged", assumed}, {"--no-skip-worktree", skipped}} {
 		for len(set.names) > 0 {
 			n := min(len(set.names), flagBatch)
-			if _, err := a.git(ctx, path, env, append([]string{"update-index", set.flag, "--"}, set.names[:n]...)...); err != nil {
+			if _, err := a.git(ctx, path, env, throwaway(append([]string{"update-index", set.flag, "--"}, set.names[:n]...)...)...); err != nil {
 				return err
 			}
 			set.names = set.names[n:]
