@@ -132,10 +132,15 @@ func Install(base string, projects ...string) (cleanup func() error, err error) 
 	env := map[string]string{"HOME": home, "CODEX_HOME": codex, "CRW_CONFIG": config}
 	restore := sandboxroot.Inject(func(name string) string { return env[name] }, home)
 	// A process the tests start reads the rule from its own environment, so the test process exports the
-	// fake Codex home and configuration to it. The rule's account home there is the passwd home.
+	// fake crw configuration to it (the rule's account home there is the passwd home), and the fake Codex home
+	// when the test binary has none of its own.
 	previous := map[string]*string{}
 	for _, name := range []string{"CODEX_HOME", "CRW_CONFIG"} {
-		if value, ok := os.LookupEnv(name); ok {
+		value, set := os.LookupEnv(name)
+		if name == "CODEX_HOME" && set && value != "" {
+			continue
+		}
+		if set {
 			previous[name] = &value
 		} else {
 			previous[name] = nil
