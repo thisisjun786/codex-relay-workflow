@@ -392,7 +392,7 @@ do not auto-convert, dissolve, or issue native writes to complete an ordinary PR
   and never bypass a queue on the agent's own initiative.
 - **Never reorder or drop a layer that has already merged** — reconstruct forward instead.
 - **A superseded layer** is closed with the supersede procedure in `crw-dev-devops`
-  `references/agent-pr-intake.md` (DEVOPS-PR-SUPERSEDE-01); keep a superseded parent
+  [agent-pr-intake.md](../../crw-canon/references/agent-pr-intake.md) (DEVOPS-PR-SUPERSEDE-01); keep a superseded parent
   branch while any child PR is open.
 - **Squash caution.** Squash merging collapses a PR's commits into one and does not
   preserve the originals. GitHub's own guidance is that squash merging works best for

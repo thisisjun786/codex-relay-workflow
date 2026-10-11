@@ -284,7 +284,7 @@ If any item remains unknown, stop, investigate, and resolve the gap before proce
 
 ## 10. Security Ownership Matrix
 
-This matrix clarifies who defines, implements, and verifies each security control across the skill bundle:
+This is the one matrix of who defines, implements, and verifies each security control across the skill bundle; other skills link here and do not restate it:
 
 | Control | Policy Owner | Implementation Owner | Verification Owner |
 |---------|-------------|---------------------|--------------------|
@@ -298,4 +298,4 @@ This matrix clarifies who defines, implements, and verifies each security contro
 | Dependency security | `dev-security` §7 | CI pipeline owner | `npm audit` / `pip-audit` in CI |
 | Agentic AI safety | `dev-security` `references/agentic-ai-security.md` | Agent builder | Scenario testing (`dev-testing`) |
 
-Reference this matrix from `dev-backend` and `dev-frontend` when ownership is unclear.
+`crw-dev-backend`, `crw-dev-frontend` and `crw-dev-data` link to this section when ownership is unclear.

@@ -50,15 +50,19 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance. CRW-1220: the description is scoped to automated test strategy; the test auditor gates move to crw-dev-code-reviewer behind one link; the limited-oracle reference becomes reference-result-evaluation",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for testing, QA, regression protection, and release verification — unit, integration, API, contract, Playwright E2E, CI, security-scan, coverage, and TDD strategy. Activates by change-surface when work adds features, fixes bugs, changes APIs, refactors behavior, or prepares a release. Triggers: 'write tests', 'regression test', 'Playwright', 'E2E', 'contract test', 'coverage', 'CI flake', 'TDD', '테스트', '회귀 테스트', '품질 게이트'.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Testing and QA router: strategy, harness choice, CI gates, TDD, and coverage.\"\n",
             "  keywords: [test, testing, TDD, coverage, regression, e2e, playwright, contract test, CI]\n"
+          ],
+          "new": [
+            "description: \"Automated test strategy: unit, integration, API, contract, Playwright E2E, CI gates, coverage and TDD. Driving a built surface by hand is crw-qa; the reviewer's test gates are crw-dev-code-reviewer. Triggers: write tests, regression test, Playwright, E2E, contract test, coverage, 테스트, 회귀 테스트.\"\n"
           ]
         },
         {
@@ -71,12 +75,145 @@
           ]
         },
         {
+          "line": 81,
+          "old": [
+            "## Limited-Oracle / Score-Objective Evaluation\n"
+          ],
+          "new": [
+            "## Reference-Result / Score-Objective Evaluation\n"
+          ]
+        },
+        {
+          "line": 83,
+          "old": [
+            "`references/limited-oracle-evaluation.md` for all proxy-score gates.\n"
+          ],
+          "new": [
+            "`references/reference-result-evaluation.md` for all proxy-score gates.\n"
+          ]
+        },
+        {
           "line": 197,
           "old": [
             "Follow [portable browser routing](../dev/references/browser-routing.md)\n"
           ],
           "new": [
             "Follow [portable browser routing](../crw-dev/references/browser-routing.md)\n"
+          ]
+        },
+        {
+          "line": 202,
+          "old": [
+            "Load `crw-qa` for scenario matrices, adversarial/oracle passes, and teardown.\n"
+          ],
+          "new": [
+            "Load `crw-qa` for scenario matrices, adversarial and reviewer passes, and teardown.\n"
+          ]
+        },
+        {
+          "line": 404,
+          "old": [
+            "## Test Oracle Integrity (TEST-PROMPT-SEAM-01 / TEST-ORACLE-INDEPENDENCE-01 / TEST-PRECEDENCE-FIXTURE-01, DEFAULT)\n",
+            "\n",
+            "Three narrow contracts that stop false-green. All three are **E7 prose — no gate enforces\n",
+            "them**; the reviewer is the only check.\n",
+            "\n",
+            "**TEST-PROMPT-SEAM-01 (DEFAULT).** Do not assert on prose. A test may read a document only\n",
+            "when it EXTRACTS a value and COMPARES it against a value from another source. Asserting that\n",
+            "a phrase exists in a file is a violation no matter how many files you read or what the test's\n",
+            "header says it is for.\n",
+            "\n",
+            "- Forbidden: `assert.match(readFileSync(\".../SKILL.md\"), /prefer rg first/i)` — one source,\n",
+            "  phrase existence, breaks on harmless rewording, proves no behavior.\n",
+            "- Allowed: parse the frontmatter `description`, pull the model token out of it, and\n",
+            "  `assert.ok(NATIVE_OPENAI_MODELS.includes(token))` — two sources, values compared, breaks\n",
+            "  only when they genuinely disagree.\n",
+            "- Also allowed (outside this rule's scope): asserting on non-prose values — version pins,\n",
+            "  license names, runtime output, CLI stdout, hook payloads, file existence.\n",
+            "\n",
+            "**The two known violations were deleted, not repaired (260726).**\n",
+            "`loop-activation-doc-sync.test.mjs` (10 assertions) and the doctrine test inside\n",
+            "`emergence-doc-sync.test.mjs` (24) both asserted phrase existence across skills, doctrine\n",
+            "documents and an archived HTML page. Three repair designs were tried and all three were\n",
+            "worse than deletion:\n",
+            "\n",
+            "- A structured `metadata.contract` block in each skill, compared between them: nothing at\n",
+            "  runtime reads such a field, so it would have been a third source of truth that passes\n",
+            "  whenever both copies are wrong together.\n",
+            "- Promoting the activation prose to a behavioural test against `handleStop`: the five\n",
+            "  guard combinations are already owned by `hook-continuation.test.ts`, so this only\n",
+            "  duplicated coverage while appearing to offset the deletion.\n",
+            "- Promoting the collapse doctrine the same way: there is no runtime branch that\n",
+            "  implements a collapse point, so there is no value to compare against.\n",
+            "\n",
+            "What that costs, stated plainly: the collapse-point doctrine, `crw-search`'s ownership of\n",
+            "the divergence `strong-1`/`add-1` provenance, and the archived falsifiability SOT now have\n",
+            "**no automated consistency check**. They are human-review items. The activation contract is\n",
+            "unaffected — `hook-continuation.test.ts` owns it and always did.\n",
+            "\n",
+            "What survived: the tag-balance half of the emergence test counts opening tags against\n",
+            "closing ones, which is a value compared to a value rather than a phrase lookup. It moved to\n",
+            "`emergence-html-structure.test.mjs` and still runs.\n",
+            "\n",
+            "The lesson worth citing: when prose has no counterpart in code, a test that reads it can\n",
+            "only check that the words are still there. Deleting it removes a false green; inventing a\n",
+            "second document to compare it against removes nothing and adds a lie.\n",
+            "\n",
+            "**TEST-ORACLE-INDEPENDENCE-01 (DEFAULT).** Never derive the expected value from the code\n",
+            "under test.\n",
+            "\n",
+            "- Forbidden: `assert.equal(fn(x), fn(x))`; building the expectation with a helper the DUT\n",
+            "  also uses; refreshing a snapshot from current output and calling that verification.\n",
+            "- Allowed: hardcode the expectation in the fixture, or compute it by an independent route\n",
+            "  (a second implementation, a hand-worked example, an external spec).\n",
+            "\n",
+            "**TEST-PRECEDENCE-FIXTURE-01 (DEFAULT).** When testing override / default / fallback, the\n",
+            "three values must all DIFFER — otherwise the test cannot tell which path ran.\n",
+            "\n",
+            "- Forbidden: override `\"x\"`, default `\"x\"`, fallback `\"x\"` — every branch passes.\n",
+            "- Allowed: override `\"from-flag\"`, default `\"from-config\"`, fallback `\"builtin\"`, and each\n",
+            "  case asserts the specific one.\n",
+            "\n",
+            "A regression test should FAIL when the defect is reintroduced. Confirm it once by mutation —\n",
+            "break it, watch it go red, restore it, watch it go green.\n",
+            "\n",
+            "## Patch Integrity Gate (TEST-PATCH-INTEGRITY-01, DEFAULT)\n",
+            "\n",
+            "Source: sol research (SWE-bench containerized evaluation, addyosmani/agent-skills).\n",
+            "\n",
+            "An agent that obtains green by weakening tests has not fixed the bug. Before\n",
+            "claiming implementation complete:\n",
+            "\n",
+            "1. **Baseline**: record which tests fail and their failure signatures BEFORE any\n",
+            "   production code change.\n",
+            "2. **Implement**: write the fix/feature.\n",
+            "3. **Re-run originals**: execute the ORIGINAL test suite (not the modified version)\n",
+            "   against the patched source. All baseline failures must now pass.\n",
+            "4. **Classify test changes**: every test/config change is `required` (new test for\n",
+            "   new behavior), `suspicious` (deleted assertion, lowered threshold, added skip,\n",
+            "   reduced coverage exclusion), or `unrelated`.\n",
+            "5. **Justify suspicious changes**: each suspicious change needs a stated reason.\n",
+            "   \"The test was wrong\" is valid only with evidence of the original test's incorrectness.\n",
+            "\n",
+            "Red flags that trigger escalation:\n",
+            "- Deleted assertions without replacement\n",
+            "- Snapshot updates without visual/behavioral verification\n",
+            "- Coverage exclusions added in the same PR as the fix\n",
+            "- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`references/ci-pipeline.md` §5.3)\n",
+            "- Threshold reductions (e.g., coverage 80% → 60%)\n",
+            "- Type assertion suppressions (`as any`, `@ts-ignore`) in test files\n",
+            "\n",
+            "## TDD Evidence Contract (TEST-TDD-EVIDENCE-01, DEFAULT)\n",
+            "\n",
+            "When TDD is claimed, durable evidence must show:\n",
+            "- RED: failing test name + failure message (before production code)\n",
+            "- GREEN: same test passing (after production code)\n",
+            "- REFACTOR: full affected suite passing (after cleanup)\n",
+            "\n",
+            "A TDD claim without RED evidence is not TDD.\n"
+          ],
+          "new": [
+            "The reviewer's gates for a test change (test-oracle integrity, patch integrity, TDD evidence) are in [Test auditor gates](../crw-dev-code-reviewer/SKILL.md#test-auditor-gates).\n"
           ]
         }
       ]
@@ -92,6 +229,32 @@
           ]
         }
       ]
+    },
+    {
+      "file": "references/ci-pipeline.md",
+      "reason": "CRW-1220: the description is scoped to automated test strategy; the test auditor gates move to crw-dev-code-reviewer behind one link; the limited-oracle reference becomes reference-result-evaluation",
+      "hunks": [
+        {
+          "line": 158,
+          "old": [
+            "`TEST-PATCH-INTEGRITY-01` red flag (`dev-testing` SKILL.md §8). An undocumented\n"
+          ],
+          "new": [
+            "`TEST-PATCH-INTEGRITY-01` red flag ([Test auditor gates](../../crw-dev-code-reviewer/SKILL.md#test-auditor-gates)). An undocumented\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/limited-oracle-evaluation.md",
+      "reason": "CRW-1220: the description is scoped to automated test strategy; the test auditor gates move to crw-dev-code-reviewer behind one link; the limited-oracle reference becomes reference-result-evaluation",
+      "remove": true
+    },
+    {
+      "file": "references/reference-result-evaluation.md",
+      "reason": "CRW-1220: the description is scoped to automated test strategy; the test auditor gates move to crw-dev-code-reviewer behind one link; the limited-oracle reference becomes reference-result-evaluation",
+      "add": true,
+      "sha256": "c27814aa51fa6b5c147f1357b8d43173e5745fcc10f73e6da960713028fe9703"
     }
   ]
 }

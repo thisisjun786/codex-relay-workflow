@@ -1,9 +1,8 @@
 # Repository Bootstrap — Ruleset-First Setup for Agent-Facing Repositories
 
-Last reviewed: 2026-09-09
 Applies to: GitHub repositories (REST rulesets API; the docs example uses `X-GitHub-Api-Version: 2026-03-10`)
 When to read: A new repository, or an existing one about to receive agent pull requests; any request naming branch protection, rulesets, auto-delete, auto-merge, required checks, or pull request limits
-Canonical owner: dev-devops §2.9 (`DEVOPS-REPO-BOOTSTRAP-01`)
+Canonical owner: [repository governance](repo-governance.md) (`DEVOPS-REPO-BOOTSTRAP-01`)
 
 ---
 
@@ -18,7 +17,7 @@ delta. Apply only when the user named the repository and the settings to change.
 
 | Branch | Role | PR base for | Notes |
 |---|---|---|---|
-| `main` | Release line and default branch | promotion PRs from `dev` (or `preview`) only | Scheduled workflows run **only** from the default branch (`branch-lifecycle.md` §3); a cleanup job landed on `dev` does nothing until promoted |
+| `main` | Release line and default branch | promotion PRs from `dev` (or `preview`) only | Scheduled workflows run **only** from the default branch ([branch-lifecycle.md](../../crw-dev-devops/references/branch-lifecycle.md) §3); a cleanup job landed on `dev` does nothing until promoted |
 | `preview` | Release candidate | promotion PRs from `dev` | Optional; same protection as `main` |
 | `dev` | Integration | every feature/fix PR | Enforce with a PR-target workflow: any PR whose base is not `dev` and is not the promotion path gets a title prefix, a draft conversion and a comment (opencodex/crw `enforce-pr-target.yml`). A manual PR chain (`DEV-STACK-*`) needs an exemption for same-repository open-PR heads, or the upper layers are flagged |
 
@@ -34,7 +33,7 @@ where deleting that rule leaves `main` unprotected; GitHub offers Convert to rul
 
 Rule IDs in this file (`DEVOPS-RULESET-FIRST-01`, `DEVOPS-MERGE-SETTINGS-01`,
 `DEVOPS-PR-LIMITS-01`) are reference-local sub-rules under `DEVOPS-REPO-BOOTSTRAP-01`,
-which is the row registered in `dev-devops` §2.9.
+which is the row registered in [repository governance](repo-governance.md).
 
 One ruleset per integration line. Shape verified against the REST reference (read
 2026-09-09):
@@ -92,7 +91,7 @@ Facts that change the design:
 
 - **Restrict deletions applies to targeted refs only.** A ruleset whose `include` is
   `refs/heads/dev` does not stop a workflow from deleting `codex/*`; the closed-PR
-  cleanup job (`branch-lifecycle.md` §3) keeps working. Targeting `~ALL` changes that,
+  cleanup job ([branch-lifecycle.md](../../crw-dev-devops/references/branch-lifecycle.md) §3) keeps working. Targeting `~ALL` changes that,
   and then the cleanup identity must be a bypass actor. A custom GitHub App
   (`actor_type: "Integration"`) is the documented route. Whether the built-in
   `github-actions` app can be selected as a bypass actor in the UI is **unverified**

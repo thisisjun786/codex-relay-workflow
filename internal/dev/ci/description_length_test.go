@@ -92,15 +92,15 @@ func TestSkillDescriptionLength(t *testing.T) {
 		if errs := descriptionLengthErrors(root, m); len(errs) > 0 {
 			t.Errorf("%s", strings.Join(errs, "\n"))
 		}
-		// The table is frozen for the 34 skills of the base, less the two that CRW-1218 merged into crw-status and crw-check: seven are already short enough and done.
+		// The table is frozen for the 34 skills of the base, less the two that CRW-1218 merged into crw-status and crw-check and the Luna search skill that CRW-1220 merged into crw-search: seven are already short enough and done.
 		done := 0
 		for _, entry := range m.Descriptions {
 			if entry.Status == "done" {
 				done++
 			}
 		}
-		if len(m.Descriptions) != 32 || done < 7 {
-			t.Errorf("%d entries, %d done; want 32 entries and at least 7 done", len(m.Descriptions), done)
+		if len(m.Descriptions) != 31 || done < 7 {
+			t.Errorf("%d entries, %d done; want 31 entries and at least 7 done", len(m.Descriptions), done)
 		}
 	})
 	long := strings.Repeat("x", 301)

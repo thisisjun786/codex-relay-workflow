@@ -1,6 +1,6 @@
 ---
 name: crw-dev-debugging
-description: "MUST USE for any real runtime debugging in any language — crashes, silent failures, wrong output, build/test failures, flaky tests, performance regressions, integration bugs. A phases 0-4 root-cause method: architecture check → investigate → analyze → hypothesize → implement. Logic analysis of unknown systems (how apps/APIs/AI tools work) via references/logic-analysis.md. Triggers: 'debug this', 'why is X failing', 'this test is flaky', 'fix the crash', 'root cause', '왜 안 돼', '디버깅', '원인 분석', 'how does X work', 'figure out how', '로직 파악', '뜯어봐', 'reverse engineer'."
+description: "Root-cause debugging in any language: crashes, silent failures, wrong output, build or test failures, flaky tests, performance regressions; also system behaviour analysis of an unknown app, API or tool. Triggers: debug this, why is X failing, root cause, how does X work, figure out how, 디버깅, 로직 파악."
 ---
 
 # dev-debugging — Systematic Root Cause Analysis
@@ -203,11 +203,11 @@ explaining the causal mechanism before patching.
 
 ---
 
-## Logic Analysis (comprehension without a defect)
+## System behaviour analysis (comprehension without a defect)
 
 When the request is to understand how a system works — closed app, AI tool,
 undocumented API, unfamiliar codebase — rather than to fix a defect, read
-[Logic analysis](references/logic-analysis.md). Core rules: "I can't" is a
+[System behaviour analysis](references/logic-analysis.md). Core rules: "I can't" is a
 skipped analysis loop, not a limit; missing source/docs is a starting
 condition; hypothesize from names/strings/errors, observe static AND dynamic,
 mutate one variable at a time, keep an incremental model with UNKNOWN fields,
@@ -234,8 +234,9 @@ was likely skipped.
 
 **Repeated Failure Rule**: After repeated failed fix attempts, pause entirely.
 Each fix revealing a new problem in a different place is a sign of
-**architectural issues**, not simple bugs. Discuss with the user before
-attempting more fixes.
+**architectural issues**, not simple bugs. Raise it with the level that assigned
+the work before attempting more fixes: an issue child returns it to its project
+orchestrator, and a task with no parent asks the user.
 
 ---
 
@@ -343,10 +344,10 @@ counts as closing one — is `dev-testing` `references/ci-pipeline.md` §5
 
 ### Escalate When:
 
-- **Repeated fix attempts failed** — likely architectural; needs human judgment
+- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to its project orchestrator, a task with no parent to the user)
 - **Undocumented library behavior** — document evidence; propose an upstream report or scoped workaround without posting externally unless authorized
 - **Environment-specific** — requires access you don't have (prod DB, cloud IAM)
-- **Security-sensitive** — don't debug auth/crypto/payment alone; flag for human review
+- **Security-sensitive** — don't debug auth/crypto/payment alone; flag it to the level that assigned the work for human review
 - **Multi-team dependency** — bug is in another team's service or API contract
 - **Stalled**: if investigation stalls, reassess approach
 
@@ -378,7 +379,7 @@ action item that prevents the same class of bug from recurring.
 | File | When to Read | What It Covers |
 |------|-------------|----------------|
 | `references/methodologies.md` | Choosing a debug approach | Five Whys, bisection, differential diagnosis, subtraction, systematic logging |
-| `references/logic-analysis.md` | Understanding how an unknown system works (no defect) | Logic-analysis loop, controlled mutation, routing table, lab boundary, anti-give-up ladder |
+| `references/logic-analysis.md` | Understanding how an unknown system works (no defect) | Observation loop, controlled mutation, routing table, lab boundary, anti-give-up ladder |
 | `references/async-debugging.md` | Concurrency issues | Race conditions, deadlocks, event loop blocking, promise/callback |
 | `references/tool-guides.md` | Quick cheatsheet | Node inspector basics, pdb basics, Chrome DevTools, git bisect, DB EXPLAIN |
 | `references/postmortem-template.md` | After resolving a significant incident | Blameless postmortem template |

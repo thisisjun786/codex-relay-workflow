@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Keep manual surface QA distinct from the Linear delivery-check verdict. Resolve the QA helper from its owning skill directory, including staging outside the plugin. Explain skill-directory placeholder resolution before invoking the staged QA helper. Quote the resolved helper path so a skill directory containing spaces is usable. State the boundary to crw-check in the description, so a request routes to the skill that owns it.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Keep manual surface QA distinct from the Linear delivery-check verdict. Resolve the QA helper from its owning skill directory, including staging outside the plugin. Explain skill-directory placeholder resolution before invoking the staged QA helper. Quote the resolved helper path so a skill directory containing spaces is usable. State the boundary to crw-check in the description, so a request routes to the skill that owns it. CRW-1220: the description is scoped to manual QA; reviewer passes replace the oracle passes; the lineage note and the v2 candidates section are removed",
       "hunks": [
         {
           "line": 3,
@@ -39,7 +39,27 @@
             "  short-description: \"Manual surface-driving QA gate: faithful channels, evidence matrix, adversarial classes, teardown receipts.\"\n"
           ],
           "new": [
-            "description: \"MUST USE after building or changing any user-facing surface (web UI, TUI, CLI, HTTP API, native desktop GUI) before claiming done — manual, surface-driving QA: real invocations on real surfaces, captured artifacts, adversarial classes, and teardown receipts feeding the PABCD C gate. Automated suites are dev-testing's job; this skill proves the surface actually works when driven. Delivery against Linear criteria is crw-check's job, and its pass here is evidence crw-check may read, not a delivery verdict. Triggers: manual QA, QA this, does it actually work, drive the UI, smoke test, visual QA, screenshot check, TUI alignment, CJK clipping, 수동 QA, 실제로 되는지 확인, 동작 확인, 직접 돌려봐.\"\n"
+            "description: \"Manual QA of a built surface (web UI, TUI, CLI, HTTP API, desktop GUI): drive it for real, capture artifacts, probe adversarial inputs, record teardown. Suites are crw-dev-testing; delivery against Linear criteria is crw-check. Triggers: manual QA, QA this, smoke test, visual QA, 수동 QA, 직접 돌려봐.\"\n"
+          ]
+        },
+        {
+          "line": 14,
+          "old": [
+            "touchpoint is noted in §7. Lineage: lazycodex `visual-qa` / `review-work` /\n",
+            "`lazycodex-qa-executor` (vendored at `devlog/.lazycodex/`), translated to\n",
+            "crw's no-server, Codex-native-tool model.\n"
+          ],
+          "new": [
+            "touchpoint is noted in §7.\n"
+          ]
+        },
+        {
+          "line": 22,
+          "old": [
+            "| `references/visual-qa.md` | ANY visual surface verdict (web UI, TUI, desktop GUI) | Visual artifact rubric: companion-skill grounding (QA-VISUAL-COMPANION-01), objective-metrics-first (QA-VISUAL-METRIC-01), oracle judge limits, extended adversarial classes, TUI harness options |\n"
+          ],
+          "new": [
+            "| `references/visual-qa.md` | ANY visual surface verdict (web UI, TUI, desktop GUI) | Visual artifact rubric: companion-skill grounding (QA-VISUAL-COMPANION-01), objective-metrics-first (QA-VISUAL-METRIC-01), reviewer-pass limits, extended adversarial classes, TUI harness options |\n"
           ]
         },
         {
@@ -49,6 +69,15 @@
           ],
           "new": [
             "[portable browser routing](../crw-dev/references/browser-routing.md). Suitable available\n"
+          ]
+        },
+        {
+          "line": 36,
+          "old": [
+            "  faithful channels, evidence contract, adversarial classes, oracle passes,\n"
+          ],
+          "new": [
+            "  faithful channels, evidence contract, adversarial classes, reviewer passes,\n"
           ]
         },
         {
@@ -79,6 +108,48 @@
           "new": [
             "node \"<crw-qa skill directory>/scripts/validate-evidence.mjs\" \\\n"
           ]
+        },
+        {
+          "line": 146,
+          "old": [
+            "## 5. Oracle passes (depth scales by work class)\n"
+          ],
+          "new": [
+            "## 5. Reviewer passes (depth scales by work class)\n"
+          ]
+        },
+        {
+          "line": 153,
+          "old": [
+            "  do not make the oracle re-derive context):\n"
+          ],
+          "new": [
+            "  do not make the reviewer re-derive context):\n"
+          ]
+        },
+        {
+          "line": 168,
+          "old": [
+            "  the same oracle (DISPATCH-ACTOR-01), and the final C gate gets a fresh one.\n"
+          ],
+          "new": [
+            "  the same reviewer (DISPATCH-ACTOR-01), and the final C gate gets a fresh one.\n"
+          ]
+        },
+        {
+          "line": 191,
+          "old": [
+            "\n",
+            "## v2 candidates (deliberately not shipped)\n",
+            "\n",
+            "- Node-only ports of lazycodex's `image-diff` / `tui-check` scoring scripts\n",
+            "  (objective similarity/overflow JSON as oracle reference input). v1 uses\n",
+            "  direct `view_image` inspection + inline width checks; vendor scripts only\n",
+            "  if field friction shows the inline checks miss real defects.\n",
+            "- A review-work-style multi-lane orchestrator: not planned — the A gate,\n",
+            "  C adversarial review, REVIEW-SYNTHESIS-01, and this skill already cover\n",
+            "  those lanes without a 5-spawn token bill.\n"
+          ]
         }
       ]
     },
@@ -90,6 +161,48 @@
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-qa to drive the built surface and capture evidence before claiming the task done.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/visual-qa.md",
+      "reason": "CRW-1220: the description is scoped to manual QA; reviewer passes replace the oracle passes; the lineage note and the v2 candidates section are removed",
+      "hunks": [
+        {
+          "line": 1,
+          "old": [
+            "# Visual QA — grounding, metrics-first, oracle limits\n"
+          ],
+          "new": [
+            "# Visual QA — grounding, metrics-first, reviewer-pass limits\n"
+          ]
+        },
+        {
+          "line": 17,
+          "old": [
+            "- Every oracle PASS names the rule ids it checked (e.g. FE-HERO-01,\n"
+          ],
+          "new": [
+            "- Every reviewer PASS names the rule ids it checked (e.g. FE-HERO-01,\n"
+          ]
+        },
+        {
+          "line": 19,
+          "old": [
+            "  verdict; it is leniency bias — VLM judges are approximators, not oracles\n"
+          ],
+          "new": [
+            "  verdict; it is leniency bias — VLM judges are approximators, not ground truth\n"
+          ]
+        },
+        {
+          "line": 89,
+          "old": [
+            "## Oracle passes (C3+; rubric-bound)\n"
+          ],
+          "new": [
+            "## Reviewer passes (C3+; rubric-bound)\n"
           ]
         }
       ]

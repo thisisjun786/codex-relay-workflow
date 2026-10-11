@@ -1,6 +1,6 @@
 ---
 name: crw-worktree-guardian
-description: "MUST USE when working inside or renaming Codex-app managed worktrees — hash-named dirs under ~/.codex/worktrees, detached-HEAD checkouts, thread-bound workspaces. Prevents delete-and-recreate: adopt in place with git switch -c / branch -m; git worktree move only for other inactive worktrees. Triggers: worktree, 워크트리, 워크트리 이름, rename worktree, 새 워크트리, 브랜치랑 워크트리, detached HEAD worktree, ~/.codex/worktrees."
+description: "Codex-app managed worktrees (hash-named dirs under ~/.codex/worktrees, detached HEAD, thread-bound workspaces): adopt in place with git switch -c or branch -m, never delete and recreate. Triggers: worktree, 워크트리, rename worktree, detached HEAD worktree."
 ---
 
 # Worktree Guardian — Codex-app managed worktrees
@@ -9,6 +9,16 @@ The Codex desktop app creates one worktree per thread under `$CODEX_HOME/worktre
 (hash or date-slug slot dirs, e.g. `~/.codex/worktrees/7627/opencodex`), checked out
 from the selected base branch, usually **detached HEAD**. These sessions look like
 scratch directories but are not: the app binds the thread to that directory.
+
+## Worktree owners (WG-OWNER-01)
+
+Each kind of worktree has one owner; the other skills point here and do not take it over.
+
+| Worktree kind | Owner | Rules |
+|---|---|---|
+| Codex-app managed worktree: one per thread under `$CODEX_HOME/worktrees` | `crw-worktree-guardian` | this skill |
+| Branch hygiene: stale branches, removing an attached worktree, local garbage collection | `crw-dev-devops` | [branch lifecycle](../crw-dev-devops/references/branch-lifecycle.md) and [local GC](../crw-dev-devops/references/local-gc.md) |
+| The workspace of a run: the checkouts a project orchestrator assigns to its issue children | `crw-run` | [Check who already owns the workspace](../crw-run/SKILL.md#check-who-already-owns-the-workspace) |
 
 ## 1. Three namespaces (WG-CONCEPT-01)
 
@@ -84,8 +94,8 @@ Automated or bulk cleanup of other worktrees follows `crw-dev-devops`
 ## 6. Hook interplay (WG-HOOK-01)
 
 This guard covers Codex-app managed worktrees under `$CODEX_HOME/worktrees`
-and `CRW_WORKTREE_ROOTS`. Worktrees created by the CRW bridge follow the
-bridge's worktree contract. Loading this skill does not install its guard hooks.
+and `CRW_WORKTREE_ROOTS`. Worktrees created for a run follow `crw-run`'s
+workspace rules (Worktree owners above). Loading this skill does not install its guard hooks.
 
 - WORKTREE-GUARD-01 (SessionStart): identity block when cwd is managed.
 - WORKTREE-GUARD-02 (UserPromptSubmit): this guidance, once per session, on

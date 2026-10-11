@@ -31,8 +31,8 @@ Each rule area has exactly one canonical owner. Other skills may contain stubs b
 | Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `dev` Family Invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |
 | Deep research protocol (SEARCH-DEEP-*) | `search/references/deep-research.md` | `search` Tier 3, `dev` browser-routing |
 | Operational gates | `dev-devops` | `dev-backend`, `dev-scaffolding` |
-| Repository bootstrap (rulesets, merge settings, PR limits) | `dev-devops` `references/repo-bootstrap.md` | `dev-devops` §2.9 |
-| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `dev-devops` `references/agent-pr-intake.md` | `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |
+| Repository bootstrap (rulesets, merge settings, PR limits) | `crw-canon` `references/repo-bootstrap.md` | `crw-canon` `references/repo-governance.md`, `dev-devops` |
+| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `crw-canon` `references/agent-pr-intake.md` | `crw-canon` `references/repo-governance.md`, `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |
 | Local worktree/branch GC (`DEVOPS-LOCAL-GC-*`) | `dev-devops` `references/local-gc.md` | `worktree-guardian` §4, `dev-devops` ci-cd-deploy |
 | Native desktop acceptance matrix (`DESKTOP-*`) | `dev-devops` `references/native-desktop-acceptance.md` | `dev` routing table, `dev-testing`, `qa`, `cross-platform-release.md`, `mobile-native.md`, `dev-debugging` runtimes/swift.md |
 | macOS system approval prompts (`MACOS-APPROVAL-*`) | `dev-devops` `references/macos-system-approvals.md` | `cross-platform-release.md` §2/§3, `qa` Desktop GUI row |

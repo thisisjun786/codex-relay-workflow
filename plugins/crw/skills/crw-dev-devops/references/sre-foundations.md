@@ -291,10 +291,9 @@ resolved binary path versus the one you built, and the config the process
 actually loaded versus the one on disk. A matching port and a healthy `/healthz`
 prove neither.
 
-Independently learned in this project's own history: a cli-jaw deployment proof
-required comparing process start time against the installed `dist` mtime, because
-a matching version string and a green health endpoint were both satisfied by a
-process running the previous build.
+A deployment proof can require comparing process start time against the installed
+`dist` mtime, because a matching version string and a green health endpoint are both
+satisfied by a process running the previous build.
 
 ### §7.2 Operator signals (`DEVOPS-OBS-SIGNAL-01`, DEFAULT)
 

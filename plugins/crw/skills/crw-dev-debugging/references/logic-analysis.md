@@ -1,13 +1,9 @@
-# Logic Analysis — Comprehending an Unknown System
+# System Behaviour Analysis — Comprehending an Unknown System
 
 Read this when the task is to understand how a system works — a closed-source
 app, an AI tool, an undocumented API, a protocol, an unfamiliar codebase —
 and no defect is being fixed. Defects use the phases 0-4 method in
 `../SKILL.md`; this reference is the same discipline aimed at comprehension.
-
-Distilled from three reverse-engineering courses (mytechnotalent
-Reverse-Engineering, wtsxDev reverse-engineering list, Z0FCourse) — analysis
-with citations: `devlog/_plan/260913_logic_analysis_skill/001_analysis_synthesis.md`.
 
 ## The core rule
 
@@ -18,7 +14,7 @@ only at the honest-limits boundary (§Honest limits). Everything short of that
 is a routing problem: pick the technique family that fits the target and run
 the loop.
 
-## The Logic-Analysis Loop
+## The Observation Loop
 
 1. **State the question precisely.** "How does X work" is not a question;
    "which endpoint charges the card, and what fields does it need" is. Decide

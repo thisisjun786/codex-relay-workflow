@@ -1,6 +1,6 @@
 ---
 name: crw-dev-code-reviewer
-description: "MUST USE for code review and review-readiness — review process, quality thresholds, antipattern detection, review verdicts, and giving/receiving feedback. Activates by change-surface for PR review, diff review, pre-merge checks, refactor audits, and high-risk changes. Triggers: 'review this', 'code review', 'PR review', 'check my diff', 'before merge', 'antipattern', '리뷰', '코드 리뷰', '머지 전에 확인'."
+description: "Independent code review of a diff or pull request: review process, quality thresholds, antipatterns, verdicts and test auditor gates. The author side of requesting and receiving feedback is crw-dev. Triggers: code review, PR review, check my diff, before merge, antipattern, 코드 리뷰, 머지 전에 확인."
 ---
 
 # Dev-Code-Reviewer — Code Review Guide
@@ -19,6 +19,7 @@ This skill activates by change-surface for review requests, pre-merge checks, or
 `crw-check` checks delivery against the canonical Linear requirements and issue criteria.
 `crw-check` also finds contradictions and broken invariants across specifications and evidence.
 Use the skill that owns the requested judgment; code review does not certify Linear delivery.
+The author's side, requesting and receiving review, is `crw-dev` §4.1.
 
 ## Review Posture (REVIEW-POSTURE-01)
 
@@ -298,37 +299,7 @@ Scan every PR for these common performance pitfalls:
 
 ---
 
-## 4. Receiving Code Review
-
-Read all feedback, restate the technical requirement, and verify it against the
-codebase before accepting it. Evaluate stack fit, existing architecture, tests,
-and actual usage rather than treating reviewer claims as authority.
-
-Clarify ambiguous items first, then handle blockers, simple fixes, and complex
-changes in that order. Implement one item at a time and test each change.
-
-Push back with concrete tests, code, or documented decisions when advice breaks
-behavior, lacks context, violates YAGNI, is technically incorrect, or conflicts
-with established architecture. Respond with the verified result and avoid
-performative agreement.
-
----
-
-## 5. Requesting Code Review
-
-Request review before merging, after major features, and before large refactors;
-also request it for complex fixes or when the approach is uncertain. Small,
-non-impactful config/docs changes may skip review.
-
-A review request must include passing build/tests, the base-to-head diff range,
-a concise change and behavior summary, and requested focus areas. Keep diffs
-under 500 changed lines or split them into reviewable units.
-
-Fix Critical findings immediately and re-request review; fix High before other
-work and Medium before merge. Low and Style findings follow impact and team
-conventions.
-
-### Reviewing AI-Generated Code
+## 4. Reviewing AI-Generated Code
 
 Run this in addition to the normal review when the diff is substantially AI-generated:
 
@@ -342,9 +313,9 @@ Run this in addition to the normal review when the diff is substantially AI-gene
 
 ---
 
-## 6. Subagent Review Mode
+## 5. Subagent Review Mode
 
-Parallelize review only when domain breadth exceeds one reviewer's context (e.g., frontend + backend + infra in a single diff, or when the diff spans too many unrelated domains for a single pass). Each subagent receives its file subset, the review process from sections 1-5, and outputs structured findings. The main agent deduplicates, normalizes severity, and presents a unified review.
+Parallelize review only when domain breadth exceeds one reviewer's context (e.g., frontend + backend + infra in a single diff, or when the diff spans too many unrelated domains for a single pass). Each subagent receives its file subset, the review process from sections 1-4, and outputs structured findings. The reviewer that dispatched them deduplicates, normalizes severity, and presents a unified review.
 
 ### AI Tool Integration Awareness
 
@@ -387,22 +358,96 @@ for removed search backends creeping back in as if they were available: `progrok
 appear only in non-goal or historical framing.
 
 There is no automated check, and there cannot be a useful one: crw owns no registry
-of available backends to compare the prose against — `web_search` is host-provided. The
-scan that used to guard this read one prose file for phrase existence, broke on rewording,
-and proved nothing, so it was deleted with the protection routed here on purpose
-(`plugins/crw/test/manifest-policy.test.mjs`, the TEST-PROMPT-SEAM-01 comment). This
-is a reviewer's read, not a contract. If a backend registry ever lands in code, revisit
-whether a real two-source check is possible.
+of available backends to compare the prose against, because `web_search` is host-provided,
+and a scan that reads one prose file for phrase existence breaks on rewording and proves
+nothing (`TEST-PROMPT-SEAM-01` below). This is a reviewer's read, not a contract. If a
+backend registry lands in code, revisit whether a real two-source check is possible.
 
 Judge by deletion kind. A **replacing/relocating** deletion (the check moved elsewhere) must
 stay GREEN after the old guard is removed, and go RED only when the surviving boundary check
 is removed too. For a **non-replacing** deletion, a regression that goes RED proves the guard
 is load-bearing — do not approve the deletion.
 
-Test adequacy for prose-wording changes follows `dev-testing`'s `TEST-PROMPT-SEAM-01`; that
-skill owns test adequacy (see §"Scope" above) and this rule does not restate it.
+Test adequacy for prose-wording changes follows `TEST-PROMPT-SEAM-01` in [Test auditor gates](#test-auditor-gates); `crw-dev-testing` owns test adequacy (see its scope).
 
 ---
+
+## Test auditor gates
+
+What a reviewer checks in a test change. The author-side test strategy is in `crw-dev-testing`; the rule ids are unchanged.
+
+### Test Oracle Integrity (TEST-PROMPT-SEAM-01 / TEST-ORACLE-INDEPENDENCE-01 / TEST-PRECEDENCE-FIXTURE-01, DEFAULT)
+
+Three narrow contracts that stop false-green. All three are agent-followed prose; no gate enforces
+them and the reviewer is the only check.
+
+**TEST-PROMPT-SEAM-01 (DEFAULT).** Do not assert on prose. A test may read a document only
+when it EXTRACTS a value and COMPARES it against a value from another source. Asserting that
+a phrase exists in a file is a violation no matter how many files you read or what the test's
+header says it is for.
+
+- Forbidden: `assert.match(readFileSync(".../SKILL.md"), /prefer rg first/i)` — one source,
+  phrase existence, breaks on harmless rewording, proves no behavior.
+- Allowed: parse the frontmatter `description`, pull the model token out of it, and
+  `assert.ok(NATIVE_OPENAI_MODELS.includes(token))` — two sources, values compared, breaks
+  only when they genuinely disagree.
+- Also allowed (outside this rule's scope): asserting on non-prose values — version pins,
+  license names, runtime output, CLI stdout, hook payloads, file existence.
+
+Where prose has no counterpart in code, a test that reads it only checks that the words are
+still there. Such prose (a doctrine statement, a skill's wording) is a human-review item with no automated
+check; inventing a second document to compare it against adds a false green.
+
+**TEST-ORACLE-INDEPENDENCE-01 (DEFAULT).** Never derive the expected value from the code
+under test.
+
+- Forbidden: `assert.equal(fn(x), fn(x))`; building the expectation with a helper the DUT
+  also uses; refreshing a snapshot from current output and calling that verification.
+- Allowed: hardcode the expectation in the fixture, or compute it by an independent route
+  (a second implementation, a hand-worked example, an external spec).
+
+**TEST-PRECEDENCE-FIXTURE-01 (DEFAULT).** When testing override / default / fallback, the
+three values must all DIFFER — otherwise the test cannot tell which path ran.
+
+- Forbidden: override `"x"`, default `"x"`, fallback `"x"` — every branch passes.
+- Allowed: override `"from-flag"`, default `"from-config"`, fallback `"builtin"`, and each
+  case asserts the specific one.
+
+A regression test should FAIL when the defect is reintroduced. Confirm it once by mutation —
+break it, watch it go red, restore it, watch it go green.
+
+### Patch Integrity Gate (TEST-PATCH-INTEGRITY-01, DEFAULT)
+
+An agent that obtains green by weakening tests has not fixed the bug. Before
+claiming implementation complete:
+
+1. **Baseline**: record which tests fail and their failure signatures BEFORE any
+   production code change.
+2. **Implement**: write the fix/feature.
+3. **Re-run originals**: execute the ORIGINAL test suite (not the modified version)
+   against the patched source. All baseline failures must now pass.
+4. **Classify test changes**: every test/config change is `required` (new test for
+   new behavior), `suspicious` (deleted assertion, lowered threshold, added skip,
+   reduced coverage exclusion), or `unrelated`.
+5. **Justify suspicious changes**: each suspicious change needs a stated reason.
+   "The test was wrong" is valid only with evidence of the original test's incorrectness.
+
+Red flags that trigger escalation:
+- Deleted assertions without replacement
+- Snapshot updates without visual/behavioral verification
+- Coverage exclusions added in the same PR as the fix
+- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`references/ci-pipeline.md` §5.3)
+- Threshold reductions (e.g., coverage 80% → 60%)
+- Type assertion suppressions (`as any`, `@ts-ignore`) in test files
+
+### TDD Evidence Contract (TEST-TDD-EVIDENCE-01, DEFAULT)
+
+When TDD is claimed, durable evidence must show:
+- RED: failing test name + failure message (before production code)
+- GREEN: same test passing (after production code)
+- REFACTOR: full affected suite passing (after cleanup)
+
+A TDD claim without RED evidence is not TDD.
 
 ## Changed-File Coverage Ledger (REVIEW-COVERAGE-01, DEFAULT)
 
@@ -438,6 +483,6 @@ assigned, review it there; otherwise create or attach a dedicated named worktree
 checkout, tests and QA in that one. Record `pwd -P` and the target `HEAD` alongside the
 anchors above.
 
-The condition is observable state, not ownership: a reviewer — often a subagent — cannot know
-which branch the parent session "owns", but it can always see what is checked out where it
+The condition is observable state, not ownership: a reviewer, often an executor-level subagent, cannot know
+which branch the task that dispatched it owns, but it can always see what is checked out where it
 stands.

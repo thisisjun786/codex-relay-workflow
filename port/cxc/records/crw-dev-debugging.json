@@ -74,15 +74,76 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. CRW-1220: Logic Analysis is system behaviour analysis; the escalation names the levels; the description is scoped",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for any real runtime debugging in any language — crashes, silent failures, wrong output, build/test failures, flaky tests, performance regressions, integration bugs. A phases 0-4 root-cause method: architecture check → investigate → analyze → hypothesize → implement. Logic analysis of unknown systems (how apps/APIs/AI tools work) via references/logic-analysis.md. Triggers: 'debug this', 'why is X failing', 'this test is flaky', 'fix the crash', 'root cause', '왜 안 돼', '디버깅', '원인 분석', 'how does X work', 'figure out how', '로직 파악', '뜯어봐', 'reverse engineer'.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Phases 0-4 systematic root-cause debugging method (any language).\"\n",
             "  keywords: [debug, error, stack trace, root cause, flaky, regression, crash, bisect, \"logic analysis\", \"comprehension\", \"unknown system\", \"reverse engineering\"]\n"
+          ],
+          "new": [
+            "description: \"Root-cause debugging in any language: crashes, silent failures, wrong output, build or test failures, flaky tests, performance regressions; also system behaviour analysis of an unknown app, API or tool. Triggers: debug this, why is X failing, root cause, how does X work, figure out how, 디버깅, 로직 파악.\"\n"
+          ]
+        },
+        {
+          "line": 210,
+          "old": [
+            "## Logic Analysis (comprehension without a defect)\n"
+          ],
+          "new": [
+            "## System behaviour analysis (comprehension without a defect)\n"
+          ]
+        },
+        {
+          "line": 214,
+          "old": [
+            "[Logic analysis](references/logic-analysis.md). Core rules: \"I can't\" is a\n"
+          ],
+          "new": [
+            "[System behaviour analysis](references/logic-analysis.md). Core rules: \"I can't\" is a\n"
+          ]
+        },
+        {
+          "line": 241,
+          "old": [
+            "**architectural issues**, not simple bugs. Discuss with the user before\n",
+            "attempting more fixes.\n"
+          ],
+          "new": [
+            "**architectural issues**, not simple bugs. Raise it with the level that assigned\n",
+            "the work before attempting more fixes: an issue child returns it to its project\n",
+            "orchestrator, and a task with no parent asks the user.\n"
+          ]
+        },
+        {
+          "line": 350,
+          "old": [
+            "- **Repeated fix attempts failed** — likely architectural; needs human judgment\n"
+          ],
+          "new": [
+            "- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to its project orchestrator, a task with no parent to the user)\n"
+          ]
+        },
+        {
+          "line": 353,
+          "old": [
+            "- **Security-sensitive** — don't debug auth/crypto/payment alone; flag for human review\n"
+          ],
+          "new": [
+            "- **Security-sensitive** — don't debug auth/crypto/payment alone; flag it to the level that assigned the work for human review\n"
+          ]
+        },
+        {
+          "line": 385,
+          "old": [
+            "| `references/logic-analysis.md` | Understanding how an unknown system works (no defect) | Logic-analysis loop, controlled mutation, routing table, lab boundary, anti-give-up ladder |\n"
+          ],
+          "new": [
+            "| `references/logic-analysis.md` | Understanding how an unknown system works (no defect) | Observation loop, controlled mutation, routing table, lab boundary, anti-give-up ladder |\n"
           ]
         }
       ]
@@ -95,6 +156,39 @@
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-dev-debugging to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/logic-analysis.md",
+      "reason": "CRW-1220: Logic Analysis is system behaviour analysis; the escalation names the levels; the description is scoped",
+      "hunks": [
+        {
+          "line": 1,
+          "old": [
+            "# Logic Analysis — Comprehending an Unknown System\n"
+          ],
+          "new": [
+            "# System Behaviour Analysis — Comprehending an Unknown System\n"
+          ]
+        },
+        {
+          "line": 8,
+          "old": [
+            "Distilled from three reverse-engineering courses (mytechnotalent\n",
+            "Reverse-Engineering, wtsxDev reverse-engineering list, Z0FCourse) — analysis\n",
+            "with citations: `devlog/_plan/260913_logic_analysis_skill/001_analysis_synthesis.md`.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 21,
+          "old": [
+            "## The Logic-Analysis Loop\n"
+          ],
+          "new": [
+            "## The Observation Loop\n"
           ]
         }
       ]

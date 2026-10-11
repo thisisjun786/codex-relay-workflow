@@ -1,14 +1,14 @@
 ---
 name: crw-search
-description: "MUST USE for external, current, real-time, or public-web lookups — latest releases/versions, news, prices, docs, status, X/Twitter, and deep research with a cited report. Routes Korean and English lookup verbs to a codex-native search ladder, never an accidental repository grep. Triggers: search, look up, latest, current, news, real-time, X, Twitter, deep research, deep-research, 검색, 검색해, 찾아봐, 찾아줘, 알아봐, 웹검색, 딥리서치, 심층 조사."
+description: "Web search for external, current or public information: latest versions, news, prices, docs, status, X/Twitter, and deep research with a cited report; Luna fan-out for broad parallel discovery. Triggers: search, look up, latest, news, deep research, 검색, 웹검색, 딥리서치, 루나검색."
 ---
 
 # search — Unified Search Hub
 
-Search discipline for any lookup that leaves the repository. This skill is
-implicit-visible as metadata (`allow_implicit_invocation: true`); load the
-full body on explicit trigger or `dev`-hub routing, never by an external
-dispatcher.
+Search discipline for any lookup that leaves the repository: public web, news, prices, versions,
+current status and deep research. Past sessions are `crw-recall`; repository code is `crw-repo-map`
+and `crw-ast-grep`. This skill is implicit-visible as metadata (`allow_implicit_invocation: true`);
+its body loads on an explicit trigger or when `crw-dev` routes a lookup here.
 
 ## Source-Proof Invariant (read first)
 
@@ -123,8 +123,18 @@ supplies the search discipline underneath it.
 - This protocol is on-demand Tier 3 work; it is selected deliberately and
   nothing auto-loads or auto-runs it.
 
+### Removed cli-jaw tiers (non-goals — do not re-add)
+crw has no server runtime, so the cli-jaw 4-tier ladder does not carry over.
+Do **not** reintroduce any of these removed backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.
+There is no codex-native equivalent and J-10 removed them deliberately.
+
+## For a dispatcher
+
+Read by the initiative lead, the project orchestrator or an issue child that sends helpers out to search. A
+helper that only searches reads the ladder above and nothing here.
+
 ### Subagent Skill Attachment (SEARCH-ATTACH-01)
-Any search subagent — Tier 3 deep-research explorers, `$crw-lunasearch` lanes,
+Any search subagent — Tier 3 deep-research explorers, Luna lanes ([Luna lane](references/lunasearch.md)),
 or ad-hoc research spawns — should receive THIS skill as a real skill
 attachment, not a hand-written tool directive in the message. The subagent
 auto-loads the skill at launch and follows its Tier 1/2 tool guidance
@@ -143,7 +153,7 @@ child's first turn parses the mention and injects the full SKILL.md body. When a
 V2-shaped spawn message reaches the crw hook as plaintext (non-encrypted
 provider/proxy paths), the hook recognizes the same mention and inlines the full body.
 Plaintext V2 without an inlined body receives a `[CRW-SKILL-AFFORDANCE]` block
-asking the child to self-load mentions from `<skillsDir>/<folder>/SKILL.md`.
+asking the child to self-load mentions from `<skillsDir>/<folder>/SKILL.md`; fork inheritance remains a secondary channel.
 Native ChatGPT-backend V2 sends ciphertext with a Fernet envelope. The hook
 preserves structurally recognized ciphertext byte-for-byte and tells the caller
 that hook-added skill text, scope instructions and prompt overrides were omitted;
@@ -176,19 +186,11 @@ Do not write a long inline TOOLS block in either path — the skill already says
 evidence." A subagent that cannot open pages must flag every finding as
 `candidate — unverified snippet` in its return.
 
-### lunasearch (dependent tool)
-`$crw-lunasearch` is a dependent discovery lane that rides on this skill's proof
-ladder. It fans out cheap `gpt-5.6-luna` subagents for wide discovery,
-then hands every candidate back here for Tier 2 source-proof. lunasearch
-discovers; crw-search proves. lunasearch names THIS skill (`crw-search`) in each
-spawn message; V1 parses the mention, while plaintext V2 paths use hook inlining as
-qualified above. Manual V1 callers may instead use `items`. See the `$crw-lunasearch` skill for its hardcoded
-spawn path and swarm shape.
-
-### Removed cli-jaw tiers (non-goals — do not re-add)
-crw has no server runtime, so the cli-jaw 4-tier ladder does not carry over.
-Do **not** reintroduce any of these removed backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.
-There is no codex-native equivalent and J-10 removed them deliberately.
+### Luna lane
+Broad, cheap, parallel public-web discovery fans out `explorer` helpers and hands every candidate back
+here for Tier 2 proof. The lane, its swarm shape and its proof handoff are in
+[Luna lane](references/lunasearch.md); trigger phrases: Luna search, 루나검색. Luna discovers, this
+skill proves.
 
 ## Korean Intent Guard (8 rules)
 
@@ -227,10 +229,8 @@ spend Tier 3 subagents on a question Tier 1+2 already settled.
 
 ## Notes
 
-- This skill is implicit-visible as metadata (`allow_implicit_invocation:
-  true`, part of the implicit set with `dev` — canonical list: `dev` SKILL.md
-  Visibility decision); the body is reached
-  by trigger words or by `dev`-hub routing.
+- This skill is implicit-visible as metadata (`allow_implicit_invocation: true`); the body is reached
+  by trigger words or when `crw-dev` routes an external lookup here.
 - Query rewrite runs prompt-side. Optional agbrowse, Aside, native browsers, and HTTP
   readers follow the shared portable policy; no fixed tool-name ladder is guaranteed
   on every distribution or host.
@@ -239,6 +239,4 @@ spend Tier 3 subagents on a question Tier 1+2 already settled.
 - A host-exposed deep-research skill (for example `deep-research-work`) owns plan
   tracking and artifact mechanics; `references/deep-research.md` supplies the search
   discipline underneath it and aligns its steps with that skill.
-- `$crw-lunasearch` is a dependent tool, not a tier. It hardcodes the Luna
-  model and skips catalog probing; its error fallback is serial dispatch
-  (re-spawn without the model field), not a probe round-trip.
+- The Luna lane is a dependent lane, not a tier: it only discovers, and its candidates climb the same ladder.
