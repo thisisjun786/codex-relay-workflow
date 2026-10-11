@@ -17,8 +17,13 @@ const (
 )
 
 // ReadyOptions tune one reading. SkipArtifactBytes leaves the declared artifact files unread, which is what the release path wants under its lock
-// (the files were hashed before it; the store half is what can change between).
-type ReadyOptions struct{ SkipArtifactBytes bool }
+// (the files were hashed before it; the store half is what can change between). AgentNode names the node an agent release (dag-release --surface agent,
+// R04) judges: an agent is given a node, not the issue, so that node is not held by the issue-level ownership of a managed start (an open relationship of
+// the issue, a managed start in flight for it), which belongs to the other nodes of the issue; the node-level exclusion of the two kinds is the release's own.
+type ReadyOptions struct {
+	SkipArtifactBytes bool
+	AgentNode         string
+}
 
 // Read is Ready inside one read transaction of the store: every query of the reading shares that one connection and so sees one state of the store.
 // The store has one connection, so a reading that opened a second would wait for itself forever; Read never does.
@@ -161,7 +166,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 			reading.Disposition, reading.Reason, reading.Detail = DispBlocked, verdict.Finding.Reason, verdict.Finding.Code+": "+verdict.Finding.Detail
 			continue
 		}
-		reason, detail, err := s.resourceHold(ctx, q, plan, snap, n, incoming[n.NodeID])
+		reason, detail, err := s.resourceHold(ctx, q, plan, snap, n, incoming[n.NodeID], n.NodeID != opts.AgentNode)
 		if err != nil {
 			return Reading{}, err
 		}
@@ -275,21 +280,13 @@ func introducedAt(ctx context.Context, q store.Querier, plan string, revision in
 
 // resourceHold applies the checks a candidate meets outside the plan: nobody else owns the issue (an open relationship, or a managed start still
 // pending: an attached start is the relationship's, and a finished relationship frees the issue), the project has exactly one registered parent to
-// reserve under, and no merge is in flight on a branch the node builds on. A non-empty reason is a closed reason.
-func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, edges []dag.SnapEdge) (string, string, error) {
-	var open int
-	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL", []any{n.IssueKey}, &open); err != nil {
-		return "", "", err
-	}
-	if open > 0 {
-		return SkipAlreadyOwned, n.IssueKey + " already has an open relationship that is not an execution of this node", nil
-	}
-	var pending int
-	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM managed_start_requests WHERE issue_key = ? AND state IN ('reserved','create_armed')", []any{n.IssueKey}, &pending); err != nil {
-		return "", "", err
-	}
-	if pending > 0 {
-		return SkipAlreadyOwned, n.IssueKey + " has a managed start in flight that no release of this node made", nil
+// reserve under, and no merge is in flight on a branch the node builds on. A non-empty reason is a closed reason. The issue-level ownership is a managed
+// start's (issueOwnership); a node judged for an agent release is not held by it (ReadyOptions.AgentNode).
+func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, edges []dag.SnapEdge, issueOwnership bool) (string, string, error) {
+	if issueOwnership {
+		if reason, detail, err := issueOwned(ctx, q, n); err != nil || reason != "" {
+			return reason, detail, err
+		}
 	}
 	parents, err := projectParents(ctx, q, snap.ProjectKey)
 	if err != nil {
@@ -310,6 +307,25 @@ func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan stri
 		if moving {
 			return DeferMergeWindow, "a merge turn is moving " + e.TargetRepository + " " + e.TargetBaseRef + "; the tip the node would build on is not settled", nil
 		}
+	}
+	return "", "", nil
+}
+
+// issueOwned is the issue-level ownership a managed start meets: an open relationship of the issue, or a managed start of it still pending.
+func issueOwned(ctx context.Context, q store.Querier, n dag.SnapNode) (string, string, error) {
+	var open int
+	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL", []any{n.IssueKey}, &open); err != nil {
+		return "", "", err
+	}
+	if open > 0 {
+		return SkipAlreadyOwned, n.IssueKey + " already has an open relationship that is not an execution of this node", nil
+	}
+	var pending int
+	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM managed_start_requests WHERE issue_key = ? AND state IN ('reserved','create_armed')", []any{n.IssueKey}, &pending); err != nil {
+		return "", "", err
+	}
+	if pending > 0 {
+		return SkipAlreadyOwned, n.IssueKey + " has a managed start in flight that no release of this node made", nil
 	}
 	return "", "", nil
 }
