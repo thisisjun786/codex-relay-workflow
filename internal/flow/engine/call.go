@@ -757,10 +757,15 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 }
 
 // threadPrefix is the turns of a thread through throughTurn, in order, as the journal recorded them: each turn's id and
-// its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold.
+// its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold. A thread that was itself forked starts
+// with the turns it inherited (the prefix its fork request recorded, which is the whole history through its boundary), and
+// only then come the turns its own calls ran; a turn an operator replaced is not part of the history.
 func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 	owner := map[string]string{}
 	events := j.Events()
+	replaced := replacedTurns(events)
+	var inherited []map[string]any
+	forkReq := map[string]Event{}
 	for _, ev := range events {
 		if ev.Kind != KindCall {
 			continue
@@ -770,20 +775,46 @@ func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 			if t, _ := ev.Data["thread_id"].(string); t != "" {
 				owner[ev.CallID] = t
 			}
+		case EvForkRequested:
+			forkReq[ev.CallID] = ev
 		case EvThreadStarted, EvForkStarted:
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
+			if t, _ := ev.Data["thread_id"].(string); ev.Event == EvForkStarted && t == threadID && inherited == nil {
+				for _, p := range prefixOf(forkReq[ev.CallID].Data) {
+					inherited = append(inherited, map[string]any{"turn_id": p.TurnID, "op": p.Op})
+				}
+			}
 		}
 	}
-	var out []map[string]any
+	out := inherited
 	for _, ev := range events {
 		if ev.Kind != KindCall || ev.Event != EvTurnStarted || owner[ev.CallID] != threadID {
 			continue
 		}
 		id, _ := ev.Data["turn_id"].(string)
+		if replaced[id] {
+			continue
+		}
 		op, _ := ev.Data["op"].(string)
 		out = append(out, map[string]any{"turn_id": id, "op": op})
-		if id == throughTurn {
-			break
+	}
+	for i, p := range out {
+		if p["turn_id"] == throughTurn {
+			return out[:i+1]
+		}
+	}
+	return out
+}
+
+// replacedTurns are the turns an operator's adoption replaced (turn_started rows with `replaces`): the call follows the
+// turn that replaced them.
+func replacedTurns(events []Event) map[string]bool {
+	out := map[string]bool{}
+	for _, ev := range events {
+		if ev.Kind == KindCall && ev.Event == EvTurnStarted {
+			if old := rowStr(ev.Data, "replaces"); old != "" {
+				out[old] = true
+			}
 		}
 	}
 	return out
@@ -888,12 +919,16 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 	}
 	info, _ := LookupCall(c.e.j, c.id)
 	c.threadID, c.configured, c.cwd = info.ThreadID, info.Configured, info.Cwd
-	for _, ev := range CallEvents(c.e.j, c.id) {
+	own := CallEvents(c.e.j, c.id)
+	replaced := replacedTurns(own)
+	for _, ev := range own {
 		if ev.Event == EvPrepared {
 			c.turnIDs = nil
 		}
 		if ev.Event == EvTurnStarted {
-			c.turnIDs = append(c.turnIDs, rowStr(ev.Data, "turn_id"))
+			if !replaced[rowStr(ev.Data, "turn_id")] {
+				c.turnIDs = append(c.turnIDs, rowStr(ev.Data, "turn_id"))
+			}
 			c.delivered = true
 		}
 	}

@@ -96,7 +96,7 @@ func (r *reconciler) recoverAdopt(ctx context.Context, st *callState, target str
 }
 
 // adoptThread takes a thread the operator names for a creation whose outcome is unknown: it has to be at the call's cwd,
-// be a root thread of the source the backend connects as and, for a fork, come from the recorded source thread. Its
+// be a root thread of the source the backend connects as (the identity automatic reconcile lists by) and, for a fork, come from the recorded source thread. Its
 // history is the operator's to judge; it is recorded.
 func (r *reconciler) adoptThread(ctx context.Context, st *callState, id string) (*RecoverResult, error) {
 	req := st.create
@@ -109,6 +109,8 @@ func (r *reconciler) adoptThread(ctx context.Context, st *callState, id string) 
 	switch {
 	case th.Cwd != cwd:
 		return nil, &ProofNotMet{Reason: fmt.Sprintf("thread %s runs in %s, the call's cwd is %s", id, th.Cwd, cwd)}
+	case th.Source != r.cfg.Host.Source():
+		return nil, &ProofNotMet{Reason: fmt.Sprintf("thread %s is of the source %q, the backend connects as %q", id, th.Source, r.cfg.Host.Source())}
 	case th.ParentThreadID != "":
 		return nil, &ProofNotMet{Reason: fmt.Sprintf("thread %s is a sub-agent thread", id)}
 	case fork && th.ForkedFromID != rowStr(req.Data, "thread_id"):
@@ -152,8 +154,18 @@ func (r *reconciler) adoptTurn(ctx context.Context, st *callState, id string) (*
 	}
 	evidence := map[string]any{"operator": true, "status": found.Status, "marker": found.Marker}
 	r.j.Append(r.callRow(st, EvRecoveryCleared, map[string]any{"mode": "adopt", "turn_id": id, "evidence": evidence}))
-	if st.last == EvTurnRequested {
-		r.j.Append(r.callRow(st, EvTurnStarted, map[string]any{"k": rowInt(st.turnReq.Data, "k"), "op": op, "turn_id": id, "recovered": true, "evidence": evidence}))
+	// The chosen turn becomes the call's turn: a turn_started row names it. A call that had recorded another turn (the one
+	// that became unreadable or missing) replaces it, so the next resume follows the turn the operator chose.
+	row := map[string]any{"k": rowInt(st.turnReq.Data, "k"), "op": op, "turn_id": id, "recovered": true, "evidence": evidence}
+	switch {
+	case st.last == EvTurnRequested:
+		r.j.Append(r.callRow(st, EvTurnStarted, row))
+	case rowStr(st.turnStarted.Data, "turn_id") != id:
+		row["replaces"] = rowStr(st.turnStarted.Data, "turn_id")
+		if k := rowInt(st.turnStarted.Data, "k"); k > 0 {
+			row["k"] = k
+		}
+		r.j.Append(r.callRow(st, EvTurnStarted, row))
 	}
 	return &RecoverResult{CallID: st.id, Mode: "adopt", Action: RecoverTurn, ThreadID: st.thread, TurnID: id, Evidence: evidence}, nil
 }

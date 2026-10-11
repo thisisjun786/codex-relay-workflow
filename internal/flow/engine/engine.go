@@ -155,6 +155,10 @@ type Engine struct {
 	// and every row before it belongs to a process that no longer exists (or to the reconcile pass that read them).
 	recovery map[string]*Recovery
 	startSeq int
+	// claimed are the calls of the previous process that a position of the resumed script took over (resumePrior): they go
+	// on in this process, so a new attempt of their node does not supersede them.
+	claimedM sync.Mutex
+	claimed  map[string]bool
 	// escalated are the calls whose dispatch_unknown escalation was written by this run.
 	escalatedM sync.Mutex
 	escalated  map[string]bool
@@ -473,6 +477,22 @@ func (e *Engine) nodeStopReason(node string) string {
 	e.stoppedM.Lock()
 	defer e.stoppedM.Unlock()
 	return e.stopped[node]
+}
+
+// claim records that the resumed script took over a call of the previous process; claimedCall asks whether it did.
+func (e *Engine) claim(id string) {
+	e.claimedM.Lock()
+	if e.claimed == nil {
+		e.claimed = map[string]bool{}
+	}
+	e.claimed[id] = true
+	e.claimedM.Unlock()
+}
+
+func (e *Engine) claimedCall(id string) bool {
+	e.claimedM.Lock()
+	defer e.claimedM.Unlock()
+	return e.claimed[id]
 }
 
 // resume reconciles the journal's open calls against the host before anything else runs, and holds every node that has a

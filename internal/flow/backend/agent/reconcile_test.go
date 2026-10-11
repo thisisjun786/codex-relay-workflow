@@ -848,7 +848,7 @@ func TestUnreadableHostHoldsUnknown(t *testing.T) {
 		if n := e.count("turn/start"); n != 1 || e.count("thread/start") != 1 {
 			t.Errorf("%d turn/start, %d thread/start requests", n, e.count("thread/start"))
 		}
-		if got := kinds(e.rows("a")); !slices.Equal(got, []string{"prepared", "thread_requested", "outcome_unknown", "thread_started", "turn_requested", "turn_started", "completed"}) {
+		if got := kinds(e.rows("a")); !slices.Equal(got, []string{"prepared", "thread_requested", "outcome_unknown", "recovery_cleared", "thread_started", "turn_requested", "turn_started", "completed"}) {
 			t.Errorf("rows %v", got)
 		}
 		if len(engine.RecoveryHolds(e.journal, e.runID)) != 0 {

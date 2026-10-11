@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
@@ -26,21 +27,43 @@ const DefaultSource = "appServer"
 // creationKey names one creation request: the call and its send ordinal.
 func creationKey(callID string, send int) string { return fmt.Sprintf("%s#%d", callID, max(1, send)) }
 
+// sentRecord is the connection a creation request's frame went out on: the client that held it and the id it gave it.
+type sentRecord struct {
+	client *appserver.Client
+	conn   uint64
+}
+
+// sentCreations is the record of the creation requests this process wrote, by host socket, owner and request. It belongs to
+// the process, not to one Backend value: a backend made again in the same process (same owner, same or another client) must
+// still know what its predecessor wrote, or it would take a request that is pending on an open connection for one that
+// never left. The entries are a few words each and live as long as the process.
+var (
+	sentMu        sync.Mutex
+	sentCreations = map[string]sentRecord{}
+)
+
+func (b *Backend) sentKey(owner, callID string, send int) string {
+	return b.client.SocketPath() + "|" + owner + "|" + creationKey(callID, send)
+}
+
 // sendCreation sends a thread/start or thread/fork and records the connection its frame went out on, before the frame is
 // written. A request that was never written leaves no record: the host certainly did not receive it.
 func (b *Backend) sendCreation(ctx context.Context, callID string, send int, method string, params map[string]any) (json.RawMessage, error) {
-	key := creationKey(callID, send)
+	key := b.sentKey(b.cfg.Owner, callID, send)
 	ctx = appserver.WithSendHook(ctx, func(sent string) {
 		// the hook also sees the handshake's own request when the call has to connect first
 		if sent != method {
 			return
 		}
-		b.mu.Lock()
-		b.sent[key] = b.client.ConnectionID()
-		b.mu.Unlock()
+		sentMu.Lock()
+		sentCreations[key] = sentRecord{client: b.client, conn: b.client.ConnectionID()}
+		sentMu.Unlock()
 	})
 	return b.client.Call(ctx, method, params)
 }
+
+// Source implements engine.ReconHost: the source kind the backend connects as and lists threads by.
+func (b *Backend) Source() string { return b.cfg.Source }
 
 // Owner implements engine.Owned: the name of the process this backend lives in, written on every creation intent.
 func (b *Backend) Owner() string { return b.cfg.Owner }
@@ -53,13 +76,13 @@ func (b *Backend) CreationState(owner, callID string, send int) engine.Creation 
 		return engine.CreationUnknown
 	}
 	if owner == b.cfg.Owner {
-		b.mu.Lock()
-		id, written := b.sent[creationKey(callID, send)]
-		b.mu.Unlock()
+		sentMu.Lock()
+		rec, written := sentCreations[b.sentKey(owner, callID, send)]
+		sentMu.Unlock()
 		switch {
 		case !written:
 			return engine.CreationUnsent
-		case id != 0 && b.client.ConnectionID() == id:
+		case rec.conn != 0 && rec.client.ConnectionID() == rec.conn:
 			return engine.CreationOpen
 		}
 		return engine.CreationClosed

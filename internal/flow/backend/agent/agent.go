@@ -60,8 +60,6 @@ type Backend struct {
 
 	mu         sync.Mutex
 	tokenTotal map[string]engine.Tokens
-	// sent is the connection each creation request went out on, by creationKey.
-	sent map[string]uint64
 }
 
 var (
@@ -99,7 +97,7 @@ func New(cfg Config) (*Backend, error) {
 	if cfg.Source == "" {
 		cfg.Source = DefaultSource
 	}
-	return &Backend{cfg: cfg, client: cfg.Client, threads: cfg.Threads, tokenTotal: map[string]engine.Tokens{}, sent: map[string]uint64{}}, nil
+	return &Backend{cfg: cfg, client: cfg.Client, threads: cfg.Threads, tokenTotal: map[string]engine.Tokens{}}, nil
 }
 
 // hold keeps this connection subscribed to a thread for as long as the backend lives. The client drops the subscription

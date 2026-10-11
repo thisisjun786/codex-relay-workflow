@@ -114,6 +114,9 @@ type ReconHost interface {
 	HarvestTurn(ctx context.Context, thread, turn, op string) (out TurnOutcome, running bool, err error)
 	// AwaitTurn waits until a turn has ended and returns its outcome.
 	AwaitTurn(ctx context.Context, thread, turn, op string) (TurnOutcome, error)
+	// Source is the Thread.source of the threads the backend creates and lists by: the one source a thread of this host can
+	// have and be a call's thread.
+	Source() string
 	// CreationState says what is known about the creation request of call `callID` with send ordinal send that the run
 	// process `owner` wrote.
 	CreationState(owner, callID string, send int) Creation
@@ -808,6 +811,12 @@ func (r *reconciler) observeTurnStarted(ctx context.Context, st *callState, adop
 // apply makes the plan real: the orphans are archived and recorded, the rows are appended in order, and an unknown outcome
 // is appended with the escalation that names the node.
 func (r *reconciler) apply(ctx context.Context, st *callState, p plan) *Recovery {
+	if st.held() && p.unknown == "" && !p.pending {
+		// A later pass established what an earlier one could not: the call is open again, whatever rows follow, so the hold
+		// ends and a resumed call goes on from this outcome instead of replaying the unknown one. (Recover opens the call in
+		// memory and writes this row itself, so it never reaches here with a held call.)
+		r.j.Append(r.callRow(st, EvRecoveryCleared, map[string]any{"mode": "reconcile", "action": p.rec.Action, "evidence": p.evidence}))
+	}
 	for _, o := range p.orphans {
 		data := map[string]any{"thread_id": o.id, "reason": o.reason}
 		if err := r.cfg.Host.ArchiveThread(ctx, o.id); err != nil {

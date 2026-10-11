@@ -344,7 +344,8 @@ The intent rows say what a later process needs to find the request again. `threa
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous
 request absent and sent it again), `at`, the wall time of the intent in milliseconds, and `owner`, the run process that
 holds the connection the request goes out on; `fork_requested` also carries the source thread, `through_turn_id` and the
-`prefix` the fork must hold. `turn_requested` carries the turn's input (without its marker line) and `resend` on a turn that
+`prefix` the fork must hold (the whole history of the source through the boundary, the turns it inherited when it was itself a fork
+included). `turn_requested` carries the turn's input (without its marker line) and `resend` on a turn that
 is sent again.
 
 ## Reconcile and recovery
@@ -387,19 +388,22 @@ What the pass cannot establish - a listing or a history that cannot be completed
 without the proof, a running turn without the marker - appends `outcome_unknown` (reason `dispatch_unknown`), writes the
 `dispatch_unknown` escalation naming the node and puts the node in `recovery_hold`: no request is sent again, no new attempt
 starts, no tier step is taken. Each resume runs the pass again over the calls whose outcome is unknown; a pass that establishes the
-outcome appends the recovered rows after `outcome_unknown` and the hold ends.
+outcome appends `recovery_cleared` (mode `reconcile`, with the evidence) and then the recovered rows after `outcome_unknown`, and
+the hold ends: the call is open again, the resumed call goes on from that outcome and the unknown one is not replayed. This holds
+for an outcome that needs no row of its own (a turn already recorded, or a request proven absent) as much as for an adopted thread.
 
 `crw flow recover CALL --adopt THREAD|TURN | --absent` is the only manual way out of a hold. `--absent` reads the host again
 with a complete listing and history and accepts the call only when the proofs above hold (turnless candidates only, an
 exact-prefix fork, a closed connection with the grace passed, or for a turn no marker and an idle thread); it appends
 `recovery_cleared` with the evidence and then the rows the proof establishes, and exits 1 without appending anything but the
 sighting of a closed connection when it does not hold. `--adopt` names the thread (at the call's cwd, a root thread of the
-source, for a fork a fork of the recorded source) or the turn (on the call's thread, carrying the call's marker when it has
-one) that is the call's, and records that an operator chose it. The command needs the run's journal; this build keeps the
+backend's source - the `appServer` source reconcile lists by - for a fork a fork of the recorded source) or the turn (on the
+call's thread, carrying the call's marker when it has one) that is the call's, and records that an operator chose it; the chosen
+turn is written as a `turn_started` row (`replaces` names the turn the call had recorded), so the next resume follows it. The command needs the run's journal; this build keeps the
 journal in memory, so no process can open another's and the command says so until the journal is stored.
 
-A new attempt starts after the turn of the attempt it replaces has ended: a call the previous process left running on the node is
-interrupted with `turn/interrupt`, the interruption is confirmed with `thread/read`, and only then is its call ended
+A new attempt starts after the turn of the attempt it replaces has ended: a call the previous process left running on the node
+(one whose position the resumed script has not taken over) is interrupted with `turn/interrupt`, the interruption is confirmed with `thread/read`, and only then is its call ended
 `superseded` (reason `superseded_by_attempt`) and the new thread started. A turn that cannot be confirmed interrupted holds the
 new call.
 

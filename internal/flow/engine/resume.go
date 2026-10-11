@@ -63,6 +63,7 @@ func (c *callRun) resumePrior() bool {
 			return false
 		}
 		c.startSeq, c.rec = prep.Seq, rec
+		e.claim(c.id)
 		if m, ok := d["allocation"].(map[string]any); ok {
 			pl := placementFromMap(m)
 			c.placement = &pl
@@ -78,12 +79,15 @@ func (c *callRun) replayResult(rows []Event) CallResult {
 	info, _ := LookupCall(c.e.j, c.id)
 	c.threadID, c.configured, c.cwd = info.ThreadID, info.Configured, info.Cwd
 	var term Event
+	replaced := replacedTurns(rows)
 	for _, ev := range rows {
 		switch {
 		case ev.Event == EvPrepared:
 			c.turnIDs = nil
 		case ev.Event == EvTurnStarted:
-			c.turnIDs = append(c.turnIDs, rowStr(ev.Data, "turn_id"))
+			if !replaced[rowStr(ev.Data, "turn_id")] {
+				c.turnIDs = append(c.turnIDs, rowStr(ev.Data, "turn_id"))
+			}
 		case isTerminal(ev.Event):
 			term = ev
 		}
@@ -109,8 +113,8 @@ func (c *callRun) supersedePrior(ctx context.Context) (CallResult, bool) {
 		if st.terminal != "" || (st.id != c.id && (c.plan.node == "" || st.node != c.plan.node)) {
 			continue
 		}
-		if rec := e.recovery[st.id]; st.id != c.id && rec != nil && rec.Action != RecoverUnknown {
-			continue // its own position goes on from what reconcile decided
+		if st.id != c.id && e.claimedCall(st.id) {
+			continue // the resumed script took its position over: it goes on from what reconcile decided
 		}
 		if host != nil && st.thread != "" && (st.last == EvTurnRequested || st.last == EvTurnStarted) {
 			if err := c.interruptAndConfirm(ctx, host, st); err != nil {
