@@ -26,6 +26,8 @@ const resumeFakeCallMarker = "CALL"
 // real relay: every answer comes from a file in the test's own temporary directory.
 func resumeRelayScript(t *testing.T, assignment, settings string, exit int) (exe, record string) {
 	t.Helper()
+	// The recorded cwd "/w" of the scenarios is a real directory of the test tree (CRW-1265).
+	settings = strings.ReplaceAll(settings, `"/w"`, `"`+resumeWorkdir+`"`)
 	dir := t.TempDir()
 	record = filepath.Join(dir, "argv.txt")
 	assignmentPath := filepath.Join(dir, "assignment.json")
@@ -207,8 +209,8 @@ func TestResumeHappyPathFixesTheOrderAndArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resume["threadId"] != "01child" || resume["excludeTurns"] != true || resume["model"] != "m" ||
-		resume["cwd"] != "/w" || resume["sandbox"] != "read-only" || resume["approvalPolicy"] != "never" ||
-		!slices.Equal(resumeStrings(resume["runtimeWorkspaceRoots"]), []string{"/w"}) {
+		resume["cwd"] != resumeWorkdir || resume["sandbox"] != "read-only" || resume["approvalPolicy"] != "never" ||
+		!slices.Equal(resumeStrings(resume["runtimeWorkspaceRoots"]), []string{resumeWorkdir}) {
 		t.Fatalf("resume params %v", resume)
 	}
 	config, _ := resume["config"].(map[string]any)
@@ -478,7 +480,7 @@ func TestResumeCarriesTheRecordedWorkspaceWritePolicy(t *testing.T) {
 	}
 	config, _ := resume["config"].(map[string]any)
 	section, _ := config["sandbox_workspace_write"].(map[string]any)
-	if !slices.Equal(resumeStrings(section["writable_roots"]), []string{"/w"}) || section["network_access"] != true ||
+	if !slices.Equal(resumeStrings(section["writable_roots"]), []string{resumeWorkdir}) || section["network_access"] != true ||
 		section["exclude_tmpdir_env_var"] != false || section["exclude_slash_tmp"] != true {
 		t.Fatalf("sandbox_workspace_write %v", section)
 	}

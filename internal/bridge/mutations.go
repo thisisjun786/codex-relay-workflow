@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 )
 
 // expectedSettingsKeys is bridge.py EXPECTED_SETTINGS_KEYS, sorted as its refusal lists them.
@@ -159,6 +160,20 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		// so it is refused here, before anything is resumed, and the preserved state is named; so is a
 		// resume whose native root could not be recorded for the thread's SessionStart.
 		native := pyjson.Text(pyjson.Map(state["thread"])["cwd"])
+		// CRW-1265: the resume runs the thread at the cwd the request names, else at the one the host
+		// reports for it, under the sandbox the request names, else the one the host reports. A thread
+		// made in the account home before the rule existed is not run again there. No cwd known (the
+		// host reported none and the request named none) leaves nothing to judge; the sandbox that
+		// cannot be told counts as on.
+		runCWD := contract.CWD
+		if runCWD == "" {
+			runCWD = native
+		}
+		runSandbox := effectiveSandbox(contract.Sandbox, contract.ExpectedPolicy, reportedSandbox(state)...)
+		roots := writableRoots(contract.Roots, contract.ExpectedPolicy)
+		if err = sandboxroot.CheckAll(runCWD, roots, runSandbox); err != nil {
+			return rootRefusal("thread/read", err)
+		}
 		if refusal := stateroot.Guard(os.LookupEnv, native, contract.CWD, in.ThreadID); refusal != nil {
 			message := refusal.Error() + "; message withheld"
 			return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": stateroot.CodeOf(refusal), "message": message}}

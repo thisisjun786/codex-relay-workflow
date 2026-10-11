@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 )
 
 // TestMain points CRW_HOME at a temporary directory for the whole package: every resume a test
@@ -17,10 +19,22 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := 1
-	if err := os.Setenv("CRW_HOME", home); err != nil {
+	// CRW-1265: the tests run threads in temporary directories, so the sandbox base of the rule they
+	// read is the temporary directory, with a fake account home; a test of the rule uses
+	// sandboxroottest.Fake.
+	removeRule, err := sandboxroottest.Install(os.TempDir(), sandboxroottest.FallbackTempParents...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bridge tests: the sandbox-root rule:", err)
+	} else if err := os.Setenv("CRW_HOME", home); err != nil {
 		fmt.Fprintln(os.Stderr, "bridge tests: set CRW_HOME:", err)
 	} else {
 		code = m.Run()
+	}
+	if removeRule != nil {
+		if err := removeRule(); err != nil {
+			fmt.Fprintln(os.Stderr, "bridge tests: remove the sandbox-root rule:", err)
+			code = 1
+		}
 	}
 	if err := os.RemoveAll(home); err != nil {
 		fmt.Fprintln(os.Stderr, "bridge tests: remove the temporary CRW home:", err)

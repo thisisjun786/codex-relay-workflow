@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"path/filepath"
 	"time"
 )
@@ -95,6 +96,11 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 	validate := func() error {
 		cwd, err := directory(in.CWD)
 		if err != nil {
+			return err
+		}
+		// CRW-1265: a sandboxed thread never starts in the account home, above it or above a project
+		// root. Nothing has been written or sent yet, so the request ID stays usable.
+		if err := sandboxroot.CheckAll(cwd, absolute(writableRoots(in.Roots, in.Policy)), effectiveSandbox(in.Sandbox, in.Policy)); err != nil {
 			return err
 		}
 		authorized, err = b.Policy.Authorize(execution.Input{Model: execution.Optional(in.Model), Effort: execution.Optional(in.Effort), CWD: cwd, Exception: in.Exception, Role: in.Role})

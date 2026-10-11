@@ -70,6 +70,14 @@ func (s *Service) launch(cmd *exec.Cmd) error {
 		return err
 	}
 	cmd.Stdout, cmd.Stderr = log, log
+	// CRW-1265: the supervisor and the worker run in the relay's state directory, never in the
+	// directory whoever started them stood in (the account home, for a relay started from a login
+	// shell or a user unit): a sandboxed Codex that ever took the daemon's cwd for its root would
+	// make and remove <home>/.git. A state path that is not absolute is left to the caller's cwd,
+	// because --state names it relative to that directory.
+	if filepath.IsAbs(s.Selection.Path) {
+		cmd.Dir = s.Selection.Path
+	}
 	// subprocess.Popen refuses an environment value holding NUL, with the log already opened:
 	// a declaration recording such a path is os.environ's ValueError, not exec's own error.
 	for _, variable := range cmd.Env {

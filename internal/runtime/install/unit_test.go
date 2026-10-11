@@ -172,7 +172,7 @@ func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
 	common := relay + " --state " + state + " --socket " + socket
 	want := "# Written by crw install register-service and owned by crw install: change it with that command, not by hand.\n" +
 		"[Unit]\nDescription=CRW relay service (starts the relay service once when the user manager starts)\nX-CRW-Owner=crw-install\n\n" +
-		"[Service]\nType=oneshot\nRemainAfterExit=yes\nTimeoutStartSec=60\nUnsetEnvironment=" + policyVar + " " + scopeVar + "\n" +
+		"[Service]\nType=oneshot\nRemainAfterExit=yes\nTimeoutStartSec=60\nWorkingDirectory=" + state + "\nUnsetEnvironment=" + policyVar + " " + scopeVar + "\n" +
 		"ExecStart=" + common + " service start\nExecStop=-" + common + " service stop\n\n[Install]\nWantedBy=default.target\n"
 	if info, err := os.Stat(u.path()); err != nil || u.text() != want || info.Mode().Perm() != 0o644 {
 		t.Fatalf("unit text:\n%s\nwant:\n%s", u.text(), want)

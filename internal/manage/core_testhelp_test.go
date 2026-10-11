@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 )
 
 // The fake crw is this test binary started again, so a test can pin the exact argument
@@ -23,6 +25,9 @@ const (
 	coreFakeDoctorEnv = "CRW_MANAGE_TEST_DOCTOR_STATE"
 	coreFakeExitEnv   = "CRW_MANAGE_TEST_EXIT"
 )
+
+// resumeWorkdir is the directory the child-resume scenarios record as the child's cwd and root.
+var resumeWorkdir string
 
 func TestMain(m *testing.M) {
 	if os.Getenv(coreFakeEnv) != "" {
@@ -49,6 +54,19 @@ func coreMain(m *testing.M) int {
 	}
 	defer func() { _ = os.RemoveAll(root) }()
 	defer premergeTestRepoTemplatesRemove()
+	// CRW-1265: the sandbox-root rule the tests read has this tree as its sandbox base and a fake
+	// account home; the child-resume scenarios run their child in resumeWorkdir.
+	resumeWorkdir = filepath.Join(root, "work")
+	if err := os.MkdirAll(resumeWorkdir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "crw manage tests:", err)
+		return 1
+	}
+	removeRule, err := sandboxroottest.Install(os.TempDir(), sandboxroottest.FallbackTempParents...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "crw manage tests: the sandbox-root rule:", err)
+		return 1
+	}
+	defer func() { _ = removeRule() }()
 	for key, path := range map[string]string{
 		"HOME":            filepath.Join(root, "home"),
 		"CODEX_HOME":      filepath.Join(root, "codex"),

@@ -98,7 +98,7 @@ const FakeAccountHome = "/crw-test-account-home"
 // directory of their own. The
 // returned cleanup removes it. A test that needs particular roots uses Fake instead, which replaces
 // this until the test ends.
-func Install(base string) (cleanup func() error, err error) {
+func Install(base string, projects ...string) (cleanup func() error, err error) {
 	realBase, err := filepath.EvalSymlinks(base)
 	if err != nil {
 		return nil, err
@@ -115,17 +115,56 @@ func Install(base string) (cleanup func() error, err error) {
 		return nil, err
 	}
 	config := filepath.Join(fakes, "crw-config.json")
-	data, _ := json.Marshal(map[string]any{"paths": map[string]string{"sandbox_root": realBase}})
+	doc := map[string]any{"paths": map[string]string{"sandbox_root": realBase}}
+	var roots []string
+	for _, project := range projects {
+		if real, err := filepath.EvalSymlinks(project); err == nil {
+			roots = append(roots, real)
+		}
+	}
+	if len(roots) > 0 {
+		doc["sandbox"] = map[string]any{"project_roots": roots}
+	}
+	data, _ := json.Marshal(doc)
 	if err := os.WriteFile(config, data, 0o644); err != nil {
 		return nil, err
 	}
 	env := map[string]string{"HOME": home, "CODEX_HOME": codex, "CRW_CONFIG": config}
 	restore := sandboxroot.Inject(func(name string) string { return env[name] }, home)
+	// A process the tests start reads the rule from its own environment, so the test process exports the
+	// fake Codex home and configuration to it. The rule's account home there is the passwd home.
+	previous := map[string]*string{}
+	for _, name := range []string{"CODEX_HOME", "CRW_CONFIG"} {
+		if value, ok := os.LookupEnv(name); ok {
+			previous[name] = &value
+		} else {
+			previous[name] = nil
+		}
+		if err := os.Setenv(name, env[name]); err != nil {
+			restore()
+			return nil, err
+		}
+	}
 	return func() error {
 		restore()
+		for name, value := range previous {
+			if value == nil {
+				os.Unsetenv(name)
+			} else {
+				os.Setenv(name, *value)
+			}
+		}
 		return os.RemoveAll(fakes)
 	}, nil
 }
 
 // Setup is Install in the shape of a testsupport.Setup: the isolation root is the sandbox base.
-func Setup(root string) (func() error, error) { return Install(root) }
+func Setup(root string) (func() error, error) { return Install(root, FallbackTempParents...) }
+
+// FallbackTempParents are the system temporary locations testsupport falls back to when TMPDIR is
+// inside a repository; they are project roots of the rule a test binary installs.
+var FallbackTempParents = []string{"/var/tmp", "/dev/shm"}
+
+// SetupTemp is Install in the shape of a testsupport.Setup for a package whose tests make their
+// directories with t.TempDir(): the sandbox base is the temporary directory.
+func SetupTemp(string) (func() error, error) { return Install(os.TempDir(), FallbackTempParents...) }

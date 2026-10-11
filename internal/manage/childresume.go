@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 )
 
 // resumeUsage is the one line crw manage child-resume prints for its help and its refusals.
@@ -137,11 +138,11 @@ func resumeLookupEnv(e *Env) host.LookupEnv {
 }
 
 // resumeExit is the status a refusal ends with: the recorded settings or the stopped-server list
-// are what the operator must fix (2), a disagreement with the host about what the child runs is
+// are what the operator must fix (2; so is a recorded cwd the sandbox-root rule refuses), a disagreement with the host about what the child runs is
 // not something this command may resolve (4), and everything else is the relay or the host (3).
 func resumeExit(f *resumeFailure) int {
 	switch f.Reason {
-	case resumeSettingsUnavailable, resumeDisabledServersUnset:
+	case resumeSettingsUnavailable, resumeDisabledServersUnset, sandboxroot.Code:
 		return usageExit
 	case resumeSettingsMismatch, resumeMCPNotDisabled, stateroot.Code:
 		return 4
@@ -340,6 +341,27 @@ func resumeSandboxConfig(config, sandbox map[string]any) map[string]any {
 	return config
 }
 
+// resumeRootRefusal asks the sandbox-root rule about the cwd, the runtime workspace roots and the
+// policy's writable roots a resume would carry, under the sandbox mode it would carry.
+func resumeRootRefusal(settings *resumeSettings, mode string) *resumeFailure {
+	var writable []string
+	if settings.RuntimeWorkspaceRoots != nil {
+		writable = append(writable, *settings.RuntimeWorkspaceRoots...)
+	}
+	if roots, ok := settings.Sandbox["writableRoots"].([]any); ok {
+		for _, root := range roots {
+			if text, ok := root.(string); ok {
+				writable = append(writable, text)
+			}
+		}
+	}
+	err := sandboxroot.CheckAll(settings.CWD, writable, mode)
+	if err == nil {
+		return nil
+	}
+	return &resumeFailure{Reason: sandboxroot.Code, Detail: err.Error() + "; nothing was sent"}
+}
+
 // resumeRun is one child-resume: two relay reads, then one App Server connection carrying
 // thread/read, thread/resume, mcpServerStatus/list and turn/start. Nothing is sent until the
 // thread is not active and the settings and the servers agree with the record; --dry-run stops
@@ -363,6 +385,13 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	mode, err := resumeSandboxMode(settings.Sandbox)
 	if err != nil {
 		return nil, err
+	}
+	// CRW-1265: the resume runs the child at the recorded cwd with the recorded roots and sandbox, and a
+	// sandboxed child is not run in the account home, above it or above a project root. A child made
+	// there before the rule existed is refused here too, the dry run included, before the App Server is
+	// contacted.
+	if refusal := resumeRootRefusal(settings, mode); refusal != nil {
+		return nil, refusal
 	}
 	limit, err := resumeAutoCompactLimit(e, cfg, *settings)
 	if err != nil {

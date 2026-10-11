@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -91,6 +92,12 @@ func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSe
 	match := managedSpawnMarker(message)
 	if match == nil {
 		return nil, nil
+	}
+	// CRW-1265: the child works in the parent's cwd, and the sandbox it runs under is the host's
+	// to set, so it counts as on. A parent opened in the account home, above it or above a project
+	// root cannot spawn a sandboxed child; the refusal says why.
+	if err := sandboxroot.Check(r.cwd, sandboxroot.Unknown); err != nil {
+		return nil, errors.New("managed spawn refused: the child would run in the parent's working directory, which a sandboxed Codex may not use: " + err.Error())
 	}
 	for _, field := range []struct{ value, name string }{{session, "sessionId"}, {match[1], "dispatchId"}, {match[2], "attemptId"}} {
 		if _, err := dispatchID(field.value, field.name); err != nil {

@@ -10,10 +10,13 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-func TestMain(m *testing.M) { testsupport.Main(m, guidancerecord.RefuseAccountHome) }
+func TestMain(m *testing.M) {
+	testsupport.Main(m, guidancerecord.RefuseAccountHome, sandboxroottest.SetupTemp)
+}
 
 // home is a temporary CRW_HOME and an environment whose HOME and CODEX_HOME are temporary too, so no test reads or writes the
 // real home.

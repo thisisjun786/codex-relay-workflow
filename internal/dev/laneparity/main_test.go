@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contracttest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -32,5 +33,5 @@ func TestMain(m *testing.M) {
 	}
 	// A test that hands the code under test the real account's HOME or CODEX_HOME fails the package, even where
 	// the code swallowed the refusal (CRW-1186).
-	testsupport.Main(m, testsupport.TempDirInRoot, homeguard.RefuseAccountHome)
+	testsupport.Main(m, testsupport.TempDirInRoot, homeguard.RefuseAccountHome, sandboxroottest.Setup)
 }

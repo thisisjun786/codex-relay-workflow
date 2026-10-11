@@ -110,15 +110,28 @@ func (u *unitRun) refuse(outcome, detail string, extra ...contract.Field) (Objec
 // renderUnit is the unit file: the relay's own start, once, when the user manager starts. It names the owned pointer,
 // so an update never rewrites it, and has no restart policy, so after that one start only an operator acts through it.
 func renderUnit(relay, state, socket, scopeDir string) string {
+	return renderUnitText(relay, state, socket, scopeDir, true)
+}
+
+// renderUnitText is renderUnit with or without the WorkingDirectory line. The unit written before CRW-1265 had none; removal still
+// recognises that text as the installer's own.
+func renderUnitText(relay, state, socket, scopeDir string, workingDirectory bool) string {
 	common := relay + " --state " + state + " --socket " + socket
 	start, unset, env := common+" service start", policyVariable+" "+scopeVariable, ""
 	if scopeDir != "" {
 		start += " --allow-isolated-scope"
 		unset, env = policyVariable, "Environment="+scopeVariable+"="+scopeDir+"\n"
 	}
+	// CRW-1265: the user manager starts the unit in the account home when it names no directory, and a relay that keeps
+	// that cwd is a sandbox root candidate the rule refuses. The relay runs in its state directory, which register-service
+	// makes.
+	workdir := ""
+	if workingDirectory {
+		workdir = "WorkingDirectory=" + state + "\n"
+	}
 	return "# Written by crw install register-service and owned by crw install: change it with that command, not by hand.\n" +
 		"[Unit]\nDescription=CRW relay service (starts the relay service once when the user manager starts)\n" + doctor.UnitOwnerLine + "\n\n" +
-		"[Service]\nType=oneshot\nRemainAfterExit=yes\nTimeoutStartSec=60\nUnsetEnvironment=" + unset + "\n" + env +
+		"[Service]\nType=oneshot\nRemainAfterExit=yes\nTimeoutStartSec=60\n" + workdir + "UnsetEnvironment=" + unset + "\n" + env +
 		"ExecStart=" + start + "\nExecStop=-" + common + " service stop\n\n[Install]\nWantedBy=default.target\n"
 }
 
@@ -167,7 +180,7 @@ func rendered(text string) bool {
 			return false
 		}
 	}
-	return !unsafeInUnit.MatchString(scopeDir) && text == renderUnit(exec[1], exec[2], exec[3], scopeDir)
+	return !unsafeInUnit.MatchString(scopeDir) && (text == renderUnit(exec[1], exec[2], exec[3], scopeDir) || text == renderUnitText(exec[1], exec[2], exec[3], scopeDir, false))
 }
 
 // lock takes the lock of the whole surface (one per unit directory, so registrations under different names exclude
@@ -350,6 +363,9 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 	}
 	wrote := outcome == UnitWouldCreate
 	if wrote {
+		if err := os.MkdirAll(selection.Path, 0o700); err != nil {
+			return u.refuse(UnitUnreadable, "the state directory the unit starts the relay in could not be made: "+err.Error())
+		}
 		if err := record.AtomicWrite(u.path, []byte(wanted)); err != nil {
 			return u.refuse(UnitUnreadable, "the unit could not be written: "+err.Error())
 		}

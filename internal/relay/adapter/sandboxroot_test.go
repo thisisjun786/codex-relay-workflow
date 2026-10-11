@@ -132,15 +132,22 @@ func TestGuardedSendKeepsUnsandboxedHomeResume(t *testing.T) {
 		settingsFree bool
 		settings     map[string]any
 		hostTop      map[string]any
+		wantTurn     bool
 	}{
-		{"recorded danger-full-access in the home", false, sandboxSettings(w.Home, []string{w.Home}, full), nil},
-		{"settings-free, the host reports danger-full-access", true, sandboxSettings(w.Home, []string{w.Home}, workspaceWrite()), map[string]any{"sandbox": full}},
+		{"recorded danger-full-access in the home", false, sandboxSettings(w.Home, []string{w.Home}, full), nil, true},
+		{"settings-free, record and host say danger-full-access", true, sandboxSettings(w.Home, []string{w.Home}, full), map[string]any{"sandbox": full}, true},
+		// The host's report decides the sandbox of a settings-free resume before the record does: the rule lets the
+		// resume go out, and the later comparison of the answer with the record is another check's business.
+		{"settings-free, the host reports danger-full-access", true, sandboxSettings(w.Home, []string{w.Home}, workspaceWrite()), map[string]any{"sandbox": full}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			receipt, methods := sandboxedSend(t, c.settings, c.settingsFree, idleThread(w.Home), c.hostTop,
 				resumeAt(c.settings, w.Home, full), map[string]any{"turn": map[string]any{"id": "fake-turn-1"}})
-			if fmt.Sprint(methods) != "[thread/read thread/resume turn/start]" {
-				text, _ := json.Marshal(receipt)
+			text, _ := json.Marshal(receipt)
+			if strings.Contains(string(text), sandboxroot.Code) || len(methods) < 2 || methods[1] != "thread/resume" {
+				t.Fatalf("calls %v; receipt %s", methods, text)
+			}
+			if c.wantTurn && fmt.Sprint(methods) != "[thread/read thread/resume turn/start]" {
 				t.Fatalf("calls %v; receipt %s", methods, text)
 			}
 		})
@@ -151,6 +158,7 @@ func TestGuardedSendKeepsUnsandboxedHomeResume(t *testing.T) {
 func resumeAt(settings map[string]any, cwd string, sandbox map[string]any) map[string]any {
 	r := resume()
 	r["cwd"], r["runtimeWorkspaceRoots"], r["sandbox"] = cwd, []any{cwd}, sandbox
+	r["thread"] = map[string]any{"id": "thread-1", "environments": []any{map[string]any{"environmentId": "local", "cwd": cwd, "runtimeWorkspaceRoots": []any{cwd}}}}
 	r["model"], r["reasoningEffort"] = settings["model"], settings["reasoningEffort"]
 	return r
 }

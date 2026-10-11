@@ -468,10 +468,14 @@ func CheckWritable(root, sandbox string) error {
 	return nil
 }
 
-// CheckAll judges a working root and then each writable root.
+// CheckAll judges a working root and then each writable root. A caller that does not know the
+// working root (a resume whose thread reports none and whose request names none) passes "" and has
+// only its writable roots judged.
 func CheckAll(cwd string, writable []string, sandbox string) error {
-	if err := Check(cwd, sandbox); err != nil {
-		return err
+	if cwd != "" {
+		if err := Check(cwd, sandbox); err != nil {
+			return err
+		}
 	}
 	for _, root := range writable {
 		if err := CheckWritable(root, sandbox); err != nil {

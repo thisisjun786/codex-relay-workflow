@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/worktrees"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 )
 
 type CreateWorktree struct {
@@ -95,6 +96,11 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		if err != nil {
 			return err
 		}
+		// CRW-1265: before anything is reserved or created, the destination must be a place a
+		// sandboxed Codex may run in once it exists.
+		if err = sandboxroot.CheckDestination(in.Destination, in.Sandbox); err != nil {
+			return rootRefusal("worktree/preflight", err)
+		}
 		if in.ProjectID != "" {
 			if _, err = b.call(ctx, "project/read", map[string]any{"projectId": in.ProjectID}); err != nil {
 				return err
@@ -146,6 +152,11 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		}
 		if !w.Matches(ctx, actual) {
 			return &Invalid{"Worktree placement/base mismatch; initial prompt withheld"}
+		}
+		// CRW-1265: the finished worktree is a linked worktree under a worktree base, so this passes for
+		// every destination the preflight let through; it is asked again before the host is.
+		if err = sandboxroot.CheckAll(w.Destination, writableRoots([]string{w.Destination}, in.Policy), in.Sandbox); err != nil {
+			return rootRefusal("worktree/check", err)
 		}
 		launch := map[string]any{"cwd": w.Destination, "sandbox": in.Sandbox, "approvalPolicy": "never", "ephemeral": false, "runtimeWorkspaceRoots": []string{w.Destination}, "model": auth.Model}
 		if config := contract.Config(); len(config) > 0 {
