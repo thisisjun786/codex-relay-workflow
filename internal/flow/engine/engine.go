@@ -1,6 +1,6 @@
 // Package engine runs CRW workflow scripts: it gives a loaded script (internal/flow/script) its globals, assigns every
 // call its (path, position) identity, journals what the script asked and what it got, and drives agent calls through a
-// Backend. The fake backend is the only backend F01 ships; the journal is in memory (store persistence is F06).
+// Backend. The journal is in memory unless the caller gives one (internal/flow/journal persists it in the relay store).
 package engine
 
 import (
@@ -48,7 +48,8 @@ type Config struct {
 	Workflow string
 	Backend  Backend
 	Policy   *Policy
-	// Journal receives every row; nil is a fresh in-memory journal.
+	// Journal receives every row; nil is a fresh in-memory journal. A journal that can fail to store a row implements
+	// FailingJournal: the engine then sends nothing whose intent row could not be stored.
 	Journal Journal
 	// Args is the JSON value the script reads as args.
 	Args json.RawMessage
@@ -156,9 +157,13 @@ type Engine struct {
 	recovery map[string]*Recovery
 	startSeq int
 	// claimed are the calls of the previous process that a position of the resumed script took over (resumePrior): they go
-	// on in this process, so a new attempt of their node does not supersede them.
-	claimedM sync.Mutex
-	claimed  map[string]bool
+	// on in this process, so a new attempt of their node does not supersede them. superseding are the calls of the previous
+	// process that a new attempt ends (or ended) superseded. Both are decided under claimedM, so a call is either claimed or
+	// superseded and never both: whichever decision comes first stands, and a later claim of a call that was superseded
+	// runs its position as a call of its own.
+	claimedM   sync.Mutex
+	claimed    map[string]bool
+	superseded map[string]*supersedeOp
 	// escalated are the calls whose dispatch_unknown escalation was written by this run.
 	escalatedM sync.Mutex
 	escalated  map[string]bool
@@ -301,6 +306,9 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	// run's last one.
 	e.cancel()
 	e.inflight.Wait()
+	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
+		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
+	}
 	e.undeliveredM.Lock()
 	for _, r := range e.undelivered {
 		e.results = append(e.results, r)
@@ -317,6 +325,11 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	res.Phases = e.phases
 	res.Logs = e.logs
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+	// the finished row is written with the rows still buffered: when that write fails the run did not end on disk, and the
+	// caller is told so instead of getting a completed run
+	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
+		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
+	}
 	return res, nil
 }
 
@@ -479,20 +492,58 @@ func (e *Engine) nodeStopReason(node string) string {
 	return e.stopped[node]
 }
 
-// claim records that the resumed script took over a call of the previous process; claimedCall asks whether it did.
-func (e *Engine) claim(id string) {
+// claim records that the resumed script took over a call of the previous process, unless a new attempt has superseded it
+// or is superseding it: it reports whether the call is the position's to go on with.
+func (e *Engine) claim(id string) bool {
 	e.claimedM.Lock()
+	defer e.claimedM.Unlock()
+	if e.superseded[id] != nil {
+		return false
+	}
 	if e.claimed == nil {
 		e.claimed = map[string]bool{}
 	}
 	e.claimed[id] = true
-	e.claimedM.Unlock()
+	return true
 }
 
-func (e *Engine) claimedCall(id string) bool {
+// supersedeOp is the end of one call of the previous process by a new attempt. The call that decided it does the work (the
+// interruption of a turn it may still run, the superseded row); a call that wants the same end waits for it.
+type supersedeOp struct {
+	done chan struct{}
+	err  error
+}
+
+// beginSupersede decides, under the same lock as claim, whether the new attempt ends the call: it may not when the resumed
+// script claimed it (unless it is the call's own position, which never claims itself) and it need not when another attempt
+// already does. owner is set for the one caller that does the work; the others wait on op.done.
+func (e *Engine) beginSupersede(id string, own bool) (op *supersedeOp, owner, skip bool) {
 	e.claimedM.Lock()
 	defer e.claimedM.Unlock()
-	return e.claimed[id]
+	if !own && e.claimed[id] {
+		return nil, false, true
+	}
+	if prior := e.superseded[id]; prior != nil {
+		return prior, false, false
+	}
+	if e.superseded == nil {
+		e.superseded = map[string]*supersedeOp{}
+	}
+	op = &supersedeOp{done: make(chan struct{})}
+	e.superseded[id] = op
+	return op, true, false
+}
+
+// endSupersede finishes the work of the owner. A failed end (a turn that cannot be confirmed interrupted) leaves the call
+// open, so it is forgotten: nothing was decided for it.
+func (e *Engine) endSupersede(id string, op *supersedeOp, err error) {
+	op.err = err
+	if err != nil {
+		e.claimedM.Lock()
+		delete(e.superseded, id)
+		e.claimedM.Unlock()
+	}
+	close(op.done)
 }
 
 // resume reconciles the journal's open calls against the host before anything else runs, and holds every node that has a
@@ -520,6 +571,32 @@ func (e *Engine) resume(ctx context.Context) {
 		e.stopNode(node, ReasonRecoveryHold)
 	}
 }
+
+// recorded reports whether the journal of a resumed run already holds the completed row of op, a call that only records a fact
+// (crw.tierStep), at callID: such a call is not recorded again. The row must be the record of op itself: the call id is
+// positional, and a completed call of another operation at the position (an agent call of the earlier script) is not the
+// record of this one. A run that does not resume a journal records every call.
+func (e *Engine) recorded(callID, op string) bool {
+	if e.cfg.Resume == nil {
+		return false
+	}
+	for _, ev := range CallEvents(e.j, callID) {
+		if ev.Seq < e.startSeq && ev.Op == op && ev.Event == EvCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+// journalFailed ends the run because a row could not be stored. It may be called from any goroutine: the calls in flight are
+// cancelled at once, and the run's failure is set on the loop's goroutine (the run reports the journal's error at its end in
+// any case).
+func (e *Engine) journalFailed(err error) {
+	e.cancel()
+	e.loop.Post(nil, func() { e.fail(ErrKindEngine, journalError(err)) })
+}
+
+func journalError(err error) error { return fmt.Errorf("the journal cannot be written: %w", err) }
 
 // escalateUnknown writes the dispatch_unknown escalation of a call once.
 func (e *Engine) escalateUnknown(c *callRun, detail string) {

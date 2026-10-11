@@ -76,6 +76,21 @@ func New(cfg Config) (*Backend, error) {
 	if cfg.Client == nil || cfg.Allocator == nil {
 		return nil, errors.New("agent: a backend needs an App Server client and an allocator")
 	}
+	return newBackend(cfg)
+}
+
+// NewHost returns a backend that only reads the host (engine.ReconHost): `crw flow recover` asks it about the threads and
+// turns of a run that is not running. It has no allocator, so it places no call and makes no worktree.
+func NewHost(cfg Config) (*Backend, error) {
+	if cfg.Client == nil {
+		return nil, errors.New("agent: a host reader needs an App Server client")
+	}
+	return newBackend(cfg)
+}
+
+var errNoAllocator = errors.New("agent: this backend only reads the host: it has no allocator")
+
+func newBackend(cfg Config) (*Backend, error) {
 	if cfg.Threads == nil {
 		cfg.Threads = NewThreads()
 	}
@@ -128,21 +143,33 @@ func (b *Backend) LeavesLostRequestsOpen() bool { return true }
 
 // Place implements engine.Placer.
 func (b *Backend) Place(req engine.PlaceRequest) (engine.Placement, error) {
+	if b.cfg.Allocator == nil {
+		return engine.Placement{}, errNoAllocator
+	}
 	return b.cfg.Allocator.Place(req)
 }
 
 // Establish implements engine.Placer.
 func (b *Backend) Establish(ctx context.Context, req engine.PlaceRequest, p engine.Placement) error {
+	if b.cfg.Allocator == nil {
+		return errNoAllocator
+	}
 	return b.cfg.Allocator.Establish(ctx, req, p)
 }
 
 // Recheck implements engine.Placer.
 func (b *Backend) Recheck(ctx context.Context, p engine.Placement) error {
+	if b.cfg.Allocator == nil {
+		return errNoAllocator
+	}
 	return b.cfg.Allocator.Recheck(ctx, p)
 }
 
 // Snapshot implements engine.Placer.
 func (b *Backend) Snapshot(ctx context.Context, path string) (string, error) {
+	if b.cfg.Allocator == nil {
+		return "", errNoAllocator
+	}
 	return b.cfg.Allocator.Snapshot(ctx, path)
 }
 

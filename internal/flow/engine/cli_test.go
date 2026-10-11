@@ -143,8 +143,8 @@ func TestFlowRecoverCommandLine(t *testing.T) {
 		"two calls":      {[]string{"recover", "c1", "c2", "--absent"}, 2, "exactly one call id"},
 		"no mode":        {[]string{"recover", "c1"}, 2, "exactly one of --adopt and --absent"},
 		"both modes":     {[]string{"recover", "c1", "--absent", "--adopt", "t1"}, 2, "exactly one of --adopt and --absent"},
-		"no journal":     {[]string{"recover", "c1", "--absent"}, 2, "keeps a run's journal in memory"},
-		"flags after":    {[]string{"recover", "c1", "--adopt", "t1"}, 2, "keeps a run's journal in memory"},
+		"no journal":     {[]string{"recover", "c1", "--absent"}, 2, "installs no journal store"},
+		"flags after":    {[]string{"recover", "c1", "--adopt", "t1"}, 2, "installs no journal store"},
 		"unknown flag":   {[]string{"recover", "c1", "--force"}, 2, "flag provided but not defined"},
 		"help":           {[]string{"recover", "--help"}, 0, "usage: crw flow recover"},
 		"top-level help": {[]string{"--help"}, 0, ""},
@@ -162,7 +162,9 @@ func TestFlowRecoverCommandLine(t *testing.T) {
 	t.Run("with a journal and a host", func(t *testing.T) {
 		j := heldJournal(EvThreadRequested)
 		host := &stubHost{threads: []HostThread{{ID: "t-new", Cwd: "/w/a1", Source: "appServer", CreatedAt: time.UnixMilli(1000), Status: "idle"}}}
-		RecoverEnv = func(ctx context.Context, runID string) (Journal, ReconHost, error) { return j, host, nil }
+		RecoverEnv = func(ctx context.Context, req RecoverEnvRequest) (RecoverSetup, error) {
+			return RecoverSetup{Journal: j, Host: host, RunID: req.RunID}, nil
+		}
 		defer func() { RecoverEnv = nil }()
 		code, out, errOut := runFlow(t, "recover", "--run", "r", "c1", "--absent")
 		if code != 0 || !strings.Contains(out, `"action": "thread_ready"`) || !strings.Contains(out, `"threadId": "t-new"`) {

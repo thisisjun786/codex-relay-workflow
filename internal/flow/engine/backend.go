@@ -34,7 +34,8 @@ const (
 	ReasonSupersededByResume       = "superseded_by_resume"
 	ReasonCancelled                = "cancelled"
 	// ReasonWorktreeFailed ends a call whose worktree could not be decided (refused: no start commit is recorded) or
-	// made (held: git failed); nothing was sent to the host.
+	// made (held: git failed; nothing was sent to the host), or a completed executor turn whose worktree could not be
+	// snapshotted (held: the pending tree P cannot be recorded; the turn was sent and its row carries pending_tree_error).
 	ReasonWorktreeFailed = "worktree_failed"
 	// ReasonRestoreSnapshotMismatch is the reason of a call that adopted a restored worktree whose live snapshot is not
 	// the one the restore verified: it sent nothing further and its node stops with an escalation. Every later call of
