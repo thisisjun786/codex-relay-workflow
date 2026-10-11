@@ -229,3 +229,53 @@ func TestBatchPlanJudgesAnIssueGivenAsUUIDAndIdentifierOnce(t *testing.T) {
 		}
 	}
 }
+
+// An entry that names an issue by an alias only a later entry ties to it is still that issue: the plan
+// first collects every id-identifier correspondence of the whole input, so in any order of the UUID-only,
+// identifier-only and both-names entries the issue is judged once, by its first entry, and the others are
+// held as duplicates of it, also when the first entry is held.
+func TestBatchPlanTiesAliasesAcrossTheWholeInput(t *testing.T) {
+	const uuid = "0b6f8a2e-1c3d-4e5f-9a7b-8c9d0e1f2a3b"
+	body := batchJSON(t, batchReadyBody)
+	entry := func(names, status string) string {
+		return `{` + names + `,"title":"t","description":` + body + `,"status":"` + status + `","labels":["night"]}`
+	}
+	u, i, both := `"id":"`+uuid+`"`, `"identifier":"CRW-1"`, `"id":"`+uuid+`","identifier":"CRW-1"`
+	other := entry(`"id":"CRW-2"`, "Backlog")
+	for name, tc := range map[string]struct {
+		list     []string
+		selected string
+		held     string
+	}{
+		"uuid, both, identifier":        {[]string{entry(u, "Backlog"), entry(both, "Backlog"), entry(i, "Backlog")}, uuid, "CRW-1:duplicate,CRW-1:duplicate"},
+		"identifier, both, uuid":        {[]string{entry(i, "Backlog"), entry(both, "Backlog"), entry(u, "Backlog")}, "CRW-1", "CRW-1:duplicate," + uuid + ":duplicate"},
+		"uuid, identifier, both":        {[]string{entry(u, "Backlog"), entry(i, "Backlog"), entry(both, "Backlog")}, uuid, "CRW-1:duplicate,CRW-1:duplicate"},
+		"identifier, uuid, both":        {[]string{entry(i, "Backlog"), entry(u, "Backlog"), entry(both, "Backlog")}, "CRW-1", uuid + ":duplicate,CRW-1:duplicate"},
+		"both, uuid, identifier":        {[]string{entry(both, "Backlog"), entry(u, "Backlog"), entry(i, "Backlog")}, "CRW-1", uuid + ":duplicate,CRW-1:duplicate"},
+		"both, identifier, uuid":        {[]string{entry(both, "Backlog"), entry(i, "Backlog"), entry(u, "Backlog")}, "CRW-1", "CRW-1:duplicate," + uuid + ":duplicate"},
+		"uuid, other, identifier, both": {[]string{entry(u, "Backlog"), other, entry(i, "Backlog"), entry(both, "Backlog")}, uuid + ",CRW-2", "CRW-1:duplicate,CRW-1:duplicate"},
+		"held first, both, identifier":  {[]string{entry(u, "In Progress"), entry(both, "Backlog"), entry(i, "Backlog")}, "", uuid + ":state,CRW-1:duplicate,CRW-1:duplicate"},
+		"held first, identifier, both":  {[]string{entry(u, "In Progress"), entry(i, "Backlog"), entry(both, "Backlog")}, "", uuid + ":state,CRW-1:duplicate,CRW-1:duplicate"},
+	} {
+		issues, err := BatchParseIssues([]byte("[" + strings.Join(tc.list, ",") + "]"))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		plan := BatchPlan("night", issues)
+		var selected, held []string
+		for _, s := range plan.Selected {
+			selected = append(selected, s.Issue)
+		}
+		for _, h := range plan.Held {
+			held = append(held, h.Issue+":"+h.Gate)
+		}
+		if strings.Join(selected, ",") != tc.selected || strings.Join(held, ",") != tc.held {
+			t.Errorf("%s: selected %v held %v, want selected [%s] held [%s]", name, selected, held, tc.selected, tc.held)
+		}
+		for _, h := range plan.Held {
+			if h.Gate == batchGateDuplicate && !strings.Contains(strings.Join(h.Reasons, " "), "first as "+issues[0].ID) {
+				t.Errorf("%s: the duplicate %s does not name the first entry: %v", name, h.Issue, h.Reasons)
+			}
+		}
+	}
+}

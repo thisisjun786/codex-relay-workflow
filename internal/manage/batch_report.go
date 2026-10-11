@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
@@ -301,6 +303,7 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 	if len(unverified) == 0 {
 		evidence = append(evidence, "미확인: 없음")
 	}
+	evidence = append(evidence, batchLabelIdentity(d.Label))
 	section(batchHeadingEvidence, evidence)
 	return b.String()
 }
@@ -321,25 +324,61 @@ func batchSlug(label string) string {
 	}
 	slug := strings.Trim(b.String(), "-")
 	if r := []rune(slug); len(r) > 64 {
-		slug = strings.Trim(string(r[:64]), "-")
+		slug = string(r[:64])
 	}
+	// At most 128 bytes, cut between characters, so the file name (with the date, the digest and the
+	// temporary suffix of the write) stays within the 255 bytes a file system accepts.
+	for len(slug) > 128 {
+		_, size := utf8.DecodeLastRuneInString(slug)
+		slug = slug[:len(slug)-size]
+	}
+	slug = strings.Trim(slug, "-")
 	if slug == "" {
 		return "batch"
 	}
 	return slug
 }
 
-// batchLabelDigest is a stable short digest of the real label (as the digest gives it), so two labels
-// that fold to the same slug, or share its first 64 characters, never name the same report file.
-func batchLabelDigest(label string) string {
+// batchLabelDigest is a stable digest of the real label (as the digest gives it): the first 128 bits of its
+// sha256 in hex, so two labels that fold to the same slug, or share its first 64 characters, do not name the
+// same report file. The report's last line holds the whole sha256 (batchLabelIdentity), and a report of
+// another label already at the path is never replaced, so even a collision of this digest loses no report.
+// A variable so that a test can make two labels collide.
+var batchLabelDigest = func(label string) string {
 	sum := sha256.Sum256([]byte(label))
-	return hex.EncodeToString(sum[:6])
+	return hex.EncodeToString(sum[:16])
+}
+
+// batchLabelIdentity is the last item of every report: the whole sha256 of the real label, which says
+// which batch the report file belongs to. No free text can make it: free text never starts a line.
+func batchLabelIdentity(label string) string {
+	sum := sha256.Sum256([]byte(label))
+	return "라벨 식별: sha256 " + hex.EncodeToString(sum[:])
+}
+
+// batchReportOwned refuses to replace a file at the report path that is not a report of this label: a
+// report of another label (two labels whose digests collide) or a file this command did not write. A
+// missing file is free.
+func batchReportOwned(path, label string) error {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the file already at the report path: %w", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if lines[len(lines)-1] != "- "+batchLabelIdentity(label) {
+		return fmt.Errorf("%s holds the report of another label (or a file that is not a batch report of this label); it is kept and this report is not written", path)
+	}
+	return nil
 }
 
 // batchReportPath is where a digest's report is written:
 // <state_dir>/batch/reports/<date>-<label slug>-<label digest>.md, the date being the finish day in the
 // digest's own offset (the morning the report is read), or today when the run recorded no finish. The
-// same label on the same day is the same batch and its report is rewritten.
+// same label on the same day is the same batch and its report is rewritten; a file of another label at the
+// path is kept and the report is refused (batchReportOwned).
 func batchReportPath(e *Env, d BatchDigest) string {
 	day := e.Now().UTC().Format("2006-01-02")
 	if t, err := time.Parse(time.RFC3339, d.FinishedAt); err == nil {
@@ -372,7 +411,7 @@ func batchRunReport(_ context.Context, e *Env, args []string) int {
 		return batchRefuse(e, batchReportUsage, "report", err)
 	}
 	path := batchReportPath(e, digest)
-	if err := batchWriteFile(path, []byte(BatchReport(digest, e.Now()))); err != nil {
+	if err := batchWriteFile(path, []byte(BatchReport(digest, e.Now())), func() error { return batchReportOwned(path, digest.Label) }); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage batch report: error: %v\n", err)
 		return 3
 	}
@@ -381,8 +420,9 @@ func batchRunReport(_ context.Context, e *Env, args []string) int {
 }
 
 // batchWriteFile writes a report through a private temporary file in its directory, synced before the
-// rename that commits it, so a morning reader sees the old report or the whole new one.
-func batchWriteFile(path string, data []byte) error {
+// rename that commits it, so a morning reader sees the old report or the whole new one. check runs just
+// before the rename; when it fails the temporary file is removed and the file at path is kept.
+func batchWriteFile(path string, data []byte, check func() error) error {
 	dir := rootDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("the report directory: %w", err)
@@ -405,6 +445,10 @@ func batchWriteFile(path string, data []byte) error {
 	}
 	if err := file.Close(); err != nil {
 		return fail("close the report", err)
+	}
+	if err := check(); err != nil {
+		os.Remove(temporary)
+		return err
 	}
 	if err := os.Rename(temporary, path); err != nil {
 		return fail("commit the report", err)

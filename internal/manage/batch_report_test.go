@@ -1,6 +1,8 @@
 package manage
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -440,5 +442,87 @@ func TestBatchReportNeutralisesHTMLInFreeText(t *testing.T) {
 	}
 	if !strings.Contains(report, "통합 1건") {
 		t.Errorf("only CRW-5 is integrated:\n%s", report)
+	}
+}
+
+// Two labels whose short digests are equal (a real collision of the 48-bit digest this command first
+// used) get different report files, and the first report is kept.
+func TestBatchReportLabelsOfACollidingShortDigestKeepTheirReports(t *testing.T) {
+	auditListHome(t)
+	e, _, _ := auditTestEnv(t)
+	prefix := strings.Repeat("n", 64)
+	a, b := prefix+"190555964047888", prefix+"123745725611942"
+	short := func(s string) string { sum := sha256.Sum256([]byte(s)); return hex.EncodeToString(sum[:6]) }
+	if short(a) != short(b) {
+		t.Fatal("the fixture is not a collision of the 48-bit digest")
+	}
+	pa := batchReportFor(t, e, a)
+	before, err := os.ReadFile(pa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb := batchReportFor(t, e, b)
+	after, err := os.ReadFile(pa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pa == pb || string(before) != string(after) {
+		t.Errorf("labels %q and %q share %s (report of the first replaced: %v)", a, b, pa, string(before) != string(after))
+	}
+}
+
+// When the label digest of two labels is the same, the second batch's report is refused and the report
+// already at the path is kept; the same label is still rewritten.
+func TestBatchReportRefusesAnotherLabelAtTheSamePath(t *testing.T) {
+	state := auditListHome(t)
+	e, _, _ := auditTestEnv(t)
+	orig := batchLabelDigest
+	batchLabelDigest = func(string) string { return "0000" }
+	t.Cleanup(func() { batchLabelDigest = orig })
+	pa := batchReportFor(t, e, "night a")
+	before, err := os.ReadFile(pa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"schema":"crw-batch-digest/1","label":"night-a","selected":["CRW-1"],"finished_at":"2026-10-12T06:40:00+09:00","items":[]}`
+	file := filepath.Join(t.TempDir(), "d.json")
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := batchRun(t, e, "", "report", "--digest", file)
+	if code == 0 || strings.TrimSpace(out) != "" || !strings.Contains(errOut, "another label") {
+		t.Errorf("a second label at the same path: exit %d, stdout %q, stderr %q; want a refusal", code, out, errOut)
+	}
+	if after, _ := os.ReadFile(pa); string(after) != string(before) {
+		t.Errorf("the report of the first label was replaced:\n%s", after)
+	}
+	if again := batchReportFor(t, e, "night a"); again != pa {
+		t.Errorf("the same label moved from %s to %s", pa, again)
+	}
+	entries, _ := os.ReadDir(filepath.Join(state, "batch", "reports"))
+	if len(entries) != 1 {
+		t.Errorf("the reports directory holds %d entries, want 1 (no temporary file left)", len(entries))
+	}
+	// A file at the path that is not a report of this command (no label line) is not replaced either.
+	if err := os.WriteFile(pa, []byte("# notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := batchRun(t, e, "", "report", "--digest", file); code == 0 {
+		t.Errorf("a file without the label line was replaced")
+	}
+	if raw, _ := os.ReadFile(pa); string(raw) != "# notes\n" {
+		t.Errorf("the file without the label line was changed: %q", raw)
+	}
+}
+
+// A label of letters that take four bytes each still names a file the file system accepts: the file name
+// part of the label is bounded in bytes, not only in characters.
+func TestBatchReportLongWideLabelStillWrites(t *testing.T) {
+	auditListHome(t)
+	e, _, _ := auditTestEnv(t)
+	label := strings.Repeat("\U00020000", 80)
+	path := batchReportFor(t, e, label)
+	if n := len(filepath.Base(path)); n > 200 {
+		t.Errorf("the report file name is %d bytes", n)
 	}
 }

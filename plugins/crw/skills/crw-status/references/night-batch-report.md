@@ -5,9 +5,13 @@ A night batch is a set of Backlog issues chosen by one label and run once while 
 [crw-status](../SKILL.md) already requires: the conclusion first, then what moved, then what is
 waiting, then the evidence and what stays unverified. `crw manage batch report --digest FILE` writes
 it into the management state directory at `<state_dir>/batch/reports/<finish date>-<label>-<label digest>.md`, from
-the run digest the night run leaves. The label digest is a short hash of the label as the digest gives it,
-so two labels never share a report file (labels that differ only in punctuation or case, or share a long
-prefix, still differ); the same label on the same day is the same batch and its report is rewritten. Nothing in the report is written from memory of the run: an item is
+the run digest the night run leaves. `<label>` is the label folded to letters, digits and dashes (at most 64
+characters and 128 bytes), and the label digest is the first 32 hex digits of the sha256 of the label as the
+digest gives it, so labels that differ only in punctuation or case, or share a long prefix, get different
+files. The last item of every report is `라벨 식별: sha256 <hex>`, the whole sha256 of the label: the same
+label on the same day is the same batch and its report is rewritten, while a file at the path that is not
+a report of this label (another label whose digest collides, or a file the command did not write) is kept
+and the new report is refused. Nothing in the report is written from memory of the run: an item is
 placed by what the digest records.
 
 ## Sections
@@ -54,5 +58,7 @@ to the report, and `&`, `<` and `>` are written as `&amp;`, `&lt;` and `&gt;`, s
 text and never as a tag (a fake heading or item) in a viewer that allows HTML in Markdown. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which
 reads the Linear issues the caller supplies and selects those in Backlog that carry the label and pass
 the release gate (`crw skill issue-ready check`), holding the others with their reasons. An issue the list
-gives twice, even once by its identifier and once by its UUID, is judged once; the repeat is held as a
-duplicate.
+gives twice, even once by its identifier and once by its UUID, is judged once, by its first entry; every
+correspondence of an id and an identifier in the whole list is collected first, so an entry that ties the
+two names, wherever it stands, makes every entry of either name the same issue, and each repeat is held as a
+duplicate naming the first entry.

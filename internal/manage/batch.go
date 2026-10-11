@@ -259,35 +259,67 @@ func batchBacklog(states []string) (bool, string) {
 	return true, ""
 }
 
-// BatchPlan is the selection. An issue is selected only when it is Backlog, carries the label (no case)
-// and passes the release gate (skill.CheckIssueReady, the one implementation of it); every other issue is
-// held with the first gate that stopped it and that gate's reasons. A repeated issue is judged once,
-// whether it is repeated by the same name or by its identifier and its id (the names compare without case).
-// The order of the input is kept, so the same input gives the same plan.
-func BatchPlan(label string, issues []BatchIssue) BatchPlanDocument {
-	plan := BatchPlanDocument{Schema: batchPlanSchema, Label: label, Selected: []BatchSelected{}, Held: []BatchHeld{}}
-	seen := map[string]string{}
-	hold := func(issue BatchIssue, gate string, reasons ...string) {
-		plan.Held = append(plan.Held, BatchHeld{Issue: issue.ID, Title: issue.Title, Gate: gate, Reasons: reasons})
+// batchFirstEntries ties the entries of the input that name one issue: two entries that share a name (an
+// identifier or an id, without case) are one issue, also when only a third entry gives the correspondence
+// of the names, wherever it stands in the input. Every correspondence of the whole input is collected
+// before any entry is judged. It gives, for each entry, the index of the first entry of its issue.
+func batchFirstEntries(issues []BatchIssue) []int {
+	root := make([]int, len(issues))
+	for i := range root {
+		root[i] = i
 	}
-	for _, issue := range issues {
+	find := func(i int) int {
+		for root[i] != i {
+			root[i] = root[root[i]]
+			i = root[i]
+		}
+		return i
+	}
+	owner := map[string]int{}
+	for i, issue := range issues {
 		keys := issue.Keys
 		if len(keys) == 0 {
 			keys = []string{issue.ID}
 		}
-		first := ""
 		for _, key := range keys {
-			if f, ok := seen[strings.ToLower(key)]; ok {
-				first = f
-				break
+			key = strings.ToLower(key)
+			j, ok := owner[key]
+			if !ok {
+				owner[key] = i
+				continue
 			}
+			// The root of a group is its first entry: the later root joins the earlier one.
+			a, b := find(i), find(j)
+			if a > b {
+				a, b = b, a
+			}
+			root[b] = a
 		}
-		if first != "" {
-			hold(issue, batchGateDuplicate, fmt.Sprintf("duplicate: %s appears more than once in the input (first as %s); only its first entry is judged", issue.ID, first))
+	}
+	first := make([]int, len(issues))
+	for i := range issues {
+		first[i] = find(i)
+	}
+	return first
+}
+
+// BatchPlan is the selection. An issue is selected only when it is Backlog, carries the label (no case)
+// and passes the release gate (skill.CheckIssueReady, the one implementation of it); every other issue is
+// held with the first gate that stopped it and that gate's reasons. A repeated issue is judged once, by its
+// first entry, whether it is repeated by the same name or by its identifier and its id, and whatever entry
+// of the input ties the two (batchFirstEntries; the names compare without case); every later entry of it
+// is held as a duplicate naming the first. The order of the input is kept, so the same input gives the
+// same plan.
+func BatchPlan(label string, issues []BatchIssue) BatchPlanDocument {
+	plan := BatchPlanDocument{Schema: batchPlanSchema, Label: label, Selected: []BatchSelected{}, Held: []BatchHeld{}}
+	hold := func(issue BatchIssue, gate string, reasons ...string) {
+		plan.Held = append(plan.Held, BatchHeld{Issue: issue.ID, Title: issue.Title, Gate: gate, Reasons: reasons})
+	}
+	first := batchFirstEntries(issues)
+	for i, issue := range issues {
+		if f := first[i]; f != i {
+			hold(issue, batchGateDuplicate, fmt.Sprintf("duplicate: %s is an issue an earlier entry of the input already names (first as %s, entry %d; the input ties their id and identifier); only its first entry is judged", issue.ID, issues[f].ID, f+1))
 			continue
-		}
-		for _, key := range keys {
-			seen[strings.ToLower(key)] = issue.ID
 		}
 		if ok, got := batchBacklog(issue.States); !ok {
 			if got == "" {
