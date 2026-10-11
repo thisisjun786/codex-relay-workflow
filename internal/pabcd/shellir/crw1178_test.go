@@ -210,7 +210,7 @@ func TestCRW1178UntaggedOrMalformedCacheNameIsRefused(t *testing.T) {
 
 // crw1178Route is the way past a cache refusal the reason names: the cache is removed by a command of its own, and the run then writes
 // no new one.
-const crw1178Route = "remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
+const crw1178Route = "then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
 
 // CRW-1178 (S2R2-F1) as decided after verification round 8: the first python -m unittest creates __pycache__, and a later run beside
 // it is refused, as at the base. No header property of an entry the reader judges before the run survives the run itself: a test

@@ -53,11 +53,13 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
 // The budgets of the Stop loop (hook.ts:1403-1411). StopMaxBlocks bounds consecutive blocks at one
@@ -184,7 +186,7 @@ func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock fun
 			next.StopDivergenceWindows = stopWithWindow(fresh.StopDivergenceWindows, series, rows)
 			return stopPlateauDivergeBlock(fresh.Phase, plateau, p.Cwd, p.SessionID, renderAdvisory)
 		}
-		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(fresh.Slug, snap.plan), p.SessionID, platform, env)
+		reason := stopBuildBlockReason(fresh.Phase, stopReadWorkContext(fresh.Slug, snap.plan), stopBindingOf(fresh.Slug, snap.plan, p.SessionID), p.SessionID, platform, env)
 		if renderAdvisory != "" {
 			reason += "\n\n" + renderAdvisory
 		}
@@ -524,17 +526,84 @@ func stopNodePlatform(platform string) string {
 	return platform
 }
 
+// stopBinding is what a Stop block knows of the goalplan its session is bound to. A block's example command is copied by the
+// agent, so it carries the keys the bound session needs with their real values (CRW-1189) and leaves out the keys an unbound
+// session does not take; the oracle showed both with a marker.
+type stopBinding struct {
+	bound       bool
+	workPhaseID string // the id the bound plan's gated attests carry; "" when the plan has no runnable work phase or cannot be read
+	receiptPath string // where `crw pabcd receipt test` writes this session's receipt; "" without a session id
+	slug        string // the bound slug
+	unreadable  bool   // bound, but the goalplan could not be read, so no work phase id is known
+	padded      bool   // bound, and the active work phase's id has white space the attest decoder trims, so no attest can name it
+}
+
+// stopBindingOf is the binding a block for the session shows. A session is bound by its slug, as the gates judge it
+// (CHECK-BINDING-01 keys on the slug alone), so the receipt path does not wait for the plan; the plan only gives the active work
+// phase's id.
+func stopBindingOf(slug string, plan *goalplan.Goalplan, sessionID string) stopBinding {
+	if slug == "" {
+		return stopBinding{}
+	}
+	b := stopBinding{bound: true, slug: slug, unreadable: plan == nil}
+	if plan != nil {
+		if id := goalplan.EffectiveActiveWorkPhaseID(plan); id != nil {
+			// attest.Coerce trims every text field of an attest (CRW-1189 round 2, d3), so an id stored with white space around it
+			// can never equal the active id the binding gate compares it to: it is not offered as a value to copy.
+			if text.Trim(*id) != *id {
+				b.padded = true
+			} else {
+				b.workPhaseID = *id
+			}
+		}
+	}
+	if sessionID != "" {
+		b.receiptPath = crwdir.DirName + "/" + evidence.Subdir + "/" + state.SanitizeKey(sessionID) + "/test-receipt.json"
+	}
+	return b
+}
+
+// stopAttestKey is `,"key":"value"` for the keys a bound session adds, "" when the session has no value to give. The value is
+// JSON text and then one word of a POSIX single-quoted string, so any id the goalplan accepts reaches the CLI unchanged; a
+// backtick is written as its escape so the id cannot end the markdown span around the command.
+func stopAttestKey(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	text, err := jsnode.Stringify(value, "")
+	if err != nil {
+		return ""
+	}
+	quoted := strings.ReplaceAll(string(text), "`", `\u0060`)
+	return ",\"" + key + "\":" + strings.ReplaceAll(quoted, "'", `'\''`)
+}
+
 // stopNextCommands is STOP_NEXT_COMMAND (hook.ts:1523-1537) under the name substitution (R33 and the
 // cli table: `cxc orchestrate` is `crw pabcd orchestrate`). These are the commands an agent copies out
-// of a Stop block, so each example carries every key the edge requires; the bound-only keys are shown
-// with a marker.
-var stopNextCommands = map[state.Phase]string{
-	state.PhaseI: "`crw pabcd orchestrate P --attest '{\"from\":\"I\",\"to\":\"P\",\"did\":\"interview complete with recorded requirements\"}'`",
-	state.PhaseP: "`crw pabcd orchestrate A --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"diff-level plan written with files and acceptance criteria\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"<bound goalplan only>\"}'`",
-	state.PhaseA: "`crw pabcd orchestrate B --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit loop closed: blockers folded into plan\",\"auditOutput\":\"<reviewer verdict tail>\",\"auditVerdict\":\"pass|near-pass\",\"auditResidual\":\"<near-pass only: residual blockers + disposition>\",\"auditBlockers\":\"<only when the review recorded blockers=N: replace with one {blocker,disposition,reason} object per blocker, disposition folded|rebutted>\",\"workPhaseId\":\"<bound goalplan only>\"}'`",
-	state.PhaseB: "`crw pabcd orchestrate C --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\",\"workPhaseId\":\"<bound goalplan only>\"}'`",
-	state.PhaseC: "`crw pabcd orchestrate D --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"checks passed\",\"checkOutput\":\"<test tail>\",\"exitCode\":0,\"testReceiptPath\":\"<bound goalplan only: crw pabcd receipt test output path>\",\"workPhaseId\":\"<bound goalplan only>\"}'`",
-	state.PhaseD: "`crw pabcd orchestrate reset` after the DONE summary is recorded",
+// of a Stop block, so each example carries every key the edge requires; the keys only a goalplan-bound
+// session takes (workPhaseId, and testReceiptPath at C) are given their real values for a bound session
+// and are left out for an unbound one (CRW-1189, known-defects CRW-1189.md: the oracle showed a
+// `<bound goalplan only>` marker for both).
+func stopNextCommands(phase state.Phase, b stopBinding) (string, bool) {
+	wp := stopAttestKey("workPhaseId", b.workPhaseID)
+	var attest string
+	switch phase {
+	case state.PhaseI:
+		return "`crw pabcd orchestrate P --attest '{\"from\":\"I\",\"to\":\"P\",\"did\":\"interview complete with recorded requirements\"}'`", true
+	case state.PhaseP:
+		attest = "`crw pabcd orchestrate A --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"diff-level plan written with files and acceptance criteria\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\"" + wp + "}'`"
+	case state.PhaseA:
+		attest = "`crw pabcd orchestrate B --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit loop closed: blockers folded into plan\",\"auditOutput\":\"<reviewer verdict tail>\",\"auditVerdict\":\"pass|near-pass\",\"auditResidual\":\"<near-pass only: residual blockers + disposition>\",\"auditBlockers\":\"<only when the review recorded blockers=N: replace with one {blocker,disposition,reason} object per blocker, disposition folded|rebutted>\"" + wp + "}'`"
+	case state.PhaseB:
+		attest = "`crw pabcd orchestrate C --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implementation completed and verifier reviewed it\"" + wp + "}'`"
+	case state.PhaseC:
+		attest = "`crw pabcd orchestrate D --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"checks passed\",\"checkOutput\":\"<test tail>\",\"exitCode\":0" + stopAttestKey("testReceiptPath", b.receiptPath) + wp + "}'`"
+	case state.PhaseD:
+		return "`crw pabcd orchestrate reset` after the DONE summary is recorded", true
+	default:
+		return "", false
+	}
+	return attest, true
 }
 
 var (
@@ -545,8 +614,8 @@ var (
 
 // stopNextCommand is stopNextCommand (hook.ts:1539-1553): win32 cannot pass the attest JSON inline, so
 // it points at the file flag there. The second result is false for a phase with no entry.
-func stopNextCommand(phase state.Phase, platform string) (string, bool) {
-	posix, ok := stopNextCommands[phase]
+func stopNextCommand(phase state.Phase, platform string, b stopBinding) (string, bool) {
+	posix, ok := stopNextCommands(phase, b)
 	if !ok || stopNodePlatform(platform) != "win32" {
 		return posix, ok
 	}
@@ -556,6 +625,8 @@ func stopNextCommand(phase state.Phase, platform string) (string, bool) {
 		return posix, true
 	}
 	const q = "`"
+	// A PowerShell single-quoted string doubles a quote where the POSIX word above closes, escapes and reopens it.
+	attest[1] = strings.ReplaceAll(attest[1], `'\''`, `''`)
 	write := q + "'" + attest[1] + "' | Set-Content -Encoding utf8 " + crwdir.DirName + "/attest.json" + q
 	run := q + "crw pabcd orchestrate " + verb[1] + " --attest-file " + crwdir.DirName + "/attest.json" + q
 	return write + " then " + run, true
@@ -644,8 +715,8 @@ func (w *stopWorkContext) lines() []string {
 // stopBuildBlockReason is the reason of buildStopBlock (hook.ts:1577-1631) without the friction line
 // (see the file comment): the session id is inserted after the verb of the command, before the
 // invocation is resolved at emission.
-func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, platform string, env host.LookupEnv) string {
-	next, ok := stopNextCommand(phase, platform)
+func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, binding stopBinding, sessionID, platform string, env host.LookupEnv) string {
+	next, ok := stopNextCommand(phase, platform, binding)
 	if !ok {
 		next = "`crw pabcd orchestrate status`"
 	}
@@ -660,6 +731,17 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 		fmt.Sprintf("[crw — continue PABCD] You are mid-cycle at %s (%s) with an active goal.", phase, stageLabel(phase)),
 		"Do the real work of this phase, then self-advance with the concrete next command:",
 		next,
+	}
+	if phase == state.PhaseC && binding.receiptPath != "" {
+		// CRW-1189: the path in the command above is where this receipt command writes; it has to run before the attest.
+		lines = append(lines, "Write the test receipt first: `crw pabcd receipt test --session "+sessionID+" -- <the check command>`.")
+	}
+	if binding.unreadable {
+		// CRW-1189: the plan is the only source of the work phase id; the attest above leaves the key out rather than guess it.
+		lines = append(lines, "The bound goalplan "+binding.slug+" could not be read, so the command above shows no workPhaseId. The gate lets the session through while no plan resolves; once it reads again, a refusal names the active work phase, and then add it as \"workPhaseId\".")
+	}
+	if binding.padded {
+		lines = append(lines, "The active work phase of goalplan "+binding.slug+" has an id with leading or trailing white space, which the attest decoder removes, so no attest can name it and the command above shows no workPhaseId. Remove the white space around that work phase's id in the goalplan, then add its id as \"workPhaseId\".")
 	}
 	if work != nil {
 		lines = append(lines, work.lines()...)

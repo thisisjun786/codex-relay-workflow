@@ -3,6 +3,8 @@ package spawn
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -81,4 +83,18 @@ func spawnParityErrno(e syscall.Errno) (string, string) {
 		return "EFBIG", "file too large"
 	}
 	return "", ""
+}
+
+// spawnManagedRecordMessage is the text of a refused managed marker. The oracle printed the ENOENT of the dispatch record's lstat
+// and nothing else, which left the cause (the marker names a dispatch that was never started) and the next action to a guess
+// (CRW-1189, S5-R3-F1; known-defects CRW-1189.md). A missing record keeps the oracle's text in parentheses and adds the cause and
+// the way past it (the marker is not to be dropped on the agent's own judgment: that turns a refused managed attempt into an unmanaged spawn); every other failure is the oracle's text alone.
+func spawnManagedRecordMessage(err error) string {
+	message := spawnParityNodeError(err)
+	path, ok := err.(*os.PathError)
+	if !ok || path.Op != "lstat" || !errors.Is(path.Err, syscall.ENOENT) || !strings.HasSuffix(path.Path, ".json") ||
+		filepath.Base(filepath.Dir(filepath.Dir(path.Path))) != "dispatches" {
+		return message
+	}
+	return "this marker has no dispatch record (" + message + "); use a marker that `crw role helper dispatch` returned (action start, then claim); a direct native spawn without a marker is only for when the user's current request explicitly asks for a direct native spawn"
 }
