@@ -126,7 +126,7 @@ func TestScheduleReportWordsTranslateTheTable(t *testing.T) {
 			continue
 		}
 		cited := map[string]bool{}
-		for _, m := range regexp.MustCompile(`\brows? (\d+(?:(?:,| and) \d+)*)`).FindAllStringSubmatch(reading, -1) {
+		for _, m := range regexp.MustCompile(`(?i)\brows? (\d+(?:(?:,| and) \d+)*)`).FindAllStringSubmatch(reading, -1) {
 			for _, n := range regexp.MustCompile(`\d+`).FindAllString(m[1], -1) {
 				cited[n] = true
 			}
@@ -144,7 +144,7 @@ func TestScheduleReportWordsTranslateTheTable(t *testing.T) {
 	if strings.Contains(readingOf["Late"], "does not exist") {
 		t.Error("the reading of Late requires the result to be absent, but row 4 is an achieved result that landed after the deadline")
 	}
-	unconfirmed := regexp.MustCompile(`(?s)Where a Schedule baseline is \x60unconfirmed\x60.*?\n\n`).FindString(words)
+	unconfirmed := regexp.MustCompile(`(?s)Where a Schedule baseline is \x60unconfirmed\x60.*?(?:\n\n|$)`).FindString(words)
 	if unconfirmed == "" {
 		t.Fatal("Report words does not say what an unconfirmed baseline reports")
 	}
