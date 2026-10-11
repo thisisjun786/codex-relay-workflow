@@ -26,15 +26,6 @@ func (a *analysis) global(e ast.Expression, name string) bool {
 	return ok && string(id.Name) == name && a.refs[id] == nil
 }
 
-// member is the property name of obj.prop, with obj a global.
-func (a *analysis) member(e ast.Expression, obj string) (string, bool) {
-	d, ok := e.(*ast.DotExpression)
-	if !ok || !a.global(d.Left, obj) {
-		return "", false
-	}
-	return string(d.Identifier.Name), true
-}
-
 // callee classifies a call expression: agent(...), agent.call(...), crw.<op>(...) and the like.
 func (a *analysis) callee(c *ast.CallExpression) (obj, name string) {
 	if a.global(c.Callee, "agent") {
