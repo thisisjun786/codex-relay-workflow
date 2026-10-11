@@ -166,7 +166,6 @@ func (c *callRun) restoreBoundary() (reason, detail string) {
 	if len(allocs) == 0 {
 		return "", ""
 	}
-	e.restored[p.node] = true
 	ctx := e.ctx
 	// A turn the previous process left running in the worktree is interrupted and confirmed first: nothing writes to the old
 	// worktree when its state is kept.
@@ -191,6 +190,7 @@ func (c *callRun) restoreBoundary() (reason, detail string) {
 	if err != nil {
 		return ReasonWorktreeFailed, "the boundary of node " + p.node + " could not be restored: " + err.Error()
 	}
+	e.restored[p.node] = true
 	var pendingValue any
 	if pending != "" {
 		pendingValue = pending
