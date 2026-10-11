@@ -4,7 +4,7 @@ An agent node (R04) is released on the agent surface of `dag-release` and its ro
 
 ## The set
 
-The set is the non-test Go files of `internal/relay` and `internal/manage` that (a) spell one of the seven frozen tables in a string literal, or (b) use a function, constant or variable whose body or value spells one. It is computed from the code with `go/ast` and `go/types` (the packages of the two trees are type-checked; any other package is an empty stub), for linux/amd64, and it is not a grep: a file that reads a table through `currentRelationshipOf`, `loadActiveAcceptance`, `commitAccepted`, `integrationRefsOf` or `standOf` never spells it. The number of files is not a criterion. `TestEveryZoneReaderClassified` (`internal/relay/dagsched/reader_classification_test.go`) recomputes the set and fails on a file without a row, a row for a file outside the set, a row without an owner, and a row whose class or owner differs from the design's classification table for the files that table names; `TestReaderSetIncludesHelperCallers` pins that a file that only calls a helper is in the set.
+The set is the non-test Go files of `internal/relay` and `internal/manage` that (a) spell one of the seven frozen tables in a string literal, or (b) use a function, constant or variable that reads one, to a fixed point: a function whose body or value spells a table in a query reads, and so does a function that uses a function, method, constant or variable that reads, at any depth (`ProgressSnapshotOf` calls `Progress`, which calls `nodeFacts`, which reads), so a file that only calls the outer wrapper of a chain is in the set. A statement that creates, drops or alters a table, trigger or index (the zone ledger, run at every open of the store) is not a read: its file is in the set, but the callers of the store's open are not. The calls followed are the uses `go/types` resolved; a call through an interface value or a function value is not followed. It is computed from the code with `go/ast` and `go/types` (the packages of the two trees are type-checked; any other package is an empty stub), for linux/amd64, and it is not a grep: a file that reads a table through `currentRelationshipOf`, `loadActiveAcceptance`, `commitAccepted`, `integrationRefsOf` or `standOf` never spells it. The number of files is not a criterion. `TestEveryZoneReaderClassified` (`internal/relay/dagsched/reader_classification_test.go`) recomputes the set and fails on a file without a row, a row for a file outside the set, a row without an owner, and a row whose class or owner differs from the design's classification table for the files that table names; `TestReaderSetIncludesHelperCallers` pins that a file that only calls a helper is in the set, `TestReaderSetFollowsWrappersToAFixedPoint` that a chain of wrappers (in a package, across packages, through methods, constants and a cycle) is followed to its end and that the zone ledger's statements are not reads, and `TestReaderSetOfTheTreeHoldsIndirectReaders` that `progress_replay.go` is in the set of the tree.
 
 ## The columns
 
@@ -16,19 +16,26 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 
 | file | class | owner | migrated | note |
 |---|---|---|---|---|
+| `internal/manage/capacity.go` | `caller` | `R06` | n/a | calls branchAttach and capacityZoneReason of capacity_branches.go |
 | `internal/manage/capacity_branches.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | branch candidates count the nodes a release or an execution owns and ask whether a node's execution landed |
 | `internal/manage/capacity_signals.go` | `caller` | `R06` | n/a | reads the zone tables of capacity_branches.go through branchZoneTables and follows it |
 | `internal/manage/checkpoint.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the checkpoint of a plan's nodes: executions, acceptances, integration |
 | `internal/manage/dagreview.go` | `node-scoped-release` | `R06` | no | asks whether a node's execution exists and reads its lanes |
 | `internal/manage/dagreview_store.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the review store's read of a node's execution and acceptance |
+| `internal/manage/improve.go` | `caller` | `R06` | n/a | the improvement run: calls improveRunCollect and improveRunRoadmap |
+| `internal/manage/improve_collect.go` | `caller` | `R06` | n/a | collects the measurements of a plan through Scheduler.Measure (measure.go) |
+| `internal/manage/improve_run.go` | `caller` | `R06` | n/a | calls improveRunCollect |
+| `internal/manage/pump_signals.go` | `caller` | `R06` | n/a | the pump signals call DagReview (dagreview.go) and capacityEvaluate |
 | `internal/manage/relayread.go` | `node-scoped-release` | `R06` | no | the manage read of a node's executions |
 | `internal/relay/acceptance/stand.go` | `node-scoped-acceptance` | `R06` | no | the head an acceptance stands on (standOf); an agent acceptance stands on itself |
+| `internal/relay/childcleanup/command.go` | `caller` | `R06` | n/a | the cleanup command runs the gate of gate.go through Execute |
 | `internal/relay/childcleanup/gate.go` | `relationship-scoped` | `R06` | n/a | asks ExecutionIntegrated of a relationship's merged mark, not of a node |
 | `internal/relay/dagsched/accept.go` | `agent-writer` | `R05` | n/a | dag-accept: the agent path reads the current agent execution and writes the agent acceptance row |
 | `internal/relay/dagsched/accept_commit.go` | `relationship-scoped` | `R06` | n/a | the commit acceptance of a relationship; agents use accept_agent |
 | `internal/relay/dagsched/accept_premerge.go` | `relationship-scoped` | `R06` | n/a | the pre-merge record of a relationship's acceptance; the agent body is judged by the same function and stored in the agent row |
 | `internal/relay/dagsched/accept_refresh.go` | `node-scoped-acceptance` | `R06` | no | the proof dag-accept records for a head a ruling verified |
 | `internal/relay/dagsched/activity.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the evidence of a node's activity (acceptance, verification, premerge, stages, verified heads) |
+| `internal/relay/dagsched/activity_cli.go` | `caller` | `R06` | n/a | dag-activity: calls Scheduler.ReadActivity (activity.go) |
 | `internal/relay/dagsched/agent_union.go` | `union` | `R04` | n/a | executionOf and releaseOf: the readers that look on both sides |
 | `internal/relay/dagsched/baserefresh.go` | `node-scoped-acceptance` | `R06` | no | a base refresh of an accepted node (standOf); an agent acceptance stands on itself |
 | `internal/relay/dagsched/bundles.go` | `node-scoped-release` | `R06` | no | bundle candidates count the nodes a release owns |
@@ -59,8 +66,13 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/dagsched/mergeorder_derive.go` | `node-scoped-release` | `R06` | no | the merge order among the nodes that hold a release or an execution |
 | `internal/relay/dagsched/nodestate.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the derived state of a node (stateOf) |
 | `internal/relay/dagsched/optimism.go` | `node-scoped-acceptance` | `R06` | no | local-optimistic release reads landings |
+| `internal/relay/dagsched/outbox.go` | `caller` | `R06` | n/a | the summary outbox calls Scheduler.Progress |
+| `internal/relay/dagsched/outbox_cli.go` | `caller` | `R06` | n/a | dag-summary commands: call EnqueueSummary and SummaryStatus (outbox.go) |
+| `internal/relay/dagsched/pass.go` | `caller` | `R06` | n/a | a dag-ready pass calls Scheduler.Ready (ready.go) |
 | `internal/relay/dagsched/policy_cli.go` | `caller` | `R06` | n/a | dag-landing-result-record: calls RecordLandingResult |
 | `internal/relay/dagsched/progress.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | dag-progress |
+| `internal/relay/dagsched/progress_cli.go` | `caller` | `R06` | n/a | dag-progress: calls Scheduler.ReadProgress (progress.go) |
+| `internal/relay/dagsched/progress_replay.go` | `node-scoped-acceptance` | `R06` | no | the view over the plan log and acceptance state: ProgressSnapshotOf calls Progress, which reads the acceptances; named by the design's table |
 | `internal/relay/dagsched/ready.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the ready set (stateOf, resourceHold) |
 | `internal/relay/dagsched/regions.go` | `caller` | `R06` | n/a | DeclareRegions asks stateOf whether a node holds its regions |
 | `internal/relay/dagsched/release.go` | `agent-writer` | `R04` | n/a | ReleaseAgent; the relationship release refuses live_agent_execution |
@@ -70,12 +82,19 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/dagsched/targets.go` | `node-scoped-acceptance` | `R06` | no | nodeTargets: where a node's accepted head has to land |
 | `internal/relay/dagsched/withdraw.go` | `relationship-scoped` | `R06` | n/a | withdraws a generation of a relationship |
 | `internal/relay/delivery/ack.go` | `relationship-scoped` | `R06` | n/a | delivery acknowledgement records the verified head of a relationship |
+| `internal/relay/delivery/cli.go` | `caller` | `R06` | n/a | delivery commands call Ack.RecordVerdict (ack.go) and the receive path |
+| `internal/relay/delivery/receive.go` | `caller` | `R06` | n/a | a received verdict is recorded through PreparedVerdict.Record (ack.go) |
+| `internal/relay/integrate/cli.go` | `caller` | `R05,R06` | n/a | dag-integrate and its readers call Scheduler.IntegrateBatch (integration_batch.go, R05), StaleIntegratedNodes (integration_stale.go) and VerifiedMoveOnto (integration_push.go) |
 | `internal/relay/mergeturn/check.go` | `relationship-scoped` | `R06` | n/a | the merge turn refuses an under-correction relationship |
+| `internal/relay/mergeturn/commands.go` | `caller` | `R06` | n/a | the merge-turn commands call Service.Check, Land, Open, TrainLand and Verify |
 | `internal/relay/mergeturn/outcome.go` | `relationship-scoped` | `R06` | n/a | the outcome of a merge turn |
 | `internal/relay/mergeturn/train.go` | `relationship-scoped` | `R06` | n/a | the merge train |
 | `internal/relay/mergeturn/undercorrection.go` | `relationship-scoped` | `R06` | n/a | a relationship under correction |
 | `internal/relay/mergeturn/undercorrection_match.go` | `relationship-scoped` | `R06` | n/a | the match of a relationship's standing acceptance |
 | `internal/relay/mergeturn/undercorrection_standing.go` | `relationship-scoped` | `R06` | n/a | the standing acceptances of a relationship |
+| `internal/relay/registry/cli.go` | `caller` | `R06` | n/a | registry commands call Registry.CloseMerged and the linkage commands |
+| `internal/relay/registry/linkage_cli.go` | `caller` | `R06` | n/a | the linkage commands call Registry.HandoverScopeKind |
+| `internal/relay/registry/linkage_write.go` | `caller` | `R06` | n/a | a linkage write asks whether a relationship is settled (readSettled, settled.go) |
 | `internal/relay/registry/restson.go` | `relationship-scoped` | `R06` | n/a | what a relationship's registration rests on |
 | `internal/relay/registry/settled.go` | `relationship-scoped` | `R06` | n/a | whether a relationship is settled |
 | `internal/relay/store/dag_integration_stages.go` | `store` | `R05` | n/a | the row writer of dag_integration_stages: batch-level rows of every batch |
@@ -84,4 +103,4 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 
 ## Named by the design and outside the set
 
-The design's classification table (relay.added) also names `internal/relay/dagsched/capacity.go` (the slots a node holds), `internal/relay/dagsched/digest.go` (the `Acceptance` record and its digest) and `internal/relay/dagsched/progress_replay.go` (the view over the plan log and acceptance state) as node-scoped readers for R06. None of them spells a frozen table or uses a function that does, so they are not in the computed set and have no row above; R06 moves them with the rows it owns.
+The design's classification table (relay.added) also names `internal/relay/dagsched/capacity.go` (the slots a node holds) and `internal/relay/dagsched/digest.go` (the `Acceptance` record and its digest) as node-scoped readers for R06. Neither spells a frozen table or uses a function that reads one, so they are not in the computed set and have no row above; R06 moves them with the rows it owns. (`progress_replay.go`, the third file the table names, reaches the tables through `Progress` and is in the set, with its row.)

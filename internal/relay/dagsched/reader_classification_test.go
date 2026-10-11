@@ -42,6 +42,10 @@ type readerEntry struct {
 	Via    []string
 }
 
+// schemaStatement is a statement that defines a table, trigger, index or view: the zone ledger spells the tables in the statements that create them, and installing the zone at every open is not a read of
+// them, so a function that holds such a statement does not make the callers of the store's open readers. (The file that spells them is in the set all the same, class store.)
+var schemaStatement = regexp.MustCompile(`(?is)^\s*(CREATE|DROP|ALTER)\s`)
+
 // tablesIn is the frozen tables a string spells.
 func tablesIn(text string) []string { return readerTablePattern.FindAllString(text, -1) }
 
@@ -201,6 +205,12 @@ func (a *readerAnalysis) readerSet() map[string]readerEntry {
 	}
 	// the objects that read a table: a function whose body spells one, and a package-level constant or variable whose value does
 	readers := map[types.Object]string{}
+	type declaration struct {
+		pkg  *readerPackage
+		obj  types.Object
+		body ast.Node
+	}
+	var declarations []declaration
 	for _, pkg := range a.pkgs {
 		for _, file := range pkg.files {
 			for _, decl := range file.Decls {
@@ -209,22 +219,53 @@ func (a *readerAnalysis) readerSet() map[string]readerEntry {
 					if d.Body == nil {
 						continue
 					}
-					if len(tablesIn(strings.Join(literalsIn(d.Body), "\n"))) > 0 {
-						if obj := pkg.info.Defs[d.Name]; obj != nil {
-							readers[obj] = qualified(pkg, obj)
-						}
+					if obj := pkg.info.Defs[d.Name]; obj != nil {
+						declarations = append(declarations, declaration{pkg, obj, d.Body})
 					}
 				case *ast.GenDecl:
 					for _, spec := range d.Specs {
-						if v, ok := spec.(*ast.ValueSpec); ok && len(tablesIn(strings.Join(literalsIn(v), "\n"))) > 0 {
+						if v, ok := spec.(*ast.ValueSpec); ok {
 							for _, name := range v.Names {
 								if obj := pkg.info.Defs[name]; obj != nil {
-									readers[obj] = qualified(pkg, obj)
+									declarations = append(declarations, declaration{pkg, obj, v})
 								}
 							}
 						}
 					}
 				}
+			}
+		}
+	}
+	for _, d := range declarations {
+		for _, text := range literalsIn(d.body) {
+			if len(tablesIn(text)) > 0 && !schemaStatement.MatchString(text) {
+				readers[d.obj] = qualified(d.pkg, d.obj)
+				break
+			}
+		}
+	}
+	// a declaration that uses a reader reads through it: the readers are followed to a fixed point, so a file that only calls the outer wrapper of a chain of calls is in the set (the calls are the uses
+	// go/types resolved: functions, methods of the trees' types, constants and variables; a call through an interface value or a function value is not followed)
+	for changed := true; changed; {
+		changed = false
+		for _, d := range declarations {
+			if _, ok := readers[d.obj]; ok {
+				continue
+			}
+			reads := false
+			ast.Inspect(d.body, func(n ast.Node) bool {
+				if ident, ok := n.(*ast.Ident); ok {
+					if used := d.pkg.info.Uses[ident]; used != nil && used != d.obj {
+						if _, ok := readers[used]; ok {
+							reads = true
+						}
+					}
+				}
+				return !reads
+			})
+			if reads {
+				readers[d.obj] = qualified(d.pkg, d.obj)
+				changed = true
 			}
 		}
 	}
@@ -405,6 +446,133 @@ const outside = "SELECT * FROM dag_releases"
 	}
 }
 
+// A reader is followed to a fixed point: a function that calls a function that reads is a reader itself, so a file that only calls the outer wrapper (any number of calls above the SQL, in the package or
+// across packages, through functions, methods and constants, in a cycle as well) is in the set.
+func TestReaderSetFollowsWrappersToAFixedPoint(t *testing.T) {
+	t.Parallel()
+	root := writeFixture(t, map[string]string{
+		"go.mod": "module fixture.example/m\n\ngo 1.27\n",
+		"internal/relay/pkg/reader.go": `package pkg
+
+func read() string { return "SELECT * FROM dag_acceptances" }
+
+const query = "SELECT head_sha FROM dag_verified_heads"
+`,
+		"internal/relay/pkg/wrapper.go": `package pkg
+
+func wrap() string { return read() }
+
+// ping and pong call each other; pong reaches the reader
+func ping(n int) string {
+	if n > 0 {
+		return pong(n - 1)
+	}
+	return ""
+}
+
+func pong(n int) string {
+	if n > 0 {
+		return ping(n - 1)
+	}
+	return wrap()
+}
+
+type Source struct{}
+
+func (Source) Rows() string { return wrap() }
+
+func Exported() string { return Source{}.Rows() }
+
+func viaConst() string { return query }
+`,
+		"internal/relay/pkg/caller.go": `package pkg
+
+func caller() string { return wrap() }
+`,
+		"internal/relay/pkg/third.go": `package pkg
+
+func third() string { return caller() }
+`,
+		"internal/relay/pkg/cyclecaller.go": `package pkg
+
+func cycleCaller() string { return ping(3) }
+`,
+		"internal/relay/pkg/constcaller.go": `package pkg
+
+func constCaller() string { return viaConst() }
+`,
+		"internal/relay/other/cross.go": `package other
+
+import "fixture.example/m/internal/relay/pkg"
+
+func cross() string { return pkg.Exported() }
+`,
+		"internal/manage/top.go": `package manage
+
+import "fixture.example/m/internal/relay/other"
+
+func top() string { return other.Chain() }
+`,
+		"internal/relay/other/chain.go": `package other
+
+func Chain() string { return cross() }
+`,
+		"internal/relay/store/zone.go": `package store
+
+// the zone ledger spells the tables in the statements that create them; installing it at every open is not a read
+var ledger = []string{"CREATE TABLE IF NOT EXISTS dag_releases (id TEXT)", "CREATE TRIGGER IF NOT EXISTS dag_releases_no_update BEFORE UPDATE ON dag_releases BEGIN SELECT 1; END"}
+
+func install() int { return len(ledger) }
+
+func Open() int { return install() }
+`,
+		"internal/relay/other/opens.go": `package other
+
+import "fixture.example/m/internal/relay/store"
+
+func opens() int { return store.Open() }
+`,
+		"internal/relay/other/alone.go": `package other
+
+func alone() string { return "nothing of the tables" }
+
+func aloneToo() string { return alone() }
+`,
+	})
+	set := newReaderAnalysis(t, root, "internal/relay", "internal/manage").readerSet()
+	for _, file := range []string{
+		"internal/relay/pkg/wrapper.go", "internal/relay/pkg/caller.go", "internal/relay/pkg/third.go", "internal/relay/pkg/cyclecaller.go", "internal/relay/pkg/constcaller.go",
+		"internal/relay/other/cross.go", "internal/relay/other/chain.go", "internal/manage/top.go",
+	} {
+		if _, ok := set[file]; !ok {
+			t.Errorf("%s calls a reader through wrappers and is not in the reader set", file)
+		}
+	}
+	if _, ok := set["internal/relay/other/alone.go"]; ok {
+		t.Error("a function that reads nothing, and its caller, are in the set")
+	}
+	if _, ok := set["internal/relay/store/zone.go"]; !ok {
+		t.Error("the file that spells the tables in the zone ledger is not in the set")
+	}
+	for _, file := range []string{"internal/relay/other/opens.go"} {
+		if entry, ok := set[file]; ok {
+			t.Errorf("%s only opens the store, which installs the zone, and is in the set: %+v", file, entry)
+		}
+	}
+	if entry := set["internal/relay/pkg/third.go"]; !contains(entry.Via, "caller") {
+		t.Errorf("third.go uses %v, want caller among them", entry.Via)
+	}
+}
+
+// The set of the tree holds the readers that reach a table through several calls: progress_replay.go calls Progress, which calls the readers of the tables.
+func TestReaderSetOfTheTreeHoldsIndirectReaders(t *testing.T) {
+	root := filepath.Join("..", "..", "..")
+	set := newReaderAnalysis(t, root, "internal/relay", "internal/manage").readerSet()
+	if _, ok := set["internal/relay/dagsched/progress_replay.go"]; !ok {
+		t.Fatal("internal/relay/dagsched/progress_replay.go reaches the frozen tables through ProgressSnapshotOf, Progress and nodeFacts and is not in the reader set")
+	}
+}
+
 // readersDocument is the document that classifies the reader set.
 const readersDocument = "docs/relay/agent-execution-readers.md"
 
@@ -448,6 +616,7 @@ func parseReaderRows(t testing.TB, text string) []readerRow {
 // every file it names; the files it leaves to "all unchanged otherwise" are classified in the document alone.
 var designClassification = map[string]struct{ classes, owners string }{
 	"internal/relay/dagsched/progress.go":            {"node-scoped-release+node-scoped-acceptance", "R06"},
+	"internal/relay/dagsched/progress_replay.go":     {"node-scoped-acceptance", "R06"},
 	"internal/relay/dagsched/nodestate.go":           {"node-scoped-release+node-scoped-acceptance", "R06"},
 	"internal/relay/dagsched/edges.go":               {"node-scoped-release+node-scoped-acceptance", "R06"},
 	"internal/relay/dagsched/ready.go":               {"node-scoped-release+node-scoped-acceptance", "R06"},
