@@ -67,6 +67,13 @@ func EventCountedSQL(event string) string {
 		" AND (cta.state IS NULL OR cta.state NOT IN " + notSendStates + "))"
 }
 
+// EventsCountedSQL is a derived table of the events that count in an hour window (the one column
+// event_id): the join form of EventCountedSQL for a read over many candidate rows, which must not
+// evaluate a correlated condition for each of them (the scheduler's due list). It takes the window's two
+// stamps.
+const EventsCountedSQL = "(SELECT DISTINCT cte.event_id AS event_id FROM attempts cte WHERE cte.sent_at >= ? AND cte.sent_at < ?" +
+	" AND (cte.state IS NULL OR cte.state NOT IN " + notSendStates + "))"
+
 // MessageCountedSQL is EventCountedSQL for a supervisor message: a transport of it is one
 // RelationshipSendsSQL counts. It takes the window's two stamps.
 func MessageCountedSQL(message string) string {

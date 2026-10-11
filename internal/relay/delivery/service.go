@@ -322,10 +322,10 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // refuse those when their backoff ended. next_eligible_at is always finite (at most BusyMax ahead), so no
 // delivery holds a line for longer than one backoff at a time.
 //
-// It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), then the
-// state DeferredBusy, now, the two hourly caps (the orchestrator class's, then the ordinary one) and the
-// window's two stamps again (an event already counted in the window is not refused by the cap):
-// see busyHeadArgs. A candidate is behind the head when the
+// It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), the
+// window's two stamps again (the events it counts: one already counted is not refused by the cap, as its
+// retry adds no distinct event), then the state DeferredBusy, now and the two hourly caps (the
+// orchestrator class's, then the ordinary one): see busyHeadArgs. A candidate is behind the head when the
 // head's key is smaller than its own, compared as row values in the order eligibleOrder sorts.
 //
 // CRW-904 adds recipient_thread_id and next_eligible_at to what this names, so the idle edge can hold a
@@ -344,17 +344,18 @@ var busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible
 	" ROW_NUMBER() OVER (PARTITION BY b.recipient_task_id ORDER BY be.first_seen_at, b.created_at, b.event_id) AS rn" +
 	" FROM deliveries b JOIN events be ON be.event_id = b.event_id JOIN relationships br ON br.relationship_id = b.relationship_id" +
 	" LEFT JOIN " + store.RelationshipSpentSQL + " bs ON bs.relationship_id = b.relationship_id AND bs.recipient_task_id = b.recipient_task_id" +
+	" LEFT JOIN " + store.EventsCountedSQL + " bc ON bc.event_id = b.event_id" +
 	" LEFT JOIN " + store.OrchestratorTasksSQL + " bo ON bo.task_id = br.parent_task_id" +
 	" LEFT JOIN delivery_wakes bw ON bw.event_id = b.event_id" +
 	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR (bw.event_id IS NOT NULL AND bw.spent_at IS NULL))" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
-	" AND (COALESCE(bs.spent, 0) < CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END OR " + store.EventCountedSQL("b.event_id") + ")) WHERE rn = 1)"
+	" AND (COALESCE(bs.spent, 0) < CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END OR bc.event_id IS NOT NULL)) WHERE rn = 1)"
 
 // busyHeadArgs are the arguments of busyHeadSQL at now.
 func (d *Service) busyHeadArgs(now float64) []any {
 	window, _ := d.Policy.RateWindows(now)
-	return append(store.RelationshipSendsArgs(window), DeferredBusy, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds))
+	return append(store.RelationshipSendsArgs(window), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds), DeferredBusy, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
 }
 
 // behindBusyHead reports whether an older delivery to this delivery's recipient is waiting out a busy
@@ -495,7 +496,7 @@ func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWa
 }
 
 // eligibility is the join and predicate of a due delivery and their arguments at now (the four
-// stamps of the window's two counts, the ten of the busy heads, then the predicate's). A delivery whose relationship has
+// stamps of the window's two counts and the two of the events it counts, the ten of the busy heads, then the predicate's). A delivery whose relationship has
 // already spent its hourly budget for the recipient (the cap of its relationship class: an orchestrator's
 // own, or the ordinary one) is not due until the window reopens: it would
 // only be refused, and a runaway relationship's refused rows must not take the attempts its calm
@@ -510,12 +511,14 @@ func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWa
 func (d *Service) eligibility(now float64) (string, string, []any) {
 	window, _ := d.Policy.RateWindows(now)
 	join := " LEFT JOIN " + store.RelationshipSpentSQL + " sbspent ON sbspent.relationship_id = d.relationship_id AND sbspent.recipient_task_id = d.recipient_task_id" +
+		" LEFT JOIN " + store.EventsCountedSQL + " ct ON ct.event_id = d.event_id" +
 		" LEFT JOIN " + busyHeadSQL + " bh ON bh.recipient_task_id = d.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < (e.first_seen_at, d.created_at, d.event_id)" +
 		" LEFT JOIN " + store.OrchestratorTasksSQL + " ot ON ot.task_id = r.parent_task_id" +
 		" LEFT JOIN delivery_wakes dw ON dw.event_id = d.event_id"
-	args := append(store.RelationshipSendsArgs(window), d.busyHeadArgs(now)...)
-	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds))
-	return join, eligibleBase + " AND (COALESCE(sbspent.spent, 0) < CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END OR " + store.EventCountedSQL("d.event_id") + ") AND bh.event_id IS NULL", args
+	args := append(store.RelationshipSendsArgs(window), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds))
+	args = append(args, d.busyHeadArgs(now)...)
+	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
+	return join, eligibleBase + " AND (COALESCE(sbspent.spent, 0) < CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END OR ct.event_id IS NOT NULL) AND bh.event_id IS NULL", args
 }
 
 // dueFrom is what the due-delivery reads select from: a delivery with its relationship and event.
