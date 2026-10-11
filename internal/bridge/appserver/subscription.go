@@ -76,6 +76,18 @@ func (w *TurnWatch) Transmitted() bool {
 	return w.transmitted
 }
 
+// Completed reports whether turn/completed for turn has been received on this watch's connection. It is read under the
+// subscription lock the receiving side writes with; a watch that never learned the turn reports false, and the caller
+// reads the turn from the host instead.
+func (w *TurnWatch) Completed(turn string) bool {
+	if w.manager == nil || turn == "" {
+		return false
+	}
+	w.manager.mu.Lock()
+	defer w.manager.mu.Unlock()
+	return w.seen[turn]
+}
+
 type subscriptionManager struct {
 	client            *Client
 	mu                sync.Mutex

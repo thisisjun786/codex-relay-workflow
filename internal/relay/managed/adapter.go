@@ -36,3 +36,20 @@ type Turn struct{ ID, Status string }
 type HostRPC interface {
 	HostCall(context.Context, string, map[string]any) (map[string]any, error)
 }
+
+// CreationHold is the creation's turn watch kept open after CreateThread has answered. The bridge opens
+// a watch on the thread it creates and lets it go as the creation returns; an adapter that implements
+// HeldCreator hands it over instead, so the subscription that carries the standby turn's turn/completed
+// stays open while the engine waits for that turn to end. Release lets the watch go (the bridge's
+// finishSubscription); it is idempotent, and the engine calls it once the wait is over.
+type CreationHold interface {
+	// TurnCompleted reports whether the watch has received turn/completed for the turn.
+	TurnCompleted(turn string) bool
+	Release()
+}
+
+// HeldCreator is an Adapter whose CreateThread can keep the creation watch open. The engine uses it when
+// the adapter offers it and falls back to CreateThread (and the polling read of the standby turn) when not.
+type HeldCreator interface {
+	CreateThreadHeld(context.Context, CreateThreadRequest) (map[string]any, CreationHold, error)
+}

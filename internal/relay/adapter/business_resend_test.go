@@ -169,6 +169,12 @@ func businessResendSocketScenario(t *testing.T, collision string) {
 		t.Fatalf("legacy shape changed: %v", failure["status"])
 	}
 	before, _ := json.Marshal(failure)
+	// The request is one the earlier unload-and-resend recovery lowered (managed/legacy_resend.go): its rows are what license a successor now.
+	for _, detail := range []string{`{"attempt":1,"phase":"begin","threadId":"resend-child"}`, `{"after":"notLoaded","archive":"ok","attempt":1,"phase":"end","threadId":"resend-child","unarchive":"ok"}`} {
+		if _, err := s.DB.ExecContext(t.Context(), "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", "2026-10-03T08:22:00+00:00", "managed_resend_unloaded", "resend-socket", detail); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if collision != "" {
 		// Independently calculated successor ID; a different operation occupies it.
 		retry := "managed-business-6dd026a2283e7d5fea993f289b8300c4288b66ab810eec40a50bc073be506ffa"

@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -45,6 +47,9 @@ const (
 	reconHasTurn     = "thread_has_turn"
 	reconTurnUnknown = "standby_turn_unknown"
 	reconExhausted   = "attempts_exhausted"
+	// reconOrphanHeld is a child held under other settings that is neither archived nor created again: its history shows more than the
+	// standby turn, or its archive is not known to have been refused.
+	reconOrphanHeld = "standby_orphan_held"
 )
 
 // reconciliation says what the engine did about a creation whose outcome the receipt does not give, or why it did nothing.
@@ -129,13 +134,25 @@ func (r *startRun) currentCreation(ctx context.Context) (map[string]any, error) 
 		return nil, err
 	}
 	r.attempt = 0
-	// Only an unknown attempt can have a successor, so a receipt that says what the host did is asked about nothing more.
-	for unknownCreation(receipt) && r.attempt+1 < maxCreationAttempts {
+	// Only an unknown attempt can have a successor, so a receipt that says what the host did is asked about nothing more; the
+	// exception is an attempt whose child was archived as an orphan (settleOrphan), which the next attempt replaced.
+	for r.attempt+1 < maxCreationAttempts {
+		replaced, err := r.orphanReplaced(ctx, r.attempt)
+		if err != nil {
+			return nil, err
+		}
+		if !unknownCreation(receipt) && !replaced {
+			break
+		}
 		next, err := r.m.Adapter.GetOperation(ctx, attemptID(r.identity.RequestID, r.identity.CreateRequestID, r.attempt+1))
 		if err != nil {
 			return nil, err
 		}
 		if next == nil {
+			if replaced {
+				// The archive is on record and the next creation was not made: it is made now.
+				receipt, r.attempt = nil, r.attempt+1
+			}
 			break
 		}
 		receipt, r.attempt = next, r.attempt+1
@@ -186,7 +203,9 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 		d.rec.attempt, d.rec.attemptID = r.attempt, r.attemptIdentity().CreateRequestID
 		r.reconciled = &d.rec
 		var notReady string
-		r.receipt, notReady, r.projectLock, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+		var hold CreationHold
+		r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+		r.setHold(hold)
 		if err != nil {
 			return nil, err
 		}
@@ -853,4 +872,207 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 		return r.recreate(base, "no thread was shown after the grace period"), nil
 	}
 	return base.stopped(reconAmbiguous, "%d threads fit the creation (%s); the engine adopts none of them", len(matches), strings.Join(matches, ", ")), nil
+}
+
+// A child that stands in the host under settings other than the request's, with nothing in its history but the
+// standby turn, is an orphan: it has no writer, no registration and no work, and the host keeps it loaded
+// where a business turn could not start on it (the resume cannot change the settings of a thread the host
+// holds). settleOrphan archives it once and the request creates its child again, as a creation that left no
+// usable thread does (the attempts are bounded by maxCreationAttempts). A child whose history shows any other
+// turn is somebody's work and is never archived or replaced; it is held. The judgement is made after the
+// standby turn has ended (settleStandby) and before the child is recorded, because a recorded child cannot be
+// replaced.
+
+// orphanKind is the journal kind of the rows an archive of such an orphan leaves, one mark before the host
+// effect and one result after it.
+const orphanKind = "managed_standby_orphan"
+
+// orphanRow is the newest archive value this request's attempt wrote: "attempting" (the mark of an archive that
+// was sent, with no result), "ok", "refused" (the host answered with an error: the archive did not apply) or
+// "skipped" (the mark was closed without an archive); "" when the attempt wrote none.
+func (r *startRun) orphanRow(ctx context.Context, attempt int) (string, error) {
+	var archive sql.NullString
+	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT CASE WHEN json_valid(detail) THEN json_extract(detail, '$.archive') END FROM journal WHERE kind=? AND subject=? AND (CASE WHEN json_valid(detail) THEN json_extract(detail, '$.attempt') END)=? ORDER BY seq DESC LIMIT 1", orphanKind, r.identity.RequestID, attempt).Scan(&archive)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return archive.String, err
+}
+
+// orphanReplaced reports whether the attempt's child was archived (or the host refused the archive) and the
+// request moved on to the next creation.
+func (r *startRun) orphanReplaced(ctx context.Context, attempt int) (bool, error) {
+	archive, err := r.orphanRow(ctx, attempt)
+	return archive == "ok" || archive == "refused", err
+}
+
+func (r *startRun) recordStandbyOrphan(ctx context.Context, detail map[string]any) error {
+	encoded, err := compactPythonJSON(detail)
+	if err != nil {
+		return err
+	}
+	_, err = r.m.Store.Querier(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", r.m.now(), orphanKind, r.identity.RequestID, string(encoded))
+	return err
+}
+
+// heldSettingsProblem names the first of the model, the reasoning effort and the working directory that the
+// host reports for the loaded child and that differs from the request's; "" when none does. A field the host
+// does not report is not a difference.
+func (r *startRun) heldSettingsProblem(facts map[string]any) string {
+	for _, field := range []string{"model", "reasoningEffort"} {
+		if got := pyjson.Text(facts[field]); got != "" && got != pyjson.Text(r.childSettings[field]) {
+			return field
+		}
+	}
+	if got, want := pyjson.Text(facts["cwd"]), pyjson.Text(r.childSettings["cwd"]); got != "" && got != want {
+		resolved, err := filepath.EvalSymlinks(want)
+		if err != nil || got != resolved {
+			return "cwd"
+		}
+	}
+	return ""
+}
+
+func (r *startRun) orphanHeld(ctx context.Context, code, detail string) (contract.OrderedObject, error) {
+	rec := reconciliation{state: reconOrphanHeld, detail: detail, thread: r.task, attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+	r.reconciled = &rec
+	return r.answer(ctx, "incomplete", "standby", code)
+}
+
+// settleOrphan judges the child once its standby turn has ended. It answers nil when the child stands (the
+// request goes on with it), nil with r.rewind set when the child was archived and created again, and the
+// held answer otherwise.
+func (r *startRun) settleOrphan(ctx context.Context) (contract.OrderedObject, error) {
+	archive, err := r.orphanRow(ctx, r.attempt)
+	if err != nil {
+		return nil, err
+	}
+	switch archive {
+	case "ok", "refused":
+		// An earlier call archived this child and stopped before the next creation was made.
+		return r.recreateOrphan(ctx)
+	case "attempting":
+		// An archive was sent and its outcome was never recorded: it may have applied and another client may have
+		// loaded the child again since, so neither the host's lists nor a new archive can settle it.
+		return r.orphanHeld(ctx, "lifecycle_unknown", fmt.Sprintf("an archive of thread %s was sent and its outcome was not recorded; it is not sent again", r.task))
+	}
+	// The worker policy withholds every host call of a refused start, reads included: the business step refuses it.
+	if readiness, err := r.m.ready(ctx, r.req); err != nil || readiness != "" {
+		return nil, err
+	}
+	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": r.task, "includeTurns": false})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if unreadable(err) {
+			return nil, nil // the host holds no such thread to judge; the business guard asks it again
+		}
+		return nil, err
+	}
+	facts := pyjson.Map(read["thread"])
+	if pyjson.Text(pyjson.Map(facts["status"])["type"]) != "idle" {
+		return nil, nil
+	}
+	problem := r.heldSettingsProblem(facts)
+	if problem == "" {
+		return nil, nil
+	}
+	why := fmt.Sprintf("thread %s stands in the host with a %s other than the request's", r.task, problem)
+	code, err := r.standbyOnlyHistory(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		code = "lifecycle_unknown"
+	}
+	if code != "" {
+		rec := reconciliation{state: reconOrphanHeld, detail: why + ", and its history is not exactly its standby turn", thread: r.task, attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+		r.reconciled = &rec
+		state := "incomplete"
+		if code == "business_identity_unobserved" {
+			state = "refused"
+		}
+		return r.answer(ctx, state, "standby", code)
+	}
+	if r.attempt+1 >= maxCreationAttempts {
+		rec := reconciliation{state: reconExhausted, detail: fmt.Sprintf("%s, and %d creations were made already", why, maxCreationAttempts), thread: r.task, attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+		r.reconciled = &rec
+		return r.incompleteResult().Observe(ctx, r.m.Store, r.m.now(), "incomplete", "creation", "creation_unknown")
+	}
+	// The archive is a host effect: readiness and the ledger are asked again with it.
+	readiness, err := r.m.ready(ctx, r.req)
+	if err != nil {
+		return nil, err
+	}
+	if readiness != "" {
+		return r.answer(ctx, "refused", "standby", readiness)
+	}
+	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
+		return nil, err
+	}
+	// The attempt is marked before the host effect on a context the caller's cancellation cannot take away. The
+	// mark is what bounds the archive: a call that finds it without a result never sends the archive again.
+	detail := map[string]any{"attempt": r.attempt, "thread": r.task, "archive": "attempting", "reason": problem}
+	if err := r.recordStandbyOrphan(context.WithoutCancel(ctx), detail); err != nil {
+		return nil, err
+	}
+	closeMark := func(archive string) error {
+		return r.recordStandbyOrphan(context.WithoutCancel(ctx), map[string]any{"attempt": r.attempt, "thread": r.task, "archive": archive, "reason": problem})
+	}
+	// thread/archive unloads an active thread, so the child is read idle once more as the last step before it.
+	last, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": r.task, "includeTurns": false})
+	if err != nil || pyjson.Text(pyjson.Map(pyjson.Map(last["thread"])["status"])["type"]) != "idle" {
+		if rerr := closeMark("skipped"); rerr != nil {
+			return nil, rerr
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, nil
+	}
+	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
+		var rpcErr *appserver.RPCError
+		if errors.As(err, &rpcErr) {
+			// The host answered with an error: this call did not archive the child. It is replaced all the same; the
+			// orphan stays where it is and the row says so.
+			if rerr := closeMark("refused"); rerr != nil {
+				return nil, rerr
+			}
+			return r.recreateOrphan(ctx)
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// No answer: the archive may have applied. The mark stays without a result, which holds the request.
+		return r.orphanHeld(ctx, "lifecycle_unknown", fmt.Sprintf("the archive of thread %s was sent and its answer was lost; it is not sent again", r.task))
+	}
+	if err := closeMark("ok"); err != nil {
+		return nil, err
+	}
+	return r.recreateOrphan(ctx)
+}
+
+// recreateOrphan makes the next creation attempt of the request in place of the archived child and sends Run
+// back to the creation steps for it.
+func (r *startRun) recreateOrphan(ctx context.Context) (contract.OrderedObject, error) {
+	old := r.task
+	r.attempt++
+	rec := reconciliation{state: reconRecreated, detail: fmt.Sprintf("thread %s stood in the host under other settings with only its standby turn; it was archived and the child is created again", old), thread: old, attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+	r.reconciled = &rec
+	r.projectLock() // create takes the project's lock again for the new creation
+	var notReady string
+	var hold CreationHold
+	var err error
+	r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+	r.setHold(hold)
+	if err != nil {
+		return nil, err
+	}
+	if notReady != "" {
+		return r.answer(ctx, "refused", "creation", notReady)
+	}
+	r.adopted, r.task, r.standby = false, "", ""
+	r.rewind = true
+	return nil, nil
 }

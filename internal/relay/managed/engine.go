@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"sync"
 	"syscall"
 	"time"
 
@@ -34,7 +33,18 @@ type Start struct {
 	// CreationGrace is how long after a creation's answer was lost a thread that is not listed yet may still appear; no thread is declared absent
 	// before it has passed. Zero is DefaultCreationGrace.
 	CreationGrace time.Duration
+	// StandbyWait is how long one call waits for the standby turn to end before it answers standby_incomplete; zero is DefaultStandbyWait.
+	StandbyWait time.Duration
+	// StandbyPoll is the interval of the ReadTurn check inside that wait; zero is DefaultStandbyPoll.
+	StandbyPoll time.Duration
 }
+
+const (
+	// DefaultStandbyWait bounds the wait for the standby turn inside one call: a caller's timeout has to be longer.
+	DefaultStandbyWait = 60 * time.Second
+	// DefaultStandbyPoll is the interval of the ReadTurn check while the creation watch has not reported the turn.
+	DefaultStandbyPoll = time.Second
+)
 
 type managedClock struct{ now func() string }
 
@@ -69,8 +79,9 @@ func nullableSQL(value string) sql.NullString {
 // guard that runs just before the business send is in business_guard.go.
 //
 // Stage by stage: preflight, reserve and declareIntent make the request exist; decideScope is the project
-// scope decision, which arms it; createChild, retryStandby, incompleteCreation and verifyCreation are the
-// creation and the retry of its standby turn; bindMarker through readback register the child; businessTurn,
+// scope decision, which arms it; createChild, reconcileCreation, retryStandby, incompleteCreation and checkCreation are the
+// creation and the retry of its standby turn, settleStandby waits for the standby turn to end and judges the child (an orphan is archived and
+// created again), and recordCreation records it; bindMarker through readback register the child; businessTurn,
 // checkBusiness and confirmRegistration are the standby check and the business turn; admit ends it.
 func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, error) {
 	run, err := m.begin(ctx, raw)
@@ -80,16 +91,19 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 	defer run.finish()
 	eligible := replayState(run.row.State) && pyjson.Map(pyjson.Map(run.req["child"])["settings"])["mcpProfile"] == nil
 	ctx = context.WithValue(ctx, armedReplayKey{}, eligible)
-	for _, step := range []func(context.Context) (contract.OrderedObject, error){
+	steps := []func(context.Context) (contract.OrderedObject, error){
 		run.preflight,
 		run.reserve,
 		run.declareIntent,
 		run.decideScope,
 		run.createChild,
+		// reconcileCreation is where a replaced child's new creation re-enters (rewindAt).
 		run.reconcileCreation,
 		run.retryStandby,
 		run.incompleteCreation,
-		run.verifyCreation,
+		run.checkCreation,
+		run.settleStandby,
+		run.recordCreation,
 		run.bindMarker,
 		run.register,
 		run.registerCriteria,
@@ -99,65 +113,18 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		run.businessTurn,
 		run.checkBusiness,
 		run.confirmRegistration,
-	} {
-		if answer, err := step(ctx); answer != nil || err != nil {
+	}
+	const rewindAt = 5 // index of reconcileCreation in steps
+	for i := 0; i < len(steps); i++ {
+		if answer, err := steps[i](ctx); answer != nil || err != nil {
 			return answer, err
+		}
+		if run.rewind {
+			// settleStandby replaced the child: the new creation goes through the steps from the reconciliation on.
+			run.rewind, i = false, rewindAt-1
 		}
 	}
 	return run.admit(ctx)
-}
-
-// create is the one place a managed start asks the host for its child. Every refusal that can be decided
-// without the child is decided here, in the order it was always decided, and the last of them directly
-// before the host is asked: readiness, the project scope, the ledger, then the project scope again with
-// the request's own fields (requestRefusal). A request that names a project holds the project's lock
-// (LockProject) from before the first of these, and the caller keeps it until the child is registered,
-// so a writer of the project's parent binding, which takes the lock exclusively, can change the binding
-// neither between the last ask and the creation nor between the creation and the registration (where
-// registration would refuse a child whose thread already exists).
-//
-// It returns the host's receipt, or the readiness refusal code that stands in for it, and the function
-// that lets the lock go; the function is never nil, may be called more than once, and must be called on
-// every way out of the caller.
-func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, func(), error) {
-	release := func() {}
-	if project := pyjson.Text(req["projectKey"]); project != "" {
-		held, err := LockProject(ctx, m.Store.Path, project)
-		if err != nil {
-			return nil, "", release, err
-		}
-		var once sync.Once
-		release = func() { once.Do(func() { _ = held() }) }
-	}
-	readiness, err := m.ready(ctx, req)
-	if err != nil {
-		return nil, "", release, err
-	}
-	if readiness != "" {
-		return nil, readiness, release, nil
-	}
-	// Asked right before the effect, as readiness is: the binding may have moved since the first ask.
-	if err := m.scopeRefusal(ctx, id, req); err != nil {
-		return nil, "", release, err
-	}
-	if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
-		return nil, "", release, err
-	}
-	// The ledger check is an adapter call and takes time: the last ask is the one after it, and nothing but
-	// the host call follows it.
-	if err := m.scopeRefusal(ctx, id, req); err != nil {
-		return nil, "", release, err
-	}
-	if err := m.requestRefusal(ctx, req); err != nil {
-		return nil, "", release, err
-	}
-	child := pyjson.Map(req["child"])
-	settings := pyjson.Map(child["settings"])
-	sandbox := pyjson.Map(settings["sandbox"])
-	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[pyjson.Text(sandbox["type"])]
-	// The name the host is given is normalized; the request and its fingerprint keep the title the parent wrote.
-	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: childTitle(id.IssueKey, pyjson.Text(child["title"])), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child", MCPProfile: pyjson.Text(settings["mcpProfile"])})
-	return receipt, "", release, err
 }
 
 // requestRefusal is what registration and the settings record refuse once the child exists and the request

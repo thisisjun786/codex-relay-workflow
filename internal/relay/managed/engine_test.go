@@ -154,7 +154,7 @@ func Test27_MST_7_WorkerPolicyDisappearsAfterCreation(t *testing.T) {
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	ready := true
 	host.onCreate = func() { ready = false }
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) {
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) {
 		if !ready {
 			return "worker_policy_unconfigured", nil
 		}
@@ -200,7 +200,7 @@ func Test27_MST_7_CreationEnvironmentDriftRefusesRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, creationEnvironmentChanged: true}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func Test27_MST_3_PausedPartialShellNoRecoverySend(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, paused: true}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func Test27_MST_7_PausedChildPreservesShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed", paused: true}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +291,7 @@ func Test27_MST_6_CreatedChildIsAuthorizedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +331,7 @@ func Test27_MST_3_UnknownRecoverySendIsNotRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, sendStatus: "outcome_unknown"}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		result, e := start.Run(ctx, raw)
 		if e != nil {
@@ -397,7 +397,7 @@ func checkManagedScopeDrift(t *testing.T, column, value string) {
 		}
 		observed = pyjson.Text(verdict["code"])
 	}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -426,7 +426,7 @@ func Test27_MST_3_UncertainFirstTurnNeverRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, partial: true, attemptedTurn: true}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		receipt, e := start.Run(ctx, raw)
 		if e != nil {
@@ -465,7 +465,7 @@ func Test27_MST_4_LedgerReplacementBeforeCreationWithholdsEffect(t *testing.T) {
 			host.ledger = map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 3}
 		}
 	}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	_, err = start.Run(ctx, raw)
 	reasonIs(t, err, "relationship_conflict")
 	if host.created != 0 || host.sent != 0 {
@@ -484,7 +484,7 @@ func Test27_MST_4_UnknownLedgerNeverReserves(t *testing.T) {
 	defer s.Close()
 	raw := requestFixture(t)
 	host := &managedFake{ledger: nil, operations: map[string]map[string]any{}}
-	start := &Start{Store: s, Adapter: host, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir}
 	_, err = start.Run(ctx, raw)
 	if err == nil || !strings.Contains(err.Error(), "observed bridge ledger identity") {
 		t.Fatalf("unknown ledger: %v", err)
@@ -513,7 +513,7 @@ func Test27_MST_4_PreflightRefusesBeforeHostEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "worker_policy_unconfigured", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "worker_policy_unconfigured", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -552,7 +552,7 @@ func Test27_MST_2_RegisteredShellCompletesCriteriaAfterCrash(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	if _, err = start.Run(ctx, raw); err == nil || !strings.Contains(err.Error(), "caller died") {
 		t.Fatalf("expected criteria crash: %v", err)
 	}
@@ -599,7 +599,7 @@ func Test27_MST_2_BusinessReceiptReplayedAfterAdmissionCrash(t *testing.T) {
 			}
 		}
 	}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	if _, err = start.Run(ctx, raw); err == nil || !strings.Contains(err.Error(), "caller died") {
 		t.Fatalf("admission failure not observed: %v", err)
 	}
@@ -634,7 +634,7 @@ func Test27_MST_2_StandbyRecoveryUsesRetainedShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed", partial: true}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		result, e := start.Run(ctx, raw)
 		if e != nil {
@@ -672,7 +672,7 @@ func Test27_MST_3_StandbyIncompleteRetainsChildUntilRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "inProgress"}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -713,7 +713,7 @@ func Test27_MST_3_UnknownCreationNeverCreatesReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, creationStatus: "outcome_unknown"}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	for range 2 {
 		receipt, e := start.Run(ctx, raw)
 		if e != nil {
@@ -748,7 +748,7 @@ func Test27_MST_1_FakeHostStartReplay(t *testing.T) {
 	}
 	child := pyjson.Map(pyjson.Map(req["child"])["settings"])
 	host := &managedFake{operations: map[string]map[string]any{}, settings: child, ledger: map[string]any{"realPath": filepath.Join(dir, "operations"), "device": 1, "inode": 2}, standby: "completed"}
-	start := &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	result, err := start.Run(ctx, raw)
 	if err != nil {
 		t.Fatal(err)

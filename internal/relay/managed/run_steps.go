@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -48,6 +49,10 @@ type startRun struct {
 	turn                string         // the business turn the host accepted
 	businessOperationID string         // internal ledger attempt; dispatch identity stays unchanged
 	businessAttempt     int
+
+	hold   CreationHold // the creation's turn watch, kept open from the creation until the standby wait is over (create.go)
+	rewind bool         // a step created the child again: Run goes back to the creation steps for the new attempt
+	waited bool         // this call has already waited for the standby turn (settleStandby): the business step only checks it
 
 	attempt    int             // the creation attempt now current: 0 is the request's own operation (reconcile.go)
 	adopted    bool            // the receipt is an unknown creation continued on the thread the App Server showed
@@ -102,6 +107,7 @@ func (m *Start) begin(ctx context.Context, raw []byte) (*startRun, error) {
 
 // finish lets go of the project's lock and then of the request's, on every way out of Run.
 func (r *startRun) finish() {
+	r.releaseHold()
 	r.projectLock()
 	if r.unlock != nil {
 		_ = r.unlock()
@@ -210,7 +216,9 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 	r.receipt = receipt
 	if receipt == nil || receipt["status"] == "not_attempted" {
 		var notReady string
-		r.receipt, notReady, r.projectLock, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+		var hold CreationHold
+		r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+		r.setHold(hold)
 		if err != nil {
 			return nil, err
 		}
@@ -219,6 +227,21 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 		}
 	}
 	return nil, nil
+}
+
+// setHold keeps the creation's watch for the standby wait, letting go the one an earlier attempt held.
+func (r *startRun) setHold(hold CreationHold) {
+	r.releaseHold()
+	r.hold = hold
+}
+
+// releaseHold lets the creation's watch go (the bridge's finishSubscription). It is called after the standby wait
+// and again by finish on every way out, and lets go once.
+func (r *startRun) releaseHold() {
+	if hold := r.hold; hold != nil {
+		r.hold = nil
+		hold.Release()
+	}
 }
 
 // retryStandby is the retry of a creation that failed after its thread started, or that was unknown and reconcileCreation continued on the
@@ -259,9 +282,10 @@ func (r *startRun) incompleteCreation(ctx context.Context) (contract.OrderedObje
 	return r.incompleteResult().Observe(ctx, r.m.Store, r.m.now(), "incomplete", "creation", "creation_"+outcome)
 }
 
-// verifyCreation takes the child's identity from the accepted receipt, checks that the host created it
-// with the settings asked for, and records the receipt on the reservation.
-func (r *startRun) verifyCreation(ctx context.Context) (contract.OrderedObject, error) {
+// checkCreation takes the child's identity from the accepted receipt and checks that the host created it with
+// the settings asked for. Nothing is recorded yet: until the standby turn has ended and the child has been
+// judged (settleStandby), the request can still be given another child.
+func (r *startRun) checkCreation(ctx context.Context) (contract.OrderedObject, error) {
 	task, standby := pyjson.Text(r.receipt["threadId"]), pyjson.Text(r.receipt["turnId"])
 	if !delivery.ValidSegment(task) || !delivery.ValidSegment(standby) {
 		return r.answer(ctx, "incomplete", "creation", "creation_identity_unobserved")
@@ -271,6 +295,11 @@ func (r *startRun) verifyCreation(ctx context.Context) (contract.OrderedObject, 
 	if !creationMatches(r.childSettings, pyjson.Map(r.receipt["creation"])) {
 		return r.answer(ctx, "refused", "creation", "creation_settings_unverified")
 	}
+	return nil, nil
+}
+
+// recordCreation records the checked receipt on the reservation.
+func (r *startRun) recordCreation(ctx context.Context) (contract.OrderedObject, error) {
 	var err error
 	r.row, err = r.reservation.Receipt(ctx, r.identity.RequestID, r.identity.Fingerprint, r.receipt)
 	return nil, err
@@ -343,43 +372,30 @@ func (r *startRun) readback(ctx context.Context) (contract.OrderedObject, error)
 	return nil, nil
 }
 
-// businessTurn sends the child its assignment, once. Only a proven failure before
-// turn/start licenses a bounded successor operation; every older receipt is kept.
+// businessTurn sends the child its assignment, once. A business send that failed before turn/start is
+// kept as it is and not sent again under a new operation id; only a request that already holds
+// managed_resend_unloaded rows keeps the successor operations those rows belong to (legacy_resend.go).
 func (r *startRun) businessTurn(ctx context.Context) (contract.OrderedObject, error) {
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return nil, err
 	}
-	for r.businessAttempt = 0; r.businessAttempt < maxBusinessResendAttempts; r.businessAttempt++ {
-		r.businessOperationID = businessResendID(r.identity.RequestID, r.identity.DispatchRequestID, r.businessAttempt)
-		sent, err := r.m.Adapter.GetOperation(ctx, r.businessOperationID)
-		if err != nil {
-			return nil, err
-		}
-		r.sent = sent
-		if sent == nil || sent["status"] == "not_attempted" && !businessResendTurnPossible(sent) {
-			break
-		}
-		safe := businessResendSafe(sent, r.task)
-		if safe {
-			// The loop overwrites r.sent with the successor lookup, so the failure that licensed
-			// this successor is kept here: the narrow unload reads it as the immediately
-			// preceding business failure.
-			r.resendFailure = sent
-		}
-		if !safe || r.businessAttempt+1 == maxBusinessResendAttempts {
-			if r.businessAttempt > 0 && sent["status"] == "accepted" {
-				// The retained ID might belong to other arguments. Send's ledger
-				// lookup proves this exact packet before replaying, with no effect.
-				return nil, r.sendBusiness(ctx)
-			}
-			return nil, nil
-		}
+	next, err := r.businessOperations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch next {
+	case businessHold:
+		return nil, nil
+	case businessReplay:
+		// The retained ID might belong to other arguments. Send's ledger lookup proves this exact
+		// packet before replaying, with no effect.
+		return nil, r.sendBusiness(ctx)
 	}
 	if answer, err := r.awaitStandby(ctx); answer != nil || err != nil {
 		return answer, err
 	}
 	if r.businessAttempt > 0 {
-		code, err := r.businessResendReady(ctx)
+		code, err := r.legacyResendReady(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -403,10 +419,65 @@ type lifecycleChecker interface {
 	Lifecycle(context.Context, string, string) (bool, string, error)
 }
 
+func (m *Start) standbyWait() time.Duration {
+	if m.StandbyWait > 0 {
+		return m.StandbyWait
+	}
+	return DefaultStandbyWait
+}
+
+func (m *Start) standbyPoll() time.Duration {
+	if m.StandbyPoll > 0 {
+		return m.StandbyPoll
+	}
+	return DefaultStandbyPoll
+}
+
+// waitStandby waits, inside the call, for a known end of the inert standby turn: the creation watch's
+// turn/completed first when the creation handed the watch over, and the host's own record of the turn
+// (ReadTurn) at the poll interval when the watch has not reported it. The wait is bounded by
+// Start.StandbyWait (60 seconds by default, so a caller's timeout has to be longer); it returns the turn as
+// last observed, which is not an end when the bound passed first. An interrupted or failed standby is an
+// end: it keeps its original anchor, and its business send also needs a ready host (awaitStandby).
+func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, error) {
+	bound := time.NewTimer(wait)
+	defer bound.Stop()
+	for {
+		if r.hold != nil && r.hold.TurnCompleted(r.standby) {
+			return &Turn{ID: r.standby, Status: "completed"}, nil
+		}
+		turn, err := r.m.Adapter.ReadTurn(ctx, r.task, r.standby)
+		if err != nil {
+			return nil, err
+		}
+		if turn != nil && (turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed") {
+			return turn, nil
+		}
+		if wait <= 0 {
+			return turn, nil
+		}
+		poll := time.NewTimer(r.m.standbyPoll())
+		select {
+		case <-ctx.Done():
+			poll.Stop()
+			return nil, ctx.Err()
+		case <-bound.C:
+			poll.Stop()
+			return turn, nil
+		case <-poll.C:
+		}
+	}
+}
+
 // awaitStandby waits for a known end of the inert standby. An interrupted or failed
 // standby keeps its original anchor; its business send also needs a ready host.
 func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, error) {
-	turn, err := r.m.Adapter.ReadTurn(ctx, r.task, r.standby)
+	wait := r.m.standbyWait()
+	if r.waited {
+		wait = 0 // settleStandby spent this call's wait before the child was registered
+	}
+	turn, err := r.waitStandby(ctx, wait)
+	r.releaseHold()
 	if err != nil {
 		return nil, err
 	}
@@ -438,6 +509,35 @@ func (r *startRun) awaitStandby(ctx context.Context) (contract.OrderedObject, er
 		}
 		if code != "" {
 			return r.answer(ctx, "incomplete", "business", code)
+		}
+	}
+	return nil, nil
+}
+
+// settleStandby is the wait for the standby turn of a child the reservation has not recorded yet, and the
+// judgement the child gets once the turn has ended (settleOrphan): a child that stands in the host under
+// settings other than the request's with nothing but its standby turn is an orphan, archived once and
+// created again under the same request, as a creation that left no usable thread is. It runs before the
+// child is recorded and registered because that is the last point at which the request can still be given
+// another child. A standby turn that has not ended when the bound passes is not judged and not answered
+// here: the child is registered as before and awaitStandby answers standby_incomplete, with the receipt it
+// has always had. The project's lock stays held over the wait (create takes it, register lets it go): the
+// binding of the project's parent cannot move between the creation and the registration, whatever the wait takes.
+func (r *startRun) settleStandby(ctx context.Context) (contract.OrderedObject, error) {
+	if r.row.State == "attached" || r.row.ReceiptStatus.Valid && r.row.ReceiptStatus.String == "accepted" {
+		// A recorded child was settled by the call that recorded it; awaitStandby waits if its standby is still running.
+		r.releaseHold()
+		return nil, nil
+	}
+	turn, err := r.waitStandby(ctx, r.m.standbyWait())
+	r.releaseHold()
+	if err != nil {
+		return nil, err
+	}
+	r.waited = true
+	if turn != nil && (turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed") {
+		if answer, err := r.settleOrphan(ctx); answer != nil || err != nil || r.rewind {
+			return answer, err
 		}
 	}
 	return nil, nil

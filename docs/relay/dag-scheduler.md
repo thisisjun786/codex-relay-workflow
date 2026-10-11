@@ -445,7 +445,7 @@ work. Skipping creates neither an observation nor a settlement and changes no te
 Ordinary/revision anchors and genuine business failures still report. Previously delivered failure
 observations are not retracted by this source change.
 
-A missing, unknown or still-running standby remains `standby_incomplete`. A known host hold
+A missing, unknown or still-running standby remains `standby_incomplete` once the call's 60 second wait for it has passed. A known host hold
 returns its reason without beginning the business operation, and an unreadable host returns an error;
 repeating after the hold clears can continue. Serving policy, settings, scope and the final business
 guard still apply. Host observation and turn start are not atomic: a thread that becomes busy in
