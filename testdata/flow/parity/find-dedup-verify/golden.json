@@ -1,0 +1,74 @@
+{
+  "claudeSha256": "311ee6ab9c17ca67d9e05e8d97d3c7299c1fcde663225eebd58671c158e70464",
+  "value": {
+    "confirmed": 1,
+    "found": 3,
+    "unique": 1
+  },
+  "calls": [
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "find:api",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "high"
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "find:storage",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "high"
+      }
+    },
+    {
+      "path": "root/1:2",
+      "position": 1,
+      "label": "find:cli",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "high"
+      }
+    },
+    {
+      "path": "root/2:0",
+      "position": 1,
+      "label": "check:0",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "ocx-gpt-6-1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      }
+    }
+  ]
+}

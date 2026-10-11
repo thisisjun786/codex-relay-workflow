@@ -1,0 +1,41 @@
+{
+  "claudeSha256": "f1e0648fc9202d049c9d394654fae9ab12f0c62d9832e30f9f9928e11e5f7abe",
+  "value": {
+    "summary": "",
+    "verdict": "verified"
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 1,
+      "label": "build:quick",
+      "role": "executor",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root",
+      "position": 2,
+      "label": "check:quick",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "ocx-gpt-6-1-sol",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      }
+    }
+  ]
+}

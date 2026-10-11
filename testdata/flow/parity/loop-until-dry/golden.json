@@ -1,0 +1,43 @@
+{
+  "claudeSha256": "8590d14160cdef249babf0e5bb907659257d504dab93a7b5cf289e21fc4c481d",
+  "value": {
+    "known": [
+      ""
+    ],
+    "rounds": 2
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 1,
+      "label": "sweep:round1",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "high"
+      }
+    },
+    {
+      "path": "root",
+      "position": 2,
+      "label": "sweep:round2",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "high"
+      }
+    }
+  ]
+}

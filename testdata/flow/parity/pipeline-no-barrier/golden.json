@@ -1,0 +1,105 @@
+{
+  "claudeSha256": "8099650c98f1ea22be20e5ad5ad8746304d64e3b2834f35efa738d17064a1e88",
+  "value": [
+    "verified",
+    "verified"
+  ],
+  "calls": [
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "plan:a.go",
+      "role": "architect",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "opus",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-opus-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:0",
+      "position": 3,
+      "label": "apply:a.go",
+      "role": "executor-t1",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "sonnet",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:0",
+      "position": 4,
+      "label": "verify:a.go",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "plan:b.go",
+      "role": "architect",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "opus",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-opus-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 3,
+      "label": "apply:b.go",
+      "role": "executor-t1",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "sonnet",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 4,
+      "label": "verify:b.go",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      }
+    }
+  ]
+}
