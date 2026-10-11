@@ -1060,6 +1060,17 @@ func (r *startRun) settleOrphan(ctx context.Context) (contract.OrderedObject, er
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return nil, err
 	}
+	// The child is replaced only when the host would let a business turn start on it: a goal the host holds paused, usage- or
+	// budget-limited, a child that takes no direct input, an archived or unknown one holds the request as it holds the
+	// business turn (awaitStandby, the business guard), whatever way its standby turn ended. The replacement's own state would
+	// otherwise stand in for the child's.
+	if held, err := hostReady(ctx, r.m.Adapter, r.task); err != nil {
+		return nil, err
+	} else if held != "" {
+		rec := reconciliation{state: reconOrphanHeld, detail: fmt.Sprintf("%s, and the host holds it: %s; it is not archived or replaced", why, held), thread: r.task, attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+		r.reconciled = &rec
+		return r.answer(ctx, "incomplete", "business", held)
+	}
 	// The attempt is marked before the host effect on a context the caller's cancellation cannot take away. The
 	// mark is what bounds the archive: a call that finds it without a result never sends the archive again.
 	detail := map[string]any{"attempt": r.attempt, "thread": r.task, "archive": "attempting", "reason": problem}
@@ -1078,7 +1089,13 @@ func (r *startRun) settleOrphan(ctx context.Context) (contract.OrderedObject, er
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, nil
+		// The child is not idle (another client started a turn on it) or cannot be read now: it is not archived, and it is not
+		// registered or sent to either, so the request stays retryable. The row says skipped and the next call judges it again.
+		code := "recipient_not_idle"
+		if err != nil {
+			code = "lifecycle_unknown"
+		}
+		return r.orphanHeld(ctx, code, fmt.Sprintf("thread %s was not idle when it was to be archived; it is not archived or replaced now", r.task))
 	}
 	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
 		var rpcErr *appserver.RPCError

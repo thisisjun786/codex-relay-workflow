@@ -204,8 +204,11 @@ deadline over the whole wait: a host read that is still running when it passes i
 Server client reports that cut as its phase timeout, which the wait counts as the bound and not as a
 host failure), and no read is given a budget of its own. The watch is asked again after every read
 and once more when the bound passes, so a `turn/completed` that arrived during a read or between
-reads ends the wait as completed; a read is not cut for the watch, because a request cancelled
-mid-write closes the connection that carries the watch. A turn seen to end is kept for the business step and is not asked of
+reads ends the wait as completed, and a read that fails on its own (its RPC bound is shorter than
+the wait's) does not discard a `turn/completed` the watch already holds: the watch is asked before
+the read's error is returned, and the error is the call's only when the watch has nothing; a read
+is not cut for the watch, because a request cancelled mid-write closes the connection that carries
+the watch. A turn seen to end is kept for the business step and is not asked of
 the host again, so the watch's proof of completion survives its release. The watch is let go once
 the wait is over and on every way out of the call.
 
@@ -234,11 +237,22 @@ archived, created or sent, instead of sending a turn whose failure would stay on
 host has unloaded the child (another client closing it, or an operator's `thread/archive` then
 `thread/unarchive`), the resume applies the recorded settings and the business turn goes out.
 
+An orphan is replaced only when the host would let a business turn start on it, whatever way its
+standby turn ended (`completed`, `interrupted` or `failed`): before the archive the start asks the
+host-ready questions of the business step about the old child, and a goal the host holds `paused`,
+`usageLimited` or `budgetLimited`, a child that takes no direct input, or an archived or unknown one,
+holds the request as `incomplete` with that code (`recipient_paused`, `recipient_usage_limited`,
+`recipient_budget_limited`, `recipient_cannot_accept_input`, `recipient_archived`, `lifecycle_unknown`)
+at the `business` stage and `creationReconciliation` `standby_orphan_held`, with nothing archived,
+created or sent. The next call judges the child again and replaces it once the hold has gone.
+
 The archive is a host effect and is bounded by its journal rows. The readiness policy and the ledger
 are asked again before it; a `managed_standby_orphan` row with `archive` `attempting` is written
 before the host call, on a context the caller's cancellation does not end, and a second row
 closes it (`ok`, `refused` when the host answered with its own JSON-RPC error, or `skipped` when
-the last `thread/read` before the archive no longer showed an idle child). An archive whose answer
+the last `thread/read` before the archive no longer showed an idle child, or could not be read:
+the start then answers `incomplete` / `recipient_not_idle` (`lifecycle_unknown` for an unreadable
+child), `standby_orphan_held`, registers nothing and sends nothing, and a repeat judges the child again). An archive whose answer
 is lost may have applied, and another client may have unarchived and loaded the child again since:
 neither the archived listing nor a second archive can settle that, so the start answers `incomplete`
 `lifecycle_unknown` (`creationReconciliation` `standby_orphan_held`) and the `attempting` row, which

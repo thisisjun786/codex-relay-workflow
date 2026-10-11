@@ -31,10 +31,18 @@ type collapseApp struct {
 	archiveCalls      []string
 	unarchiveCalls    []string
 	archivedListCalls int
-	createErr         error
-	creates           int
-	createStatus      string // the load status a created thread has once its standby turn has ended; idle when empty
-	mcpWrong          map[string]bool
+	// marked reports whether the orphan archive's mark row is written; archivedListAfterMark counts the archived listings asked after it.
+	marked                func() bool
+	archivedListAfterMark int
+	createErr             error
+	creates               int
+	createStatus          string // the load status a created thread has once its standby turn has ended; idle when empty
+	mcpWrong              map[string]bool
+	// goal is the status of the goal the host holds for a thread; noInput lists threads that take no direct input.
+	goal    map[string]string
+	noInput map[string]bool
+	// onRead runs before every thread/read answer.
+	onRead func(thread string)
 }
 
 // MCPProblem is what an adapter that knows the request's MCP profile answers: the host reports the thread under other MCP servers.
@@ -54,6 +62,7 @@ func collapseKit(t *testing.T, wrong ...string) (*reconcileKit, *collapseApp) {
 		app.wrong[id] = true
 	}
 	k.start.Adapter = app
+	app.marked = func() bool { return len(k.orphanRows("managed_standby_orphan")) > 0 }
 	return k, app
 }
 
@@ -101,6 +110,9 @@ func (a *collapseApp) HostCall(ctx context.Context, method string, params map[st
 	case "thread/list":
 		if params["archived"] == true {
 			a.archivedListCalls++
+			if a.marked != nil && a.marked() {
+				a.archivedListAfterMark++
+			}
 			if a.onArchivedList != nil {
 				a.onArchivedList()
 			}
@@ -112,11 +124,21 @@ func (a *collapseApp) HostCall(ctx context.Context, method string, params map[st
 			}
 			return map[string]any{"data": data}, nil
 		}
+	case "thread/goal/get":
+		if status := a.goal[id]; status != "" {
+			return map[string]any{"goal": map[string]any{"status": status}}, nil
+		}
 	case "thread/read":
+		if a.onRead != nil {
+			a.onRead(id)
+		}
 		answer, err := a.scriptedApp.HostCall(ctx, method, params)
 		if err == nil && a.wrong[id] {
 			thread := answer["thread"].(map[string]any)
 			thread["model"] = "another-model"
+		}
+		if err == nil && a.noInput[id] {
+			answer["thread"].(map[string]any)["canAcceptDirectInput"] = false
 		}
 		return answer, err
 	}
@@ -270,7 +292,6 @@ func TestCRW1070RaceArchivedAtMostOnce(t *testing.T) {
 	k, app := collapseKit(t, "t-1")
 	app.archiveLostReply = true
 	app.onArchive = func() { app.otherClientReloads("t-1") } // the archive applied, then the other client acted, then the reply was lost
-	app.onArchivedList = func() { t.Error("the archived listing is not the evidence of an archive") }
 	for round := range 3 {
 		got := k.run()
 		if got["state"] != "incomplete" || got["stage"] != "standby" || got["reason"] != "lifecycle_unknown" || recon(got)["state"] != "standby_orphan_held" {
@@ -280,8 +301,8 @@ func TestCRW1070RaceArchivedAtMostOnce(t *testing.T) {
 			k.restart()
 		}
 	}
-	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || app.archivedListCalls != 0 || app.creates != 1 || k.host.sent != 0 {
-		t.Fatalf("one archive of t-1, no listing, no second creation, no send: archives %v lists %d creates %d sent %d", app.archiveCalls, app.archivedListCalls, app.creates, k.host.sent)
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || app.archivedListAfterMark != 0 || app.creates != 1 || k.host.sent != 0 {
+		t.Fatalf("one archive of t-1, no listing, no second creation, no send: archives %v lists after the mark %d creates %d sent %d", app.archiveCalls, app.archivedListAfterMark, app.creates, k.host.sent)
 	}
 }
 
@@ -315,7 +336,6 @@ func TestCRW1070OtherClientUnarchiveRace(t *testing.T) {
 	t.Parallel()
 	k, app := collapseKit(t, "t-1")
 	app.archiveLostReply = true
-	app.onArchivedList = func() { t.Error("the archived listing is not the evidence of an archive") }
 	k.expect(k.run(), "incomplete", "lifecycle_unknown", "standby_orphan_held")
 	app.otherClientReloads("t-1") // unarchived and loaded again, idle, with its other settings; the archived listing no longer holds it
 	for round := range 3 {
@@ -324,8 +344,8 @@ func TestCRW1070OtherClientUnarchiveRace(t *testing.T) {
 			k.restart()
 		}
 	}
-	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || app.archivedListCalls != 0 {
-		t.Fatalf("the same thread is archived once: %v lists %d", app.archiveCalls, app.archivedListCalls)
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || app.archivedListAfterMark != 0 {
+		t.Fatalf("the same thread is archived once: %v lists after the mark %d", app.archiveCalls, app.archivedListAfterMark)
 	}
 }
 

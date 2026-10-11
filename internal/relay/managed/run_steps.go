@@ -470,6 +470,11 @@ func (r *startRun) waitStandby(ctx context.Context, wait time.Duration) (*Turn, 
 			if waitCtx.Err() != nil && cutByDeadline(err) {
 				return atBound(), nil // the bound passed under the read
 			}
+			if r.watchCompleted() {
+				// The read failed on its own (its RPC bound is shorter than the wait's), but the watch has the standby's end:
+				// the proof that already arrived is not discarded for a failed second source.
+				return &Turn{ID: r.standby, Status: "completed"}, nil
+			}
 			return nil, err
 		}
 		last = turn
