@@ -28,7 +28,7 @@ import (
 //
 // The pre-merge and verification bodies are stored in the acceptance row, because dag_acceptance_premerge and dag_acceptance_verifications reference dag_acceptances. A node without a head (a
 // non-implementation node) takes the reviewer, the execution and the actor, and returns its slot in the same transaction (dag_accepted), as the relationship path does. There is no pull request route and no
-// 'local CI only' route: the pull request landing of an agent node is CRW-1226's, and until it lands a plan on the pull request route compiles such a node out.
+// 'local CI only' route: the pull request landing of an agent node is CRW-1226's. Until it lands the design has the plan compile refuse an agent node on the pull request route (that compile is not part of this issue), and this path itself refuses a pull request for an agent node.
 //
 // What the run records, and what this path reads of it (the journal is written by the flow engine into flow_calls; these are the columns and keys the acceptance depends on):
 //
