@@ -294,6 +294,52 @@ func (s *Scheduler) resolveCheckout(ctx context.Context, q store.Querier, plan, 
 			return cwd, nil
 		}
 	}
+	// a plan whose nodes run on the agent surface has neither a parent_cwd nor, before its first acceptance, an acceptance: the worktrees its executions record are linked working trees of the checkout the
+	// sweep measures in, so the main working tree of their repository is the checkout (a repository with no working tree is its git directory)
+	return s.agentExecutionCheckout(ctx, q, plan, node)
+}
+
+// agentExecutionCheckout is the checkout of the repository the agent executions of a plan work in, found from the worktree each of them records (the trigger node's first, then the newest). "" is none.
+func (s *Scheduler) agentExecutionCheckout(ctx context.Context, q store.Querier, plan, node string) (string, error) {
+	has, err := tableExists(ctx, q, "dag_agent_executions")
+	if err != nil || !has {
+		return "", err
+	}
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT worktree FROM dag_agent_executions WHERE plan_id = ? AND worktree <> '' ORDER BY CASE WHEN node_id = ? THEN 0 ELSE 1 END, node_id, worktree", plan, node)
+	if err != nil {
+		return "", err
+	}
+	var worktrees []string
+	for rows.Next() {
+		var wt string
+		if err := rows.Scan(&wt); err != nil {
+			_ = rows.Close()
+			return "", err
+		}
+		worktrees = append(worktrees, wt)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return "", err
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	for _, wt := range worktrees {
+		if !isGitCheckout(ctx, wt) {
+			continue
+		}
+		common, err := gitCommonDir(ctx, wt)
+		if err != nil {
+			continue
+		}
+		if filepath.Base(common) == ".git" {
+			common = filepath.Dir(common)
+		}
+		if isGitCheckout(ctx, common) {
+			return common, nil
+		}
+	}
 	return "", nil
 }
 

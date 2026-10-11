@@ -783,7 +783,22 @@ func activeAcceptancesOf(ctx context.Context, q store.Querier, plan string, head
 		}
 		sort.SliceStable(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
 	}
-	return out, nil
+	// a node that holds an acceptance or an execution on both sides is read as neither (cross_kind_acceptance, cross_kind_execution): it contributes no acceptance, as acceptanceOf and stateOf read it
+	kept := out[:0]
+	for _, a := range out {
+		if _, _, err := acceptanceOf(ctx, q, plan, a.NodeID); crossKindHeld(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if held, err := crossKindExecutionHeld(ctx, q, plan, a.NodeID); err != nil {
+			return nil, err
+		} else if held {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept, nil
 }
 
 // acceptanceIntact is whether an acceptance row is what its id says: the digest of a relationship's row (AcceptanceDigest), the key of an agent's (AgentAcceptanceID).
@@ -910,5 +925,24 @@ func tolerantAcceptanceOf(ctx context.Context, q store.Querier, plan, node strin
 	if crossKindHeld(err) {
 		return Acceptance{}, false, nil
 	}
-	return a, found, err
+	if err != nil || !found {
+		return a, found, err
+	}
+	// a node with a current execution on both sides is ambiguous (stateOf): its acceptance is read as none, though only one side holds one
+	if held, err := crossKindExecutionHeld(ctx, q, plan, node); err != nil || held {
+		return Acceptance{}, false, err
+	}
+	return a, found, nil
+}
+
+// crossKindExecutionHeld is whether a node holds a current execution on both sides (cross_kind_execution). The relationship side is read only when the agent side holds one, which is the only way a node can.
+func crossKindExecutionHeld(ctx context.Context, q store.Querier, plan, node string) (bool, error) {
+	if _, hasAgent, err := currentAgentExecution(ctx, q, plan, node); err != nil || !hasAgent {
+		return false, err
+	}
+	_, _, err := executionOf(ctx, q, plan, node)
+	if crossKindHeld(err) {
+		return true, nil
+	}
+	return false, err
 }

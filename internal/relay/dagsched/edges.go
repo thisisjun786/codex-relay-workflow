@@ -338,6 +338,9 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	if !found {
 		return wait(e, "the predecessor has no active acceptance"), nil
 	}
+	if st, err := ambiguousExecution(ctx, q, plan, e.FromNodeID); err != nil || st != nil {
+		return valueOf(st), err
+	}
 	if st, err := s.standing(ctx, q, plan, from, a); err != nil || st != nil {
 		return valueOf(st), err
 	}
@@ -507,6 +510,17 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 	return out, err
 }
 
+// ambiguousExecution is the blocked status of an edge out of a node that holds a current execution on both sides (cross_kind_execution): stateOf reads such a node as ambiguous, so what one side accepted opens
+// nothing while the other side runs. nil is a node that does not.
+func ambiguousExecution(ctx context.Context, q store.Querier, plan, node string) (*EdgeStatus, error) {
+	held, err := crossKindExecutionHeld(ctx, q, plan, node)
+	if err != nil || !held {
+		return nil, err
+	}
+	st := blocked(BlockedAmbiguousHead, "the predecessor holds a current execution on both sides (cross_kind_execution): neither is read")
+	return &st, nil
+}
+
 func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
 	a, found, err := activeAcceptanceOf(ctx, q, plan, e.FromNodeID)
 	if crossKindHeld(err) {
@@ -517,6 +531,9 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	}
 	if !found {
 		return wait(e, "the predecessor has no active acceptance"), nil
+	}
+	if st, err := ambiguousExecution(ctx, q, plan, e.FromNodeID); err != nil || st != nil {
+		return valueOf(st), err
 	}
 	if a.HeadSHA == "" {
 		return blocked(BlockedAcceptanceIncomplete, "an integrated edge needs the accepted head"), nil
