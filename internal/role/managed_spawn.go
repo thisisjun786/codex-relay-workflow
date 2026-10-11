@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -120,8 +121,18 @@ func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSe
 // an attempt. A call whose tool use id an earlier attempt of the dispatch was issued to (an old event delivered again) is not the
 // current attempt's either. Whether the attempt is still waiting for its spawn is the issuance's to decide under the record's
 // lock, exactly as for a marker. The source returned is the marker line of the attempt, for the binding of a replayed answer.
-// Nothing is written.
+// Nothing is written, and no repository command is run for a call whose task_name no record under the workspace or one of its
+// parents can be: the CXC hook makes no external call on a V2 ciphertext spawn, and an unmanaged one keeps that.
 func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, roles []RoleName) (*ManagedSpawnSelection, string, error) {
+	if _, err := dispatchID(session, "sessionId"); err != nil {
+		return nil, "", err
+	}
+	if _, err := dispatchID(task, "dispatchId"); err != nil {
+		return nil, "", nil // a task name that cannot be a dispatch id names none
+	}
+	if !r.resolved && !dispatchNamedRecordMayExist(r.cwd, session, task) {
+		return nil, "", nil
+	}
 	if !r.resolved {
 		r.resolved = true
 		if r.root, r.err = dispatchRoot(r.cwd); r.err == nil {
@@ -130,12 +141,6 @@ func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, ro
 	}
 	if r.err != nil {
 		return nil, "", r.err
-	}
-	if _, err := dispatchID(session, "sessionId"); err != nil {
-		return nil, "", err
-	}
-	if _, err := dispatchID(task, "dispatchId"); err != nil {
-		return nil, "", nil // a task name that cannot be a dispatch id names none
 	}
 	d, err := dispatchRead(filepath.Join(r.root, ".crw", "dispatches", session, task+".json"), session, task)
 	if err != nil || len(d.Attempts) == 0 {
@@ -154,6 +159,27 @@ func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, ro
 	}
 	sel := &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: r.root, rootInfo: r.rootInfo, session: session, dispatch: d.ID, attempt: a.ID}
 	return sel, "[CRW-DISPATCH:" + d.ID + ":" + a.ID + "]", nil
+}
+
+// dispatchNamedRecordMayExist reports whether the record a V2 task_name names can be there before the root is resolved: the root
+// dispatchRoot returns contains the real workspace, so the record is at <ancestor>/.crw/dispatches/<session>/<task>.json for the
+// workspace or one of its parents. When no such entry exists the call names no dispatch, and Named answers so without running git
+// (CRW-1260). An entry that exists is only a reason to resolve the root; what it is and whether it is the root's is Named's to check.
+func dispatchNamedRecordMayExist(cwd, session, task string) bool {
+	dir, err := realpath(cwd)
+	if err != nil {
+		return true // dispatchRoot reports why the workspace cannot be resolved
+	}
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".crw", "dispatches", session, task+".json")); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // IssueManagedSpawn consumes issuance under the ledger lock (oracle:250-267).
