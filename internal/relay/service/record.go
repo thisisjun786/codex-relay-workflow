@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -190,6 +191,9 @@ type Service struct {
 	// stopWorkerReadTicks lets tests hold the post-pidfd identity-read window open.
 	// The nil production value uses StartTicks.
 	stopWorkerReadTicks func(int) any
+	// LogFile is the daemon log when a configured log_root moves it out of the store directory
+	// (CRW-958, crwconfig.RelayLogFile); empty keeps it at <state>/daemon.log.
+	LogFile string
 }
 
 func InstallationID(state string) string {
@@ -220,6 +224,16 @@ func New(ctx context.Context, selection store.StateSelection, socket string) (*S
 		return nil, err
 	}
 	s := &Service{Selection: selection, Socket: socket, Scope: scope, InstallationID: InstallationID(selection.Path)}
+	// A log_root the configuration file names moves the daemon log; the store directory keeps the
+	// durable state either way. The store's resolved path names its log directory, so every spelling
+	// of one store finds one log.
+	resolved, err := store.ResolvePath(selection.Path)
+	if err != nil {
+		resolved = selection.Path
+	}
+	if s.LogFile, err = crwconfig.RelayLogFile(os.Getenv, resolved); err != nil {
+		return nil, err
+	}
 	// Service discovery is read-only. In particular, no diagnostic BEGIN
 	// IMMEDIATE is allowed before daemon/scope lock acquisition.
 	stamp, readErr := ownership.SnapshotMeta(ctx, selection.DBPath())
@@ -236,6 +250,39 @@ func New(ctx context.Context, selection store.StateSelection, socket string) (*S
 	return s, nil
 }
 func (s *Service) path(name string) string { return stateFile(s.Selection.Path, name) }
+
+// logPath is the daemon log: below a configured log_root, else in the store directory.
+func (s *Service) logPath() string {
+	if s.LogFile != "" {
+		return s.LogFile
+	}
+	return s.path("daemon.log")
+}
+
+// openLog opens the daemon log for appending, making a configured log directory first.
+func (s *Service) openLog() (*os.File, error) {
+	if s.LogFile != "" {
+		// the directory is cut off the spelling, not cleaned out of it: a log_root that mixes a
+		// symbolic link and ".." names the directory the filesystem gives that spelling
+		if err := os.MkdirAll(rawDir(s.LogFile), 0o700); err != nil {
+			return nil, err
+		}
+	}
+	return os.OpenFile(s.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+}
+
+// rawDir is the part of path before its last separator, kept as spelled. filepath.Dir cleans the
+// result, which turns "link/../x" into "x" and names another directory when link is a symbolic link.
+func rawDir(path string) string {
+	cut := strings.LastIndex(path, "/")
+	switch {
+	case cut < 0:
+		return "."
+	case cut == 0:
+		return "/"
+	}
+	return path[:cut]
+}
 
 // stateFile is selection.path / name: joined as spelled, so a '..' after a symlink in the
 // state directory names the file Python names rather than a lexically cleaned one.
@@ -295,7 +342,7 @@ func (s *Service) JournalNote(detail string) error {
 	} else if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(s.path("daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	f, err := s.openLog()
 	if err != nil {
 		return err
 	}

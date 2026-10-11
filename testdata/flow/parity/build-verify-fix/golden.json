@@ -1,0 +1,58 @@
+{
+  "claudeSha256": "cbc064721f7c2a5ea9ff4d02b37fc051a86731b663e7fae745060c15bc465c35",
+  "value": {
+    "fixed": true,
+    "summary": "",
+    "verdict": "needs_changes"
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 1,
+      "label": "build:change",
+      "role": "executor",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root",
+      "position": 2,
+      "label": "verify:change",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      }
+    },
+    {
+      "path": "root",
+      "position": 3,
+      "label": "fix:change",
+      "role": "executor",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "xhigh"
+      }
+    }
+  ]
+}

@@ -718,7 +718,15 @@ func pumpLog(cfg *Config, message string) {
 		return
 	}
 	line := time.Now().UTC().Format(time.RFC3339) + " " + message + "\n"
-	file, err := os.OpenFile(crwconfig.JoinRoot(cfg.StateDir, pumpLogFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	dir := cfg.StateDir
+	if cfg.logDir != "" {
+		// paths.log_root names where this host keeps logs; the directory is made on first use
+		dir = cfg.logDir
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return
+		}
+	}
+	file, err := os.OpenFile(crwconfig.JoinRoot(dir, pumpLogFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}

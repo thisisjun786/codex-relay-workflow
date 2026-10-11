@@ -3,7 +3,7 @@
 How `crw-plan` builds, checks and records a schedule. The field names, their sources, the
 precedence between records, the evidence rules, the wait cause and change reason words and
 the four graph checks belong to the shared
-[Schedule baseline contract](integrations.md#schedule-baseline-contract); this file applies
+[Schedule baseline contract](../../crw-canon/references/schedule-contract.md#schedule-baseline-contract); this file applies
 them and does not restate them. Read it when a request covers a project or initiative plan,
 or a scoped update to a schedule that already exists.
 
@@ -227,7 +227,7 @@ would make, under [Authority](#authority) below.
 
 A target read from fast records buys nothing from the rest of the delivery. Review, required
 checks, installation evidence and an unattended round trip are satisfied exactly as they were
-before the target shortened ([Implementation Done](integrations.md#implementation-done)), and a
+before the target shortened ([Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)), and a
 subject waiting on its review, a decision or a host constraint carries that wait cause and stays
 unfinished. A wait is never recorded as a finish. Report a host constraint, a slow review and an
 unmet prerequisite as what they are, because a schedule that hides them is the padded one facing
@@ -261,10 +261,10 @@ of writing it. Within an already approved full-plan scope, apply the schedule wi
 the same approval again. A pull-in and an extension are both schedule changes, so both run under
 that same authority and neither adds an approval step, and a checkpoint without it returns the
 replan request above rather than writing one. A record owned by an active supervisor or parent is
-returned to that owner under [supervisor, parent and child scope](integrations.md#supervisor-parent-and-child-scope)
+returned to that owner under [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level)
 rather than written over. Recording a date assigns nobody, starts no execution, installs nothing
 and restarts nothing; those remain separate authorizations under
-[Default independent execution](integrations.md#default-independent-execution).
+[Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution).
 
 ## Judgment cases
 

@@ -38,15 +38,20 @@ func (r Report) Object() contract.OrderedObject {
 // Policy bounds what one tick does. The observation pass (observe.go) reads at most MaxTurnReads turns, no
 // relationship more than its share of them (never less than MinRelationshipShare), and stops reading after
 // MaxObserveSeconds, apart from the first read of each class of turn; zero turns that time limit off.
+//
+// MaxSends, MaxProjects and MaxSupervisorSends are the budgets of a tick that has no live orchestrator; with
+// some, BudgetsFor raises them (and the share one parent may use) by what each live orchestrator needs, of
+// which OrchestratorSends is the delivery attempts.
 type Policy struct {
 	PollInterval, MaxObserveSeconds                                                                             float64
 	MaxSends, MaxReconciles, MaxTurnReads, MaxTurnChecks, MinRelationshipShare, MaxProjects, MaxSupervisorSends int
+	OrchestratorSends                                                                                           int
 }
 
 // DefaultPolicy: a read of one turn cost a mean of 2.3 ms at the median thread and 17 ms at the worst of 40 recent
 // threads, measured read-only against the App Server (CRW-258), so 32 reads take under a second of a 20 s tick.
 func DefaultPolicy() Policy {
-	return Policy{PollInterval: 20, MaxObserveSeconds: 10, MaxSends: 4, MaxReconciles: 8, MaxTurnReads: 32, MaxTurnChecks: 4, MinRelationshipShare: 2, MaxProjects: 4, MaxSupervisorSends: 2}
+	return Policy{PollInterval: 20, MaxObserveSeconds: 10, MaxSends: 4, MaxReconciles: 8, MaxTurnReads: 32, MaxTurnChecks: 4, MinRelationshipShare: 2, MaxProjects: 4, MaxSupervisorSends: 2, OrchestratorSends: 3}
 }
 
 type Daemon struct {
@@ -80,6 +85,8 @@ type Daemon struct {
 	// turn a halt back into writes. haltReason is what the pass says about it.
 	haltedStore bool
 	haltReason  string
+	// budgets are the budgets the last delivery pass ran on (budgets.go).
+	budgets Budgets
 }
 
 func New(s *store.Store, host Host, clock delivery.Clock, channel *supervisor.Channel) *Daemon {
@@ -212,8 +219,19 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		}
 		return r, err
 	}
+	// The budgets of the pass that follows follow the live orchestrators of the store (CRW-1210, R8). A count
+	// that cannot be read leaves them the policy's constants; a damaged store halts the pass.
+	live, liveErr := d.Store.LiveOrchestrators(ctx)
+	if liveErr != nil {
+		if d.halted(ctx, &r, store.HaltSiteObservation, liveErr) {
+			return r, nil
+		}
+		r.Notes = append(r.Notes, "live orchestrators not counted: "+liveErr.Error())
+		live = 0
+	}
+	d.budgets = d.Policy.BudgetsFor(live, d.Delivery.Policy.MaxSendsPerParentPerTick)
 	var sent delivery.TickCounts
-	deliverErr := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent)
+	deliverErr := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.budgets.MaxSends, MaxSendsPerParent: d.budgets.MaxSendsPerParentPerTick}).Deliver(ctx, d.Host, now, &sent)
 	// The attempts the pass made were made, whatever ends the tick after it - the pass's own failure, a halt, or a
 	// failure of the read of the waiting heads below: the report keeps their counts and notes (CRW-945).
 	r.Delivered += sent.Delivered
@@ -237,7 +255,7 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	}
 	r.Notes = append(r.Notes, d.idle.take()...)
 	if d.Channel != nil {
-		a, err := d.Channel.AutoSend(ctx, d.Host, now, d.Policy.MaxProjects, d.Policy.MaxSupervisorSends, d.afterProject, d.afterStaged, d.afterMessage)
+		a, err := d.Channel.AutoSend(ctx, d.Host, now, d.budgets.MaxProjects, d.budgets.MaxSupervisorSends, d.afterProject, d.afterStaged, d.afterMessage)
 		if err != nil {
 			if d.halted(ctx, &r, store.HaltSiteWrite, err) {
 				return r, nil
@@ -251,7 +269,7 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 		r.Skipped += a.Skipped
 		r.Notes = append(r.Notes, a.Notes...)
 		if d.Notices != nil {
-			answer, err := d.Notices.Tick(ctx, now, max(0, d.Policy.MaxSupervisorSends-a.Attempts))
+			answer, err := d.Notices.Tick(ctx, now, max(0, d.budgets.MaxSupervisorSends-a.Attempts))
 			if err != nil {
 				r.Notes = append(r.Notes, "fault notifications not delivered: "+err.Error())
 			} else {
@@ -416,10 +434,21 @@ func sweepFailure(r *Report, err error) error {
 
 // Run is bounded by count or wall deadline; stop is additional, never a bound.
 func Run(ctx context.Context, tick func(context.Context) (Report, error), clock delivery.Clock, interval float64, maxTicks *int, deadline *float64, stop func() bool, sleep func(float64) error) ([]Report, error) {
+	var pause func(time.Time) ([]string, error)
+	if sleep != nil {
+		pause = func(time.Time) ([]string, error) { return nil, sleep(interval) }
+	}
+	return loop(ctx, tick, clock, maxTicks, deadline, stop, pause)
+}
+
+// loop is the tick loop of Run and RunWoken. pause, when set, is called after every tick but a last one that
+// ends the bound; it is given when that tick began and returns the threads that woke the next tick.
+func loop(ctx context.Context, tick func(context.Context) (Report, error), clock delivery.Clock, maxTicks *int, deadline *float64, stop func() bool, pause func(began time.Time) ([]string, error)) ([]Report, error) {
 	if maxTicks == nil && deadline == nil {
 		return nil, fmt.Errorf("run() needs max_ticks or deadline; a stop callable is not a bound because it may never return True")
 	}
 	reports := []Report{}
+	var woken []string
 	for {
 		if maxTicks != nil && len(reports) >= *maxTicks {
 			break
@@ -433,13 +462,15 @@ func Run(ctx context.Context, tick func(context.Context) (Report, error), clock 
 		if err := ctx.Err(); err != nil {
 			return reports, err
 		}
-		r, err := tick(ctx)
+		began := time.Now()
+		r, err := tick(WithWoken(ctx, woken))
 		if err != nil {
 			return reports, err
 		}
 		reports = append(reports, r)
-		if sleep != nil && (maxTicks == nil || len(reports) < *maxTicks) {
-			if err = sleep(interval); err != nil {
+		woken = nil
+		if pause != nil && (maxTicks == nil || len(reports) < *maxTicks) {
+			if woken, err = pause(began); err != nil {
 				return reports, err
 			}
 		}

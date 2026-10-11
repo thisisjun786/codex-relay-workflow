@@ -329,7 +329,7 @@ func (r *upgradeRunState) note(step string, argv []string, code int, out string,
 func (r *upgradeRunState) command(ctx context.Context, timeout time.Duration, step, exe string, args ...string) (string, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, stderr, code, err := upgradeRunCommand(ctx, exe, args...)
+	out, stderr, code, err := upgradeRunCommand(ctx, r.cfg, exe, args...)
 	r.note(step, append([]string{exe}, args...), code, out+stderr, err)
 	return out, code, err
 }

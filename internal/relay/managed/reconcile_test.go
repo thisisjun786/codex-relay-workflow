@@ -224,7 +224,7 @@ func newReconcileKit(t *testing.T, outcomes ...string) *reconcileKit {
 	clock := &stepClock{now: time.Date(2026, 10, 3, 8, 22, 0, 0, time.UTC)}
 	fake := &managedFake{operations: map[string]map[string]any{}, settings: settings, ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	host := &scriptedApp{managedFake: fake, clock: clock, cwd: pyjson.Text(settings["cwd"]), outcomes: outcomes, threads: map[string]*appThread{}, failures: map[string]error{}, noTurn: map[string]string{}}
-	start := &Start{Store: s, Adapter: host, Now: clock.ISO, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{Store: s, Adapter: host, Now: clock.ISO, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }, StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll}
 	return &reconcileKit{t: t, start: start, host: host, clock: clock, raw: raw}
 }
 

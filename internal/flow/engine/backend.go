@@ -40,8 +40,12 @@ type ThreadSpec struct {
 	CallID string
 	Role   string
 	Pair   Pair
+	// Sandbox is the sandbox of the role's thread (read-only or workspace-write).
+	Sandbox string
 	// Cwd is the call's private working directory ("" lets the backend choose).
 	Cwd string
+	// AutoCompactTokenLimit is the role's model_auto_compact_token_limit, nil when its pair declares none.
+	AutoCompactTokenLimit *int64
 }
 
 // ThreadInfo is what the backend reads back about a created thread: its id and the pair it is configured with.

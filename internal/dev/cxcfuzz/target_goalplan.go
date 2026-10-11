@@ -103,7 +103,7 @@ func goalplanTarget() Target {
 		Name:     "goalplan",
 		Generate: goalplanGenerate,
 		Go:       goalplanGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("goalplan"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("goalplan"), Root: OracleRoot()},
 		Compare:  goalplanCompare,
 	}
 }

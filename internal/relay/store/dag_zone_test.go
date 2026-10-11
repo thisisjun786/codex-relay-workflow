@@ -89,6 +89,14 @@ var zoneInventory = map[string][]string{
 	"dag_revalidation_premerge": {"revalidation_id", "acceptance_id", "record_digest", "record_json", "evaluated_head", "accepted_head", "recorded_by", "coordinator_epoch", "recorded_at"},
 	// CRW-974 (appended statement): the marks the rowid -1 guards of the append-only tables keep while an insert runs.
 	"dag_zone_rowid_marks": {"table_name"},
+	// CRW-1212 (appended statements): the flow journal, and the agent execution rows with their closures.
+	"flow_runs":            {"run_id", "workflow", "script_digest", "helper_digests_json", "args_digest", "plan_id", "plan_revision", "actor_task_id", "epoch_nonce", "resume_from", "started_at"},
+	"flow_calls":           {"call_id", "event_seq", "run_id", "path", "position", "kind", "role", "input_digest", "input_snapshot", "event", "operation", "result_digest", "result_bytes", "result_artifact", "commit_sha", "commit_parent", "tree_digest", "verification_digest", "acceptance_id", "batch_id", "thread_id", "turn_id", "plan_id", "node_id", "attempt", "execution_id", "worktree_kind", "worktree_path", "start_commit", "pending_tree", "snapshot_digest", "input_state", "held_tree", "tokens", "detail_json", "recorded_at"},
+	"flow_events":          {"run_id", "seq", "kind", "call_id", "node_id", "subject", "payload_json", "recorded_at"},
+	"flow_spawn_decisions": {"decision_id", "run_id", "kind", "call_id", "node_id", "rule_id", "decision", "reason", "requested_model", "requested_effort", "applied_model", "applied_effort", "tool_use_id", "evidence_json", "decided_at"},
+	"flow_step_decisions":  {"step_id", "run_id", "node_id", "from_tier", "to_tier", "rule_id", "evidence_json", "checkpoint_head", "checkpoint_tree", "decided_at"},
+	"dag_agent_executions": {"execution_id", "plan_id", "node_id", "attempt", "kind", "manifest_digest", "role", "tier", "author_model", "author_effort", "thread_id", "worktree", "base_sha", "run_id", "actor_task_id", "coordinator_epoch", "decided_at", "supersedes_execution_id"},
+	"dag_agent_closures":   {"subject_kind", "subject_id", "state", "slot_released", "actor_task_id", "coordinator_epoch", "reason", "closed_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

@@ -1,0 +1,8 @@
+{
+  "origin": "the Claude Code Workflow tool's own copy of the script a session ran, under <claude config dir>/projects/<project>/<session>/workflows/scripts/",
+  "file": "crw-security-p1-batch-wf_fa3ef792-787.js",
+  "session": "442c785d-2216-450c-abfc-7493af9adb2d",
+  "sha256": "0415735be16307e1724d9254b728ed632d3b7250b7ca7ac142a5236082b5c1c1",
+  "bytes": 7315,
+  "modified": "2026-10-09T00:13:22Z"
+}

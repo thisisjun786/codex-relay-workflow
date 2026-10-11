@@ -341,3 +341,214 @@ func canonicalRepository(in string) (string, error) {
 	}
 	return in, nil
 }
+
+// The owner of a shared place (R04, CRW-1212; the reproduction cases d4 and P3 of the cancelled CRW-1003). Agent nodes of one issue run side by side with no managed start between them, so nothing
+// orders them the way a relationship's one-live-owner rule does, and the declarations decide: a place that several of them take has exactly one owner, the node whose declaration holds the place
+// at the exclusive grade (foldedGrade: the declarer's word, a shared contract surface, a delete, a rename or a hotspot at its own place). Nothing is judged for a node without a declaration (its regions
+// are unknown) or for nodes of another issue.
+//
+// The judgement is per PLACE, not per pair of nodes. Two nodes that edit one file under a directory another node holds exclusive have an owner, the node that holds the directory, although neither of
+// the pair does: a broad owner recorded by a tree is looked for among every declaration of the issue, and it counts for every file, symbol and directory under it. The key of a place is the repository, the
+// path and the KIND of place as a suffix, so a whole-repository hold (path "*"), a directory and a file are three places even when their paths read alike.
+const (
+	// RegionOwnerMissing and RegionOwnerAmbiguous are the closed reasons of the refusal, carried in the detail of a disposition_conflict (D-02: no new refusal reason).
+	RegionOwnerMissing   = "agent_region_owner_missing"
+	RegionOwnerAmbiguous = "agent_region_owner_ambiguous"
+)
+
+// The kinds of place, the suffix of a place key.
+const (
+	placeRepo   = "repo"
+	placeTree   = "tree"
+	placeFile   = "file"
+	placeSymbol = "symbol"
+)
+
+// regionPlace is a place two regions share.
+type regionPlace struct{ Repository, Path, Kind, Symbol string }
+
+// key is the place's key: repository, path and kind joined by NUL, and the symbol after the kind for a symbol place.
+func (p regionPlace) key() string {
+	key := p.Repository + "\x00" + p.Path + "\x00" + p.Kind
+	if p.Kind == placeSymbol {
+		key += "\x00" + p.Symbol
+	}
+	return key
+}
+
+// label is the place as a refusal names it.
+func (p regionPlace) label() string {
+	switch p.Kind {
+	case placeRepo:
+		return "the whole of " + p.Repository
+	case placeSymbol:
+		return p.Kind + " " + p.Symbol + " of " + p.Path + " in " + p.Repository
+	}
+	return p.Kind + " " + p.Path + " in " + p.Repository
+}
+
+// placeOfRegion is the place a region takes by itself.
+func placeOfRegion(r Region) regionPlace {
+	p := regionPlace{Repository: r.Repository, Path: path.Clean(r.Path), Kind: r.Kind}
+	if r.Kind == "symbol" {
+		p.Symbol = r.Key
+	}
+	return p
+}
+
+// sharedPlace is the place two overlapping regions share: the whole repository when both hold it, the other region's place when one does, else the place the place rules agree on (commonPlace).
+func sharedPlace(a, b Region) (regionPlace, bool) {
+	if a.Repository != b.Repository {
+		return regionPlace{}, false
+	}
+	switch {
+	case a.Exclusive && b.Exclusive:
+		return regionPlace{Repository: a.Repository, Path: "*", Kind: placeRepo}, true
+	case a.Exclusive:
+		return placeOfRegion(b), true
+	case b.Exclusive:
+		return placeOfRegion(a), true
+	}
+	shared, tree, ok := commonPlace(a, b)
+	if !ok {
+		return regionPlace{}, false
+	}
+	switch {
+	case tree:
+		return regionPlace{Repository: a.Repository, Path: shared, Kind: placeTree}, true
+	case a.Kind == "symbol" && b.Kind == "symbol" && !wholeFile(a) && !wholeFile(b):
+		return regionPlace{Repository: a.Repository, Path: shared, Kind: placeSymbol, Symbol: a.Key}, true
+	}
+	return regionPlace{Repository: a.Repository, Path: shared, Kind: placeFile}, true
+}
+
+// regionCovers is whether a region takes the whole of a place: a stated whole-repository hold covers every place of its repository, a tree every place under it, a file its own path (and the symbols of
+// it), and a symbol its own symbol, or the whole file when it makes the file one place.
+func regionCovers(r Region, p regionPlace) bool {
+	if r.Repository != p.Repository {
+		return false
+	}
+	if r.Exclusive {
+		return true
+	}
+	rp := path.Clean(r.Path)
+	switch p.Kind {
+	case placeRepo:
+		return false
+	case placeTree:
+		return r.Kind == "tree" && within(p.Path, rp)
+	case placeFile:
+		return r.Kind == "tree" && within(p.Path, rp) || r.Kind == "file" && rp == p.Path || r.Kind == "symbol" && rp == p.Path && wholeFile(r)
+	}
+	return r.Kind == "tree" && within(p.Path, rp) || r.Kind == "file" && rp == p.Path || r.Kind == "symbol" && rp == p.Path && (r.Key == p.Symbol || wholeFile(r))
+}
+
+// regionOwnerFinding is a place of the node's declaration that other nodes of its issue take as well and that does not have exactly one owner.
+type regionOwnerFinding struct {
+	Place regionPlace
+	// Takers are the nodes whose declarations overlap on the place (the node itself among them); Owners the nodes that hold it at the exclusive grade, wherever the declaration records it.
+	Takers, Owners []string
+	Reason         string // RegionOwnerMissing or RegionOwnerAmbiguous
+}
+
+// regionOwnerFindings judges every place the node shares with a sibling. siblings are the declarations of the other nodes of the issue.
+func regionOwnerFindings(node string, mine []Region, siblings map[string][]Region) []regionOwnerFinding {
+	places := map[string]regionPlace{}
+	takers := map[string]map[string]bool{}
+	ids := make([]string, 0, len(siblings))
+	for id := range siblings {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, m := range mine {
+		for _, id := range ids {
+			for _, o := range siblings[id] {
+				p, ok := sharedPlace(m, o)
+				if !ok {
+					continue
+				}
+				key := p.key()
+				places[key] = p
+				if takers[key] == nil {
+					takers[key] = map[string]bool{}
+				}
+				takers[key][node], takers[key][id] = true, true
+			}
+		}
+	}
+	keys := make([]string, 0, len(places))
+	for key := range places {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	declarations := map[string][]Region{node: mine}
+	for id, regions := range siblings {
+		declarations[id] = regions
+	}
+	var out []regionOwnerFinding
+	for _, key := range keys {
+		place := places[key]
+		var owners []string
+		for id, regions := range declarations {
+			for _, r := range regions {
+				if EffectiveGrade(r) == GradeExclusive && regionCovers(r, place) {
+					owners = append(owners, id)
+					break
+				}
+			}
+		}
+		sort.Strings(owners)
+		finding := regionOwnerFinding{Place: place, Owners: owners}
+		for id := range takers[key] {
+			finding.Takers = append(finding.Takers, id)
+		}
+		sort.Strings(finding.Takers)
+		switch {
+		case len(owners) == 0:
+			finding.Reason = RegionOwnerMissing
+		case len(owners) > 1:
+			finding.Reason = RegionOwnerAmbiguous
+		default:
+			continue
+		}
+		out = append(out, finding)
+	}
+	return out
+}
+
+// agentRegionOwners is the region-owner check of an agent release: the declarations of the node and of the other live implementation nodes of its issue are read from the store and judged by
+// regionOwnerFindings. A node that is not an implementation node, or declared nothing, is not judged.
+func agentRegionOwners(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) error {
+	if n.Kind != dag.NodeImplementation {
+		return nil
+	}
+	declared, err := loadDeclarations(ctx, q, plan)
+	if err != nil {
+		return err
+	}
+	mine, ok := declared[n.NodeID]
+	if !ok || len(mine) == 0 {
+		return nil
+	}
+	siblings := map[string][]Region{}
+	for _, other := range snap.Nodes {
+		if other.NodeID == n.NodeID || other.Kind != dag.NodeImplementation || other.Lifecycle != "" || other.IssueKey != n.IssueKey {
+			continue
+		}
+		if theirs, ok := declared[other.NodeID]; ok && len(theirs) > 0 {
+			siblings[other.NodeID] = theirs
+		}
+	}
+	findings := regionOwnerFindings(n.NodeID, mine, siblings)
+	if len(findings) == 0 {
+		return nil
+	}
+	f := findings[0]
+	switch f.Reason {
+	case RegionOwnerAmbiguous:
+		return refuse(contract.RefusalDispositionConflict, "%s: nodes %s of issue %s all take %s and %s hold it at the exclusive grade: a place has one owner, so one keeps the grade and the others take a grade that settles the overlap",
+			f.Reason, strings.Join(f.Takers, ", "), n.IssueKey, f.Place.label(), strings.Join(f.Owners, ", "))
+	}
+	return refuse(contract.RefusalDispositionConflict, "%s: nodes %s of issue %s all take %s and none holds it at the exclusive grade: a place several nodes of one issue take needs exactly one owner, declared with the exclusive grade (a directory that covers it counts)",
+		f.Reason, strings.Join(f.Takers, ", "), n.IssueKey, f.Place.label())
+}

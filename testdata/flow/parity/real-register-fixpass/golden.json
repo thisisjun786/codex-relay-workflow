@@ -1,0 +1,42 @@
+{
+  "claudeSha256": "80664d7e028dd38ce5311f7e510dea87959d70cf5c49aa138fd8586226c3fc98",
+  "value": {
+    "check": null,
+    "fix": "fake answer to: Fix these problems found by reading Linear back after the co"
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 2,
+      "label": "fix:register",
+      "role": "executor-t1",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root",
+      "position": 3,
+      "label": "readback",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    }
+  ]
+}

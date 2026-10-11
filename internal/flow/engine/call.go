@@ -32,6 +32,8 @@ type callPlan struct {
 	resume    *CallInfo
 	inherited []string
 	refusal   *Refusal
+	// explicitLabel is whether the script gave the call a label of its own (lint judges label uniqueness on those).
+	explicitLabel bool
 }
 
 func (s *scriptVM) optString(o *goja.Object, key string) string {
@@ -129,6 +131,7 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 	}
 	s.plan(p)
 
+	p.explicitLabel = p.opts.Label != ""
 	label := p.opts.Label
 	if label == "" {
 		label = "agent"
@@ -146,7 +149,11 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 	c.complete = s.e.loop.Begin(s.rt)
 	c.prepare()
 	if p.refusal != nil {
-		c.deliverNow(c.terminal(EvRefused, StatusRefused, p.refusal.Reason, map[string]any{"detail": p.refusal.Detail}))
+		data := map[string]any{"detail": p.refusal.Detail}
+		if p.refusal.Cause != "" {
+			data["cause"] = p.refusal.Cause
+		}
+		c.deliverNow(c.terminal(EvRefused, StatusRefused, p.refusal.Reason, data))
 	} else {
 		s.e.inflight.Add(1)
 		go func() {
@@ -171,6 +178,7 @@ func (s *scriptVM) plan(p *callPlan) {
 		r, ref := e.cfg.Policy.ResolveFresh(p.opts)
 		if ref != nil {
 			refuse(ref.Reason, ref.Detail)
+			p.refusal.Cause = ref.Cause
 		} else {
 			p.role, p.spec, p.requested = r.Role, r.Spec, r.RequestedPair
 			if p.role == "executor-t1" && p.step == "" {
@@ -209,6 +217,11 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 		refuse(ReasonPolicyRefused, "the handle's role "+info.Role+" is not in the policy")
 		return
 	}
+	// A thread keeps the pair it was created with: a continuation runs on the handle's pair even when the policy the
+	// run now reads (policy_repinned) gives the role another one. Only a new thread takes the new pair.
+	if info.Pair != (Pair{}) {
+		spec.Pair = info.Pair
+	}
 	p.resume, p.role, p.spec = &info, info.Role, spec
 	p.requested = requested(p.opts, spec)
 
@@ -220,6 +233,7 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 			r, ref := e.cfg.Policy.ResolveFresh(CallOpts{AgentType: want, Effort: p.opts.Effort, Isolation: p.opts.Isolation})
 			if ref != nil {
 				refuse(ref.Reason, ref.Detail)
+				p.refusal.Cause = ref.Cause
 				return
 			}
 			role = r.Role
@@ -303,7 +317,8 @@ func (c *callRun) prepare() {
 		"role": p.role, "family": p.spec.Family, "model": p.spec.Pair.Model, "effort": p.spec.Pair.Effort,
 		"requested_model": p.requested.Model, "requested_effort": p.requested.Effort,
 		"node": p.node, "step_decision": p.step, "phase": p.opts.Phase, "head": p.opts.Head, "cwd": p.opts.Cwd,
-		"input_digest": digestJSON([]byte(p.prompt)), "plain": c.plain,
+		"input_digest": digestJSON([]byte(p.prompt)), "plain": c.plain, "sandbox": p.spec.Sandbox,
+		"explicit_label": p.explicitLabel, "policy_digest": c.e.cfg.Policy.Digest,
 	}
 	if p.schema != nil {
 		d["schema_digest"] = digestJSON(p.schema)
@@ -489,7 +504,7 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 	}
 	if p.resume == nil {
 		c.event(EvThreadRequested, map[string]any{"cwd": p.opts.Cwd})
-		info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Cwd: p.opts.Cwd})
+		info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: p.opts.Cwd, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
 		if err != nil {
 			return c.fromError(ctx, err)
 		}

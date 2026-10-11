@@ -43,6 +43,9 @@ func (t *pendingTurn) waiting() string { return max(t.since, t.attempt) }
 // pending is what the store says one active relationship still has to be observed for.
 type pending struct {
 	id string
+	// child is the relationship's child thread: the thread whose Stop wakes the daemon (wake.go) and whose
+	// turns a woken tick reads first.
+	child string
 	// class holds the pending turns of each class (0: other, 1: staged), longest-waiting first, and rank the
 	// wait of the first of them: a relationship waits, in a class, as long as the turn it deals next.
 	class [2][]*pendingTurn
@@ -61,12 +64,12 @@ WHERE m.state='attached' AND m.receipt_status='accepted'
   AND m.execution_generation=g.execution_generation AND m.dispatch_request_id=g.dispatch_request_id
   AND m.standby_turn_id=g.dispatch_turn_id`
 
-	stagedTurns = `SELECT r.relationship_id AS rid, e.turn_id AS turn, e.first_seen_at AS since, 0 AS current
+	stagedTurns = `SELECT r.relationship_id AS rid, r.child_task_id AS child, e.turn_id AS turn, e.first_seen_at AS since, 0 AS current
 FROM relationships r JOIN events e ON e.relationship_id=r.relationship_id AND e.turn_thread_id=r.child_task_id
 WHERE r.status='active' AND r.superseded_by IS NULL AND e.stage='staged'
 ORDER BY r.relationship_id, e.first_seen_at, e.event_id`
 
-	unsettledAnchors = `SELECT r.relationship_id AS rid, g.dispatch_turn_id AS turn, COALESCE(g.bound_at,g.opened_at) AS since,
+	unsettledAnchors = `SELECT r.relationship_id AS rid, r.child_task_id AS child, g.dispatch_turn_id AS turn, COALESCE(g.bound_at,g.opened_at) AS since,
   g.execution_generation=r.execution_generation AS current
 FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
 WHERE r.status='active' AND r.superseded_by IS NULL AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
@@ -83,7 +86,7 @@ ORDER BY r.relationship_id, g.execution_generation`
 	// read whole, one row per relationship there ever was). It still probes assignment_settlements once for each
 	// admission of an active relationship, settled ones included: no stored row says which admission is pending, so
 	// what a tick examines follows those admissions and not only the pending ones (CRW-262 measured it).
-	unsettledAdmissions = `SELECT r.relationship_id AS rid, t.turn_id AS turn, t.admitted_at AS since, 0 AS current
+	unsettledAdmissions = `SELECT r.relationship_id AS rid, r.child_task_id AS child, t.turn_id AS turn, t.admitted_at AS since, 0 AS current
 FROM relationships r
 CROSS JOIN generations g ON g.relationship_id=r.relationship_id
 CROSS JOIN generation_turns t ON t.relationship_id=g.relationship_id AND t.execution_generation=g.execution_generation
@@ -106,9 +109,9 @@ WHERE relationship_id=?1 AND execution_generation IN (SELECT execution_generatio
 
 // reason is one of the reasons a turn is pending, as a query found it: the turn waits since the stamp.
 type reason struct {
-	rid, turn, since string
-	staged           bool
-	how              int
+	rid, child, turn, since string
+	staged                  bool
+	how                     int
 }
 
 // census returns the active relationships that have a pending turn, in relationship id order.
@@ -129,7 +132,7 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 			if row.Get("current").(int64) != 0 {
 				how = currentAnchor
 			}
-			reasons = append(reasons, reason{rid: id, turn: turn, since: since, staged: q.staged, how: how})
+			reasons = append(reasons, reason{rid: id, child: row.Get("child").(string), turn: turn, since: since, staged: q.staged, how: how})
 		}
 	}
 	if len(reasons) == 0 {
@@ -152,7 +155,7 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 	for _, r := range reasons {
 		p := byID[r.rid]
 		if p == nil {
-			p = &pending{id: r.rid, turns: map[string]*pendingTurn{}}
+			p = &pending{id: r.rid, child: r.child, turns: map[string]*pendingTurn{}}
 			byID[r.rid] = p
 		}
 		since := past(r.since)

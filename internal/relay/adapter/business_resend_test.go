@@ -18,7 +18,7 @@ import (
 )
 
 // Production engine, bridge, adapter and durable ledgers against a synthetic
-// socket. The scripted external load loses the profile after the standby.
+// socket. The scripted external load loses the profile at the business resume, after the orphan judgement found the child as asked.
 func TestBusinessResendProfileFailureOverSocket(t *testing.T) {
 	businessResendSocketScenario(t, "")
 }
@@ -94,6 +94,10 @@ func businessResendSocketScenario(t *testing.T, collision string) {
 		resumes = append(resumes, params)
 		if load == "notLoaded" {
 			applied = true
+		} else if turnCount == 1 {
+			// The host ignores the overrides of a resume on a thread another client holds loaded; the child still stands as asked when the
+			// standby has ended (the start's orphan judgement), and loses the profile at the business resume.
+			applied = false
 		}
 		load = "idle"
 		if foreign {
@@ -106,9 +110,7 @@ func businessResendSocketScenario(t *testing.T, collision string) {
 		defer mu.Unlock()
 		turnCount++
 		id := "standby"
-		if turnCount == 1 {
-			applied = false
-		} else {
+		if turnCount > 1 {
 			id = "business"
 		}
 		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": id}}}
@@ -169,6 +171,12 @@ func businessResendSocketScenario(t *testing.T, collision string) {
 		t.Fatalf("legacy shape changed: %v", failure["status"])
 	}
 	before, _ := json.Marshal(failure)
+	// The request is one the earlier unload-and-resend recovery lowered (managed/legacy_resend.go): its rows are what license a successor now.
+	for _, detail := range []string{`{"attempt":1,"phase":"begin","threadId":"resend-child"}`, `{"after":"notLoaded","archive":"ok","attempt":1,"phase":"end","threadId":"resend-child","unarchive":"ok"}`} {
+		if _, err := s.DB.ExecContext(t.Context(), "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", "2026-10-03T08:22:00+00:00", "managed_resend_unloaded", "resend-socket", detail); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if collision != "" {
 		// Independently calculated successor ID; a different operation occupies it.
 		retry := "managed-business-6dd026a2283e7d5fea993f289b8300c4288b66ab810eec40a50bc073be506ffa"

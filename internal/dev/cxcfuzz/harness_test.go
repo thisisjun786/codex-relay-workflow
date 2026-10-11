@@ -120,7 +120,7 @@ func requireNode(t *testing.T) {
 }
 
 // requireOracleModule skips a test that starts one of this issue's shims when the oracle module that
-// shim imports at its top level is not present under DefaultOracleRoot. A CI runner has node but no
+// shim imports at its top level is not present under OracleRoot(). A CI runner has node but no
 // extracted CXC oracle tree, so such a shim exits at its top-level import (ERR_MODULE_NOT_FOUND)
 // before it reads a request, and a test that started it would report a worker that answered nothing
 // rather than the input the host is missing. Each shim that imports an oracle module names it here: the
@@ -151,7 +151,7 @@ func requireOracleModule(t *testing.T, target string) {
 	if module == "" {
 		return
 	}
-	path := filepath.Join(DefaultOracleRoot, filepath.FromSlash(module))
+	path := filepath.Join(OracleRoot(), filepath.FromSlash(module))
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("the oracle module %s is not present: %v", path, err)
 	}

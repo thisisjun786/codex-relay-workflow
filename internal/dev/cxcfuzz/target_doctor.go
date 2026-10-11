@@ -37,7 +37,7 @@ func doctorTarget() Target {
 		Name:     "doctor",
 		Generate: doctorGenerate,
 		Go:       doctorGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("doctor"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("doctor"), Root: OracleRoot()},
 		Compare:  doctorCompare(),
 	}
 }

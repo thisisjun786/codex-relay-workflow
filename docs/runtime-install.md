@@ -233,6 +233,105 @@ Nothing here manages `PATH`. The declared server and hook name the pointer by ab
 skill command that runs `codex-session-relay` finds whatever `PATH` finds
 ([how skill commands reach the relay](#how-skill-commands-reach-the-relay)).
 
+## Where crw keeps its files
+
+Every directory crw writes to has a name, a default and one way to move it. With no configuration
+file every root takes its XDG default (or, for the build roots, the tool's own), so a clean `HOME`
+on a single disk works without tuning. A host places a root on another disk only by naming it in
+the `paths` section of the configuration file (found by `--config`, then `CRW_CONFIG`, then
+`${XDG_CONFIG_HOME:-~/.config}/crw/config.json`); no host path
+and no device name is written into the product, its skills or its packet templates, and
+`crw config paths` prints every root with the source of its path.
+
+| `paths` key | Default | What it holds | What the product passes a tool |
+| --- | --- | --- | --- |
+| `tools_root` | `${XDG_DATA_HOME:-~/.local/share}/crw/tools` | pinned tools | - |
+| `cache_root` | `${XDG_CACHE_HOME:-~/.cache}/crw` | caches | - |
+| `scratch_root` | `<cache_root>/scratch` | scratch space; follows `cache_root` unless named | - |
+| `worktree_root` | `<data>/crw/worktrees` | worktrees | - |
+| `evidence_root` | `${XDG_STATE_HOME:-~/.local/state}/crw/evidence` | evidence | - |
+| `temp_root` | `${TMPDIR:-/tmp}/crw` | temporary files, test sockets | - |
+| `data_root` | `<data>/crw/data` | bulk data | - |
+| `manage_state` | `<state>/crw/manage` | the management tool's own state | - |
+| `build_cache` | unset: Go's own (`GOCACHE`) | the Go build cache | `GOCACHE=<path>` |
+| `module_cache` | unset: Go's own (`GOMODCACHE`) | the Go module cache | `GOMODCACHE=<path>` |
+| `build_work` | unset: Go's own (`GOTMPDIR`) | the Go build work directory | `GOTMPDIR=<path>` |
+| `log_root` | `<state>/crw/logs` | the product's own logs, once a host names it | - |
+| `relay_state` | `<state>/codex-session-relay` | the relay's durable state: one directory per scope, each holding the store, its WAL and its sidecars | - |
+
+A root that is unset passes the tool nothing: the product starts `go` with the caller's own
+environment, and only a configured `build_cache`, `module_cache` or `build_work` becomes an
+environment entry. A configured `build_work` that does not exist yet passes `crw config check` (the check
+creates nothing) and is made, owner-only, by the command that is about to start a tool, because `go`
+makes its work directory directly below `GOTMPDIR` and fails when that is missing. Which commands start
+a tool with them: `crw-dev ci local` (the build cache and the
+build work directory, not the module cache: a sealed run keeps its own, see [CI](CI.md#sealed-runs)),
+`crw-dev ci validate` (`go mod tidy -diff`), the `merge-build-check` skill command (the build work
+directory holds the run's owned temporary directory, and is never removed itself) and the audit
+package expansion of `crw manage` (`go list`), every child `crw manage` starts (the relay, the audit
+and pre-merge grader, the bridge the deliveries dial, the commands an upgrade runs and the record-version
+and verification commands of the integration queue (`crw manage integrate`); a configuration
+named with `--config` is handed to each as `CRW_CONFIG`), the jobs `crw relay` runs in the background
+and the commands the relay's evidence reads run. A job is started with the roots the relay process's
+own configuration names, so a host that moves the roots names them in the file the relay reads.
+
+`relay_state` is the relay's durable state as one bundle, and it is read in one place, the relay's own
+state selection (`store.DiscoverStateDir`), so a relay started directly, the registered services, the
+install commands and the relay `crw manage` starts choose the same bundle for one configuration and one
+socket. Its precedence is `--state`, then `CODEX_SESSION_RELAY_STATE`, then the scope directory below a
+configured `relay_state` (named by the socket's digest, as the relay names it; the selection reports
+`source: config`), then the relay's own discovery below `XDG_STATE_HOME`. `crw manage` passes
+`manage.relay.state` as `--state`, so it is the most specific setting; it never turns `relay_state`
+into a `--state` of its own, and an environment variable is never overridden by a derived value. The
+scope directories and the legacy directories discovery already adopts are looked for below the
+configured root exactly as they are below the XDG base. A configured `relay_state` is judged (and
+refused on a structural fault) only where the selection uses it: when `--state` or
+`CODEX_SESSION_RELAY_STATE` chooses the store, an unusable `relay_state` stops neither a relay started
+directly nor `crw manage`. The store, its WAL and its sidecars are never placed apart: a
+`paths.relay_store`, `relay_db`, `relay_wal`, `relay_sidecar` or `relay_sidecars` key is refused on its
+own, with or without a `relay_state` beside it, and for every source of the selection, since the file
+is wrong whichever store is chosen; `manage_state` does not move the relay.
+
+`log_root` moves the product's long-lived logs once the file names it: the management tool's pump log
+goes to `<log_root>/pump.log`, and each relay service's daemon log (the output of the daemon a
+`service start` launches, its journal notes and the tail a failed start reports) goes to
+`<log_root>/relay/<16 hex>/daemon.log`, where the 16 hex digits are the start of the SHA-256 of the
+store directory's resolved path, so every store has a log of its own. Unset, the pump log stays in the
+management state directory and the daemon log in the store directory, as before. The log is not part
+of the durable state bundle; the store, its WAL and its sidecars stay in the store directory either
+way. A `log_root` that fails a structural check refuses the relay service and `crw manage`.
+Neither root moves data that is already somewhere: the move is a separate, approved step.
+
+`crw config check [--config <path>]` (also `crw doctor storage`, which runs the same check) prints every root, its path, whether it exists, its file system
+and free space, and every placement already in use that holds data (`in_use`): the root's default
+location, Go's own caches, the relay stores the relay's scope registry
+(`CODEX_SESSION_RELAY_SCOPE_DIR`, else `~/.codex-session-relay/scopes`) and the installer's unit
+(`crw-relay.service`) record, the pump log in the management state directory and the daemon logs in
+the store directories. It writes nothing and creates no directory. The same check runs, for the
+environment it is given, as the `storage` entry of the plain `crw doctor` report (its `refusal` is the
+fault a product command would refuse on, else null) and as the preflight of `crw install install` and
+`update`, before anything is read or written: an error refuses the run, and a warning is recorded as
+its first step and the run goes on. It reports two kinds of finding. An error exits 1 and is a structural fault, and any
+product command that uses a root the file names refuses to run against it:
+
+| Check | Error when |
+| --- | --- |
+| `not_directory` | the path exists and is not a directory |
+| `not_creatable` | no part of it can be made: the nearest existing part is not a writable directory |
+| `not_writable` | the directory exists and this process cannot write to it |
+| `socket_path_too_long` | `relay_state`: a store socket, `<root>/<16 hex scope>/control.sock`, would reach the Unix socket bind limit (108 bytes on Linux, 104 on macOS, the NUL included) |
+| `state_split` | a `paths` key places the relay's store, WAL or sidecars apart, or a store's WAL or sidecar lives in another directory than the store (the daemon log is not a sidecar) |
+
+A warning never stops anything, so a host short of space or sharing a directory keeps working:
+
+| Check | Warning when |
+| --- | --- |
+| `low_space` | the file system under a root has less free than the root is expected to need (8 GiB for worktrees, 4 GiB for the build cache, 2 GiB for caches and data, 1 GiB otherwise) |
+| `shared_path` | two uses name one directory (links resolved) |
+| `unknown_filesystem` | the file system under a root is not one the check can name |
+| `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
+| `drift` | a root the file names differs from a placement in use that holds data (a registered relay store outside the configured `relay_state`, a pump or daemon log outside the configured `log_root`, a populated default or Go cache elsewhere), naming both paths, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
+
 ## Installing the runtime
 
 `crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and
@@ -1204,6 +1303,14 @@ has no restart policy: after the one start it acts only when an operator acts on
 middle of an update. It unsets `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` and `CODEX_SESSION_RELAY_SCOPE_DIR`, which the user manager
 would otherwise pass in. `--scope-dir <dir>` registers an isolated target instead (a temporary state directory and socket):
 the unit sets that scope variable and the start carries `--allow-isolated-scope`.
+
+A registration keeps the configuration it used: when the registering environment selects a configuration file through
+`CRW_CONFIG` or `XDG_CONFIG_HOME` and that file exists, the unit carries it as `Environment=CRW_CONFIG=<file>` (a path systemd
+would split or expand is a usage error, as for the state directory), so the relay a boot start runs, and the jobs and evidence
+commands it starts, read the same `log_root`, tool roots and `relay_state` as the registering shell, which a user manager's
+environment does not carry. A file at the default location needs no line (the manager finds it too), and a missing file
+configures nothing. A unit registered without the line and a registration that would add it differ (`unit_differs`): remove,
+then register again.
 
 One owner registers this surface, and the command asks the manager as well as the file. It refuses, writing nothing:
 

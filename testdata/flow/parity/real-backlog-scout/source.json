@@ -1,0 +1,8 @@
+{
+  "origin": "the Claude Code Workflow tool's own copy of the script a session ran, under <claude config dir>/projects/<project>/<session>/workflows/scripts/",
+  "file": "crw-backlog-scout-wf_9df877b7-422.js",
+  "session": "442c785d-2216-450c-abfc-7493af9adb2d",
+  "sha256": "6c9fa50cf6c5323d6abc4e234b685b483ab1780fa6915062c28f401b6b330f18",
+  "bytes": 4581,
+  "modified": "2026-10-09T09:15:42Z"
+}

@@ -57,6 +57,12 @@ type Program struct {
 	Meta     map[string]any
 	MetaJSON []byte
 	Helpers  []Helper
+	// Body is the script's body with the header replaced by its newlines, so a line of Body is the line of the
+	// script's file. Static analysis (crw flow lint) reads it; the executable text is built from the same bytes.
+	Body string
+	// Imports are the local names the header's imports declare, in header order: the body sees them as consts, so
+	// static analysis of Body declares them too.
+	Imports []string
 
 	libs []*goja.Program
 	main *goja.Program
@@ -140,6 +146,7 @@ func load(src Source) (*Program, error) {
 		g := p.Helpers[idx].GlobalName
 		var named []string
 		for _, bd := range imp.bindings {
+			p.Imports = append(p.Imports, bd.local)
 			switch bd.kind {
 			case bindDefault:
 				fmt.Fprintf(&wrapper, "const %s = %s.default; ", bd.local, g)
@@ -165,8 +172,8 @@ func load(src Source) (*Program, error) {
 	}
 
 	// The header is replaced by its newlines, so the body keeps its own line numbers in the wrapped text.
-	wrapper.WriteString(strings.Repeat("\n", strings.Count(text[:h.bodyStart], "\n")))
-	wrapper.WriteString(text[h.bodyStart:])
+	p.Body = strings.Repeat("\n", strings.Count(text[:h.bodyStart], "\n")) + text[h.bodyStart:]
+	wrapper.WriteString(p.Body)
 	wrapper.WriteString("\n})")
 	tr := api.Transform(wrapper.String(), api.TransformOptions{
 		Target:     transformTarget,

@@ -22,7 +22,7 @@ func spawnTarget() Target {
 		Name:     "spawn",
 		Generate: spawnGenerate,
 		Go:       spawnGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("spawn"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("spawn"), Root: OracleRoot()},
 		Compare:  spawnCompare,
 	}
 }

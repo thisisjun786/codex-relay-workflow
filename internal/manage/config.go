@@ -58,6 +58,8 @@ type Config struct {
 	StateDir         string            `json:"state_dir"`
 	Settings         coreSettingsBlock `json:"settings"`
 
+	tools  crwconfig.ToolRoots        // the build roots the file names; a root it leaves out is empty
+	logDir string                     // log_root when the file names it, else empty: logs stay in StateDir
 	path   string                     // the configuration file's path
 	source crwconfig.Source           // where that path came from: flag, env or default
 	raw    map[string]json.RawMessage // the manage object verbatim, for Section
@@ -205,7 +207,35 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 	if cfg.Bridge.Binary != "" && coreFieldPresent(manage["bridge"], "binary") {
 		cfg.sources["bridge.binary"] = coreSourceConfig
 	}
+	if err := coreApplyStorage(e, file, cfg); err != nil {
+		return coreConfigState{cfg: cfg, err: fmt.Errorf("%s: %v", path, err)}
+	}
 	return coreConfigState{cfg: cfg}
+}
+
+// coreApplyStorage applies the storage roots the configuration file names (CRW-958). A tool root or
+// log_root the file names that fails a structural check refuses the configuration, so no command
+// starts a tool against it or writes a log it cannot keep; a paths key that points a part of the
+// relay's state apart refuses it too, as it refuses every relay state selection
+// (store.ResolveStateDir). The tool roots are kept for the children this tool starts; log_root moves
+// the pump log. relay_state is not judged here and not turned into a state directory: the relay's own
+// state selection reads it (store.DiscoverStateDir), after --state and CODEX_SESSION_RELAY_STATE, and
+// judges it only when it is the source it uses, so this tool and a relay started directly choose one
+// bundle and refuse the same configurations. manage.relay.state, passed as --state, stays the more
+// specific setting. A root the file does not name changes nothing.
+func coreApplyStorage(e *Env, file *crwconfig.File, cfg *Config) error {
+	if err := file.RelaySplit(); err != nil {
+		return err
+	}
+	if err := file.Refusal(e.Getenv, crwconfig.RootBuildCache, crwconfig.RootModuleCache, crwconfig.RootBuildWork, crwconfig.RootLog); err != nil {
+		return err
+	}
+	roots := file.Roots()
+	cfg.tools = file.ToolRoots()
+	if root := roots[crwconfig.RootLog]; root.Source == crwconfig.SourceConfig {
+		cfg.logDir = root.Path
+	}
+	return nil
 }
 
 // coreKeyPresent reports whether a manage key carries a value: a key that is absent,

@@ -420,7 +420,7 @@ transport call.
 |---|---|
 | `awaiting_receipt` | the child has not produced a completion receipt yet |
 | `awaiting_send` | the receipt is collected and accepted; this relay has not reached the recipient yet |
-| `awaiting_send:hourly_cap` | as above, and the delivery's relationship has spent its hourly send cap to this recipient; `pacing` says until when (see "When the send budget holds a delivery") |
+| `awaiting_send:hourly_cap` | as above, and the delivery's relationship has sent its class's hourly cap of distinct events to this recipient; `pacing` says until when (see "When the send budget holds a delivery") |
 | `in_flight` | a send was claimed and its outcome is not yet settled |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
 | `settings_rejected` | the host would not confirm the authorized execution settings; `settingsHold` and `recovery` name who restores them |
@@ -492,15 +492,19 @@ budget holds it unless the delivery's own backoff (a busy recipient, a pre-send 
 than the budget reopens; then the backoff is what holds it and no `pacing` is shown. The block is
 `{reason, reopensAt, sends, cap, windowStart}`, where the reason is `hourly_cap` or
 `min_send_interval`. It is read live from the same budget the claim spends, so it is never stored
-and never a hold or a failure (I-225). `sends` and `cap` are the delivery's own relationship's
-count of sends to this recipient this hour and the cap on it (CRW-259; they were the recipient's
-count of every relationship's sends, which a parent with many children exhausted); the gap
-behind `min_send_interval` is still the recipient's. The daemon does not attempt a delivery whose
-relationship has spent its hour: it is not due until the window reopens, and the cap is read
+and never a hold or a failure (I-225). `sends` is the number of distinct events the delivery's own
+relationship has sent to this recipient this hour (an event tried again counts once; CRW-259 made it
+the relationship's, it was every relationship's sends to the recipient, which a parent with many
+children exhausted, and CRW-1210 made it events, it was attempts) and `cap` is the hour cap of the
+relationship's class; the gap behind `min_send_interval` is still the recipient's. The cap holds new
+events, not the retry of an event the hour already counts (the send budget section below): `status`,
+`assignment-show` and the delivery snapshot show no `hourly_cap` for such a retry, and it is held only by
+the recipient's gap, its own backoff and its attempt cap. The daemon does not attempt a new delivery
+whose relationship has spent its hour: it is not due until the window reopens, and the cap is read
 against the live policy every tick, so a cap raised mid-window releases it on the next tick. A
-direct claim (`deliver --event`) is still refused by the cap, before or inside its claim, and tried
-again at the window's end or within a minute, whichever is sooner; `reopensAt` is the window's end
-and does not move from tick to tick.
+direct claim (`deliver --event`) of a new event is still refused by the cap, before or inside its claim,
+and tried again at the window's end or within a minute, whichever is sooner; `reopensAt` is the window's
+end and does not move from tick to tick.
 
 `status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
 delivery row could exist, which a paused or unauthorized assignment produces. They have no
@@ -972,14 +976,25 @@ K5ctl leg.
 
 The send budget has two owners (CRW-259). The recipient owns the gap: a task is woken at most once
 in `min_send_interval_seconds`, whoever sends, the parent-child queue or the supervisor channel. A
-relationship owns the hour: it may wake one recipient `max_sends_per_relationship_per_hour` times
-(12), counted over both queues from the attempts the relay already records, with no count stored
-for it (I-225, I-475). An attempt that woke nobody does not count: a delivery attempt that failed
-before the send or found the recipient busy, and a supervisor transport that sent nothing and may
-be retried; a claim still in flight, or one whose outcome is unknown, counts until it settles. The hour used to be one count per recipient, so a parent with ten children
+relationship owns the hour: it may wake one recipient for `max_sends_per_relationship_per_hour`
+distinct events (12), counted over both queues from the attempts the relay already records, with no
+count stored for it (I-225, I-475). A send is an event, not an attempt (CRW-1210): an event tried
+again and again is one send, and what stops its repetition is its own attempt cap (`MaxAttempts`,
+held at `attempt_cap`; a busy recipient has `BusyMaxAttempts`), so the hour is spent by new events
+and a retried one cannot read as a runaway. The cap refuses a new event, not the retry of one the hour
+already counts: a retry adds no distinct event, so an event or supervisor message with a counted attempt
+in the window stays due, still heads its recipient's busy line, and is claimed at the cap (the recipient's
+gap and the event's own attempt cap still hold). An event none of whose attempts woke anybody is not
+counted: a delivery attempt that failed before the send or found the recipient busy, and a supervisor
+transport that sent nothing and may be retried; a claim still in flight, or one whose outcome is
+unknown, counts until it settles. A relationship of class `orchestrator` - its parent holds the live
+parent binding of a project, the owner every reader of the linkage counts as the project's
+orchestrator, active or paused - has its own cap, `max_sends_per_orchestrator_relationship_per_hour`
+(60), because the orchestrator receives the results of every issue its project runs; the class is
+read from the binding, so a handover or a release changes it at once. The hour used to be one count per recipient, so a parent with ten children
 stopped receiving at twelve deliveries an hour in all; now it can receive 12 an hour from each
-child, a runaway relationship still stops at 12, and the gap holds the recipient to 720 an hour
-whatever the number of relationships.
+child, a runaway relationship still stops at its class's cap, and the gap holds the recipient to 720
+an hour whatever the number of relationships.
 
 CRW-124's H7 leg met the cap: an interrupted notice to the parent read `queued` with no hold, no failure
 and a `nextEligibleAt` that moved every tick, and `assignment-show` said `daemon_delivers`,
@@ -1175,6 +1190,32 @@ rotates its parents by position. A tick wakes a recipient at most once, because 
 and the gap is longer, so through the daemon (20 s ticks) one parent receives at most 180
 deliveries an hour and the scheduler as a whole 720; a recipient reached outside the daemon (the
 `deliver` command) is held to 720 an hour by the gap alone.
+
+**The budgets follow the live orchestrators (CRW-1210).** The numbers above are a tick's with no
+orchestrator. Each tick counts the tasks that hold the live parent binding of a project (at most 32)
+and raises the budgets by what they need: the tick's attempts to at least three for each live
+orchestrator, the attempts one parent may use to three while any is live, the projects the
+supervisor pass visits to at least one for each, and the supervisor reports a tick sends to at least
+one for each. With none live the constants stand.
+
+**The Stop hook wakes the tick (CRW-1210).** The control socket and the daemon are one process, so
+when a Stop ends the turn of a managed child (the guard selected the child's assignment and did not
+hold the turn) the control handler posts the child's thread id on an in-process channel, which is not
+a socket method, and the daemon runs a tick at once instead of waiting out the 20 s poll interval.
+A tick that wakes begins at least one second after the last one began, whatever the number of Stops,
+so the per-tick budgets hold and a storm of Stops is one tick a second with each woken thread listed
+once; the threads that woke a tick have their turns read first by the observation pass, ahead of the
+longest-waiting turns of the others, except that the first read of each class that waits (a staged claim,
+or other work) is reserved, so a run of woken turns of one class cannot take the budget from the other,
+and the woken turns take at most the reads past those reserved ones: the rest of the read budget goes to
+the order an unwoken tick reads, so the turns nobody woke keep rotating longest-waiting first and each is
+read within a bounded number of ticks, however often the same children wake the daemon. When the
+observation time bound stops a woken tick before it has made those reserved reads (a woken read that
+takes the whole bound), the tick still makes the reads an unwoken tick would make first, whatever the
+clock says, so a slow child woken again and again does not keep the others from rotating. The 20 s tick is
+the backstop: a wake that is dropped (the
+channel holds 256), or a Stop that ends before the host marks its turn finished, is made up by the
+next tick, and a daemon nobody wakes ticks exactly as before.
 
 This is scheduler fairness. Transport concurrency is a separate guarantee, and it is now a
 real one: the adapter dispatches each submission as its own task and allows one send in

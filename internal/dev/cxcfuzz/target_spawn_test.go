@@ -845,7 +845,7 @@ func TestSpawnOracleLoadRootIsRemoved(t *testing.T) {
 // caller home and creates nothing there.
 func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 	requireNode(t)
-	hook := filepath.Join(DefaultOracleRoot, "subagent-config", "dist", "spawn-attach-hook.js")
+	hook := filepath.Join(OracleRoot(), "subagent-config", "dist", "spawn-attach-hook.js")
 	if _, err := os.Stat(hook); err != nil {
 		t.Skipf("the CXC oracle tree is not extracted here: %v", err)
 	}
@@ -860,7 +860,7 @@ func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 	// The harness TMPDIR is a directory of its own, so the decoy holds only the four homes the load must
 	// leave alone.
 	workerTmp := t.TempDir()
-	pool := spawnFakePool(t, DefaultOracleRoot, append(os.Environ(), spawnDecoyEnvAt(t, decoy, workerTmp, true)...))
+	pool := spawnFakePool(t, OracleRoot(), append(os.Environ(), spawnDecoyEnvAt(t, decoy, workerTmp, true)...))
 	defer func() { _ = pool.Close() }()
 	got, err := pool.Call("null", "")
 	if err != nil {

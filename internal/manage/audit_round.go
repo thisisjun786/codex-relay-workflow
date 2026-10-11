@@ -373,7 +373,7 @@ func auditRoundRunStart(ctx context.Context, e *Env, args []string) int {
 			fmt.Fprintln(e.Stderr, "crw manage audit round start: error: checkout_unconfigured: the checkout section names no repository")
 			return 1
 		}
-		out, err := auditPkgGoList(ctx, co.Repository, pattern)
+		out, err := auditPkgGoList(ctx, co.Repository, pattern, cfg.tools)
 		if err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage audit round start: error: %v\n", err)
 			return 1

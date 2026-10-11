@@ -106,7 +106,7 @@ func newProfileRun(t *testing.T, base []byte, reported string) *profileRun {
 	}
 	fake := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(parsed["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	host := &profileHost{managedFake: fake, reported: reported}
-	return &profileRun{t: t, ctx: ctx, store: s, host: host, start: &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}}
+	return &profileRun{t: t, ctx: ctx, store: s, host: host, start: &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}}
 }
 
 func (x *profileRun) run(raw []byte) map[string]any {
