@@ -530,21 +530,24 @@ func stopNodePlatform(platform string) string {
 // session does not take; the oracle showed both with a marker.
 type stopBinding struct {
 	bound       bool
-	workPhaseID string // the id the bound plan's gated attests carry; "" when the plan has no runnable work phase
+	workPhaseID string // the id the bound plan's gated attests carry; "" when the plan has no runnable work phase or cannot be read
 	receiptPath string // where `crw pabcd receipt test` writes this session's receipt; "" without a session id
+	slug        string // the bound slug
+	unreadable  bool   // bound, but the goalplan could not be read, so no work phase id is known
 }
 
-// stopWorkPhaseIDText is the shape of a work phase id that is safe inside the single-quoted attest JSON.
-var stopWorkPhaseIDText = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-// stopBindingOf is the binding a block for the session shows: the bound plan's active work phase and the session's receipt path.
+// stopBindingOf is the binding a block for the session shows. A session is bound by its slug, as the gates judge it
+// (CHECK-BINDING-01 keys on the slug alone), so the receipt path does not wait for the plan; the plan only gives the active work
+// phase's id.
 func stopBindingOf(slug string, plan *goalplan.Goalplan, sessionID string) stopBinding {
-	if slug == "" || plan == nil {
+	if slug == "" {
 		return stopBinding{}
 	}
-	b := stopBinding{bound: true}
-	if id := goalplan.EffectiveActiveWorkPhaseID(plan); id != nil && stopWorkPhaseIDText.MatchString(*id) {
-		b.workPhaseID = *id
+	b := stopBinding{bound: true, slug: slug, unreadable: plan == nil}
+	if plan != nil {
+		if id := goalplan.EffectiveActiveWorkPhaseID(plan); id != nil {
+			b.workPhaseID = *id
+		}
 	}
 	if sessionID != "" {
 		b.receiptPath = crwdir.DirName + "/" + evidence.Subdir + "/" + state.SanitizeKey(sessionID) + "/test-receipt.json"
@@ -552,12 +555,19 @@ func stopBindingOf(slug string, plan *goalplan.Goalplan, sessionID string) stopB
 	return b
 }
 
-// stopAttestKey is `,"key":"value"` for the keys a bound session adds, "" when the session is not bound or has no value to give.
+// stopAttestKey is `,"key":"value"` for the keys a bound session adds, "" when the session has no value to give. The value is
+// JSON text and then one word of a POSIX single-quoted string, so any id the goalplan accepts reaches the CLI unchanged; a
+// backtick is written as its escape so the id cannot end the markdown span around the command.
 func stopAttestKey(key, value string) string {
 	if value == "" {
 		return ""
 	}
-	return ",\"" + key + "\":\"" + value + "\""
+	text, err := jsnode.Stringify(value, "")
+	if err != nil {
+		return ""
+	}
+	quoted := strings.ReplaceAll(string(text), "`", `\u0060`)
+	return ",\"" + key + "\":" + strings.ReplaceAll(quoted, "'", `'\''`)
 }
 
 // stopNextCommands is STOP_NEXT_COMMAND (hook.ts:1523-1537) under the name substitution (R33 and the
@@ -607,6 +617,8 @@ func stopNextCommand(phase state.Phase, platform string, b stopBinding) (string,
 		return posix, true
 	}
 	const q = "`"
+	// A PowerShell single-quoted string doubles a quote where the POSIX word above closes, escapes and reopens it.
+	attest[1] = strings.ReplaceAll(attest[1], `'\''`, `''`)
 	write := q + "'" + attest[1] + "' | Set-Content -Encoding utf8 " + crwdir.DirName + "/attest.json" + q
 	run := q + "crw pabcd orchestrate " + verb[1] + " --attest-file " + crwdir.DirName + "/attest.json" + q
 	return write + " then " + run, true
@@ -715,6 +727,10 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, binding stop
 	if phase == state.PhaseC && binding.receiptPath != "" {
 		// CRW-1189: the path in the command above is where this receipt command writes; it has to run before the attest.
 		lines = append(lines, "Write the test receipt first: `crw pabcd receipt test --session "+sessionID+" -- <the check command>`.")
+	}
+	if binding.unreadable {
+		// CRW-1189: the plan is the only source of the work phase id; the attest above leaves the key out rather than guess it.
+		lines = append(lines, "The bound goalplan "+binding.slug+" could not be read, so the command above shows no workPhaseId. The gate lets the session through while no plan resolves; once it reads again, a refusal names the active work phase, and then add it as \"workPhaseId\".")
 	}
 	if work != nil {
 		lines = append(lines, work.lines()...)
