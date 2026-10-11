@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
@@ -55,6 +56,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		case "harness":
 			// The CXC plugin-health report (doctor.ts runDoctor), text or --json, exit 1 on FAIL.
 			return RunHarnessDoctorCLI(args[1:], stdout, stderr, host.LookupEnv(os.LookupEnv), os.Getwd, harnessRunExec, time.Now())
+		case "storage":
+			// The storage check of crw config check, run for the same configuration: one function
+			// reads the roots, so the two commands cannot disagree (CRW-958).
+			return crwconfig.Run(append([]string{"check"}, args[1:]...), stdout, stderr, os.Getenv)
 		case "retrust":
 			// The CXC hook trust rewrite (decision 8, J4): a command only the user runs, never a
 			// hook, the installer or SessionStart. Its plugin package is the host's PLUGIN_ROOT.
@@ -79,7 +84,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return usageExit
 	}
 	if flags.NArg() > 0 {
-		fmt.Fprintf(stderr, "crw doctor: unknown argument %q (choose from declared-schema, harness, retrust)\n", flags.Arg(0))
+		fmt.Fprintf(stderr, "crw doctor: unknown argument %q (choose from declared-schema, harness, retrust, storage)\n", flags.Arg(0))
 		return usageExit
 	}
 	options := Options{Env: env, CodexHome: *codexHome, RecordPath: *recordPath, RelayCommand: *relayCommand, Socket: *socket, State: *state, Temporary: *temporary}

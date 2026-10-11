@@ -1,0 +1,61 @@
+{
+  "claudeSha256": "6c9fa50cf6c5323d6abc4e234b685b483ab1780fa6915062c28f401b6b330f18",
+  "value": {
+    "check": null,
+    "other": [],
+    "rows": []
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 2,
+      "label": "check",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "scout:0",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "scout:1",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    }
+  ]
+}

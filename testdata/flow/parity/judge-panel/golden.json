@@ -1,0 +1,73 @@
+{
+  "claudeSha256": "e4926b899322f337ee78ee05288a43863859a112b10cbd7f805fe1d084d8699c",
+  "value": {
+    "decision": "accept",
+    "total": 3
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 2,
+      "label": "decide",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "ocx-gpt-6-1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "judge:correctness",
+      "role": "architect",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-opus-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "judge:cost",
+      "role": "architect",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-opus-5-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:2",
+      "position": 1,
+      "label": "judge:risk",
+      "role": "architect",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-opus-5-5",
+        "effort": "xhigh"
+      }
+    }
+  ]
+}

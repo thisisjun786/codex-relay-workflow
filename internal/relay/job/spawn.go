@@ -50,6 +50,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/fdsweep"
 )
 
@@ -275,6 +276,12 @@ func runBackground(ws string, opts RunOptions, clock func() time.Time, start fun
 	args[len(args)-1] = launchGate + args[len(args)-1]
 	cmd := exec.Command(file, args...)
 	cmd.Dir = ws
+	// The job runs with the tool roots the configuration names (CRW-958): its go commands use the
+	// configured build cache, module cache and build work directory. With none configured the
+	// job inherits this process's environment, as it always did.
+	if err := crwconfig.ConfigureCommand(cmd, os.Getenv); err != nil {
+		return withdraw(fmt.Errorf("start refused, the storage configuration cannot be used: %w", err))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detached: a session and a process group of its own, which Cancel signals
 	// The caller's descriptors without close-on-exec would reach the job, which outlives the caller (CRW-1081): they are marked here, and a
 	// start that cannot be shown to keep them out is refused. ExtraFiles, set up by the fork itself, are not touched.

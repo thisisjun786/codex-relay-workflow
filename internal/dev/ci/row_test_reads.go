@@ -30,5 +30,7 @@ var rowTestReads = []rowTestRead{
 	{"TestTriggerOverlapTable", "internal/dev/ci", []string{"plugins/crw/skills/"}, nil},
 	{"TestNoStaleCxcReferences", "internal/dev/ci", []string{"plugins/crw/skills/"}, nil},
 	{"TestNoChangeHistoryNotes", "internal/dev/ci", []string{"plugins/crw/skills/"}, nil},
+	{"TestNoSharedSectionOutsideCanon", "internal/dev/ci", []string{"plugins/crw/skills/crw-canon/", "plugins/crw/skills/crw-plan/references/integrations.md"}, nil},
+	{"TestAddIssueCallersNamed", "internal/dev/ci", []string{"plugins/crw/skills/crw-add-issue/SKILL.md"}, nil},
 	{"TestSkillDescriptionLength", "internal/dev/ci", []string{"plugins/crw/skills/"}, []string{"triggerAmbiguity[13]", "sizeHotspots[4]"}},
 }

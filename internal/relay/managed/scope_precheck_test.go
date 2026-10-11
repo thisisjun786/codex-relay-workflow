@@ -80,7 +80,7 @@ func newScopeRun(t *testing.T) *scopeRun {
 	now := func() string { return "2026-09-26T00:00:00.000000+00:00" }
 	return &scopeRun{
 		t: t, ctx: ctx, store: s, host: host, raw: raw,
-		start: &Start{Store: s, Adapter: host, Now: now, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }},
+		start: &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: now, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }},
 		reg:   &registry.Registry{Store: s, Now: now},
 	}
 }

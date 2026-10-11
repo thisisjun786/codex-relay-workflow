@@ -644,7 +644,7 @@ verifies that head, merges it, verifies the landing, records the issue, and repo
 progress upward. The supervisor holds no checkout of its own and sees no implementation diff.
 
 Clauses: OPS-7.4, OPS-9.3, OPS-10.1; role semantics belong to
-[the shared role contract](../../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+[the shared role contract](../../../crw-canon/references/hierarchy.md#scope-of-each-level).
 
 Action: the supervisor verifies the reported project outcome against the initiative's finish
 condition and stops there. It does not re-open the issue investigation its parent already did, does
@@ -664,7 +664,7 @@ supervisor and the project already has its parent and its running children. The 
 now wants the same project's outcome, and its own supervisor asks that a further issue be added.
 
 Clauses: OPS-7.1, OPS-7.4; ownership selection belongs to
-[the shared role contract](../../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+[the shared role contract](../../../crw-canon/references/hierarchy.md#scope-of-each-level).
 
 Action: the project keeps one execution supervisor and one parent. The second initiative references
 the project's outcome rather than issuing it work: its supervisor does not instruct that parent,
@@ -724,7 +724,7 @@ child reports work that assumed the condition already held, and separately A ask
 project adopt the same split.
 
 Clauses: OPS-7.3, OPS-7.4, OPS-9.3; the path and its form are
-[Direct coordination between parents](../../../crw-plan/references/integrations.md#direct-coordination-between-parents) and the
+[Direct coordination between project orchestrators](../../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators) and the
 [Coordination message](../../../crw-run/references/task-packet.md#coordination-message).
 
 Action: the two parents settle the split between themselves without the supervisor relaying it, and

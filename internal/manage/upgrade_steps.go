@@ -61,10 +61,15 @@ var (
 	upgradeServiceBudget   = 60 * time.Second
 )
 
-// upgradeRunCommand runs exe and returns its stdout, stderr and exit status.
-func upgradeRunCommand(ctx context.Context, exe string, args ...string) (string, string, int, error) {
+// upgradeRunCommand runs exe and returns its stdout, stderr and exit status. The command starts with
+// the configuration and the tool roots this tool was started with (coreChildEnv, CRW-958), so an
+// install, a forge read or a relay start the upgrade runs reads the file the upgrade read.
+func upgradeRunCommand(ctx context.Context, cfg *Config, exe string, args ...string) (string, string, int, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, exe, args...)
+	if err := coreChildEnv(cmd, cfg); err != nil {
+		return "", "", 0, err
+	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -319,7 +324,7 @@ func (r *upgradeRunState) releasePins() (map[string]string, error) {
 		args := []string{"api", "repos/" + r.cfg.Repository + "/contents/" + path + "?ref=" + r.commit, "-H", "Accept: application/vnd.github.raw"}
 		ctx, cancel := context.WithTimeout(r.ctx, upgradeCommandTimeout)
 		defer cancel()
-		out, stderr, code, err := upgradeRunCommand(ctx, "gh", args...)
+		out, stderr, code, err := upgradeRunCommand(ctx, r.cfg, "gh", args...)
 		r.note(upgradeStepVerify, append([]string{"gh"}, args...), code, upgradeOutputHead(stderr), err)
 		if err == nil && code == 0 {
 			return []byte(out), true, nil
@@ -544,7 +549,7 @@ func (r *upgradeRunState) start() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
 		argv := []string{crwconfig.JoinRoot(runtime, "bin", "codex-session-relay"),
 			"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start"}
-		out, stderr, code, err := upgradeRunCommand(ctx, argv[0], argv[1:]...)
+		out, stderr, code, err := upgradeRunCommand(ctx, r.cfg, argv[0], argv[1:]...)
 		cancel()
 		from := "the pointer"
 		if runtime == r.previous {

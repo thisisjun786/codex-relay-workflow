@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// StandingCap is the parent's standing child cap (crw-plan integrations.md, "6"): the DAG never runs more children than this unless a cap basis
+// StandingCap is the parent's standing child cap (crw-canon delivery.md, "6"): the DAG never runs more children than this unless a cap basis
 // (dag_cap_basis, contract 7.3) documents a larger ceiling. D-05 is undecided: nothing here raises it.
 const StandingCap = 6
 

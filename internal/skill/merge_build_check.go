@@ -9,11 +9,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // The merged-tree build check (CRW-534): two pull requests that add different files to one Go
@@ -128,7 +129,12 @@ func runMergeBuildCheck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cannot("extract the merged tree "+tree, err)
 	}
-	env, err := mergeBuildEnv(ctx, g.env, filepath.Join(g.dir, "go"))
+	tools, err := crwconfig.LoadToolRoots(os.Getenv, "")
+	if err != nil {
+		return cannot("read the storage configuration", err)
+	}
+	env, releaseEnv, err := mergeBuildToolEnv(ctx, g.env, g.dir, tools)
+	defer releaseEnv()
 	if err != nil {
 		return cannot("prepare the go environment", err)
 	}

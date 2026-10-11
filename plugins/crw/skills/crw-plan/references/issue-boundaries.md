@@ -2,7 +2,7 @@
 
 Where one implementation issue ends, what it must carry, and how to tell that the split
 is finished. The mapping itself belongs to the shared
-[issue-to-PR rule](integrations.md#issue-to-pr-mapping); this file is the judgment
+[issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping); this file is the judgment
 `crw-plan` applies while writing a plan, and it cites that rule instead of restating it.
 Read it with the planning rules in [crw-plan](../SKILL.md), which the cases below assume.
 
@@ -20,7 +20,7 @@ A second issue and delivery is forced when any of these holds, because each is a
 
 - the change lands in a different target repository, which is a different merge; a
   repository that is only read, validated or depended on is not a target
-  ([repository resolution](integrations.md#resolve-the-implementation-repository));
+  ([repository resolution](../../crw-canon/references/linear-model.md#resolve-the-implementation-repository));
 - some part must already be landed before the rest can be written or verified — a
   schema, an API or message shape, a published artifact, an installed package, a
   migrated store — so that part becomes a prerequisite issue and the rest depends on it;
@@ -34,7 +34,7 @@ stay in one issue even where each could be verified apart.
 
 Criteria that no merge establishes, such as installation, deployment, live behaviour or
 an external decision, are tracked as their own result under
-[Implementation Done](integrations.md#implementation-done) rather than riding along in a
+[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done) rather than riding along in a
 delivery PR's criteria.
 
 Splitting is forbidden when the parts cannot pass verification apart: a change and the
@@ -149,11 +149,11 @@ the artifact it delivers and where that artifact lives: a document revision, a r
 decision, a measurement with the method that produced it, an observed state. Its
 completion criterion is that artifact existing, and its verification is something a
 second person can repeat. It carries no repository label and no placeholder PR
-([issue-to-PR rule](integrations.md#issue-to-pr-mapping)).
+([issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping)).
 
 When code work has no resolvable target repository, plan the issue anyway with its
 deliverable and criteria, leave the repository label empty
-([operating model](integrations.md#linear-operating-model)), and record the decision that
+([operating model](../../crw-canon/references/linear-model.md#linear-operating-model)), and record the decision that
 would resolve it — which repository to create or choose, and who decides — as its own
 non-PR decision issue blocking it. The implementation issue is not ready for dispatch
 until that decision issue is settled. Do not point it at a convenient checkout, and do
@@ -173,7 +173,7 @@ current owner and status. Then write one of these four outcomes before any reass
   by the boundary rule above; where it is, agree the new boundary with the owner first, then
   narrow this issue and make the new one blocked by it. Where the PR was closed without
   merging or can no longer deliver, designate one replacement delivery PR and keep the
-  superseded link ([issue-to-PR rule](integrations.md#issue-to-pr-mapping)). Where the owner
+  superseded link ([issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping)). Where the owner
   is no longer active, recover ownership or obtain an authorized reassignment before any
   scope change or dispatch. A live assignment is never narrowed or split before its owner
   has seen the change.
@@ -183,7 +183,7 @@ current owner and status. Then write one of these four outcomes before any reass
 - The merged PR satisfies none of the accepted delivery criteria, such as instrumentation
   that only makes a failure observable, or a reference change. Link it as a contributing
   PR, leave the delivery link empty, keep the issue's status, and treat none of its
-  criteria as met ([Implementation Done](integrations.md#implementation-done)).
+  criteria as met ([Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)).
 - The issue is an existing multi-PR exception. Record the exception on the issue,
   inventory its required deliveries against the criteria still open, and reconcile with
   its current owner before dispatch.
@@ -192,7 +192,7 @@ Leaving the issue open with its boundary undecided is not alignment. It defers t
 decision to the next worker, who inherits an issue whose stated scope is larger than the
 PR it may open. Check what a linked PR does to the issue on merge as well, and record the
 intended link type when a PR will not complete it
-([Implementation Done](integrations.md#implementation-done)).
+([Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)).
 
 Narrowing a delivered issue is a material change to agreed scope. The authorization the
 request already gave carries it when that request covers alignment, and it is returned as
@@ -258,7 +258,7 @@ wrong row, and both are fixed here.
 
 | # | Given | Plan outcome | Clause |
 | --- | --- | --- | --- |
-| 1 | An outcome needs a change in the core repository and in the installer repository; the installer consumes the new core interface. | 2 issues, 1 repository label each, installer blocked by core, combined outcome on the milestone, 0 extra issues for reading core. | Different target repository. |
+| 1 | An outcome needs a change in the core repository and in the installer repository; the installer consumes the new core interface. | 2 projects, one per repository, held by 1 initiative, 1 issue and 1 repository label each, installer blocked by core, combined outcome on the initiative, 0 extra issues for reading core. | Different target repository. |
 | 2 | One schema field and three consumers, all in one target repository; one fails to build unless it lands with the schema, the other two can merge and be verified separately. | 1 issue: the schema field and its three consumers are one contract change in one repository, so they bundle; the coupled consumer must land with the schema, and the two consumers that could merge apart stay in the same issue because being verifiable apart permits a split and does not require one. 0 splits on verifiability alone; a consumer is split off only where its own repository, deployment, owner or risk boundary separates it, and then it is blocked by the schema issue. | Concept bundle: one contract in several files; verifiable apart permits a split, never requires one. |
 | 3 | Half the scope merged last month under a Done issue, no PR is open, and the undelivered half builds on what merged. | 1 reopened issue for the undelivered half when it is inside the Done issue's accepted criteria, otherwise 1 new issue blocked by the Done issue; criteria not restated. | Already delivered or owned elsewhere. |
 | 4 | "Decide whether the relay can share one database", with no code change. | 1 issue now, 0 repository labels, 0 PRs; deliverable is the recorded decision with its measurement, verified by the document revision holding it. Implementation the decision may later require is planned then, as its own issue blocked by this one, and is not created now. | Non-PR work. |

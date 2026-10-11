@@ -18,7 +18,7 @@ type delRig struct {
 
 func newDelRig(t *testing.T) delRig {
 	t.Helper()
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := filepath.EvalSymlinks(cleanTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

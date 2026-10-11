@@ -18,6 +18,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // mergeBuildPackage is one Go package of the merged tree the check builds for one target. dir is its
@@ -99,7 +101,7 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 	case "off":
 	case "":
 		if config, err := os.UserConfigDir(); err == nil {
-			env = append(env, "GOENV="+filepath.Join(config, "go", "env"))
+			env = append(env, "GOENV="+crwconfig.JoinRoot(config, "go", "env"))
 		}
 	default:
 		// the go tool runs in another directory, where a relative name would be another file
@@ -107,14 +109,24 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 			env = append(env, "GOENV="+abs)
 		}
 	}
-	config := filepath.Join(owned, "config")
-	tmp := filepath.Join(owned, "tmp")
+	// The owned directory can sit below a configured build_work that mixes a symbolic link and "..".
+	// The go tool cleans what it joins below XDG_CONFIG_HOME, TMPDIR and HOME (filepath.Join), which
+	// would turn such a spelling into another directory than the one the mode files are written to
+	// and the cleanup removes. So the owned directory is made as spelled and then named by its
+	// physical path, which every value below derives from and which no cleaning changes.
+	physical, err := mergeBuildPhysicalDir(owned)
+	if err != nil {
+		return nil, err
+	}
+	owned = physical
+	config := crwconfig.JoinRoot(owned, "config")
+	tmp := crwconfig.JoinRoot(owned, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return nil, err
 	}
 	mode := []byte("off " + time.Now().UTC().Format("2006-01-02"))
 	for _, file := range mergeBuildTelemetryModeFiles(owned, goos) {
-		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		if err := os.MkdirAll(mergeBuildRawDir(file), 0o700); err != nil {
 			return nil, err
 		}
 		if err := os.WriteFile(file, mode, 0o600); err != nil {
@@ -123,7 +135,7 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 	}
 	env = append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
 	if goos == "darwin" {
-		home := filepath.Join(owned, "home")
+		home := crwconfig.JoinRoot(owned, "home")
 		if err := os.MkdirAll(home, 0o700); err != nil {
 			return nil, err
 		}
@@ -135,7 +147,7 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 		if err := os.MkdirAll(probe, 0o700); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(filepath.Join(probe, "go.mod"), []byte(mergeBuildProbeModule), 0o600); err != nil {
+		if err := os.WriteFile(crwconfig.JoinRoot(probe, "go.mod"), []byte(mergeBuildProbeModule), 0o600); err != nil {
 			return nil, err
 		}
 		readEnv := append(append([]string{}, env...), "HOME="+home)
@@ -155,14 +167,51 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 	return env, nil
 }
 
+// mergeBuildToolEnv is mergeBuildEnv with the tool roots the configuration names (CRW-958). Under a
+// configured build_work the run's owned directory is made there, so the go tool's temporary files
+// and its telemetry mode live on that disk; the run removes the directory it made, never build_work.
+// Otherwise the owned directory is below scratch, as before. A configured build_cache and
+// module_cache are named after everything else, so they win over the caller's values and over what
+// the darwin read took from the caller's go environment; a root nothing configured passes nothing.
+// The returned function removes what the call made and is safe to call more than once.
+func mergeBuildToolEnv(ctx context.Context, base []string, scratch string, tools crwconfig.ToolRoots, targetOS ...string) ([]string, func(), error) {
+	owned := crwconfig.JoinRoot(scratch, "go")
+	cleanup := func() {}
+	if tools.BuildWork != "" {
+		if err := os.MkdirAll(tools.BuildWork, 0o700); err != nil {
+			return nil, cleanup, err
+		}
+		made, err := os.MkdirTemp(tools.BuildWork, "merge-build-go-")
+		if err != nil {
+			return nil, cleanup, err
+		}
+		// the directory made is removed by its physical path, the one the go tool is given
+		dir, err := filepath.EvalSymlinks(made)
+		if err != nil {
+			os.RemoveAll(made)
+			return nil, cleanup, err
+		}
+		owned = dir
+		cleanup = func() { os.RemoveAll(dir) }
+	}
+	env, err := mergeBuildEnv(ctx, base, owned, targetOS...)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	caches := tools
+	caches.BuildWork = "" // GOTMPDIR is the owned directory's, named by mergeBuildEnv
+	return caches.Apply(env), cleanup, nil
+}
+
 // mergeBuildTelemetryModeFiles are the mode files that say telemetry is off for the go tool: the one
 // under the owned config directory, which is where a user config directory that follows
 // XDG_CONFIG_HOME reads it, and on darwin the one under the owned home, which is where
 // os.UserConfigDir reads the mode ($HOME/Library/Application Support) once HOME has moved there.
 func mergeBuildTelemetryModeFiles(owned, goos string) []string {
-	files := []string{filepath.Join(owned, "config", "go", "telemetry", "mode")}
+	files := []string{crwconfig.JoinRoot(owned, "config", "go", "telemetry", "mode")}
 	if goos == "darwin" {
-		files = append(files, filepath.Join(owned, "home", "Library", "Application Support", "go", "telemetry", "mode"))
+		files = append(files, crwconfig.JoinRoot(owned, "home", "Library", "Application Support", "go", "telemetry", "mode"))
 	}
 	return files
 }
@@ -180,7 +229,30 @@ const mergeBuildProbeModule = "module crw-merge-build-probe\n"
 // caller's working directory holds nor one above the run scratch can choose the go tool's toolchain
 // for it.
 func mergeBuildProbeDir(owned string) string {
-	return filepath.Join(owned, "probe")
+	return crwconfig.JoinRoot(owned, "probe")
+}
+
+// mergeBuildPhysicalDir makes dir as spelled (the filesystem resolves a symbolic link before a
+// following "..") and returns the path the filesystem gives it, free of links and "..", so a tool
+// that cleans the paths it joins below it still names the same directory.
+func mergeBuildPhysicalDir(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(dir)
+}
+
+// mergeBuildRawDir is the part of path before its last separator, as spelled: filepath.Dir would clean
+// "link/../x" into "x", a different directory when link is a symbolic link.
+func mergeBuildRawDir(path string) string {
+	cut := strings.LastIndex(path, "/")
+	switch {
+	case cut < 0:
+		return "."
+	case cut == 0:
+		return "/"
+	}
+	return path[:cut]
 }
 
 // mergeBuildEnvValue is what an environment slice gives a key: of duplicated names the last value,
@@ -204,6 +276,11 @@ func mergeBuildCallerPath(value, ownedHome, callerHome string) string {
 		return value
 	}
 	rest, ok := strings.CutPrefix(value, ownedHome+string(filepath.Separator))
+	if !ok {
+		// the go tool joins its default below HOME with a cleaning join, so a home spelled with a
+		// symbolic link and ".." comes back in its cleaned spelling
+		rest, ok = strings.CutPrefix(value, filepath.Clean(ownedHome)+string(filepath.Separator))
+	}
 	if !ok {
 		return value
 	}

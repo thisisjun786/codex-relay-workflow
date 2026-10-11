@@ -30,7 +30,7 @@ func worktreeDelTarget() Target {
 		Name:     "worktreedel",
 		Generate: worktreeDelGenerate,
 		Go:       worktreeDelGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("worktreedel"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("worktreedel"), Root: OracleRoot()},
 		Compare:  worktreeDelCompare,
 		Reading:  worktreeDelReading,
 	}

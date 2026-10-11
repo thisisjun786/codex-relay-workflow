@@ -23,9 +23,10 @@ the user asked for one, and is not a required section otherwise.
 
 ## Connect the workflow
 
-Read [Integrations](../crw-plan/references/integrations.md) for canonical documents, connector
+Read the shared [Linear model](../crw-canon/references/linear-model.md) and
+[delivery](../crw-canon/references/delivery.md) for canonical documents, connector
 access and which operation owns what, and
-[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
+[scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level)
 for the three roles and the names a Korean report gives them. Write the report in an
 evidence-first, short-brief form, without assuming that the reader has been away: the same form serves a routine midpoint check.
 When the request bundles several questions or its referent is unclear, restate it and resolve
@@ -84,7 +85,7 @@ thread matters to the report, page it to the end, because an unread page is an u
 Five things get collapsed into 'done' and they are five separate claims: the source exists, its
 checks passed, it actually merged into the intended target, it is installed or deployed, and it has
 been observed working. A Linear status of Done, a summary written last week, and an agent turn that
-ended are none of them. Use [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
+ended are none of them. Use [Implementation Done](../crw-canon/references/linear-model.md#implementation-done)
 for what a real landing requires and [Merge readiness](../crw-run/references/merge-readiness.md)
 for what current CI and review evidence establish.
 
@@ -151,7 +152,7 @@ prior approvals. On one input the two must classify it the same way; if your rea
 check's, one of you is wrong and it is worth settling before acting on it.
 
 The canonical statement of this classification is the shared bullet in
-[Default independent execution](../crw-plan/references/integrations.md#default-independent-execution),
+[Default independent execution](../crw-canon/references/delivery.md#default-independent-execution),
 and it governs. The row a reader following this skill's own links reaches, in
 [Initiative supervision](../crw-run/references/initiative-supervision.md), carries the same two
 branches.

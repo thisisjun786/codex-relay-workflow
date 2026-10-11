@@ -9,7 +9,9 @@ package hook
 
 import (
 	"io"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -30,13 +32,26 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 	if id.cwd == "" && shellirPayloadCwd(cwd) != "" {
 		id.cwd = canonicalize(cwd)
 	}
-	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil, false)
+	return worktreeDelJudgeText(command, shellirPayloadCwd(cwd), id, 0, nil, false, false)
 }
 
 // worktreeDelRead is the guard's reading of a text: the shared reader with no environment, so a variable is unknown whatever the
 // session's environment holds. The differential fuzz counts the commands this reading refuses (WorktreeGuardCommandReadable).
-func worktreeDelRead(command, cwd string, cdpath bool) (shellir.Result, error) {
-	return shellir.AnalyzeScriptProvenDirectory(command, cwd, cdpath)
+//
+// The one part of the hook's own environment it reads is what a shell reads at start (worktreeDelStartupEnv), because the proof of
+// `cd <literal> || exit <digits>` stands on exit and cd being the builtins; tainted is whether the text that runs this one (a script
+// file's body) left them alone (CRW-1165).
+func worktreeDelRead(command, cwd string, cdpath, tainted bool) (shellir.Result, error) {
+	return shellir.AnalyzeScriptProven(command, cwd, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: tainted, Startup: worktreeDelStartupEnv})
+}
+
+// worktreeDelStartupEnv answers the variables a shell reads at start from the hook's own environment, which the command it judges
+// inherits: a startup file (BASH_ENV, ENV, and ZDOTDIR for zsh), a shell option, an exported function named exit or cd, or a CDPATH. Every other variable is unknown.
+func worktreeDelStartupEnv(name string) (string, bool) {
+	if slices.Contains(shellir.StartupEnvNames, name) {
+		return os.LookupEnv(name)
+	}
+	return "", false
 }
 
 func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
@@ -45,8 +60,8 @@ func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
 
 // worktreeDelJudgeText judges one text; outer is the writes of the texts that run it (a script file's body), which happen before
 // its own commands.
-func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites, cdpath bool) GuardVerdict {
-	res, err := worktreeDelRead(command, cwd, cdpath)
+func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites, cdpath, tainted bool) GuardVerdict {
+	res, err := worktreeDelRead(command, cwd, cdpath, tainted)
 	if err != nil {
 		return worktreeDelUnreadable(id)
 	}
@@ -87,7 +102,7 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int, writ
 		return worktreeDelUnreadable(id)
 	}
 	// The body is judged as any text is: the script files it runs are checked against what it and the texts around it write.
-	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes, e.Cdpath)
+	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes, e.Cdpath, e.ExitTainted)
 }
 
 // worktreeDelJudgeExec is the verdict for one program the reader shows.

@@ -37,7 +37,9 @@ type keyGuard struct {
 	cols     []string
 	where    string
 	newWhere string
-	earlier  string
+	// whereCols are the columns the partial key's WHERE reads: a test's rows carry them so a row is in (or out of) the index.
+	whereCols []string
+	earlier   string
 	// probe lists columns beyond the key a test's conflicting row shares with the stored row so that the table's
 	// earlier trigger lets it through (an outbox entry repeating a summary_id stays in its stream).
 	probe []string
@@ -146,11 +148,11 @@ var zoneKeyGuards = []keyGuard{
 	{table: "dag_plan_revisions", suffix: "request_key", cols: []string{"plan_id", "request_id"}, earlier: revisionEarlier},
 	{table: "dag_plan_revisions", suffix: "parent_key", cols: []string{"plan_id", "parent_revision_no"}, earlier: revisionEarlier},
 	{table: "dag_nodes", suffix: "pk", cols: []string{"plan_id", "node_id", "introduced_rev"}},
-	{table: "dag_nodes", suffix: "live_key", cols: []string{"plan_id", "node_id"}, where: "retired_rev IS NULL", newWhere: "NEW.retired_rev IS NULL"},
+	{table: "dag_nodes", suffix: "live_key", cols: []string{"plan_id", "node_id"}, where: "retired_rev IS NULL", newWhere: "NEW.retired_rev IS NULL", whereCols: []string{"retired_rev"}},
 	{table: "dag_edges", suffix: "pk", cols: []string{"plan_id", "edge_id"}},
 	{table: "dag_summary_outbox", suffix: "pk", cols: []string{"summary_id"}, earlier: outboxEarlier, probe: []string{"plan_id", "document"}},
 	{table: "dag_summary_outbox", suffix: "open_key", cols: []string{"plan_id", "document"}, earlier: outboxEarlier,
-		where: "state IN ('pending', 'claimed', 'failed')", newWhere: "NEW.state IN ('pending', 'claimed', 'failed')"},
+		where: "state IN ('pending', 'claimed', 'failed')", newWhere: "NEW.state IN ('pending', 'claimed', 'failed')", whereCols: []string{"state"}},
 	{table: "dag_base_refreshes", suffix: "pk", cols: []string{"refresh_id"}},
 	{table: "dag_base_refreshes", suffix: "seq_key", cols: []string{"acceptance_id", "refresh_seq"}},
 	{table: "dag_base_refreshes", suffix: "head_key", cols: []string{"acceptance_id", "event_id", "head_sha"}},
@@ -167,6 +169,16 @@ var zoneKeyGuards = []keyGuard{
 	{table: "dag_integration_stages", suffix: "pk", cols: []string{"stage_id"}},
 	{table: "dag_acceptance_premerge", suffix: "pk", cols: []string{"acceptance_id"}},
 	{table: "dag_revalidation_premerge", suffix: "pk", cols: []string{"revalidation_id"}},
+	// CRW-1212: the flow journal and the agent execution rows. dag_agent_executions has two partial keys (a chain has one root per node, and a row is the predecessor of at most one row).
+	{table: "flow_runs", suffix: "pk", cols: []string{"run_id"}},
+	{table: "flow_calls", suffix: "pk", cols: []string{"call_id", "event_seq"}},
+	{table: "flow_events", suffix: "pk", cols: []string{"run_id", "seq"}},
+	{table: "flow_spawn_decisions", suffix: "pk", cols: []string{"decision_id"}},
+	{table: "flow_step_decisions", suffix: "pk", cols: []string{"step_id"}},
+	{table: "dag_agent_executions", suffix: "pk", cols: []string{"execution_id"}},
+	{table: "dag_agent_executions", suffix: "root_key", cols: []string{"plan_id", "node_id"}, where: "supersedes_execution_id IS NULL", newWhere: "NEW.supersedes_execution_id IS NULL", whereCols: []string{"supersedes_execution_id"}},
+	{table: "dag_agent_executions", suffix: "successor_key", cols: []string{"supersedes_execution_id"}, where: "supersedes_execution_id IS NOT NULL", newWhere: "NEW.supersedes_execution_id IS NOT NULL", whereCols: []string{"supersedes_execution_id"}},
+	{table: "dag_agent_closures", suffix: "pk", cols: []string{"subject_kind", "subject_id"}},
 }
 
 // zoneKeyGuardExempt are the unique keys of the guarded tables that have no guard, with the reason. The unique
@@ -286,6 +298,11 @@ type keyScenario struct {
 var zoneKeyScenarios = map[string][]keyScenario{
 	"dag_plan_revisions": {{base: map[string]string{"parent_revision_no": "0"}, other: map[string]string{"parent_revision_no": "-1"}}},
 	"dag_nodes":          {{base: map[string]string{"retired_rev": "NULL"}, other: map[string]string{"retired_rev": "7"}}},
+	// the chain of an agent node: the first scenario's rows have no predecessor (they are in the root key), the second's rows name one (they are in the successor key)
+	"dag_agent_executions": {
+		{base: map[string]string{"supersedes_execution_id": "NULL"}, fixed: []string{"supersedes_execution_id"}},
+		{base: map[string]string{"supersedes_execution_id": "'b-predecessor'"}, fixed: []string{"supersedes_execution_id"}},
+	},
 	"dag_summary_outbox": {
 		// the stream's first entry is open
 		{base: map[string]string{"state": "'pending'", "attempts": "0", "plan_revision": "1"}, other: map[string]string{"seq": "2"},
@@ -322,9 +339,7 @@ func zoneKeyColumns(table string) []string {
 	var out []string
 	for _, g := range zoneKeyGuardsOf(table) {
 		out = append(out, g.cols...)
-		if g.where != "" {
-			out = append(out, "retired_rev", "state")
-		}
+		out = append(out, g.whereCols...)
 	}
 	return out
 }
@@ -357,9 +372,7 @@ func zoneKeepOf(keys []keyGuard) []string {
 	for _, g := range keys {
 		keep = append(keep, g.cols...)
 		keep = append(keep, g.probe...)
-		if g.where != "" {
-			keep = append(keep, "retired_rev", "state")
-		}
+		keep = append(keep, g.whereCols...)
 	}
 	return keep
 }
@@ -386,6 +399,12 @@ func zoneSeedKeyRow(t *testing.T, db *sql.DB, table string, s keyScenario) []zon
 }
 
 // zoneKeyVariants is how many scenarios a table has.
+// skipAgentChainVariant is whether a scenario of dag_agent_executions is outside the key g covers: a row with no predecessor is not in the successor key, a row with one is not in the root key, and the
+// primary key is repeated alone by the rows without a predecessor (a row that repeats a predecessor too is refused by the successor key first, which SQLite checks before the primary key).
+func skipAgentChainVariant(g keyGuard, variant int) bool {
+	return g.table == "dag_agent_executions" && (g.suffix == "root_key" && variant == 1 || g.suffix == "successor_key" && variant == 0 || g.suffix == "pk" && variant == 1)
+}
+
 func zoneKeyVariants(table string) int { return max(1, len(zoneKeyScenarios[table])) }
 
 // The guards are in the catalog under their own names with the text the template gives, one per key, and
@@ -541,6 +560,9 @@ func TestDAGZoneRefusesAnInsertOrReplaceOfAStoredKey(t *testing.T) {
 			if g.table == "dag_summary_outbox" && g.suffix != "open_key" && variant == 0 {
 				continue // the open entry conflicts on the open key too, which is checked first
 			}
+			if skipAgentChainVariant(g, variant) {
+				continue
+			}
 			t.Run(fmt.Sprintf("%s/%s", g.table, g.suffix), func(t *testing.T) {
 				for _, which := range []struct {
 					name string
@@ -609,6 +631,9 @@ func TestDAGZoneKeyGuardsKeepThePlainInsertRefusal(t *testing.T) {
 		for variant := 0; variant < zoneKeyVariants(g.table); variant++ {
 			scenario := zoneScenarioFor(g.table, variant)
 			if g.table == "dag_summary_outbox" && (g.suffix == "open_key") == (variant == 1) {
+				continue
+			}
+			if skipAgentChainVariant(g, variant) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s", g.table, g.suffix), func(t *testing.T) {

@@ -58,6 +58,9 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 			return fail("%v", err)
 		}
 	}
+	if err := r.prepare(); err != nil {
+		return fail("%v", err)
+	}
 	if rc, err := r.git(ctx, c.Checkout, nil, "fetch", c.Remote, "--quiet"); err != nil || rc != 0 {
 		return fail("fetch failed")
 	}

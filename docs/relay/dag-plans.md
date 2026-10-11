@@ -201,11 +201,17 @@ tables (decision D-01):
   prefix: the gate derives the zone by applying them (`swapgate.zoneObjects`), so these tables arrive as
   `EXTENDS_ZONE` and leave as `NARROWS_ZONE` like the `dag_` ones. The train commands that write them ship
   separately; nothing in this build writes them yet;
+* seven tables R04 (CRW-1212) appends: the flow journal (`flow_runs`, `flow_calls`, `flow_events`, `flow_spawn_decisions`, `flow_step_decisions`; no writer in
+  this build yet) and the agent execution kind (`dag_agent_executions` and `dag_agent_closures`, written by `dag-release --surface agent` and, from R07, by the
+  lifecycle). All are append-only, refuse a NULL key (CRW-835) and a REPLACE of a stored key or rowid (CRW-974), and a zone that stops before them is extended by
+  the next write open. A node's agent executions are a chain (a row names the row it supersedes; one row per node has none, and a row is followed by at most one);
+  the current execution is the last row of the chain when no closure row ends it. `relay-sqlite.sql` and every frozen table are unchanged, and no agent row is
+  written into one ([the scheduler](dag-scheduler.md#the-agent-surface-of-the-release-r04), [the readers](agent-execution-readers.md));
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
   later issue needs arrives as an appended `ALTER TABLE ... ADD COLUMN` that every open runs, so a fresh store and an upgraded store read the
   same text. `testdata/dag_zone_shipped.json` holds the text each object had when it shipped.
-* an append-only table (one with a `<table>_no_delete` trigger: 17 of them) refuses `INSERT OR REPLACE` of a stored key as well (CRW-974). The
+* an append-only table (one with a `<table>_no_delete` trigger: 24 of them) refuses `INSERT OR REPLACE` of a stored key as well (CRW-974). The
   UPDATE and DELETE triggers cannot see a REPLACE, which deletes the row it replaces without running a DELETE trigger while `recursive_triggers`
   is OFF (the store's setting, unchanged). Each key of such a table (the primary key, each UNIQUE, each partial UNIQUE with its `WHERE`) has a
   `BEFORE INSERT` guard named `<table>_<key>_guard`, appended to the statements, that raises the text SQLite gives a plain INSERT of that key

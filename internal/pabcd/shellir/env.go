@@ -47,9 +47,29 @@ func AnalyzeScriptEnv(src, cwd string, cdpath bool, lookup func(string) (string,
 // AnalyzeScriptProvenDirectory is AnalyzeScript with the same failed-cd
 // tracking as AnalyzeEnvProvenDirectory, for memory destinations in carried files.
 func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) {
+	return AnalyzeScriptProven(src, cwd, ScriptOptions{Cdpath: cdpath})
+}
+
+// ScriptOptions is what a reader of a text with failed-cd tracking knows about the shell that runs it besides the text (CRW-1165).
+type ScriptOptions struct {
+	// Cdpath is Exec.Cdpath of the record that runs the text.
+	Cdpath bool
+	// ExitTainted is Exec.ExitTainted of the record that runs the text: the text that ran it did not leave exit and cd alone, so a
+	// function or option it made may be inherited, and the text is not given the proof of `cd <literal> || exit <digits>`.
+	ExitTainted bool
+	// Startup answers the variables a shell reads at start (StartupEnvNames: BASH_ENV, ENV, ZDOTDIR, SHELLOPTS, BASHOPTS, BASH_FUNC_exit%%, BASH_FUNC_cd%%, CDPATH)
+	// from the environment the command inherits, for a reader that is given no environment otherwise. nil: not known, nothing is held
+	// against the proof for them (the other variables stay unknown either way).
+	Startup func(string) (string, bool)
+}
+
+// AnalyzeScriptProven is AnalyzeScriptProvenDirectory with what is known about the shell around the text (ScriptOptions).
+func AnalyzeScriptProven(src, cwd string, o ScriptOptions) (Result, error) {
 	st := newState(cwd)
-	st.cdpath = cdpath
+	st.cdpath = o.Cdpath
 	st.proveCD = true
+	st.exitTainted = o.ExitTainted
+	st.startup = o.Startup
 	return analyze(src, st, nil)
 }
 
@@ -70,6 +90,7 @@ func AnalyzeNoDir(src string) (Result, error) {
 
 func analyze(src string, st *state, lookup func(string) (string, bool)) (Result, error) {
 	w := &walker{}
+	fresh := st.clone()
 	if len(src) > MaxCommandBytes {
 		return Result{}, unreadablef("command is %d bytes; the limit is %d", len(src), MaxCommandBytes)
 	}
@@ -86,8 +107,34 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	st.lookup = lookup
 	st.cdpath = st.cdpath || textNamesCdpath(src)
 	w.prefixNamed = textNamesPycachePrefix(src)
-	if err := w.stmts(file.Stmts, st, Context{}); err != nil {
+	w.pythonPathNamed = strings.Contains(src, "PYTHONPATH")
+	w.startupSet = textNamesStartupVar(src)
+	startup := lookup
+	if st.startup != nil {
+		startup = st.startup
+	}
+	w.exitProof = st.proveCD && !st.exitTainted && !st.noExitProof && !w.startupSet && !textNamesShellTables(src) && plainForExitProof(file, startup)
+	if err := w.stmts(file.Stmts, st, Context{top: true}); err != nil {
 		return Result{}, err
+	}
+	if err := w.writersBesideModules(); err != nil {
+		return Result{}, err
+	}
+	if w.prefixUnknown || w.startupSet {
+		// A name the text does not spell may be BASH_ENV, ENV or another startup variable (printf -v "$N$M" with N=BASH_ and M=ENV), or a text names
+		// one in a form that is not a plain assignment (${BASH_ENV:=x}, read BASH_ENV, a name built from known parts): the
+		// scripts the text runs may start with an exit function from a file, so none of them is given the proof, wherever the
+		// assignment stands and whether or not the text used the proof itself (CRW-1165).
+		for i := range w.out {
+			w.out[i].ExitTainted = true
+		}
+	}
+	if w.exitUsed && (w.prefixUnknown || w.startupSet) {
+		// The form was taken as proof, and the text assigns variables by names it does not spell (read "$N", printf -v "$N", export
+		// "$N"): one of them may be a table that defines a function or an alias named exit (zsh functions, aliases), which the walk cannot
+		// know. Read the text again without the proof (CRW-1165).
+		fresh.noExitProof = true
+		return analyze(src, fresh, lookup)
 	}
 	return Result{Execs: w.out}, nil
 }

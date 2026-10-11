@@ -60,7 +60,7 @@
 | `daemon` | `other` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
 | `deliver` | `other` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
 | `dispositions-show` | `other` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
-| `doctor` | `other` | yes | 3 - `plugins/crw/skills/crw-plan/references/integrations.md`<br>`plugins/crw/skills/crw-run/references/operations/check-result.example.json`<br>`plugins/crw/skills/crw-run/references/relay.md` |
+| `doctor` | `other` | yes | 3 - `plugins/crw/skills/crw-canon/references/delivery.md`<br>`plugins/crw/skills/crw-run/references/operations/check-result.example.json`<br>`plugins/crw/skills/crw-run/references/relay.md` |
 | `emit` | `other` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
 | `generation-bind` | `other` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
 | `generation-open` | `other` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |

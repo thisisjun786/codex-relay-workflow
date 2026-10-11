@@ -2,7 +2,7 @@
 
 Use when a check covers subjects that carry agreed dates, which the contract defines
 as projects, milestones and issues. An initiative-level request is judged through those
-subjects rather than as a subject of its own. It consumes the [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
+subjects rather than as a subject of its own. It consumes the [Schedule baseline contract](../../crw-canon/references/schedule-contract.md#schedule-baseline-contract),
 which [crw-plan](../../crw-plan/SKILL.md) owns, together with the delivery evidence
 this skill already pins. Where a subject's fields are absent, report that part of the
 schedule as unchecked rather than reconstructing them here. It decides whether each
@@ -63,7 +63,7 @@ Never supply a timezone from the host, a user profile, or memory.
 A result is achieved only when evidence exists at the delivery level its own
 criteria require. This skill already separates source existence, passing checks,
 integration, deployment, and observed behavior, and
-[Implementation Done](../../crw-plan/references/integrations.md#implementation-done)
+[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)
 already makes merge, installation, and live behavior three separate claims; apply
 those rules here rather than restating them. A lower level reached early is an
 observation, never an achievement: a merge that landed well before the date does
@@ -275,7 +275,7 @@ in one project returns to that project's parent, which settles within the approv
 already holds whether the approved successor proceeds. Where the mismatch orders work
 across projects, return it through the supervisor that owns both. Where the two projects share no
 supervisor or answer to different ones, follow
-[direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents):
+[direct coordination between project orchestrators](../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators):
 the parents settle what they can between themselves, hold only the unsettled part
 while independent work continues, and raise that pair-level decision to the user,
 because neither supervisor acquires authority over the pair and none is invented. A
@@ -283,7 +283,7 @@ requirement confined to one of those projects is raised with that project's own
 supervisor instead. Every route holds the same line: a project parent owns sequencing
 inside its own project and never decides whether another project proceeds. A bounded helper returns the finding
 to its caller rather than contacting an owner itself, as
-[supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
+[scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level)
 already requires. Do not become the new owner of technical execution or of a merge,
 and do not build a second path that resumes work. Explicit report-only, read-only,
 pause, and no-contact limits still win, and an independent audit keeps its own
