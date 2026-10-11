@@ -187,6 +187,33 @@ func TestMarkdownAnchorsDefinitionSyntaxAndCommentContext(t *testing.T) {
 	has("<div>\n<a title=\"-->\" id=\"kept\"></a>\n<!-- <a id=\"gone\"></a>\n</div>\n", []string{"kept"}, []string{"gone"})
 }
 
+// A link label holds at most 999 characters, counted as characters, not UTF-8 bytes: a label of 999
+// non-ASCII characters defines its reference, one of 1000 characters does not; a backslash escape
+// counts as its two characters.
+func TestMarkdownAnchorsReferenceLabelLength(t *testing.T) {
+	for _, row := range []struct {
+		char string
+		size int
+		ok   bool
+	}{
+		{"a", 999, true}, {"a", 1000, false},
+		{"한", 334, true}, {"한", 400, true}, {"한", 999, true}, {"한", 1000, false},
+		{`\]a`, 333, true}, {`\]a`, 334, false},
+	} {
+		label := strings.Repeat(row.char, row.size)
+		anchors := markdownAnchors("## [Install][" + label + "]\n\n[" + label + "]: /url\n")
+		if anchors["install"] != row.ok {
+			t.Errorf("label of %d x %q: install anchor %v, want %v", row.size, row.char, anchors["install"], row.ok)
+		}
+	}
+	label := strings.Repeat("한", 400)
+	errs := anchorFixture(t, map[string]string{
+		"docs/source.md": "[valid](target.md#install)\n",
+		"docs/target.md": "## [Install][" + label + "]\n\n[" + label + "]: /url\n",
+	})
+	expectEqual(t, "errors", errs, []string(nil))
+}
+
 // A list marker needs a space, a tab or the line end after it, the content of a list item and of a
 // block quote is read as blocks of its own, raw HTML blocks hold no Markdown, and a code span runs
 // over the lines of its paragraph.

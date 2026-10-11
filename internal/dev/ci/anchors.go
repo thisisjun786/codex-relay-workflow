@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // The anchor check: a relative link's #fragment must name a heading slug or an explicit anchor of
@@ -129,7 +130,7 @@ func referenceLabels(blocks []inlineBlock) map[string]bool {
 }
 
 // linkDefinition reads the link reference definition s starts with, as CommonMark reads one: a
-// label in brackets (some non-space text, no unescaped bracket), ':', white space holding at most one
+// label in brackets (some non-space text of at most 999 characters, no unescaped bracket), ':', white space holding at most one
 // line end, a destination (in <> without a line end or an unescaped <, or plain text without spaces
 // or control characters whose parentheses balance), and, after white space, an optional title in
 // double quotes, single quotes or parentheses; nothing but spaces may follow on the line. When the
@@ -140,17 +141,21 @@ func linkDefinition(s string) (label string, n int, ok bool) {
 	if !strings.HasPrefix(s, "[") {
 		return "", 0, false
 	}
-	i := 1
+	i, characters := 1, 0 // the label holds at most 999 characters (not UTF-8 bytes)
 	for ; ; i++ {
-		if i >= len(s) || s[i] == '[' || i > 1000 {
+		if i >= len(s) || s[i] == '[' || characters > 999 {
 			return "", 0, false
 		}
 		if s[i] == '\\' && i+1 < len(s) && isMarkdownPunctuation(rune(s[i+1])) {
 			i++
+			characters += 2
 			continue
 		}
 		if s[i] == ']' {
 			break
+		}
+		if utf8.RuneStart(s[i]) {
+			characters++
 		}
 	}
 	label = normalizeLabel(s[1:i])
