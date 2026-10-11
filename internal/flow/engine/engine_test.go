@@ -334,11 +334,11 @@ return out
 `)
 	got := value[[]map[string]any](t, res)
 	want := []map[string]any{
-		{"status": "completed", "reason": nil, "hasOutput": true, "hasHandle": true, "callId": "string", "frozen": true, "pair": "fake-sol"},
-		{"status": "null_model", "reason": "schema_invalid_after_repair", "hasOutput": false, "hasHandle": true, "callId": "string", "frozen": true, "pair": "fake-sol"},
+		{"status": "completed", "reason": nil, "hasOutput": true, "hasHandle": true, "callId": "string", "frozen": true, "pair": "gpt-fake-sol"},
+		{"status": "null_model", "reason": "schema_invalid_after_repair", "hasOutput": false, "hasHandle": true, "callId": "string", "frozen": true, "pair": "gpt-fake-sol"},
 		{"status": "refused", "reason": "policy_refused", "hasOutput": false, "hasHandle": false, "callId": "string", "frozen": true, "pair": ""},
-		{"status": "unknown", "reason": "dispatch_unknown", "hasOutput": false, "hasHandle": true, "callId": "string", "frozen": true, "pair": "fake-haiku"},
-		{"status": "held", "reason": "host_infra_serverOverloaded", "hasOutput": false, "hasHandle": true, "callId": "string", "frozen": true, "pair": "fake-haiku"},
+		{"status": "unknown", "reason": "dispatch_unknown", "hasOutput": false, "hasHandle": true, "callId": "string", "frozen": true, "pair": "claude-fake-haiku"},
+		{"status": "held", "reason": "host_infra_serverOverloaded", "hasOutput": false, "hasHandle": true, "callId": "string", "frozen": true, "pair": "claude-fake-haiku"},
 	}
 	for i := range want {
 		if fmt.Sprint(got[i]) != fmt.Sprint(want[i]) {
@@ -581,7 +581,7 @@ return [first, next, viaResult].map((r) => ({ status: r.status, handle: r.handle
 		Turns                        []string
 	}](t, res)
 	for i, g := range got {
-		if g.Status != "completed" || g.Role != "executor-t1" || g.Pair != (Pair{"fake-sonnet", "xhigh"}) || g.Thread != got[0].Thread {
+		if g.Status != "completed" || g.Role != "executor-t1" || g.Pair != (Pair{"claude-fake-sonnet", "xhigh"}) || g.Thread != got[0].Thread {
 			t.Errorf("call %d: %+v", i, g)
 		}
 	}
@@ -596,7 +596,7 @@ return [first, next, viaResult].map((r) => ({ status: r.status, handle: r.handle
 		}
 	}
 	th, ok := h.fake.Thread(got[0].Thread)
-	if threads != 1 || !ok || len(th.Turns) != 3 || th.Pair != (Pair{"fake-sonnet", "xhigh"}) {
+	if threads != 1 || !ok || len(th.Turns) != 3 || th.Pair != (Pair{"claude-fake-sonnet", "xhigh"}) {
 		t.Errorf("threads %d thread %+v", threads, th)
 	}
 	// the journal row of the continuation carries the inherited identity and what it inherited
@@ -607,7 +607,7 @@ return [first, next, viaResult].map((r) => ({ status: r.status, handle: r.handle
 		}
 	}
 	d := prep.Data
-	if d["role"] != "executor-t1" || d["step_decision"] != "sd-7" || d["node"] != "node-3" || d["model"] != "fake-sonnet" || d["thread_id"] != got[0].Thread {
+	if d["role"] != "executor-t1" || d["step_decision"] != "sd-7" || d["node"] != "node-3" || d["model"] != "claude-fake-sonnet" || d["thread_id"] != got[0].Thread {
 		t.Errorf("prepared row %+v", d)
 	}
 	if inh := fmt.Sprint(d["inherited"]); inh != "[role pair node stepDecision]" {
@@ -653,7 +653,7 @@ func TestRequestedEffortIsKeptNotApplied(t *testing.T) {
 const r = await agent.call('build', { agentType: 'executor-t1', stepDecision: 'sd-1', effort: 'low' })
 return { status: r.status, configured: r.meta.configuredPair, requested: r.meta.requestedPair }`)
 	v := value[map[string]any](t, res)
-	if v["status"] != "completed" || fmt.Sprint(v["configured"]) != "map[effort:xhigh model:fake-sonnet]" || fmt.Sprint(v["requested"]) != "map[effort:low model:fake-sonnet]" {
+	if v["status"] != "completed" || fmt.Sprint(v["configured"]) != "map[effort:xhigh model:claude-fake-sonnet]" || fmt.Sprint(v["requested"]) != "map[effort:low model:claude-fake-sonnet]" {
 		t.Errorf("%v", v)
 	}
 }

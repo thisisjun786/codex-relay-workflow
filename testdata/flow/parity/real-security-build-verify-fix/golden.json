@@ -1,0 +1,51 @@
+{
+  "claudeSha256": "0415735be16307e1724d9254b728ed632d3b7250b7ca7ac142a5236082b5c1c1",
+  "value": [
+    {
+      "build": null,
+      "issue": "CRW-0001",
+      "rounds": []
+    },
+    {
+      "build": null,
+      "issue": "CRW-0002",
+      "rounds": []
+    }
+  ],
+  "calls": [
+    {
+      "path": "root",
+      "position": 2,
+      "label": "build:m1",
+      "role": "executor-t1",
+      "sandbox": "workspace-write",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root",
+      "position": 4,
+      "label": "build:s1",
+      "role": "executor",
+      "sandbox": "workspace-write",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "claudeSha256": "faf080bcef174011ee73bf02f9243a98b37adf88f98f33589e79ded7233e344b",
+  "value": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "calls": [
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "judge:zone-null-guards",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "judge:dag-correct-skip",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:2",
+      "position": 1,
+      "label": "judge:verify-pins-stale-push",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:3",
+      "position": 1,
+      "label": "judge:pump-signals",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:4",
+      "position": 1,
+      "label": "judge:decisions-derive",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:5",
+      "position": 1,
+      "label": "judge:managed-unload-race",
+      "role": "reviewer-final",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    }
+  ]
+}

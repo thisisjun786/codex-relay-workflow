@@ -61,7 +61,10 @@ the supervisor" is a mechanism rather than a sentence someone has to remember.
 
 Reasoning-effort names are catalog values, and two models that both offer a name do not thereby
 offer the same thing. Nothing maps one onto another: there is no alias table, no normalisation
-step, and every comparison in both packages is exact string equality.
+step, and every comparison in both packages is exact string equality. The flow alias table (see
+"The agent roles of a flow run") is a table that selects a role from the options of a Claude script and
+never turns one effort name into another, so this paragraph's rule stands: an effort name belongs to
+its own model and the comparison is exact string equality.
 
 The clearest case is the pair the parent row just left. The host's catalog reports SWE-2 at
 medium, high, max and ultra, and the parent ran on it at exactly `max` until 2026-09-23; Opus 5.5,
@@ -287,6 +290,84 @@ its record states: no default is applied on a resume, so a record with no profil
 A server added to config.toml between the host's `config/read` and `thread/start` is neither switched off
 nor flagged.
 
+## The agent roles of a flow run
+
+`crw flow run` runs each agent call of a workflow script as one of six roles: `architect`, `executor`,
+`executor-t1`, `reviewer`, `reviewer-final` and `explorer`. They are not the relay's roles above
+(`supervisor`, `parent`, `child`), whose pair rules do not change. The same policy file declares them in two
+more sections, and the model names are in this file and nowhere else.
+
+    {
+      "agent-roles": {
+        "architect":      {"model": "anthropic/claude-opus-5-5",   "reasoningEffort": "xhigh"},
+        "executor":       {"model": "anthropic/claude-haiku-5",    "reasoningEffort": "xhigh"},
+        "executor-t1":    {"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"},
+        "reviewer":       {"model": "gpt-6.1-sol",                 "reasoningEffort": "high"},
+        "reviewer-final": {"model": "gpt-6.1-sol",                 "reasoningEffort": "xhigh"},
+        "explorer":       {"model": "anthropic/claude-haiku-5",    "reasoningEffort": "high"}
+      }
+    }
+
+EXAMPLE ONLY, like the file above: the pairs are a host's decision, not defaults.
+
+- **Exactly one pair per role.** Every one of the six roles is declared, each with one `model` and
+  `reasoningEffort` (or a `pairs` list of one, and the optional `autoCompactTokenLimit`, which a flow run keeps in its role table, gives the thread it creates and shows in `crw flow roles`). A thread's pair never
+  changes, so a role with two pairs, a missing role, or a name that is not one of the six refuses the file when
+  it is read.
+- **A reviewer is not an author's family.** `reviewer` and `reviewer-final` must run on a model whose family is
+  not the family of `executor` or `executor-t1`. The family of a model is its name without the provider prefix, up
+  to the first dash (`anthropic/claude-haiku-5` and `claude-opus-5-5` are `claude`, `gpt-6.1-sol` is `gpt`). The
+  file is refused otherwise: a review by the family that wrote the change is not independent.
+- **Allowed.** Where the file has an `allowed` list, every agent-roles pair must be in it, by the rule of
+  "Where both are present they have to agree"; a file with only `agent-roles` is not "neither allowed nor roles".
+- **The alias table.** A Claude script names a model (`model: 'haiku'`) or a verifier (`agentType:
+  'ocx-gpt-6-1-sol'`), not a role. The `agent-aliases` section maps the options of such a call to one role or to
+  a refusal. A row has a `key` (the non-role `agentType` string, else the `model`), an optional `effort`, an
+  optional `isolation`, and exactly one of `role` or `refuse` (a cause, with an optional `detail`). Of the rows
+  that match a call, the one that names more options wins, and the file is refused when two rows cover one call and
+  neither is more specific. A file that declares `agent-roles` and no `agent-aliases` has the design's table:
+
+  | Options of the call | Role |
+  | --- | --- |
+  | `model: 'opus'` | `architect` |
+  | `model: 'haiku'` with `isolation: 'worktree'` | `executor` |
+  | `model: 'haiku'` without isolation | refused: `policy_refused`, cause `alias_ambiguous` |
+  | `model: 'sonnet'` | `executor-t1` |
+  | `ocx-gpt-6-1-sol` (as `model` or as `agentType`) with `effort: 'xhigh'` | `reviewer-final` |
+  | `ocx-gpt-6-1-sol` (as `model` or as `agentType`) otherwise | `reviewer` |
+
+  Anything else is `policy_refused`. A role's `aliases` list (default: `opus` for the architect, `haiku` for the
+  executor and the explorer, `sonnet` for `executor-t1`, `ocx-gpt-6-1-sol` for both reviewers) names the model
+  aliases a call may state beside `agentType` being that role: `agentType: 'explorer', model: 'haiku'` is the
+  explorer, `agentType: 'reviewer', model: 'haiku'` is `pair_refused`.
+- **Why an isolation-less haiku is refused.** In Claude that call edits the shared checkout, but a CRW call has a
+  write cwd of its own that no other call shares. Resolving it to the explorer would end the build without an
+  edit, and resolving it to the executor would leave the edit outside the run's commit path. So the script says
+  which it is, with one option (`isolation: 'worktree'` for a build, `agentType: 'explorer'` for an investigation),
+  and `crw flow lint` and a dry run catch the first call.
+- **The requested effort is recorded, never applied.** The alias selects the role; the thread runs on the role's
+  pair, and an `effort` the script states that differs from it is not an error. The call result keeps both,
+  `meta.requestedPair` and `meta.configuredPair`, and the journal's intent row both pairs.
+
+`crw flow roles` prints the roles, the alias table, the file's path and its digest, the digest being the one
+`get_capabilities` and `relay doctor` report for the same file, and `get_capabilities` describes the sections under
+`executionPolicy.agentRoles` when the file declares them. A runtime from before these sections refuses a file that
+declares them ("has unknown keys"), as one from before `pairs` does, so install the runtime that reads them
+everywhere a role question is asked before the file is edited.
+
+### One policy snapshot per run
+
+A `crw flow run` process reads the file once when it starts and records its path and digest in the run record
+(`flow_runs`). A run keeps its snapshot: editing the file changes nothing for a run in progress. The `agent-roles`
+section changes the digest like any other edit, so adding or changing a pair follows "Adding a pair to a role"
+(restart the relay daemon, replace the bridge processes, read the digest back with `get_capabilities` and
+`relay doctor`). A run process that resumes a run and reads another digest writes a `policy_repinned` event with
+the old and the new digest to the journal before its first live call. From then on only the calls that start a new
+thread take the new pairs; a continuation keeps the pair of the thread in its handle, since the pair of a thread
+never changes. The spawn hook does not read the file: the run writes the helper pairs (`explorer`, `reviewer`) and
+the digest of its own snapshot to the flow binding file and the hook uses that, so no hook process has a policy
+path or a digest that could disagree with the run's.
+
 ## The file
 
 The policy file is named by `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` in the bridge server process's
@@ -313,7 +394,7 @@ The same `child` as a single pair is `{"model": "anthropic/claude-sonnet-5-5", "
 `allowed` stays optional when `roles` is declared. That matters: an allowlist restricts every task
 on the host, so forcing one in order to declare roles would block other legitimate work. With no
 `allowed` the mode stays `presence_only` and only cited roles are enforced. A file declaring
-neither `allowed` nor `roles` is an error, because a policy that declares nothing is a mistake and
+neither `allowed` nor `roles` nor `agent-roles` is an error, because a policy that declares nothing is a mistake and
 not an empty policy.
 
 Where both are present they have to agree. A declared role pair is still asked the allowlist
@@ -322,7 +403,7 @@ so a file declaring `parent` on a pair its own `allowed` omits describes a role 
 create: the request matches its role and then fails `execution_not_allowed`. That is refused when
 the policy is read rather than at the first creation attempt, and neither section is made to win:
 letting `roles` authorize its own pair would turn editing it into a way to widen the allowlist,
-and letting `allowed` win would silently unmake a role.
+and letting `allowed` win would silently unmake a role. The `agent-roles` section follows the same rule.
 
 An exception may now carry a `role`. A request that cites a role may cite only an exception
 declaring that same role, and an exception with no `role` key may be cited only by a request that
@@ -431,8 +512,8 @@ Four steps, and the order matters because each one is a separate fact.
 
 1. Write the `roles` section into the file `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` names.
 2. Set that variable for **every** process that asks a role question: the bridge MCP server, and
-   the relay's daemon, CLI and Stop hook. They are separate processes with separate environments,
-   and one that misses it refuses role-bound deliveries rather than skipping the check.
+   the relay's daemon, CLI and Stop hook, and `crw flow run`. They are separate processes with separate
+   environments, and one that misses it refuses role-bound deliveries rather than skipping the check.
    Codex gives the plugin-declared bridge no variable of its own; its launcher sets it from
    the bridge record, see
    [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under).

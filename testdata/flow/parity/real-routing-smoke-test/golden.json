@@ -1,0 +1,40 @@
+{
+  "claudeSha256": "8f99bdad5c254510d264c0c1ef4d2b53cb912f13d115a3ef1db16ae3124fc444",
+  "value": [
+    "fake answer to: Routing test. Use no tools. The build step returned: \"fake a"
+  ],
+  "calls": [
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "build:haiku",
+      "role": "executor",
+      "sandbox": "workspace-write",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "anthropic/claude-haiku-5",
+        "effort": "xhigh"
+      }
+    },
+    {
+      "path": "root/1:0",
+      "position": 2,
+      "label": "verify:sol",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "completed",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      }
+    }
+  ]
+}
