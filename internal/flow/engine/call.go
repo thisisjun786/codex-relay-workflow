@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -304,10 +305,29 @@ type callRun struct {
 	tokens     Tokens
 	repairUsed bool
 	delivered  bool
+
+	// placement is where the call runs when the backend places calls (Placer); placeReq is what it was asked.
+	placement *Placement
+	placeReq  PlaceRequest
+	// cwd is the working directory of the call's thread once it is known.
+	cwd string
+
+	// mu guards what an interrupt from another goroutine reads and writes: the last row, the turn in flight and the
+	// engine's intent to interrupt it.
+	mu         sync.Mutex
+	lastSeq    int
+	lastEvent  string
+	op         string
+	cancelTurn context.CancelCauseFunc
+	intent     string
 }
 
 func (c *callRun) event(ev string, data map[string]any) Event {
-	return c.e.j.Append(Event{RunID: c.e.runID, Kind: KindCall, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: ev, Data: data})
+	row := c.e.j.Append(Event{RunID: c.e.runID, Kind: KindCall, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: ev, Data: data})
+	c.mu.Lock()
+	c.lastSeq, c.lastEvent = row.Seq, ev
+	c.mu.Unlock()
+	return row
 }
 
 // prepare writes the call's intent row before anything is sent.
@@ -330,6 +350,20 @@ func (c *callRun) prepare() {
 		d["configured_model"] = p.resume.Configured.Model
 		d["configured_effort"] = p.resume.Configured.Effort
 		d["inherited"] = p.inherited
+		if p.resume.Cwd != "" {
+			d["thread_cwd"] = p.resume.Cwd
+			c.cwd = p.resume.Cwd
+		}
+	}
+	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil {
+		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: c.e.j}
+		pl, err := placer.Place(c.placeReq)
+		if err != nil {
+			p.refusal = &Refusal{Reason: ReasonWorktreeFailed, Detail: err.Error()}
+		} else {
+			c.placement = &pl
+			d["allocation"] = pl.Map()
+		}
 	}
 	c.startSeq = c.event(EvPrepared, d).Seq
 }
@@ -341,7 +375,21 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 	}
 	data["reason"] = reason
 	row := c.event(ev, data)
-	startSeq, endSeq := c.startSeq, row.Seq
+	return c.result(status, reason, row.Seq, data)
+}
+
+// leaveOpen ends the call for the script without a terminal row: its last row stays the intent that was sent, and the
+// reconcile pass (or a resume) decides the call.
+func (c *callRun) leaveOpen(reason string) CallResult {
+	c.mu.Lock()
+	seq := c.lastSeq
+	c.mu.Unlock()
+	return c.result(StatusUnknown, reason, seq, nil)
+}
+
+// result is the CallResult of a call whose last row is endSeq.
+func (c *callRun) result(status, reason string, endSeq int, data map[string]any) CallResult {
+	startSeq := c.startSeq
 	if c.e.cfg.OmitSeq {
 		startSeq, endSeq = 0, 0
 	}
@@ -424,24 +472,44 @@ func mustJSON(v any) []byte {
 }
 
 // gate stops a call that would send a request while the run is paused or over its token ceiling.
-func (c *callRun) gate() (CallResult, bool) {
+func (c *callRun) gate(ctx context.Context) (CallResult, bool) {
 	reason := c.e.pauseReason()
 	if reason == "" {
 		return CallResult{}, false
 	}
-	state := "not_delivered"
-	if c.delivered {
-		state = "delivered"
-	}
+	data := map[string]any{"input_state": c.inputState()}
 	if reason != ReasonBudgetExhausted {
 		reason = ReasonEnginePaused
 	}
-	return c.terminal(EvHeld, StatusHeld, reason, map[string]any{"input_state": state}), true
+	c.heldSnapshot(ctx, data)
+	return c.terminal(EvHeld, StatusHeld, reason, data), true
+}
+
+func (c *callRun) inputState() string {
+	if c.delivered {
+		return "delivered"
+	}
+	return "not_delivered"
 }
 
 // aborted reports whether the run ended and cancelled the call.
 func (c *callRun) aborted(ctx context.Context) bool {
 	return ctx.Err() != nil
+}
+
+// heldSnapshot adds P_held to the data of a held row: the working snapshot of an executor call's worktree at the moment
+// the run classified the failure (for a call that sent nothing, the snapshot it started from).
+func (c *callRun) heldSnapshot(ctx context.Context, data map[string]any) {
+	placer, ok := c.e.cfg.Backend.(Placer)
+	if !ok || c.cwd == "" || c.plan.spec.Family != "executor" {
+		return
+	}
+	snap, err := placer.Snapshot(ctx, c.cwd)
+	if err != nil {
+		data["p_held_error"] = err.Error()
+		return
+	}
+	data["p_held"] = snap
 }
 
 // fromError ends the call with the disposition of a request that failed.
@@ -450,29 +518,233 @@ func (c *callRun) fromError(ctx context.Context, err error) CallResult {
 	switch {
 	case c.aborted(ctx):
 		return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
+	case c.interrupted() != "":
+		return c.fromIntent(ctx, err.Error())
 	case errors.As(err, &rpc):
-		return c.fromDisposition(ClassifyHostFailure(rpc.CodexErrorInfo), rpc.Message)
+		return c.fromDisposition(ctx, ClassifyHostFailure(rpc.CodexErrorInfo), rpc.Message)
+	}
+	if r, ok := c.e.cfg.Backend.(Reconciled); ok && r.LeavesLostRequestsOpen() {
+		return c.leaveOpen(ReasonDispatchUnknown)
 	}
 	return c.terminal(EvOutcomeUnknown, StatusUnknown, ReasonDispatchUnknown, map[string]any{"error": err.Error()})
 }
 
-func (c *callRun) fromDisposition(d Disposition, detail string) CallResult {
+// fromIntent ends a call whose turn the engine itself interrupted: it is held for the reason of the intent, whatever the
+// turn came back as.
+func (c *callRun) fromIntent(ctx context.Context, detail string) CallResult {
+	return c.fromDisposition(ctx, Disposition{Status: StatusHeld, Reason: c.interrupted()}, detail)
+}
+
+// quotaEscalation is written once per run, by the call whose failure paused it.
+func (e *Engine) quotaEscalation(c *callRun, info string) {
+	if !e.quotaEscalated.CompareAndSwap(false, true) {
+		return
+	}
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: "escalation",
+		Data: map[string]any{"reason": "quota_or_rate", "node": c.plan.node, "call_id": c.id, "codex_error_info": info}})
+}
+
+func (c *callRun) fromDisposition(ctx context.Context, d Disposition, detail string) CallResult {
 	data := map[string]any{"codex_error_info": d.CodexErrorInfo, "detail": detail}
 	switch d.Status {
 	case StatusHeld:
-		state := "not_delivered"
-		if c.delivered {
-			state = "delivered"
-		}
-		data["input_state"] = state
+		data["input_state"] = c.inputState()
+		c.heldSnapshot(ctx, data)
 		if PausesRun(d.Reason) {
+			c.e.quotaEscalation(c, d.CodexErrorInfo)
 			c.e.pause(ReasonEnginePaused)
+			c.e.interruptTurns(ReasonEnginePaused)
 		}
 		return c.terminal(EvHeld, StatusHeld, d.Reason, data)
 	case StatusRefused:
 		return c.terminal(EvRefused, StatusRefused, d.Reason, data)
 	}
 	return c.terminal(EvNullModel, StatusNullModel, d.Reason, data)
+}
+
+// beginTurn opens the context one turn request runs under; the engine's interrupt cancels it.
+func (c *callRun) beginTurn(ctx context.Context, op string) (context.Context, func()) {
+	turnCtx, cancel := context.WithCancelCause(ctx)
+	c.mu.Lock()
+	c.cancelTurn, c.op, c.intent = cancel, op, ""
+	c.mu.Unlock()
+	c.e.turnsM.Lock()
+	c.e.turns[c] = struct{}{}
+	c.e.turnsM.Unlock()
+	return turnCtx, func() {
+		c.e.turnsM.Lock()
+		delete(c.e.turns, c)
+		c.e.turnsM.Unlock()
+		c.mu.Lock()
+		c.cancelTurn = nil
+		c.mu.Unlock()
+		cancel(nil)
+	}
+}
+
+// interrupted is the reason the engine interrupted the call's last turn for, "" when it did not.
+func (c *callRun) interrupted() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.intent
+}
+
+// interrupt journals the engine's intent to interrupt the turn in flight and then cancels it: the backend sends the
+// host's interrupt, and the turn that comes back interrupted is classified by this intent, never as a null_model.
+func (c *callRun) interrupt(reason string) {
+	c.mu.Lock()
+	if c.cancelTurn == nil || c.intent != "" {
+		c.mu.Unlock()
+		return
+	}
+	c.intent = reason
+	cancel, op := c.cancelTurn, c.op
+	c.mu.Unlock()
+	c.event(EvInterruptRequested, map[string]any{"reason": reason, "op": op})
+	cancel(errInterrupt)
+}
+
+var errInterrupt = errors.New("interrupted by the engine")
+
+// interruptTurns interrupts the turn every call in flight is running.
+func (e *Engine) interruptTurns(reason string) {
+	e.turnsM.Lock()
+	calls := make([]*callRun, 0, len(e.turns))
+	for c := range e.turns {
+		calls = append(calls, c)
+	}
+	e.turnsM.Unlock()
+	for _, c := range calls {
+		c.interrupt(reason)
+	}
+}
+
+// placementProblem ends a call whose worktree could not be made. A restored worktree that changed since it was verified
+// stops the node: nothing more is sent, the call keeps the row it had, and an escalation names it.
+func (c *callRun) placementProblem(ctx context.Context, err error) CallResult {
+	var mismatch *SnapshotMismatch
+	switch {
+	case c.aborted(ctx):
+		return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
+	case errors.As(err, &mismatch):
+		c.mu.Lock()
+		last := c.lastEvent
+		c.mu.Unlock()
+		c.e.j.Append(Event{RunID: c.e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: "escalation",
+			Data: map[string]any{"reason": ReasonRestoreSnapshotMismatch, "node": c.plan.node, "call_id": c.id, "last_event": last, "verified": mismatch.Want, "live": mismatch.Got}})
+		return c.leaveOpen(ReasonRestoreSnapshotMismatch)
+	}
+	return c.terminal(EvHeld, StatusHeld, ReasonWorktreeFailed, map[string]any{"input_state": "not_delivered", "detail": err.Error()})
+}
+
+// establish makes the call's placement real, after its prepared row.
+func (c *callRun) establish(ctx context.Context) (CallResult, bool) {
+	placer, ok := c.e.cfg.Backend.(Placer)
+	if !ok || c.placement == nil || c.placement.Path == "" || c.placement.Kind == PlaceContinued {
+		return CallResult{}, false
+	}
+	if err := placer.Establish(ctx, c.placeReq, *c.placement); err != nil {
+		return c.placementProblem(ctx, err), true
+	}
+	c.cwd = c.placement.Path
+	return CallResult{}, false
+}
+
+// pairCheck ends a call whose new thread read back another pair than its role's.
+func (c *callRun) pairCheck(info ThreadInfo) (CallResult, bool) {
+	p := c.plan
+	if info.Pair == p.spec.Pair {
+		return CallResult{}, false
+	}
+	return c.terminal(EvRefused, StatusRefused, ReasonPairRefused, map[string]any{
+		"detail": fmt.Sprintf("the thread reads back %s/%s, the role's pair is %s/%s", info.Pair.Model, info.Pair.Effort, p.spec.Pair.Model, p.spec.Pair.Effort)}), true
+}
+
+// startThread creates the call's thread.
+func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
+	e, p := c.e, c.plan
+	if res, stop := c.establish(ctx); stop {
+		return res, true
+	}
+	cwd := p.opts.Cwd
+	var placement Placement
+	if c.placement != nil {
+		placement = *c.placement
+		if placement.Path != "" {
+			cwd = placement.Path
+		}
+	}
+	c.event(EvThreadRequested, map[string]any{"cwd": cwd})
+	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
+	if err != nil {
+		return c.fromError(ctx, err), true
+	}
+	c.threadID, c.configured = info.ID, info.Pair
+	if info.Cwd != "" {
+		c.cwd = info.Cwd
+	} else if c.cwd == "" {
+		c.cwd = cwd
+	}
+	c.event(EvThreadStarted, map[string]any{"thread_id": info.ID, "model": info.Pair.Model, "effort": info.Pair.Effort, "cwd": info.Cwd})
+	return c.pairCheck(info)
+}
+
+// forkThread forks the handle's thread at its last turn into the restored worktree the call adopted.
+func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
+	e, p := c.e, c.plan
+	forker, ok := e.cfg.Backend.(Forker)
+	if !ok {
+		return c.terminal(EvRefused, StatusRefused, ReasonPolicyRefused, map[string]any{"detail": "the backend cannot fork a thread"}), true
+	}
+	if res, stop := c.establish(ctx); stop {
+		return res, true
+	}
+	cwd := c.placement.Path
+	c.event(EvForkRequested, map[string]any{"thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "prefix": threadPrefix(e.j, p.resume.ThreadID, p.resume.ThroughTurnID), "cwd": cwd})
+	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
+		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
+	if err != nil {
+		return c.fromError(ctx, err), true
+	}
+	c.threadID, c.configured = info.ID, info.Pair
+	if info.Cwd != "" {
+		c.cwd = info.Cwd
+	}
+	c.event(EvForkStarted, map[string]any{"thread_id": info.ID, "model": info.Pair.Model, "effort": info.Pair.Effort, "cwd": info.Cwd})
+	return c.pairCheck(info)
+}
+
+// threadPrefix is the turns of a thread through throughTurn, in order, as the journal recorded them: each turn's id and
+// its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold.
+func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
+	owner := map[string]string{}
+	events := j.Events()
+	for _, ev := range events {
+		if ev.Kind != KindCall {
+			continue
+		}
+		switch ev.Event {
+		case EvPrepared:
+			if t, _ := ev.Data["thread_id"].(string); t != "" {
+				owner[ev.CallID] = t
+			}
+		case EvThreadStarted, EvForkStarted:
+			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
+		}
+	}
+	var out []map[string]any
+	for _, ev := range events {
+		if ev.Kind != KindCall || ev.Event != EvTurnStarted || owner[ev.CallID] != threadID {
+			continue
+		}
+		id, _ := ev.Data["turn_id"].(string)
+		op, _ := ev.Data["op"].(string)
+		out = append(out, map[string]any{"turn_id": id, "op": op})
+		if id == throughTurn {
+			break
+		}
+	}
+	return out
 }
 
 const repairInstruction = "Your previous answer did not satisfy the output schema: %s\nAnswer again with only a JSON value that satisfies the schema."
@@ -499,42 +771,48 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 			return c.terminal(EvRefused, StatusRefused, ReasonSchemaNotStrict, map[string]any{"detail": "the schema cannot be compiled"})
 		}
 	}
-	if res, stop := c.gate(); stop {
+	if res, stop := c.gate(ctx); stop {
 		return res
 	}
-	if p.resume == nil {
-		c.event(EvThreadRequested, map[string]any{"cwd": p.opts.Cwd})
-		info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: p.opts.Cwd, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit})
-		if err != nil {
-			return c.fromError(ctx, err)
+	switch {
+	case p.resume == nil:
+		if res, stop := c.startThread(ctx); stop {
+			return res
 		}
-		c.threadID, c.configured = info.ID, info.Pair
-		c.event(EvThreadStarted, map[string]any{"thread_id": info.ID, "model": info.Pair.Model, "effort": info.Pair.Effort})
-		if info.Pair != p.spec.Pair {
-			return c.terminal(EvRefused, StatusRefused, ReasonPairRefused, map[string]any{
-				"detail": fmt.Sprintf("the thread reads back %s/%s, the role's pair is %s/%s", info.Pair.Model, info.Pair.Effort, p.spec.Pair.Model, p.spec.Pair.Effort)})
+	case c.placement != nil && c.placement.Fork:
+		if res, stop := c.forkThread(ctx); stop {
+			return res
 		}
-	} else {
+	default:
 		c.threadID, c.configured = p.resume.ThreadID, p.resume.Configured
 	}
 
 	input := p.prompt
 	for k := 1; ; k++ {
-		if res, stop := c.gate(); stop {
+		if res, stop := c.gate(ctx); stop {
 			return res
+		}
+		if k == 1 && c.placement != nil && c.placement.Kind == PlaceRestore {
+			if placer, ok := e.cfg.Backend.(Placer); ok {
+				if err := placer.Recheck(ctx, *c.placement); err != nil {
+					return c.placementProblem(ctx, err)
+				}
+			}
 		}
 		op := fmt.Sprintf("%s/t%d", c.id, k)
 		c.event(EvTurnRequested, map[string]any{"k": k, "op": op})
 		repair := k > 1
-		out, err := e.cfg.Backend.RunTurn(ctx, TurnSpec{
-			CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Pair: p.spec.Pair,
-			Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: p.opts.Cwd, Repair: repair,
+		turnCtx, endTurn := c.beginTurn(ctx, op)
+		out, err := e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
+			CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
+			Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair,
 			Started: func(turnID string) {
 				c.turnIDs = append(c.turnIDs, turnID)
 				c.delivered = true
 				c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turnID})
 			},
 		})
+		endTurn()
 		if err != nil {
 			return c.fromError(ctx, err)
 		}
@@ -546,10 +824,13 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 			if c.aborted(ctx) {
 				return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
 			}
-			if f.Interrupted && f.CodexErrorInfo == "" {
-				return c.fromDisposition(Disposition{Status: StatusHeld, Reason: ReasonHostInterruptedExternal}, f.Message)
+			if c.interrupted() != "" {
+				return c.fromIntent(ctx, f.Message)
 			}
-			return c.fromDisposition(ClassifyHostFailure(f.CodexErrorInfo), f.Message)
+			if f.Interrupted && f.CodexErrorInfo == "" {
+				return c.fromDisposition(ctx, Disposition{Status: StatusHeld, Reason: ReasonHostInterruptedExternal}, f.Message)
+			}
+			return c.fromDisposition(ctx, ClassifyHostFailure(f.CodexErrorInfo), f.Message)
 		}
 		result, verr := c.validate(out.Text, resolved)
 		if verr == nil {

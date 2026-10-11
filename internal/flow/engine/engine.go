@@ -131,6 +131,10 @@ type Engine struct {
 	warned atomic.Bool
 	pauseM sync.Mutex
 	paused string
+	// turns are the calls with a turn in flight; quotaEscalated is set once the run's quota escalation was written.
+	turnsM         sync.Mutex
+	turns          map[*callRun]struct{}
+	quotaEscalated atomic.Bool
 
 	// Everything below is touched only by the loop goroutine.
 	fatalKind string
@@ -184,7 +188,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}}
+	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}}
 	// A run that resumes a journal read the policy under another digest before: the change is journaled before any live
 	// call, and only calls that start a thread afterwards take the new pairs.
 	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
