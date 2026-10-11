@@ -531,6 +531,22 @@ func (c *callRun) heldSnapshot(ctx context.Context, data map[string]any) {
 	data["p_held"] = snap
 }
 
+// pendingTree adds the pending tree P to the data of a completed executor call: the working snapshot of the call's worktree
+// at the moment its turn ended, which crw.commit later commits as it is and which the effect proof of the call compares
+// the worktree with. A call that runs in no worktree of the backend's (a reviewer, a backend without a placer) has none.
+func (c *callRun) pendingTree(ctx context.Context, data map[string]any) {
+	placer, ok := c.e.cfg.Backend.(Placer)
+	if !ok || c.cwd == "" || c.plan.spec.Family != "executor" {
+		return
+	}
+	snap, err := placer.Snapshot(ctx, c.cwd)
+	if err != nil {
+		data["pending_tree_error"] = err.Error()
+		return
+	}
+	data["pending_tree"] = snap
+}
+
 // fromError ends the call with the disposition of a request that failed.
 func (c *callRun) fromError(ctx context.Context, err error) CallResult {
 	var rpc *RPCError
@@ -1025,8 +1041,9 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 		}
 		result, verr := c.validate(out.Text, resolved)
 		if verr == nil {
-			return c.terminal(EvCompleted, StatusCompleted, "", map[string]any{
-				"result": string(result), "result_digest": digestJSON(result), "tokens": c.tokens, "repair_used": c.repairUsed})
+			data := map[string]any{"result": string(result), "result_digest": digestJSON(result), "tokens": c.tokens, "repair_used": c.repairUsed}
+			c.pendingTree(ctx, data)
+			return c.terminal(EvCompleted, StatusCompleted, "", data)
 		}
 		if repair {
 			return c.terminal(EvNullModel, StatusNullModel, ReasonSchemaInvalidAfterRepair, map[string]any{"detail": verr.Error(), "repair_used": true})
