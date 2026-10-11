@@ -52,10 +52,12 @@ type state struct {
 	pend map[*binding]pending
 }
 
-// pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node and its phase.
+// pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node, its phase and
+// the call (one call's promise may be held by more than one name, as in q = p = crw.review(...)).
 type pending struct {
 	slot string
 	ev   uint8
+	call *ast.CallExpression
 }
 
 func newState() *state {
@@ -202,8 +204,10 @@ type walker struct {
 	guard int
 	// pending are the labels of the labeled statement being entered, for the loop or switch it labels to take.
 	pending []string
-	// deferred are the lifecycle calls whose promise the text does not await where it is made.
-	deferred map[*ast.CallExpression]*deferral
+	// deferred are the lifecycle calls whose promise the text does not await where it is made, and dropReads the reads
+	// of a name whose value is discarded where it is read (void p, p as a statement): neither completes an event.
+	deferred  map[*ast.CallExpression]*deferral
+	dropReads map[*ast.Identifier]bool
 	// buildKeys are the node keys a fresh executor call of the function starts; initial is the phase set each node
 	// slot starts in.
 	buildKeys map[string]bool
@@ -214,7 +218,7 @@ type walker struct {
 func (s *scanner) flow() {
 	lanes := s.laneFunctions()
 	for _, fn := range s.a.order {
-		w := &walker{s: s, fn: fn, lanes: lanes, deferred: map[*ast.CallExpression]*deferral{}}
+		w := &walker{s: s, fn: fn, lanes: lanes, deferred: map[*ast.CallExpression]*deferral{}, dropReads: map[*ast.Identifier]bool{}}
 		w.life = w.hasLifecycle()
 		w.collectNodes()
 		start := newState()
@@ -237,6 +241,7 @@ func (s *scanner) flow() {
 			case *ast.BlockStatement:
 				w.stmts(body.List, start)
 			case *ast.ExpressionBody:
+				w.consume(body.Expression, used)
 				w.expr(body.Expression, start)
 			}
 		}
@@ -409,9 +414,146 @@ var legalFrom = map[uint8]uint8{
 
 var eventNames = map[uint8]string{pBuilt: "build", pCommitted: "crw.commit", pVerified: "crw.verify", pReviewed: "crw.review", pLanded: "crw.land"}
 
-// deferral says a lifecycle call's promise is not awaited where the call is made: it is dropped (id is nil), or held by
-// a name that has to be read before the event is complete.
-type deferral struct{ bd *binding }
+// deferral says a lifecycle call's promise is not awaited where the call is made: it is dropped (no names), or held by
+// names one of which has to be read before the event is complete.
+type deferral struct {
+	call *ast.CallExpression
+	bds  []*binding
+}
+
+// useKind is what the place an expression stands in does with its value: uses it (awaits, returns, passes, keeps it in
+// a container), discards it, or gives it to names.
+type useKind uint8
+
+const (
+	useValue useKind = iota
+	dropValue
+	holdValue
+)
+
+type use struct {
+	kind useKind
+	bds  []*binding
+}
+
+var (
+	used    = use{kind: useValue}
+	dropped = use{kind: dropValue}
+)
+
+// holdIn is the use of a value given to a name: by itself, or along with the names an enclosing assignment gives it to.
+func holdIn(m use, bd *binding) use {
+	switch m.kind {
+	case useValue:
+		return used
+	case holdValue:
+		return use{kind: holdValue, bds: append(slices.Clip(m.bds), bd)}
+	}
+	return use{kind: holdValue, bds: []*binding{bd}}
+}
+
+// consume notes, for the lifecycle calls of an expression and the names it reads, whether their value is used where it
+// stands. The value of an expression goes to its parts by the operator: void, a unary operator, a comparison, an
+// arithmetic operator, a template and a test discard it; a sequence keeps only its last part; && keeps its right side
+// (a promise is never falsy), || and ?? their left; await, a call's arguments and callee, a property read and a
+// container use it; a plain assignment gives it to the name and passes it on. A function literal is consumed by its own
+// walk.
+func (w *walker) consume(n any, m use) {
+	a := w.s.a
+	switch e := n.(type) {
+	case nil:
+		return
+	case *ast.FunctionLiteral, *ast.ArrowFunctionLiteral, *ast.ClassLiteral:
+		return
+	case *ast.Identifier:
+		if m.kind == dropValue {
+			w.dropReads[e] = true
+		}
+		return
+	case *ast.CallExpression:
+		if w.lifecycleCall(e) != nil {
+			switch m.kind {
+			case dropValue:
+				w.deferred[e] = &deferral{call: e}
+			case holdValue:
+				var bds []*binding
+				for _, bd := range m.bds {
+					if bd != nil {
+						bds = append(bds, bd)
+					}
+				}
+				w.deferred[e] = &deferral{call: e, bds: bds}
+			}
+		}
+		w.consume(e.Callee, used)
+		for _, arg := range e.ArgumentList {
+			w.consume(arg, used)
+		}
+		return
+	case *ast.AwaitExpression:
+		w.consume(e.Argument, used)
+		return
+	case *ast.UnaryExpression:
+		w.consume(e.Operand, dropped)
+		return
+	case *ast.SequenceExpression:
+		for i, x := range e.Sequence {
+			if i == len(e.Sequence)-1 {
+				w.consume(x, m)
+			} else {
+				w.consume(x, dropped)
+			}
+		}
+		return
+	case *ast.ConditionalExpression:
+		w.consume(e.Test, dropped)
+		w.consume(e.Consequent, m)
+		w.consume(e.Alternate, m)
+		return
+	case *ast.BinaryExpression:
+		switch e.Operator {
+		case token.LOGICAL_AND:
+			w.consume(e.Left, dropped)
+			w.consume(e.Right, m)
+		case token.LOGICAL_OR, token.COALESCE:
+			w.consume(e.Left, m)
+			w.consume(e.Right, m)
+		default:
+			w.consume(e.Left, dropped)
+			w.consume(e.Right, dropped)
+		}
+		return
+	case *ast.TemplateLiteral:
+		inner := dropped
+		if e.Tag != nil {
+			w.consume(e.Tag, used)
+			inner = used
+		}
+		for _, x := range e.Expressions {
+			w.consume(x, inner)
+		}
+		return
+	case *ast.AssignExpression:
+		switch left := e.Left.(type) {
+		case *ast.Identifier:
+			if e.Operator == token.ASSIGN {
+				w.consume(e.Right, holdIn(m, a.refs[left]))
+			} else {
+				w.consume(left, dropped)
+				w.consume(e.Right, dropped)
+			}
+			return
+		}
+		if e.Operator != token.ASSIGN {
+			w.consume(e.Left, used)
+			w.consume(e.Right, dropped)
+			return
+		}
+	}
+	for _, c := range children(n) {
+		w.consume(c, used)
+	}
+}
 
 // lifecycleCall is the crw.commit, crw.verify, crw.review or crw.land call an expression is, if it is one.
 func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
@@ -425,12 +567,19 @@ func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
 	return nil
 }
 
-// complete marks the event a name's promise stands for as done: the node is in its phase.
+// complete marks the event a name's promise stands for as done: the node is in its phase, and no other name that holds
+// the same promise is still pending.
 func (w *walker) complete(bd *binding, st *state) {
-	if p, ok := st.pend[bd]; ok {
-		delete(st.pend, bd)
-		st.phases[p.slot] = p.ev
+	p, ok := st.pend[bd]
+	if !ok {
+		return
 	}
+	for k, v := range st.pend {
+		if v.call == p.call {
+			delete(st.pend, k)
+		}
+	}
+	st.phases[p.slot] = p.ev
 }
 
 // completeIn completes every pending event whose name appears in n (a function literal may read it when it runs).
@@ -440,8 +589,14 @@ func (w *walker) completeIn(n any, st *state) {
 	}
 	var visit func(n any)
 	visit = func(n any) {
-		if id, ok := n.(*ast.Identifier); ok {
-			if bd := w.s.a.refs[id]; bd != nil {
+		switch x := n.(type) {
+		case *ast.Identifier:
+			if bd := w.s.a.refs[x]; bd != nil {
+				w.complete(bd, st)
+			}
+		case *ast.PropertyShort:
+			// The name of {p} is a value field the children do not reach.
+			if bd := w.s.a.refs[&x.Name]; bd != nil {
 				w.complete(bd, st)
 			}
 		}
@@ -456,7 +611,7 @@ func (w *walker) completeIn(n any, st *state) {
 // in, so a path the text cannot rule out is not a violation; the node then goes on in the event's phase. The call's
 // promise has to settle for the phase to be reached: a call whose promise is dropped never gets the node there, and a
 // call held by a name gets it there where the name is read (anywhere the text can read it counts: the lint does not
-// follow the promise further).
+// follow the promise further). The call itself starts the event whether its promise is awaited or not (started).
 func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral) {
 	if st.dead() || !w.life {
 		return
@@ -476,12 +631,28 @@ func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral
 			w.s.add(RuleLifecycleOrder, line, "", "%s runs while the node is %s: the order is build, then rounds of commit, verify, review, then land", eventNames[ev], phaseList(cur))
 		}
 	}
-	switch {
-	case def == nil:
+	if def == nil {
 		st.phases[slot] = ev
-	case def.bd != nil:
-		st.pend[def.bd] = pending{slot: slot, ev: ev}
+		return
 	}
+	st.phases[slot] = started(ev, cur)
+	for _, bd := range def.bds {
+		st.pend[bd] = pending{slot: slot, ev: ev, call: def.call}
+	}
+}
+
+// started is the phase a node is in once an event has been started and its promise has not been shown to settle. A land
+// that has started has happened as far as a second land is concerned; a commit that has started replaces the head the
+// last review saw, so the node holds a change no round has committed yet (built). A verify or review that has not
+// settled leaves the node where it was.
+func started(ev, cur uint8) uint8 {
+	switch ev {
+	case pLanded:
+		return pLanded
+	case pCommitted:
+		return pBuilt
+	}
+	return cur
 }
 
 func (w *walker) stmts(list []ast.Statement, st *state) {
@@ -540,18 +711,13 @@ func (w *walker) jumpTo(i int, cont bool, st *state) {
 // binding walks one declarator: the initializer, then the names it gives a value to.
 func (w *walker) binding(b *ast.Binding, st *state) {
 	if id, ok := b.Target.(*ast.Identifier); ok {
-		w.deferTo(b.Initializer, id)
+		w.consume(b.Initializer, holdIn(dropped, w.s.a.refs[id]))
+	} else {
+		w.consume(b.Initializer, used)
 	}
 	w.expr(b.Initializer, st)
 	derived := b.Initializer != nil && w.derives(b.Initializer, st)
 	patternNames(b.Target, func(id *ast.Identifier) { w.setStep(id, derived, st) })
-}
-
-// deferTo notes that a lifecycle call held by a name is complete where the name is read.
-func (w *walker) deferTo(e ast.Expression, id *ast.Identifier) {
-	if c := w.lifecycleCall(e); c != nil {
-		w.deferred[c] = &deferral{bd: w.s.a.refs[id]}
-	}
 }
 
 // setStep records that a name now holds (or no longer holds) a value that comes from crw.tierStep.
@@ -604,14 +770,8 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	w.pending = nil
 	switch s := n.(type) {
 	case *ast.ExpressionStatement:
-		// A lifecycle call used as a statement (or voided) drops its promise.
-		e := s.Expression
-		if u, ok := e.(*ast.UnaryExpression); ok && u.Operator == token.VOID {
-			e = u.Operand
-		}
-		if c := w.lifecycleCall(e); c != nil {
-			w.deferred[c] = &deferral{}
-		}
+		// The value of an expression statement is discarded.
+		w.consume(s.Expression, dropped)
 		w.expr(s.Expression, st)
 	case *ast.VariableStatement:
 		for _, b := range s.List {
@@ -624,14 +784,17 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	case *ast.BlockStatement:
 		w.stmts(s.List, st)
 	case *ast.ReturnStatement:
+		w.consume(s.Argument, used)
 		w.expr(s.Argument, st)
 		w.noteReturn(st)
 		st.kill()
 	case *ast.ThrowStatement:
+		w.consume(s.Argument, used)
 		w.expr(s.Argument, st)
 		w.noteThrow(st)
 		st.kill()
 	case *ast.IfStatement:
+		w.consume(s.Test, dropped)
 		w.expr(s.Test, st)
 		other := st.clone()
 		w.guarded(func() {
@@ -677,6 +840,7 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	case *ast.ForStatement:
 		switch init := s.Initializer.(type) {
 		case *ast.ForLoopInitializerExpression:
+			w.consume(init.Expression, dropped)
 			w.expr(init.Expression, st)
 		case *ast.ForLoopInitializerVarDeclList:
 			for _, b := range init.List {
@@ -687,20 +851,30 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 				w.binding(b, st)
 			}
 		}
+		w.consume(s.Test, dropped)
+		w.consume(s.Update, dropped)
 		w.loop(s.Test, s.Update, s.Body, s.Test != nil, forRounds(s), labels, st)
 	case *ast.WhileStatement:
+		w.consume(s.Test, dropped)
 		w.loop(s.Test, nil, s.Body, !truthy(s.Test), 0, labels, st)
 	case *ast.DoWhileStatement:
+		w.consume(s.Test, dropped)
 		w.doWhile(s, labels, st)
 	case *ast.ForInStatement:
+		w.consume(s.Source, used)
 		w.expr(s.Source, st)
 		w.loop(nil, nil, s.Body, true, 0, labels, st)
 	case *ast.ForOfStatement:
+		w.consume(s.Source, used)
 		w.expr(s.Source, st)
 		w.loop(nil, nil, s.Body, true, arrayRounds(s.Source), labels, st)
 	case *ast.TryStatement:
 		w.try(s, st)
 	case *ast.SwitchStatement:
+		w.consume(s.Discriminant, dropped)
+		for _, c := range s.Body {
+			w.consume(c.Test, dropped)
+		}
 		w.expr(s.Discriminant, st)
 		pre := st.clone()
 		e := w.pushExit(false, labels)
@@ -1034,10 +1208,15 @@ func (w *walker) expr(n any, st *state) {
 		w.completeIn(e, st)
 		return
 	case *ast.Identifier:
-		if bd := w.s.a.refs[e]; bd != nil {
+		if bd := w.s.a.refs[e]; bd != nil && !w.dropReads[e] {
 			w.complete(bd, st)
 		}
 		return
+	case *ast.PropertyShort:
+		// The name of {p} is a value field the children do not reach.
+		if bd := w.s.a.refs[&e.Name]; bd != nil {
+			w.complete(bd, st)
+		}
 	case *ast.ConditionalExpression:
 		w.expr(e.Test, st)
 		other := st.clone()
@@ -1056,9 +1235,6 @@ func (w *walker) expr(n any, st *state) {
 			return
 		}
 	case *ast.AssignExpression:
-		if id, ok := e.Left.(*ast.Identifier); ok && e.Operator == token.ASSIGN {
-			w.deferTo(e.Right, id)
-		}
 		w.expr(e.Right, st)
 		switch left := e.Left.(type) {
 		case *ast.Identifier:

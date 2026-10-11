@@ -977,3 +977,98 @@ return 1`)
 		t.Errorf("a dropped commit leaves the node built, so verify is out of order: %v", r.Diagnostics)
 	}
 }
+
+// lintStatic checks a script with the static rules only: what the walker shows, without the dry run.
+func lintStatic(t *testing.T, body string) Report {
+	t.Helper()
+	return Check(context.Background(), script.Source{Name: "inline.js", Text: []byte("export const meta = { name: 'inline' }\n" + body)}, Options{})
+}
+
+func TestLintLifecyclePromiseContexts(t *testing.T) {
+	const built = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+await crw.verify('n', head)
+`
+	// The review's promise is discarded wherever the value of the expression around it is: under void, in a sequence
+	// but its last part, on the left of &&, in a test, in a comparison or a template, as a read of the name that holds it
+	// in such a place.
+	for name, body := range map[string]string{
+		"a void initializer":            "const ignored = void crw.review('n', head, null)\nreturn crw.land('n', { head })",
+		"a void in a returned sequence": "return (void crw.review('n', head, null), crw.land('n', { head }))",
+		"a sequence that drops it":      ";(crw.review('n', head, null), 1)\nreturn crw.land('n', { head })",
+		"an awaited void":               "await void crw.review('n', head, null)\nreturn crw.land('n', { head })",
+		"a void argument":               "await Promise.all([void crw.review('n', head, null)])\nreturn crw.land('n', { head })",
+		"the left side of &&":           "await (crw.review('n', head, null) && 1)\nreturn crw.land('n', { head })",
+		"an if test":                    "if (crw.review('n', head, null)) { }\nreturn crw.land('n', { head })",
+		"a negation":                    "const ok = !crw.review('n', head, null)\nreturn crw.land('n', { head })",
+		"a comparison":                  "const same = crw.review('n', head, null) === null\nreturn crw.land('n', { head })",
+		"a template":                    "const text = `${crw.review('n', head, null)}`\nreturn crw.land('n', { head })",
+		"a held promise only voided":    "const p = crw.review('n', head, null)\nvoid p\nreturn crw.land('n', { head })",
+		"an assignment voided":          "let p\nvoid (p = crw.review('n', head, null))\nreturn crw.land('n', { head })",
+	} {
+		r := lintStatic(t, built+body)
+		if !slices.Contains(rules(r), RuleLandWithoutReview) {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+	// Where the value of the expression is awaited, returned or kept, the promise in it is too.
+	for name, body := range map[string]string{
+		"an awaited assignment":             "let p\nawait (p = crw.review('n', head, null))\nreturn crw.land('n', { head })",
+		"an assignment then awaited":        "let p\np = crw.review('n', head, null)\nawait p\nreturn crw.land('n', { head })",
+		"a chained assignment, one read":    "let p, q\nq = p = crw.review('n', head, null)\nawait p\nreturn crw.land('n', { head })",
+		"a chained assignment, other read":  "let p, q\nq = p = crw.review('n', head, null)\nawait q\nreturn crw.land('n', { head })",
+		"an initializer from an assignment": "let p\nconst q = (p = crw.review('n', head, null))\nawait q\nreturn crw.land('n', { head })",
+		"an object shorthand":               "const p = crw.review('n', head, null)\nawait ({ p }).p\nreturn crw.land('n', { head })",
+		"an object property":                "const p = crw.review('n', head, null)\nawait ({ p: p }).p\nreturn crw.land('n', { head })",
+		"a shorthand read in a closure":     "const p = crw.review('n', head, null)\nconst wait = async () => { await ({ p }).p }\nawait wait()\nreturn crw.land('n', { head })",
+		"the last part of a sequence":       "await (1, crw.review('n', head, null))\nreturn crw.land('n', { head })",
+		"the left side of ||":               "await (crw.review('n', head, null) || 1)\nreturn crw.land('n', { head })",
+		"a conditional branch":              "await (args.a ? crw.review('n', head, null) : crw.review('n', head, null))\nreturn crw.land('n', { head })",
+		"a then callback":                   "await crw.review('n', head, null).then(() => 1)\nreturn crw.land('n', { head })",
+	} {
+		if r := lintStatic(t, built+body); !r.OK() {
+			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+}
+
+func TestLintLifecycleCountsTheInvocation(t *testing.T) {
+	const reviewed = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+await crw.verify('n', head)
+await crw.review('n', head, null)
+`
+	// A call starts its event whether or not its promise is awaited: a land runs once, and a commit started after the
+	// review needs a new round before the land.
+	for name, c := range map[string]struct {
+		body string
+		rule string
+	}{
+		"a dropped land, then a returned land":  {"crw.land('n', { head })\nreturn crw.land('n', { head })", RuleLandTwice},
+		"a held land, then a returned land":     {"const first = crw.land('n', { head })\nreturn crw.land('n', { head })", RuleLandTwice},
+		"a voided land, then a returned land":   {"void crw.land('n', { head })\nreturn crw.land('n', { head })", RuleLandTwice},
+		"a dropped commit after the review":     {"crw.commit('n', ex)\nreturn crw.land('n', { head })", RuleLandWithoutReview},
+		"a held commit after the review":        {"const next = crw.commit('n', ex)\nreturn crw.land('n', { head })", RuleLandWithoutReview},
+		"a held commit, awaited, no new review": {"const next = crw.commit('n', ex)\nawait next\nreturn crw.land('n', { head })", RuleLandWithoutReview},
+	} {
+		if r := lintStatic(t, reviewed+c.body); !slices.Contains(rules(r), c.rule) {
+			t.Errorf("%s: want %s, got %v", name, c.rule, r.Diagnostics)
+		}
+	}
+	// A commit held by a name completes where the name is read: the next round goes on from there.
+	r := lintStatic(t, reviewed+`
+const next = crw.commit('n', ex)
+const h2 = await next
+await crw.verify('n', h2)
+await crw.review('n', h2, null)
+return crw.land('n', { head: h2 })`)
+	if !r.OK() {
+		t.Errorf("a held commit awaited before the next round: %v", r.Diagnostics)
+	}
+	// One awaited land is clean.
+	if r := lintStatic(t, reviewed+"return crw.land('n', { head })"); !r.OK() {
+		t.Errorf("one land: %v", r.Diagnostics)
+	}
+}
