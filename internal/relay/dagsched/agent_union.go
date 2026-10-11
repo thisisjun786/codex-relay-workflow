@@ -143,7 +143,7 @@ type NodeExecution struct {
 // A release is an open INTENT only until a child is bound to it: the managed start of the release (latestRelease: a dag_releases or rereleased row that dag-release-close did not end) has no
 // dag_node_executions row of its managed request yet. An open intent holds the node, whatever the history under it. A bound release is history: dag-release-close never ends it, so what is current is
 // decided by the executions and the relationship they stand on: the newest execution of the relationship the node stands on (a correction's generation and manifest, not the first release's), current
-// while the relationship has not ended: active or paused and not replaced, or, when a result of it is accepted, anything but cancelled. A relationship the store does not hold counts as current: the
+// while the relationship has not ended: never once the registry replaced it (superseded_by), else active or paused, or, when an acceptance of that relationship's result stands, anything but cancelled. A relationship the store does not hold counts as current: the
 // question is whether the node can be given to another kind of execution, and an unreadable record is no reason to say yes.
 func relationshipExecutionCurrent(ctx context.Context, q store.Querier, plan, node string) (NodeExecution, bool, error) {
 	out := NodeExecution{Kind: ExecutionRelationship, PlanID: plan, NodeID: node}
@@ -183,17 +183,19 @@ func relationshipExecutionCurrent(ctx context.Context, q store.Querier, plan, no
 	if !ok {
 		return out, true, nil
 	}
-	_, accepted, err := loadActiveAcceptance(ctx, q, plan, node)
+	// a relationship the registry replaced has ended, whatever was accepted of it: its result is nobody's to accept
+	if rel.Superseded {
+		return out, false, nil
+	}
+	if rel.Status == "active" || rel.Status == "paused" {
+		return out, true, nil
+	}
+	// an ended relationship is current only while an acceptance of ITS result stands: another relationship's acceptance does not keep it
+	acceptance, accepted, err := loadActiveAcceptance(ctx, q, plan, node)
 	if err != nil {
 		return out, false, err
 	}
-	switch {
-	case accepted && rel.Status != "cancelled":
-		return out, true, nil
-	case !rel.Superseded && (rel.Status == "active" || rel.Status == "paused"):
-		return out, true, nil
-	}
-	return out, false, nil
+	return out, accepted && acceptance.RelationshipID == rel.ID && rel.Status != "cancelled", nil
 }
 
 // relationshipExecutionRow fills out from the newest execution of a relationship (the newest release row, kind initial or correction, when release is set): its generation, manifest and managed request,

@@ -93,3 +93,53 @@ func TestEndedRelationshipIsNotACurrentExecution(t *testing.T) {
 		t.Fatalf("a superseded relationship refuses the agent release: %v", err)
 	}
 }
+
+// Fix round 2: an accepted relationship that the registry replaced (superseded_by set and status archived, as registry.go writes a replacement) is not the node's current execution: its result is
+// nobody's to accept, so the acceptance no longer holds the node for it. And an acceptance holds only the relationship it was made for: a later relationship of the node that ended unaccepted is not
+// made current by another relationship's acceptance.
+func TestAcceptedThenSupersededRelationshipIsNotACurrentExecution(t *testing.T) {
+	t.Parallel()
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	ctx := context.Background()
+	q := k.s.Q(ctx)
+	a := k.acceptNode("rp", "A", acceptOpts{})
+	rid := a.Acceptance.RelationshipID
+	k.exec("UPDATE relationships SET status = 'archived' WHERE relationship_id = ?", rid)
+	// accepted and archived: the accepted result still holds the node
+	if cur, found, err := executionOf(ctx, q, "rp", "A"); err != nil || !found || cur.RelationshipID != rid {
+		t.Fatalf("an accepted archived relationship: %+v found=%v err=%v", cur, found, err)
+	}
+	if err := refuseLiveRelationshipExecution(ctx, q, "rp", "A"); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("an accepted relationship does not refuse the agent release: %v", err)
+	}
+	// replaced by the registry after the acceptance
+	k.foreignRelationship("CRW-A")
+	k.exec("UPDATE relationships SET superseded_by = 'rel-foreign-CRW-A', status = 'archived' WHERE relationship_id = ?", rid)
+	if cur, found, err := executionOf(ctx, q, "rp", "A"); err != nil || found {
+		t.Fatalf("an accepted relationship that was replaced is current: %+v found=%v err=%v", cur, found, err)
+	}
+	if rel, found, err := releaseOf(ctx, q, "rp", "A", a.Manifest); err != nil || found {
+		t.Fatalf("the release of a replaced relationship is current: %+v found=%v err=%v", rel, found, err)
+	}
+	if err := refuseLiveRelationshipExecution(ctx, q, "rp", "A"); err != nil {
+		t.Fatalf("a replaced relationship refuses the agent release: %v", err)
+	}
+
+	// the acceptance of an earlier relationship does not make a later, unaccepted and ended one current
+	k2 := newReleaseKit(t)
+	releasePlan(k2.fixture, "rp")
+	q2 := k2.s.Q(ctx)
+	first := k2.acceptNode("rp", "A", acceptOpts{})
+	k2.exec("UPDATE relationships SET status = 'archived' WHERE relationship_id = ?", first.Acceptance.RelationshipID)
+	later := k2.reportNode("rp", "A", acceptOpts{Suffix: "-2", Status: "archived"})
+	if later.Acceptance.RelationshipID == first.Acceptance.RelationshipID {
+		t.Fatal("the fixture made one relationship")
+	}
+	if rel, found, err := currentRelationshipOf(ctx, q2, "rp", "A"); err != nil || !found || rel.ID != later.Acceptance.RelationshipID {
+		t.Fatalf("the node stands on %+v (%v %v), want the later relationship", rel, found, err)
+	}
+	if cur, found, err := executionOf(ctx, q2, "rp", "A"); err != nil || found {
+		t.Fatalf("another relationship's acceptance makes an ended relationship current: %+v found=%v err=%v", cur, found, err)
+	}
+}
