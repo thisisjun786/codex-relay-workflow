@@ -135,9 +135,10 @@ func pumpSignalTestHoldCapacityLock(t *testing.T, stateDir string) func() {
 
 // A capacity lock another process holds fails the commit within a bound: the round goes on to the
 // other sources' events and the rest of the round, the alert stays pending, and the next round,
-// with the lock free, converges on the same id and commits. A state without a lineage (round 9)
-// cannot be given one behind the lock, so that read is unmeasured instead: the round still goes on,
-// and the alert is judged, under one id, once the lock is free.
+// with the lock free, converges on the same id and commits. A state without a lineage cannot be
+// given one behind the lock, so its alert is judged without a usable state (round 10): it is
+// pending under the pump's own id, and the next round, with the lock free, takes that id over and
+// commits.
 func TestPumpSignalBusyCapacityLockDoesNotHoldUpTheRound(t *testing.T) {
 	for _, lineage := range []bool{true, false} {
 		name := "state_with_a_lineage"
@@ -165,23 +166,20 @@ func TestPumpSignalBusyCapacityLockDoesNotHoldUpTheRound(t *testing.T) {
 				if err != nil {
 					t.Fatalf("round: %v", err)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(60 * time.Second):
+				// A round that waited on the lock would wait until it is released, i.e. for good;
+				// the bound only has to outlast a round on a loaded host (one took 30 s at load 40).
 				release()
 				<-done
 				t.Fatal("the round waited on the busy capacity lock")
 			}
 			st := pumpTestReadState(t, f.cfg)
-			first := ""
-			if lineage {
-				if len(st.Pending) != 2 {
-					t.Fatalf("pending = %v, want the capacity alert and the audit line", pumpSignalIDs(st.Pending))
-				}
-				first = st.Pending[0].ID
-				if !strings.HasPrefix(first, pumpSignalCapacityName) {
-					t.Fatalf("pending = %v, want the capacity alert first", pumpSignalIDs(st.Pending))
-				}
-			} else if len(st.Pending) != 1 || !strings.HasPrefix(st.Pending[0].ID, pumpSignalAuditName) || st.Sources[pumpSignalCapacityName] != pumpSourceUnmeasured {
-				t.Fatalf("pending = %v sources = %v, want the audit line and the capacity read unmeasured", pumpSignalIDs(st.Pending), st.Sources)
+			if len(st.Pending) != 2 || st.Sources[pumpSignalCapacityName] != pumpSourceOK {
+				t.Fatalf("pending = %v sources = %v, want the capacity alert and the audit line", pumpSignalIDs(st.Pending), st.Sources)
+			}
+			first := st.Pending[0].ID
+			if !strings.HasPrefix(first, pumpSignalCapacityName) {
+				t.Fatalf("pending = %v, want the capacity alert first", pumpSignalIDs(st.Pending))
 			}
 			if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 0 {
 				t.Fatalf("stored = %+v, want nothing committed behind the busy lock", got)
@@ -197,11 +195,8 @@ func TestPumpSignalBusyCapacityLockDoesNotHoldUpTheRound(t *testing.T) {
 			release()
 			f.advance(31 * time.Minute)
 			st = f.round()
-			if lineage && (len(st.Pending) != 2 || st.Pending[0].ID != first) {
+			if len(st.Pending) != 2 || st.Pending[0].ID != first {
 				t.Fatalf("pending = %v, want the same capacity id %s after the lock was freed", pumpSignalIDs(st.Pending), first)
-			}
-			if !lineage && (len(st.Pending) != 2 || !strings.HasPrefix(st.Pending[1].ID, pumpSignalCapacityName)) {
-				t.Fatalf("pending = %v, want the capacity alert once the lock was freed", pumpSignalIDs(st.Pending))
 			}
 			if got := pumpSignalTestCapacityState(t, cf).Plans["p-crw-129"]; len(got.Alerted) != 2 {
 				t.Fatalf("stored = %+v, want the alert committed once the lock is free", got)

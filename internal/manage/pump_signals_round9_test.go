@@ -91,9 +91,9 @@ func TestPumpSignalCapacityAbsentStateWhoseCommitKeepsFailingAlertsOnce(t *testi
 			repair := c.fail(t, path, crash)
 			ids := map[string]bool{}
 			pumpSignalTestCollect(f, 4, ids)
-			if len(ids) > 1 {
+			if len(ids) != 1 {
 				repair()
-				t.Fatalf("while the commit fails: the same unchanged alert was sent under %d ids %v", len(ids), ids)
+				t.Fatalf("while the commit fails: the unchanged alert was sent under %d ids %v, want one", len(ids), ids)
 			}
 			repair()
 			pumpSignalTestCollect(f, 2, ids)
@@ -103,9 +103,9 @@ func TestPumpSignalCapacityAbsentStateWhoseCommitKeepsFailingAlertsOnce(t *testi
 }
 
 // The same with a capacity state that cannot be read (a directory at its path, a file without read
-// permission, as a run under another user leaves it). Nothing can be judged against a state nobody
-// can read: the read is unmeasured and logged, and once the state can be read the alert is sent
-// under one id and committed.
+// permission, as a run under another user leaves it). The judgement is made without the state and
+// logged, its alert is sent under one id however often the state is read again, and once the state
+// can be read that id is the one committed (round 10: the round-9 pump judged nothing until then).
 func TestPumpSignalCapacityUnreadableStateAlertsOnce(t *testing.T) {
 	for _, c := range []struct {
 		name          string
@@ -150,11 +150,11 @@ func TestPumpSignalCapacityUnreadableStateAlertsOnce(t *testing.T) {
 			t.Cleanup(func() { os.Chmod(path, 0o600) })
 			ids := map[string]bool{}
 			pumpSignalTestCollect(f, 4, ids)
-			if len(ids) > 1 {
-				t.Fatalf("while the state cannot be read: the same unchanged alert was sent under %d ids %v", len(ids), ids)
+			if len(ids) != 1 {
+				t.Fatalf("while the state cannot be read: the unchanged alert was sent under %d ids %v, want one", len(ids), ids)
 			}
-			if st := pumpTestReadState(t, f.cfg); st.Sources[pumpSignalCapacityName] != pumpSourceUnmeasured {
-				t.Fatalf("status = %q, want the read of a state nobody can read unmeasured", st.Sources[pumpSignalCapacityName])
+			if st := pumpTestReadState(t, f.cfg); st.Sources[pumpSignalCapacityName] != pumpSourceOK {
+				t.Fatalf("status = %q, want the judgement made without the state", st.Sources[pumpSignalCapacityName])
 			}
 			if logged, err := os.ReadFile(filepath.Join(f.cfg.StateDir, pumpLogFile)); err != nil || !strings.Contains(string(logged), "cannot be read") {
 				t.Fatalf("pump.log = %q, %v; want the unreadable state logged", logged, err)

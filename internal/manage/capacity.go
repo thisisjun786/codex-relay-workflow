@@ -42,6 +42,10 @@ type CapacityReport struct {
 	Actions  CapacityActions  `json:"actions"`
 	Child429 CapacityChild429 `json:"child_429"`
 	Plans    []CapacityPlan   `json:"plans"`
+
+	// unusable is why the state the report was judged on could not be used: it could not be read,
+	// or not be given a lineage (pumpSignalCapacityRead). It is not part of the document.
+	unusable string
 }
 
 type CapacityLane struct {
@@ -88,12 +92,14 @@ type CapacityPlan struct {
 	// lifecycle names the plan's entry in the capacity state (capacityPlanState.Lifecycle) and
 	// committedEpoch is the alert epoch that entry held when the plan was judged. proposal is set
 	// when the state read held no lifecycle for the plan: lifecycle is then the one this evaluation
-	// gives the entry, and its commit stores it. None is part of the document: the pump keeps them
-	// beside an alert so a retry of the same judgement is told from a later alert of another
-	// lifecycle, and a commit it lost track of from one it never made.
+	// gives the entry, and its commit stores it. removed is the version of the write that removed the
+	// plan's entry when the state read holds none since (capacityState.Removed). None is part of the
+	// document: the pump keeps them beside an alert so a retry of the same judgement is told from a
+	// later alert of another lifecycle, and a commit it lost track of from one it never made.
 	lifecycle      string
 	committedEpoch int
 	proposal       *capacityLifecycleProposal
+	removed        int
 }
 
 // capacityLifecycleProposal is a lifecycle given to a plan's entry that the state read held none
@@ -401,6 +407,7 @@ func capacityEvaluate(ctx context.Context, e *Env, cfg *Config) (capacityEvaluat
 				Stamp: stamp, Lineage: previous.Lineage, Version: previous.Version}
 		}
 		plan.lifecycle, plan.committedEpoch = next.Plans[ref.Plan].Lifecycle, previous.Plans[ref.Plan].AlertEpoch
+		plan.removed = previous.Removed[ref.Plan]
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
 		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, zoneReason)
 		if err != nil {

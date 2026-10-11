@@ -67,6 +67,10 @@ const (
 	// the plan's entry while the capacity state holds none, kept until a commit or a later read shows
 	// the state holds the plan (see pumpSignalCapacityProposals).
 	pumpSignalCapacityLifecyclePrefix = "signal.capacity.lifecycle."
+	// pumpSignalCapacityUnusablePrefix starts the lifecycle the pump gives an alert judged on a
+	// capacity state it cannot use (pumpSignalCapacityUnusable). A lifecycle a capacity state holds is
+	// a random base32 name (rand.Text), which never holds a colon, so the two are never confused.
+	pumpSignalCapacityUnusablePrefix = "unusable-state:"
 
 	// pumpSignalAuditOffsetKey is the alert file's byte offset in Offsets.
 	pumpSignalAuditOffsetKey = "signal_audit"
@@ -100,31 +104,34 @@ var pumpSignalCapacity = pumpSignalCapacityRead
 // pumpSignalCapacityRead is the real read: the pure evaluation, whose Commit the pump calls once the
 // alert events are durable (a dry read returns no commit and writes nothing).
 //
-// A capacity state nobody can read is a failed read, which the source reports unmeasured: the
-// judgement would be made against an empty state it cannot commit over, and judged again on every
-// read (under the default persist_minutes such a judgement never alerts at all, since the state
-// cannot keep the persistence clock).
-//
-// The pump judges a plan whose entry carries no lifecycle only on a capacity state with a lineage.
-// A proposal made on no file, or on a file told only by its content, cannot be told from the same
+// The pump judges a plan whose entry carries no lifecycle on a capacity state with a lineage. A
+// proposal made on no file, or on a file told only by its content, cannot be told from the same
 // file lost and written again (capacityLifecycleProposal.holds); one made on a lineage can. So when
 // plans are configured, the read first writes a state without a lineage again as it reads
-// (capacityStateEstablishLineage), and a write that fails (another writer holds the lock, the
-// directory cannot be written) is a failed read: the commit could not be made either, and the
-// alert is judged once the state can be written instead of under a new lifecycle on every read. An
-// evaluation that still read no lineage (the state was replaced while it was read) is a failed read
-// too.
+// (capacityStateEstablishLineage). An evaluation that still read no lineage (the state was replaced
+// while it was read) is a failed read.
+//
+// A state the pump cannot use is not a failed read: a write that fails (another writer holds the
+// lock, the lock cannot be opened) over a state without a lineage, or a state nobody can read (a
+// directory at its path, a file without read permission). Its plans are judged on the state as far
+// as it could be read (an unreadable one reads as empty) and the report carries why
+// (pumpSignalCapacityUnusable); no commit is returned, since none could be made over that state. The
+// source then gives each alert the pump's own identity for an unusable state, so the alert is
+// delivered once however often the state is read again (pumpSignalCapacityUnusableEpoch), and once
+// the state can be used the alert continues under its lineage (pumpSignalCapacityEpoch).
 //
 // The pump settles its alert records and drops its lifecycle proposals on what the evaluation read,
 // so that state is made durable first (capacityStateDurable): a commit renamed into place whose
 // directory sync failed is not taken for made while a power loss can still take it back. A sync that
-// fails is a failed read.
+// fails is a failed read (the pump state, kept in the same directory, is synced on every save, so a
+// directory that cannot be synced stops the pump's own saves first).
 func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, func() error, error) {
 	statePath := crwconfig.JoinRoot(cfg.StateDir, capacityStateFile)
 	settings := capacitySettings{}
+	unusable := ""
 	if !dry && cfg.Section("capacity", &settings) == nil && len(settings.Plans) > 0 {
 		if err := capacityStateEstablishLineage(statePath); err != nil {
-			return CapacityReport{}, nil, err
+			unusable = err.Error()
 		}
 	}
 	ev, err := capacityEvaluate(ctx, e, cfg)
@@ -136,7 +143,10 @@ func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) 
 		if _, err := os.ReadFile(ev.statePath); err != nil {
 			reason = err.Error()
 		}
-		return CapacityReport{}, nil, fmt.Errorf("the capacity state cannot be read: %s", reason)
+		unusable = "the capacity state cannot be read: " + reason
+	}
+	if unusable != "" {
+		return pumpSignalCapacityUnusable(ev.Report, unusable), nil, nil
 	}
 	if dry {
 		return ev.Report, nil, nil
@@ -150,6 +160,30 @@ func pumpSignalCapacityRead(ctx context.Context, e *Env, cfg *Config, dry bool) 
 		return CapacityReport{}, nil, err
 	}
 	return ev.Report, ev.Commit, nil
+}
+
+// pumpSignalCapacityUnusable marks a report judged on a capacity state the pump cannot use: the
+// report carries why, and each plan the lifecycle the pump gives an alert on such a state, derived
+// from the plan, its whole waiting digest and a fixed marker, instead of the random one the
+// evaluation drew (no state keeps it) or a proposal (nothing stores it).
+func pumpSignalCapacityUnusable(report CapacityReport, reason string) CapacityReport {
+	report.unusable = reason
+	plans := make([]CapacityPlan, len(report.Plans))
+	for i, plan := range report.Plans {
+		plan.lifecycle = pumpSignalCapacityUnusableLifecycle(plan.Plan, pumpSignalWaitingHash(plan.Waiting))
+		plan.proposal = nil
+		plans[i] = plan
+	}
+	report.Plans = plans
+	return report
+}
+
+// pumpSignalCapacityUnusableLifecycle is the lifecycle of plan's alert of the waiting set whose
+// digest is waiting, judged on a capacity state the pump cannot use.
+func pumpSignalCapacityUnusableLifecycle(plan, waiting string) string {
+	data, _ := json.Marshal([]string{plan, waiting}) // two strings: it cannot fail
+	sum := sha256.Sum256(data)
+	return pumpSignalCapacityUnusablePrefix + hex.EncodeToString(sum[:])
 }
 
 // pumpSignalCapacityBudget is the longest one capacity read may hold the pump round. The read
@@ -584,9 +618,10 @@ func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 // the pending events, about the last alert event it made for a plan: the epoch the capacity state
 // had when the alert was judged (Base), the lifecycle of the plan's entry in the capacity state
 // (Lifecycle, see capacityPlanState), the epoch put in the event id (Epoch), the waiting set
-// (Waiting) and whether the alert is settled (Committed): its alerted state was committed, a later
+// (Waiting), whether the alert is settled (Committed): its alerted state was committed, a later
 // read found it reflected in the state, or the record was superseded because the plan left the
-// settings.
+// settings, and when the pump first judged the alert of this epoch (At, Unix seconds; cleared when
+// the plan leaves the settings, which ends its alert generation).
 //
 // The capacity state file alone cannot give an event id that is stable and also never reused: a
 // plan removed from the settings and added again, or a state file that is gone, restarts its epoch
@@ -602,12 +637,32 @@ func (pumpSignalCapacitySource) Name() string { return pumpSignalCapacityName }
 // the proposal holds. A plan registered again or a state file lost or written again without the
 // plan therefore starts a new lifecycle. Any other alert takes an epoch above the record's, so the
 // epoch of a plan's events only grows.
+//
+// An alert judged on a capacity state the pump cannot use carries the pump's own lifecycle for such
+// a state (pumpSignalCapacityUnusableLifecycle) and is matched by its waiting set
+// (pumpSignalCapacityUnusableEpoch); the first judgement on a usable state takes its record over
+// (pumpSignalCapacityEpoch).
 type pumpSignalCapacityRecord struct {
 	Base      int    `json:"base"`
 	Lifecycle string `json:"lifecycle"`
 	Epoch     int    `json:"epoch"`
 	Waiting   string `json:"waiting"`
 	Committed bool   `json:"committed"`
+	At        int64  `json:"at,omitempty"`
+}
+
+// unusable reports whether the record is of an alert judged on a capacity state the pump could not
+// use.
+func (rec pumpSignalCapacityRecord) unusable() bool {
+	return strings.HasPrefix(rec.Lifecycle, pumpSignalCapacityUnusablePrefix)
+}
+
+// recent reports whether the record's alert was first judged less than realert before now: inside
+// the window in which the capacity judgement does not alert the same waiting set again. A record
+// without a time (the plan left the settings since, or a pump that did not keep one wrote it) is
+// not recent.
+func (rec pumpSignalCapacityRecord) recent(now time.Time, realert time.Duration) bool {
+	return rec.At > 0 && now.Sub(time.Unix(rec.At, 0)) < realert
 }
 
 func pumpSignalCapacityLoad(st *pumpState, plan string) (pumpSignalCapacityRecord, bool) {
@@ -633,18 +688,62 @@ func pumpSignalWaitingHash(waiting []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, and the record to keep.
-func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan) (int, pumpSignalCapacityRecord) {
+// pumpSignalCapacityEpoch is the epoch the plan's alert event takes, judged on a capacity state the
+// pump can use, and the record to keep.
+//
+// A retry of the record's alert (unsettled, the same lifecycle, base and waiting set) keeps its
+// epoch. So does the first judgement on a usable state of an alert the pump judged while the state
+// could not be used: an unsettled record of such an alert with the same waiting set, first judged
+// inside the realert window, on a state that recorded no removal of the plan's entry since it last
+// made it, is taken over: the alert keeps its id (pending or delivered already) and the record takes
+// the state's lifecycle and base, so the commit and every retry continue under the state's lineage.
+// A plan whose entry was removed (the command line made and removed it, or removed it before) is a
+// new generation, as on a usable state, and alerts under a new epoch; so does an unusable state's
+// alert past the realert window, which is the periodic re-alert falling due. Any other alert takes
+// an epoch above the record's.
+func pumpSignalCapacityEpoch(st *pumpState, plan CapacityPlan, now time.Time, realert time.Duration) (int, pumpSignalCapacityRecord) {
 	base, hash := plan.AlertEpoch-1, pumpSignalWaitingHash(plan.Waiting)
-	epoch := plan.AlertEpoch
+	epoch, at := plan.AlertEpoch, now.Unix()
 	if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok {
-		if !rec.Committed && rec.Lifecycle == plan.lifecycle && rec.Base == base && rec.Waiting == hash {
-			epoch = rec.Epoch
-		} else if rec.Epoch >= epoch {
+		switch {
+		case !rec.Committed && rec.Lifecycle == plan.lifecycle && rec.Base == base && rec.Waiting == hash:
+			epoch, at = rec.Epoch, rec.At
+		case !rec.Committed && rec.unusable() && rec.Waiting == hash && rec.recent(now, realert) && plan.removed == 0:
+			epoch, at = rec.Epoch, rec.At
+		case rec.Epoch >= epoch:
 			epoch = rec.Epoch + 1
 		}
 	}
-	return epoch, pumpSignalCapacityRecord{Base: base, Lifecycle: plan.lifecycle, Epoch: epoch, Waiting: hash}
+	if at == 0 {
+		// A retry of a record written before records kept the time is taken as judged now.
+		at = now.Unix()
+	}
+	return epoch, pumpSignalCapacityRecord{Base: base, Lifecycle: plan.lifecycle, Epoch: epoch, Waiting: hash, At: at}
+}
+
+// pumpSignalCapacityUnusableEpoch is the epoch the plan's alert event takes, judged on a capacity
+// state the pump cannot use, and the record to keep.
+//
+// Such a state keeps no alerted set, so the judgement alerts the plan's waiting set on every read;
+// the pump's record is what makes it one alert. A record of the same waiting set that is unsettled
+// (this alert judged on an earlier read, or the pump's alert whose commit has not landed) or was
+// first judged inside the realert window (an alert committed before the state became unusable)
+// gives its epoch, and the record stays as it is: the event carries the id already pending or
+// delivered, and the pump's dedupe (pending, then the sent set) keeps it from being delivered again.
+// Any other alert (no record, another waiting set, or one whose record the plan's leaving the
+// settings ended) takes an epoch above the record's under the unusable state's lifecycle, first
+// judged now; while the state stays unusable it is not alerted again, whatever realert_hours says.
+func pumpSignalCapacityUnusableEpoch(st *pumpState, plan CapacityPlan, now time.Time, realert time.Duration) (int, pumpSignalCapacityRecord) {
+	hash, epoch := pumpSignalWaitingHash(plan.Waiting), plan.AlertEpoch
+	if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok {
+		if rec.Waiting == hash && (!rec.Committed || rec.recent(now, realert)) {
+			return rec.Epoch, rec
+		}
+		if rec.Epoch >= epoch {
+			epoch = rec.Epoch + 1
+		}
+	}
+	return epoch, pumpSignalCapacityRecord{Base: plan.AlertEpoch - 1, Lifecycle: plan.lifecycle, Epoch: epoch, Waiting: hash, At: now.Unix()}
 }
 
 // pumpSignalCapacityProposals is the lifecycles the pump proposed for plans the capacity state did
@@ -679,10 +778,17 @@ func pumpSignalCapacityProposals(st *pumpState) map[string]capacityLifecycleProp
 // pumpSignalCapacitySettle settles the record of every judged plan whose state already reflects a
 // later alert of the same lifecycle: the commit was made (by this pump, whose record of it was lost,
 // or by the command line). The record is then not reused, whatever happens to the state file later.
-// A plan whose entry carries a lifecycle in the state needs no proposal any more, and one whose
-// entry carries none keeps the lifecycle its evaluation gave it as the proposal for its retry.
-func pumpSignalCapacitySettle(st *pumpState, report CapacityReport) {
+// The record of an alert judged while the state could not be used is settled once its realert window
+// has passed, so a later state the pump cannot use alerts the set again. A plan whose entry carries a
+// lifecycle in the state needs no proposal any more, and one whose entry carries none keeps the
+// lifecycle its evaluation gave it as the proposal for its retry. It runs only on a report judged on
+// a state the pump could use.
+func pumpSignalCapacitySettle(st *pumpState, report CapacityReport, now time.Time, realert time.Duration) {
 	for _, plan := range report.Plans {
+		if rec, ok := pumpSignalCapacityLoad(st, plan.Plan); ok && !rec.Committed && rec.unusable() && !rec.recent(now, realert) {
+			rec.Committed = true
+			pumpSignalCapacityStore(st, plan.Plan, rec)
+		}
 		if plan.proposal != nil {
 			encoded, _ := json.Marshal(plan.proposal) // two plain fields: it cannot fail
 			st.Cursors[pumpSignalCapacityLifecyclePrefix+plan.Plan] = string(encoded)
@@ -697,10 +803,10 @@ func pumpSignalCapacitySettle(st *pumpState, report CapacityReport) {
 	}
 }
 
-// pumpSignalCapacitySupersede settles the record of every plan the report no longer judges: a plan
-// that left the settings ends its alert generation, so when it is registered again its next alert
-// takes a new epoch rather than the uncommitted one of its last alert, and its entry a new
-// lifecycle rather than the one proposed before.
+// pumpSignalCapacitySupersede settles the record of every plan the report no longer judges and
+// clears its time: a plan that left the settings ends its alert generation, so when it is registered
+// again its next alert takes a new epoch rather than the uncommitted one of its last alert, also on
+// a state the pump cannot use, and its entry a new lifecycle rather than the one proposed before.
 func pumpSignalCapacitySupersede(st *pumpState, report CapacityReport) {
 	judged := map[string]bool{}
 	for _, plan := range report.Plans {
@@ -715,8 +821,8 @@ func pumpSignalCapacitySupersede(st *pumpState, report CapacityReport) {
 		if !ok || judged[name] {
 			continue
 		}
-		if rec, ok := pumpSignalCapacityLoad(st, name); ok && !rec.Committed {
-			rec.Committed = true
+		if rec, ok := pumpSignalCapacityLoad(st, name); ok && (!rec.Committed || rec.At != 0) {
+			rec.Committed, rec.At = true, 0
 			pumpSignalCapacityStore(st, name, rec)
 		}
 	}
@@ -779,8 +885,17 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 		return pumpSignalUnmeasured(cfg, pumpSignalCapacityName, err)
 	}
 	st.Cursors[pumpSignalCapacityReadKey] = strconv.FormatInt(now.Unix(), 10)
+	realert := time.Duration(report.Limits.RealertHours * float64(time.Hour))
 	pumpSignalCapacitySupersede(st, report)
-	pumpSignalCapacitySettle(st, report)
+	epochOf := pumpSignalCapacityEpoch
+	if report.unusable != "" {
+		// Judged on a state the pump cannot use: no commit came with it, the proposals and records
+		// stay as they are, and each alert is the pump's own until the state can be used again.
+		pumpLog(cfg, "source "+pumpSignalCapacityName+": "+report.unusable+"; judged without a usable capacity state, nothing committed")
+		epochOf = pumpSignalCapacityUnusableEpoch
+	} else {
+		pumpSignalCapacitySettle(st, report, now, realert)
+	}
 	res := pumpSourceResult{Status: pumpSourceOK}
 	var alerted, proposed []string
 	for _, plan := range report.Plans {
@@ -790,7 +905,7 @@ func (pumpSignalCapacitySource) Collect(ctx context.Context, e *Env, cfg *Config
 		if !plan.Alert {
 			continue
 		}
-		epoch, rec := pumpSignalCapacityEpoch(st, plan)
+		epoch, rec := epochOf(st, plan, now, realert)
 		pumpSignalCapacityStore(st, plan.Plan, rec)
 		alerted = append(alerted, plan.Plan)
 		res.Events = append(res.Events, pumpEvent{ID: pumpSignalCapacityID(plan, epoch), Kind: pumpKindLow, Text: pumpSignalCapacityText(plan)})
