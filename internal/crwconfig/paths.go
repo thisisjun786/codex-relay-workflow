@@ -26,15 +26,31 @@ const (
 	// directory the product names, not one it derives from the cache root: moving scratch_root would
 	// move every harness that uses it.
 	RootSandbox = "sandbox_root"
+
+	// RootBuildCache is Go's build cache (GOCACHE), RootModuleCache its module cache
+	// (GOMODCACHE) and RootBuildWork its build work directory (GOTMPDIR). They have no
+	// default of their own: unset, the tool keeps its own default and the product passes it
+	// nothing, so a clean HOME on one disk needs no tuning.
+	RootBuildCache  = "build_cache"
+	RootModuleCache = "module_cache"
+	RootBuildWork   = "build_work"
+	// RootLog is where the product's own long-lived logs go once a host moves them.
+	RootLog = "log_root"
+	// RootRelayState is the durable relay state root: the directory whose children are the
+	// relay's per-scope store directories, each one bundle of the store, its WAL and its
+	// sidecars. It is separate from manage_state, which is the management tool's own state.
+	RootRelayState = "relay_state"
 )
 
 // DefaultSandboxRoot is sandbox_root's default. It is outside the account home, decision C names
-// /scratch, and the coordinator's sandboxed runs already work below it.
+// the host's scratch disk, and the coordinator's sandboxed runs already work below it. It is the one
+// host path product code names (TestNoHostPathOrDeviceNameInProduct allows exactly this line).
 const DefaultSandboxRoot = "/scratch/crw"
 
 // rootOrder is every root, in the order the decided layout lists them: the order
 // Resolve checks them in and the order a caller that prints them walks.
-var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEvidence, RootTemp, RootData, RootManage, RootSandbox}
+var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEvidence, RootTemp, RootData, RootManage,
+	RootBuildCache, RootModuleCache, RootBuildWork, RootLog, RootRelayState, RootSandbox}
 
 // RootNames is the root names in the decided order, so a caller that prints the roots
 // has one fixed order to follow. The slice is a copy, so a caller cannot change the
@@ -73,11 +89,16 @@ const (
 	SourceConfig  Source = "config"
 )
 
-// Root is one resolved root: the absolute path and where that path came from.
+// Root is one resolved root: the absolute path and where that path came from. A root that
+// has no default and that nothing configured (build_cache, module_cache, build_work) has an
+// empty Path: it is unset, and the product passes the tool nothing for it.
 type Root struct {
 	Path   string
 	Source Source
 }
+
+// Set reports whether the root names a path.
+func (r Root) Set() bool { return r.Path != "" }
 
 // sourceOf names where a default came from: an environment variable when one supplied
 // the base directory, the built-in default otherwise.
@@ -98,6 +119,19 @@ func baseDir(getenv func(string) string, variable, name string) (string, bool) {
 	return rootJoin(getenv("HOME"), name), false
 }
 
+// unsetRoots are the roots with no default: a tool's own default stands until a
+// configuration names a path.
+var unsetRoots = []string{RootBuildCache, RootModuleCache, RootBuildWork}
+
+func isUnsetRoot(name string) bool {
+	for _, unset := range unsetRoots {
+		if unset == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Resolve computes every root from the environment, then applies the overrides. A root
 // the overrides name wins and is sourced to them; a root they do not name keeps the
 // environment's value, sourced to the variable that supplied it or to the built-in
@@ -110,6 +144,12 @@ func baseDir(getenv func(string) string, variable, name string) (string, bool) {
 // to, and a root derived from another (scratch_root from cache_root) sits under the
 // text its base was given.
 func Resolve(getenv func(string) string, overrides map[string]string) (map[string]Root, error) {
+	return resolve(getenv, overrides, true)
+}
+
+// resolve is Resolve. With strict false a root the overrides do not name is not required to be
+// absolute (see load).
+func resolve(getenv func(string) string, overrides map[string]string, strict bool) (map[string]Root, error) {
 	data, dataEnv := baseDir(getenv, "XDG_DATA_HOME", ".local/share")
 	cache, cacheEnv := baseDir(getenv, "XDG_CACHE_HOME", ".cache")
 	state, stateEnv := baseDir(getenv, "XDG_STATE_HOME", ".local/state")
@@ -131,6 +171,8 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 		{RootData, rootJoin(data, "crw", "data"), dataEnv},
 		{RootManage, rootJoin(state, "crw", "manage"), stateEnv},
 		{RootSandbox, DefaultSandboxRoot, false},
+		{RootLog, rootJoin(state, "crw", "logs"), stateEnv},
+		{RootRelayState, rootJoin(state, "codex-session-relay"), stateEnv},
 	} {
 		roots[row.name] = Root{Path: row.path, Source: sourceOf(row.fromEnv)}
 	}
@@ -138,6 +180,9 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 	// overrides are applied and again after them: an override of only cache_root moves
 	// the scratch root under the new cache root, and an override that names
 	// scratch_root itself keeps the value it named.
+	for _, name := range unsetRoots {
+		roots[name] = Root{Source: SourceDefault}
+	}
 	cacheRoot := roots[RootCache]
 	roots[RootScratch] = Root{Path: rootJoin(cacheRoot.Path, "scratch"), Source: cacheRoot.Source}
 	for name, value := range overrides {
@@ -151,7 +196,14 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 		roots[RootScratch] = Root{Path: rootJoin(cacheRoot.Path, "scratch"), Source: cacheRoot.Source}
 	}
 	for _, name := range rootOrder {
-		if path := roots[name].Path; !filepath.IsAbs(path) {
+		root := roots[name]
+		if !root.Set() && root.Source == SourceDefault && isUnsetRoot(name) {
+			continue
+		}
+		if !strict && root.Source != SourceConfig {
+			continue
+		}
+		if path := root.Path; !filepath.IsAbs(path) {
 			return nil, fmt.Errorf("%s %q: not an absolute path", name, path)
 		}
 	}

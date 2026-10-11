@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 )
@@ -72,7 +73,7 @@ func TestRelayHelperRunsInTheStateDirectory(t *testing.T) {
 	t.Chdir(start)
 	e := &Env{Executable: script}
 	run := func(argv ...string) string {
-		stdout, code, _, err := e.relayHelperRun(context.Background(), argv...)
+		stdout, code, _, err := e.relayHelperRun(context.Background(), nil, argv...)
 		if err != nil || code != 0 {
 			t.Fatalf("%v: code %d err %v", argv, code, err)
 		}
@@ -102,7 +103,7 @@ func TestRelayHelperKeepsRelativePathsOfTheCaller(t *testing.T) {
 	}
 	t.Chdir(start)
 	e := &Env{Executable: script}
-	stdout, code, _, err := e.relayHelperRun(context.Background(), "relay", "--state", state, "--socket", "./app.sock", "settings-record", "--cwd", "work", "--settings", "@s.json", "--task", "t")
+	stdout, code, _, err := e.relayHelperRun(context.Background(), nil, "relay", "--state", state, "--socket", "./app.sock", "settings-record", "--cwd", "work", "--settings", "@s.json", "--task", "t")
 	if err != nil || code != 0 {
 		t.Fatalf("code %d err %v", code, err)
 	}
@@ -113,7 +114,7 @@ func TestRelayHelperKeepsRelativePathsOfTheCaller(t *testing.T) {
 		t.Fatalf("argv %q, want %q", got, expect)
 	}
 	// The line that stays in the caller's directory is passed as it was.
-	stdout, _, _, _ = e.relayHelperRun(context.Background(), "relay", "--socket", "./app.sock", "doctor")
+	stdout, _, _, _ = e.relayHelperRun(context.Background(), nil, "relay", "--socket", "./app.sock", "doctor")
 	if strings.Join(strings.Fields(string(stdout)), " ") != "relay --socket ./app.sock doctor" {
 		t.Fatalf("the doctor line was rewritten: %q", stdout)
 	}
@@ -147,7 +148,7 @@ func TestRelayHelperKeepsTheCallersRelativePolicyEnvironment(t *testing.T) {
 	t.Chdir(start)
 	e := &Env{Executable: script}
 	run := func(argv ...string) []string {
-		stdout, code, _, err := e.relayHelperRun(context.Background(), argv...)
+		stdout, code, _, err := e.relayHelperRun(context.Background(), nil, argv...)
 		if err != nil || code != 0 {
 			t.Fatalf("%v: code %d err %v", argv, code, err)
 		}
@@ -182,5 +183,35 @@ func TestRelayHelperKeepsTheCallersRelativePolicyEnvironment(t *testing.T) {
 	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "scopes")
 	if got := run("relay", "--socket", "s", "doctor"); got[0] != "p.json" || got[1] != "scopes" {
 		t.Fatalf("the doctor line's environment was rewritten: %q", got)
+	}
+}
+
+// CRW-1265 with CRW-958. A relay command that runs in the state directory still gets the configuration
+// file this tool was started with (CRW_CONFIG) and the caller's relative execution policy made absolute:
+// the two environment changes compose on one environment, neither drops the other.
+func TestRelayHelperInStateDirectoryKeepsConfigAndPolicyEnvironment(t *testing.T) {
+	start := t.TempDir()
+	state := t.TempDir()
+	if err := os.WriteFile(filepath.Join(start, "p.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "crw")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$CRW_CONFIG\"\necho \"$CODEX_THREAD_BRIDGE_EXECUTION_POLICY\"\npwd -P\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(start)
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "p.json")
+	cfg := &Config{source: crwconfig.SourceConfig, path: filepath.Join(start, "c.json")}
+	e := &Env{Executable: script}
+	stdout, code, _, err := e.relayHelperRun(context.Background(), cfg, "relay", "--state", state, "--socket", "s", "service", "status")
+	if err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	wd, _ := os.Getwd()
+	wantState, _ := filepath.EvalSymlinks(state)
+	got := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
+	want := []string{filepath.Join(start, "c.json"), filepath.Join(wd, "p.json"), wantState}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("child saw %q, want %q", got, want)
 	}
 }

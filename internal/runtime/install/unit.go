@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -25,6 +26,7 @@ import (
 const (
 	policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 	scopeVariable  = "CODEX_SESSION_RELAY_SCOPE_DIR"
+	configVariable = "CRW_CONFIG"
 )
 
 // Outcomes of register-service.
@@ -62,6 +64,7 @@ var (
 	relayStarts   = regexp.MustCompile(`(?m)^\s*ExecStart=.*(codex-session-relay|crw relay)\b.*\bservice (start|run)\b`)
 	renderedExec  = regexp.MustCompile(`(?m)^ExecStart=(\S+) --state (\S+) --socket (\S+) service start( --allow-isolated-scope)?$`)
 	renderedScope = regexp.MustCompile("(?m)^Environment=" + scopeVariable + "=(\\S+)$")
+	renderedConf  = regexp.MustCompile("(?m)^Environment=" + configVariable + "=(\\S+)$")
 	busyStates    = map[string]bool{"active": true, "activating": true, "deactivating": true, "reloading": true}
 )
 
@@ -109,18 +112,26 @@ func (u *unitRun) refuse(outcome, detail string, extra ...contract.Field) (Objec
 
 // renderUnit is the unit file: the relay's own start, once, when the user manager starts. It names the owned pointer,
 // so an update never rewrites it, and has no restart policy, so after that one start only an operator acts through it.
-func renderUnit(relay, state, socket, scopeDir string) string {
-	return renderUnitText(relay, state, socket, scopeDir, true)
+//
+// config is the configuration file the registration used, when the registering environment selected one a user manager
+// would not find (CRW_CONFIG or XDG_CONFIG_HOME): the unit names it as the start's CRW_CONFIG, so the log root, the tool
+// roots and the relay state the relay reads at boot are the ones it was registered with. A registration without one
+// writes no such line.
+func renderUnit(relay, state, socket, scopeDir, config string) string {
+	return renderUnitText(relay, state, socket, scopeDir, config, true)
 }
 
 // renderUnitText is renderUnit with or without the WorkingDirectory line. The unit written before CRW-1265 had none; removal still
 // recognises that text as the installer's own.
-func renderUnitText(relay, state, socket, scopeDir string, workingDirectory bool) string {
+func renderUnitText(relay, state, socket, scopeDir, config string, workingDirectory bool) string {
 	common := relay + " --state " + state + " --socket " + socket
 	start, unset, env := common+" service start", policyVariable+" "+scopeVariable, ""
 	if scopeDir != "" {
 		start += " --allow-isolated-scope"
 		unset, env = policyVariable, "Environment="+scopeVariable+"="+scopeDir+"\n"
+	}
+	if config != "" {
+		env += "Environment=" + configVariable + "=" + config + "\n"
 	}
 	// CRW-1265: the user manager starts the unit in the account home when it names no directory, and a relay that keeps
 	// that cwd is a sandbox root candidate the rule refuses. The relay runs in its state directory, which register-service
@@ -175,12 +186,17 @@ func rendered(text string) bool {
 		}
 		scopeDir = found[1]
 	}
+	config := ""
+	if found := renderedConf.FindStringSubmatch(text); found != nil {
+		config = found[1]
+	}
 	for _, value := range exec[1:4] {
 		if unsafeInUnit.MatchString(value) {
 			return false
 		}
 	}
-	return !unsafeInUnit.MatchString(scopeDir) && (text == renderUnit(exec[1], exec[2], exec[3], scopeDir) || text == renderUnitText(exec[1], exec[2], exec[3], scopeDir, false))
+	return !unsafeInUnit.MatchString(scopeDir) && !unsafeInUnit.MatchString(config) &&
+		(text == renderUnit(exec[1], exec[2], exec[3], scopeDir, config) || text == renderUnitText(exec[1], exec[2], exec[3], scopeDir, config, false))
 }
 
 // lock takes the lock of the whole surface (one per unit directory, so registrations under different names exclude
@@ -311,7 +327,8 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 		return usage("the relay state directory could not be resolved (" + err.Error() + "); give --state")
 	}
 	relay := filepath.Join(o.Dest, "current", "bin", definition.Relay)
-	for _, one := range []struct{ what, value string }{{"the relay executable", relay}, {"the state directory", selection.Path}, {"the socket", socket}, {"--scope-dir", u.scopeDir}} {
+	config := crwconfig.ExplicitFile(o.Env.Get)
+	for _, one := range []struct{ what, value string }{{"the relay executable", relay}, {"the state directory", selection.Path}, {"the socket", socket}, {"--scope-dir", u.scopeDir}, {"the configuration file", config}} {
 		if unsafeInUnit.MatchString(one.value) {
 			return usage(fmt.Sprintf("%s %q holds whitespace, a quote, a backslash, %%, $, ; or a control character, which systemd would split or expand in the unit", one.what, one.value))
 		}
@@ -319,7 +336,7 @@ func RegisterService(ctx context.Context, o Options, s ServiceOptions) (Object, 
 	if info, err := os.Stat(relay); err != nil || !info.Mode().IsRegular() || unix.Access(relay, unix.X_OK) != nil {
 		return u.refuse(UnitUnreadable, "no runtime is installed to start: "+relay+" is not an executable file; run crw install install first")
 	}
-	wanted := renderUnit(relay, selection.Path, socket, u.scopeDir)
+	wanted := renderUnit(relay, selection.Path, socket, u.scopeDir, config)
 	basis, file := lookAt(u.path), readUnit(u.path)
 	outcome := UnitWouldCreate
 	switch {

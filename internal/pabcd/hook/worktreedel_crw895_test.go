@@ -212,7 +212,7 @@ func TestCRW895ShapesFromOtherDirectories(t *testing.T) {
 // decides whether find selects the checkout.
 func newDelRigNamed(t *testing.T, name string) delRig {
 	t.Helper()
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := filepath.EvalSymlinks(cleanTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

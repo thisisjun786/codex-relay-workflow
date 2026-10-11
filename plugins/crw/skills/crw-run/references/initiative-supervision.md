@@ -3,7 +3,7 @@
 Run executes the scope its task is bound to. Where that scope is an initiative, this file is the
 entry: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
-the shared [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 which also fixes what each level is called in a report to Jun,
 and the project-level procedures [crw-run](../SKILL.md) already owns are not repeated here one
 level up.
@@ -139,7 +139,7 @@ it.
 ### Where the record lives
 
 The record is the initiative's own, written by the supervisor under the
-[initiative body standard](../../crw-plan/references/integrations.md#initiative-body-standard) and
+[initiative body standard](../../crw-canon/references/linear-model.md#initiative-body-standard) and
 its comments and updates. The supervision record that makes recovery possible is in
 [Coordination record](task-packet.md#coordination-record).
 
@@ -284,7 +284,7 @@ Real delivery facts are read through the relationships that already hold them ra
 upward. Which pull request delivers an issue, which revision a verdict was recorded against and
 whether a merge actually landed are already recorded by the parent and, where an installation holds
 the assignment, by that record; the supervisor reads them there and treats
-[Implementation Done](../../crw-plan/references/integrations.md#implementation-done) as the test for
+[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done) as the test for
 a landing. A green check, a parent's acceptance and a completed turn are not that evidence.
 
 The supervisor decides what a pair of parents cannot settle alone: a disagreement, a change that
@@ -472,7 +472,7 @@ window; where the process cannot reach that store, the rereads above bound it in
 Observed: two projects in the approved set are complete, with their pull requests merged and their
 outcomes verified.
 Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds); landing evidence per
-[Implementation Done](../../crw-plan/references/integrations.md#implementation-done).
+[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done).
 Action: record the verified outcome and its evidence pointer, and execute only what remains. Do not
 reopen a finished project, re-verify a landing already verified at the same revision, or hand its
 parent a brief it has already delivered. Completing the initiative still needs its finish condition

@@ -27,6 +27,8 @@ type nullKeyGuard struct {
 	emptyRefused bool
 	// overrides are the columns the table's own shipped BEFORE INSERT trigger or CHECKs read, set to values that pass them.
 	overrides map[string]string
+	// bornGuarded: the table was created together with its guard (CRW-1212) and its key columns are NOT NULL, so no store holds a NULL-key row of it and the upgrade of such rows has none to keep.
+	bornGuarded bool
 }
 
 func (g nullKeyGuard) insertTrigger() string { return g.table + "_" + g.key + "_not_null" }
@@ -62,6 +64,15 @@ var zoneNullKeyGuards = []nullKeyGuard{
 	{table: "dag_user_decisions", key: "decision_id", updatable: true, emptyRefused: true,
 		overrides: map[string]string{"kind": "'design_choice'", "state": "'open'"}},
 	{table: "delivery_wakes", key: "event_id", updatable: true, emptyRefused: true},
+	// CRW-1212: the flow journal and the agent execution rows (append-only: no UPDATE guard, the no_update trigger refuses every update). flow_calls, flow_events and dag_agent_closures have a
+	// composite key; the guard refuses a NULL in either column, and the row here names the second column.
+	{table: "flow_runs", bornGuarded: true, key: "run_id", emptyRefused: true},
+	{table: "flow_calls", bornGuarded: true, key: "call_id", emptyRefused: true},
+	{table: "flow_events", bornGuarded: true, key: "run_id", emptyRefused: true},
+	{table: "flow_spawn_decisions", bornGuarded: true, key: "decision_id", emptyRefused: true},
+	{table: "flow_step_decisions", bornGuarded: true, key: "step_id", emptyRefused: true},
+	{table: "dag_agent_executions", bornGuarded: true, key: "execution_id", emptyRefused: true, overrides: map[string]string{"kind": "'initial'"}},
+	{table: "dag_agent_closures", bornGuarded: true, key: "subject_id", emptyRefused: true, overrides: map[string]string{"subject_kind": "'execution'", "state": "'cancelled'"}},
 }
 
 // zoneFillerDB is a raw connection to path with the CHECK constraints ignored, so a test writes a row
@@ -324,10 +335,16 @@ func TestDAGZoneUpgradeKeepsNullKeyRows(t *testing.T) {
 	old := zoneFillerDB(t, path)
 	zoneDropGuards(t, old)
 	for _, g := range zoneNullKeyGuards {
+		if g.bornGuarded {
+			continue
+		}
 		zoneMustExec(t, old, zoneFillerInsert(t, old, g, "NULL"))
 	}
 	before := map[string][]string{}
 	for _, g := range zoneNullKeyGuards {
+		if g.bornGuarded {
+			continue
+		}
 		before[g.table] = zoneTableContents(t, old, g.table)
 		if len(before[g.table]) != 1 {
 			t.Fatalf("%s: the old zone holds %d rows, want the one NULL-key row", g.table, len(before[g.table]))
@@ -346,6 +363,9 @@ func TestDAGZoneUpgradeKeepsNullKeyRows(t *testing.T) {
 	}
 	db := zoneFillerDB(t, path)
 	for _, g := range zoneNullKeyGuards {
+		if g.bornGuarded {
+			continue
+		}
 		after := zoneTableContents(t, db, g.table)
 		if !slices.Equal(after, before[g.table]) {
 			t.Errorf("%s: rows after upgrade %q, want the rows as they were %q", g.table, after, before[g.table])

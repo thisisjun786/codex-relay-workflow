@@ -132,7 +132,7 @@ child, the entry of its issue's family under [Child pair by issue type](../../cr
 the host then checks the answer instead of taking the caller's word. A role the policy does not
 declare is refused before any call, and no pair is supplied in its place. The rule and the
 decision it carries are in
-[Execution settings by role](../../crw-plan/references/integrations.md#execution-settings-by-role).
+[Execution settings by role](../../crw-canon/references/execution-roles.md#execution-settings-by-role).
 
 **New retained worktree:** `create_worktree_thread` accepts a source checkout,
 full immutable commit, absent absolute destination with an existing parent,
@@ -357,7 +357,7 @@ Use `get_operation`, backend reads/listing, and actual worktree state to identif
 what occurred. If a writer may still be active or the delivery outcome is unknown,
 do not start a replacement. Reuse an existing delivery when it can complete the
 assignment. After reconciliation proves no prior writer remains, recover within
-the assignment and host permissions as described in [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
+the assignment and host permissions as described in [Integrations](../../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow).
 A permitted replacement uses a new ID; record why and preserve earlier work and
 receipts. A read failure alone does not prove the task never existed.
 Do not delete receipts, reset shared work, or edit a session database to retry.

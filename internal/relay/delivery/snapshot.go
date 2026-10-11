@@ -6,6 +6,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // reportedState is _reported_state: what an operator should read, beside the raw state.
@@ -180,7 +181,7 @@ func (d *Service) SnapshotItem(ctx context.Context, eventID string) (Obj, error)
 	}
 	var pacing Obj
 	if (row.S("state") == Queued || row.S("state") == DeferredBusy || row.S("state") == WithheldPreSend) && row.S("hold_reason") == "" {
-		if pacing, err = d.pacing(ctx, row.S("relationship_id"), row.S("recipient_task_id"), d.Clock.Now()); err != nil {
+		if pacing, err = d.pacing(ctx, row.S("relationship_id"), row.S("recipient_task_id"), d.Clock.Now(), store.SendSubject{EventID: row.S("event_id")}); err != nil {
 			return nil, err
 		}
 		if reopens, _ := pacing.Lookup("reopensAt"); pacing != nil && reopens != nil && !row.N("next_eligible_at") && row.F("next_eligible_at") > reopens.(float64) {

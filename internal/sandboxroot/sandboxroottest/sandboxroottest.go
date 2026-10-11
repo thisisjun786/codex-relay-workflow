@@ -1,6 +1,6 @@
 // Package sandboxroottest gives a test a sandbox-root rule that reads nothing of the real host
 // (CRW-1265): a fake account home, a fake Codex home, a fake crw configuration and a sandbox base
-// the test chooses. The real /home/jun, the real ~/.codex and the real crw configuration never
+// the test chooses. The real account home, the real ~/.codex and the real crw configuration never
 // decide a verdict in a test.
 package sandboxroottest
 
@@ -26,8 +26,8 @@ type World struct {
 }
 
 // Fake builds a World under t.TempDir() and points the rule at it until the test ends. Its sandbox
-// base is <Root>/scratch/crw, its account home <Root>/home/jun and its worktree base
-// <Root>/data/worktrees. Both bases and the home exist.
+// base, account home and worktree base are three directories below that temporary root (see the
+// World fields); both bases and the home exist.
 func Fake(t testing.TB) *World {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())

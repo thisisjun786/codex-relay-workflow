@@ -103,7 +103,7 @@ func (e *Env) Relay(ctx context.Context, cfg *Config, args ...string) ([]byte, i
 		return nil, 0, err
 	}
 	argv := append([]string{"relay", "--state", state, "--socket", cfg.Relay.Socket}, args...)
-	stdout, code, stderr, err := e.relayHelperRun(ctx, argv...)
+	stdout, code, stderr, err := e.relayHelperRun(ctx, cfg, argv...)
 	if err != nil {
 		return nil, 0, relayHelperError(err, stderr)
 	}
@@ -135,7 +135,7 @@ func (e *Env) relayHelperState(ctx context.Context, cfg *Config) (string, error)
 			entry = &relayHelperEntry{done: make(chan struct{})}
 			relayHelperMemo[e] = entry
 			relayHelperMemoMu.Unlock()
-			return e.relayHelperResolve(ctx, cfg.Relay.Socket, entry)
+			return e.relayHelperResolve(ctx, cfg, entry)
 		}
 		relayHelperMemoMu.Unlock()
 		select {
@@ -155,7 +155,7 @@ func (e *Env) relayHelperState(ctx context.Context, cfg *Config) (string, error)
 // relayHelperResolve asks the doctor for the call that owns entry, publishes the outcome to
 // the waiters. A success stays in the map as the remembered answer unless the Env was forgotten
 // meanwhile; any other outcome leaves the map.
-func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *relayHelperEntry) (state string, err error) {
+func (e *Env) relayHelperResolve(ctx context.Context, cfg *Config, entry *relayHelperEntry) (state string, err error) {
 	finished := false
 	defer func() {
 		relayHelperMemoMu.Lock()
@@ -169,7 +169,7 @@ func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *rela
 		relayHelperMemoMu.Unlock()
 		close(entry.done)
 	}()
-	resolved, doctorErr := e.relayHelperDoctorState(ctx, socket)
+	resolved, doctorErr := e.relayHelperDoctorState(ctx, cfg)
 	relayHelperMemoMu.Lock()
 	finished = true
 	switch {
@@ -193,8 +193,8 @@ func (e *Env) relayHelperResolve(ctx context.Context, socket string, entry *rela
 // relayHelperDoctorState is the state directory the relay's doctor answer selects. The
 // doctor call carries the socket and no state, because choosing the state is its whole
 // point.
-func (e *Env) relayHelperDoctorState(ctx context.Context, socket string) (string, error) {
-	stdout, code, stderr, err := e.relayHelperRun(ctx, "relay", "--socket", socket, "doctor")
+func (e *Env) relayHelperDoctorState(ctx context.Context, cfg *Config) (string, error) {
+	stdout, code, stderr, err := e.relayHelperRun(ctx, cfg, "relay", "--socket", cfg.Relay.Socket, "doctor")
 	if err != nil {
 		return "", relayHelperError(err, stderr)
 	}
@@ -215,10 +215,59 @@ func (e *Env) relayHelperDoctorState(ctx context.Context, socket string) (string
 	return answer.StateSelection.Path, nil
 }
 
+// coreChildEnv gives a child this tool starts (the relay, the grader, the bridge, the commands of an
+// upgrade) the configuration this tool was started with (CRW-958). A configuration file named with
+// --config is handed on as CRW_CONFIG, so the child's own state selection (paths.relay_state), its
+// log_root and the roots it starts tools with read the file this tool read; a file reached through
+// CRW_CONFIG or the default location is reached the same way by the child. The configured tool roots
+// are put into its environment, and a configured build_work is made first. The child's environment
+// is cmd.Env when the caller set one and this process's otherwise, and with nothing configured an
+// inherited environment is left untouched.
+func coreChildEnv(cmd *exec.Cmd, cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if err := cfg.tools.Prepare(); err != nil {
+		return err
+	}
+	if env, ok := coreEnvValues(cmd.Env, cfg); ok {
+		cmd.Env = env
+	}
+	return nil
+}
+
+// coreEnvValues builds the environment coreChildEnv gives a child, from base (this process's
+// environment when base is nil), and makes no directory: the configuration file this tool was started
+// with as CRW_CONFIG and the configured tool roots. It reports false when the configuration adds
+// nothing, so a caller keeps the inherited environment. A command that must not touch the disk
+// (integrate --dry-run) builds its environment with this and prepares the roots (ToolRoots.Prepare)
+// only when it is about to start the tool.
+func coreEnvValues(base []string, cfg *Config) ([]string, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	changed := false
+	if cfg.source == crwconfig.SourceConfig && cfg.path != "" {
+		if base == nil {
+			base = os.Environ()
+		}
+		base = crwconfig.SetEnv(base, "CRW_CONFIG", cfg.path)
+		changed = true
+	}
+	if len(cfg.tools.Env()) > 0 {
+		if base == nil {
+			base = os.Environ()
+		}
+		base = cfg.tools.Apply(base)
+		changed = true
+	}
+	return base, changed
+}
+
 // relayHelperRun runs one relay command line of the same executable and reports its
 // stdout, exit status and stderr excerpt. A command that ran and failed is an exit status
 // with no error; one that could not be started, or whose context ended, is an error.
-func (e *Env) relayHelperRun(ctx context.Context, argv ...string) ([]byte, int, string, error) {
+func (e *Env) relayHelperRun(ctx context.Context, cfg *Config, argv ...string) ([]byte, int, string, error) {
 	var stdout bytes.Buffer
 	stderr := &relayHelperStderr{}
 	// CRW-1265: the relay command runs in the relay's state directory, not in the directory the manage
@@ -233,6 +282,9 @@ func (e *Env) relayHelperRun(ctx context.Context, argv ...string) ([]byte, int, 
 	cmd.Dir = dir
 	if dir != "" {
 		cmd.Env = relayHelperEnvironment(os.Environ())
+	}
+	if err := coreChildEnv(cmd, cfg); err != nil {
+		return nil, 0, "", err
 	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = stderr

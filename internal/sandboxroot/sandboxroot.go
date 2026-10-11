@@ -3,7 +3,7 @@
 // a working root that has no .git of its own, so a sandbox whose working root (or writable root) is
 // the account home, or a directory above other projects, makes <home>/.git appear and vanish and
 // every tool that walks the home reads the home as a git repository in that instant. The rule keeps
-// a sandboxed Codex in a dedicated root: the crwconfig sandbox_root (default /scratch/crw), a known
+// a sandboxed Codex in a dedicated root: the crwconfig sandbox_root (its default is crwconfig.DefaultSandboxRoot), a known
 // project root or a linked worktree, and never the account home, a directory above it, or a
 // directory above a known project root.
 //

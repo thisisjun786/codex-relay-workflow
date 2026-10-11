@@ -48,7 +48,7 @@ func (r *startRun) businessGuard(ctx context.Context) (map[string]any, error) {
 			return refuse(code)
 		}
 	}
-	code, err := businessResendCheckHost(ctx, r.m.Adapter, r.task, r.businessAttempt > 0)
+	code, err := hostLifecycle(ctx, r.m.Adapter, r.task, r.businessAttempt > 0)
 	if err != nil {
 		if r.businessAttempt > 0 && ctx.Err() == nil {
 			return refuse("lifecycle_unknown")
@@ -59,7 +59,7 @@ func (r *startRun) businessGuard(ctx context.Context) (map[string]any, error) {
 		return map[string]any{"code": code, "message": "Managed turn withheld: " + code}, nil
 	}
 	if r.businessAttempt > 0 {
-		code, err := r.businessResendOnlyStandby(ctx)
+		code, err := r.standbyOnlyHistory(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()

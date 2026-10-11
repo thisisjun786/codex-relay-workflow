@@ -768,7 +768,7 @@ than the host, so a lookup by issue happens before anything is created.
 Decided, from the project record of 2026-09-19: execution runs at three levels bound to three
 Linear levels, a supervisor to an initiative, a parent to a project and a child to an issue. What
 each role owns is the shared
-[Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope);
+[Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level);
 what this clause owns is identity and routing, because a level that cannot be identified cannot be
 isolated either.
 

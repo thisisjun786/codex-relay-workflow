@@ -13,10 +13,11 @@ import (
 
 // FakeThread is a thread of the fake backend.
 type FakeThread struct {
-	ID    string
-	Pair  Pair
-	Role  string
-	Turns []string
+	ID      string
+	Pair    Pair
+	Role    string
+	Sandbox string
+	Turns   []string
 }
 
 // FakeRequest is one request the fake backend received.
@@ -71,7 +72,7 @@ func (f *Fake) Thread(id string) (FakeThread, bool) {
 	if !ok {
 		return FakeThread{}, false
 	}
-	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Turns: append([]string(nil), t.Turns...)}, true
+	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Sandbox: t.Sandbox, Turns: append([]string(nil), t.Turns...)}, true
 }
 
 // StartThread implements Backend.
@@ -93,7 +94,7 @@ func (f *Fake) StartThread(ctx context.Context, spec ThreadSpec) (ThreadInfo, er
 		}
 	}
 	f.mu.Lock()
-	f.threads[info.ID] = &FakeThread{ID: info.ID, Pair: info.Pair, Role: spec.Role}
+	f.threads[info.ID] = &FakeThread{ID: info.ID, Pair: info.Pair, Role: spec.Role, Sandbox: spec.Sandbox}
 	f.mu.Unlock()
 	return info, nil
 }

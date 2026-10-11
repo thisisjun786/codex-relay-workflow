@@ -172,6 +172,18 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 	if services.SocketPath == "" || services.Selection.Source != "flag" {
 		return nil, usage("dag-release starts a managed task and requires explicit --state and --socket")
 	}
+	surface := args.Text("surface")
+	if surface == "agent" {
+		return runReleaseAgent(ctx, services, args)
+	}
+	for _, flag := range []string{"role", "tier", "run-id", "worktree"} {
+		if args.Given(flag) {
+			return nil, usage("--" + flag + " belongs to --surface agent")
+		}
+	}
+	if !args.Given("marker-root") {
+		return nil, usage("dag-release needs --marker-root: the managed start is fingerprinted with it")
+	}
 	raw, err := dag.ReadDocument(args.Text("request"))
 	if err != nil {
 		return nil, err
@@ -199,6 +211,35 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 	if !result.Bound {
 		// the managed start was refused or left incomplete: the intent and the slot stay, and the same call again continues it.
 		return nil, &dispatch.PayloadExit{Payload: result.Object(), Code: contract.ExitRefused}
+	}
+	return result.Object(), nil
+}
+
+// runReleaseAgent is dag-release --surface agent: the node is given to an agent of the flow engine as one dag_agent_executions row (ReleaseAgent). It starts no child and reads no forge write path, so
+// it needs no marker root and no starter; the tip an implementation node starts from and the pinned pull requests it consumes are read as for a managed release.
+func runReleaseAgent(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	raw, err := dag.ReadDocument(args.Text("request"))
+	if err != nil {
+		return nil, err
+	}
+	request, err := DecodeAgentReleaseRequest(raw)
+	if err != nil {
+		return nil, err
+	}
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	if err := sched.useHostMemory(); err != nil {
+		return nil, err
+	}
+	sched.Tips = mergeturn.TargetReader{}
+	sched.PRs = ForgePullRequestReader(evidence.ExecRunner)
+	result, err := sched.ReleaseAgent(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), request,
+		AgentReleaseOptions{Role: args.Text("role"), Tier: args.Text("tier"), RunID: args.Text("run-id"), Worktree: args.Text("worktree")})
+	if err != nil {
+		return nil, hostFailure(err)
 	}
 	return result.Object(), nil
 }

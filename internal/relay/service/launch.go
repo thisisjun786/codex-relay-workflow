@@ -104,7 +104,7 @@ func (s *Service) launch(cmd *exec.Cmd) error {
 	if err := os.MkdirAll(s.Selection.Path, 0700); err != nil {
 		return err
 	}
-	log, err := os.OpenFile(s.path("daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+	log, err := s.openLog()
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (s *Service) launch(cmd *exec.Cmd) error {
 	return errors.Join(err, log.Close())
 }
 func (s *Service) logTail() string {
-	raw, err := os.ReadFile(s.path("daemon.log"))
+	raw, err := os.ReadFile(s.logPath())
 	if err != nil {
 		return ""
 	}

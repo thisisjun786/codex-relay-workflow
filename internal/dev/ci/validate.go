@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skillport"
 )
 
@@ -344,13 +345,20 @@ func goModTidyCheck(root string) (errs []string, note string) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return nil, "go mod tidy check skipped: no go command on PATH"
 	}
+	tools, err := crwconfig.LoadToolRoots(os.Getenv, "")
+	if err != nil {
+		return []string{"go mod tidy -diff: " + err.Error()}, ""
+	}
+	if err := tools.Prepare(); err != nil {
+		return []string{"go mod tidy -diff: " + err.Error()}, ""
+	}
 	cmd := exec.Command("go", "mod", "tidy", "-diff")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",
+	cmd.Env = append(tools.Apply(os.Environ()), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",
 		"GOTOOLCHAIN=local", "GOWORK=off")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err == nil {
 		return nil, "go.mod and go.sum match go mod tidy."
 	}

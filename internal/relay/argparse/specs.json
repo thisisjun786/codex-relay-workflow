@@ -899,7 +899,12 @@
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent, who owns the slot and the child"},
   {"flag":"--request","required":true,"help":"the dag-release-request/1 document as JSON, or @file"},
-  {"flag":"--marker-root","required":true},
+  {"flag":"--marker-root","help":"the marker root of the managed start; the relationship surface requires it, the agent surface starts nothing and takes none"},
+  {"flag":"--surface","choices":["relationship","agent"],"help":"who runs the node: relationship (the default) is a managed Codex child; agent is an agent of the flow engine, released as one dag_agent_executions row of kind initial with the slot and the input manifest, and no managed start, relationship, standby or dag_releases row"},
+  {"flag":"--role","help":"agent surface: the role key of the agent that runs the node (executor when not given)"},
+  {"flag":"--tier","help":"agent surface: the tier of the agent (executor when not given)"},
+  {"flag":"--run-id","help":"agent surface: the flow run the release belongs to"},
+  {"flag":"--worktree","help":"agent surface: the worktree the execution was allocated"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-release-close","summary":"ends the release of a DAG node whose managed start was released before it created a child (blocked:release_abandoned): in one transaction it records the closure of that request and returns the node's slot (reason dag_release_closed); its frozen manifest copy is then removed unless something live names it. The node reads planned again and the ordinary dag-release releases it again, a changed manifest as a new release and an unchanged one under a successor request id. The same request again answers the recorded closure. It creates no child and refuses a release that is running or still in flight","options":[
   {"flag":"--plan","required":true},

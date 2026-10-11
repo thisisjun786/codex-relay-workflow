@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,12 @@ func TestFeatureCodexHelper(t *testing.T) {
 		os.Exit(3)
 	}
 	if len(args) == 1 && args[0] == "--version" && os.Getenv("CRW1150_FAKE_VERSION_HANG") != "" {
-		time.Sleep(30 * time.Second)
+		// The stalled probe says that it has begun to stall, so a test ends the recording after that and
+		// never before, whatever the host load made the start of this process take.
+		if err := os.WriteFile(filepath.Join(home, "stalled"), nil, 0600); err != nil {
+			os.Exit(92)
+		}
+		time.Sleep(5 * time.Minute)
 		os.Exit(0)
 	}
 	if len(args) == 1 && args[0] == "--version" && os.Getenv("CRW1150_FAKE_VERSION") != "" {
@@ -82,6 +88,19 @@ func TestFeatureCodexHelper(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// The explicit enable records its evidence under a deadline of seconds (featureEvidenceDeadline), and a
+// codex that is slow to start on a loaded host would miss it and leave the record these tests read
+// absent (CRW-1263). The product's deadline is not what these tests are about, so the package runs
+// with a recording that no clock ends; the tests of the deadline and of the ending set their own.
+func init() {
+	featureEvidenceContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		return context.WithCancel(ctx)
+	}
+}
+
+// defaultFeatureEvidenceContext is the product's own featureEvidenceContext, taken before init replaces it.
+var defaultFeatureEvidenceContext = featureEvidenceContext
 
 type featureHome struct {
 	t    *testing.T
@@ -548,34 +567,100 @@ func TestFeaturesEnableWithoutAReadableVersionRecordsNoEvidence(t *testing.T) {
 
 // CRW-1150: the optional recording after an enable shares one short deadline, so a codex whose
 // --version never answers cannot hold an enable that already activated.
+//
+// The test drives the end of the recording itself (CRW-1263): it waits until the probe says it has
+// begun to stall, ends the recording's context, and holds the enable to returning. No clock decides
+// the outcome, so a probe that is slow to start on a loaded host changes nothing. The 5 minute probe
+// is long enough that an enable returning only because the probe finished is a failure of the
+// bound below, and the bound is for a hang: no assertion depends on how much of it passes.
 func TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe(t *testing.T) {
-	prev := featureEvidenceDeadline
-	featureEvidenceDeadline = 500 * time.Millisecond
-	t.Cleanup(func() { featureEvidenceDeadline = prev })
+	prev := featureEvidenceContext
+	t.Cleanup(func() { featureEvidenceContext = prev })
+	ends := make(chan context.CancelFunc, 1)
+	// Whatever way the test leaves, the recording's context ends and the enable has returned before the
+	// test's directories are removed: a failure before the explicit end below must not leave the enable
+	// and its 5 minute probe running.
+	leave, leaveNow := context.WithCancel(context.Background())
+	exited := make(chan struct{})
+	featureEvidenceContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		evidenceCtx, end := context.WithCancel(ctx)
+		context.AfterFunc(leave, end)
+		ends <- end
+		return evidenceCtx, end
+	}
 	h := newFeatureHome(t, "")
 	h.env = h.env.With("CRW1150_FAKE_VERSION_HANG", "1")
+	// Registered after newFeatureHome so that it runs first (t.Cleanup is last in, first out): the recording ends
+	// and the enable returns while the test home still exists.
+	t.Cleanup(func() {
+		leaveNow()
+		select {
+		case <-exited:
+		case <-time.After(30 * time.Second):
+			t.Error("the enable did not return after its recording ended")
+		}
+	})
 	type answer struct {
 		code        int
 		out, errOut string
 	}
 	done := make(chan answer, 1)
-	start := time.Now()
 	go func() {
+		defer close(exited)
 		code, out, errOut := h.run("enable")
 		done <- answer{code, out, errOut}
 	}()
+	// The recording's context exists once the enable has activated and begun to record; end it only
+	// after the probe has begun to stall.
+	for deadline := time.Now().Add(2 * time.Minute); ; {
+		if _, err := os.Stat(filepath.Join(h.home, "stalled")); err == nil {
+			break
+		}
+		select {
+		case a := <-done:
+			t.Fatalf("the enable returned before the probe began to stall: exit %d stdout=%q stderr=%q", a.code, a.out, a.errOut)
+		case <-time.After(5 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the probe never began to stall")
+		}
+	}
+	(<-ends)()
 	select {
 	case a := <-done:
 		if a.code != 0 || !strings.HasPrefix(a.out, "crw: enabled [") {
 			t.Fatalf("exit %d stdout=%q stderr=%q", a.code, a.out, a.errOut)
 		}
-		if elapsed := time.Since(start); elapsed > 10*time.Second {
-			t.Fatalf("the enable ran %v past a %v deadline", elapsed, featureEvidenceDeadline)
+		if marker, err := configguard.ReadSelfHealMarkerFile(h.home); err != nil || marker != nil && marker.Probe != nil {
+			t.Fatalf("evidence recorded without a version: %+v %v", marker, err)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("a stalled --version held an enable that had already activated")
+	case <-time.After(2 * time.Minute):
+		t.Fatal("a stalled --version held an enable whose recording had ended")
 	}
-	if marker, err := configguard.ReadSelfHealMarkerFile(h.home); err != nil || marker != nil && marker.Probe != nil {
-		t.Fatalf("evidence recorded without a version: %+v %v", marker, err)
+}
+
+// CRW-1150: the recording's deadline is the product's 8 seconds, and it ends the recording's context.
+// Neither assertion depends on how long anything takes: the deadline is compared with the clock
+// reading taken on each side of the call, and the end is waited for as an event.
+func TestFeatureEvidenceContextIsBoundedByTheEvidenceDeadline(t *testing.T) {
+	if featureEvidenceDeadline != 8*time.Second {
+		t.Fatalf("the evidence deadline is %v, not the 8s of CRW-1150", featureEvidenceDeadline)
+	}
+	before := time.Now()
+	ctx, end := defaultFeatureEvidenceContext(context.Background())
+	after := time.Now()
+	defer end()
+	at, ok := ctx.Deadline()
+	if !ok || at.Sub(before) < featureEvidenceDeadline || at.Sub(after) > featureEvidenceDeadline {
+		t.Fatalf("deadline %v (set: %v) is not %v from the call between %v and %v", at, ok, featureEvidenceDeadline, before, after)
+	}
+	prev := featureEvidenceDeadline
+	t.Cleanup(func() { featureEvidenceDeadline = prev })
+	featureEvidenceDeadline = time.Millisecond
+	short, endShort := defaultFeatureEvidenceContext(context.Background())
+	defer endShort()
+	<-short.Done()
+	if !errors.Is(short.Err(), context.DeadlineExceeded) {
+		t.Fatalf("the recording's context ended with %v, not its deadline", short.Err())
 	}
 }

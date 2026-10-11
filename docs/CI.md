@@ -43,7 +43,7 @@ The run makes a **clean worktree** of the commit being verified under the work r
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
 temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
 caches cannot change the result. The record names the commit and its tree, never the caller's
-working state. The worktree is removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`), so the run refuses with `engine_differs_from_commit` when the working tree under any of those paths differs from the commit's files byte for byte: an edited, deleted or extra file, whatever the index marks (assume-unchanged, skip-worktree) or the ignore files say. An ignored file is let through only when Go does not compile it (a log, a coverage file); a FIFO, device or other special file in place of an engine file is a difference and is never opened. A prebuilt `crw-dev` is held to the same rule: `go build` stamps the revision and the modified flag in it, and the run refuses with `engine_differs_from_commit` when the binary was built from a modified tree or from a revision whose engine paths differ from the verified commit's (`make crw-dev` from a clean checkout of the commit builds the right one). A binary with no revision (`go run`, `go test`, `-buildvcs=false`) is compiled from the working tree that the byte comparison has just checked, so the comparison is all there is to bind it. No record is written or reused from such a checkout. The `secrets` step fetches the linux x64 Gitleaks archive and calls `sha256sum`, so a plan that carries it refuses any other host with `unsupported_platform` before a step runs. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The module cache is not inherited, and GOFLAGS is set by the engine.
+working state. The worktree is removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`, and `internal/crwconfig`, whose tool-root code the engine runs to build every step's environment), so the run refuses with `engine_differs_from_commit` when the working tree under any of those paths differs from the commit's files byte for byte: an edited, deleted or extra file, whatever the index marks (assume-unchanged, skip-worktree) or the ignore files say. An ignored file is let through only when Go does not compile it (a log, a coverage file); a FIFO, device or other special file in place of an engine file is a difference and is never opened. A prebuilt `crw-dev` is held to the same rule: `go build` stamps the revision and the modified flag in it, and the run refuses with `engine_differs_from_commit` when the binary was built from a modified tree or from a revision whose engine paths differ from the verified commit's (`make crw-dev` from a clean checkout of the commit builds the right one). A binary with no revision (`go run`, `go test`, `-buildvcs=false`) is compiled from the working tree that the byte comparison has just checked, so the comparison is all there is to bind it. No record is written or reused from such a checkout. The `secrets` step fetches the linux x64 Gitleaks archive and calls `sha256sum`, so a plan that carries it refuses any other host with `unsupported_platform` before a step runs. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The configuration file's `paths.build_cache` replaces the inherited `GOCACHE` and `paths.build_work` is the steps' `GOTMPDIR`; a root the file does not name passes nothing. The module cache is not inherited, not even `paths.module_cache`, and GOFLAGS is set by the engine ([where crw keeps its files](runtime-install.md#where-crw-keeps-its-files)).
 
 ### The local step to GitHub job mapping
 
@@ -103,7 +103,10 @@ failed command fails it. A failed step's `reason` gives the exit status, the fai
 of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 40 lines of the
 output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
 so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `TMPDIR`
-and `PATH`, so a test that makes a socket or a temporary file uses the caller's temporary root.
+and `PATH`, so a test that makes a socket or a temporary file uses the caller's temporary root. A
+Unix socket path must stay under 108 bytes on Linux and 104 on macOS, and a test adds its own
+directory and file names to the root, so keep `TMPDIR` short; `crw config check` warns when
+`temp_root` leaves no room.
 
 A step's result is `passed`, `failed`, `missing_tool`,
 `skipped` or `not_applicable`. The whole result is `pass` only when no step
@@ -320,6 +323,53 @@ sequential set the process environment, change the directory or assign a package
 alternating): wall clock 103, 83, 82 s before and 47, 52, 37 s after; user plus system CPU 142, 156, 146 s
 before and 114, 128, 117 s after. Under five `nice -n 19` spinners, `make test-part TEST_PART=1` took 69, 75
 and 40 s with `relay/dagsched` at 53, 60 and 25 s, against the 600 s of its budget, so the budget stays.
+
+### The `runtime/install` test time
+
+`runtime/install` grew back from the 90 s of CRW-734 to 513 s on a loaded host (CRW-1263), and three
+integration runs hit the 10 minute budget while two tests failed on wall-clock limits. The time was
+data, not waiting: every test that installs wrote the whole release binary (72 MB) into a fresh
+archive and hashed it again for each runtime directory it named, and on a host at load 30 to 40 those
+writes held up every small sync of the tests running beside them (a CPU
+profile of the package: 171 s of CPU, most of it SHA-256, copying and read/write system calls on those
+bytes). Each release archive is now written once per run, read-only under the isolation root, and
+linked into the test's own directory with its digest known, so a test pays for the archive it installs
+and not for building it. No test, name or assertion was removed, and no product time bound changed.
+The two timing failures were wall-clock verdicts and are now decided without one:
+`TestFeaturesEnableRecordsVerifiedProbeEvidence` read a record the enable writes under its 8 s
+evidence deadline (the product's 8 s, unchanged), which a codex slow to start on a loaded host missed
+(marker nil after 44 s); the package now records under a context that no clock ends, through the
+`featureEvidenceContext` seam (default: the context ended by the 8 s deadline, which
+`TestFeatureEvidenceContextIsBoundedByTheEvidenceDeadline` holds to the product's value). The one
+test of the stall, `TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe`, waits until the probe says it
+has begun to stall, ends the recording's context itself, and requires the enable to return with no
+evidence recorded; the probe sleeps 5 minutes, so an enable that ignores the end fails. A 17 s start
+delay of the probe, which failed the earlier retry-with-a-doubled-deadline form, passes.
+`TestWriteExecutableSurvivesConcurrentForks` asserted that 320
+spawned processes finish within 30 s (51 s under load) and now asserts that no stretch of 60 s passes
+without one finishing. Measured on one host with the package's own method (`go test -count=1 -json`
+through the heavy-check gate at `nice 12`, `GOFLAGS=-p=4`, the crw binary built once):
+
+| Run | Load1 (start, end) | Package | Slowest test |
+| --- | --- | --- | --- |
+| before, dev `e537281c6` | 33, 24 | 349 s | 184 s (`TestTheRouteDoesNotCarryAnythingButTheZoneArrivingAlone`) |
+| before, as reported in CRW-1263 | 27 to 36 | 513 s | 167 s |
+| after | 21, 18 | 65 s | 15 s (`TestFeaturesAndConfigCommandsKeepEveryTomlFormValid`) |
+| after, under five `nice -n 19` spinners of six busy threads | 24, 69 | 268 s | 112 s (`TestTheBackupDestinationIsRefusedWhereItCouldNotSurvive`) |
+
+Both packages ran 362 tests with no failure. The timing tests were repeated with `-count=20` under
+five `nice -n 19` spinners of eight busy threads, killed afterwards, through the same gate and Go:
+
+| Code | Load1 (start, end) | Passed |
+| --- | --- | --- |
+| an earlier form of the stall test, which doubled its deadline on each retry | 66, 70 | 60 of 60 (three tests) |
+| `13ad71d83`, the stall test ended by the `featureEvidenceContext` seam, spinners warmed 30 s | 33, 43 | 80 of 80 (four tests, the deadline test included) |
+| `13ad71d83`, again, spinners warmed until load1 reached 48 | 48, 49 | 80 of 80 |
+
+After `13ad71d83` the code changes only in the failure-path cleanup of `TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe` (it ends the recording and waits for the enable before the test home is removed); the timed assertions and the product code are the ones proven above, and the branch also merged dev. The spinners at `nice 19` do not slow a `nice 12`
+test as much as the host's other runs did, so this is a load proof, and the failure itself was seen
+only in the unspun runs above (44 s for the evidence test, 51 s for the fork test). The temporary root
+is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`.
 
 ### The `internal/manage` test time
 

@@ -10,7 +10,16 @@ import (
 // its state directory; a unit written before this line existed is still the installer's own to remove.
 func TestRenderUnitSetsWorkingDirectoryToState(t *testing.T) {
 	for _, scope := range []string{"", "/srv/scope"} {
-		text := renderUnit("/opt/crw/bin/relay", "/var/lib/relay-state", "/run/app.sock", scope)
+		for _, config := range []string{"", "/etc/crw/config.json"} {
+			checkWorkingDirectory(t, scope, config)
+		}
+	}
+}
+
+func checkWorkingDirectory(t *testing.T, scope, config string) {
+	t.Helper()
+	{
+		text := renderUnit("/opt/crw/bin/relay", "/var/lib/relay-state", "/run/app.sock", scope, config)
 		lines := strings.Split(text, "\n")
 		var service, workdir, execStart = -1, -1, -1
 		for i, line := range lines {
@@ -24,17 +33,17 @@ func TestRenderUnitSetsWorkingDirectoryToState(t *testing.T) {
 			}
 		}
 		if service < 0 || workdir <= service || execStart <= workdir {
-			t.Fatalf("scope %q: the [Service] section has no WorkingDirectory= the state directory before ExecStart:\n%s", scope, text)
+			t.Fatalf("scope %q config %q: the [Service] section has no WorkingDirectory= the state directory before ExecStart:\n%s", scope, config, text)
 		}
 		if strings.Count(text, "WorkingDirectory=") != 1 {
-			t.Fatalf("scope %q: more than one WorkingDirectory:\n%s", scope, text)
+			t.Fatalf("scope %q config %q: more than one WorkingDirectory:\n%s", scope, config, text)
 		}
 		if !rendered(text) {
-			t.Fatalf("scope %q: the installer does not recognise its own unit", scope)
+			t.Fatalf("scope %q config %q: the installer does not recognise its own unit", scope, config)
 		}
-		legacy := renderUnitText("/opt/crw/bin/relay", "/var/lib/relay-state", "/run/app.sock", scope, false)
+		legacy := renderUnitText("/opt/crw/bin/relay", "/var/lib/relay-state", "/run/app.sock", scope, config, false)
 		if strings.Contains(legacy, "WorkingDirectory=") || !rendered(legacy) {
-			t.Fatalf("scope %q: the unit written before CRW-1265 is not recognised for removal:\n%s", scope, legacy)
+			t.Fatalf("scope %q config %q: the unit written before CRW-1265 is not recognised for removal:\n%s", scope, config, legacy)
 		}
 	}
 }

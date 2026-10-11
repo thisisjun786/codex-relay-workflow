@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -33,10 +34,49 @@ type CreateThread struct {
 	Policy                                                                                        map[string]any
 }
 
-func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Receipt, error) {
+// CreationWatch is the turn watch a creation opened on its thread, handed to the caller instead of being let go
+// as the creation returns (CreateThreadWatched). The watch holds the thread's mutation gate and its
+// subscription until Release, so the caller can wait for the standby turn's turn/completed on the connection
+// that carried the creation.
+type CreationWatch struct {
+	watch   *appserver.TurnWatch
+	receipt ledger.Receipt
+	once    sync.Once
+}
+
+// TurnCompleted reports whether the watch has received turn/completed for turn.
+func (w *CreationWatch) TurnCompleted(turn string) bool { return w.watch.Completed(turn) }
+
+// Release lets the watch go, as the creation does when nobody keeps it. It is idempotent.
+func (w *CreationWatch) Release() {
+	w.once.Do(func() { finishSubscription(w.watch, w.receipt, true) })
+}
+
+type keepWatchKey struct{}
+
+// CreateThreadWatched is CreateThread that keeps the creation's turn watch open: the returned CreationWatch is
+// nil when the creation opened none (a scripted transport) or failed, and otherwise the caller releases it.
+func (b *Bridge) CreateThreadWatched(ctx context.Context, in CreateThread) (ledger.Receipt, *CreationWatch, error) {
+	keep := &CreationWatch{}
+	receipt, err := b.CreateThread(context.WithValue(ctx, keepWatchKey{}, keep), in)
+	if keep.watch == nil {
+		return receipt, nil, err
+	}
+	return receipt, keep, err
+}
+
+func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt ledger.Receipt, failure error) {
 	var watch *appserver.TurnWatch
 	var result ledger.Receipt
-	defer func() { finishSubscription(watch, result, true) }()
+	defer func() {
+		// Only an accepted creation hands its watch over: a creation that failed or is unknown goes on to the standby recovery, which
+		// takes the thread's gate itself.
+		if keep, ok := ctx.Value(keepWatchKey{}).(*CreationWatch); ok && watch != nil && failure == nil && result["status"] == "accepted" {
+			keep.watch, keep.receipt = watch, result
+			return
+		}
+		finishSubscription(watch, result, true)
+	}()
 	// One bound on this path's context covers every call it makes, before and inside the mutation.
 	ctx = appserver.WithAckBound(ctx, createAckBound)
 	if err := nonempty(in.CWD, "cwd", 100000); err != nil {

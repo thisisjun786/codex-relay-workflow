@@ -380,7 +380,7 @@ A linked installation exposes the skills as `crw-run`, `crw-plan`, and so on. A
 plugin installation namespaces them under the plugin name, so the same skills are
 offered as `crw:crw-run`, `crw:crw-plan`, and so on. The documents keep the
 unprefixed names and the mapping lives in
-[the shared integration guide](../plugins/crw/skills/crw-plan/references/integrations.md),
+[the skill family reference](../plugins/crw/skills/crw-canon/references/skill-family.md#skill-names-under-each-installation),
 so one revision reads correctly under either installation.
 
 `crw-dev ci plugin` derives the namespaced names from the revision rather than

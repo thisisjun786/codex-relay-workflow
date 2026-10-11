@@ -22,11 +22,15 @@ const (
 // The send budget has two parts with two owners. MinSendInterval is the recipient's: a task is
 // woken at most once in that gap, whoever sends. MaxSendsPerRelationshipPerHour is the
 // relationship's: it fences one relationship (a parent and a child with one issue) from waking one
-// recipient more than that many times in an hour, which is what a loop looks like. The cap used to
-// be counted per recipient, so every child of a parent spent the same twelve and a parent with ten
-// children stopped receiving; counted per relationship, a parent with R children can receive up to
-// 12 R an hour (the gap still holds a recipient to 720 an hour) and one runaway relationship still
-// stops at 12.
+// recipient for more than that many distinct events in an hour, which is what a loop of new events
+// looks like. A send is an event, not an attempt (CRW-1210): one event tried again and again is one
+// send, and what bounds its attempts is its own cap, MaxAttempts. The cap used to be counted per
+// recipient, so every child of a parent spent the same twelve and a parent with ten children stopped
+// receiving; counted per relationship, a parent with R children can receive up to 12 R an hour (the
+// gap still holds a recipient to 720 an hour) and one runaway relationship still stops at 12. A
+// relationship of class orchestrator - its parent holds the live parent binding of a project, and
+// receives the results of every issue the project runs - has its own cap,
+// MaxSendsPerOrchestratorRelationshipPerHour.
 type RetryPolicy struct {
 	BusyBase, BusyMax              float64
 	BusyMaxAttempts                int64
@@ -42,11 +46,14 @@ type RetryPolicy struct {
 	// a refused row costs an attempt too. With the daemon's 20 s tick and four attempts a tick the
 	// scheduler can deliver 180 an hour to a parent and 720 an hour in all.
 	MaxSendsPerParentPerTick int
+	// MaxSendsPerOrchestratorRelationshipPerHour is the hour cap of a relationship of class orchestrator
+	// (see MaxSendsPerRelationshipPerHour): one whose parent holds the live parent binding of a project.
+	MaxSendsPerOrchestratorRelationshipPerHour int64
 }
 
 func DefaultPolicy() RetryPolicy {
 	return RetryPolicy{BusyBase: 15, BusyMax: 300, BusyMaxAttempts: 40, PresendBase: 30, PresendMax: 900, MaxAttempts: 6,
-		MinSendInterval: 5, MaxSendsPerRelationshipPerHour: 12, LifecycleRecheck: 60, Lease: 300, MaxSendsPerParentPerTick: 2}
+		MinSendInterval: 5, MaxSendsPerRelationshipPerHour: 12, MaxSendsPerOrchestratorRelationshipPerHour: 60, LifecycleRecheck: 60, Lease: 300, MaxSendsPerParentPerTick: 2}
 }
 
 // DelayFor is how long a delivery waits for its attemptNo-th try: the base, doubled for each earlier
@@ -82,19 +89,34 @@ func (p RetryPolicy) RateWindows(now float64) (float64, float64) {
 	return window, window - reach
 }
 
-// Pacing is policy.pacing: why a recipient may not be woken now, or nil. sends is how many sends
-// the delivery's own relationship has charged to the recipient this hour, and last is the
-// recipient's latest send of any relationship.
+// HourlyCapFor is the hour cap of a relationship of the class given: orchestrator, or ordinary.
+func (p RetryPolicy) HourlyCapFor(orchestrator bool) int64 {
+	if orchestrator {
+		return p.MaxSendsPerOrchestratorRelationshipPerHour
+	}
+	return p.MaxSendsPerRelationshipPerHour
+}
+
+// Pacing is PacingAt with the ordinary relationship cap.
 func (p RetryPolicy) Pacing(now float64, sends int64, last *float64) Obj {
+	return p.PacingAt(now, sends, p.MaxSendsPerRelationshipPerHour, false, last)
+}
+
+// PacingAt is policy.pacing: why a recipient may not be woken now, or nil. sends is how many distinct
+// events the delivery's own relationship has sent to the recipient this hour and capacity the cap of that
+// relationship's class (HourlyCapFor). counted says the subject of the send (the event or message) is
+// already one of those events: its retry adds no distinct event to the hour, so the hour cap does not
+// refuse it (a cap of zero still does), and the gap and the subject's own attempt cap still hold. last is
+// the recipient's latest send of any relationship.
+func (p RetryPolicy) PacingAt(now float64, sends, capacity int64, counted bool, last *float64) Obj {
 	window, _ := p.RateWindows(now)
-	capacity := p.MaxSendsPerRelationshipPerHour
 	var gapEnds *float64
 	if last != nil {
 		g := *last + p.MinSendInterval
 		gapEnds = &g
 	}
 	reading := Obj{{Key: "sends", Value: sends}, {Key: "cap", Value: capacity}, {Key: "windowStart", Value: window}}
-	if sends >= capacity {
+	if sends >= capacity && (capacity <= 0 || !counted) {
 		if capacity <= 0 {
 			return append(Obj{{Key: "reason", Value: HourlyCap}, {Key: "reopensAt", Value: nil}}, append(reading,
 				F{Key: "detail", Value: "a cap of zero refuses every send; only a changed policy reopens it"})...)

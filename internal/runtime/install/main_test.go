@@ -7,11 +7,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -27,7 +30,7 @@ import (
 
 func TestMain(m *testing.M) {
 	golden.Helper()
-	testsupport.Main(m)
+	testsupport.Main(m, setUpArchiveRoot)
 }
 
 // binary is the crw this package's tests install: the real multi-call binary
@@ -101,39 +104,117 @@ func (h *host) options() install.Options {
 
 // archive writes crw_<version>_<os>_<arch>.tar.gz carrying the real binary, its three
 // compatibility links and a licence (extra varies the bytes, so each archive has its own
-// digest), and a SHA256SUMS beside it.
+// digest), and a SHA256SUMS beside it. The archive is a link to the one copy of its bytes
+// this process wrote (sharedArchive), so a test that installs an archive no longer writes the
+// whole binary again; the copy is read-only, and no test writes into an archive it was given.
 func archive(t *testing.T, version, extra string) string {
 	t.Helper()
 	dir := t.TempDir()
 	name := "crw_" + version + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
-	compressed := archiveBytes(t, version, extra)
+	shared := sharedArchive(t, version, extra, name)
 	path := filepath.Join(dir, name)
-	write(t, path, string(compressed))
-	sum := sha256.Sum256(compressed)
-	write(t, filepath.Join(dir, install.SumsName), hex.EncodeToString(sum[:])+"  "+name+"\n")
+	if err := os.Link(shared.path, path); err != nil {
+		// a different file system than the shared copy: a copy is the same archive
+		if err := copyFile(shared.path, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(dir, install.SumsName), shared.digest+"  "+name+"\n")
 	return path
 }
 
-// archives holds each archive's bytes by version and extra. The tests install a few archives
-// over and over, and compressing the whole binary again for each call was most of this
-// package's time; the bytes, and so every digest, are the same either way.
-var archives = struct {
-	sync.Mutex
-	bytes map[[2]string][]byte
-}{bytes: map[[2]string][]byte{}}
+func copyFile(from, to string) error {
+	in, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
 
+// archiveRoot is a directory inside the isolation root that testsupport.Main removes after the
+// tests; the shared archives are written under it.
+var archiveRoot string
+
+func setUpArchiveRoot(root string) (func() error, error) {
+	archiveRoot = filepath.Join(root, "archives")
+	return nil, nil
+}
+
+// sharedArchives holds each archive by version and extra: where its bytes are written once for
+// the whole run, and their digest. The tests install a few archives over and over; compressing
+// (and, later, writing and hashing) the whole binary again for each call was most of this
+// package's time, and the bytes, so every digest, are the same either way.
+var sharedArchives = struct {
+	sync.Mutex
+	made    map[[2]string]sharedFile
+	digests map[fileIdentity]string
+}{made: map[[2]string]sharedFile{}, digests: map[fileIdentity]string{}}
+
+type sharedFile struct{ path, digest string }
+
+// fileIdentity is a file as the file system names it: the device, inode, size and modification
+// time. A path whose identity is a shared archive's holds that archive's bytes, so its digest is
+// known without reading it again.
+type fileIdentity struct {
+	dev, ino uint64
+	size     int64
+	mtime    int64
+}
+
+func identityOf(info os.FileInfo) (fileIdentity, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fileIdentity{}, false
+	}
+	return fileIdentity{uint64(stat.Dev), uint64(stat.Ino), info.Size(), info.ModTime().UnixNano()}, true
+}
+
+func sharedArchive(t *testing.T, version, extra, name string) sharedFile {
+	t.Helper()
+	sharedArchives.Lock()
+	defer sharedArchives.Unlock()
+	key := [2]string{version, extra}
+	if made, found := sharedArchives.made[key]; found {
+		return made
+	}
+	compressed := archiveBytes(t, version, extra)
+	dir := filepath.Join(archiveRoot, fmt.Sprintf("%d", len(sharedArchives.made)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, compressed, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(compressed)
+	made := sharedFile{path: path, digest: hex.EncodeToString(sum[:])}
+	if info, err := os.Stat(path); err == nil {
+		if id, ok := identityOf(info); ok {
+			sharedArchives.digests[id] = made.digest
+		}
+	}
+	sharedArchives.made[key] = made
+	return made
+}
+
+// archiveBytes is an archive's bytes, built once per run and freed after they are written.
 func archiveBytes(t *testing.T, version, extra string) []byte {
 	t.Helper()
-	archives.Lock()
-	defer archives.Unlock()
-	if cached, found := archives.bytes[[2]string{version, extra}]; found {
-		return cached
-	}
 	raw, err := binary()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
+	buf.Grow(len(raw) + 1<<16)
 	compressed, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
 	if err != nil {
 		t.Fatal(err)
@@ -160,12 +241,23 @@ func archiveBytes(t *testing.T, version, extra string) []byte {
 	if err := compressed.Close(); err != nil {
 		t.Fatal(err)
 	}
-	archives.bytes[[2]string{version, extra}] = buf.Bytes()
 	return buf.Bytes()
 }
 
+// archiveDigest is the SHA-256 of the file at path: read from the file system, except for a
+// shared archive (or a link to one), whose digest was taken when it was written.
 func archiveDigest(t *testing.T, path string) string {
 	t.Helper()
+	if info, err := os.Stat(path); err == nil {
+		if id, ok := identityOf(info); ok {
+			sharedArchives.Lock()
+			digest, known := sharedArchives.digests[id]
+			sharedArchives.Unlock()
+			if known {
+				return digest
+			}
+		}
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

@@ -4,7 +4,7 @@ One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in a 
 initiative. The answer is a short report covering everything that supervision holds and, where the
 execution approval is still in force, the approved work moved along. This file
 is that entry. The roles it walks are the shared
-[supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+[scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 and the binding it reads is the one
 [Initiative supervision](../../crw-run/references/initiative-supervision.md) established. Its
 existing row classifying a how-is-it-going request as a read that wakes nothing describes the
@@ -115,7 +115,7 @@ Per delivery, from git and, where a pull request exists, from GitHub: the curren
 paged to the end, whether the delivery actually landed on its intended target (the integrator's fast-forward, or the pull request's merge while one is open), and whether
 anything was installed or demonstrated afterwards. Use
 [Merge readiness](../../crw-run/references/merge-readiness.md) for what the checks and reviews
-establish and [Implementation Done](../../crw-plan/references/integrations.md#implementation-done)
+establish and [Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)
 for what a landing requires. The Devin and Codex reviews are references and not gates
 ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)): a skipped or
 missing review is recorded as such, never as a review that passed. Read each reviewer's one run as that
@@ -255,7 +255,7 @@ notices a parent sends upward. Those are held to a completion, a new real block 
 only Jun can make, so the channel being quiet is not a reason to answer this with less: the
 suppression is of unsolicited turns, not of answers. What each form carries and what the five
 delivery states mean are in
-[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
+[the message both relations are read by](../../crw-canon/references/hierarchy.md#the-message-both-relations-are-read-by).
 
 ## Cases
 

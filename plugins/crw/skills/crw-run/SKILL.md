@@ -8,7 +8,7 @@ description: "Coordinate one Linear project through independent issue children, 
 Use the selected Linear project as the planning source and keep this Codex task
 as its coordinator: this task is that project's parent, one parent per project and
 one child per issue. Follow the shared
-[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+[scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
 which fixes those three names and the ids they are recorded under and covers
 standalone issues and explicit current-task work. Where the initiative above this
 project has an execution supervisor, it verifies this parent's reported outcome and instructs this
@@ -30,7 +30,7 @@ Resolve current installed paths; never copy plugin versions from old records.
 `crw-loop` and `crw-pabcd` own those phases and the helper role policy (`crw role helper`)
 owns helper routing; the parent does not adopt a child's FSM.
 
-Read [Integrations](../crw-plan/references/integrations.md) for Linear document
+Read the shared [Linear model](../crw-canon/references/linear-model.md) for Linear document
 authority and tools. Use the available Linear tools
 and relevant workspace Agent Skills for full documents, criteria, and work records.
 Restate a bundled scope or model correction to resolve it, and refresh the state from the records when the user
@@ -96,11 +96,11 @@ still govern each action, including task creation and goal activation.
 A named-model correction steers the current dispatch; it does not authorize
 global model or helper role policy changes (`crw role helper`). Preserve explicit model and effort per
 task; take an unchosen model, effort, or workflow from
-[Default independent execution](../crw-plan/references/integrations.md#default-independent-execution).
+[Default independent execution](../crw-canon/references/delivery.md#default-independent-execution).
 Do not copy a model choice from a previous project into a new one.
 
 Resolve task-creation authority from the submitted operation above and the
-conversation below; never override host requirements. Apply the shared [delivery and integration default](../crw-plan/references/integrations.md#default-dev-integration)
+conversation below; never override host requirements. Apply the shared [delivery and integration default](../crw-canon/references/delivery.md#default-dev-integration)
 and inherit existing authorization for coordination records and recovery. Release
 publication, deployment, issue closure, and unrelated messages need scope covering
 those actions. When the user designates this as the fixed management task,
@@ -146,7 +146,7 @@ handoff is a manual push rather than automatic continuation, and an explicit sta
 report-only, read-only or pause limit on it still wins.
 
 A request from a peer parent is answered here, by this task, under
-[Direct coordination between parents](../crw-plan/references/integrations.md#direct-coordination-between-parents):
+[Direct coordination between project orchestrators](../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators):
 decide what this project's own issues and children do about it, never reach into the other
 project's children, and escalate to the supervisor only an unresolved disagreement, a scope
 change, new ownership, or a shared resource including the order into a shared target. Where the
@@ -363,7 +363,7 @@ round count is not a reason to send an approved correction upward. Do not invent
 increase concurrency; an issue the [size check](#check-the-size-before-dispatch) flags is reconciled through `crw-plan`'s boundary rules before dispatch, when the concept boundary separates it and a useful split fits the authorized scope.
 One issue runs as one packet and one delivery today (a task branch and its head for the
 integrator, or a pull request where one is named), and a batch keeps those
-separate pairs, under the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping)
+separate pairs, under the shared [issue-to-PR mapping](../crw-canon/references/linear-model.md#issue-to-pr-mapping)
 and the [work-unit rules](../../../../POLICY.md#work-units-review-and-integration). Several
 packets for one feature are allowed by policy but are not switched on until their
 support lands. If one issue needs several PRs, or a proposed PR would deliver
@@ -387,7 +387,7 @@ A DAG plan's Linear summary is the plan's own queue in the relay, drained by the
 that entry ([The Linear summary of a DAG plan](references/relay.md#the-linear-summary-of-a-dag-plan)).
 
 Before assigning a checkout, apply the shared
-[repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository)
+[repository resolution](../crw-canon/references/linear-model.md#resolve-the-implementation-repository)
 and put its verified issue target, remote, integration branch and full baseline
 in the packet. Reuse an existing task's worktree and issue branch on resume;
 classification changes alone never relocate it. Non-PR work can omit those code
@@ -399,7 +399,7 @@ Managed start and managed resume decide, before dispatch, whether a relay holds 
 assignment or whether this work is explicitly direct, and record which. Everything below
 that reads "where a relay holds the assignment" is that decision, not a guess to be made
 again per paragraph. The rule and what to record are in
-[Whether a relay holds this assignment](../crw-plan/references/integrations.md#whether-a-relay-holds-this-assignment);
+[Whether a relay holds this assignment](../crw-canon/references/delivery.md#whether-a-relay-holds-this-assignment);
 the command and its output are in
 [codex-session-relay](references/relay.md#determine-whether-this-store-holds-the-assignment).
 
@@ -586,7 +586,7 @@ are reported explicitly, with no silent substitution of a different workflow.
 
 ### Check the issue is ready before release
 
-Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `crw skill issue-ready check` on the issue as the Linear tools return it (id, title, description and labels; JSON on stdin or saved to a file), before the size check below. It judges the [release gate](../crw-plan/references/integrations.md#the-release-gate): registered criteria, edit regions, a decided answer with no design question left, the test cases to write first, and the done condition. Unlike the size check, its answer holds the release.
+Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `crw skill issue-ready check` on the issue as the Linear tools return it (id, title, description and labels; JSON on stdin or saved to a file), before the size check below. It judges the [release gate](../crw-canon/references/release-gate.md#the-release-gate): registered criteria, edit regions, a decided answer with no design question left, the test cases to write first, and the done condition. Unlike the size check, its answer holds the release.
 
 - `ready` (exit 0): the release goes on under the checks below.
 - `not_ready` or `design_first` (exit 1): do not release. Create no packet, no task, no `managed-start` and no `dag-release` for the issue, and do not send it to a child with a note to design it. Report the `reasons` to the issue's owner: each names the missing item and the heading that supplies it, and a `design_first` reason names the label or the open question that holds it. A `design_first` issue gets its design first (an architect-role proposal and the parent's decision), the result is written into the decided answer and the label removed, and then the check runs again. Skip the issue in the ready set and release the others; a held issue never holds the rest.
@@ -725,7 +725,7 @@ after a compaction or for a later batch, re-read the identities those values sta
 has not changed, and adjudicate again only the field whose conditions did. Start policy owns the
 fields, the scope each decision carries, the re-adjudication triggers and the cases this is judged
 by; the standing cap and its precedence are in
-[Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
+[Default parent start policy](../crw-canon/references/delivery.md#default-parent-start-policy).
 
 The first thing settled is the role, because it decides what this task opens: an initiative
 management task runs without a native goal or an automatic loop, a project parent opens no goal
@@ -941,7 +941,7 @@ violation, and check that evaluation evidence does not merely confirm its own as
 a nontrivial task packet needs a fresh-reader check, give it to a context-free reviewer through helper delegation (`crw role helper dispatch`) and rewrite that
 packet after changes so it reads as current. Do not run every check on every delivery.
 
-After verification, the coordinator applies [Default dev integration](../crw-plan/references/integrations.md#default-dev-integration),
+After verification, the coordinator applies [Default dev integration](../crw-canon/references/delivery.md#default-dev-integration),
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
 Devin and Codex reviews are references there and not gates: the merge waits for neither, and the child
@@ -984,7 +984,7 @@ vocabulary names is reported as a blocker against the state that does apply, und
 
 A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
 
-After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
+After integration, apply [Implementation Done](../crw-canon/references/linear-model.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery's landing: the commit on the intended branch (the integrator's fast-forward) with its repository and branch, or the pull request's actual merge where one was named. For legacy multi-PR
 scope, verify the reconciled deliveries and their combined coverage instead. Retain
 existing accepted operational criteria and never infer completion from an automatic status alone.
@@ -1031,7 +1031,7 @@ only from a measurement that actually compares them.
 
 ## Return corrections to the existing task
 
-Apply the completion-follow-up rule in [Integrations](../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
+Apply the completion-follow-up rule in [Integrations](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow).
 Send an actionable packet to the existing responsible task without asking Jun to
 approve or relay routine in-scope corrections. Include the issue and criterion,
 reviewed revision, expected and observed behavior, reproducer/evidence, required
@@ -1127,7 +1127,7 @@ when ongoing background monitoring is requested.
 
 The final update above says what the work is; this says how far it got and
 what the user can use. Write the chain from
-[Delivery reach and current usability](../crw-plan/references/integrations.md#delivery-reach-and-current-usability):
+[Delivery reach and current usability](../crw-canon/references/delivery.md#delivery-reach-and-current-usability):
 the stages this delivery has evidence for in chain order, any first stage that
 is missing or unobserved, and the two closing lines. A merged pull request
 completes the remote stage; whether anything was installed from it, and whether
@@ -1242,7 +1242,7 @@ not refresh is marked unrefreshed with its observation time rather than reported
 
 A record saying completed is a claim rather than a verdict, and it is corroborated against the
 evidence its own delivery shape requires under
-[Implementation Done](../crw-plan/references/integrations.md#implementation-done) and C9 in
+[Implementation Done](../crw-canon/references/linear-model.md#implementation-done) and C9 in
 [Initiative supervision](references/initiative-supervision.md): for implementation work that is
 the delivery landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
@@ -1250,7 +1250,7 @@ for accepted non-PR work it is the agreed observable result, which has no pull r
 That test runs per subject rather than once, so each scoped issue is corroborated on its own
 delivery and the project is finished only when every obligation in its agreed scope is delivered,
 integrated and reconciled. That is the parent's own completion boundary in
-[Supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+[Scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
 and no single pull request reaches it.
 
 Four states then look alike from outside, and the restatement separates them. A project whose
@@ -1273,7 +1273,7 @@ sent, then continues through the task that already owns the work, inside the app
 The settings to restate are not all established the same way. Model, effort, profile and
 permissions are compared against what the current host reports and what this task is authorized to
 use now, under
-[Default independent execution](../crw-plan/references/integrations.md#default-independent-execution)
+[Default independent execution](../crw-canon/references/delivery.md#default-independent-execution)
 and [Model and settings verification](references/bridge.md#model-and-settings-verification). The
 effective workflow is not among them, for the reason the
 [restoration block](references/task-packet.md#restoration-block) already gives, so a resume that

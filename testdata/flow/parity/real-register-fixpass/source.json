@@ -1,0 +1,8 @@
+{
+  "origin": "the Claude Code Workflow tool's own copy of the script a session ran, under <claude config dir>/projects/<project>/<session>/workflows/scripts/",
+  "file": "crw-register-fixpass-wf_6cc0ce38-459.js",
+  "session": "442c785d-2216-450c-abfc-7493af9adb2d",
+  "sha256": "80664d7e028dd38ce5311f7e510dea87959d70cf5c49aa138fd8586226c3fc98",
+  "bytes": 5174,
+  "modified": "2026-10-10T18:59:49Z"
+}

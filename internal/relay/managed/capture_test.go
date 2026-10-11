@@ -991,12 +991,12 @@ func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(root, "ledger"), "device": 1, "inode": 2}, standby: "completed", hostScenario: code}
-			start := &Start{Store: s, Adapter: worker, Socket: filepath.Join(root, "socket"), MarkerRoot: filepath.Join(root, "markers"), StateSelector: root, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+			start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: worker, Socket: filepath.Join(root, "socket"), MarkerRoot: filepath.Join(root, "markers"), StateSelector: root, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 			receipt, err := start.Run(ctx, raw)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if orderedValue(t, receipt).(map[string]any)["reason"] != "business_failed" || worker.sent != 0 || len(worker.hostCalls) != len(host.hostCalls) {
+			if orderedValue(t, receipt).(map[string]any)["reason"] != "business_failed" || worker.sent != 0 || len(worker.hostCalls) != len(host.hostCalls)+1 /* the thread/read that judges the child once its standby has ended */ {
 				t.Fatalf("host refusal not applied before business send: receipt=%v sent=%d calls=%v", receipt, worker.sent, worker.hostCalls)
 			}
 		})
@@ -1021,7 +1021,7 @@ func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 					t.Fatal(err)
 				}
 				host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(state, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
-				start := &Start{Store: s, Adapter: host, Socket: filepath.Join(state, "socket"), MarkerRoot: filepath.Join(state, "markers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+				start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Socket: filepath.Join(state, "socket"), MarkerRoot: filepath.Join(state, "markers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 				if _, err := start.Run(ctx, raw); err != nil {
 					t.Fatal(err)
 				}
@@ -1044,7 +1044,7 @@ func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 				host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(state, "ledger"), "device": 1, "inode": 2}, standby: "completed", beforeStartWorker: true}
 				ready := true
 				host.beforeSend = func(SendRequest) { ready = false }
-				start := &Start{Store: s, Adapter: host, Socket: filepath.Join(state, "socket"), MarkerRoot: filepath.Join(state, "markers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) {
+				start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Socket: filepath.Join(state, "socket"), MarkerRoot: filepath.Join(state, "markers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) {
 					if !ready {
 						return "recipient_paused", nil
 					}
@@ -1124,7 +1124,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 	}
 	clock := delivery.NewFakeClock()
 	ready := true
-	start := &Start{Store: s, Adapter: host, Now: clock.ISO, Socket: filepath.Join(root, "socket"), MarkerRoot: filepath.Join(root, "gomarkers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) {
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: clock.ISO, Socket: filepath.Join(root, "socket"), MarkerRoot: filepath.Join(root, "gomarkers"), StateSelector: state, Readiness: func(context.Context, map[string]any) (string, error) {
 		if !ready {
 			return "worker_policy_unconfigured", nil
 		}

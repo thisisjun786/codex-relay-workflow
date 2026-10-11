@@ -129,10 +129,10 @@ func TestTheOperatorCommandDuplicatesALargeStoreWithoutHoldingItInMemory(t *test
 	if _, err := db.Exec("CREATE TABLE filler (id INTEGER PRIMARY KEY, blob BLOB)"); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 64; i++ {
-		if _, err := db.Exec("INSERT INTO filler (blob) VALUES (randomblob(65536))"); err != nil {
-			t.Fatal(err)
-		}
+	// one transaction: 64 commits of 64 KiB were 64 syncs, which on a loaded host waited behind every other
+	// test's writes (CRW-1263); the store is the same size and a real database either way
+	if _, err := db.Exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 64) INSERT INTO filler (blob) SELECT randomblob(65536) FROM n"); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)

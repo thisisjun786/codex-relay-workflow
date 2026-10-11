@@ -160,11 +160,11 @@ func (c *Channel) holdUnaddressed(ctx context.Context, row store.SupervisorMessa
 
 // Attempt enforces the live hierarchy, lifecycle and settings gates before the
 // claim and again at transport start. The attempt row and frozen bytes commit first.
-func (c *Channel) preflightRate(ctx context.Context, service *delivery.Service, relationship, recipient string, now float64) (string, error) {
+func (c *Channel) preflightRate(ctx context.Context, service *delivery.Service, relationship, recipient, message string, now float64) (string, error) {
 	if c.skipPreflightRate {
 		return "", nil
 	}
-	return service.SendRefusal(ctx, relationship, recipient, now)
+	return service.SendRefusalFor(ctx, relationship, recipient, now, store.SendSubject{MessageID: message})
 }
 
 func (c *Channel) Attempt(ctx context.Context, id string, adapter SendAdapter, now float64) (map[string]any, error) {
@@ -329,7 +329,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		}
 		token = requestID + "." + hex.EncodeToString(tokenBytes)
 		message = c.render(p, requestID, token)
-		if refusal, err := service.SendRefusal(tx, current.RelationshipID, r.Recipient, now); err != nil {
+		if refusal, err := service.SendRefusalFor(tx, current.RelationshipID, r.Recipient, now, store.SendSubject{MessageID: id}); err != nil {
 			return err
 		} else if refusal != "" {
 			return Refusal{"paced", refusal}
@@ -538,7 +538,7 @@ func (a *attemptRun) resolve(ctx context.Context) error {
 // rateGate defers the message five seconds, without a hold, while the recipient's send rate is spent.
 func (a *attemptRun) rateGate(ctx context.Context) (stop bool, err error) {
 	c, row := a.c, a.row
-	refused, err := c.preflightRate(ctx, a.service, row.RelationshipID, a.r.Recipient, a.now)
+	refused, err := c.preflightRate(ctx, a.service, row.RelationshipID, a.r.Recipient, row.MessageID, a.now)
 	if err != nil {
 		return true, err
 	}
@@ -802,7 +802,7 @@ func (a *attemptRun) fenceBudget(tx context.Context, current store.SupervisorMes
 			transportNow = max(a.now, float64(stamp.UnixMicro())/1e6)
 		}
 	}
-	refused, err := a.service.ReserveSend(tx, current.RelationshipID, a.r.Recipient, transportNow)
+	refused, err := a.service.ReserveSendFor(tx, current.RelationshipID, a.r.Recipient, transportNow, store.SendSubject{MessageID: current.MessageID})
 	if err != nil {
 		return true, err
 	}

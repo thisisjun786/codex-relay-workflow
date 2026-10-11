@@ -275,8 +275,8 @@ Execution:
   delivery validation, and authorized integration. Do not adopt the parent's session binding.
   Where an initiative above it has a supervisor, that supervisor works through your parent:
   it does not instruct you, and you report to your parent. See
-  [Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
-- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. `crw-dev` `DEV-GIT-PUSH-01` defines when a push is allowed; this packet is evidence that the standing grant of [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration) applies to your task branch, not a new consent: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
+  [Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level).
+- Where the assignment covers publication and you can push, own the delivery end to end: implement, test, commit, push the task branch, then triage, fix, reply to and recheck any review. Report once the current head's local verification has passed and its blockers are resolved, not when the code is written. `crw-dev` `DEV-GIT-PUSH-01` defines when a push is allowed; this packet is evidence that the standing grant of [Default dev integration](../../crw-canon/references/delivery.md#default-dev-integration) applies to your task branch, not a new consent: push your task branch without stopping to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
 - Run your own independent review in the order your workflow chooses; the two may overlap, because preparation and review are parallel. The review meant here is the one your workflow runs on the candidate inside this task; whether and how often it runs is that workflow's decision, which this packet does not change. Where one runs, it ends on a head and the handoff names it, lists the commits made after it, and says which head the review answered ([what a handoff discloses](#what-a-handoff-discloses)).
@@ -420,7 +420,7 @@ Execution:
   carries no file) and put the question and the blocked file's path in your final message;
   where none does, return the status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
   with the question. Then end the turn. Your parent takes the question to Jun. See
-  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration).
+  [Default dev integration](../../crw-canon/references/delivery.md#default-dev-integration).
 - [When `crw-loop` is the effective workflow:]
   `$crw:crw-loop` — invoke the skill, or attach it through the
   creation tool's supported skill field, and run this bounded objective under it and
@@ -541,7 +541,7 @@ field in brackets where that reduced shape names it differently.
   non-Loop or no-goal alternative is effective, that workflow is named in its place.
   Where Loop is effective the packet also says how `LOOP-DOCS-FIRST-01` applies to the
   child's own issue, as
-  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)
+  [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution)
   states it.
 - Issue scope — `Issue/PR mapping:` and `Outcome and scope:` [`Scope:` with its
   `Input baseline:`], including the exclusions.
@@ -554,7 +554,7 @@ field in brackets where that reduced shape names it differently.
   under `Authorized execution:`. The packet says whether it carries the standing grant that
   `DEV-GIT-PUSH-01` (`crw-dev`) accepts (push the task branch,
   never merge), or that its scope excludes publication and the child pushes nothing.
-  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
+  [Default dev integration](../../crw-canon/references/delivery.md#default-dev-integration)
   names the grant and `crw-dev` owns the rule; this line checks that the packet carries the grant. [A Non-PR packet has no
   publication to approve.]
 - Escalation route — the `Execution:` bullet on a question only a person can answer:
@@ -1207,7 +1207,7 @@ It is not a delivery channel: it carries no receipt, no acknowledgement and no v
 never instructs another parent's child. The handoff is the one kind here that assigns anything, and
 even it assigns only a project to the parent that owns it; that parent binding the project and
 returning its result are separate facts the message does not establish. The path and the rules it follows are
-[Direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents).
+[Direct coordination between project orchestrators](../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators).
 
 Keep it short. Name what identifies this message, and reference what the existing relationship
 already holds instead of recopying it, exactly as the restoration block carries pointers rather
@@ -1215,7 +1215,7 @@ than contents.
 
 What identifies it, and what the recipient owes because it arrived, are the shared form rather
 than this file's invention:
-[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by),
+[the message both relations are read by](../../crw-canon/references/hierarchy.md#the-message-both-relations-are-read-by),
 implemented as `relay-envelope/1`. Take the words from there - request, notification, decision,
 status response - so a parent and a supervisor mean the same thing by them, and keep the five
 delivery states apart in the same way.
@@ -1306,7 +1306,7 @@ named as a claim the receiver corroborates against that record rather than as a 
 message issues. The **unresolved problems**, a failure, a missing observation or a conflict with
 another scope, go in `Asking` beside the result. The **decisions the receiver owns** go in `Next`,
 and a proposed Linear record change is one of them: it travels under
-[record writes and returned proposals](../../crw-plan/references/integrations.md#record-writes-and-returned-proposals)
+[record writes and returned proposals](../../crw-canon/references/linear-model.md#record-writes-and-returned-proposals)
 and the sender has not applied it.
 
 The detail behind those values stays where it already is. A child returns its issue-level delivery
@@ -1484,7 +1484,7 @@ says, so read the level first and the fields second:
   work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle; `crw-loop`'s own rule, which a task
   that lost its first assignment is left with, counts work-phases and not what a phase does.
 - The language the task writes in, restated: English for an issue child under
-  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
+  [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution),
   or the explicit override its assignment carried. Like the workflow it has no transport field,
   and a child that lost its first assignment answers a review in whatever language it drifts to.
 - The publication scope and the escalation route, restated. Like the workflow and the language
@@ -1494,7 +1494,7 @@ says, so read the level first and the fields second:
   `DEV-GIT-PUSH-01` (`crw-dev`) accepts (push its task branch and, where a pull request exists, update it, never merge, nothing
   wider) or that it is not, and that a question only a person can answer goes to the parent as
   `blocked_needs_input` with the question written out. These are pointers to
-  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration),
+  [Default dev integration](../../crw-canon/references/delivery.md#default-dev-integration),
   not a copy of it.
 - Assignment identity: the issue, this task's own id, and where a relay holds the
   assignment its relationship id and the generation to emit under, read from the
@@ -1544,7 +1544,7 @@ says, so read the level first and the fields second:
   can tell which lines are current and which were carried forward before it acts on them.
 - The observation each setting was read at, so the recipient compares the values against its own
   host instead of adopting them, and settles an unsupported one under
-  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution).
+  [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution).
 - Where the block travels to a parent rather than to an issue child, the recorded `run_mode` and
   `observation_path` — spelled as the literals
   [Start policy](start-policy.md#what-is-settled-and-what-is-recorded-with-it) declares, because a
@@ -1615,12 +1615,12 @@ Use the project's linked canonical Linear coordination document as part of the
 management assignment. For a standalone issue, use its existing linked document
 or an owned section in that issue and private issue/task recovery receipts. Where this task
 supervises an initiative, its record is the initiative's own, under the
-[initiative body standard](../../crw-plan/references/integrations.md#initiative-body-standard)
+[initiative body standard](../../crw-canon/references/linear-model.md#initiative-body-standard)
 with its comments and updates, kept against the stable initiative link: a multi-project initiative
 has no one project document, and supervision state left in a contributing project's record is
 both outside that project's scope and somewhere recovery will not look. A
 project binding is optional; the actual coordinator identity remains required
-when delegating or routing relay delivery. Follow [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
+when delegating or routing relay delivery. Follow [Integrations](../../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow).
 For explicit read-only scope or unavailable access, return an unsynced update;
 retain private recovery receipts so an interrupted task can still be reconciled. Record only what is
 needed to resume:

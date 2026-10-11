@@ -24,6 +24,9 @@ const (
 	coreFakeRecordEnv = "CRW_MANAGE_TEST_RECORD"
 	coreFakeDoctorEnv = "CRW_MANAGE_TEST_DOCTOR_STATE"
 	coreFakeExitEnv   = "CRW_MANAGE_TEST_EXIT"
+	// coreFakeEnvRecordEnv names a file the fake appends one line of JSON to per call: the
+	// storage-related environment the call was started with (CRW-958).
+	coreFakeEnvRecordEnv = "CRW_MANAGE_TEST_ENVRECORD"
 )
 
 // resumeWorkdir is the directory the child-resume scenarios record as the child's cwd and root.
@@ -101,6 +104,27 @@ func coreFakeMain() {
 		}
 		if err := f.Close(); err != nil {
 			coreFakeFail(err)
+		}
+	}
+	if path := os.Getenv(coreFakeEnvRecordEnv); path != "" {
+		seen := map[string]string{}
+		for _, name := range []string{"CRW_CONFIG", "GOCACHE", "GOMODCACHE", "GOTMPDIR"} {
+			if value, ok := os.LookupEnv(name); ok {
+				seen[name] = value
+			}
+		}
+		line, err := json.Marshal(seen)
+		if err != nil {
+			coreFakeFail(err)
+		}
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil {
+			coreFakeFail(err)
+		} else {
+			_, werr := f.Write(append(line, '\n'))
+			f.Close()
+			if werr != nil {
+				coreFakeFail(werr)
+			}
 		}
 	}
 	if len(argv) > 0 && argv[len(argv)-1] == "doctor" {

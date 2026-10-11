@@ -1,0 +1,128 @@
+{
+  "claudeSha256": "74d572356097f63dd5ae869bc0e4329e355c8a48fb2e3a3796990835cf1b9234",
+  "value": {
+    "check": null,
+    "projects": []
+  },
+  "calls": [
+    {
+      "path": "root",
+      "position": 2,
+      "label": "check",
+      "role": "reviewer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "scout:0",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "scout:1",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:2",
+      "position": 1,
+      "label": "scout:2",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:3",
+      "position": 1,
+      "label": "scout:3",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:4",
+      "position": 1,
+      "label": "scout:4",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:5",
+      "position": 1,
+      "label": "scout:5",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "high"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    }
+  ]
+}

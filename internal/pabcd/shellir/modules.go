@@ -32,7 +32,15 @@ func interpreterNoExec(lang string, args []Word) bool {
 const maxModuleFiles = 128
 const maxModuleBytes = 1 << 20
 
-func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs []Redir, st *state, ctx Context) (bool, error) {
+func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs []Redir, st *state, ctx Context) (handled bool, err error) {
+	// first is where the records of this run begin; a run that passed the checks of its directory is kept in w.moduleRuns, to judge
+	// the records that run beside it (writersBesideModules, CRW-1187).
+	first, tracked := -1, false
+	defer func() {
+		if tracked && err == nil {
+			w.moduleRuns = append(w.moduleRuns, moduleRun{first: first, end: len(w.out)})
+		}
+	}()
 	module, at := "", 0
 	for i, a := range args {
 		if !a.Known {
@@ -89,6 +97,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 		}
 		files = append(files, v)
 	}
+	first = len(w.out)
 	w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Args: args, Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx})
 	if module == "json.tool" && len(files) > 1 {
 		return true, unreadablef("json.tool output operand is not modelled")
@@ -99,9 +108,10 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if !st.dir.Known || st.dir.Path == "" {
 		return true, unreadablef("python module directory is unknown")
 	}
-	if err := w.moduleImportsClear(st); err != nil {
+	if err := w.moduleImportsClear(module, args[:at], assigns, st); err != nil {
 		return true, err
 	}
+	tracked = true
 	// Importing the runner itself can write under a configured cache prefix,
 	// even when discovery finds no local source or json.tool only reads data.
 	if moduleBytecodeEnabled(args[:at], assigns, st) {
@@ -215,6 +225,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if len(files) > maxModuleFiles {
 		return true, unreadablef("module file limit exceeded")
 	}
+	var rels, bodies []string
 	for _, file := range files {
 		if !filepath.IsAbs(file) {
 			file = strings.TrimSuffix(physical, "/") + "/" + file
@@ -227,6 +238,14 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			return true, unreadablef("module file read refused")
 		}
 		total += len(body)
+		if module == "unittest" || module == "pytest" {
+			// A source that moves the import path or loads a file by path runs code the inventory did not read (CRW-1187). py_compile
+			// only compiles its operands, so their text imports nothing.
+			if what := moduleSourceRefusal(body); what != "" {
+				return true, unreadablef("module source %s %s: the reader cannot read what it loads; remove that from the test sources or keep the code to be run in the project files (python -I does not change this)", shortRel(strings.TrimPrefix(file, physical+"/")), what)
+			}
+			rels, bodies = append(rels, shortRel(strings.TrimPrefix(file, physical+"/"))), append(bodies, body)
+		}
 		if module == "py_compile" || moduleBytecodeEnabled(args[:at], assigns, st) {
 			// -B suppresses import caches, but never explicit py_compile.
 			// Model the prefix itself conservatively: every cache is below it.
@@ -235,6 +254,9 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: cacheArgs, Dir: st.dir, Ctx: ctx})
 		}
 		w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Dir: st.dir, Ctx: ctx, Inline: &Inline{Language: "python", Source: Word{Known: true, Value: body}}})
+	}
+	if what := moduleSourcesReceiverRefusal(rels, bodies); what != "" {
+		return true, unreadablef("module source %s: the reader cannot read what it loads (python -I does not change this)", what)
 	}
 	return true, nil
 }
@@ -394,20 +416,76 @@ func readModuleFile(path string, limit int) (string, error) {
 	return string(b), nil
 }
 
+// moduleFixedNames are the module names a unittest or pytest run, and a code path written before a run, is judged against.
+var moduleFixedNames = func() map[string]bool {
+	m := map[string]bool{}
+	for _, n := range strings.Fields("json argparse re shutil inspect unittest pytest py_compile os sys pathlib importlib typing collections contextlib traceback linecache warnings functools types enum dataclasses io tokenize token ast copy gettext _pytest pluggy site sitecustomize usercustomize") {
+		m[n] = true
+	}
+	return m
+}()
+
+// moduleRun is the records one module run left in the walk: out[first:end], the run itself and the sources it carries.
+type moduleRun struct{ first, end int }
+
+// moduleSafePath is whether the run starts with no entry for the working directory in sys.path: -I, or -P with PYTHONPATH proven unset
+// or empty (-P alone keeps PYTHONPATH, which may name the directory; -EP ignores it; a text that spells the name, builds it from parts the walk
+// knows (printf -v "$N$M") or may build a variable name at run time proves nothing; neither does a reading that is given no environment). The python -m of json.tool and py_compile then imports
+// nothing from the directory.
+func (w *walker) moduleSafePath(args []Word, assigns []Assign, st *state) bool {
+	isolated, noPath, noEnv := false, false, false
+	for _, a := range args {
+		if !a.Known || !strings.HasPrefix(a.Value, "-") || strings.HasPrefix(a.Value, "--") || strings.HasPrefix(a.Value, "-m") {
+			continue
+		}
+		isolated = isolated || strings.Contains(a.Value[1:], "I")
+		noPath = noPath || strings.Contains(a.Value[1:], "P")
+		noEnv = noEnv || strings.Contains(a.Value[1:], "E")
+	}
+	if isolated {
+		return true
+	}
+	if noPath && noEnv {
+		// -E makes the interpreter ignore every PYTHON* variable, PYTHONPATH among them, and -P leaves the directory out of sys.path: the
+		// environment, and the names the text builds, cannot put it back (CRW-1187).
+		return true
+	}
+	if !noPath || w.pythonPathNamed || w.prefixUnknown || moduleAssigned("PYTHONPATH", assigns) {
+		return false
+	}
+	if st.lookup == nil {
+		// No environment is known, so PYTHONPATH may name the directory: -P alone proves nothing (the guard that is given none answers
+		// with -I, or runs the module in the directory it checked).
+		return false
+	}
+	if v, ok := st.lookup("PYTHONPATH"); ok && v != "" {
+		return false
+	}
+	return true
+}
+
 // The fixed modules still import from cwd. Refuse local shadows (including
 // compiled files), and command-time code writes whose imports cannot be proven.
-func (w *walker) moduleImportsClear(st *state) error {
-	names := map[string]bool{}
-	for _, n := range strings.Fields("json argparse re shutil inspect unittest pytest py_compile os sys pathlib importlib typing collections contextlib traceback linecache warnings functools types enum dataclasses io tokenize token ast copy gettext _pytest pluggy site sitecustomize usercustomize") {
-		names[n] = true
-	}
+// The list for unittest and pytest is the names their own imports use; their sources are read by the inventory walk. json.tool and
+// py_compile read no inventory, so every module name of the standard library the interpreter can import at start is a shadow there
+// (stdlibShadowName), unless the run leaves the working directory out of sys.path (moduleSafePath).
+func (w *walker) moduleImportsClear(module string, flags []Word, assigns []Assign, st *state) error {
+	names := moduleFixedNames
+	reads := module == "json.tool" || module == "py_compile"
+	broad := reads && !w.moduleSafePath(flags, assigns, st)
+	// A run of json.tool or py_compile that leaves the directory out of sys.path imports nothing from it, whatever the names in it are
+	// (the fixed names of the list included); the writer check below still applies (CRW-1187).
+	isolated := reads && !broad
 	entries, err := os.ReadDir(st.dir.Path)
 	if err != nil {
 		return unreadablef("module import directory cannot be read")
 	}
 	for _, e := range entries {
+		if isolated {
+			break
+		}
 		base := strings.SplitN(e.Name(), ".", 2)[0]
-		if !names[base] {
+		if !names[base] && !(broad && stdlibShadowName(base)) {
 			continue
 		}
 		if e.IsDir() {
@@ -417,31 +495,100 @@ func (w *walker) moduleImportsClear(st *state) error {
 			}
 			for _, c := range children {
 				if strings.HasPrefix(c.Name(), "__init__.") {
-					return unreadablef("local package shadows a fixed module import")
+					return unreadablef("local package shadows a fixed module import (%s)%s", shortRel(e.Name()), shadowRoute(module, broad))
 				}
 			}
 		} else if strings.HasSuffix(e.Name(), ".py") || strings.HasSuffix(e.Name(), ".pyc") || strings.Contains(e.Name(), ".so") || strings.HasSuffix(e.Name(), ".pyd") || e.Type()&os.ModeSymlink != 0 {
-			return unreadablef("local file shadows a fixed module import")
+			return unreadablef("local file shadows a fixed module import (%s)%s", shortRel(e.Name()), shadowRoute(module, broad))
 		}
-	}
-	codePath := func(v string) bool {
-		return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)] || strings.Contains(v, "__pycache__")
 	}
 	for _, e := range w.out {
-		if e.Kind == KindScriptFile || e.Inline != nil || e.Name == "tar" || e.Name == "unzip" {
-			return unreadablef("a carried program may rewrite module imports")
+		if err := moduleWriterRefusal(e); err != nil {
+			return err
 		}
-		for _, r := range e.Redirs {
-			if strings.Contains(r.Op, ">") && (!r.Target.Known || codePath(r.Target.Value)) {
+	}
+	return nil
+}
+
+// shadowRoute is the way past a shadow refusal of a run that reads no inventory: python -I leaves the directory out of sys.path.
+func shadowRoute(module string, broad bool) string {
+	if broad {
+		return "; run python -I -m " + module + " or move the file"
+	}
+	return ""
+}
+
+// codePath is whether a written name is where the interpreter looks for code.
+func moduleCodePath(v string) bool {
+	names := moduleFixedNames
+	return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)] || strings.Contains(v, "__pycache__")
+}
+
+// moduleWriterRefusal is the refusal of one record that may write module imports: a carried program, an archive extraction, a redirection
+// or a copy-like command whose destination is not known or is a code path.
+func moduleWriterRefusal(e Exec) error {
+	if e.Kind == KindScriptFile || e.Inline != nil || e.Name == "tar" || e.Name == "unzip" {
+		return unreadablef("a carried program may rewrite module imports")
+	}
+	for _, r := range e.Redirs {
+		if strings.Contains(r.Op, ">") && (!r.Target.Known || moduleCodePath(r.Target.Value)) {
+			return unreadablef("module import may be rewritten")
+		}
+	}
+	switch e.Name {
+	case "cp", "mv", "ln", "install", "tee", "dd", "curl", "wget", "touch":
+		for _, a := range e.Args {
+			if !a.Known || moduleCodePath(strings.TrimPrefix(a.Value, "of=")) {
 				return unreadablef("module import may be rewritten")
 			}
 		}
-		switch e.Name {
-		case "cp", "mv", "ln", "install", "tee", "dd", "curl", "wget", "touch":
-			for _, a := range e.Args {
-				if !a.Known || codePath(strings.TrimPrefix(a.Value, "of=")) {
-					return unreadablef("module import may be rewritten")
-				}
+	case "uniq", "split", "csplit", "patch", "rsync", "gzip", "bzip2", "xz", "zstd", "zip", "sed",
+		"shuf", "iconv", "xxd", "openssl", "gpg", "gpg2", "ar", "cpio", "bsdtar", "7z", "7za", "7zr", "jar", "ed", "ex", "truncate":
+		// programs that write a file an operand names (the output of uniq, a piece of split, a patched or compressed file): refused
+		// when an operand they are given is a code path, or cannot be evaluated (read OUT <<< late.py; ... | uniq payload.txt "$OUT"), as
+		// for cp, tee and sort (CRW-1187).
+		for _, a := range e.Args {
+			if !a.Known || moduleCodePath(a.Value) {
+				return unreadablef("module import may be rewritten")
+			}
+		}
+	case "sort":
+		// sort writes the file of -o/--output, in any of the spellings getopt_long accepts (the reading the write gate uses).
+		for _, d := range SortOutputDests(e.Args, moduleWordText, moduleUnknownWord) {
+			if d == moduleUnknownWord || moduleCodePath(d) {
+				return unreadablef("module import may be rewritten")
+			}
+		}
+	}
+	return nil
+}
+
+// moduleUnknownWord marks a word the reader cannot evaluate in a destination list; moduleWordText is a word's text or that mark.
+const moduleUnknownWord = "\x00unknown"
+
+func moduleWordText(w Word) string {
+	if !w.Known || strings.Contains(w.Value, "%") {
+		return moduleUnknownWord
+	}
+	return w.Value
+}
+
+// writersBesideModules refuses a record that runs at the same time as a module run and may write module imports: a background job or a
+// coprocess (before or after the run in the text), a process substitution, or another stage of the pipeline the run is in (CRW-1187).
+// The earlier records of the text are judged by moduleImportsClear; a record that runs after the module has ended is not judged.
+func (w *walker) writersBesideModules() error {
+	for _, m := range w.moduleRuns {
+		mctx := w.out[m.first].Ctx
+		for i, e := range w.out {
+			if i >= m.first && i < m.end {
+				continue
+			}
+			beside := e.Ctx.Background || e.Ctx.Coprocess || e.Ctx.ProcSubst || (mctx.pipeID != 0 && e.Ctx.pipeID == mctx.pipeID)
+			if !beside {
+				continue
+			}
+			if err := moduleWriterRefusal(e); err != nil {
+				return unreadablef("%s: a command runs beside the module run (background, coprocess, process substitution or the same pipeline); run it before or after the module in a separate command", err.(*Unreadable).Reason)
 			}
 		}
 	}

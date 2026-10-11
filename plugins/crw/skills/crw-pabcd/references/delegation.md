@@ -382,10 +382,21 @@ neither the managed spawn's receipt and marker rules nor the hook's decision.
    permits one native call. Prepend the returned `marker` and a newline to the
    original bounded task and required skills. Use a fresh context and the returned
    candidate's model/effort (null inherits the original session). Preserve the role.
+   Under multi-agent V2 (`spawn_agent` takes `task_name`), add `"v2TaskName":true` to
+   the claim and give the native call the returned `taskName`, the `dispatchId`, as its
+   `task_name`.
 3. Every report includes `sessionId`, `dispatchId`, and the current `attemptId`.
-   Report `outcome:created` and the actual `agentId`, then use native wait. Created
-   requires the spawn hook's issuance of the attempt, and the child's first message
-   must carry this attempt's marker. The marker does not tie the child to the call:
+   Report `outcome:created` and the actual `agentId` (under multi-agent V2, where
+   `spawn_agent` returns the agent path `root/<task>`, written with a leading slash, and no thread id, that path is the
+   `agentId`; the command resolves it to the child's thread id in the native database
+   and records the thread id), then use native wait. Created
+   requires the spawn hook's issuance of the attempt (a V2 task is host ciphertext whose
+   marker the hook cannot read, so the hook issues the attempt of a claim made with
+   `v2TaskName:true` to the V2 call whose `task_name` is its `dispatchId`, and none to any
+   other call: a direct call whose name only equals a dispatch id stays unmanaged; an
+   explorer-typed call may carry a reviewer or architect dispatch), and the child's first message
+   must carry this attempt's marker (a child forked from this session starts with the
+   parent's history, so it is tied by the call's result alone). The marker does not tie the child to the call:
    only the host's own result of the issued spawn call naming this `agentId` does, and
    a child the host cannot yet tie that way is recorded unverified and cannot complete
    an independent review until created is reported again. A child spawned while the hook was off is recorded only with

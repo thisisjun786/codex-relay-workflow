@@ -25,6 +25,7 @@ type File struct {
 	path   string
 	source Source
 	roots  map[string]Root
+	paths  map[string]string // the document's paths section, verbatim
 	doc    map[string]json.RawMessage
 	raw    []byte
 }
@@ -77,6 +78,14 @@ func (f *File) SandboxProjectRoots() ([]string, error) {
 // must carry this package's. The roots themselves come from Resolve, with the
 // document's paths section as its overrides.
 func Load(getenv func(string) string, flagPath string) (*File, error) {
+	return load(getenv, flagPath, true)
+}
+
+// load is Load. With strict false only the roots the configuration file names must be absolute: a
+// reading that wants one root (the relay state selection, the tool roots of a job) is not stopped by
+// a default another root derives from an environment it was never configured through, such as a
+// relative XDG_STATE_HOME, which other code reads and judges for itself.
+func load(getenv func(string) string, flagPath string, strict bool) (*File, error) {
 	path, source, err := locate(getenv, flagPath)
 	if err != nil {
 		return nil, err
@@ -117,11 +126,12 @@ func Load(getenv func(string) string, flagPath string) (*File, error) {
 			return nil, fmt.Errorf("%s: paths is not an object of paths", path)
 		}
 	}
-	roots, err := Resolve(getenv, overrides)
+	roots, err := resolve(getenv, overrides, strict)
 	if err != nil {
 		return nil, err
 	}
 	file.roots = roots
+	file.paths = overrides
 	// A malformed sandbox section is refused here, where the file is read, so crw config show names it
 	// instead of a sandbox start finding it later.
 	explicit, err := file.SandboxProjectRoots()
@@ -179,10 +189,10 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
-	case "paths", "show":
+	case "paths", "show", "check":
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw config: error: invalid command %q (choose from 'paths', 'show')\n", verb)
+		fmt.Fprintf(stderr, "crw config: error: invalid command %q (choose from 'paths', 'show', 'check')\n", verb)
 		return usageExit
 	}
 	flagPath, rest, err := parseConfigFlag(args[1:])
@@ -207,8 +217,18 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		fmt.Fprintf(stderr, "crw config: error: %v\n", err)
 		return usageExit
 	}
-	if verb == "paths" {
+	switch verb {
+	case "paths":
 		return writeJSON(stdout, stderr, pathsReport(file))
+	case "check":
+		report := Check(file, getenv, runProbe)
+		if code := writeJSON(stdout, stderr, report); code != 0 {
+			return code
+		}
+		if len(report.Faults()) > 0 {
+			return 1
+		}
+		return 0
 	}
 	return writeJSON(stdout, stderr, showReportOf(file))
 }
@@ -289,7 +309,8 @@ func writeJSON(stdout, stderr io.Writer, v any) int {
 
 // usage writes the usage line and one line per subcommand.
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw config [-h] {paths,show} ...")
+	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check} ...")
 	fmt.Fprintln(w, "  paths\tprint every named root, its path and where the path came from")
 	fmt.Fprintln(w, "  show\tprint the configuration file's path, where it came from and its document")
+	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use; exit 1 on a fault")
 }

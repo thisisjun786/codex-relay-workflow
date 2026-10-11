@@ -44,6 +44,12 @@ func (h *timedHost) ReadTurn(ctx context.Context, thread, turn string) (*deliver
 // stopwatch and what it noted.
 func slowObservation(t *testing.T, staged []bool, cost func(string) float64, fail func(string) bool) (*Daemon, *timedHost, func() ([]int, float64, []string)) {
 	t.Helper()
+	return slowObservationWoken(t, staged, cost, fail, nil)
+}
+
+// slowObservationWoken is slowObservation for a daemon that every tick is woken by the children woken (CRW-1210).
+func slowObservationWoken(t *testing.T, staged []bool, cost func(string) float64, fail func(string) bool, woken []string) (*Daemon, *timedHost, func() ([]int, float64, []string)) {
+	t.Helper()
 	ctx, s := throughputStore(t)
 	for i, claim := range staged {
 		seedIndexed(t, s, i)
@@ -59,7 +65,11 @@ func slowObservation(t *testing.T, staged []bool, cost func(string) float64, fai
 	d.mono = watch.now
 	return d, host, func() ([]int, float64, []string) {
 		before, started := len(base.reads), watch.seconds
-		report, err := d.Tick(ctx)
+		tickCtx := ctx
+		if len(woken) > 0 {
+			tickCtx = WithWoken(ctx, woken)
+		}
+		report, err := d.Tick(tickCtx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,4 +193,47 @@ func TestBothClassesSlowStillGetTheirFirstReadAndNothingMore(t *testing.T) {
 	}
 	withinTicks(t, "other work", reads, []int{0, 1, 2}, 3)
 	withinTicks(t, "staged claims", reads, []int{3, 4, 5}, 3)
+}
+
+// A slow woken read does not starve the turns nobody woke: when the time bound is spent, the reads the pass is
+// owed are those of the longest-waiting order an unwoken tick would make, so a child woken again and again whose
+// read takes the whole bound cannot keep the others out of every tick (CRW-1210, evaluation d1).
+func TestASlowWokenReadDoesNotStarveTheTurnsNobodyWoke(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		staged []bool
+		woken  int // the relationship woken before every tick; its read takes the whole bound and fails
+	}{
+		{"one class", noneStaged(4), 0},
+		{"woken plain turn, staged turns wait", []bool{false, false, true, true}, 0},
+		{"woken staged turn, plain turns wait", []bool{false, false, true, true}, 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			slow := name("child", c.woken)
+			cost := func(turn string) float64 {
+				if indexOf(turn) == c.woken {
+					return 10
+				}
+				return 0
+			}
+			_, _, tick := slowObservationWoken(t, c.staged, cost, func(turn string) bool { return indexOf(turn) == c.woken }, []string{slow})
+			seen := map[int]bool{}
+			for n := range len(c.staged) + 1 {
+				served, _, _ := tick()
+				if len(served) == 0 || served[0] != c.woken {
+					t.Fatalf("tick %d read %v: the first read is not of the woken child", n, served)
+				}
+				for _, i := range served {
+					seen[i] = true
+				}
+			}
+			for i := range c.staged {
+				if !seen[i] {
+					t.Errorf("relationship %d was not read in %d woken ticks (read %v): the slow woken read starves it", i, len(c.staged)+1, seen)
+				}
+			}
+		})
+	}
 }

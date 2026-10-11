@@ -21,11 +21,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 )
 
-// DefaultOutRoot is where a campaign writes when --out is not given.
-const DefaultOutRoot = "/scratch/crw/fuzz"
+// DefaultOutRoot is where a campaign writes when --out is not given: fuzz below the scratch root the
+// configuration resolves (scratch_root, by default below the XDG cache), so no host path is built in.
+func DefaultOutRoot(getenv func(string) string) (string, error) {
+	file, err := crwconfig.Load(getenv, "")
+	if err != nil {
+		return "", err
+	}
+	return crwconfig.JoinRoot(file.Roots()[crwconfig.RootScratch].Path, "fuzz"), nil
+}
+
+// DefaultOut is the output directory of one campaign of the target started at now when --out is not
+// given: below DefaultOutRoot, joined as spelled. A scratch_root that mixes a symbolic link and ".."
+// names the directory the filesystem gives that spelling, which a cleaning join would turn into another.
+func DefaultOut(getenv func(string) string, target string, now time.Time) (string, error) {
+	root, err := DefaultOutRoot(getenv)
+	if err != nil {
+		return "", err
+	}
+	return crwconfig.JoinRoot(root, target, now.UTC().Format("20060102T150405Z")), nil
+}
 
 // DefaultWorkers and DefaultTimeout are the issue's defaults.
 const (
@@ -129,7 +148,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	cases := set.Int("cases", 0, "stop after this many cases")
 	seed := set.Int64("seed", 0, "the generator seed (default: the clock, written to summary.json)")
 	workers := set.Int("workers", DefaultWorkers, "long-lived oracle workers")
-	out := set.String("out", "", "the output directory (default "+DefaultOutRoot+"/<target>/<UTC time>)")
+	out := set.String("out", "", "the output directory (default <scratch_root>/fuzz/<target>/<UTC time>; crw config paths prints scratch_root)")
 	adopt := set.String("adopt", "", "a divergence file to pin as a case")
 	tag := set.String("tag", "", "the adopted case's tag: identical, intentionally-changed or open")
 	record := set.String("record", "", "the adopted case's known-defects or follow-up pointer")
@@ -168,7 +187,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if *out != "" {
 		cfg.Out = *out
 	} else {
-		cfg.Out = filepath.Join(DefaultOutRoot, target.Name, time.Now().UTC().Format("20060102T150405Z"))
+		dir, err := DefaultOut(os.Getenv, target.Name, time.Now())
+		if err != nil {
+			fmt.Fprintf(stderr, "crw-dev fuzz: the output directory: %v\n", err)
+			return 1
+		}
+		cfg.Out = dir
 	}
 	if err := homeguard.Refuse(cfg.Out); err != nil {
 		fmt.Fprintf(stderr, "crw-dev fuzz: the output directory: %v\n", err)
@@ -482,7 +506,7 @@ func writeDivergence(out string, d Divergence, written map[string]bool) error {
 		return nil
 	}
 	written[name] = true
-	dir := filepath.Join(out, DivergenceDir)
+	dir := crwconfig.JoinRoot(out, DivergenceDir)
 	if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -490,7 +514,7 @@ func writeDivergence(out string, d Divergence, written map[string]bool) error {
 	if err != nil {
 		return err
 	}
-	return homeguard.WriteFile(filepath.Join(dir, name), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(crwconfig.JoinRoot(dir, name), append(raw, '\n'), 0o644)
 }
 
 // writeSummary writes <out>/summary.json.
@@ -499,7 +523,7 @@ func writeSummary(out string, summary Summary) error {
 	if err != nil {
 		return err
 	}
-	return homeguard.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644)
+	return homeguard.WriteFile(crwconfig.JoinRoot(out, "summary.json"), append(raw, '\n'), 0o644)
 }
 
 // repositoryRoot is the checkout holding the working directory: the first parent with a go.mod.

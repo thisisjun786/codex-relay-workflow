@@ -177,7 +177,7 @@ func newCharRun(t *testing.T) *charRun {
 	fake := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	tr := &tracer{managedFake: fake}
 	x := &charRun{t: t, ctx: ctx, dir: dir, store: s, raw: raw, req: req, fake: fake, tr: tr}
-	x.start = &Start{Store: s, Adapter: tr, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(ctx context.Context, _ map[string]any) (string, error) {
+	x.start = &Start{StandbyWait: testStandbyInstant, StandbyPoll: testStandbyPoll, Store: s, Adapter: tr, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(ctx context.Context, _ map[string]any) (string, error) {
 		if err := tr.note(ctx, "Readiness"); err != nil {
 			return "", err
 		}
@@ -257,9 +257,11 @@ var happyPathEvents = []string{
 	"Readiness@run",
 	"RequireLedger@run",
 	"CreateThread@run",
+	"ReadTurn@run",
+	"Readiness@run",
+	"HostCall(thread/read)@run",
 	"RequireLedger@run",
 	"GetOperation(dispatch)@run",
-	"ReadTurn@run",
 	"Lifecycle@run",
 	"Readiness@run",
 	"RequireLedger@run",
@@ -291,9 +293,9 @@ var retryIncompleteEvents = []string{
 	"Readiness@run",
 	"RequireLedger@run",
 	"CreateThread@run",
+	"ReadTurn@run",
 	"RequireLedger@run",
 	"GetOperation(dispatch)@run",
-	"ReadTurn@run",
 }
 var retryCompletedEvents = []string{
 	"LedgerIdentityRecord@run",
@@ -306,6 +308,8 @@ var retryCompletedEvents = []string{
 	"ReadTurn@run",
 	"Lifecycle@run",
 	"Readiness@run",
+	"Readiness@run",
+	"HostCall(thread/read)@run",
 	"RequireLedger@run",
 	"SendMessage(business)@run",
 	"RequireLedger@guard",
@@ -341,9 +345,11 @@ var recoveryEvents = []string{
 	"SendMessage(recovery)@run",
 	"RequireLedger@guard",
 	"Readiness@guard",
+	"ReadTurn@run",
+	"Readiness@run",
+	"HostCall(thread/read)@run",
 	"RequireLedger@run",
 	"GetOperation(dispatch)@run",
-	"ReadTurn@run",
 	"Lifecycle@run",
 	"Readiness@run",
 	"RequireLedger@run",

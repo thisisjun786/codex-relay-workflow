@@ -1,0 +1,397 @@
+{
+  "schema": "crw-flow-compile-input/1",
+  "initiative": "INIT-CHECKOUT",
+  "author_task_id": "crw-plan-checkout",
+  "projects": [
+    {
+      "key": "PAPI",
+      "plan_id": "plan-papi",
+      "target": {
+        "repository": "acme/shop",
+        "base_ref": "refs/heads/dev"
+      },
+      "issues": [
+        {
+          "key": "API-1",
+          "title": "Cart model",
+          "criteria": [
+            "a cart holds lines",
+            "a line holds a quantity"
+          ],
+          "milestone": "M1 cart",
+          "regions": [
+            "internal/cart/model.go",
+            "internal/cart/model_test.go"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "API-2",
+          "title": "Cart storage",
+          "criteria": [
+            "lines persist",
+            "a cart reloads"
+          ],
+          "milestone": "M1 cart",
+          "regions": [
+            "internal/cart/store/"
+          ],
+          "after": [
+            "API-1"
+          ],
+          "group": "g-cart",
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "API-3",
+          "title": "Cart HTTP surface",
+          "criteria": [
+            "POST adds a line",
+            "GET reads the cart"
+          ],
+          "milestone": "M1 cart",
+          "regions": [
+            "internal/cart/http/",
+            "internal/cart/store/index.go"
+          ],
+          "group": "g-cart",
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "API-4",
+          "title": "Cart events",
+          "criteria": [
+            "a change emits one event"
+          ],
+          "milestone": "M1 cart",
+          "regions": [
+            "internal/cart/http/events.go"
+          ],
+          "group": "g-cart",
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "API-5",
+          "title": "Price rules",
+          "criteria": [
+            "a rule prices a line",
+            "rules compose",
+            "a rule explains itself",
+            "rounding follows the decision",
+            "currency is explicit",
+            "an unknown rule is refused",
+            "rules reload",
+            "a rule set is versioned",
+            "a price is reproducible"
+          ],
+          "milestone": "M2 pricing",
+          "regions": [
+            "internal/price/",
+            "docs/price.md"
+          ],
+          "after": [
+            "API-6"
+          ],
+          "size_fit": "child",
+          "size_reason": "steps_gt5",
+          "issue_size": "over_line_accepted",
+          "bundle_reason": "one concept: the price rule engine",
+          "exception_record": "size-check exception: API-5 is over a baseline (criteria_total 9 exceeds the limit 8); approved by Jun on 2026-10-11: one concept, kept whole"
+        },
+        {
+          "key": "API-6",
+          "title": "Decision: tax rounding",
+          "criteria": [
+            "the rounding rule is decided"
+          ],
+          "milestone": "M2 pricing",
+          "regions": [
+            "docs/decisions/tax-rounding.md"
+          ],
+          "kind": "non_pr",
+          "size_fit": "executor",
+          "size_reason": "fits_executor"
+        }
+      ]
+    },
+    {
+      "key": "PWEB",
+      "plan_id": "plan-pweb",
+      "target": {
+        "repository": "acme/shop",
+        "base_ref": "refs/heads/dev"
+      },
+      "issues": [
+        {
+          "key": "WEB-1",
+          "title": "Cart page",
+          "criteria": [
+            "the page lists lines"
+          ],
+          "milestone": "M1 cart",
+          "regions": [
+            "web/cart/"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "WEB-2",
+          "title": "Cart totals",
+          "criteria": [
+            "totals follow the API"
+          ],
+          "milestone": "M1 cart",
+          "regions": [
+            "web/cart/totals.ts"
+          ],
+          "after": [
+            "WEB-1",
+            "API-3"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "WEB-3",
+          "title": "Checkout form",
+          "criteria": [
+            "the form validates",
+            "the form submits"
+          ],
+          "milestone": "M2 checkout",
+          "regions": [
+            "web/checkout/"
+          ],
+          "after": [
+            "WEB-2"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "WEB-4",
+          "title": "Checkout flow rewrite",
+          "criteria": [
+            "the flow has six states",
+            "each state has a screen",
+            "back works",
+            "resume works",
+            "errors are shown",
+            "analytics fire",
+            "a11y holds",
+            "e2e runs",
+            "docs are updated"
+          ],
+          "milestone": "M2 checkout",
+          "regions": [
+            "web/checkout/flow/",
+            "web/shared/"
+          ],
+          "after": [
+            "WEB-3"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "over_line"
+        },
+        {
+          "key": "WEB-5",
+          "title": "Order confirmation",
+          "criteria": [
+            "the page shows the order"
+          ],
+          "milestone": "M3 confirm",
+          "regions": [
+            "web/confirm/"
+          ],
+          "after": [
+            "WEB-3"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        }
+      ]
+    },
+    {
+      "key": "PDATA",
+      "plan_id": "plan-pdata",
+      "target": {
+        "repository": "acme/shop",
+        "base_ref": "refs/heads/dev"
+      },
+      "issues": [
+        {
+          "key": "DATA-1",
+          "title": "Order schema",
+          "criteria": [
+            "orders table exists"
+          ],
+          "milestone": "M1 orders",
+          "regions": [
+            "db/schema/orders.sql"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "DATA-2",
+          "title": "Order writer",
+          "criteria": [
+            "an order writes in one transaction"
+          ],
+          "milestone": "M1 orders",
+          "regions": [
+            "internal/order/writer.go"
+          ],
+          "after": [
+            "DATA-1"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "DATA-3",
+          "title": "Order reader",
+          "criteria": [
+            "an order reads by id"
+          ],
+          "milestone": "M1 orders",
+          "regions": [
+            "internal/order/reader.go"
+          ],
+          "after": [
+            "DATA-1"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "DATA-4",
+          "title": "Order export",
+          "criteria": [
+            "a day exports to csv"
+          ],
+          "milestone": "M2 export",
+          "regions": [
+            "internal/order/export/"
+          ],
+          "after": [
+            "DATA-2",
+            "DATA-3"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "DATA-5",
+          "title": "Backfill",
+          "criteria": [
+            "old carts become orders"
+          ],
+          "milestone": "M2 export",
+          "regions": [
+            "tools/backfill/"
+          ],
+          "after": [
+            "DATA-2"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        }
+      ]
+    },
+    {
+      "key": "POPS",
+      "plan_id": "plan-pops",
+      "target": {
+        "repository": "acme/shop",
+        "base_ref": "refs/heads/dev"
+      },
+      "issues": [
+        {
+          "key": "OPS-1",
+          "title": "Deploy pipeline",
+          "criteria": [
+            "a merge deploys to staging"
+          ],
+          "milestone": "M1 deploy",
+          "regions": [
+            ".ci/deploy.yml"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "OPS-2",
+          "title": "Alerts",
+          "criteria": [
+            "errors page the owner"
+          ],
+          "milestone": "M1 deploy",
+          "regions": [
+            ".ci/alerts.yml"
+          ],
+          "after": [
+            "OPS-1"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "OPS-3",
+          "title": "Runbook",
+          "criteria": [
+            "the runbook lists each alert"
+          ],
+          "milestone": "M2 runbook",
+          "regions": [
+            "docs/runbook.md"
+          ],
+          "after": [
+            "OPS-2"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        },
+        {
+          "key": "OPS-4",
+          "title": "Load test",
+          "criteria": [
+            "a load test runs nightly"
+          ],
+          "milestone": "M2 runbook",
+          "regions": [
+            "tools/load/"
+          ],
+          "after": [
+            "OPS-1"
+          ],
+          "size_fit": "executor",
+          "size_reason": "fits_executor",
+          "issue_size": "ok"
+        }
+      ]
+    }
+  ]
+}

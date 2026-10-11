@@ -7,11 +7,11 @@ description: "Explore an idea and define a goal-based Linear initiative: purpose
 
 Make the intended change clear enough to decide whether and what to plan.
 An initiative is a goal with an observable finish, not a permanent product bucket.
-Read the shared [Integrations](../crw-plan/references/integrations.md) for source
+Read the shared [Linear model](../crw-canon/references/linear-model.md) for source
 of truth, write authority, classification, and tool access.
-Defining an initiative creates no supervisor and moves no project's ownership; the execution
-roles are in [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
-and a supervisor begins only from the explicit designation in
+Defining an initiative creates no initiative lead and moves no project's ownership; the
+levels are in [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
+and an initiative lead begins only from the explicit designation in
 [Initiative supervision](../crw-run/references/initiative-supervision.md).
 
 ## Recover the intent
@@ -33,7 +33,7 @@ Continue independent work while a question is pending where the host permits it.
 ## Define the goal
 
 Write the definition in the initiative page body using the shared
-[initiative body standard](../crw-plan/references/integrations.md#initiative-body-standard).
+[initiative body standard](../crw-canon/references/linear-model.md#initiative-body-standard).
 Keep a compact definition with:
 
 - The original idea, problem or opportunity, and why it matters.
@@ -50,13 +50,22 @@ filling later design stages with plausible detail. Reuse an existing initiative
 when the goal matches; related products or repositories alone do not establish it.
 A narrow project or standalone issue does not require a new initiative.
 
+## Size rules
+
+An initiative is one outcome. Its definition lists its projects, the artifacts one project
+hands to another, which projects run in parallel and in what order, and an observable finish
+condition for each project: which integrated result, and which check shows it. Recommended:
+at most 8 projects in flight at the same time; beyond that, split the initiative or stagger
+its projects. The levels these sizes belong to are in
+[hierarchy.md](../crw-canon/references/hierarchy.md#sizes-at-each-level).
+
 ## Carry design forward
 
 Use Strategy → Scope → Structure → Skeleton → Surface as design lenses, not as
 Linear levels or mandatory headings. Keep the initiative definition in its body;
 linked documents carry requested or necessary supporting detail, not a duplicate.
 Where the definition names a repository contract, a procedure or a research
-result, link it under [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical)
+result, link it under [where each document type is canonical](../crw-canon/references/linear-model.md#where-each-document-type-is-canonical)
 instead of copying it into the body.
 The initiative definition usually supplies Strategy and high-level Scope. Let
 project planning develop project-specific Structure, Skeleton and Surface when

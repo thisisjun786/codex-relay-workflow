@@ -394,7 +394,7 @@ func dispatchReceiptParent(t *testing.T, env host.LookupEnv, spawns ...dispatchR
 	check(t, os.WriteFile(rollout, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 	db := must(sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.Join(native, "state_5.sqlite")}).String()))
 	defer db.Close()
-	_, err := db.Exec("INSERT INTO threads VALUES (?,?,?,0,?,?,?)", "session-test", rollout, "cli", "", "", "")
+	_, err := db.Exec("INSERT INTO threads (id, rollout_path, source, archived, first_user_message, model, reasoning_effort) VALUES (?,?,?,0,?,?,?)", "session-test", rollout, "cli", "", "", "")
 	check(t, err)
 }
 
