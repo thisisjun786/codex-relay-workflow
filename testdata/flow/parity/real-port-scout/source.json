@@ -1,0 +1,8 @@
+{
+  "origin": "the Claude Code Workflow tool's own copy of the script a session ran, under <claude config dir>/projects/<project>/<session>/workflows/scripts/",
+  "file": "cxc-port-scout-wf_50cb983e-f2b.js",
+  "session": "442c785d-2216-450c-abfc-7493af9adb2d",
+  "sha256": "3dfe7c8de693e3feeb978d5885b7e303fd323d7f7325e694c5384ed07c06d2e8",
+  "bytes": 3913,
+  "modified": "2026-10-08T22:19:06Z"
+}

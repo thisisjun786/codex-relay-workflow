@@ -315,3 +315,58 @@ func TestFallbackNoticeHookCompactInALaterTurnSaysTheNotice(t *testing.T) {
 		t.Errorf("compact in a later turn answered %q, want the notice", got)
 	}
 }
+
+// CRW-1257 (real-environment trial r1, S5-s6): the SessionStart notice makes the dispatch protocol the default procedure, and says in one
+// sentence, after the CXC text, that an explicit user request for a direct native spawn is not refused: the spawn hook allows it and marks
+// it unmanaged. The sentence is CRW-owned; DispatchGuidance stays the oracle's text.
+func TestFallbackNoticeSaysAnExplicitNativeSpawnIsNotRefused(t *testing.T) {
+	const sentence = "CRW: dispatch is the default procedure for these roles, not a prohibition. When the user's current request explicitly asks for a direct native spawn (for example native, without dispatch), spawn it as asked for any role (explorer, executor, reviewer or architect): the spawn hook allows it and marks it unmanaged, and an unmanaged spawn creates no managed receipt."
+	additionalContext := func(t *testing.T, notice string) string {
+		t.Helper()
+		var out struct {
+			Hook struct {
+				Context string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal([]byte(notice), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Hook.Context
+	}
+	for name, roles := range map[string]string{
+		"one role":  `{"executor":{"fallback":{"model":"provider/fallback","effort":"low"}}}`,
+		"all roles": `{"explorer":{"fallback":{"model":"p/f"}},"reviewer":{"fallback":{"model":"p/f"}},"executor":{"fallback":{"model":"p/f"}},"architect":{"fallback":{"model":"p/f"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, env := fallbackTestEnv(t)
+			if err := os.WriteFile(filepath.Join(m["CRW_HOME"], StoreFile), []byte(`{"roles":`+roles+`}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			notice, err := SessionFallbackNotice(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			context := additionalContext(t, notice)
+			if !strings.Contains(context, ". "+DispatchGuidance+" "+sentence) {
+				t.Fatalf("the notice does not carry the CXC guidance followed by the CRW sentence: %q", context)
+			}
+			for _, want := range []string{"explicit", "unmanaged", "not a prohibition"} {
+				if !strings.Contains(context, want) {
+					t.Errorf("the notice lacks %q", want)
+				}
+			}
+			if n := dispatchUTF16Len(context); n > 4096 {
+				t.Errorf("the notice is %d UTF-16 units, over 4096", n)
+			}
+		})
+	}
+	// Without a fallback configured there is no protocol to qualify, so the sentence is not said.
+	_, env := fallbackTestEnv(t)
+	notice, err := SessionFallbackNotice(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(additionalContext(t, notice), "not a prohibition") {
+		t.Error("the sentence was said with no fallback configured")
+	}
+}

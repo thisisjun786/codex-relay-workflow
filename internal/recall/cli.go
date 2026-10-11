@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // Run receives a per-invocation clock; the dispatcher supplies wall time.
@@ -61,9 +61,15 @@ func recallCLIString(values map[string]any, key string) *string {
 	}
 	return &s
 }
+
+// recallCLIQuery joins the query words as Node's process.argv gave them: decoded as UTF-8, a byte outside it one U+FFFD, which is what the
+// rollout and Markdown readers make of the same byte in the text searched. jsnode.Lower keeps an undecoded byte, so the decoding is done here.
+func recallCLIQuery(words []string) string {
+	return jsnode.DecodeUTF8([]byte(strings.Join(words, " ")))
+}
 func recallCLIBool(values map[string]any, key string) bool { return values[key] == true }
 func recallCLIJSON(stdout, stderr io.Writer, value any) int {
-	b, err := role.Stringify(value, "  ")
+	b, err := jsnode.Stringify(value, "  ")
 	if err != nil {
 		return recallCLIFail(stderr, err)
 	}
@@ -97,7 +103,7 @@ func recallCLIChatSearch(args []string, stdout, stderr io.Writer, now time.Time)
 			return recallCLIFail(stderr, err)
 		}
 	}
-	query := text.Trim(strings.Join(parsed.Positionals, " "))
+	query := text.Trim(recallCLIQuery(parsed.Positionals))
 	if query == "" {
 		fmt.Fprintln(stdout, Usage())
 		return 1
@@ -135,7 +141,7 @@ func recallCLIMemorySearch(args []string, stdout, stderr io.Writer, now time.Tim
 	if err != nil {
 		return recallCLIFail(stderr, err)
 	}
-	query := text.Trim(strings.Join(parsed.Positionals, " "))
+	query := text.Trim(recallCLIQuery(parsed.Positionals))
 	if query == "" {
 		fmt.Fprintln(stdout, Usage())
 		return 1
@@ -204,7 +210,7 @@ func recallCLIStatusReportMode(db *RwDb, path, home string, budget *FreshnessBud
 	return report, err
 }
 func recallCLIStaleCountLabel(n float64, truncated bool) string {
-	s := memoryNumberText(n)
+	s := jsnode.NumberString(n)
 	if truncated {
 		s += "+"
 	}
@@ -221,7 +227,7 @@ func recallCLIFormatStatusText(r recallCLIIndexReport) string {
 	if r.Freshness != "" {
 		stale += " (" + r.Freshness + ")"
 	}
-	return fmt.Sprintf("index: %s\nfiles: %s, messages: %s, source files: %s, stale: %s, last ingest: %s\n", r.Path, memoryNumberText(r.Files), memoryNumberText(r.Msgs), memoryNumberText(r.SourceFiles), stale, recallCLILastIngest(r))
+	return fmt.Sprintf("index: %s\nfiles: %s, messages: %s, source files: %s, stale: %s, last ingest: %s\n", r.Path, jsnode.NumberString(r.Files), jsnode.NumberString(r.Msgs), jsnode.NumberString(r.SourceFiles), stale, recallCLILastIngest(r))
 }
 func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 	parsed, home, err := recallCLIFlags(args)
@@ -280,10 +286,10 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 			return fail(err)
 		}
 		if r.UnreadDirs > 0 {
-			fmt.Fprintf(stderr, "recall: %s rollout directories could not be listed — what lies under them was neither indexed nor pruned\n", memoryNumberText(r.UnreadDirs))
+			fmt.Fprintf(stderr, "recall: %s rollout directories could not be listed — what lies under them was neither indexed nor pruned\n", jsnode.NumberString(r.UnreadDirs))
 		}
 		if !recallCLIBool(v, "json") {
-			fmt.Fprintf(stdout, "ingested %s/%s files, %s appended (%s messages, %s pruned, %sms)\n", memoryNumberText(r.Ingested), memoryNumberText(r.Scanned), memoryNumberText(r.Appended), memoryNumberText(r.Msgs), memoryNumberText(r.Pruned), memoryNumberText(r.ElapsedMs))
+			fmt.Fprintf(stdout, "ingested %s/%s files, %s appended (%s messages, %s pruned, %sms)\n", jsnode.NumberString(r.Ingested), jsnode.NumberString(r.Scanned), jsnode.NumberString(r.Appended), jsnode.NumberString(r.Msgs), jsnode.NumberString(r.Pruned), jsnode.NumberString(r.ElapsedMs))
 		}
 	}
 	report, err := recallCLIStatusReportMode(db, path, h, nil, verify)
@@ -473,7 +479,7 @@ func IndexStatusLine(home, path string) string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("%s files / %s messages, %s source, %s stale, last ingest %s", memoryNumberText(r.Files), memoryNumberText(r.Msgs), memoryNumberText(r.SourceFiles), recallCLIStaleCountLabel(r.StaleFiles, r.Truncated), recallCLILastIngest(r))
+	return fmt.Sprintf("%s files / %s messages, %s source, %s stale, last ingest %s", jsnode.NumberString(r.Files), jsnode.NumberString(r.Msgs), jsnode.NumberString(r.SourceFiles), recallCLIStaleCountLabel(r.StaleFiles, r.Truncated), recallCLILastIngest(r))
 }
 
 // The owner struct's state-first order differs from the oracle's object spread.

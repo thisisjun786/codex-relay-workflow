@@ -40,7 +40,7 @@ const b = await agent.call('two', { resume: a })
 const c = await agent.call('three', { resume: b })
 return [a, b, c].map((r) => ({ status: r.status, reason: r.reason, pair: r.meta.configuredPair }))`)
 	for i, g := range got {
-		if g["status"] != "completed" || fmt.Sprint(g["pair"]) != "map[effort:xhigh model:fake-sonnet]" {
+		if g["status"] != "completed" || fmt.Sprint(g["pair"]) != "map[effort:xhigh model:claude-fake-sonnet]" {
 			t.Errorf("call %d: %v", i, g)
 		}
 	}

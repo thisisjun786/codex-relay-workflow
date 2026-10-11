@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
@@ -120,7 +120,7 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (out ConfigSetO
 	if err != nil {
 		return ConfigSetOutcome{}, err
 	}
-	content := source.DecodeUTF8(pre)
+	content := jsnode.DecodeUTF8(pre)
 	keyID := ManagedKeyID(*entry)
 	recorded, hadRecord := m.TableKeys[keyID]
 	// The key is read and edited through the semantic editor (CRW-1141): a config.toml that does not decode is refused, and
@@ -300,7 +300,7 @@ func ReadManagedState(configPath string) ([]ManagedState, error) {
 	if err != nil {
 		return nil, err
 	}
-	content := source.DecodeUTF8(b)
+	content := jsnode.DecodeUTF8(b)
 	if err := validateConfig(configPath, content); err != nil {
 		return nil, err
 	}

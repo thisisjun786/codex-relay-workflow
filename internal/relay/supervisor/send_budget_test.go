@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // CRW-259: a supervisor report spends the hour of the relationship it reports, toward the recipient
@@ -29,7 +30,9 @@ func Test259_a_supervisor_send_is_charged_to_its_relationship_and_recipient(t *t
 		t.Fatalf("another relationship's hour count is %d, %v; want 0", got, err)
 	}
 	service := delivery.NewService(f.s, delivery.SystemClock{})
+	// The reporting relationship's parent holds the project, so it is of class orchestrator (CRW-1210).
 	service.Policy.MaxSendsPerRelationshipPerHour = 1
+	service.Policy.MaxSendsPerOrchestratorRelationshipPerHour = 1
 	later := float64(now + 60)
 	if refusal, err := service.SendRefusal(f.ctx, row.RelationshipID, row.RecipientTaskID, later); err != nil || refusal != delivery.HourlyCap {
 		t.Errorf("the reporting relationship, one send into a cap of one: %q, %v; want %s", refusal, err, delivery.HourlyCap)
@@ -39,5 +42,32 @@ func Test259_a_supervisor_send_is_charged_to_its_relationship_and_recipient(t *t
 	}
 	if refusal, err := service.SendRefusal(f.ctx, "another-relationship", row.RecipientTaskID, now+1); err != nil || refusal != delivery.MinSendInterval {
 		t.Errorf("another relationship inside the recipient's gap: %q, %v; want %s", refusal, err, delivery.MinSendInterval)
+	}
+}
+
+// A retry of a supervisor message the hour already counts adds no distinct message, so the hour cap does
+// not refuse it; a new message at the same cap is refused (CRW-1210).
+func TestRetryOfCountedMessageAtCap(t *testing.T) {
+	t.Parallel()
+	f, _, id, sent := delivered24(t)
+	if sent == nil {
+		t.Fatal("the report was not sent")
+	}
+	row, err := f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := delivery.NewService(f.s, delivery.SystemClock{})
+	service.Policy.MaxSendsPerRelationshipPerHour = 1
+	service.Policy.MaxSendsPerOrchestratorRelationshipPerHour = 1
+	later := float64(1_700_000_000 + 60)
+	if refusal, err := service.SendRefusalFor(f.ctx, row.RelationshipID, row.RecipientTaskID, later, store.SendSubject{MessageID: id}); err != nil || refusal != "" {
+		t.Errorf("the retry of the counted message at the cap: %q, %v; want none", refusal, err)
+	}
+	if refusal, err := service.SendRefusalFor(f.ctx, row.RelationshipID, row.RecipientTaskID, later, store.SendSubject{MessageID: "another-message"}); err != nil || refusal != delivery.HourlyCap {
+		t.Errorf("a new message at the cap: %q, %v; want %s", refusal, err, delivery.HourlyCap)
+	}
+	if refusal, err := service.SendRefusalFor(f.ctx, row.RelationshipID, row.RecipientTaskID, 1_700_000_001, store.SendSubject{MessageID: id}); err != nil || refusal != delivery.MinSendInterval {
+		t.Errorf("the retry inside the recipient's gap: %q, %v; want %s", refusal, err, delivery.MinSendInterval)
 	}
 }

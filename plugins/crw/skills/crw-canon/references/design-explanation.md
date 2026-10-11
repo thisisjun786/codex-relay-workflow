@@ -139,7 +139,7 @@ in the same pass: update the canonical document and every plan item the explanat
 changed, read each one back after the write, and report what the read-back returned. Do not ask
 again for an approval already given, and do not leave a verbal agreement as the only record. The
 authority, the read-back duty and the ownership rules for those writes stay in
-[Integrations](integrations.md).
+[record writes and returned proposals](linear-model.md#record-writes-and-returned-proposals).
 
 ## Worked example: a completion hook and a session relay
 

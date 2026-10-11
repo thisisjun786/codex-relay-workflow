@@ -19,7 +19,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -111,7 +111,7 @@ func CanonicalCwdSQL(expr string) string {
 func CwdMatches(sessionCwd, prefix string, caseInsensitive ...bool) bool {
 	s, p := NormalizeCwd(sessionCwd), NormalizeCwd(prefix)
 	if len(caseInsensitive) != 0 && caseInsensitive[0] {
-		s, p = Lower(s), Lower(p)
+		s, p = jsnode.Lower(s), jsnode.Lower(p)
 	}
 	return s == p || strings.HasPrefix(s, p+"/")
 }
@@ -214,7 +214,7 @@ func listRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 			return
 		}
 		for _, entry := range names {
-			name := source.DecodeUTF8([]byte(entry.Name()))
+			name := jsnode.DecodeUTF8([]byte(entry.Name()))
 			if strings.HasSuffix(name, ".jsonl") && usableFile(filepath.Join(dir, entry.Name())) {
 				out = append(out, RolloutFile{filepath.Join(dir, name), date})
 			}
@@ -238,7 +238,7 @@ func listRolloutFiles(home string, days float64, now ...time.Time) ([]RolloutFil
 			note(archive, err)
 		} else {
 			for _, entry := range names {
-				name := source.DecodeUTF8([]byte(entry.Name()))
+				name := jsnode.DecodeUTF8([]byte(entry.Name()))
 				date := DateFromRolloutName(name)
 				if strings.HasSuffix(name, ".jsonl") && date != nil && inWindow(*date) && usableFile(filepath.Join(archive, entry.Name())) {
 					out = append(out, RolloutFile{filepath.Join(archive, name), *date})
@@ -266,7 +266,7 @@ func safeDirs(dir string, note func(string, error)) []string {
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			out = append(out, source.DecodeUTF8([]byte(entry.Name())))
+			out = append(out, jsnode.DecodeUTF8([]byte(entry.Name())))
 		}
 	}
 	return out
@@ -291,7 +291,7 @@ func readFirstLineBounded(path string) (line string, truncated bool, err error) 
 		if err != nil && err != io.EOF {
 			return "", false, err
 		}
-		head := source.DecodeUTF8(buf[:n])
+		head := jsnode.DecodeUTF8(buf[:n])
 		if nl := strings.IndexByte(head, '\n'); nl >= 0 {
 			return head[:nl], false, nil
 		}
@@ -452,18 +452,8 @@ func rolloutString(v any) (string, error) {
 	case bool:
 		return strconv.FormatBool(v), nil
 	case json.Number:
-		f, _ := strconv.ParseFloat(string(v), 64)
-		if math.IsInf(f, 1) {
-			return "Infinity", nil
-		}
-		if math.IsInf(f, -1) {
-			return "-Infinity", nil
-		}
-		if f == 0 {
-			return "0", nil
-		}
-		b, err := json.Marshal(f)
-		return string(b), err
+		f, _ := strconv.ParseFloat(string(v), 64) // out of range is an infinity, as it is in JavaScript
+		return jsnode.NumberString(f), nil
 	case []any:
 		parts := make([]string, len(v))
 		for i, item := range v {

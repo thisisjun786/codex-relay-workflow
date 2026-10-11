@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // JS whitespace and dot, as used by comment-lint.ts's non-Unicode regexes.
@@ -160,7 +160,7 @@ func editAnswer(decision, reason, context string) string {
 		PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 		AdditionalContext        string `json:"additionalContext,omitempty"`
 	}
-	b, err := role.Stringify(struct {
+	b, err := jsnode.Stringify(struct {
 		Output output `json:"hookSpecificOutput"`
 	}{output{"PreToolUse", decision, reason, context}}, "")
 	if err != nil {

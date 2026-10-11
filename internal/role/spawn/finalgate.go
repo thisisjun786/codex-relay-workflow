@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
@@ -310,7 +311,7 @@ func spawnFinalGateObject(root *os.Root, rel string) map[string]any {
 	if err != nil {
 		return nil
 	}
-	value, err := pyjson.Loads(source.DecodeUTF8(data), pyjson.LoadOptions{Map: true, Surrogates: true, Numbers: pyjson.SpelledNumbers})
+	value, err := pyjson.Loads(jsnode.DecodeUTF8(data), pyjson.LoadOptions{Map: true, Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
 		return nil
 	}

@@ -12,9 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // Limits of one command. Every remote read runs under the deadline of its source and of the whole command, and
@@ -106,7 +105,7 @@ func fetchHTTP(ctx context.Context, url string, limit int) (string, error) {
 		return "", exceedsError(limit)
 	}
 	// Response.text strips a UTF-8 BOM and replaces invalid UTF-8.
-	return strings.TrimPrefix(source.DecodeUTF8(body), "\uFEFF"), nil
+	return strings.TrimPrefix(jsnode.DecodeUTF8(body), "\uFEFF"), nil
 }
 
 // Run is the CLI boundary without a caller context.
@@ -299,7 +298,7 @@ func runCLI(ctx context.Context, argv []string, fetch fetchFunc, stdout, stderr 
 					Body     string `json:"body"`
 					Preamble string `json:"preamble"`
 				}{row, body, AdapterPreamble}
-				b, err := role.Stringify(value, "")
+				b, err := jsnode.Stringify(value, "")
 				if err != nil {
 					return 1, err
 				}

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 )
 
@@ -37,7 +38,7 @@ func RenderLoopPlanLines(plan *goalplan.Goalplan, lock *goalplan.GoalplanLockSta
 		if lock.Exists {
 			age := "null"
 			if lock.AgeMs != nil {
-				age = metricCliNumberText(*lock.AgeMs)
+				age = jsnode.NumberString(*lock.AgeMs)
 			}
 			lines = append(lines, fmt.Sprintf("writeLock: present path=%s ageMs=%s", lock.Path, age))
 		} else {

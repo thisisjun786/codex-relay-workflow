@@ -16,12 +16,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skillport"
 )
 
 var (
 	markdownLink = regexp.MustCompile(`\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+"[^"]*")?\)`)
-	fenceMarker  = regexp.MustCompile("^(`{3,}|~{3,})")
 	skillName    = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	urlScheme    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 )
@@ -42,25 +42,35 @@ func scalar(value string) (string, error) {
 	return value, nil
 }
 
+// frontmatterFields is the name and description fields of a SKILL.md frontmatter.
+func frontmatterFields(text string) (map[string]string, error) {
+	parts := strings.SplitN(text, "---", 3)
+	if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" {
+		return nil, errors.New("missing frontmatter")
+	}
+	fields := map[string]string{}
+	for _, line := range lines(strings.TrimSpace(parts[1])) {
+		key, value, found := strings.Cut(line, ":")
+		if _, seen := fields[key]; !found || (key != "name" && key != "description") || seen {
+			return nil, errors.New("expected one name and one description field")
+		}
+		var err error
+		if fields[key], err = scalar(value); err != nil {
+			return nil, err
+		}
+	}
+	return fields, nil
+}
+
 // SkillMetadata checks a skill's SKILL.md frontmatter and its agents/openai.yaml.
 func SkillMetadata(path string) error {
 	text, err := readText(path)
 	if err != nil {
 		return err
 	}
-	parts := strings.SplitN(text, "---", 3)
-	if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" {
-		return errors.New("missing frontmatter")
-	}
-	fields := map[string]string{}
-	for _, line := range lines(strings.TrimSpace(parts[1])) {
-		key, value, found := strings.Cut(line, ":")
-		if _, seen := fields[key]; !found || (key != "name" && key != "description") || seen {
-			return errors.New("expected one name and one description field")
-		}
-		if fields[key], err = scalar(value); err != nil {
-			return err
-		}
+	fields, err := frontmatterFields(text)
+	if err != nil {
+		return err
 	}
 	dir := filepath.Dir(path)
 	name, hasName := fields["name"]
@@ -118,34 +128,42 @@ func localPath(target string) string {
 	return target
 }
 
-// LinkErrors is every unfenced local Markdown link in the file root/name that does not resolve
-// to an existing path inside root. name is the path relative to root as reported.
+// LinkErrors is every local Markdown link outside code and raw HTML in the file root/name that
+// does not resolve to an existing path inside root, and, for a file the anchor check covers (anchorScope), every
+// link whose #fragment is neither a heading slug nor an explicit anchor of the file it leads to
+// (a link to the same file included). name is the path relative to root as reported.
 func LinkErrors(root, name string) ([]string, error) {
+	return linkErrors(root, name, map[string]map[string]bool{})
+}
+
+// linkErrors is LinkErrors with the anchors of the files already read kept in cache.
+func linkErrors(root, name string, cache map[string]map[string]bool) ([]string, error) {
 	path := filepath.Join(root, name)
 	text, err := readText(path)
 	if err != nil {
 		return nil, err
 	}
 	var errs []string
-	fence := ""
 	resolvedRoot := resolve(root)
-	for number, line := range lines(text) {
-		if marker := fenceMarker.FindStringSubmatch(strings.TrimLeft(line, " \t")); marker != nil {
-			delimiter := marker[1]
-			if fence == "" {
-				fence = delimiter
-			} else if delimiter[0] == fence[0] && len(delimiter) >= len(fence) {
-				fence = ""
-			}
-			continue
-		}
-		if fence != "" {
-			continue
-		}
-		for _, match := range markdownLink.FindAllStringSubmatch(line, -1) {
-			target := strings.Trim(match[1], "<>")
+	checkAnchors := anchorScope(name)
+	// Only the paragraphs and headings hold links: code (fenced, indented, code spans over one line
+	// or several), raw HTML blocks and the frontmatter render no link.
+	for _, block := range parseMarkdown(text).blocks {
+		masked := maskCodeSpans(block.joined())
+		for _, match := range markdownLink.FindAllStringSubmatchIndex(masked, -1) {
+			number := block.lines[0].number - 1 + strings.Count(masked[:match[0]], "\n")
+			target := strings.Trim(masked[match[2]:match[3]], "<>")
+			fragment, hasFragment := fragmentOf(target)
 			local := localPath(target)
 			if local == "" {
+				if checkAnchors && hasFragment && strings.HasPrefix(target, "#") {
+					anchors, err := anchorsOf(cache, path)
+					if err != nil {
+						errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, unreadableAnchorMessage, target))
+					} else if !anchors[fragment] {
+						errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, invalidAnchorMessage, target))
+					}
+				}
 				continue
 			}
 			destination := local
@@ -155,6 +173,16 @@ func LinkErrors(root, name string) ([]string, error) {
 			destination, err := filepath.EvalSymlinks(destination)
 			if err != nil || !isRelativeTo(destination, resolvedRoot) {
 				errs = append(errs, fmt.Sprintf("%s:%d: invalid local link %s", name, number+1, target))
+				continue
+			}
+			if checkAnchors && hasFragment && filepath.Ext(destination) == ".md" {
+				if info, err := os.Stat(destination); err != nil || !info.Mode().IsRegular() {
+					errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, unreadableAnchorMessage, target))
+				} else if anchors, err := anchorsOf(cache, destination); err != nil {
+					errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, unreadableAnchorMessage, target))
+				} else if !anchors[fragment] {
+					errs = append(errs, fmt.Sprintf("%s:%d%s%s", name, number+1, invalidAnchorMessage, target))
+				}
 			}
 		}
 	}
@@ -317,13 +345,20 @@ func goModTidyCheck(root string) (errs []string, note string) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return nil, "go mod tidy check skipped: no go command on PATH"
 	}
+	tools, err := crwconfig.LoadToolRoots(os.Getenv, "")
+	if err != nil {
+		return []string{"go mod tidy -diff: " + err.Error()}, ""
+	}
+	if err := tools.Prepare(); err != nil {
+		return []string{"go mod tidy -diff: " + err.Error()}, ""
+	}
 	cmd := exec.Command("go", "mod", "tidy", "-diff")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",
+	cmd.Env = append(tools.Apply(os.Environ()), "GOFLAGS=-mod=mod", "GOPROXY=off", "GONOPROXY=none", "GOSUMDB=off", "GONOSUMDB=none",
 		"GOTOOLCHAIN=local", "GOWORK=off")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err == nil {
 		return nil, "go.mod and go.sum match go mod tidy."
 	}
@@ -342,9 +377,10 @@ func goModTidyCheck(root string) (errs []string, note string) {
 	return []string{"go mod tidy -diff: " + strings.TrimSpace(stderr.String())}, ""
 }
 
-// Validate is `crw-dev ci validate`: skill metadata, local link paths, no Python outside skill assets,
-// the generated case sections of the dispatch-verification reference matching their data files, no
-// blob over 2 MiB brought into the history, and go.mod and go.sum as go mod tidy writes them.
+// Validate is `crw-dev ci validate`: skill metadata, local link paths and, for the documents under
+// plugins/crw/skills and docs, link anchors, the base rule of the skill inventory map, no Python outside
+// skill assets, the generated case sections of the dispatch-verification reference matching their data
+// files, no blob over 2 MiB brought into the history, and go.mod and go.sum as go mod tidy writes them.
 func Validate(args []string, stdout, stderr io.Writer) int {
 	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, that Python sits only in skill assets, "+
 		"that no blob over 2 MiB comes into the history (BLOB_RANGE_BASE and GITHUB_EVENT_NAME give the range; see docs/CI.md), "+
@@ -368,13 +404,14 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	names := sortedSet(strings.Split(string(out), "\x00"))
 	errs := pythonFileErrors(root, names)
 	count := 0
+	anchorCache := map[string]map[string]bool{}
 	for _, name := range names {
 		path := filepath.Join(root, name)
 		// The dispatch-cases data files and the refactor backlog fragments are generator inputs, not
 		// documents: their relative links are written for the generated document's directory, and that
 		// document is link-checked itself.
-		if filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) && !refactorBacklogFragment(name) {
-			found, err := LinkErrors(root, name)
+		if anchorChecked(name) {
+			found, err := linkErrors(root, name, anchorCache)
 			if err != nil {
 				errs = append(errs, name+": "+err.Error())
 				continue
@@ -391,6 +428,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	}
 	_, fidelity := skillport.Check(root, nil)
 	errs = append(errs, fidelity...)
+	errs = append(errs, InventoryBaseErrors(root)...)
 	if err := dispatchCasesVerify(root); err != nil {
 		errs = append(errs, err.Error())
 	}

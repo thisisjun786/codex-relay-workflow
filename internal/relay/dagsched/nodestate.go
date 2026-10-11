@@ -56,6 +56,13 @@ func dispositionOf(reason string) string {
 
 // stateOf reads a node's execution records: nothing (unowned), a release whose child is not yet bound, or a bound execution.
 func (s *Scheduler) stateOf(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (nodeState, error) {
+	// an agent execution without a closure holds the node and its edit regions like a running child (R04): it is in no frozen table, so the reading below would see an unowned node. The relationship side
+	// is excluded while it is current, so nothing below describes the node better.
+	if cur, live, err := currentAgentExecution(ctx, q, plan, n.NodeID); err != nil {
+		return nodeState{}, err
+	} else if live {
+		return ownedAs(StateRunning, SkipAlreadyOwned, "agent execution "+cur.ExecutionID+" (attempt "+itoa64(cur.Attempt)+", released under manifest "+short(cur.ManifestDigest)+") holds the node until a closure ends it", true), nil
+	}
 	var bound int
 	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ?", []any{plan, n.NodeID}, &bound); err != nil {
 		return nodeState{}, err

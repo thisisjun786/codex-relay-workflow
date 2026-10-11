@@ -375,8 +375,15 @@ func pumpOverlapSentCount(t *testing.T, log, text string) int {
 // sent and stays queued under a held pin, whatever that attempt answers; otherwise every other notice
 // is sent exactly once, and nothing else stays queued or pinned.
 func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
+	e := pumpTestEnv(t, new(time.Time))
+	pumpOverlapRunIn(t, e, shape, kinds)
+}
+
+// pumpOverlapRunIn is pumpOverlapRun over an Env the caller built, so a parallel subtest (which may
+// not set the environment) can pass one made by pumpTestEnvHomeless.
+func pumpOverlapRunIn(t *testing.T, e *Env, shape pumpOverlapShape, kinds []string) {
 	now := pumpTestNow
-	e := pumpTestEnv(t, &now)
+	e.Now = func() time.Time { return now }
 	bridge, receiptsPath, log := pumpOverlapBridge(t)
 	cfg := pumpTestConfig(t, bridge)
 	thread := "parent-1"
@@ -518,11 +525,17 @@ func pumpOverlapRun(t *testing.T, shape pumpOverlapShape, kinds []string) {
 // exactly once in a new batch and completed (I3). A record that cannot prove its text holds the thread
 // whatever it answers (R2): nothing it or any other record covers is sent, and only a notice a provable
 // record shows delivered is completed.
+//
+// Every combination is its own parallel subtest: it has its own state directory, fake bridge and
+// clock, and the parent sets the homes once, so the combinations run side by side.
 func TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants(t *testing.T) {
+	coreTempHome(t)
+	pumpSignalTestQuiet(t)
 	for _, shape := range pumpOverlapShapes() {
 		for _, kinds := range pumpOverlapCombos(len(shape.records)) {
 			t.Run(shape.name+"/"+strings.Join(kinds, "+"), func(t *testing.T) {
-				pumpOverlapRun(t, shape, kinds)
+				t.Parallel()
+				pumpOverlapRunIn(t, pumpTestEnvHomeless(t, new(time.Time)), shape, kinds)
 			})
 		}
 	}

@@ -42,12 +42,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/attest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -194,7 +194,7 @@ func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 // JSON object, handed to visit and then dropped, so no more than one line and one row is held at a time
 // (CRW-1103: the oracle reads the whole file, splits it and keeps every object, and the close read the
 // plan's ledger twice and the workspace ledger once more, all while it held the session and goalplan
-// locks). A missing file is no rows. Each line is decoded as UTF-8 first (source.DecodeUTF8, what Node's
+// locks). A missing file is no rows. Each line is decoded as UTF-8 first (jsnode.DecodeUTF8, what Node's
 // readFileSync(path, "utf8") and goalplan read.go both do: an invalid byte becomes one U+FFFD; a line
 // feed never belongs to an invalid sequence, so a line decodes as it would inside the whole file), then
 // parsed the way the oracle's JSON.parse parses it.
@@ -228,7 +228,7 @@ func orchestrateDcloseScanJSONL(path string, open func(string) (*os.File, error)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return readErr
 		}
-		if line := strings.TrimSuffix(source.DecodeUTF8(raw), "\n"); line != "" {
+		if line := strings.TrimSuffix(jsnode.DecodeUTF8(raw), "\n"); line != "" {
 			value, err := pyjson.Loads(line, orchestrateDcloseSurrogateOptions)
 			if err != nil {
 				return err

@@ -12,8 +12,8 @@ import (
 	"unicode"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -200,7 +200,7 @@ func hookContextUnits(s string, meta *cwdExcerptClip) []uint16 {
 		u := utf16.Encode([]rune(meta.prefix))
 		return append(append(u, meta.lone), '.', '.', '.')
 	}
-	return utf16.Encode([]rune(source.DecodeUTF8([]byte(s))))
+	return utf16.Encode([]rune(jsnode.DecodeUTF8([]byte(s))))
 }
 
 // JSON.stringify + angle/ampersand escaping, including well-formed lone-surrogate

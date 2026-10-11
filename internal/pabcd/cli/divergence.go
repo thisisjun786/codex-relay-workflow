@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 )
 
@@ -171,40 +172,6 @@ func divergenceCliSession(argv []string) *string {
 		return value
 	}
 	return divergenceCliFlag(argv, "-s")
-}
-
-// divergenceCliQuote is JSON.stringify of a string: metric's rowQuote owns this spelling for the
-// archive rows (metrics.go), but that helper is unexported and this issue does not edit the metric
-// package, so the wrapper's session id uses this copy, pinned to the encoder by
-// TestDivergenceCliQuoteSpellsAsTheMetricEncoderDoes. An invalid UTF-8 byte is written as U+FFFD.
-func divergenceCliQuote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"', '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\b':
-			b.WriteString(`\b`)
-		case '\f':
-			b.WriteString(`\f`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(&b, `\u%04x`, r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }
 
 // RunDivergenceCli ports runDivergenceCli (:94-165). The error is the oracle's one uncaught path: the
@@ -374,7 +341,7 @@ func divergenceCliCandidateList(cwdOut, sessionID string, asJSON bool) Divergenc
 		for i, candidate := range candidates {
 			rows[i] = metric.EncodeCandidate(candidate)
 		}
-		return DivergenceCliResult{Output: "{\"sessionId\":" + divergenceCliQuote(sessionID) + ",\"candidates\":[" + strings.Join(rows, ",") + "]}", Code: 0}
+		return DivergenceCliResult{Output: "{\"sessionId\":" + jsnode.JSString(sessionID) + ",\"candidates\":[" + strings.Join(rows, ",") + "]}", Code: 0}
 	}
 	if len(candidates) == 0 {
 		return DivergenceCliResult{Output: "divergence candidate list: no candidates for session " + sessionID, Code: 0}

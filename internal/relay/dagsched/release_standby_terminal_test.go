@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -65,7 +66,7 @@ func TestReleaseInterruptedStandbyContinuesFrozenRequest(t *testing.T) {
 	var requests []string
 	k.sched.Start = func(ctx context.Context, raw []byte) (StartAnswer, error) {
 		requests = append(requests, string(raw))
-		engine := &managed.Start{Store: k.s, Adapter: h, Now: k.clock, Socket: k.sched.Selectors.Socket, MarkerRoot: k.marker, StateSelector: k.state,
+		engine := &managed.Start{StandbyWait: 30 * time.Millisecond, StandbyPoll: 5 * time.Millisecond, Store: k.s, Adapter: h, Now: k.clock, Socket: k.sched.Selectors.Socket, MarkerRoot: k.marker, StateSelector: k.state,
 			Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 		answer, err := engine.Run(ctx, raw)
 		return answerOf(answer), err

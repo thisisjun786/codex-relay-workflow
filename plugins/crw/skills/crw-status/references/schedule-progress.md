@@ -7,7 +7,7 @@ with its reason, not a projection.
 ## The shared baseline contract
 
 The dates and their meaning come from
-[Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
+[Schedule baseline contract](../../crw-canon/references/schedule-contract.md#schedule-baseline-contract),
 which `crw-plan` owns. Read its fields, their sources and their precedence there. This file keeps
 no second copy of them, because two operations paraphrasing one contract stop agreeing about the
 same item, and `crw-check` reads that same section, which is what makes a status verdict and a

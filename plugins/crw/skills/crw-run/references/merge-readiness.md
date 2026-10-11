@@ -1,7 +1,7 @@
 # Merge readiness
 
 Use before integration, together with the target repository's policy and the
-[shared authorization and review rules](../../crw-plan/references/integrations.md#default-dev-integration).
+[shared authorization and review rules](../../crw-canon/references/delivery.md#default-dev-integration).
 This procedure consumes existing CI and review evidence; it does not install a
 reviewer, enable an unfinished app, or change branch protections.
 
@@ -19,7 +19,7 @@ establish the active review setup. Lack of access leaves configuration unknown.
 Where the delivery is a pull request, record `isDraft` with the base and head. A pull request that is open for review has
 entered review, which is not the same as being ready to merge: the gates below decide
 that. A draft candidate is not merge-ready, and the fix is to publish it for review as
-[Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable)
+[Publish for review when the work is reviewable](../../crw-canon/references/delivery.md#publish-for-review-when-the-work-is-reviewable)
 describes, not to merge around the gap. Findings or pending CI on an in-flight pull request
 never send it back to draft.
 
@@ -389,7 +389,7 @@ The two exceptions of that step are unchanged: a stale result whose reading says
 concerns the base only and is no way around a late thread.
 
 **After the merge.** A late thread inside this issue's scope reopens the same issue key: the finding belongs to
-what this issue promised, so the issue carries its own correction rather than a successor. The general [issue-to-PR mapping](../../crw-plan/references/integrations.md#issue-to-pr-mapping) states the same exception for a defect inside the finished issue's promise. A late thread outside this issue's scope is new work: a separable one is replied to and
+what this issue promised, so the issue carries its own correction rather than a successor. The general [issue-to-PR mapping](../../crw-canon/references/linear-model.md#issue-to-pr-mapping) states the same exception for a defect inside the finished issue's promise. A late thread outside this issue's scope is new work: a separable one is replied to and
 listed for the backlog with its own context, impact and outcome, a blocking one is raised at once as a correction
 issue for the area it touches, and a P0 or security one is fixed before the merge and raised as a correction
 issue if it arrives after it.

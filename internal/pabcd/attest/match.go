@@ -1,13 +1,9 @@
 package attest
 
 import (
-	"encoding/json"
-	"math"
 	"strings"
-	"unicode"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // The JavaScript semantics the oracle leans on. Its regular expressions are written out by hand: Go's regexp folds case over all of
@@ -83,85 +79,4 @@ func isNumberedDoc(name string) bool {
 		}
 	}
 	return true
-}
-
-// jsNumber is a number in a template literal: encoding/json prints a float64 as ECMAScript does, bar NaN, Infinity and -0.
-func jsNumber(f float64) string {
-	switch {
-	case math.IsNaN(f):
-		return "NaN"
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	b, _ := json.Marshal(f)
-	return string(b)
-}
-
-// lowerJS is String.prototype.toLowerCase: the simple case mapping, with U+0130 as "i" and a combining dot above, and capital
-// sigma in its final form at the end of a word (Unicode Final_Sigma). A lone surrogate is no code point to case-fold: it keeps
-// the bytes it was spelled with (pyjson.CodePoint reads the WTF-8 form), as the JS reading leaves it.
-func lowerJS(s string) string {
-	var units []attestLowerUnit
-	var rs []rune
-	for i := 0; i < len(s); {
-		r, n := pyjson.CodePoint(s, i)
-		units = append(units, attestLowerUnit{r: r, off: i, size: n})
-		rs = append(rs, r)
-		i += n
-	}
-	var b strings.Builder
-	for i, u := range units {
-		switch {
-		case pyjson.IsSurrogate(u.r):
-			b.WriteString(s[u.off : u.off+u.size])
-		case u.r == 0x130:
-			b.WriteString("i\u0307")
-		case u.r == 0x3a3 && finalSigma(rs, i):
-			b.WriteRune(0x3c2)
-		default:
-			b.WriteRune(unicode.ToLower(u.r))
-		}
-	}
-	return b.String()
-}
-
-// attestLowerUnit is one code point of lowerJS's input: the rune pyjson.CodePoint read and the byte span it was spelled with,
-// so a surrogate keeps its original bytes (strings.Builder.WriteRune would write U+FFFD for a surrogate rune instead).
-type attestLowerUnit struct {
-	r    rune
-	off  int
-	size int
-}
-
-// finalSigma: a cased letter precedes rs[i] (skipping case-ignorable characters) and none follows it (likewise).
-func finalSigma(rs []rune, i int) bool {
-	j := i - 1
-	for j >= 0 && caseIgnorable(rs[j]) {
-		j--
-	}
-	if j < 0 || !cased(rs[j]) {
-		return false
-	}
-	k := i + 1
-	for k < len(rs) && caseIgnorable(rs[k]) {
-		k++
-	}
-	return k == len(rs) || !cased(rs[k])
-}
-
-// cased is the Unicode Cased property: Lowercase, Uppercase and titlecase letters.
-func cased(r rune) bool {
-	return unicode.IsUpper(r) || unicode.IsLower(r) || unicode.Is(unicode.Lt, r) || unicode.Is(unicode.Other_Lowercase, r) || unicode.Is(unicode.Other_Uppercase, r)
-}
-
-// caseIgnorable is the Unicode Case_Ignorable property: the categories Mn, Me, Cf, Lm and Sk, and the Word_Break classes
-// MidLetter, MidNumLet and Single_Quote, which Go's tables do not carry. The data is Go's: a character assigned after the Unicode
-// version of Go's tables or of the oracle's runtime may differ.
-func caseIgnorable(r rune) bool {
-	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Lm, unicode.Sk) ||
-		strings.ContainsRune("'.:\u00b7\u0387\u055f\u05f4\u2018\u2019\u2024\u2027\ufe13\ufe52\ufe55\uff07\uff0e\uff1a", r)
 }

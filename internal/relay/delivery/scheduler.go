@@ -25,6 +25,9 @@ type Scheduler struct {
 	// MaxSendsTick is policy.max_sends_per_tick: 0 means its default 4, a negative value 0. It is
 	// the tick's budget of attempts, whatever their outcome.
 	MaxSendsTick int
+	// MaxSendsPerParent is how many of the tick's attempts one parent may use; 0 is the policy's
+	// MaxSendsPerParentPerTick. The daemon raises it for the live orchestrators of the store (CRW-1210).
+	MaxSendsPerParent int
 	// afterParents is a test seam: it runs between the read of the parents with due deliveries and the
 	// opening of their walks, where a parent's deliveries can be taken.
 	afterParents func()
@@ -222,7 +225,11 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 	}
 	start := sort.Search(len(parents), func(i int) bool { return parents[i] > after }) % len(parents)
 	order := append(slices.Clone(parents[start:]), parents[:start]...)
-	attempts := min(d.Policy.MaxSendsPerParentPerTick, budget)
+	share := sc.MaxSendsPerParent
+	if share == 0 {
+		share = d.Policy.MaxSendsPerParentPerTick
+	}
+	attempts := min(share, budget)
 	if sc.afterParents != nil {
 		sc.afterParents()
 	}

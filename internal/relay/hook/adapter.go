@@ -546,6 +546,17 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 // is on the whole line, and the grace is the time kept to answer its expiry. The error it returns is a transport failure only: the
 // peer went away before an answer.
 func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err error) {
+	return HandleControlWake(ctx, conn, ownerState, nil)
+}
+
+// HandleControlWake is HandleControl for an owner that is also the daemon (CRW-1210, R1). When the
+// evaluated Stop is the end of a turn of a managed child - the guard selected an assignment for it
+// and did not hold the turn open - wake is told the child's thread id, whether or not the peer is
+// still there to read the answer: the turn has ended either way. wake is the daemon loop's
+// in-process channel (daemon.Waker), never a socket method; it must not block. A Stop the guard held
+// (decision block) continues the turn and wakes nobody; a Stop outside every assignment is not the
+// relay's. A nil wake is HandleControl.
+func HandleControlWake(ctx context.Context, conn net.Conn, ownerState string, wake func(thread string)) (err error) {
 	defer conn.Close()
 	defer func() {
 		if p := recover(); p != nil {
@@ -610,8 +621,24 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 		// handler failure.
 		return answerHost(conn, err.Error())
 	}
+	if wake != nil {
+		if thread, ok := managedStopThread(stop, v); ok {
+			wake(thread)
+		}
+	}
 	_, err = io.WriteString(conn, pyjson.Dumps(v, pyjson.Options{Compact: true})+"\n")
 	return err
+}
+
+// managedStopThread is the thread of a Stop that ended a managed child's turn: the guard's verdict names
+// the assignment it selected (assignmentId) and released the turn. The thread is the Stop's session id.
+func managedStopThread(stop, verdict Object) (string, bool) {
+	assignment, _ := verdict.Get("assignmentId").(string)
+	thread, _ := stop.Get("session_id").(string)
+	if assignment == "" || thread == "" || verdict.Get("decision") == "block" {
+		return "", false
+	}
+	return thread, true
 }
 
 // ownerPaths is control.py owner_paths: a control request may not choose where the owner writes

@@ -9,16 +9,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
 func catalogJSON(t *testing.T, got any, want json.RawMessage) {
 	t.Helper()
 	a, b := any(nil), any(nil)
-	check(t, json.Unmarshal(must(Stringify(got, "")), &a))
+	check(t, json.Unmarshal(must(jsnode.Stringify(got, "")), &a))
 	check(t, json.Unmarshal(want, &b))
 	if !reflect.DeepEqual(a, b) {
-		t.Fatalf("got %s; want %s", must(Stringify(got, "")), want)
+		t.Fatalf("got %s; want %s", must(jsnode.Stringify(got, "")), want)
 	}
 }
 

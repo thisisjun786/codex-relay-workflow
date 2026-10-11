@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // SeedSQLite creates the given databases as the recorder's Node seeder does: open each file, run its
@@ -79,7 +80,7 @@ func (r *cxcReplayer) DumpSQLite(path string) (string, error) {
 				rows = text
 			}
 		}
-		fmt.Fprintf(&out, `{"name":%s,"sql":%s,"rows":%s}`, jsString(o.name), jsString(o.ddl), rows)
+		fmt.Fprintf(&out, `{"name":%s,"sql":%s,"rows":%s}`, jsnode.JSString(o.name), jsnode.JSString(o.ddl), rows)
 	}
 	out.WriteString("]}")
 	return out.String(), nil
@@ -130,7 +131,7 @@ func tableRows(db *sql.DB, name string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			out.WriteString(jsString(col) + ":" + text)
+			out.WriteString(jsnode.JSString(col) + ":" + text)
 		}
 		out.WriteByte('}')
 	}
@@ -171,37 +172,7 @@ func jsValue(v any) (string, error) {
 		b.WriteByte('}')
 		return b.String(), nil
 	case string:
-		return jsString(v), nil
+		return jsnode.JSString(v), nil
 	}
 	return "", fmt.Errorf("unexpected SQLite value %T", v)
-}
-
-// jsString is s as JSON.stringify spells a string: only the quote, the backslash and the control
-// characters are escaped (markup characters and U+2028 and U+2029 stay as they are).
-func jsString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, c := range s {
-		switch {
-		case c == '"' || c == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(c)
-		case c == '\b':
-			b.WriteString(`\b`)
-		case c == '\f':
-			b.WriteString(`\f`)
-		case c == '\n':
-			b.WriteString(`\n`)
-		case c == '\r':
-			b.WriteString(`\r`)
-		case c == '\t':
-			b.WriteString(`\t`)
-		case c < 0x20:
-			fmt.Fprintf(&b, `\u%04x`, c)
-		default:
-			b.WriteRune(c)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }

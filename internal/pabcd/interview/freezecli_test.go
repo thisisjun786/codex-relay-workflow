@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // freezeEntry is one file of a recorded scenario: its path below the state directory and its data as bytes (base64 in the recording)
@@ -118,7 +119,7 @@ func TestFreezeRunsLikeTheRecordedOracle(t *testing.T) {
 					}
 				}
 				manifest, err := os.ReadFile(filepath.Join(ws, ".crw", "interview", "freeze.json"))
-				if got := ts.ReplaceAllString(decodeUTF8(manifest), "\"frozenAt\": \"<TS>\""); (err == nil) != (step.Manifest != nil) || (step.Manifest != nil && got != *step.Manifest) {
+				if got := ts.ReplaceAllString(jsnode.DecodeUTF8(manifest), "\"frozenAt\": \"<TS>\""); (err == nil) != (step.Manifest != nil) || (step.Manifest != nil && got != *step.Manifest) {
 					t.Errorf("step %d manifest (%v)\n got %q\nwant %v", i, err, got, step.Manifest)
 				}
 				tree := freezeTree(t, ws, "")

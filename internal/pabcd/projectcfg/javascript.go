@@ -5,13 +5,13 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // This file reads and writes JSON the way JavaScript does, because the oracle round-trips crw.json
@@ -86,7 +86,7 @@ func (p *parser) next() (json.Token, []byte) {
 // parse is JSON.parse of one document read from a file; ok is false, and value nil, for anything
 // JSON.parse rejects.
 func parse(data []byte) (value any, ok bool) {
-	data = decodeUTF8(data)
+	data = []byte(jsnode.DecodeUTF8(data))
 	p := &parser{data: data, decoder: json.NewDecoder(bytes.NewReader(data))}
 	p.decoder.UseNumber()
 	value = p.value()
@@ -94,49 +94,6 @@ func parse(data []byte) (value any, ok bool) {
 		return nil, false
 	}
 	return value, true
-}
-
-// decodeUTF8 reads the bytes as Node's utf8 decoder does: each maximal subpart of an ill-formed
-// sequence becomes one U+FFFD. What is left is valid UTF-8, so a raw byte can never pass for the
-// WTF-8 bytes of an escaped lone surrogate.
-func decodeUTF8(data []byte) []byte {
-	var out []byte
-	for i := 0; i < len(data); {
-		r, size := utf8.DecodeRune(data[i:])
-		if r == utf8.RuneError && size == 1 {
-			size, out = subpart(data[i:]), utf8.AppendRune(out, utf8.RuneError)
-		} else {
-			out = append(out, data[i:i+size]...)
-		}
-		i += size
-	}
-	return out
-}
-
-// subpart is the length of the longest prefix of b that starts a well-formed UTF-8 sequence.
-func subpart(b []byte) int {
-	lo, hi, need := byte(0x80), byte(0xBF), 0
-	switch c := b[0]; {
-	case c >= 0xC2 && c <= 0xDF:
-		need = 1
-	case c == 0xE0:
-		need, lo = 2, 0xA0
-	case c == 0xED:
-		need, hi = 2, 0x9F
-	case c >= 0xE1 && c <= 0xEF:
-		need = 2
-	case c == 0xF0:
-		need, lo = 3, 0x90
-	case c == 0xF4:
-		need, hi = 3, 0x8F
-	case c >= 0xF1 && c <= 0xF3:
-		need = 3
-	}
-	n := 1
-	for ; n <= need && n < len(b) && b[n] >= lo && b[n] <= hi; n++ {
-		lo, hi = 0x80, 0xBF
-	}
-	return n
 }
 
 func (p *parser) value() any {
@@ -207,34 +164,6 @@ func unquote(literal []byte) string {
 	return b.String()
 }
 
-// quote is JSON.stringify of a string: the quote, backslash and control characters escaped, a lone
-// surrogate as \udXXX, and nothing else (U+2028 and U+2029 stay raw).
-func quote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		switch k := strings.IndexRune(escaped, r); {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case k >= 0:
-			b.WriteByte('\\')
-			b.WriteByte(escapes[k])
-		case r < 0x20:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		case r == utf8.RuneError && size == 1 && s[i] == 0xED && i+2 < len(s) && s[i+1]&0xE0 == 0xA0 && s[i+2]&0xC0 == 0x80:
-			fmt.Fprintf(&b, `\u%04x`, 0xD000|rune(s[i+1]&0x3F)<<6|rune(s[i+2]&0x3F))
-			size = 3
-		default:
-			b.WriteString(s[i : i+size])
-		}
-		i += size
-	}
-	b.WriteByte('"')
-	return b.String()
-}
-
 // stringify is JSON.stringify(value, null, 2). Numbers go through encoding/json, which writes a
 // float64 as ECMAScript does; the parser has already turned -0 into 0 and an overflow into null.
 func stringify(v any, indent string) string {
@@ -245,7 +174,7 @@ func stringify(v any, indent string) string {
 	case object:
 		open, closing = "{", "}"
 		for _, m := range v {
-			parts = append(parts, inner+quote(m.key)+": "+stringify(m.value, inner))
+			parts = append(parts, inner+jsnode.JSString(m.key)+": "+stringify(m.value, inner))
 		}
 	case []any:
 		open, closing = "[", "]"
@@ -253,10 +182,9 @@ func stringify(v any, indent string) string {
 			parts = append(parts, inner+stringify(item, inner))
 		}
 	case string:
-		return quote(v)
+		return jsnode.JSString(v)
 	case float64:
-		number, _ := json.Marshal(v)
-		return string(number)
+		return jsnode.NumberString(v)
 	case bool:
 		return strconv.FormatBool(v)
 	default:

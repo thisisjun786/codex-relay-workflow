@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // Ports of the B-class tests of CXC v0.2.40 recall/test/query-words.test.ts whose subject is query-words.ts (the nine that call
@@ -52,7 +54,7 @@ func TestSplitQueryWords(t *testing.T) {
 // toLowerCase maps U+0130 to two units and a word-final capital sigma to its final form, where unicode.ToLower does neither.
 func TestLowerIsToLowerCase(t *testing.T) {
 	for in, want := range map[string]string{"CI": "ci", "İSTANBUL": "i\u0307stanbul", "ΑΣ Σ": "ας σ", "\u212a": "k", "Éa": "éa", "\u01c5": "\u01c6", "배포": "배포"} {
-		holds(t, Lower(in) == want, "Lower(%q) = %q, want %q", in, Lower(in), want)
+		holds(t, jsnode.Lower(in) == want, "jsnode.Lower(%q) = %q, want %q", in, jsnode.Lower(in), want)
 	}
 }
 

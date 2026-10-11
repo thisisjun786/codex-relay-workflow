@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // sentinel makes an error a constant: this package has no package-level variable.
@@ -73,11 +75,11 @@ func (o object) MarshalJSON() ([]byte, error) {
 		key := []byte(lit)
 		if !isLit {
 			var err error
-			if key, err = Stringify(m.key, ""); err != nil {
+			if key, err = jsnode.Stringify(m.key, ""); err != nil {
 				return nil, err
 			}
 		}
-		value, err := Stringify(m.value, "")
+		value, err := jsnode.Stringify(m.value, "")
 		if err != nil {
 			return nil, err
 		}
@@ -118,32 +120,4 @@ func parseObject(data []byte) (object, error) {
 		o.set(name, value)
 	}
 	return o, nil
-}
-
-// Stringify is JSON.stringify(v, null, indent), compact for an empty indent: HTML is not escaped and U+2028 and U+2029 are written
-// literally, as internal/pabcd/state encodes its files.
-func Stringify(v any, indent string) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", indent)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	in, out := bytes.TrimSuffix(b.Bytes(), []byte("\n")), make([]byte, 0, b.Len())
-	// encoding/json always escapes U+2028 and U+2029, JSON.stringify never does. A backslash and the byte after it are copied together,
-	// so an escaped backslash before "u2028" stays text.
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
 }

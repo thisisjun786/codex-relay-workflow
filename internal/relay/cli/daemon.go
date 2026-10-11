@@ -362,7 +362,11 @@ func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Ar
 			return nil, err
 		}
 	}
-	control, e := service.ListenControl(ctx, services.Selection.Path)
+	// Control and daemon are this one process: a Stop that ends a managed child's turn wakes the loop below
+	// through an in-process channel, not a socket method (decision 25, CRW-1210). The poll interval stays as
+	// the backstop.
+	waker := daemon.NewWaker()
+	control, e := service.ListenControlWake(ctx, services.Selection.Path, waker.Wake)
 	if e != nil {
 		return nil, e
 	}
@@ -370,7 +374,7 @@ func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	stop := func() bool {
 		return ctx.Err() != nil || s.StopRequested() || s.Draining() || (bound != nil && service.Monotonic() >= *bound)
 	}
-	reports, err := daemon.Run(ctx, d.Tick, clock, d.Policy.PollInterval, maxTicks, deadline, stop, func(seconds float64) error { return daemon.SchedulerWait(ctx, clock, deadline, seconds) })
+	reports, err := daemon.RunWoken(ctx, d.Tick, clock, d.Policy.PollInterval, maxTicks, deadline, stop, waker)
 	if err != nil {
 		return nil, dispatch.Host(err.Error())
 	}

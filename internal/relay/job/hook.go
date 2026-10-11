@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -289,7 +290,7 @@ func runHook(ctx context.Context, event string, in io.Reader, stdout io.Writer, 
 	if ctx.Err() != nil {
 		return harness.Interrupted
 	}
-	raw, unusable := decodeUTF8(b), err != nil || len(b) > harness.MaxStdinBytes
+	raw, unusable := jsnode.DecodeUTF8(b), err != nil || len(b) > harness.MaxStdinBytes
 	if unusable || hookUnits(raw) > MaxHookUnits {
 		raw, unusable = "", true
 	}

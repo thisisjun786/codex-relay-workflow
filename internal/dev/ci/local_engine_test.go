@@ -11,7 +11,7 @@ import (
 )
 
 // CRW-1025: the engine the caller runs is the verified commit's. The plan a run executes is compiled
-// from the caller's engine source (internal/dev/ci, cmd/crw-dev, Makefile), so an engine file that
+// from the caller's engine source (internal/dev/ci, cmd/crw-dev, Makefile; internal/crwconfig since CRW-958), so an engine file that
 // differs from the commit, tracked or untracked, would let a run record a clean commit's pass for
 // steps the commit does not define. Such a run is refused before any step runs or any record is reused.
 

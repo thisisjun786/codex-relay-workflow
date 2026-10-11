@@ -3,8 +3,6 @@
 package cxcfuzz
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -13,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -104,7 +103,7 @@ func goalplanTarget() Target {
 		Name:     "goalplan",
 		Generate: goalplanGenerate,
 		Go:       goalplanGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("goalplan"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("goalplan"), Root: OracleRoot()},
 		Compare:  goalplanCompare,
 	}
 }
@@ -165,41 +164,11 @@ func goalplanAnswer(read goalplan.GoalplanReadResult) pyjson.Object {
 	// 2). jsonStringify does not escape <, > or & as encoding/json does, so a plan holding markup
 	// compares equal instead of a false divergence. The comparison is canonical, so key order does not
 	// matter.
-	encoded, err := jsonStringify(read.Plan)
+	encoded, err := jsnode.Stringify(read.Plan, "  ")
 	if err != nil {
 		return answer.Set("plan", nil)
 	}
 	return answer.Set("plan", string(encoded))
-}
-
-// goalplanCompare compares the read kind, field and revived plan, and the rewritten bytes.
-// jsonStringify is JSON.stringify(value, null, 2) for a value encoding/json can carry: it leaves <, >
-// and & literal and writes U+2028 and U+2029 as themselves, where encoding/json would escape them.
-// The port's own JSON.stringify-compatible encoder (writeEncodeJSON) is private to internal/pabcd/
-// goalplan, so this target keeps its own copy for the read-plan snapshot.
-func jsonStringify(value any) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(value); err != nil {
-		return nil, err
-	}
-	in := bytes.TrimSuffix(b.Bytes(), []byte("\n"))
-	out := make([]byte, 0, len(in))
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] != '\\':
-			out = append(out, in[i])
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out, i = append(out, "\u2028"...), i+5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out, i = append(out, "\u2029"...), i+5
-		default:
-			out, i = append(out, in[i], in[i+1]), i+1
-		}
-	}
-	return out, nil
 }
 
 func goalplanCompare(goOut, oracleOut any) Verdict {

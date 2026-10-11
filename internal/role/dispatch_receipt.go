@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // The records the checked boundary adds to an attempt (receipt and its parts, termination, cleanup) keep the members they do
@@ -28,7 +30,7 @@ func dispatchRawDecode(data []byte, plain any) (object, error) {
 // file and plain is written as it is). The members plain names are set to what it holds, or removed when it omits them; every
 // other member of raw stays where it was.
 func dispatchRawEncode(raw object, plain any) ([]byte, error) {
-	own, err := Stringify(plain, "")
+	own, err := jsnode.Stringify(plain, "")
 	if err != nil || raw == nil {
 		return own, err
 	}

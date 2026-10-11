@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -19,7 +20,7 @@ import (
 // CXC v0.2.40 oracle gave runDivergenceCli (testdata/divergence/oracle.json, recorded by
 // record-oracle.mjs; no Node runs here); the three tests under it port the B-class cases of
 // divergence.test.ts:153-225 and the divergence block of help-verbs.test.ts:120-125 literally; and
-// TestDivergenceCliQuoteSpellsAsTheMetricEncoderDoes pins the one string the wrapper spells itself.
+// TestDivergenceSessionIdIsQuotedAsTheMetricEncoderQuotes pins the one string the wrapper spells itself.
 // Every test runs in a temporary workspace with HOME, CODEX_HOME and CRW_HOME pointed at a temporary
 // tree (the real ~/.codex and ~/.crw are not observed, CRW-1170).
 
@@ -215,10 +216,10 @@ func TestDivergenceCliHelpTokensDoNotDemandSession(t *testing.T) {
 	}
 }
 
-// The wrapper's session id is the one string divergence.go spells itself; metric's rowQuote is
-// unexported, so this pins the copy to the metric encoder's spelling (JSON.stringify).
-func TestDivergenceCliQuoteSpellsAsTheMetricEncoderDoes(t *testing.T) {
-	for _, value := range []string{"", "plain", "\"", "\\", "\b\f\n\r\t", "\u0001", "\u2028\u2029", "<>&'", "\U0001F600", "\xff"} {
+// The wrapper's session id is the one string divergence.go spells itself, with jsnode.JSString; the metric encoder spells its strings
+// with the same function, so a lone surrogate (WTF-8) is written as its escape by both.
+func TestDivergenceSessionIdIsQuotedAsTheMetricEncoderQuotes(t *testing.T) {
+	for _, value := range []string{"", "plain", "\"", "\\", "\b\f\n\r\t", "\u0001", "\u2028\u2029", "<>&'", "\U0001F600", "\xff", "\xed\xa0\x80", "a\xed\xbf\xbfb"} {
 		encoded := metric.EncodeMode(metric.DivergenceMode{Reason: value})
 		start := strings.Index(encoded, `"reason":`)
 		end := strings.Index(encoded, `,"updatedAt":`)
@@ -226,8 +227,11 @@ func TestDivergenceCliQuoteSpellsAsTheMetricEncoderDoes(t *testing.T) {
 			t.Fatalf("metric.EncodeMode spelled unexpectedly: %s", encoded)
 		}
 		want := encoded[start+len(`"reason":`) : end]
-		if got := divergenceCliQuote(value); got != want {
-			t.Errorf("divergenceCliQuote(%q) = %s, the metric encoder spells %s", value, got, want)
+		if value == "\xed\xa0\x80" && want != `"\ud800"` {
+			t.Errorf("the metric encoder spells a lone surrogate %s, want the escape \\ud800", want)
+		}
+		if got := jsnode.JSString(value); got != want {
+			t.Errorf("jsnode.JSString(%q) = %s, the metric encoder spells %s", value, got, want)
 		}
 	}
 }

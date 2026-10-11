@@ -82,7 +82,7 @@ func newTitleKit(t *testing.T, issueKey, title string, outcomes ...string) *titl
 	fake := &managedFake{operations: map[string]map[string]any{}, settings: settings, ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	app := &scriptedApp{managedFake: fake, clock: clock, cwd: pyjson.Text(settings["cwd"]), outcomes: outcomes, threads: map[string]*appThread{}, failures: map[string]error{}, noTurn: map[string]string{}}
 	host := &titleFake{scriptedApp: app}
-	start := &Start{Store: s, Adapter: host, Now: clock.ISO, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
+	start := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: clock.ISO, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}
 	return &titleKit{t: t, start: start, host: host, clock: clock, store: s, raw: raw, request: req, issueKey: issueKey, rawTitle: title}
 }
 

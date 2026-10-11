@@ -242,7 +242,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. State the dispatch rule of CRW-1257: dispatch is the default procedure of a role with a configured first fallback and not a prohibition, and a direct native spawn the user's current request explicitly asks for is allowed by the spawn hook as unmanaged.",
       "hunks": [
         {
           "line": 141,
@@ -251,6 +251,28 @@
           ],
           "new": [
             "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        },
+        {
+          "line": 368,
+          "old": [
+            "with JSON on stdin before its first native call. The command selects and records\n"
+          ],
+          "new": [
+            "with JSON on stdin before a native spawn of that role. The command selects and records\n"
+          ]
+        },
+        {
+          "line": 371,
+          "new": [
+            "\n",
+            "Dispatch is the default procedure, not a prohibition. When the user's current request\n",
+            "explicitly asks for a direct native spawn (for example \"native, without dispatch\"), spawn\n",
+            "it as asked, for any role (explorer, executor, reviewer or architect): the spawn hook\n",
+            "allows it and marks it unmanaged (its notice reads \"This direct spawn is not managed by\n",
+            "first-fallback tracking\"), and an unmanaged spawn creates no managed receipt. Do not\n",
+            "refuse such a request because of this section; it removes no capability and changes\n",
+            "neither the managed spawn's receipt and marker rules nor the hook's decision.\n"
           ]
         },
         {

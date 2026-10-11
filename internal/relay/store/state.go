@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -205,7 +206,15 @@ func socketHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:8])
 }
+
+// ResolveStateDir is the relay's one state selection: --state, then CODEX_SESSION_RELAY_STATE, then
+// DiscoverStateDir (a configured relay_state, then the XDG or home base). A configuration whose paths
+// section points a part of the state apart (CRW-958, state_split) is refused for every source: it is
+// wrong whichever store is chosen. A configured relay_state is judged only where it is used, below.
 func ResolveStateDir(explicit, socket string) (StateSelection, error) {
+	if err := crwconfig.RelayStateSplit(os.Getenv); err != nil {
+		return StateSelection{}, err
+	}
 	if explicit != "" {
 		path, err := absoluteExpanded(explicit)
 		return StateSelection{Path: path, Source: "flag", Detail: "--state " + explicit}, err
@@ -303,21 +312,32 @@ func SocketScope(socket string) (string, error) {
 // service serves; it connects to nothing. Only when that directory holds no store, no other store
 // records the default socket, and the legacy "default" directory holds one, is "default" kept.
 func DiscoverStateDir(socket string) (StateSelection, error) {
-	base := os.Getenv("XDG_STATE_HOME")
-	source := "xdg"
-	detail := "XDG_STATE_HOME=" + base
-	if base == "" {
-		home, err := homeDir()
-		if err != nil {
-			return StateSelection{}, err
-		}
-		base = pathlibSpelling(strings.TrimSuffix(home, "/") + "/.local/state")
-		source = "home"
-		detail = "default under " + base
-	}
-	absoluteBase, err := absoluteExpanded(base)
+	// A relay_state root the configuration file names (CRW-958) takes the place of the XDG or home
+	// base: the scope directories sit directly below it, and everything discovery does below that
+	// (the legacy directories, the store that already records the socket) is unchanged.
+	configured, err := crwconfig.ConfiguredRelayState(os.Getenv)
 	if err != nil {
 		return StateSelection{}, err
+	}
+	var absoluteBase, source, detail string
+	if configured != "" {
+		absoluteBase, source, detail = configured, "config", "paths."+crwconfig.RootRelayState+"="+configured
+	} else {
+		base := os.Getenv("XDG_STATE_HOME")
+		source = "xdg"
+		detail = "XDG_STATE_HOME=" + base
+		if base == "" {
+			home, err := homeDir()
+			if err != nil {
+				return StateSelection{}, err
+			}
+			base = pathlibSpelling(strings.TrimSuffix(home, "/") + "/.local/state")
+			source = "home"
+			detail = "default under " + base
+		}
+		if absoluteBase, err = absoluteExpanded(base); err != nil {
+			return StateSelection{}, err
+		}
 	}
 	defaulted := socket == ""
 	if defaulted {
@@ -339,6 +359,9 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 	// Every directory is joined as pathlib joins, never through filepath.Join, which would fold the
 	// two leading slashes pathlib keeps as a root of their own.
 	root := PathlibChild(absoluteBase, "codex-session-relay")
+	if configured != "" {
+		root = configured
+	}
 	chosen := StateSelection{Path: PathlibChild(root, canonical), Source: source, Detail: detail, SocketScope: canonical}
 	if defaulted {
 		chosen.DefaultSocket = socket
