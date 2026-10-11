@@ -36,16 +36,25 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if !ok {
 		return Policy{}, &PolicyError{"the execution policy must be a JSON object"}
 	}
-	if err := only(data, []string{"allowed", "exceptions", "roles"}, "the execution policy"); err != nil {
+	if err := only(data, []string{"agent-aliases", "agent-roles", "allowed", "exceptions", "roles"}, "the execution policy"); err != nil {
 		return Policy{}, err
 	}
 	roles, err := parseRoles(data.Get("roles"))
 	if err != nil {
 		return Policy{}, err
 	}
-	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0)
+	agentRoles, err := parseAgentSections(data)
 	if err != nil {
 		return Policy{}, err
+	}
+	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0 || agentRoles != nil)
+	if err != nil {
+		return Policy{}, err
+	}
+	if agentRoles != nil {
+		if err := checkAgentRoles(agentRoles.byName(), allowed); err != nil {
+			return Policy{}, err
+		}
 	}
 	if allowed != nil {
 		for _, name := range roleNames {
@@ -72,7 +81,7 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if section, ok := data.Get("roles").(object); ok {
 		roleOrder = append(roleOrder, keys(section)...)
 	}
-	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest}
+	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest, agentRoles: agentRoles}
 	if err := policy.describable(); err != nil {
 		return Policy{}, err
 	}

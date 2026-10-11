@@ -59,6 +59,8 @@ type Policy struct {
 	roleOrder  []string
 	exceptions map[string]exception
 	digest     string
+	// agentRoles is the agent-roles and agent-aliases sections; nil when the file declares none.
+	agentRoles *AgentRoles
 }
 
 // Input is one authorization request. Model and Effort are the raw argument values: nil is
@@ -91,6 +93,10 @@ type Authorized struct {
 	AutoCompactTokenLimit *int64
 }
 
+// Digest is the SHA-256 of the bytes the policy was read from, as get_capabilities and relay doctor report it; it is
+// empty for a policy that was not read from bytes.
+func (p Policy) Digest() string { return p.digest }
+
 func (p Policy) Mode() string {
 	if p.allowed == nil {
 		return "presence_only"
@@ -106,7 +112,11 @@ func (p Policy) Summary() map[string]any {
 	for name, role := range p.roles {
 		roles[name] = role.receipt(name, nil)
 	}
-	return map[string]any{"mode": p.Mode(), "digest": nullable(p.digest), "roles": roles}
+	summary := map[string]any{"mode": p.Mode(), "digest": nullable(p.digest), "roles": roles}
+	if p.agentRoles != nil {
+		summary["agentRoles"] = p.agentRoles.summary()
+	}
+	return summary
 }
 
 // Role is what the policy declares for a role: the pairs it may run on, or the record expectation
