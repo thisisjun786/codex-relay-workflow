@@ -95,13 +95,6 @@ func (f *fx) complete(call string) string {
 	return p
 }
 
-// hold ends the call held with the snapshot as P_held.
-func (f *fx) hold(call string) string {
-	p := f.snapshot()
-	f.add(engine.Event{Kind: engine.KindCall, CallID: call, Op: "agent", Event: engine.EvHeld, Data: map[string]any{"p_held": p, "reason": "host_infra_serverOverloaded"}})
-	return p
-}
-
 // commit commits the snapshot the way crw.commit does and records the row.
 func (f *fx) commit(callID string) CommitResult {
 	f.t.Helper()

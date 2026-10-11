@@ -158,7 +158,7 @@ type Engine struct {
 	startSeq int
 	// claimed are the calls of the previous process that a position of the resumed script took over (resumePrior): they go
 	// on in this process, so a new attempt of their node does not supersede them. superseding are the calls of the previous
-	// process that a new attempt ends (or ended) superseded. Both are decided under attemptM, so a call is either claimed or
+	// process that a new attempt ends (or ended) superseded. Both are decided under claimedM, so a call is either claimed or
 	// superseded and never both: whichever decision comes first stands, and a later claim of a call that was superseded
 	// runs its position as a call of its own.
 	claimedM   sync.Mutex
@@ -488,7 +488,7 @@ func (e *Engine) nodeStopReason(node string) string {
 }
 
 // claim records that the resumed script took over a call of the previous process, unless a new attempt has superseded it
-// or is superseding it: it reports whether the call is the position's to go on with. claimedCall asks whether it was claimed.
+// or is superseding it: it reports whether the call is the position's to go on with.
 func (e *Engine) claim(id string) bool {
 	e.claimedM.Lock()
 	defer e.claimedM.Unlock()
@@ -500,12 +500,6 @@ func (e *Engine) claim(id string) bool {
 	}
 	e.claimed[id] = true
 	return true
-}
-
-func (e *Engine) claimedCall(id string) bool {
-	e.claimedM.Lock()
-	defer e.claimedM.Unlock()
-	return e.claimed[id]
 }
 
 // supersedeOp is the end of one call of the previous process by a new attempt. The call that decided it does the work (the
