@@ -78,6 +78,9 @@ func moduleSourceWriterRefusal(src string, aliases map[string]string) string {
 	}
 	for _, m := range reOpenCall.FindAllStringIndex(src, -1) {
 		paren := m[1] - 1
+		if openDeclared(src, m[0]) {
+			continue // def open(self, path, mode): a declaration, its formal arguments are no operands
+		}
 		if !openMayWrite(src, paren, afterDot(src, m[0])) || !afterDot(src, m[0]) && writerCallHarmless(src, paren, openSlots) {
 			continue
 		}
@@ -109,6 +112,21 @@ func moduleSourceWriterRefusal(src string, aliases map[string]string) string {
 		return "writes, copies or links a file at an import location (a name ending .py, .pyc, .so, .pth or in __pycache__)"
 	}
 	return ""
+}
+
+// openDeclared is whether the name open at i is the name of a def (or an async def): the word before it, on the same line with only spaces
+// and tabs between, is def. A call of open in the default value of an argument is a match of its own; a def on the line before a line
+// join is not read (a comment may end in one), so such a def keeps the rule of a call.
+func openDeclared(src string, i int) bool {
+	j := i
+	for j > 0 && (src[j-1] == ' ' || src[j-1] == '\t') {
+		j--
+	}
+	if j == i || j < 3 || src[j-3:j] != "def" {
+		return false
+	}
+	k := j - 3
+	return k == 0 || !(isPyLetter(src[k-1]) || src[k-1] >= '0' && src[k-1] <= '9' || src[k-1] == '_' || src[k-1] >= 0x80)
 }
 
 // openMayWrite is whether the open whose parenthesis is at paren may open for writing: its operands are not read, its mode is a write mode
@@ -291,8 +309,9 @@ var (
 	reClassMachinery = regexp.MustCompile(`\b(setattr|delattr|vars|globals|locals|exec|eval|compile|__dict__|__build_class__|__class__|__bases__|__mro__|__new__|__getattr__|__getattribute__|__init_subclass__|__set_name__|__prepare__|__get__|metaclass|__setattr__|__delattr__|__code__|__globals__|get_referents|get_referrers|get_objects|ctypes)\b`)
 	reExtractWord    = regexp.MustCompile(`\bextract\b`)
 	reDefExtract     = regexp.MustCompile(`^def[ \t]+extract[ \t]*\(`)
-	// reStarImport: a logical line from m import * binds names the source does not spell (a class of its own among them).
-	reStarImport = regexp.MustCompile(`^from\s[^;]*\bimport\s*\*`)
+	// reStarImport: a statement from m import * (from.m import * too) binds names the source does not spell (a class of its own among
+	// them). It is matched on the lexer's statements, so one after a semicolon or a compound header (if x: from m import *) counts.
+	reStarImport = regexp.MustCompile(`^from\b[^;]*\bimport\s*\*`)
 )
 
 // plainClassReceiver is the class Name when the .extract( whose dot is at dot is called on Name(...), a fresh instance of a plain class
@@ -313,9 +332,15 @@ func plainClassReceiver(src string, dot int) string {
 	if lexed.nonASCIICode || lexed.fUnsure {
 		return ""
 	}
+	// a star import rebinds names unseen, after a semicolon or a compound header too
+	for _, stmt := range lexed.stmts {
+		if reStarImport.MatchString(stmt) {
+			return ""
+		}
+	}
+	// a decorator over an extract (over several lines too) hands back what it likes
 	for i, line := range lexed.lines {
-		// a star import rebinds names unseen; a decorator over an extract (over several lines too) hands back what it likes
-		if reStarImport.MatchString(line) || reDefExtract.MatchString(line) && i > 0 && strings.HasPrefix(lexed.lines[i-1], "@") {
+		if reDefExtract.MatchString(line) && i > 0 && strings.HasPrefix(lexed.lines[i-1], "@") {
 			return ""
 		}
 	}
