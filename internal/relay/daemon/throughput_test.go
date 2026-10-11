@@ -853,3 +853,64 @@ func TestThroughputWokenTickKeepsBothClassesRead(t *testing.T) {
 		})
 	}
 }
+
+// A daemon woken tick after tick by the same children still reads every pending turn: the woken turns take the
+// front of the order, but never the reads past the class floor that the longest-waiting order keeps, so the turns
+// nobody woke rotate as they do in an unwoken tick and each is read within a bounded number of ticks, whichever
+// class the woken children hold (CRW-1210, verification round 2; I-66).
+func TestThroughputRepeatedWakesDoNotStarveTheOthers(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name          string
+		relationships int
+		staged        []int // the relationships whose anchor a staged claim waits on; the rest are plain
+		woken         []int
+		budget        int
+	}{
+		{"one class, the woken fill the budget", 6, nil, []int{2, 3, 4, 5}, 4},
+		{"woken staged turns, plain and staged turns wait", 8, []int{4, 5, 6, 7}, []int{5, 6, 7}, 4},
+		{"woken plain turns, plain and staged turns wait", 8, []int{4, 5, 6, 7}, []int{0, 1, 2}, 4},
+		{"woken turns of both classes", 8, []int{4, 5, 6, 7}, []int{0, 1, 4, 5}, 4},
+		{"a small budget", 5, nil, []int{1, 2, 3, 4}, 2},
+		{"a small budget, two classes", 6, []int{3, 4, 5}, []int{0, 3}, 3},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, s := throughputStore(t)
+			for i := range c.relationships {
+				seedIndexed(t, s, i)
+				if slices.Contains(c.staged, i) {
+					stageClaim(t, s, i, name("anchor", i))
+				}
+			}
+			host := &observationHost{status: "inProgress"}
+			d := New(s, host, movingClock(), nil)
+			d.Policy.MaxSends, d.Policy.MaxTurnReads = -1, c.budget
+			var woken []string
+			for _, i := range c.woken {
+				woken = append(woken, name("child", i))
+			}
+			const ticks = 16
+			var reads [][]int
+			for range ticks {
+				before := len(host.reads)
+				if _, err := d.Tick(WithWoken(ctx, woken)); err != nil {
+					t.Fatal(err)
+				}
+				read := []int{}
+				for _, turn := range host.reads[before:] {
+					read = append(read, indexOf(turn))
+				}
+				if len(read) == 0 || !slices.Contains(c.woken, read[0]) {
+					t.Fatalf("a woken tick read %v: the first read is not of a woken child", read)
+				}
+				reads = append(reads, read)
+			}
+			all := []int{}
+			for i := range c.relationships {
+				all = append(all, i)
+			}
+			withinTicks(t, "under repeated wakes", reads, all, c.relationships)
+		})
+	}
+}

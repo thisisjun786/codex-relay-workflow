@@ -1205,7 +1205,10 @@ so the per-tick budgets hold and a storm of Stops is one tick a second with each
 once; the threads that woke a tick have their turns read first by the observation pass, ahead of the
 longest-waiting turns of the others, except that the first read of each class that waits (a staged claim,
 or other work) is reserved, so a run of woken turns of one class cannot take the budget from the other,
-however often the daemon is woken. The 20 s tick is the backstop: a wake that is dropped (the
+and the woken turns take at most the reads past those reserved ones: the rest of the read budget goes to
+the order an unwoken tick reads, so the turns nobody woke keep rotating longest-waiting first and each is
+read within a bounded number of ticks, however often the same children wake the daemon. The 20 s tick is
+the backstop: a wake that is dropped (the
 channel holds 256), or a Stop that ends before the host marks its turn finished, is made up by the
 next tick, and a daemon nobody wakes ticks exactly as before.
 

@@ -136,15 +136,25 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 	default:
 		order, floor = slices.Concat(others[:1], staged, others[1:]), 2
 	}
-	if woken := Woken(ctx); len(woken) > 0 && budget >= 2 {
+	if woken := Woken(ctx); len(woken) > 0 && budget > floor {
 		// The children whose Stop woke this tick (CRW-1210): their turns are read first, in the order the
-		// deal gave them, ahead of the longest-waiting turns of the others. The first read of each class that
-		// waits is still reserved, within the first two (the pass's floor): a run of woken turns of one class
-		// cannot take the budget from the other, however often the daemon is woken. With one read to give,
-		// the longest-waiting turn keeps it.
-		slices.SortStableFunc(order, func(a, b read) int {
-			return cmp.Compare(b2i(!slices.Contains(woken, a.p.child)), b2i(!slices.Contains(woken, b.p.child)))
-		})
+		// deal gave them, ahead of the longest-waiting turns of the others, but they take at most the reads
+		// past the pass's floor (budget-floor). The rest of the order is the one an unwoken tick reads, from
+		// its front, so the floor's reads of it are always within the budget: the turns nobody woke keep
+		// rotating, longest-waiting first, however often the same children wake the daemon (I-66). The first
+		// read of each class that waits is still reserved, within the first two (the floor): a run of woken
+		// turns of one class cannot take the budget from the other. With no read past the floor to give, the
+		// order is the unwoken one.
+		front := make([]read, 0, budget-floor)
+		rest := make([]read, 0, len(order))
+		for _, r := range order {
+			if len(front) < budget-floor && slices.Contains(woken, r.p.child) {
+				front = append(front, r)
+			} else {
+				rest = append(rest, r)
+			}
+		}
+		order = slices.Concat(front, rest)
 		if floor == 2 {
 			if j := slices.IndexFunc(order, func(r read) bool { return r.class != order[0].class }); j > 1 {
 				other := order[j]
@@ -197,13 +207,6 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 		}
 	}
 	return nil
-}
-
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // readHost asks the host about one turn under the instant the pass's time bound ends the read, when it has one. Only
