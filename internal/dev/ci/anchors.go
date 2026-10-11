@@ -378,13 +378,14 @@ func inlineTokens(runes []rune, definitions map[string]bool) []inlineToken {
 				}
 			} else if closing > 0 && closing+1 < len(runes) && runes[closing+1] == '[' {
 				// A full or collapsed reference link: [text][label] or [text][] with a definition of
-				// the label; the label is no part of the rendered text.
+				// the label; the label is no part of the rendered text. As in a definition, the label
+				// holds at most 999 characters as written, before its white space is collapsed.
 				if end := matchingBracket(runes, closing+1); end > 0 {
-					label := string(runes[closing+2 : end])
-					if label == "" {
-						label = string(runes[open+1 : closing])
+					label := runes[closing+2 : end]
+					if len(label) == 0 {
+						label = runes[open+1 : closing]
 					}
-					if definitions[normalizeLabel(label)] {
+					if len(label) <= 999 && definitions[normalizeLabel(string(label))] {
 						literal.WriteString(renderInline(string(runes[open+1:closing]), definitions))
 						i = end + 1
 						continue

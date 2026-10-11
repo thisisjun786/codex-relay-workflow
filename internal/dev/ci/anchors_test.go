@@ -214,6 +214,33 @@ func TestMarkdownAnchorsReferenceLabelLength(t *testing.T) {
 	expectEqual(t, "errors", errs, []string(nil))
 }
 
+// The 999-character limit holds for the label of a full or collapsed reference too, counted on the
+// label as written, before white space is collapsed: a usage label of 1000 characters or more is no
+// reference, even when it normalizes to the label of a definition, so the heading keeps its text.
+func TestMarkdownAnchorsOversizedReferenceUsage(t *testing.T) {
+	korean := strings.TrimSpace(strings.Repeat("한 ", 400))        // 799 characters
+	koreanUsage := strings.TrimSpace(strings.Repeat("한   ", 400)) // 1597 characters, the same label once normalized
+	ascii := strings.TrimSpace(strings.Repeat("a ", 334))         // 667 characters
+	asciiUsage := strings.TrimSpace(strings.Repeat("a  ", 334))   // 1000 characters, the same label once normalized
+	for _, row := range []struct{ name, heading, definition string }{
+		{"full", "[Install][" + koreanUsage + "]", korean},
+		{"collapsed", "[" + koreanUsage + "][]", korean}, // read as text or as a link, its slug is the same
+		{"full 1000", "[Install][" + asciiUsage + "]", ascii},
+	} {
+		target := "## " + row.heading + "\n\n[" + row.definition + "]: /url\n"
+		literal := anchorSlug(row.heading)
+		anchors := markdownAnchors(target)
+		if !anchors[literal] || anchors["install"] {
+			t.Errorf("%s: anchor of the literal heading present=%v, spurious install=%v", row.name, anchors[literal], anchors["install"])
+		}
+		errs := anchorFixture(t, map[string]string{
+			"docs/source.md": "[valid](target.md#" + literal + ")\n",
+			"docs/target.md": target,
+		})
+		expectEqual(t, row.name+" errors", errs, []string(nil))
+	}
+}
+
 // A list marker needs a space, a tab or the line end after it, the content of a list item and of a
 // block quote is read as blocks of its own, raw HTML blocks hold no Markdown, and a code span runs
 // over the lines of its paragraph.
