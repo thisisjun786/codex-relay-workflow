@@ -155,7 +155,7 @@ A quarantine without a deadline is a deletion with extra steps. Quarantine never
 closes the defect — it defers it, and the deadline is the receipt.
 
 A quarantine carrying all four fields is the one form of `.skip()` that is not a
-`TEST-PATCH-INTEGRITY-01` red flag (`dev-testing` SKILL.md §8). An undocumented
+`TEST-PATCH-INTEGRITY-01` red flag ([Test auditor gates](../../crw-dev-code-reviewer/SKILL.md#test-auditor-gates)). An undocumented
 skip still is.
 
 ### 5.4 "Environmental" is a claim, not an observation (`TEST-FLAKE-ATTRIBUTION-01`, DEFAULT)

@@ -17,13 +17,32 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata, resolve the renamed PABCD link, and distinguish Codex-app guard scope from bridge worktrees and hook installation.",
+      "reason": "Remove unsupported frontmatter metadata, resolve the renamed PABCD link, and distinguish Codex-app guard scope from bridge worktrees and hook installation. CRW-1220: the description is scoped to Codex-app managed worktrees; the worktree owner table is added",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE when working inside or renaming Codex-app managed worktrees — hash-named dirs under ~/.codex/worktrees, detached-HEAD checkouts, thread-bound workspaces. Prevents delete-and-recreate: adopt in place with git switch -c / branch -m; git worktree move only for other inactive worktrees. Triggers: worktree, 워크트리, 워크트리 이름, rename worktree, 새 워크트리, 브랜치랑 워크트리, detached HEAD worktree, ~/.codex/worktrees.\"\n",
             "metadata:\n",
             "  short-description: \"Managed-worktree identity safety: never delete/recreate; adopt in place.\"\n"
+          ],
+          "new": [
+            "description: \"Codex-app managed worktrees (hash-named dirs under ~/.codex/worktrees, detached HEAD, thread-bound workspaces): adopt in place with git switch -c or branch -m, never delete and recreate. Triggers: worktree, 워크트리, rename worktree, detached HEAD worktree.\"\n"
+          ]
+        },
+        {
+          "line": 15,
+          "new": [
+            "## Worktree owners (WG-OWNER-01)\n",
+            "\n",
+            "Each kind of worktree has one owner; the other skills point here and do not take it over.\n",
+            "\n",
+            "| Worktree kind | Owner | Rules |\n",
+            "|---|---|---|\n",
+            "| Codex-app managed worktree: one per thread under `$CODEX_HOME/worktrees` | `crw-worktree-guardian` | this skill |\n",
+            "| Branch hygiene: stale branches, removing an attached worktree, local garbage collection | `crw-dev-devops` | [branch lifecycle](../crw-dev-devops/references/branch-lifecycle.md) and [local GC](../crw-dev-devops/references/local-gc.md) |\n",
+            "| The workspace of a run: the checkouts a project orchestrator assigns to its issue children | `crw-run` | [Check who already owns the workspace](../crw-run/SKILL.md#check-who-already-owns-the-workspace) |\n",
+            "\n"
           ]
         },
         {
@@ -40,8 +59,8 @@
           "new": [
             "\n",
             "This guard covers Codex-app managed worktrees under `$CODEX_HOME/worktrees`\n",
-            "and `CRW_WORKTREE_ROOTS`. Worktrees created by the CRW bridge follow the\n",
-            "bridge's worktree contract. Loading this skill does not install its guard hooks.\n"
+            "and `CRW_WORKTREE_ROOTS`. Worktrees created for a run follow `crw-run`'s\n",
+            "workspace rules (Worktree owners above). Loading this skill does not install its guard hooks.\n"
           ]
         }
       ]

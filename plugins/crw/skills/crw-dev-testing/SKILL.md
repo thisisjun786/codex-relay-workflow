@@ -1,6 +1,6 @@
 ---
 name: crw-dev-testing
-description: "MUST USE for testing, QA, regression protection, and release verification — unit, integration, API, contract, Playwright E2E, CI, security-scan, coverage, and TDD strategy. Activates by change-surface when work adds features, fixes bugs, changes APIs, refactors behavior, or prepares a release. Triggers: 'write tests', 'regression test', 'Playwright', 'E2E', 'contract test', 'coverage', 'CI flake', 'TDD', '테스트', '회귀 테스트', '품질 게이트'."
+description: "Automated test strategy: unit, integration, API, contract, Playwright E2E, CI gates, coverage and TDD. Driving a built surface by hand is crw-qa; the reviewer's test gates are crw-dev-code-reviewer. Triggers: write tests, regression test, Playwright, E2E, contract test, coverage, 테스트, 회귀 테스트."
 ---
 # Testing & QA
 Balance: ~40% Backend/API, ~40% Frontend/E2E (Playwright), ~20% Cross-cutting (CI, Security, TDD, Coverage) -- directional guidance, not a hard ratio.
@@ -74,9 +74,9 @@ source-fetch and evidence-status rules.
 - **STRICT (TEST-ANTI-FLAKE-01):** A time-based flake is a bug. Do not use sleep-based synchronization, retry-as-fix, or green-on-retry acceptance without a deterministic cause and harness correction. Full policy: `references/ci-pipeline.md` §5 (`TEST-FLAKE-*`).
 - Verification depth follows `dev` §3 `DEV-VERIFY-FLOOR-01`; CRUD per-operation negative coverage is owned by `references/core/crud-test-matrix.md`.
 ---
-## Limited-Oracle / Score-Objective Evaluation
+## Reference-Result / Score-Objective Evaluation
 For scarce, paid, rate-limited, or opaque evaluators, route to
-`references/limited-oracle-evaluation.md` for all proxy-score gates.
+`references/reference-result-evaluation.md` for all proxy-score gates.
 ### 1.6 Property-Based & Mutation Testing (verified 2026-07-02)
 
 | Technique | Use for | Default tools | When |
@@ -195,7 +195,7 @@ Follow [portable browser routing](../crw-dev/references/browser-routing.md)
 drive built UI; no one optional tool is required. Inspect -> act -> re-inspect,
 exercise the promised interaction, and retain the state/result evidence.
 Repository-owned Playwright suites remain the deterministic regression path.
-Load `crw-qa` for scenario matrices, adversarial/oracle passes, and teardown.
+Load `crw-qa` for scenario matrices, adversarial and reviewer passes, and teardown.
 Missing tool/access -> report the gap, never mark an unperformed check passed.
 
 ## 5. CI Pipeline Integration
@@ -397,101 +397,4 @@ Common unreachable shapes:
 - Two rows in the same table are mutually exclusive on the same tree (e.g. "the gate
   reports a failure here" plus "the gate exits 0 overall").
 
-## Test Oracle Integrity (TEST-PROMPT-SEAM-01 / TEST-ORACLE-INDEPENDENCE-01 / TEST-PRECEDENCE-FIXTURE-01, DEFAULT)
-
-Three narrow contracts that stop false-green. All three are **E7 prose — no gate enforces
-them**; the reviewer is the only check.
-
-**TEST-PROMPT-SEAM-01 (DEFAULT).** Do not assert on prose. A test may read a document only
-when it EXTRACTS a value and COMPARES it against a value from another source. Asserting that
-a phrase exists in a file is a violation no matter how many files you read or what the test's
-header says it is for.
-
-- Forbidden: `assert.match(readFileSync(".../SKILL.md"), /prefer rg first/i)` — one source,
-  phrase existence, breaks on harmless rewording, proves no behavior.
-- Allowed: parse the frontmatter `description`, pull the model token out of it, and
-  `assert.ok(NATIVE_OPENAI_MODELS.includes(token))` — two sources, values compared, breaks
-  only when they genuinely disagree.
-- Also allowed (outside this rule's scope): asserting on non-prose values — version pins,
-  license names, runtime output, CLI stdout, hook payloads, file existence.
-
-**The two known violations were deleted, not repaired (260726).**
-`loop-activation-doc-sync.test.mjs` (10 assertions) and the doctrine test inside
-`emergence-doc-sync.test.mjs` (24) both asserted phrase existence across skills, doctrine
-documents and an archived HTML page. Three repair designs were tried and all three were
-worse than deletion:
-
-- A structured `metadata.contract` block in each skill, compared between them: nothing at
-  runtime reads such a field, so it would have been a third source of truth that passes
-  whenever both copies are wrong together.
-- Promoting the activation prose to a behavioural test against `handleStop`: the five
-  guard combinations are already owned by `hook-continuation.test.ts`, so this only
-  duplicated coverage while appearing to offset the deletion.
-- Promoting the collapse doctrine the same way: there is no runtime branch that
-  implements a collapse point, so there is no value to compare against.
-
-What that costs, stated plainly: the collapse-point doctrine, `crw-search`'s ownership of
-the divergence `strong-1`/`add-1` provenance, and the archived falsifiability SOT now have
-**no automated consistency check**. They are human-review items. The activation contract is
-unaffected — `hook-continuation.test.ts` owns it and always did.
-
-What survived: the tag-balance half of the emergence test counts opening tags against
-closing ones, which is a value compared to a value rather than a phrase lookup. It moved to
-`emergence-html-structure.test.mjs` and still runs.
-
-The lesson worth citing: when prose has no counterpart in code, a test that reads it can
-only check that the words are still there. Deleting it removes a false green; inventing a
-second document to compare it against removes nothing and adds a lie.
-
-**TEST-ORACLE-INDEPENDENCE-01 (DEFAULT).** Never derive the expected value from the code
-under test.
-
-- Forbidden: `assert.equal(fn(x), fn(x))`; building the expectation with a helper the DUT
-  also uses; refreshing a snapshot from current output and calling that verification.
-- Allowed: hardcode the expectation in the fixture, or compute it by an independent route
-  (a second implementation, a hand-worked example, an external spec).
-
-**TEST-PRECEDENCE-FIXTURE-01 (DEFAULT).** When testing override / default / fallback, the
-three values must all DIFFER — otherwise the test cannot tell which path ran.
-
-- Forbidden: override `"x"`, default `"x"`, fallback `"x"` — every branch passes.
-- Allowed: override `"from-flag"`, default `"from-config"`, fallback `"builtin"`, and each
-  case asserts the specific one.
-
-A regression test should FAIL when the defect is reintroduced. Confirm it once by mutation —
-break it, watch it go red, restore it, watch it go green.
-
-## Patch Integrity Gate (TEST-PATCH-INTEGRITY-01, DEFAULT)
-
-Source: sol research (SWE-bench containerized evaluation, addyosmani/agent-skills).
-
-An agent that obtains green by weakening tests has not fixed the bug. Before
-claiming implementation complete:
-
-1. **Baseline**: record which tests fail and their failure signatures BEFORE any
-   production code change.
-2. **Implement**: write the fix/feature.
-3. **Re-run originals**: execute the ORIGINAL test suite (not the modified version)
-   against the patched source. All baseline failures must now pass.
-4. **Classify test changes**: every test/config change is `required` (new test for
-   new behavior), `suspicious` (deleted assertion, lowered threshold, added skip,
-   reduced coverage exclusion), or `unrelated`.
-5. **Justify suspicious changes**: each suspicious change needs a stated reason.
-   "The test was wrong" is valid only with evidence of the original test's incorrectness.
-
-Red flags that trigger escalation:
-- Deleted assertions without replacement
-- Snapshot updates without visual/behavioral verification
-- Coverage exclusions added in the same PR as the fix
-- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`references/ci-pipeline.md` §5.3)
-- Threshold reductions (e.g., coverage 80% → 60%)
-- Type assertion suppressions (`as any`, `@ts-ignore`) in test files
-
-## TDD Evidence Contract (TEST-TDD-EVIDENCE-01, DEFAULT)
-
-When TDD is claimed, durable evidence must show:
-- RED: failing test name + failure message (before production code)
-- GREEN: same test passing (after production code)
-- REFACTOR: full affected suite passing (after cleanup)
-
-A TDD claim without RED evidence is not TDD.
+The reviewer's gates for a test change (test-oracle integrity, patch integrity, TDD evidence) are in [Test auditor gates](../crw-dev-code-reviewer/SKILL.md#test-auditor-gates).

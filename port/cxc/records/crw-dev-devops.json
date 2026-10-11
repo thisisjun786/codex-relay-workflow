@@ -74,23 +74,32 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Redirect the relative hub reference to the staged crw-dev directory. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance. CRW-1220: the description drops the worktree and governance triggers; repo-bootstrap, agent-pr-intake and their two rule rows move to crw-canon repo-governance; the stacked-PR text is scoped to repositories that use pull requests; dated verification stamps and history notes are removed",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for DevOps, infrastructure, or delivery work — container builds, deploy pipelines, stacked-PR CI diagnosis, Kubernetes, Infrastructure as Code, SRE foundations, edge/serverless, ML infrastructure, repository bootstrap, agent-PR intake policy, repository branch/worktree lifecycle hygiene, and native desktop acceptance. Triggers: 'Dockerfile', 'container build', 'deploy', 'CI/CD', 'stacked PR CI', 'duplicate CI', 'Kubernetes', 'K8s', 'Terraform', 'Pulumi', 'Helm', 'SRE', 'SLI', 'SLO', 'error budget', 'serverless', 'edge', 'stale branch', 'branch cleanup', 'delete merged branches', 'delete_branch_on_merge', 'worktree cleanup', 'repo bootstrap', 'branch protection', 'ruleset', 'PR limits', 'agent PR', 'agent PRs', 'AI PR policy', 'superseded PR', 'worktree gc', 'Tauri', 'AppKit', 'WidgetKit', 'menu bar app', 'notarization', 'TCC', '스택 PR CI', '배포', '인프라', '쿠버네티스', '브랜치 정리', '브랜치 삭제', '워크트리 정리', '저장소 세팅', '브랜치 보호', '에이전트 PR', 'PR 정책', '데스크톱 앱', '메뉴 막대'.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-09-09\"\n",
             "  short-description: \"Container, deploy, Kubernetes, IaC, SRE, and branch-lifecycle guidance for production delivery.\"\n"
+          ],
+          "new": [
+            "description: \"DevOps and delivery: container builds, deploy pipelines, Kubernetes, IaC, SRE, edge/serverless, ML infra, native desktop acceptance, stale-branch hygiene, stacked-PR CI in repositories that use PRs. Triggers: Dockerfile, deploy, CI/CD, Terraform, SLO, stale branch, branch cleanup, 배포, 인프라.\"\n"
           ]
         },
         {
           "line": 42,
           "old": [
-            "| `../dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n"
+            "| `../dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n",
+            "| `references/branch-lifecycle.md` | Branch/worktree cleanup | Closed-PR branch automation, per-branch deletion evidence, worktree dirty audit, stacked-PR safety |\n",
+            "| `references/repo-bootstrap.md` | New or under-configured repository; branch protection, rulesets, auto-delete, PR limits | Ruleset-first setup, merge-setting fields, closed-PR job values, PR limits, labels/template, read-only bootstrap check |\n",
+            "| `references/agent-pr-intake.md` | Many agent-authored PRs/issues; intake policy; superseded PRs | Identity tiers, agent convention table, draft-first, supersede procedure, weak/medium/strong policy options with sources |\n"
           ],
           "new": [
-            "| `../crw-dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n"
+            "| `../crw-dev/references/stacked-prs.md` | Stacked/dependent PRs or unexpected CI runs in a repository that uses PRs | `DEV-STACK-03/06/07`: native membership preflight and CI diagnosis; also reached globally through `dev` |\n",
+            "| `../crw-canon/references/repo-governance.md` | New or under-configured repository; branch protection, rulesets, PR limits; many agent-authored PRs; superseded PRs | Owned by crw-canon: ruleset-first setup, merge-setting fields, intake policy, supersede procedure |\n",
+            "| `references/branch-lifecycle.md` | Branch hygiene and attached-worktree removal | Closed-PR branch automation, per-branch deletion evidence, worktree dirty audit, stacked-PR safety |\n"
           ]
         },
         {
@@ -103,12 +112,58 @@
           ]
         },
         {
-          "line": 115,
+          "line": 113,
           "old": [
-            "[`crw-dev`'s canonical stack reference](../dev/references/stacked-prs.md).\n"
+            "**Stacked-PR CI preflight (DEFAULT).** For stack sizing, repeated runs or missing\n",
+            "checks, follow `DEV-STACK-03/06/07` in\n",
+            "[`crw-dev`'s canonical stack reference](../dev/references/stacked-prs.md).\n",
+            "Stack recognition also applies without this DevOps router; the global `dev` entry\n",
+            "owns it. Ordinary PRs/manual chains are the default. Do not suggest or adopt GitHub\n"
           ],
           "new": [
-            "[`crw-dev`'s canonical stack reference](../crw-dev/references/stacked-prs.md).\n"
+            "**Stacked-PR CI preflight (DEFAULT, repositories that use pull requests).** CRW internal work\n",
+            "opens no pull request and is never stacked (DEV-STACK-01 in `crw-dev`); this preflight is for an\n",
+            "external contribution or a repository whose delivery path is PRs. For stack sizing, repeated runs or\n",
+            "missing checks, follow `DEV-STACK-03/06/07` in\n",
+            "[`crw-dev`'s canonical stack reference](../crw-dev/references/stacked-prs.md).\n",
+            "Ordinary PRs/manual chains are the default. Do not suggest or adopt GitHub\n"
+          ]
+        },
+        {
+          "line": 240,
+          "old": [
+            "| `DEVOPS-REPO-BOOTSTRAP-01` | DEFAULT | A repository that receives agent PRs is set up ruleset-first: protected integration lines, auto-delete on merge, closed-PR cleanup job, merge-method policy, PR limits, labels and template, each verified by a read-back command. Owner: `references/repo-bootstrap.md`. |\n",
+            "| `DEVOPS-AGENT-INTAKE-01` | DEFAULT | Agent-authored PRs enter through a declared intake policy (weak, medium or strong) that names identity, draft rule, review budget, supersede procedure and close conditions. Owner: `references/agent-pr-intake.md`. |\n"
+          ]
+        },
+        {
+          "line": 262,
+          "old": [
+            "`references/branch-lifecycle.md`. Setup, intake and local GC have their own owner\n",
+            "files, listed in Modular References above.\n"
+          ],
+          "new": [
+            "`references/branch-lifecycle.md`; local GC is `references/local-gc.md`. Repository setup\n",
+            "(`DEVOPS-REPO-BOOTSTRAP-01`) and agent PR intake (`DEVOPS-AGENT-INTAKE-01`) are repository\n",
+            "governance, owned by [repo-governance.md](../crw-canon/references/repo-governance.md).\n"
+          ]
+        },
+        {
+          "line": 280,
+          "old": [
+            "### §3.2 Gateway API (v1.6+, verified 2026-07-02 — TCPRoute/UDPRoute GA in v1.6)\n"
+          ],
+          "new": [
+            "### §3.2 Gateway API (v1.6+: TCPRoute and UDPRoute are GA)\n"
+          ]
+        },
+        {
+          "line": 373,
+          "old": [
+            "**DORA 2025 (verified 2026-07-02):** AI acts as an *amplifier* — returns depend on the underlying sociotechnical system. For AI-agent-heavy delivery invest in golden paths, guardrails, observability, provenance, and review gates.\n"
+          ],
+          "new": [
+            "**DORA 2025:** AI acts as an *amplifier* — returns depend on the underlying sociotechnical system. For AI-agent-heavy delivery invest in golden paths, guardrails, observability, provenance, and review gates.\n"
           ]
         }
       ]
@@ -121,6 +176,41 @@
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-dev-devops to guide this task and verify its result.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/agent-infra-safety.md",
+      "reason": "CRW-1220: the description drops the worktree and governance triggers; repo-bootstrap, agent-pr-intake and their two rule rows move to crw-canon repo-governance; the stacked-PR text is scoped to repositories that use pull requests; dated verification stamps and history notes are removed",
+      "hunks": [
+        {
+          "line": 42,
+          "old": [
+            "requests are governed by `agent-pr-intake.md` (DEVOPS-AGENT-INTAKE-01); the approval\n"
+          ],
+          "new": [
+            "requests are governed by [agent-pr-intake.md](../../crw-canon/references/agent-pr-intake.md) (DEVOPS-AGENT-INTAKE-01); the approval\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/agent-pr-intake.md",
+      "reason": "CRW-1220: the description drops the worktree and governance triggers; repo-bootstrap, agent-pr-intake and their two rule rows move to crw-canon repo-governance; the stacked-PR text is scoped to repositories that use pull requests; dated verification stamps and history notes are removed",
+      "remove": true
+    },
+    {
+      "file": "references/ci-cd-deploy.md",
+      "reason": "CRW-1220: the description drops the worktree and governance triggers; repo-bootstrap, agent-pr-intake and their two rule rows move to crw-canon repo-governance; the stacked-PR text is scoped to repositories that use pull requests; dated verification stamps and history notes are removed",
+      "hunks": [
+        {
+          "line": 265,
+          "old": [
+            "| Repository accepting agent PRs with no intake policy | Review budget is consumed by volume, not by risk | `DEVOPS-AGENT-INTAKE-01`, `agent-pr-intake.md` |\n"
+          ],
+          "new": [
+            "| Repository accepting agent PRs with no intake policy | Review budget is consumed by volume, not by risk | `DEVOPS-AGENT-INTAKE-01`, [agent-pr-intake.md](../../crw-canon/references/agent-pr-intake.md) |\n"
           ]
         }
       ]
@@ -182,6 +272,31 @@
           ],
           "new": [
             "Cross-ref: read `../../crw-dev-security/references/supply-chain-sbom.md` for SBOM/signing depth.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/repo-bootstrap.md",
+      "reason": "CRW-1220: the description drops the worktree and governance triggers; repo-bootstrap, agent-pr-intake and their two rule rows move to crw-canon repo-governance; the stacked-PR text is scoped to repositories that use pull requests; dated verification stamps and history notes are removed",
+      "remove": true
+    },
+    {
+      "file": "references/sre-foundations.md",
+      "reason": "CRW-1220: the description drops the worktree and governance triggers; repo-bootstrap, agent-pr-intake and their two rule rows move to crw-canon repo-governance; the stacked-PR text is scoped to repositories that use pull requests; dated verification stamps and history notes are removed",
+      "hunks": [
+        {
+          "line": 294,
+          "old": [
+            "Independently learned in this project's own history: a cli-jaw deployment proof\n",
+            "required comparing process start time against the installed `dist` mtime, because\n",
+            "a matching version string and a green health endpoint were both satisfied by a\n",
+            "process running the previous build.\n"
+          ],
+          "new": [
+            "A deployment proof can require comparing process start time against the installed\n",
+            "`dist` mtime, because a matching version string and a green health endpoint are both\n",
+            "satisfied by a process running the previous build.\n"
           ]
         }
       ]

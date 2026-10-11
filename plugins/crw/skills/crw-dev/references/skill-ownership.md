@@ -28,11 +28,11 @@ Each rule area has exactly one canonical owner. Other skills may contain stubs b
 | Design intent discovery | `dev-uiux-design` | `dev-frontend` |
 | Design judgment | `dev-uiux-design` | `dev-frontend` |
 | Visual document composition / diagram and report rendering and delivery mechanics | `dev-visualizer` | `dev`; format-specific document owners retain PDF/DOCX/Slides mechanics |
-| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `dev` Family Invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |
+| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |
 | Deep research protocol (SEARCH-DEEP-*) | `search/references/deep-research.md` | `search` Tier 3, `dev` browser-routing |
 | Operational gates | `dev-devops` | `dev-backend`, `dev-scaffolding` |
-| Repository bootstrap (rulesets, merge settings, PR limits) | `dev-devops` `references/repo-bootstrap.md` | `dev-devops` §2.9 |
-| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `dev-devops` `references/agent-pr-intake.md` | `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |
+| Repository bootstrap (rulesets, merge settings, PR limits) | `crw-canon` `references/repo-bootstrap.md` | `crw-canon` `references/repo-governance.md`, `dev-devops` |
+| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `crw-canon` `references/agent-pr-intake.md` | `crw-canon` `references/repo-governance.md`, `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |
 | Local worktree/branch GC (`DEVOPS-LOCAL-GC-*`) | `dev-devops` `references/local-gc.md` | `worktree-guardian` §4, `dev-devops` ci-cd-deploy |
 | Native desktop acceptance matrix (`DESKTOP-*`) | `dev-devops` `references/native-desktop-acceptance.md` | `dev` routing table, `dev-testing`, `qa`, `cross-platform-release.md`, `mobile-native.md`, `dev-debugging` runtimes/swift.md |
 | macOS system approval prompts (`MACOS-APPROVAL-*`) | `dev-devops` `references/macos-system-approvals.md` | `cross-platform-release.md` §2/§3, `qa` Desktop GUI row |
@@ -45,8 +45,8 @@ Each rule area has exactly one canonical owner. Other skills may contain stubs b
 | C2+ P-phase loop-spec output fields | pabcd references/plan-output.md | pabcd P router, phase-plan |
 | Repair and optimization method | pabcd references/loop-engineering.md and optimization.md respectively | loop |
 | PABCD workflow | `pabcd` | — |
-| Anti-slop output | `dev` §Family Invariants | all `dev-*` |
-| file:line evidence | `dev` §Family Invariants | all `dev-*` |
-| Completion proof | `dev` §Family Invariants | `pabcd`, all `dev-*` |
+| Anti-slop output | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |
+| file:line evidence | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |
+| Completion proof | `dev` §3 verification gate; `crw-canon` `references/skill-family.md` (Family invariants) | `pabcd`, all `dev-*` |
 
 When updating a rule, update the canonical owner first, then verify stubs still point correctly.

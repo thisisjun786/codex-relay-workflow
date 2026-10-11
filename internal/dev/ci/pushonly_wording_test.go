@@ -58,6 +58,16 @@ var pushOnlyExempt = map[string]string{
 	pushOnlyCoordination: pushOnlyCoordinationHeading,
 }
 
+// pushOnlyPullRequestRepositories are the repository governance documents of crw-canon: they describe the
+// intake of pull requests into a repository whose delivery path is pull requests (an external contribution,
+// a repository that receives agent-authored PRs), which is not CRW's own task-branch procedure
+// (repo-governance.md says so). CRW's own documents are read in full.
+var pushOnlyPullRequestRepositories = map[string]string{
+	"plugins/crw/skills/crw-canon/references/repo-governance.md": "the rules for repositories that receive pull requests",
+	"plugins/crw/skills/crw-canon/references/repo-bootstrap.md":  "rulesets and pull request limits of a pull-request repository",
+	"plugins/crw/skills/crw-canon/references/agent-pr-intake.md": "intake policy for agent-authored pull requests",
+}
+
 var pushOnlyDocs = []string{
 	"POLICY.md", "CONTRIBUTING.md", "AGENTS.md", "README.md",
 	"docs/CI.md", "docs/releases.md", "docs/plugin-packaging.md", "docs/runtime-install.md",
@@ -94,6 +104,9 @@ func pushOnlyFiles(t *testing.T) []string {
 				rel, err := filepath.Rel(root, p)
 				if err != nil {
 					return err
+				}
+				if _, ok := pushOnlyPullRequestRepositories[filepath.ToSlash(rel)]; ok {
+					return nil
 				}
 				files = append(files, filepath.ToSlash(rel))
 			}

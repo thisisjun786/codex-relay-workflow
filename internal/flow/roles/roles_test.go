@@ -161,14 +161,16 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 	}
 }
 
-// TestQAOverlayForbidsOracleSpawn: the QA overlay does not start the two oracle passes and asks for the captures.
+// TestQAOverlayForbidsOracleSpawn: the QA overlay does not start the two reviewer passes (the oracle passes of SP-QA-2)
+// and asks for the captures. Since CRW-1220 the crw-qa skill calls them reviewer passes, so the overlay names the
+// section by the heading the skill has.
 func TestQAOverlayForbidsOracleSpawn(t *testing.T) {
 	overlay, err := Overlay("executor", Options{QA: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Do not start the two oracle passes of section 5 of the `crw-qa` skill yourself",
+		"Do not start the two reviewer passes of section 5 of the `crw-qa` skill (`## 5. Reviewer passes`) yourself",
 		"SP-QA-2",
 		"Do not call spawn_agent",
 		"the receipt field `captures`",
@@ -180,7 +182,7 @@ func TestQAOverlayForbidsOracleSpawn(t *testing.T) {
 		}
 	}
 	plain, _ := Overlay("executor", Options{})
-	if plain == overlay || strings.Contains(plain, "oracle") {
+	if plain == overlay || strings.Contains(plain, "SP-QA-2") || strings.Contains(plain, "reviewer passes") {
 		t.Error("the ordinary executor overlay is not the QA overlay")
 	}
 	// The QA call is an executor call and nothing else.
@@ -194,10 +196,14 @@ func TestQAOverlayForbidsOracleSpawn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, heading := range []string{"## 5. Oracle passes", "## 6. Teardown receipts"} {
-		if !strings.Contains(string(skill), heading) {
+	for _, heading := range []string{"## 5. Reviewer passes", "## 6. Teardown receipts"} {
+		if !strings.Contains(string(skill), "\n"+heading) {
 			t.Errorf("the crw-qa skill has no %q the overlay points at", heading)
 		}
+	}
+	// No word of the overlay still calls the passes by the name the skill no longer uses.
+	if strings.Contains(strings.ToLower(overlay), "oracle pass") {
+		t.Error("the QA overlay calls the passes oracle passes; section 5 of the crw-qa skill calls them reviewer passes")
 	}
 }
 

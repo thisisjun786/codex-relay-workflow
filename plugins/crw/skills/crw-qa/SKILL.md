@@ -1,6 +1,6 @@
 ---
 name: crw-qa
-description: "MUST USE after building or changing any user-facing surface (web UI, TUI, CLI, HTTP API, native desktop GUI) before claiming done — manual, surface-driving QA: real invocations on real surfaces, captured artifacts, adversarial classes, and teardown receipts feeding the PABCD C gate. Automated suites are dev-testing's job; this skill proves the surface actually works when driven. Delivery against Linear criteria is crw-check's job, and its pass here is evidence crw-check may read, not a delivery verdict. Triggers: manual QA, QA this, does it actually work, drive the UI, smoke test, visual QA, screenshot check, TUI alignment, CJK clipping, 수동 QA, 실제로 되는지 확인, 동작 확인, 직접 돌려봐."
+description: "Manual QA of a built surface (web UI, TUI, CLI, HTTP API, desktop GUI): drive it for real, capture artifacts, probe adversarial inputs, record teardown. Suites are crw-dev-testing; delivery against Linear criteria is crw-check. Triggers: manual QA, QA this, smoke test, visual QA, 수동 QA, 직접 돌려봐."
 ---
 
 # crw-qa — Manual Surface QA Gate
@@ -9,15 +9,13 @@ Prove a built surface works by DRIVING it, not by inferring from green tests.
 No scenario closes on a status string; it closes on a captured artifact from a
 real surface, an adversarial pass, and a teardown receipt. Everything in this
 skill is E7 discipline (agent-followed, not hook-enforced); the one shipped E2
-touchpoint is noted in §7. Lineage: lazycodex `visual-qa` / `review-work` /
-`lazycodex-qa-executor` (vendored at `devlog/.lazycodex/`), translated to
-crw's no-server, Codex-native-tool model.
+touchpoint is noted in §7.
 
 ## Modular References
 
 | File | When to Read | What It Covers |
 | --- | --- | --- |
-| `references/visual-qa.md` | ANY visual surface verdict (web UI, TUI, desktop GUI) | Visual artifact rubric: companion-skill grounding (QA-VISUAL-COMPANION-01), objective-metrics-first (QA-VISUAL-METRIC-01), oracle judge limits, extended adversarial classes, TUI harness options |
+| `references/visual-qa.md` | ANY visual surface verdict (web UI, TUI, desktop GUI) | Visual artifact rubric: companion-skill grounding (QA-VISUAL-COMPANION-01), objective-metrics-first (QA-VISUAL-METRIC-01), reviewer-pass limits, extended adversarial classes, TUI harness options |
 | `references/http-api-qa.md` | HTTP API surface scenarios | Wire-driving procedure (QA-HTTP-01): curl capture discipline, auth-state/contract/idempotency/boundary/content-negotiation/CORS axes, status-code truth table |
 | `references/cli-tui-qa.md` | CLI or TUI surface scenarios | Session mechanics (QA-CLI-01): stdout/stderr separation, TTY-vs-pipe, env/config precedence, signal cleanup, tmux lifecycle + wait-for-marker driving |
 
@@ -31,7 +29,7 @@ Aside, agbrowse and native browser capabilities may drive built UI; none is requ
   Playwright suites and CI gates. Browser selection lives in the shared dev policy;
   `dev-testing` §4.7 connects that policy to exploratory tests.
 - `crw-qa` (this skill) owns the manual QA PROCEDURE: scenario matrix,
-  faithful channels, evidence contract, adversarial classes, oracle passes,
+  faithful channels, evidence contract, adversarial classes, reviewer passes,
   teardown receipts.
 - Both feed PABCD C. Neither replaces the other: a green suite without a
   driven surface can still ship a broken border or a dead route; a driven
@@ -147,14 +145,14 @@ Class 5 findings feed the visual pass in §5. N/A classes follow the §3 rule.
 Surface-specialized class details: `http-api-qa.md` (wire), `cli-tui-qa.md`
 (terminal), `visual-qa.md` (extended visual classes).
 
-## 5. Oracle passes (depth scales by work class)
+## 5. Reviewer passes (depth scales by work class)
 
 - **C2**: run the matrix yourself; one self-review pass over the artifacts
   before writing verdicts.
 - **C3+ with a visual surface**: dispatch TWO parallel read-only reviewer
   passes (`spawn_agent`, explorer role, DISPATCH-TASK-01 packet; paste the
   captures/screenshot paths + script/tool observations into each prompt —
-  do not make the oracle re-derive context):
+  do not make the reviewer re-derive context):
   Both passes are rubric-bound: attach `crw-dev-frontend` (anti-slop +
   visual-verification checklist ARE the rubric) and, for design-direction
   judgments only, `crw-dev-uiux-design`; every PASS cites the rule ids it
@@ -169,7 +167,7 @@ Surface-specialized class details: `http-api-qa.md` (wire), `cli-tui-qa.md`
     precision, border/box-drawing drift.
   Synthesize both into one PASS / REVISE / FAIL in the MAIN session. On FAIL,
   REVIEW-SYNTHESIS-01 applies before any re-dispatch; revision rounds reuse
-  the same oracle (DISPATCH-ACTOR-01), and the final C gate gets a fresh one.
+  the same reviewer (DISPATCH-ACTOR-01), and the final C gate gets a fresh one.
 - Long passes: require `WORKING: <task> - <phase>` progress messages and
   `BLOCKED: <reason>` from dispatched QA workers; a wait timeout is not a
   failure signal (a running child is alive). A lane that crashed or returned
@@ -192,13 +190,3 @@ re-scoped through a P-phase amendment, never silently. This is E7 discipline:
 no hook reads verdict.json. The E2 touchpoint: QA delegated to a registered `executor`
 subagent rides the existing SubagentStop receipt gate (legacy `worker` also supported) — the executor cannot
 finish without a non-empty receipt under `.crw/evidence/`.
-
-## v2 candidates (deliberately not shipped)
-
-- Node-only ports of lazycodex's `image-diff` / `tui-check` scoring scripts
-  (objective similarity/overflow JSON as oracle reference input). v1 uses
-  direct `view_image` inspection + inline width checks; vendor scripts only
-  if field friction shows the inline checks miss real defects.
-- A review-work-style multi-lane orchestrator: not planned — the A gate,
-  C adversarial review, REVIEW-SYNTHESIS-01, and this skill already cover
-  those lanes without a 5-spawn token bill.

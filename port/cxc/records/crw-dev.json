@@ -62,15 +62,40 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1218: the polling budget aggregate is owned by the project orchestrator, with a link to crw-run's resource accounting.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1218: the polling budget aggregate is owned by the project orchestrator, with a link to crw-run's resource accounting. CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for coding, PR creation/review/merge, dependent branches, scaffolding, and QA. Classify C0-C5, preserve safety and fresh proof, and load the matching surface owner. Triggers: develop, fix, refactor, test, review, docs, browse, QA, stacked PR, 개발, 수정, 검토, 스택 PR.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Universal dev discipline: work classifier, modular limits, verification gate, safety rules.\"\n",
             "  keywords: [\"develop\", \"implement\", \"refactor\", \"feature\", \"code quality\", \"verification\", \"browse\", \"browser\", \"QA\", \"agbrowse\", \"stacked PR\", \"stacked pull request\", \"stacked diff\", \"PR stack\", \"restack\", \"브라우저\", \"페이지 확인\", \"화면 QA\", \"플레이라이트\", \"스택 PR\", \"PR 쪼개기\"]\n"
+          ],
+          "new": [
+            "description: \"Class-scaled development guidelines: classify the task C0-C5, keep the safety rules and fresh proof, and load the matching crw-dev-* surface owner. Use for coding, fixes and docs in a repository; project coordination and Linear planning go to crw-run and crw-plan. Triggers: develop, fix, docs, 개발.\"\n"
+          ]
+        },
+        {
+          "line": 32,
+          "old": [
+            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record |\n"
+          ],
+          "new": [
+            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n"
+          ]
+        },
+        {
+          "line": 36,
+          "old": [
+            "and the task is reclassified C0-C4.\n"
+          ],
+          "new": [
+            "and the task is reclassified as one of C0 through C4.\n",
+            "\n",
+            "In a flow-managed run, reviewer-final does not replace the pre-build design audit. The executor and an\n",
+            "oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.\n"
           ]
         },
         {
@@ -80,6 +105,20 @@
             "coordination route to crw-define, crw-plan, crw-check and crw-run respectively.\n",
             "The PABCD and task host-goal modes above govern a task's implementation; crw-run\n",
             "parent goal mode creates no implementation goalplan or FSM.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 159,
+          "new": [
+            "### Executor of a flow-managed run\n",
+            "\n",
+            "| Caller | Loads | Does not load |\n",
+            "|---|---|---|\n",
+            "| executor of a flow-managed run | `crw-dev` and the classified surface owners of the table above (`crw-dev-backend`, `crw-dev-frontend`, `crw-dev-data`, `crw-dev-testing`, `crw-dev-security`, `crw-dev-architecture`, `crw-dev-debugging`, `crw-dev-devops`, `crw-dev-scaffolding`, `crw-dev-uiux-design`, `crw-dev-visualizer`, `crw-dev-code-reviewer`) | the loop and PABCD skills: the run owns the process, so the executor starts no FSM |\n",
+            "\n",
+            "The run's overlay names the `crw-dev-*` skill to read; the executor reads that skill's routing table and the\n",
+            "references the change needs, nothing else.\n",
             "\n"
           ]
         },
@@ -111,6 +150,118 @@
           ]
         },
         {
+          "line": 236,
+          "old": [
+            "Canonical rule ownership and stub locations live in `references/skill-ownership.md`.\n",
+            "Update the canonical owner first and keep stubs as pointers; multi-domain tasks load\n",
+            "every relevant owner skill before work begins.\n"
+          ],
+          "new": [
+            "Canonical rule ownership is in [Skill ownership](references/skill-ownership.md): update the owner first,\n",
+            "and multi-domain tasks load every relevant owner skill before work begins.\n"
+          ]
+        },
+        {
+          "line": 242,
+          "old": [
+            "## Family Invariants (apply to every `crw-*` skill)\n"
+          ],
+          "new": [
+            "## Rules every skill follows\n"
+          ]
+        },
+        {
+          "line": 244,
+          "old": [
+            "> **Role boundary (canonical — identical in `dev-frontend` and `dev-uiux-design`):**\n",
+            "> `dev` owns universal process, evidence, and safety rules. `dev-uiux-design` owns\n",
+            "> design intent, direction, and concept judgment. `dev-frontend` owns concrete frontend\n",
+            "> implementation and rendered tell enforcement. Anti-slop has three layers: `dev` =\n",
+            "> output/process hygiene (FAMILY-SLOP-01), `dev-uiux-design` = concept/taste judgment\n",
+            "> (is this direction generic or domain-wrong?), `dev-frontend` = rendered implementation\n",
+            "> tell detection and removal (FE-AI-TELL-01).\n"
+          ],
+          "new": [
+            "The invariants every `crw-*` skill follows (anti-slop output, reader deliverables, `path:line` evidence,\n",
+            "completion proof) and the role boundary of `crw-dev`, `crw-dev-uiux-design` and `crw-dev-frontend` are in\n",
+            "[Family invariants](../crw-canon/references/skill-family.md#family-invariants). The completion-proof long\n",
+            "form is §3 below.\n"
+          ]
+        },
+        {
+          "line": 252,
+          "old": [
+            "These hold for every dev-family skill and every response they govern. `dev` is the canonical\n",
+            "owner; other routers reference this section rather than restating it. They are agent-followed\n",
+            "wording (no Codex hook enforces skill text — `structure/00_philosophy.md` §1), not runtime gates.\n",
+            "\n",
+            "- **Anti-slop output (FAMILY-SLOP-01).** No filler, no performative narration, no decorative\n",
+            "  rationale. Ship no placeholders, TODO-only deliverables, fake fallbacks, speculative wrapper\n",
+            "  layers, or broad defensive clutter without a named boundary reason. Code-smell catalog lives\n",
+            "  in §6 + `dev-code-reviewer` §3; this rule is about not emitting slop in the first place.\n",
+            "  Prose and document deliverables have their own reflexes (DEFAULT): em dashes and\n",
+            "  connector openers in Korean text, bold-label bullets and rule-of-three lists where\n",
+            "  a sentence would do, and stat cards, tinted callouts and box-and-arrow figures in a\n",
+            "  printed page. `kwrite` owns the Korean sentence tells; `dev-visualizer`\n",
+            "  REPORT-DESIGN-01 owns the page-design tells.\n",
+            "- **Reader deliverables (FAMILY-READER-01).** A report, explainer, visual document or summary\n",
+            "  written for a person follows [Reader documents](references/reader-documents.md): answer\n",
+            "  first, evidence separated and anchored, fresh-reader check for delivered reports. Audit\n",
+            "  artifacts (receipts, logs, ledgers) keep their raw form and are linked, not narrated.\n",
+            "- **file:line evidence (FAMILY-CITE-01).** When reporting code findings, plans, reviews, or\n",
+            "  contradictions, cite `path:line`. Plans list exact paths + the verification command; review\n",
+            "  and audit findings carry `path:line`; verification claims carry the command + its output or\n",
+            "  artifact path. This mirrors the structure doctrine (`structure/00_philosophy.md:135-141`).\n",
+            "- **Completion proof (FAMILY-PROOF-01).** No completion claim without fresh proof — see the\n",
+            "  §3 verification gate for the long form. Every other router inherits that gate; it is not\n",
+            "  re-stated per skill.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 325,
+          "old": [
+            "For non-obvious defects or repeated failed repairs load crw-dev-debugging.\n",
+            "For comprehension without a defect — how an unknown app, API, AI tool, or\n",
+            "codebase works (로직 파악, 뜯어보기) — load crw-dev-debugging's\n",
+            "`references/logic-analysis.md`: \"I can't analyze this\" is a skipped\n",
+            "observation loop, not a limit.\n",
+            "DEV-FRICTION-01 and DEV-EDIT-SHAPE-01 remain in\n"
+          ],
+          "new": [
+            "Non-obvious defects, repeated failed repairs and comprehension of an unknown system:\n",
+            "[crw-dev-debugging](../crw-dev-debugging/SKILL.md). DEV-FRICTION-01 and DEV-EDIT-SHAPE-01 stay in\n"
+          ]
+        },
+        {
+          "line": 435,
+          "new": [
+            "## 4.1 Requesting and Receiving Review\n",
+            "\n",
+            "The author's side of review; the independent reviewer's procedure is\n",
+            "[crw-dev-code-reviewer](../crw-dev-code-reviewer/SKILL.md).\n",
+            "\n",
+            "**Requesting.** Request review before merging, after major features, and before large refactors;\n",
+            "also request it for complex fixes or when the approach is uncertain. Small, non-impactful\n",
+            "config/docs changes may skip review. A review request includes passing build/tests, the\n",
+            "base-to-head diff range, a concise change and behavior summary, and requested focus areas. Keep\n",
+            "diffs under 500 changed lines or split them into reviewable units. Fix Critical findings\n",
+            "immediately and re-request review; fix High before other work and Medium before merge. Low and\n",
+            "Style findings follow impact and team conventions.\n",
+            "\n",
+            "**Receiving.** Read all feedback, restate the technical requirement, and verify it against the\n",
+            "codebase before accepting it. Evaluate stack fit, existing architecture, tests, and actual usage\n",
+            "rather than treating reviewer claims as authority. Clarify ambiguous items first, then handle\n",
+            "blockers, simple fixes, and complex changes in that order. Implement one item at a time and test\n",
+            "each change. Push back with concrete tests, code, or documented decisions when advice breaks\n",
+            "behavior, lacks context, violates YAGNI, is technically incorrect, or conflicts with established\n",
+            "architecture. Respond with the verified result and avoid performative agreement.\n",
+            "\n",
+            "---\n",
+            "\n"
+          ]
+        },
+        {
           "line": 443,
           "old": [
             "- **Push requires explicit user approval (DEV-GIT-PUSH-01, ESCALATE)** — never `git push` without the user's explicit approval in the current session. Committing locally is autonomous; pushing to a remote is an external state change that the user must authorize. If the user has not approved a push, do not push — even at D/completion. This applies equally to force-push, branch creation on remote, and tag push.\n"
@@ -126,6 +277,29 @@
           ],
           "new": [
             "- **Choose the repository's delivery path first, then stack only where it uses pull requests (DEV-STACK-01, DEFAULT)** — CRW internal work is a verified task branch that the integrator fast-forwards onto `dev` (`AGENTS.md`, `POLICY.md`): it opens no pull request, so it is never stacked; a large dependent change is sequenced as ordered commits or task branches for the integrator. An external contribution or an in-flight pull request keeps the pull-request path: when a change there splits into 2+ dependency-ordered parts and one PR would be too large to review, publish a bottom-up stack: each branch based on the one below, each PR's base pointing at its parent. Editing a lower layer means cascading the rebase to every layer above before pushing (`DEV-STACK-02`, STRICT). Merging a stack is bottom-up and stays user-authorized (`DEV-STACK-04`, ESCALATE). Canonical rules, depth guidance, anti-patterns, review scope, and tooling: `references/stacked-prs.md`.\n"
+          ]
+        },
+        {
+          "line": 449,
+          "old": [
+            "## 6. Code Quality Signals (stub)\n"
+          ],
+          "new": [
+            "## 6. Code Quality Signals\n"
+          ]
+        },
+        {
+          "line": 451,
+          "old": [
+            "Anti-pattern detection (god class, long method, deep nesting, magic numbers, stringly\n",
+            "typed, missing boundary error handling, floating promises, copy-paste) is canonically\n",
+            "owned by `crw-dev-code-reviewer` §3 — read it when writing or reviewing code.\n",
+            "Thresholds mirror §1 hard limits; boundary-error placement follows `crw-dev-architecture` §4.\n"
+          ],
+          "new": [
+            "Anti-pattern detection when writing or reviewing code:\n",
+            "[crw-dev-code-reviewer](../crw-dev-code-reviewer/SKILL.md) §3; boundary-error placement:\n",
+            "[crw-dev-architecture](../crw-dev-architecture/SKILL.md) §4.\n"
           ]
         },
         {
@@ -234,6 +408,21 @@
       ]
     },
     {
+      "file": "references/reader-documents.md",
+      "reason": "CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
+      "hunks": [
+        {
+          "line": 129,
+          "old": [
+            "`kwrite`; general output hygiene is `dev` FAMILY-SLOP-01. Limit a revision to one\n"
+          ],
+          "new": [
+            "`kwrite`; general output hygiene is FAMILY-SLOP-01 in [Family invariants](../../crw-canon/references/skill-family.md#family-invariants). Limit a revision to one\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "references/skill-catalog.md",
       "reason": "Drop the Telegram delivery row: the port has no messenger delivery.",
       "hunks": [
@@ -246,8 +435,47 @@
       ]
     },
     {
+      "file": "references/skill-ownership.md",
+      "reason": "CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
+      "hunks": [
+        {
+          "line": 31,
+          "old": [
+            "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `dev` Family Invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |\n"
+          ],
+          "new": [
+            "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |\n"
+          ]
+        },
+        {
+          "line": 34,
+          "old": [
+            "| Repository bootstrap (rulesets, merge settings, PR limits) | `dev-devops` `references/repo-bootstrap.md` | `dev-devops` §2.9 |\n",
+            "| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `dev-devops` `references/agent-pr-intake.md` | `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |\n"
+          ],
+          "new": [
+            "| Repository bootstrap (rulesets, merge settings, PR limits) | `crw-canon` `references/repo-bootstrap.md` | `crw-canon` `references/repo-governance.md`, `dev-devops` |\n",
+            "| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `crw-canon` `references/agent-pr-intake.md` | `crw-canon` `references/repo-governance.md`, `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |\n"
+          ]
+        },
+        {
+          "line": 48,
+          "old": [
+            "| Anti-slop output | `dev` §Family Invariants | all `dev-*` |\n",
+            "| file:line evidence | `dev` §Family Invariants | all `dev-*` |\n",
+            "| Completion proof | `dev` §Family Invariants | `pabcd`, all `dev-*` |\n"
+          ],
+          "new": [
+            "| Anti-slop output | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |\n",
+            "| file:line evidence | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |\n",
+            "| Completion proof | `dev` §3 verification gate; `crw-canon` `references/skill-family.md` (Family invariants) | `pabcd`, all `dev-*` |\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "references/stacked-prs.md",
-      "reason": "CRW-1024: state the push-only scope of the pull-request rules (internal work opens no pull request) and name the commit subject and handoff where a CRW task branch has no PR title or body; rewrite the PR-gate and PR-description wording of the migration rule as change wording. Recorded per the validation ledger.",
+      "reason": "CRW-1024: state the push-only scope of the pull-request rules (internal work opens no pull request) and name the commit subject and handoff where a CRW task branch has no PR title or body; rewrite the PR-gate and PR-description wording of the migration rule as change wording. Recorded per the validation ledger. CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
       "hunks": [
         {
           "line": 7,
@@ -285,6 +513,15 @@
           ],
           "new": [
             "- carries a stack map in the body of its pull request so reviewers can navigate (a CRW task branch carries it in its handoff):\n"
+          ]
+        },
+        {
+          "line": 389,
+          "old": [
+            "  `references/agent-pr-intake.md` (DEVOPS-PR-SUPERSEDE-01); keep a superseded parent\n"
+          ],
+          "new": [
+            "  [agent-pr-intake.md](../../crw-canon/references/agent-pr-intake.md) (DEVOPS-PR-SUPERSEDE-01); keep a superseded parent\n"
           ]
         }
       ]

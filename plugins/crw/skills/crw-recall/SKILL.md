@@ -1,9 +1,12 @@
 ---
 name: crw-recall
-description: "MUST USE for past-session recall — when a term from prior work is unfamiliar, context feels lost after a compact/restart, or the user references earlier work (그때, 지난번, 저번 세션, 예전에 했던, 기억나?, last time, previous session, what did we do). Searches past Codex conversations and the Codex memory store from the CLI before asking the user. Triggers: recall, 리콜, past session, chat search, memory search, 지난 세션, 이전 작업, 뭐였지, 어떻게 했었지."
+description: "Search past Codex session history and the memory store from the CLI when a term from prior work is unfamiliar or context was lost after a compact or restart. Triggers: recall, past session, chat search, memory search, last time, 지난 세션, 지난번, 기억나?"
 ---
 
 # recall — Past-Session Recall Search
+
+Corpus: the session history and the memory store of one Codex home. A Claude Code session's transcript is
+not in it, and another home is reached only with `--home`.
 
 Codex already persists every session (`~/.codex/sessions/**/rollout-*.jsonl`) and a
 per-thread memory store (`~/.codex/memories/`). This skill is the discipline for
@@ -40,9 +43,6 @@ crw recall chat index [--rebuild] [--status] [--verify] [--json]
 crw recall memory search "<query>" [--days N] [--limit N] [--any] [--no-synonyms]
                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]
                             [--home PATH]
-crw recall memory status [--json] [--home PATH]
-crw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]
-                   [--retries N] [--json] [--home PATH]
 ```
 
 Flags that live in the CLI USAGE and are easy to miss:
@@ -51,29 +51,11 @@ Flags that live in the CLI USAGE and are easy to miss:
   is newest-first.
 - `--full` — with `--json`, skip the 500-char clip.
 - `--home PATH` — search an alternate Codex home (default `$CODEX_HOME` ?? `~/.codex`).
-
-`crw recall memory status` reports the HOST extraction pipeline, which is a different system
-from the recall index above: per-kind job counts, jobs that exhausted their retries
-bucketed by cause, and the newest success. It names the store it read, because the host
-supports more than one memories schema, and reports `unsupported` rather than guessing.
-
-Every snapshot carries `observationSource: "jobs-db"`, identifying the collector even
-when the store is missing or unreadable. `effectiveExtractionRoute` and
-`startupGuardDecision` are always `"unknown"`: job history, including a recent success
-or a quota-classified error, cannot establish the current extraction route or startup
-guard decision. Text output states this limit too; healthy SessionStart notices stay
-silent. This diagnostic improvement does not resolve #191's native routing/guard
-mismatch. Provider-bridge status is not extraction-route evidence, and setting the
-threshold to zero is not a universal bypass: a present `rate_limit_reached_type` still
-blocks startup, while an absent flag permits a numeric 100% window at threshold zero.
-
-`crw recall memory requeue` returns dead-lettered jobs to that pipeline's retry queue. It is a
-**dry run unless you pass `--apply`**, because it writes to the live memory database.
-By default it selects only transient causes; `--include-context-window` is opt-in and
-usually a bad idea, since an input that did not fit the context window will not fit on a
-retry either — it just spends quota failing again.
 - `--json` on `crw recall chat index` prints index status as JSON.
 - `--verify` on `crw recall chat index` decides which rollout files changed from their content, so a rewrite that kept the size and the millisecond mtime is found; the default refresh compares size, mtime and file identity only. With `--status` it reports without writing.
+
+Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator
+work for the manager: [operator.md](references/operator.md).
 
 Defaults that matter:
 

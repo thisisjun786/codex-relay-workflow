@@ -30,13 +30,24 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata while preserving name, description and the original instruction body.",
+      "reason": "Remove unsupported frontmatter metadata while preserving name, description and the original instruction body. CRW-1220: the routing note names crw-dev; the helper functions no longer carry the CodexClaw name",
       "hunks": [
         {
           "line": 4,
           "old": [
             "metadata:\n",
             "  short-description: \"AST-aware structural search + deterministic codemods (ast-grep/sg) across 25 languages.\"\n"
+          ]
+        },
+        {
+          "line": 100,
+          "old": [
+            "- On-demand skill (`allow_implicit_invocation: false`); reached by trigger or\n",
+            "  `dev`-hub routing.\n"
+          ],
+          "new": [
+            "- On-demand skill (`allow_implicit_invocation: false`); reached by trigger or when\n",
+            "  `crw-dev` routes a structural-search task here.\n"
           ]
         }
       ]
@@ -49,6 +60,57 @@
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-ast-grep to preview this structural code search or rewrite before applying changes.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "scripts/ast_grep_helper.py",
+      "reason": "CRW-1220: the routing note names crw-dev; the helper functions no longer carry the CodexClaw name",
+      "hunks": [
+        {
+          "line": 209,
+          "old": [
+            "def codexclaw_env_binary() -> Optional[Path]:\n"
+          ],
+          "new": [
+            "def crw_env_binary() -> Optional[Path]:\n"
+          ]
+        },
+        {
+          "line": 219,
+          "old": [
+            "def codexclaw_runtime_slug() -> str:\n"
+          ],
+          "new": [
+            "def crw_runtime_slug() -> str:\n"
+          ]
+        },
+        {
+          "line": 232,
+          "old": [
+            "def codexclaw_runtime_binary() -> Optional[Path]:\n"
+          ],
+          "new": [
+            "def crw_runtime_binary() -> Optional[Path]:\n"
+          ]
+        },
+        {
+          "line": 234,
+          "old": [
+            "    slug = codexclaw_runtime_slug()\n"
+          ],
+          "new": [
+            "    slug = crw_runtime_slug()\n"
+          ]
+        },
+        {
+          "line": 257,
+          "old": [
+            "    for fn in (codexclaw_env_binary, codexclaw_runtime_binary, cached_binary, which_binary, homebrew_binary):\n"
+          ],
+          "new": [
+            "    for fn in (crw_env_binary, crw_runtime_binary, cached_binary, which_binary, homebrew_binary):\n"
           ]
         }
       ]

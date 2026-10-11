@@ -206,7 +206,7 @@ def homebrew_binary() -> Optional[Path]:
 
 # --- crw runtime resolution ---
 
-def codexclaw_env_binary() -> Optional[Path]:
+def crw_env_binary() -> Optional[Path]:
     raw_path = os.environ.get("CRW_AST_GREP_SG_PATH") or os.environ.get("OMO_AST_GREP_SG_PATH")
     if not raw_path:
         return None
@@ -216,7 +216,7 @@ def codexclaw_env_binary() -> Optional[Path]:
     return None
 
 
-def codexclaw_runtime_slug() -> str:
+def crw_runtime_slug() -> str:
     if sys.platform.startswith("win"):
         os_slug = "win32"
     elif sys.platform == "darwin":
@@ -229,9 +229,9 @@ def codexclaw_runtime_slug() -> str:
     return f"{os_slug}-{arch_slug}"
 
 
-def codexclaw_runtime_binary() -> Optional[Path]:
+def crw_runtime_binary() -> Optional[Path]:
     binary_name = "sg.exe" if sys.platform.startswith("win") else "sg"
-    slug = codexclaw_runtime_slug()
+    slug = crw_runtime_slug()
     candidates: list[Path] = []
 
     codex_home = os.environ.get("CODEX_HOME")
@@ -254,7 +254,7 @@ def resolve_binary() -> Optional[Path]:
     4. PATH (via shutil.which)
     5. Homebrew default paths
     """
-    for fn in (codexclaw_env_binary, codexclaw_runtime_binary, cached_binary, which_binary, homebrew_binary):
+    for fn in (crw_env_binary, crw_runtime_binary, cached_binary, which_binary, homebrew_binary):
         result = fn()
         if result:
             return result

@@ -693,6 +693,10 @@ this procedure applies: placement, the ownership columns, who commits, and where
 lives. What is here is when to read them, what to compare them against and what to refuse.
 Where the two disagree, OPS-5 is the one that changes and this follows it.
 
+The workspace of a run is this skill's. A Codex-app managed worktree (one per thread under
+`$CODEX_HOME/worktrees`) is `crw-worktree-guardian`'s, and branch hygiene is `crw-dev-devops`'s; see
+[Worktree owners](../crw-worktree-guardian/SKILL.md#worktree-owners-wg-owner-01).
+
 Before a checkout is assigned, read what already exists and who is answerable for
 it: the repository's worktrees with their branches and locked state, the dirty and
 untracked files in each, and any current writer. Then split the result in two, the

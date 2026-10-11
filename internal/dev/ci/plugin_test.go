@@ -641,12 +641,12 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 		t.Fatalf("report: %v: %+v", err, got)
 	}
 	// The plugin ships the skills the repository holds: its own ten (crw-canon, the reference-only
-	// library, among them) and, since the activation move (CRW-392), the 24 ported from CXC, crw-loop
+	// library, among them) and, since the activation move (CRW-392), the 23 ported from CXC, crw-loop
 	// (the PABCD loop) among them; the parent-goal procedure crw-loop once carried is crw-run's goal mode.
 	names := []any{"crw-add-issue", "crw-ast-grep", "crw-canon", "crw-check", "crw-define", "crw-dev", "crw-dev-architecture",
 		"crw-dev-backend", "crw-dev-code-reviewer", "crw-dev-data", "crw-dev-debugging", "crw-dev-devops",
 		"crw-dev-frontend", "crw-dev-scaffolding", "crw-dev-security", "crw-dev-testing", "crw-dev-uiux-design",
-		"crw-dev-visualizer", "crw-interview", "crw-kwrite", "crw-loop", "crw-lunasearch",
+		"crw-dev-visualizer", "crw-interview", "crw-kwrite", "crw-loop",
 		"crw-pabcd", "crw-plan", "crw-qa", "crw-recall", "crw-refactor", "crw-repo-map", "crw-run", "crw-run-initiative", "crw-search",
 		"crw-status", "crw-tidy", "crw-worktree-guardian"}
 	var expected []any

@@ -23,15 +23,19 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Separate code/PR review from Linear delivery checking and logical-consistency audits without changing the upstream review process. CRW-1116: the plan-audit verdict contract names the two closing lines (LAUNCH, then VERDICT) and the GO-WITH-FIXES (blockers=N) form the PABCD observer now parses and records. CRW-1218: the contradiction audit is part of crw-check, so the ownership boundary names crw-check for it.",
+      "reason": "CRW-1220 correction: the quarantine exception names the ci-pipeline file of crw-dev-testing",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for code review and review-readiness — review process, quality thresholds, antipattern detection, review verdicts, and giving/receiving feedback. Activates by change-surface for PR review, diff review, pre-merge checks, refactor audits, and high-risk changes. Triggers: 'review this', 'code review', 'PR review', 'check my diff', 'before merge', 'antipattern', '리뷰', '코드 리뷰', '머지 전에 확인'.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Code review router: findings, severity, verdicts, and review workflow.\"\n",
             "  keywords: [\"review\", \"PR\", \"pull request\", \"diff\", \"merge\", \"feedback\", \"approve\", \"code quality\", \"stacked PR\", \"stack review\", \"스택 PR 리뷰\"]\n"
+          ],
+          "new": [
+            "description: \"Independent code review of a diff or pull request: review process, quality thresholds, antipatterns, verdicts and test auditor gates. The author side of requesting and receiving feedback is crw-dev. Triggers: code review, PR review, check my diff, before merge, antipattern, 코드 리뷰, 머지 전에 확인.\"\n"
           ]
         },
         {
@@ -43,6 +47,7 @@
             "`crw-check` checks delivery against the canonical Linear requirements and issue criteria.\n",
             "`crw-check` also finds contradictions and broken invariants across specifications and evidence.\n",
             "Use the skill that owns the requested judgment; code review does not certify Linear delivery.\n",
+            "The author's side, requesting and receiving review, is `crw-dev` §4.1.\n",
             "\n"
           ]
         },
@@ -67,6 +72,188 @@
             "all, and the round stays open. The dispatching agent's exit rule is AUDIT-LOOP-01\n",
             "(`crw-pabcd` §A): FAIL always triggers another round, and each blocker of a\n",
             "GO-WITH-FIXES is folded into the plan or rebutted, which the main agent records in the attest's `auditBlockers`.\n"
+          ]
+        },
+        {
+          "line": 292,
+          "old": [
+            "## 4. Receiving Code Review\n"
+          ],
+          "new": [
+            "## 4. Reviewing AI-Generated Code\n"
+          ]
+        },
+        {
+          "line": 294,
+          "old": [
+            "Read all feedback, restate the technical requirement, and verify it against the\n",
+            "codebase before accepting it. Evaluate stack fit, existing architecture, tests,\n",
+            "and actual usage rather than treating reviewer claims as authority.\n",
+            "\n",
+            "Clarify ambiguous items first, then handle blockers, simple fixes, and complex\n",
+            "changes in that order. Implement one item at a time and test each change.\n",
+            "\n",
+            "Push back with concrete tests, code, or documented decisions when advice breaks\n",
+            "behavior, lacks context, violates YAGNI, is technically incorrect, or conflicts\n",
+            "with established architecture. Respond with the verified result and avoid\n",
+            "performative agreement.\n",
+            "\n",
+            "---\n",
+            "\n",
+            "## 5. Requesting Code Review\n",
+            "\n",
+            "Request review before merging, after major features, and before large refactors;\n",
+            "also request it for complex fixes or when the approach is uncertain. Small,\n",
+            "non-impactful config/docs changes may skip review.\n",
+            "\n",
+            "A review request must include passing build/tests, the base-to-head diff range,\n",
+            "a concise change and behavior summary, and requested focus areas. Keep diffs\n",
+            "under 500 changed lines or split them into reviewable units.\n",
+            "\n",
+            "Fix Critical findings immediately and re-request review; fix High before other\n",
+            "work and Medium before merge. Low and Style findings follow impact and team\n",
+            "conventions.\n",
+            "\n",
+            "### Reviewing AI-Generated Code\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 336,
+          "old": [
+            "## 6. Subagent Review Mode\n"
+          ],
+          "new": [
+            "## 5. Subagent Review Mode\n"
+          ]
+        },
+        {
+          "line": 338,
+          "old": [
+            "Parallelize review only when domain breadth exceeds one reviewer's context (e.g., frontend + backend + infra in a single diff, or when the diff spans too many unrelated domains for a single pass). Each subagent receives its file subset, the review process from sections 1-5, and outputs structured findings. The main agent deduplicates, normalizes severity, and presents a unified review.\n"
+          ],
+          "new": [
+            "Parallelize review only when domain breadth exceeds one reviewer's context (e.g., frontend + backend + infra in a single diff, or when the diff spans too many unrelated domains for a single pass). Each subagent receives its file subset, the review process from sections 1-4, and outputs structured findings. The reviewer that dispatched them deduplicates, normalizes severity, and presents a unified review.\n"
+          ]
+        },
+        {
+          "line": 381,
+          "old": [
+            "of available backends to compare the prose against — `web_search` is host-provided. The\n",
+            "scan that used to guard this read one prose file for phrase existence, broke on rewording,\n",
+            "and proved nothing, so it was deleted with the protection routed here on purpose\n",
+            "(`plugins/crw/test/manifest-policy.test.mjs`, the TEST-PROMPT-SEAM-01 comment). This\n",
+            "is a reviewer's read, not a contract. If a backend registry ever lands in code, revisit\n",
+            "whether a real two-source check is possible.\n"
+          ],
+          "new": [
+            "of available backends to compare the prose against, because `web_search` is host-provided,\n",
+            "and a scan that reads one prose file for phrase existence breaks on rewording and proves\n",
+            "nothing (`TEST-PROMPT-SEAM-01` below). This is a reviewer's read, not a contract. If a\n",
+            "backend registry lands in code, revisit whether a real two-source check is possible.\n"
+          ]
+        },
+        {
+          "line": 393,
+          "old": [
+            "Test adequacy for prose-wording changes follows `dev-testing`'s `TEST-PROMPT-SEAM-01`; that\n",
+            "skill owns test adequacy (see §\"Scope\" above) and this rule does not restate it.\n"
+          ],
+          "new": [
+            "Test adequacy for prose-wording changes follows `TEST-PROMPT-SEAM-01` in [Test auditor gates](#test-auditor-gates); `crw-dev-testing` owns test adequacy (see its scope).\n"
+          ]
+        },
+        {
+          "line": 398,
+          "new": [
+            "## Test auditor gates\n",
+            "\n",
+            "What a reviewer checks in a test change. The author-side test strategy is in `crw-dev-testing`; the rule ids are unchanged.\n",
+            "\n",
+            "### Test Oracle Integrity (TEST-PROMPT-SEAM-01 / TEST-ORACLE-INDEPENDENCE-01 / TEST-PRECEDENCE-FIXTURE-01, DEFAULT)\n",
+            "\n",
+            "Three narrow contracts that stop false-green. All three are agent-followed prose; no gate enforces\n",
+            "them and the reviewer is the only check.\n",
+            "\n",
+            "**TEST-PROMPT-SEAM-01 (DEFAULT).** Do not assert on prose. A test may read a document only\n",
+            "when it EXTRACTS a value and COMPARES it against a value from another source. Asserting that\n",
+            "a phrase exists in a file is a violation no matter how many files you read or what the test's\n",
+            "header says it is for.\n",
+            "\n",
+            "- Forbidden: `assert.match(readFileSync(\".../SKILL.md\"), /prefer rg first/i)` — one source,\n",
+            "  phrase existence, breaks on harmless rewording, proves no behavior.\n",
+            "- Allowed: parse the frontmatter `description`, pull the model token out of it, and\n",
+            "  `assert.ok(NATIVE_OPENAI_MODELS.includes(token))` — two sources, values compared, breaks\n",
+            "  only when they genuinely disagree.\n",
+            "- Also allowed (outside this rule's scope): asserting on non-prose values — version pins,\n",
+            "  license names, runtime output, CLI stdout, hook payloads, file existence.\n",
+            "\n",
+            "Where prose has no counterpart in code, a test that reads it only checks that the words are\n",
+            "still there. Such prose (a doctrine statement, a skill's wording) is a human-review item with no automated\n",
+            "check; inventing a second document to compare it against adds a false green.\n",
+            "\n",
+            "**TEST-ORACLE-INDEPENDENCE-01 (DEFAULT).** Never derive the expected value from the code\n",
+            "under test.\n",
+            "\n",
+            "- Forbidden: `assert.equal(fn(x), fn(x))`; building the expectation with a helper the DUT\n",
+            "  also uses; refreshing a snapshot from current output and calling that verification.\n",
+            "- Allowed: hardcode the expectation in the fixture, or compute it by an independent route\n",
+            "  (a second implementation, a hand-worked example, an external spec).\n",
+            "\n",
+            "**TEST-PRECEDENCE-FIXTURE-01 (DEFAULT).** When testing override / default / fallback, the\n",
+            "three values must all DIFFER — otherwise the test cannot tell which path ran.\n",
+            "\n",
+            "- Forbidden: override `\"x\"`, default `\"x\"`, fallback `\"x\"` — every branch passes.\n",
+            "- Allowed: override `\"from-flag\"`, default `\"from-config\"`, fallback `\"builtin\"`, and each\n",
+            "  case asserts the specific one.\n",
+            "\n",
+            "A regression test should FAIL when the defect is reintroduced. Confirm it once by mutation —\n",
+            "break it, watch it go red, restore it, watch it go green.\n",
+            "\n",
+            "### Patch Integrity Gate (TEST-PATCH-INTEGRITY-01, DEFAULT)\n",
+            "\n",
+            "An agent that obtains green by weakening tests has not fixed the bug. Before\n",
+            "claiming implementation complete:\n",
+            "\n",
+            "1. **Baseline**: record which tests fail and their failure signatures BEFORE any\n",
+            "   production code change.\n",
+            "2. **Implement**: write the fix/feature.\n",
+            "3. **Re-run originals**: execute the ORIGINAL test suite (not the modified version)\n",
+            "   against the patched source. All baseline failures must now pass.\n",
+            "4. **Classify test changes**: every test/config change is `required` (new test for\n",
+            "   new behavior), `suspicious` (deleted assertion, lowered threshold, added skip,\n",
+            "   reduced coverage exclusion), or `unrelated`.\n",
+            "5. **Justify suspicious changes**: each suspicious change needs a stated reason.\n",
+            "   \"The test was wrong\" is valid only with evidence of the original test's incorrectness.\n",
+            "\n",
+            "Red flags that trigger escalation:\n",
+            "- Deleted assertions without replacement\n",
+            "- Snapshot updates without visual/behavioral verification\n",
+            "- Coverage exclusions added in the same PR as the fix\n",
+            "- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`../crw-dev-testing/references/ci-pipeline.md` §5.3)\n",
+            "- Threshold reductions (e.g., coverage 80% → 60%)\n",
+            "- Type assertion suppressions (`as any`, `@ts-ignore`) in test files\n",
+            "\n",
+            "### TDD Evidence Contract (TEST-TDD-EVIDENCE-01, DEFAULT)\n",
+            "\n",
+            "When TDD is claimed, durable evidence must show:\n",
+            "- RED: failing test name + failure message (before production code)\n",
+            "- GREEN: same test passing (after production code)\n",
+            "- REFACTOR: full affected suite passing (after cleanup)\n",
+            "\n",
+            "A TDD claim without RED evidence is not TDD.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 432,
+          "old": [
+            "The condition is observable state, not ownership: a reviewer — often a subagent — cannot know\n",
+            "which branch the parent session \"owns\", but it can always see what is checked out where it\n"
+          ],
+          "new": [
+            "The condition is observable state, not ownership: a reviewer, often an executor-level subagent, cannot know\n",
+            "which branch the task that dispatched it owns, but it can always see what is checked out where it\n"
           ]
         }
       ]

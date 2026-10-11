@@ -1,6 +1,6 @@
 ---
 name: crw-dev
-description: "MUST USE for coding, PR creation/review/merge, dependent branches, scaffolding, and QA. Classify C0-C5, preserve safety and fresh proof, and load the matching surface owner. Triggers: develop, fix, refactor, test, review, docs, browse, QA, stacked PR, 개발, 수정, 검토, 스택 PR."
+description: "Class-scaled development guidelines: classify the task C0-C5, keep the safety rules and fresh proof, and load the matching crw-dev-* surface owner. Use for coding, fixes and docs in a repository; project coordination and Linear planning go to crw-run and crw-plan. Triggers: develop, fix, docs, 개발."
 ---
 
 # Dev — Common Development Guidelines
@@ -25,11 +25,14 @@ label does not justify retaining independent source areas in main.
 | C1 | Single-File Local | One file, local behavior, no new abstractions | Fast path (§0.1) + targeted check |
 | C2 | Ordinary Product Slice | Conventional endpoint, form, table, model, list/detail screen, integration touchpoint | Compact plan + adjacent convention search + focused tests + micro-audit |
 | C3 | Cross-Domain Feature/Refactor | Multiple modules, public API, shared types, broad behavior | Compact or full PABCD depending on persistence/risk; add subagent audit when scope or risk warrants |
-| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record |
+| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |
 | C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | Interview-first via the `pabcd` skill, then reclassify |
 
 **C5 is temporary** — it cannot enter implementation until Interview resolves ambiguity
-and the task is reclassified C0-C4.
+and the task is reclassified as one of C0 through C4.
+
+In a flow-managed run, reviewer-final does not replace the pre-build design audit. The executor and an
+oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.
 
 **Tie-break (DEFAULT):** when signals match two classes, the higher class wins. A
 conventional route→service→storage slice still counts as C2 even though it spans files;
@@ -157,6 +160,15 @@ numbered, contiguous, non-overlapping chunks through EOF and verify no gaps.
 | Code review | `dev-code-reviewer` | `dev-security` + `dev-testing` |
 | Diagrams / charts / visual documents / reports / PDF composition | `dev-visualizer` | Available document-format owner for PDF/DOCX/Slides mechanics; `dev-frontend` and `dev-uiux-design` retain implementation/design ownership |
 
+### Executor of a flow-managed run
+
+| Caller | Loads | Does not load |
+|---|---|---|
+| executor of a flow-managed run | `crw-dev` and the classified surface owners of the table above (`crw-dev-backend`, `crw-dev-frontend`, `crw-dev-data`, `crw-dev-testing`, `crw-dev-security`, `crw-dev-architecture`, `crw-dev-debugging`, `crw-dev-devops`, `crw-dev-scaffolding`, `crw-dev-uiux-design`, `crw-dev-visualizer`, `crw-dev-code-reviewer`) | the loop and PABCD skills: the run owns the process, so the executor starts no FSM |
+
+The run's overlay names the `crw-dev-*` skill to read; the executor reads that skill's routing table and the
+references the change needs, nothing else.
+
 ### Subagent Skill Injection (DEV-SKILL-INJECT-01)
 Attach `crw-dev` and every relevant surface skill explicitly to governed subagents.
 Prefer resolvable skill links; use plugin-native mentions or v1 `items` when needed.
@@ -234,46 +246,17 @@ Do not install a new driver/runner merely because a request says Playwright; use
 available capability. Explicit project-owned E2E work remains `dev-testing`'s domain.
 
 ### Skill Ownership Map
-Canonical rule ownership and stub locations live in `references/skill-ownership.md`.
-Update the canonical owner first and keep stubs as pointers; multi-domain tasks load
-every relevant owner skill before work begins.
+Canonical rule ownership is in [Skill ownership](references/skill-ownership.md): update the owner first,
+and multi-domain tasks load every relevant owner skill before work begins.
 
 ---
 
-## Family Invariants (apply to every `crw-*` skill)
+## Rules every skill follows
 
-> **Role boundary (canonical — identical in `dev-frontend` and `dev-uiux-design`):**
-> `dev` owns universal process, evidence, and safety rules. `dev-uiux-design` owns
-> design intent, direction, and concept judgment. `dev-frontend` owns concrete frontend
-> implementation and rendered tell enforcement. Anti-slop has three layers: `dev` =
-> output/process hygiene (FAMILY-SLOP-01), `dev-uiux-design` = concept/taste judgment
-> (is this direction generic or domain-wrong?), `dev-frontend` = rendered implementation
-> tell detection and removal (FE-AI-TELL-01).
-
-These hold for every dev-family skill and every response they govern. `dev` is the canonical
-owner; other routers reference this section rather than restating it. They are agent-followed
-wording (no Codex hook enforces skill text — `structure/00_philosophy.md` §1), not runtime gates.
-
-- **Anti-slop output (FAMILY-SLOP-01).** No filler, no performative narration, no decorative
-  rationale. Ship no placeholders, TODO-only deliverables, fake fallbacks, speculative wrapper
-  layers, or broad defensive clutter without a named boundary reason. Code-smell catalog lives
-  in §6 + `dev-code-reviewer` §3; this rule is about not emitting slop in the first place.
-  Prose and document deliverables have their own reflexes (DEFAULT): em dashes and
-  connector openers in Korean text, bold-label bullets and rule-of-three lists where
-  a sentence would do, and stat cards, tinted callouts and box-and-arrow figures in a
-  printed page. `kwrite` owns the Korean sentence tells; `dev-visualizer`
-  REPORT-DESIGN-01 owns the page-design tells.
-- **Reader deliverables (FAMILY-READER-01).** A report, explainer, visual document or summary
-  written for a person follows [Reader documents](references/reader-documents.md): answer
-  first, evidence separated and anchored, fresh-reader check for delivered reports. Audit
-  artifacts (receipts, logs, ledgers) keep their raw form and are linked, not narrated.
-- **file:line evidence (FAMILY-CITE-01).** When reporting code findings, plans, reviews, or
-  contradictions, cite `path:line`. Plans list exact paths + the verification command; review
-  and audit findings carry `path:line`; verification claims carry the command + its output or
-  artifact path. This mirrors the structure doctrine (`structure/00_philosophy.md:135-141`).
-- **Completion proof (FAMILY-PROOF-01).** No completion claim without fresh proof — see the
-  §3 verification gate for the long form. Every other router inherits that gate; it is not
-  re-stated per skill.
+The invariants every `crw-*` skill follows (anti-slop output, reader deliverables, `path:line` evidence,
+completion proof) and the role boundary of `crw-dev`, `crw-dev-uiux-design` and `crw-dev-frontend` are in
+[Family invariants](../crw-canon/references/skill-family.md#family-invariants). The completion-proof long
+form is §3 below.
 
 ---
 
@@ -323,12 +306,8 @@ Before any new abstraction, apply DEV-NECESSITY-01 and owner search in
 
 ## 2. Systematic Debugging
 
-For non-obvious defects or repeated failed repairs load crw-dev-debugging.
-For comprehension without a defect — how an unknown app, API, AI tool, or
-codebase works (로직 파악, 뜯어보기) — load crw-dev-debugging's
-`references/logic-analysis.md`: "I can't analyze this" is a skipped
-observation loop, not a limit.
-DEV-FRICTION-01 and DEV-EDIT-SHAPE-01 remain in
+Non-obvious defects, repeated failed repairs and comprehension of an unknown system:
+[crw-dev-debugging](../crw-dev-debugging/SKILL.md). DEV-FRICTION-01 and DEV-EDIT-SHAPE-01 stay in
 [Development practice](references/development-practice.md).
 
 ---
@@ -433,6 +412,29 @@ still governs its named log. Do not create an unrelated record to satisfy this s
 
 ---
 
+## 4.1 Requesting and Receiving Review
+
+The author's side of review; the independent reviewer's procedure is
+[crw-dev-code-reviewer](../crw-dev-code-reviewer/SKILL.md).
+
+**Requesting.** Request review before merging, after major features, and before large refactors;
+also request it for complex fixes or when the approach is uncertain. Small, non-impactful
+config/docs changes may skip review. A review request includes passing build/tests, the
+base-to-head diff range, a concise change and behavior summary, and requested focus areas. Keep
+diffs under 500 changed lines or split them into reviewable units. Fix Critical findings
+immediately and re-request review; fix High before other work and Medium before merge. Low and
+Style findings follow impact and team conventions.
+
+**Receiving.** Read all feedback, restate the technical requirement, and verify it against the
+codebase before accepting it. Evaluate stack fit, existing architecture, tests, and actual usage
+rather than treating reviewer claims as authority. Clarify ambiguous items first, then handle
+blockers, simple fixes, and complex changes in that order. Implement one item at a time and test
+each change. Push back with concrete tests, code, or documented decisions when advice breaks
+behavior, lacks context, violates YAGNI, is technically incorrect, or conflicts with established
+architecture. Respond with the verified result and avoid performative agreement.
+
+---
+
 ## 5. Safety Rules
 
 - **Preserve public contracts** — trace external consumers before removing exports. Internal unused exports may be removed within scope after consumer search; public removals need a compatibility/migration decision.
@@ -447,12 +449,11 @@ still governs its named log. Do not create an unrelated record to satisfy this s
 
 ---
 
-## 6. Code Quality Signals (stub)
+## 6. Code Quality Signals
 
-Anti-pattern detection (god class, long method, deep nesting, magic numbers, stringly
-typed, missing boundary error handling, floating promises, copy-paste) is canonically
-owned by `crw-dev-code-reviewer` §3 — read it when writing or reviewing code.
-Thresholds mirror §1 hard limits; boundary-error placement follows `crw-dev-architecture` §4.
+Anti-pattern detection when writing or reviewing code:
+[crw-dev-code-reviewer](../crw-dev-code-reviewer/SKILL.md) §3; boundary-error placement:
+[crw-dev-architecture](../crw-dev-architecture/SKILL.md) §4.
 
 ---
 

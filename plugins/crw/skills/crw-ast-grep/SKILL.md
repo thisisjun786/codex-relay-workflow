@@ -95,8 +95,8 @@ binary under the skill `bin/` → `PATH` → Homebrew defaults. When `sg` is mis
 
 ## Notes
 
-- On-demand skill (`allow_implicit_invocation: false`); reached by trigger or
-  `dev`-hub routing.
+- On-demand skill (`allow_implicit_invocation: false`); reached by trigger or when
+  `crw-dev` routes a structural-search task here.
 - No MCP server, no daemon, no workspace side-effects — this honors the core
   no-server contract. LSP and codegraph are deferred to a separate, isolated
   post-MVP extension and are deliberately not shipped here.

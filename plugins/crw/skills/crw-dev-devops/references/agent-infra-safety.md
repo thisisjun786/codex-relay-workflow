@@ -39,5 +39,5 @@ Source: sol research (microsoft/skills governance, cloudflare/skills sandbox, go
 
 ## Pull-request intake
 This file governs agents operating infrastructure. Agents *contributing* pull
-requests are governed by `agent-pr-intake.md` (DEVOPS-AGENT-INTAKE-01); the approval
+requests are governed by [agent-pr-intake.md](../../crw-canon/references/agent-pr-intake.md) (DEVOPS-AGENT-INTAKE-01); the approval
 classes above do not map onto PR review.

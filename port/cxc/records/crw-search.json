@@ -29,14 +29,33 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata and resolve peer/browser policy links through the renamed CRW dev folder.",
+      "reason": "Remove unsupported frontmatter metadata and resolve peer/browser policy links through the renamed CRW dev folder. CRW-1220: the description names the web corpus and the Luna lane; the dispatcher sections are one heading; the Luna lane is merged in as references/lunasearch.md",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for external, current, real-time, or public-web lookups — latest releases/versions, news, prices, docs, status, X/Twitter, and deep research with a cited report. Routes Korean and English lookup verbs to a codex-native search ladder, never an accidental repository grep. Triggers: search, look up, latest, current, news, real-time, X, Twitter, deep research, deep-research, 검색, 검색해, 찾아봐, 찾아줘, 알아봐, 웹검색, 딥리서치, 심층 조사.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-09-08\"\n",
             "  short-description: \"Codex-native unified search: discover -> prove -> deep-research ladder with Aside lane and Korean intent guard.\"\n"
+          ],
+          "new": [
+            "description: \"Web search for external, current or public information: latest versions, news, prices, docs, status, X/Twitter, and deep research with a cited report; Luna fan-out for broad parallel discovery. Triggers: search, look up, latest, news, deep research, 검색, 웹검색, 딥리서치, 루나검색.\"\n"
+          ]
+        },
+        {
+          "line": 11,
+          "old": [
+            "Search discipline for any lookup that leaves the repository. This skill is\n",
+            "implicit-visible as metadata (`allow_implicit_invocation: true`); load the\n",
+            "full body on explicit trigger or `dev`-hub routing, never by an external\n",
+            "dispatcher.\n"
+          ],
+          "new": [
+            "Search discipline for any lookup that leaves the repository: public web, news, prices, versions,\n",
+            "current status and deep research. Past sessions are `crw-recall`; repository code is `crw-repo-map`\n",
+            "and `crw-ast-grep`. This skill is implicit-visible as metadata (`allow_implicit_invocation: true`);\n",
+            "its body loads on an explicit trigger or when `crw-dev` routes a lookup here.\n"
           ]
         },
         {
@@ -55,6 +74,93 @@
           ],
           "new": [
             "Use the shared [portable browser routing](../crw-dev/references/browser-routing.md).\n"
+          ]
+        },
+        {
+          "line": 129,
+          "new": [
+            "### Removed cli-jaw tiers (non-goals — do not re-add)\n",
+            "crw has no server runtime, so the cli-jaw 4-tier ladder does not carry over.\n",
+            "Do **not** reintroduce any of these removed backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.\n",
+            "There is no codex-native equivalent and J-10 removed them deliberately.\n",
+            "\n",
+            "## For a dispatcher\n",
+            "\n",
+            "Read by the initiative lead, the project orchestrator or an issue child that sends helpers out to search. A\n",
+            "helper that only searches reads the ladder above and nothing here.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 130,
+          "old": [
+            "Any search subagent — Tier 3 deep-research explorers, `$crw-lunasearch` lanes,\n"
+          ],
+          "new": [
+            "Any search subagent — Tier 3 deep-research explorers, Luna lanes ([Luna lane](references/lunasearch.md)),\n"
+          ]
+        },
+        {
+          "line": 149,
+          "old": [
+            "asking the child to self-load mentions from `<skillsDir>/<folder>/SKILL.md`.\n"
+          ],
+          "new": [
+            "asking the child to self-load mentions from `<skillsDir>/<folder>/SKILL.md`; fork inheritance remains a secondary channel.\n"
+          ]
+        },
+        {
+          "line": 182,
+          "old": [
+            "### lunasearch (dependent tool)\n",
+            "`$crw-lunasearch` is a dependent discovery lane that rides on this skill's proof\n",
+            "ladder. It fans out cheap `gpt-5.6-luna` subagents for wide discovery,\n",
+            "then hands every candidate back here for Tier 2 source-proof. lunasearch\n",
+            "discovers; crw-search proves. lunasearch names THIS skill (`crw-search`) in each\n",
+            "spawn message; V1 parses the mention, while plaintext V2 paths use hook inlining as\n",
+            "qualified above. Manual V1 callers may instead use `items`. See the `$crw-lunasearch` skill for its hardcoded\n",
+            "spawn path and swarm shape.\n"
+          ],
+          "new": [
+            "### Luna lane\n",
+            "Broad, cheap, parallel public-web discovery fans out `explorer` helpers and hands every candidate back\n",
+            "here for Tier 2 proof. The lane, its swarm shape and its proof handoff are in\n",
+            "[Luna lane](references/lunasearch.md); trigger phrases: Luna search, 루나검색. Luna discovers, this\n",
+            "skill proves.\n"
+          ]
+        },
+        {
+          "line": 191,
+          "old": [
+            "### Removed cli-jaw tiers (non-goals — do not re-add)\n",
+            "crw has no server runtime, so the cli-jaw 4-tier ladder does not carry over.\n",
+            "Do **not** reintroduce any of these removed backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.\n",
+            "There is no codex-native equivalent and J-10 removed them deliberately.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 233,
+          "old": [
+            "- This skill is implicit-visible as metadata (`allow_implicit_invocation:\n",
+            "  true`, part of the implicit set with `dev` — canonical list: `dev` SKILL.md\n",
+            "  Visibility decision); the body is reached\n",
+            "  by trigger words or by `dev`-hub routing.\n"
+          ],
+          "new": [
+            "- This skill is implicit-visible as metadata (`allow_implicit_invocation: true`); the body is reached\n",
+            "  by trigger words or when `crw-dev` routes an external lookup here.\n"
+          ]
+        },
+        {
+          "line": 245,
+          "old": [
+            "- `$crw-lunasearch` is a dependent tool, not a tier. It hardcodes the Luna\n",
+            "  model and skips catalog probing; its error fallback is serial dispatch\n",
+            "  (re-spawn without the model field), not a probe round-trip.\n"
+          ],
+          "new": [
+            "- The Luna lane is a dependent lane, not a tier: it only discovers, and its candidates climb the same ladder.\n"
           ]
         }
       ]
@@ -106,6 +212,12 @@
           ]
         }
       ]
+    },
+    {
+      "file": "references/lunasearch.md",
+      "reason": "CRW-1220 correction: an unusable explorer setting is reported and repaired, a re-issued spawn is refused again",
+      "add": true,
+      "sha256": "f0acc7a310b544e642eee9795753be7b9c61868adb8efc87899502e7540475f8"
     }
   ]
 }

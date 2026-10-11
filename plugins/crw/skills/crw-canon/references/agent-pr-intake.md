@@ -1,9 +1,8 @@
 # Agent PR Intake — Identity, Draft-First, Supersede, Policy Strengths
 
-Last reviewed: 2026-09-09
 Applies to: GitHub repositories receiving pull requests or issues from coding agents — Copilot cloud agent, Codex cloud, Claude Code GitHub Actions, and human-driven agent sessions pushing from a personal account
 When to read: Many agent PRs or issues; designing or auditing an intake policy; a superseded or duplicate PR; deciding what to auto-close
-Canonical owner: dev-devops §2.9 (`DEVOPS-AGENT-INTAKE-01`)
+Canonical owner: [repository governance](repo-governance.md) (`DEVOPS-AGENT-INTAKE-01`)
 
 ---
 

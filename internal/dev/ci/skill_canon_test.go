@@ -68,6 +68,58 @@ var canonMoved = []canonSection{
 	{"execution-roles.md", "Execution settings by role"},
 	{"design-explanation.md", "Explaining a design"},
 	{"skill-family.md", "Skill names under each installation"},
+	{"skill-family.md", "Family invariants"},
+}
+
+// familyInvariantIDs are the rules crw-canon/references/skill-family.md defines for every skill; a definition
+// is the rule id in parentheses closing a bold label.
+var familyInvariantIDs = []string{"FAMILY-SLOP-01", "FAMILY-READER-01", "FAMILY-CITE-01", "FAMILY-PROOF-01"}
+
+const crwDevSkill = "plugins/crw/skills/crw-dev/SKILL.md"
+
+// crwDevStubErrors: crw-dev keeps no stub section and no copy of the family invariants; each invariant is
+// defined once, in crw-canon's skill-family.md, and crw-dev links to that section.
+func crwDevStubErrors(root string) []string {
+	var errs []string
+	data, err := os.ReadFile(filepath.Join(root, crwDevSkill))
+	if err != nil {
+		return []string{crwDevSkill + ": " + err.Error()}
+	}
+	for _, h := range headingsOf(string(data)) {
+		if strings.HasSuffix(h, "(stub)") || strings.Contains(strings.ToLower(h), "family invariants") {
+			errs = append(errs, crwDevSkill+": heading "+h+" is a stub or a copy of crw-canon/references/skill-family.md")
+		}
+	}
+	if !strings.Contains(string(data), "crw-canon/references/skill-family.md#family-invariants") {
+		errs = append(errs, crwDevSkill+": does not link crw-canon/references/skill-family.md#family-invariants")
+	}
+	files, err := repositoryFiles(root)
+	if err != nil {
+		return append(errs, err.Error())
+	}
+	for _, id := range familyInvariantIDs {
+		definition := "(" + id + ").**"
+		count := 0
+		for _, name := range files {
+			if filepath.Ext(name) != ".md" || strings.HasPrefix(name, "docs/port-cxc/") {
+				continue
+			}
+			text, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil {
+				continue
+			}
+			if n := strings.Count(string(text), definition); n > 0 {
+				if name != canonRefDir+"skill-family.md" {
+					errs = append(errs, name+": defines "+id+", which crw-canon/references/skill-family.md defines")
+				}
+				count += n
+			}
+		}
+		if count != 1 {
+			errs = append(errs, "crw-canon/references/skill-family.md: "+id+" is defined "+strconv.Itoa(count)+" times, want once")
+		}
+	}
+	return errs
 }
 
 // planningOnlyHeadings is every heading crw-plan/references/integrations.md keeps: the sections that
@@ -200,7 +252,7 @@ func sharedSectionOutsideCanonErrors(root string) []string {
 	if _, err := os.Stat(filepath.Join(root, "plugins/crw/skills/crw-plan/references/design-explanation.md")); err == nil {
 		errs = append(errs, "plugins/crw/skills/crw-plan/references/design-explanation.md: moved to crw-canon/references")
 	}
-	return errs
+	return append(errs, crwDevStubErrors(root)...)
 }
 
 func TestNoSharedSectionOutsideCanon(t *testing.T) {
@@ -227,6 +279,25 @@ func TestNoSharedSectionOutsideCanon(t *testing.T) {
 			"docs/other.md: heading Direct coordination between project orchestrators belongs to crw-canon/references/hierarchy.md",
 			planIntegrate + ": heading The release gate belongs to crw-canon/references/release-gate.md",
 			planIntegrate + ": headings Linear and implementation workflow integration | The release gate; want only the planning sections",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("errors lack %q:\n%s", want, joined)
+			}
+		}
+	})
+	t.Run("fixture: a crw-dev stub, a copy of the family invariants and a repeated definition fail", func(t *testing.T) {
+		r := newRepo(t)
+		r.write(crwDevSkill, "# Dev\n\n## Family Invariants (apply to every crw-* skill)\n\n- **Anti-slop output (FAMILY-SLOP-01).** x\n\n## 6. Code Quality Signals (stub)\n")
+		r.write(canonRefDir+"skill-family.md", "# Skill family\n\n## Family invariants\n\n- **Anti-slop output (FAMILY-SLOP-01).** x\n- **Reader (FAMILY-READER-01).** x\n- **Cite (FAMILY-CITE-01).** x\n- **Cite again (FAMILY-CITE-01).** x\n")
+		r.write("docs/other.md", "- **Completion proof (FAMILY-PROOF-01).** x\n")
+		r.commit()
+		joined := strings.Join(crwDevStubErrors(r.root), "\n")
+		for _, want := range []string{
+			"heading Family Invariants (apply to every crw-* skill) is a stub or a copy",
+			"heading 6. Code Quality Signals (stub) is a stub or a copy",
+			"does not link crw-canon/references/skill-family.md#family-invariants",
+			"FAMILY-CITE-01 is defined 2 times, want once",
+			"docs/other.md: defines FAMILY-PROOF-01",
 		} {
 			if !strings.Contains(joined, want) {
 				t.Errorf("errors lack %q:\n%s", want, joined)
