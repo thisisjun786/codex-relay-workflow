@@ -59,6 +59,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
 // The budgets of the Stop loop (hook.ts:1403-1411). StopMaxBlocks bounds consecutive blocks at one
@@ -534,6 +535,7 @@ type stopBinding struct {
 	receiptPath string // where `crw pabcd receipt test` writes this session's receipt; "" without a session id
 	slug        string // the bound slug
 	unreadable  bool   // bound, but the goalplan could not be read, so no work phase id is known
+	padded      bool   // bound, and the active work phase's id has white space the attest decoder trims, so no attest can name it
 }
 
 // stopBindingOf is the binding a block for the session shows. A session is bound by its slug, as the gates judge it
@@ -546,7 +548,13 @@ func stopBindingOf(slug string, plan *goalplan.Goalplan, sessionID string) stopB
 	b := stopBinding{bound: true, slug: slug, unreadable: plan == nil}
 	if plan != nil {
 		if id := goalplan.EffectiveActiveWorkPhaseID(plan); id != nil {
-			b.workPhaseID = *id
+			// attest.Coerce trims every text field of an attest (CRW-1189 round 2, d3), so an id stored with white space around it
+			// can never equal the active id the binding gate compares it to: it is not offered as a value to copy.
+			if text.Trim(*id) != *id {
+				b.padded = true
+			} else {
+				b.workPhaseID = *id
+			}
 		}
 	}
 	if sessionID != "" {
@@ -731,6 +739,9 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, binding stop
 	if binding.unreadable {
 		// CRW-1189: the plan is the only source of the work phase id; the attest above leaves the key out rather than guess it.
 		lines = append(lines, "The bound goalplan "+binding.slug+" could not be read, so the command above shows no workPhaseId. The gate lets the session through while no plan resolves; once it reads again, a refusal names the active work phase, and then add it as \"workPhaseId\".")
+	}
+	if binding.padded {
+		lines = append(lines, "The active work phase of goalplan "+binding.slug+" has an id with leading or trailing white space, which the attest decoder removes, so no attest can name it and the command above shows no workPhaseId. Remove the white space around that work phase's id in the goalplan, then add its id as \"workPhaseId\".")
 	}
 	if work != nil {
 		lines = append(lines, work.lines()...)

@@ -23,11 +23,19 @@ func TestCRW1189MarkerWithoutADispatchRecordSaysWhatToDo(t *testing.T) {
 		"`crw role helper dispatch`",
 		"start",
 		"claim",
-		"or leave the marker out",
+		"explicitly asks for a direct native spawn",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the refusal lacks %q: %q", want, got)
 		}
+	}
+	// CRW-1189 round 2 (d1): the refusal never tells the agent to drop the marker on its own - that turns a refused managed attempt into
+	// an unmanaged native spawn - and names the one case where a direct spawn is asked for: the user's own request.
+	if strings.Contains(got, "or leave the marker out") || strings.Contains(got, "leave the marker out") {
+		t.Errorf("the refusal advises dropping the marker unconditionally: %q", got)
+	}
+	if !strings.Contains(got, "user's current request") {
+		t.Errorf("the direct spawn is not tied to the user's request: %q", got)
 	}
 }
 

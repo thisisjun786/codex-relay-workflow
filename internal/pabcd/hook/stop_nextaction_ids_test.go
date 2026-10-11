@@ -1,7 +1,6 @@
 package hook
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +9,23 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/attest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
+
+// stopCliDecode is the decoding the CLI gives an --attest word (cli.decodeCliAttest: pyjson.Loads with the same options, then
+// attest.Coerce, which trims every text field), so the tests below see the attestation the binding gate sees, not a plain JSON read.
+func stopCliDecode(t *testing.T, word string) *attest.Attestation {
+	t.Helper()
+	v, err := pyjson.Loads(word, pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers, Map: true})
+	if err != nil {
+		t.Fatalf("the attest is not JSON: %v in %q", err, word)
+	}
+	att := attest.Coerce(v)
+	if att == nil {
+		t.Fatalf("the CLI reads no attestation from %q", word)
+	}
+	return att
+}
 
 // stopAttestWord is the shell word after `--attest ` in a block's command, read as a POSIX shell reads a single-quoted word
 // (a quote inside it is written close, backslash, quote, reopen), so a test sees what the agent's shell passes to the CLI.
@@ -37,8 +52,9 @@ func stopAttestWord(t *testing.T, reason string) string {
 	return ""
 }
 
-// CRW-1189 verification round 1 (P1): a work phase id the goalplan accepts (Unicode, spaces, colons, quotes) is given to the
-// agent exactly: the attest the block shows decodes to the id, and the binding gate accepts it.
+// CRW-1189 verification round 1 (P1): a work phase id the goalplan accepts (Unicode, inner spaces, colons, quotes) is given to the
+// agent exactly: the attest the block shows, decoded as the CLI decodes it (CRW-1189 round 2, d3: attest.Coerce included), carries
+// the id, and the binding gate accepts it.
 func TestStopContinuationCarriesAnyWorkPhaseIDTheGoalplanAccepts(t *testing.T) {
 	ids := []string{"wp7", "검증단계", "phase 7", "phase:7", `it's "quoted"`, "back`tick", `back\slash`, "a<b>&c"}
 	for _, id := range ids {
@@ -50,14 +66,11 @@ func TestStopContinuationCarriesAnyWorkPhaseIDTheGoalplanAccepts(t *testing.T) {
 					p.WorkPhases = []goalplan.GoalplanWorkPhase{stopWorkPhase(id, "Exporter", goalplan.WorkPhaseInProgress)}
 				})
 				reason := stopBlockReason(t, stopRun(cwd, env))
-				var att attest.Attestation
-				if err := json.Unmarshal([]byte(stopAttestWord(t, reason)), &att); err != nil {
-					t.Fatalf("the attest is not JSON: %v in %q", err, reason)
-				}
+				att := stopCliDecode(t, stopAttestWord(t, reason))
 				if att.WorkPhaseID != id {
 					t.Errorf("workPhaseId=%q, want %q in %q", att.WorkPhaseID, id, reason)
 				}
-				if bind := attest.ValidateWorkPhaseBinding(&att, &id); !bind.OK {
+				if bind := attest.ValidateWorkPhaseBinding(att, &id); !bind.OK {
 					t.Errorf("the binding gate refuses the shown attest: %s", bind.Reason)
 				}
 				if strings.Contains(strings.SplitN(reason, "\n", 4)[2], "`"+"`") {
@@ -112,5 +125,33 @@ func TestStopContinuationOfABoundSessionWithAnUnreadablePlanKeepsTheReceipt(t *t
 				t.Errorf("the block does not say why no workPhaseId is shown and what to do: %q", reason)
 			}
 		})
+	}
+}
+
+// CRW-1189 round 2 (d3): the CLI trims every text field of an attest (attest.Coerce), so an id the goalplan stores with leading or
+// trailing white space can never reach the binding gate from an attest. The block does not show a workPhaseId it knows to be
+// refused; it says why and what to change, and the decoded attest is not offered with an id that differs from the plan's.
+func TestStopContinuationOfAnIDWithPaddingSaysItCannotBeAttested(t *testing.T) {
+	for _, id := range []string{" phase 7 ", "phase7\n", "\tphase7", "\u00a0phase7\u00a0"} {
+		for _, phase := range []state.Phase{state.PhaseB, state.PhaseC} {
+			t.Run(id+"/"+string(phase), func(t *testing.T) {
+				cwd, env := stopRig(t, "active")
+				stopInFlight(t, cwd, phase, func(s *state.State) { s.Slug = "export" })
+				stopWritePlan(t, cwd, "export", func(p *goalplan.Goalplan) {
+					p.WorkPhases = []goalplan.GoalplanWorkPhase{stopWorkPhase(id, "Exporter", goalplan.WorkPhaseInProgress)}
+				})
+				reason := stopBlockReason(t, stopRun(cwd, env))
+				att := stopCliDecode(t, stopAttestWord(t, reason))
+				if att.WorkPhaseID != "" {
+					t.Errorf("a refused id is not shown: workPhaseId=%q in %q", att.WorkPhaseID, reason)
+				}
+				if !strings.Contains(reason, "leading or trailing white space") || !strings.Contains(reason, "goalplan export") {
+					t.Errorf("the block does not say the id cannot be attested and where to change it: %q", reason)
+				}
+				if phase == state.PhaseC && !strings.Contains(reason, `"testReceiptPath":".crw/evidence/rec-s1/test-receipt.json"`) {
+					t.Errorf("the receipt path stays: %q", reason)
+				}
+			})
+		}
 	}
 }

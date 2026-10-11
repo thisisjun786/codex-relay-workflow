@@ -188,20 +188,45 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 }
 
 // SessionBusyError is the busy error of a session lock whose wait ran out, worded for the caller who sees it (CRW-1189, R3-S2-F2):
-// another crw command is using the session, nothing was changed and the same command can be run again. It wraps the lock file's
-// *fs.PathError, so errors.Is(err, fs.ErrExist) and errors.As to a *fs.PathError still answer for it, and its text keeps the
-// oracle's "open <lock>: file exists" after the new words. The wait itself (the oracle's schedule, about 250 ms) is unchanged.
-type SessionBusyError struct{ Err error }
+// when the lock is held by a command that is running (or an owner that is alive) another crw command is using the session, nothing
+// was changed and the same command can be run again. It wraps the lock file's *fs.PathError, so errors.Is(err, fs.ErrExist) and
+// errors.As to a *fs.PathError still answer for it, and its text keeps the oracle's "open <lock>: file exists" after the new words.
+// The wait itself (the oracle's schedule, about 250 ms) is unchanged.
+//
+// A lock the acquisition rules cannot judge (Unjudged: a record that is empty or of neither protocol, a symlink, a directory or
+// another file the process cannot lock) is not contention: it can stay as it is with no command running, so the text does not ask for
+// a retry (round 2, d2); it says the owner cannot be judged and what to inspect. The acquisition rules, which never take such a lock
+// over, are unchanged.
+type SessionBusyError struct {
+	Err error
+	// Unjudged is set when the lock's owner could not be judged, as opposed to a holder known to be running.
+	Unjudged bool
+}
 
 func (e *SessionBusyError) Error() string {
+	if e.Unjudged {
+		return "session lock cannot be judged: its owner is unknown (an empty or unrecognised record, or a path that is not a lock file), so it is not taken over and running the command again will not clear it; " +
+			"if no crw command is running, inspect it and remove the stale lock file by hand (nothing was changed): " + e.Err.Error()
+	}
 	return "session state is busy: another crw command is using this session; retry the same command in a moment (nothing was changed): " + e.Err.Error()
 }
 
 func (e *SessionBusyError) Unwrap() error { return e.Err }
 
+// unjudgedLockError is the busy error of an attempt that found a lock it cannot judge (see SessionBusyError). It is the same
+// *fs.PathError the contention case returns, marked, so the wait and its schedule treat both alike.
+type unjudgedLockError struct{ Err *fs.PathError }
+
+func (e *unjudgedLockError) Error() string { return e.Err.Error() }
+func (e *unjudgedLockError) Unwrap() error { return e.Err }
+
 // sessionBusy words a give-up on a held lock; any other error is returned as it is.
 func sessionBusy(err error) error {
 	if errors.Is(err, fs.ErrExist) {
+		var unjudged *unjudgedLockError
+		if errors.As(err, &unjudged) {
+			return &SessionBusyError{Err: unjudged.Err, Unjudged: true}
+		}
 		return &SessionBusyError{Err: err}
 	}
 	return err
@@ -240,6 +265,7 @@ var sessionLockWriteRecord = func(f *os.File, record string) error {
 // exclusive create and its pid write, alive or not, which no record can tell apart, so it is never taken over.
 func trySessionLock(path string) (*sessionLock, error) {
 	busy := &fs.PathError{Op: "open", Path: path, Err: syscall.EEXIST}
+	unjudged := &unjudgedLockError{Err: busy} // busy, for a lock whose owner cannot be judged
 	// A file that leaves the path between the open and the kernel lock was released by its holder, and a file that appears
 	// between a failed open and the link was placed by another acquirer: both are progress, so the attempt opens again rather
 	// than waiting, a bounded number of times.
@@ -254,7 +280,7 @@ func trySessionLock(path string) (*sessionLock, error) {
 			return held, err
 		}
 		if err != nil { // a link, a directory, a socket, a file this process may not write: nothing it can judge
-			return nil, busy
+			return nil, unjudged
 		}
 		info, err := f.Stat()
 		if err != nil {
@@ -263,7 +289,7 @@ func trySessionLock(path string) (*sessionLock, error) {
 		}
 		if !info.Mode().IsRegular() {
 			_ = f.Close()
-			return nil, busy
+			return nil, unjudged
 		}
 		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 			_ = f.Close()
@@ -281,9 +307,14 @@ func trySessionLock(path string) (*sessionLock, error) {
 			}
 			return nil, err
 		}
-		if !sessionLockOwnerGone(f) {
+		switch sessionLockOwner(f) {
+		case ownerGone:
+		case ownerLive:
 			_ = f.Close()
 			return nil, busy
+		default:
+			_ = f.Close()
+			return nil, unjudged
 		}
 		// The gone owner's file stays locked by this process until its replacement is at the path, so an acquirer that opened
 		// it meanwhile finds, once it gets that kernel lock, that the path names another file.
@@ -341,25 +372,40 @@ func placeSessionLock(path string, replace bool) (*sessionLock, error) {
 	return &sessionLock{path: path, file: f, info: info}, nil
 }
 
-// sessionLockOwnerGone judges the record of a lock file whose kernel lock this process now holds. A record of this protocol has no
+// lockOwnerVerdict is what the record of a lock file says of its owner.
+type lockOwnerVerdict int
+
+const (
+	ownerUnjudged lockOwnerVerdict = iota // empty, unreadable, or of neither protocol
+	ownerGone
+	ownerLive // the oracle's bare pid of a process that exists
+)
+
+// sessionLockOwner judges the record of a lock file whose kernel lock this process now holds. A record of this protocol has no
 // live owner: a holder of this protocol keeps the kernel lock until it is gone. The oracle's record is the bare pid of a holder that
 // took no kernel lock, so it is gone only when no such process exists. Anything else cannot be judged, the empty record included:
 // it is what the oracle's live holder shows between its exclusive create and its pid write.
-func sessionLockOwnerGone(f *os.File) bool {
+func sessionLockOwner(f *os.File) lockOwnerVerdict {
 	buf := make([]byte, 64)
 	n, err := f.ReadAt(buf, 0)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return false
+		return ownerUnjudged
 	}
 	record := string(buf[:n])
 	if pid, ok := strings.CutSuffix(record, " flock\n"); ok && sessionLockDigits(pid) {
-		return true
+		return ownerGone
 	}
 	if !sessionLockDigits(record) {
-		return false
+		return ownerUnjudged
 	}
 	pid, err := strconv.Atoi(record)
-	return err == nil && ProcessGone(pid)
+	switch {
+	case err != nil || pid <= 0 || pid > math.MaxInt32: // not a pid that names a process
+		return ownerUnjudged
+	case ProcessGone(pid):
+		return ownerGone
+	}
+	return ownerLive
 }
 
 func sessionLockDigits(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }

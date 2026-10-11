@@ -3,6 +3,9 @@ package state
 import (
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,5 +51,69 @@ func TestCRW1189BusySessionLockSaysItIsRetryable(t *testing.T) {
 func TestCRW1189OtherLockFailuresKeepTheirText(t *testing.T) {
 	if err := WithSessionLock(t.TempDir(), "a/b", func() error { return nil }); !errors.Is(err, ErrNonCanonicalSessionID) || strings.Contains(err.Error(), "busy") {
 		t.Errorf("non-canonical id: %v", err)
+	}
+}
+
+// CRW-1189 round 2 (d2): only contention is retryable. A lock the acquisition rules cannot judge (a record that is empty or not of
+// either protocol, a symlink, a directory) can stay as it is with no command running, so its text does not send the caller into
+// retries: it names the path, says the owner cannot be judged and what to inspect. It is still the lock's fs.ErrExist.
+func TestCRW1189UnjudgeableSessionLockDoesNotAskForARetry(t *testing.T) {
+	for name, seed := range map[string]func(t *testing.T, cwd string) string{
+		"an unknown record": func(t *testing.T, cwd string) string { return lockOwnerSeed(t, cwd, "held") },
+		"an empty record":   func(t *testing.T, cwd string) string { return lockOwnerSeed(t, cwd, "") },
+		"a symlink": func(t *testing.T, cwd string) string {
+			if err := makeSessionsDir(cwd); err != nil {
+				t.Fatal(err)
+			}
+			lock := SessionLockPath(cwd, "s")
+			if err := os.Symlink(filepath.Join(cwd, "nowhere"), lock); err != nil {
+				t.Fatal(err)
+			}
+			return lock
+		},
+		"a directory": func(t *testing.T, cwd string) string {
+			if err := makeSessionsDir(cwd); err != nil {
+				t.Fatal(err)
+			}
+			lock := SessionLockPath(cwd, "s")
+			if err := os.Mkdir(lock, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return lock
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cwd := t.TempDir()
+			lock := seed(t, cwd)
+			err := withSessionLock(cwd, "s", func() error { t.Fatal("fn ran"); return nil }, func(time.Duration) {})
+			if err == nil || !errors.Is(err, fs.ErrExist) {
+				t.Fatalf("err=%v; want the lock's fs.ErrExist", err)
+			}
+			var pathErr *fs.PathError
+			if !errors.As(err, &pathErr) || pathErr.Path != lock {
+				t.Errorf("the lock file's *fs.PathError is not reachable: %v", err)
+			}
+			text := err.Error()
+			for _, bad := range []string{"retry", "another crw command is using"} {
+				if strings.Contains(text, bad) {
+					t.Errorf("an unjudgeable lock must not claim contention (%q): %q", bad, text)
+				}
+			}
+			for _, want := range []string{"cannot be judged", lock, "nothing was changed"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the text lacks %q: %q", want, text)
+				}
+			}
+		})
+	}
+}
+
+// Known contention (a live holder in this process, a live pid in the oracle's record) keeps the retry text.
+func TestCRW1189LiveHolderKeepsTheRetryText(t *testing.T) {
+	cwd := t.TempDir()
+	lockOwnerSeed(t, cwd, strconv.Itoa(os.Getpid()))
+	err := withSessionLock(cwd, "s", func() error { t.Fatal("fn ran"); return nil }, func(time.Duration) {})
+	if err == nil || !strings.Contains(err.Error(), "another crw command is using this session; retry") {
+		t.Errorf("a live oracle holder is contention: %v", err)
 	}
 }
