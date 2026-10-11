@@ -90,10 +90,11 @@ func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostW
 }
 
 // githubPostEnv is the part of the hook's own environment, which the command it judges inherits, that the guard reads:
-// PYTHONPYCACHEPREFIX, which makes a Python module run load compiled code from outside the module inventory (CRW-1178). Every other
-// variable is unset for the guard, as before.
+// PYTHONPYCACHEPREFIX, which makes a Python module run load compiled code from outside the module inventory (CRW-1178), and
+// PYTHONPATH, which puts the working directory on sys.path for a run that has only -P (CRW-1187). Every other variable is unset for the
+// guard, as before.
 func githubPostEnv(name string) (string, bool) {
-	if name != "PYTHONPYCACHEPREFIX" {
+	if name != "PYTHONPYCACHEPREFIX" && name != "PYTHONPATH" {
 		return "", false
 	}
 	return os.LookupEnv(name)

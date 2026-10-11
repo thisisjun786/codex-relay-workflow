@@ -101,10 +101,15 @@ type Context struct {
 	Coprocess   bool
 	Subshell    bool
 	Pipeline    bool
-	Loop        bool
-	FuncBody    bool
-	CmdSubst    bool
-	ProcSubst   bool
+	// pipeID names the pipeline the command is a stage of (0 outside one): its stages run at the same time.
+	pipeID int
+	// top is whether the statement is a direct member of the list of the text being read (CRW-1165): not inside a block, a branch, a loop,
+	// a function, a subshell or a substitution, and not in a carried text.
+	top       bool
+	Loop      bool
+	FuncBody  bool
+	CmdSubst  bool
+	ProcSubst bool
 	// Stdin is the source of standard input: one of the Stdin constants.
 	Stdin string
 	// stdinFile is the file the last input redirection names when Stdin is StdinFile and the reader knows it; inTextPipe is
@@ -159,6 +164,10 @@ type Exec struct {
 	// program or script file that is run there inherits it: a cd to a bare name in a script body searches its directories. A
 	// reader of the body starts with it (AnalyzeScript).
 	Cdpath bool
+	// ExitTainted is whether the text that holds a KindScriptFile record may have changed what exit or cd does for the shell that runs
+	// the script (a function, option or builtin it changed, or an environment it was not shown to leave alone): the reader of the
+	// script's body does not give it the proof of `cd <literal> || exit <digits>` (AnalyzeScriptProven, CRW-1165).
+	ExitTainted bool
 	// Line is the line, in the text the record was read from, of the statement that holds it (1-based; 0 when unknown).
 	Line int
 }
@@ -191,6 +200,13 @@ type state struct {
 	funcs   map[string]*syntax.Stmt
 	cdpath  bool
 	lookup  func(string) (string, bool)
+	// exitTainted and startup are what the reader was told about the shell around the text (ScriptOptions); they are read once, at the
+	// start of the walk.
+	exitTainted bool
+	startup     func(string) (string, bool)
+	// noExitProof withdraws the proof of cd || exit for the whole walk (the second reading of a text whose first reading used the proof
+	// and then met an assignment to a name it does not spell, see analyze).
+	noExitProof bool
 }
 
 func newState(cwd string) *state {
@@ -209,6 +225,8 @@ func (s *state) clone() *state {
 		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
 		cdpath:  s.cdpath,
 		lookup:  s.lookup,
+
+		exitTainted: s.exitTainted, startup: s.startup, noExitProof: s.noExitProof,
 	}
 	for k, v := range s.vars {
 		c.vars[k] = v
@@ -304,6 +322,19 @@ type walker struct {
 	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command or an expansion of
 	// it may assign a variable whose name it does not spell: either may give a later module run a cache prefix (CRW-1178).
 	prefixNamed, prefixUnknown bool
+	// pythonPathNamed is whether a text the walk read spells PYTHONPATH (CRW-1187). moduleRuns are the module runs of the text whose directory
+	// was checked, and pipeSeq numbers its pipelines (Context.pipeID).
+	pythonPathNamed bool
+	// startupSet is whether the text names a variable a shell reads at start (BASH_ENV, ENV, ZDOTDIR, SHELLOPTS, BASHOPTS, an exported
+	// function): by its spelling, or in a word a builtin that assigns variables is given. A script the text runs may then start with a
+	// function named exit from a file, so the scripts of the text get no proof of `cd <literal> || exit <digits>` (CRW-1165).
+	startupSet bool
+	// exitProof is whether the text leaves exit and cd alone, so that `cd <literal> || exit <digits>` proves the cd (CRW-1165).
+	exitProof bool
+	// exitUsed is whether the walk took a cd as proven by the form (cdOrExit).
+	exitUsed   bool
+	moduleRuns []moduleRun
+	pipeSeq    int
 }
 
 func (w *walker) stmts(list []*syntax.Stmt, st *state, ctx Context) error {
@@ -328,6 +359,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 	if s == nil {
 		return nil
 	}
+	// Only a statement of the text's own list is at its top; what it holds is not (ctx.top is cleared for it).
+	top := ctx.top && !s.Negated && !s.Background && !s.Coprocess && len(s.Redirs) == 0
+	ctx.top = false
 	_, simple := s.Cmd.(*syntax.CallExpr)
 	_, binary := s.Cmd.(*syntax.BinaryCmd)
 	if (!simple && !binary) || s.Negated || s.Background || s.Coprocess || ctx.Pipeline {
@@ -388,6 +422,9 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		wctx.Unsequenced = multiSubst
 		return w.call(c, redirs, st, ctx, wctx)
 	case *syntax.BinaryCmd:
+		if top && w.exitProof && cdExitForm(c) {
+			return w.cdOrExit(c, st, ctx)
+		}
 		return w.binary(c, st, ctx)
 	case *syntax.Subshell:
 		sctx := ctx
@@ -631,6 +668,22 @@ func (e *effectScan) function(name string, body *syntax.Stmt) bool {
 	return changes
 }
 
+// cdOrExit walks `cd <literal> || exit <digits>` at the top of the text: the cd is taken as succeeding for what follows, because a cd that
+// fails runs the exit, which ends the shell (cdExitForm; exitProof says nothing in the text changes that). The exit is walked on a copy of
+// the state, which is dropped: nothing runs after it.
+func (w *walker) cdOrExit(c *syntax.BinaryCmd, st *state, ctx Context) error {
+	w.exitUsed = true
+	lctx := ctx
+	lctx.succeeds = true
+	if err := w.stmt(c.X, st, lctx); err != nil {
+		return err
+	}
+	rctx := ctx
+	rctx.Conditional = true
+	rctx.succeeds = false
+	return w.stmt(c.Y, st.clone(), rctx)
+}
+
 func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 	switch c.Op {
 	case syntax.AndStmt, syntax.OrStmt:
@@ -659,6 +712,10 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 		}
 		return nil
 	case syntax.Pipe, syntax.PipeAll:
+		if ctx.pipeID == 0 {
+			w.pipeSeq++
+			ctx.pipeID = w.pipeSeq
+		}
 		lctx := ctx
 		lctx.Pipeline = true
 		before := len(w.out)
@@ -823,6 +880,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if mayNamePycachePrefix([]Word{v}) || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "i") {
 				w.prefixUnknown = true
 			}
+			w.noteAssignedNames([]Word{v})
 			// A word that names a variable by a value built at run time (export "${n}PATH=/x") may name CDPATH.
 			if mentionsCdpath([]Word{v}) {
 				st.cdpath = true
@@ -844,6 +902,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if v.Known && textNamesPycachePrefix(v.Value) {
 				w.prefixUnknown = true // a name reference to it, built from parts (declare -n r=${N}PREFIX)
 			}
+			w.noteAssignedNames([]Word{v}) // a name reference to a startup variable (declare -n r=$N)
 		default:
 			asg.Value = Word{Reason: "declared without a value"}
 		}
@@ -1229,6 +1288,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
 		}
+		w.noteAssignedNames(assignedNames(name, words[1:]))
 		if mentionsCdpath(words[1:]) {
 			st.cdpath = true
 		}
@@ -1242,7 +1302,9 @@ func (s *state) cd(args []Word) {
 		return
 	}
 	target := args[0].Value
-	if target == "" || strings.HasPrefix(target, "-") || strings.Contains(target, "..") {
+	// zsh reads an operand that starts with + (or -) as an entry of the directory stack, cd +0 being the directory it is in, and one
+	// that starts with = as the path of a command: none is the literal directory (CRW-1165).
+	if target == "" || strings.HasPrefix(target, "-") || strings.HasPrefix(target, "+") || strings.HasPrefix(target, "=") || strings.Contains(target, "..") {
 		s.dir = unknownDir(s.dir)
 		return
 	}
@@ -1373,7 +1435,7 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	}
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
-		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath,
+		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, ExitTainted: !w.exitProof,
 	})
 	return nil
 }
@@ -1407,6 +1469,8 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		st.cdpath = true
 	}
 	w.prefixNamed = w.prefixNamed || textNamesPycachePrefix(text)
+	w.startupSet = w.startupSet || textNamesStartupVar(text)
+	w.pythonPathNamed = w.pythonPathNamed || strings.Contains(text, "PYTHONPATH")
 	return w.stmts(file.Stmts, st, ctx)
 }
 

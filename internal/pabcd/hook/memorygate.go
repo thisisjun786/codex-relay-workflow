@@ -289,7 +289,8 @@ func memoryGateShellReadable(command, dir string, env host.LookupEnv) bool {
 	if _, err := shellir.AnalyzeEnvProvenDirectory(command, dir, env); err != nil {
 		return false
 	}
-	if _, err := shellir.Analyze(command, dir); err != nil {
+	// the plain reading the gate makes (memoryPlainReading): it keeps PYTHONPATH of the environment, as the gate does
+	if _, err := memoryPlainReading(env)(command, dir); err != nil {
 		return false
 	}
 	_, err := shellir.AnalyzeNoDir(command)
