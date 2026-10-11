@@ -81,11 +81,14 @@ func (s *Scheduler) RecordLandingResult(ctx context.Context, plan, node, actor s
 		if !live || n.Kind != dag.NodeImplementation {
 			// a plan revision that retired the node or changed its kind after its pull request existed leaves the work as it was (the scheduler reads landed work from the stored acceptance), so a node
 			// the store holds an acceptance or an execution of can still be stated about
-			var one int
-			had, err := queryOne(txCtx, q, "SELECT 1 FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND head_sha IS NOT NULL AND head_sha <> '' UNION ALL SELECT 1 FROM dag_node_executions WHERE plan_id = ? AND node_id = ? LIMIT 1",
-				[]any{plan, node, plan, node}, &one)
+			had, err := nodeHadHead(txCtx, q, plan, node)
 			if err != nil {
 				return err
+			}
+			if !had {
+				if had, err = nodeHasExecuted(txCtx, q, plan, node); err != nil {
+					return err
+				}
 			}
 			switch {
 			case had:

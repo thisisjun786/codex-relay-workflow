@@ -283,8 +283,10 @@ func dagReviewReleasedBeforePredecessor(in *dagReviewInput) {
 // dagReviewReleasedRepeatedly reports a node the relay executed more than once. The executions are
 // the scheduler's own (Progress node links): a correction generation leaves a row in
 // dag_node_executions and no dag_releases row, so counting releases would read a node that ran
-// twice as run once. The detail carries how many times, because a correction and a redefinition
-// are not the same thing.
+// twice as run once. An agent node's executions are among those links (R06: the rows of its agent
+// chain, kind initial or correction, and the parent_handover and tier_step rows beside them), and a
+// handover or a tier step is not a re-execution, as a parent_handover of a relationship is not. The
+// detail carries how many times, because a correction and a redefinition are not the same thing.
 func dagReviewReleasedRepeatedly(in *dagReviewInput, facts dagReviewFacts) {
 	issue := dagReviewIssueByNode(facts)
 	for _, node := range facts.progress.Nodes {

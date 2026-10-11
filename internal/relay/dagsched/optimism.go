@@ -150,24 +150,10 @@ func storedTime(text string) (time.Time, bool) {
 
 // landings are the plan's landings in order, with the facts the policy and the measurements read.
 func (s *Scheduler) landings(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot) ([]Landing, error) {
-	rows, err := q.QueryContext(ctx, "SELECT "+acceptanceColumns+" FROM dag_acceptances WHERE plan_id = ? AND state = 'active' AND head_sha IS NOT NULL AND head_sha <> '' ORDER BY node_id", plan)
+	accepted, err := activeAcceptancesOf(ctx, q, plan, true)
 	if err != nil {
 		return nil, err
 	}
-	var accepted []Acceptance
-	for rows.Next() {
-		a, err := scanAcceptance(rows)
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
-		accepted = append(accepted, a)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
 	sweeps, err := tableExists(ctx, q, "dag_conflict_sweep_members")
 	if err != nil {
 		return nil, err
@@ -209,7 +195,7 @@ func (s *Scheduler) landings(ctx context.Context, q store.Querier, plan string, 
 			return nil, err
 		}
 		l.Judged = judgements > 0
-		if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND kind = 'correction'", []any{plan, a.NodeID}, &l.Returns); err != nil {
+		if l.Returns, err = nodeCorrections(ctx, q, plan, a.NodeID); err != nil {
 			return nil, err
 		}
 		if results {
@@ -232,25 +218,15 @@ func (s *Scheduler) landings(ctx context.Context, q store.Querier, plan string, 
 // node's head against a tip (observed or replayed) and found a conflict; a replay is a measurement made at the sweep's time, whatever the age of the observation row it points to. Nil when there is none.
 func handlingSeconds(ctx context.Context, q store.Querier, plan, node string, landed time.Time) (*int64, error) {
 	var floor time.Time
-	accepted, err := q.QueryContext(ctx, "SELECT accepted_at FROM dag_acceptances WHERE plan_id = ? AND node_id = ?", plan, node)
+	accepted, err := nodeAcceptedTimes(ctx, q, plan, node)
 	if err != nil {
 		return nil, err
 	}
-	for accepted.Next() {
-		var text string
-		if err := accepted.Scan(&text); err != nil {
-			accepted.Close()
-			return nil, err
-		}
+	for _, text := range accepted {
 		if t, ok := storedTime(text); ok && (floor.IsZero() || t.Before(floor)) {
 			floor = t
 		}
 	}
-	if err := accepted.Err(); err != nil {
-		accepted.Close()
-		return nil, err
-	}
-	accepted.Close()
 	if floor.IsZero() {
 		return nil, nil
 	}

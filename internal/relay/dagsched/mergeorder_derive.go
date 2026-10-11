@@ -39,7 +39,8 @@ func (p lanePos) before(o lanePos) bool {
 // relationship of its executions, which a correction or a handover does not move, else by the decided_at of its release (a node that holds regions before it has a child).
 func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan string, h orderHolder, head string) (lanePos, error) {
 	inLane := head != "" && !h.Held && h.HasAcc && h.Acc.HeadSHA != ""
-	if inLane {
+	// an agent node never enters a merge turn (R06): it is in the lane by its accepted head alone
+	if inLane && h.Acc.agent == nil {
 		var requested, turn string
 		found, err := queryOne(ctx, q, "SELECT requested_at, turn_id FROM merge_turns WHERE relationship_id = ? AND candidate_head = ? AND state IN ('waiting','holding','merging','unknown') ORDER BY requested_at, turn_id LIMIT 1",
 			[]any{h.Acc.RelationshipID, head}, &requested, &turn)
@@ -67,6 +68,14 @@ func (s *Scheduler) lanePosition(ctx context.Context, q store.Querier, plan stri
 		}
 		if decided != nil {
 			since = *decided
+		}
+	}
+	if since == "" {
+		// an agent node holds regions from its release: the time of its first execution row (R06)
+		if first, err := agentExecutionsOf(ctx, q, plan, h.NodeID); err != nil {
+			return lanePos{}, err
+		} else if len(first) > 0 {
+			since = first[0].DecidedAt
 		}
 	}
 	return lanePos{rank: 2, lane: LaneWorking, since: since, node: h.NodeID}, nil

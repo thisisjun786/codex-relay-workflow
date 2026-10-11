@@ -14,7 +14,8 @@ type Target struct{ Repository, BaseRef string }
 // nodeTargets are the targets of a node's ACTIVE acceptance: the targets of its live outgoing edges that wait for a landing (integrated, and artifact_verified
 // with a code pin, whose successors build on a landed head) and every target the acceptance already has an observation for, a negative one included (a
 // target once observed stays required: an edge retired afterwards does not excuse it). The set is deduplicated and sorted, so two reads of one store agree.
-// A terminal node has no outgoing edge: its target arrives with its first observation (dag-integration-observe --target).
+// A terminal node has no outgoing edge: its target arrives with its first observation (dag-integration-observe --target). An acceptance of an agent (R06) is read in the shape of Acceptance (AgentAcceptance.record):
+// it is a commit acceptance, so its targets are the integration refs its batches moved, and the observation targets are the same table's.
 func (s *Scheduler) nodeTargets(ctx context.Context, q store.Querier, snap dag.Snapshot, a Acceptance) ([]Target, error) {
 	seen := map[Target]bool{}
 	// a commit-accepted node completes on the integration branch its batches moved, not on the base ref its edge names (CRW-965, D4)

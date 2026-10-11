@@ -418,10 +418,37 @@ func (s *checkpointStore) checkpointIntegrations(ctx context.Context, project st
 	if err != nil {
 		return out, err
 	}
-	if len(acceptances) == 0 {
+	agents, err := s.checkpointAgentAcceptances(ctx, project)
+	if err != nil {
+		return out, err
+	}
+	if len(acceptances) == 0 && len(agents) == 0 {
 		return out, nil
 	}
 	scheduler := &dagsched.Scheduler{Store: s.snapshot}
+	// the acceptances of agent nodes (R06): the same judgement, made by the scheduler on the agent's own rows (AgentAcceptanceIntegrated: the agent marked row and an observation of the head in every
+	// target), and the instant read from the observations of the head
+	for _, agent := range agents {
+		integrated, err := scheduler.AgentAcceptanceIntegrated(ctx, q, agent.acceptance)
+		if err != nil {
+			return out, err
+		}
+		if !integrated {
+			continue
+		}
+		at, measured, err := s.checkpointAgentIntegrationInstant(ctx, agent.acceptance)
+		if err != nil {
+			return out, err
+		}
+		if !measured {
+			if out.reasons == nil {
+				out.reasons = map[string]string{}
+			}
+			out.reasons[agent.project] = "an integrated acceptance of " + agent.project + " carries no readable observation instant"
+			continue
+		}
+		out.instants = append(out.instants, checkpointProjectInstant{project: agent.project, at: at})
+	}
 	for _, acc := range acceptances {
 		stand, err := acceptance.StandOf(ctx, q, acc.acceptanceID, acc.relationship, acc.generation, acc.event, acc.revision, acc.head)
 		if err != nil {
@@ -451,6 +478,91 @@ func (s *checkpointStore) checkpointIntegrations(ctx context.Context, project st
 		out.instants = append(out.instants, checkpointProjectInstant{project: acc.project, at: at})
 	}
 	return out, nil
+}
+
+// checkpointAgentAcceptance is one current acceptance of an agent node, with the project whose reading counts the answer.
+type checkpointAgentAcceptance struct {
+	project    string
+	acceptance dagsched.AgentAcceptance
+}
+
+// checkpointAgentAcceptances are the current acceptances of agent nodes that name a head, read through the union reader (dagsched.CurrentAcceptance): the node's last acceptance of its chain when no
+// closure ends it, and none for a node that also holds one of a relationship. A store that predates the agent tables has none.
+func (s *checkpointStore) checkpointAgentAcceptances(ctx context.Context, project string) ([]checkpointAgentAcceptance, error) {
+	present, err := s.checkpointHasTable(ctx, "dag_agent_acceptances")
+	if err != nil || !present {
+		return nil, err
+	}
+	nodes, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
+		"SELECT DISTINCT a.plan_id, a.node_id, p.project_key FROM dag_agent_acceptances a JOIN dag_plans p ON p.plan_id = a.plan_id"+
+			" WHERE a.head <> '' AND (? = '' OR p.project_key = ?) ORDER BY p.project_key, a.plan_id, a.node_id",
+		[]any{project, project}, func(rows *sql.Rows) ([3]string, error) {
+			var row [3]string
+			return row, rows.Scan(&row[0], &row[1], &row[2])
+		})
+	if err != nil {
+		return nil, err
+	}
+	var out []checkpointAgentAcceptance
+	for _, node := range nodes {
+		current, found, err := dagsched.CurrentAcceptance(ctx, s.snapshot.Q(ctx), node[0], node[1])
+		if dagsched.CrossKindHeld(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !found || current.Kind != dagsched.AcceptanceAgent || current.Agent.Head == "" {
+			continue
+		}
+		out = append(out, checkpointAgentAcceptance{project: node[2], acceptance: current.Agent})
+	}
+	return out, nil
+}
+
+// checkpointAgentIntegrationInstant is checkpointIntegrationInstant for an agent acceptance: the observations of its head in each target (the first satisfying one of the current containment run, by
+// observed_seq), and the latest of those across targets. The merged mark is the agent marked row, which the scheduler's judgement (AgentAcceptanceIntegrated) has already required, and no merge turn carries
+// an observation of an agent node.
+func (s *checkpointStore) checkpointAgentIntegrationInstant(ctx context.Context, a dagsched.AgentAcceptance) (string, bool, error) {
+	rows, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
+		"SELECT o.repository, o.base_ref, o.observed_seq, o.observed_at"+
+			" FROM dag_integration_observations o"+
+			" WHERE o.acceptance_id = ? AND o.subject_sha = ? AND o.is_ancestor = 1 AND o.reverted_by IS NULL"+
+			"  AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2"+
+			"   WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository"+
+			"    AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
+			" ORDER BY o.repository, o.base_ref, o.observed_seq",
+		[]any{a.AcceptanceID, a.Head},
+		func(rows *sql.Rows) (checkpointTargetObservation, error) {
+			var row checkpointTargetObservation
+			return row, rows.Scan(&row.repository, &row.baseRef, &row.seq, &row.at)
+		})
+	if err != nil {
+		return "", false, err
+	}
+	first := map[[2]string]checkpointTargetObservation{}
+	for _, row := range rows {
+		key := [2]string{row.repository, row.baseRef}
+		if _, seen := first[key]; !seen {
+			first[key] = row
+		}
+	}
+	latest := ""
+	var latestInstant time.Time
+	for _, key := range checkpointTargetKeys(first) {
+		row := first[key]
+		instant, ok := checkpointInstant(row.at)
+		if !ok {
+			return "", false, nil
+		}
+		if latest == "" || instant.After(latestInstant) {
+			latest, latestInstant = row.at, instant
+		}
+	}
+	if latest == "" {
+		return "", false, nil
+	}
+	return latest, true, nil
 }
 
 // checkpointIntegrationInstant is when one integrated acceptance landed everywhere it had to:

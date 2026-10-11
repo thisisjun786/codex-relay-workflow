@@ -137,6 +137,8 @@ type ExecutionLink struct {
 	RelationshipID string
 	Generation     int64
 	Kind           string
+	// ExecutionID is set for an execution of an agent (R06): its row of dag_agent_executions. Such a link has no relationship, and its generation is the attempt.
+	ExecutionID string
 }
 
 type ManagedLink struct{ RequestID, State, ReceiptStatus string }
@@ -429,6 +431,11 @@ func (l NodeLinks) object() contract.OrderedObject {
 	executions := make([]any, len(l.Executions))
 	for i, e := range l.Executions {
 		executions[i] = contract.OrderedObject{{Key: "relationship_id", Value: e.RelationshipID}, {Key: "execution_generation", Value: e.Generation}, {Key: "kind", Value: e.Kind}}
+		if e.ExecutionID != "" {
+			// an agent execution has no relationship: its identity is the execution row (the key is absent from the link of a relationship, so a document of a plan without an agent node is as it was)
+			executions[i] = contract.OrderedObject{{Key: "relationship_id", Value: nil}, {Key: "execution_generation", Value: e.Generation}, {Key: "kind", Value: e.Kind},
+				{Key: "execution_id", Value: e.ExecutionID}, {Key: "surface", Value: ExecutionAgent}}
+		}
 	}
 	return contract.OrderedObject{{Key: "relationship", Value: relationship}, {Key: "thread", Value: thread}, {Key: "executions", Value: executions}, {Key: "managed_start", Value: managed}, {Key: "pull_request", Value: pr}}
 }
@@ -592,7 +599,7 @@ func (s *Scheduler) nodeFacts(ctx context.Context, q store.Querier, plan string,
 	out := make(map[string]NodeFacts, len(snap.Nodes))
 	for _, n := range snap.Nodes {
 		facts := NodeFacts{Title: n.Title}
-		acc, hasAcc, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+		acc, hasAcc, err := tolerantAcceptanceOf(ctx, q, plan, n.NodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -634,6 +641,14 @@ func (s *Scheduler) nodeLinks(ctx context.Context, q store.Querier, plan string,
 	}
 	if err := rows.Close(); err != nil {
 		return links, err
+	}
+	// the executions of an agent node, in release order (R06)
+	agentRows, err := agentExecutionsOf(ctx, q, plan, n.NodeID)
+	if err != nil {
+		return links, err
+	}
+	for _, e := range agentRows {
+		links.Executions = append(links.Executions, ExecutionLink{Generation: e.Attempt, Kind: e.Kind, ExecutionID: e.ExecutionID})
 	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, n.NodeID)
 	if err != nil {
@@ -682,6 +697,9 @@ func managedStartOf(ctx context.Context, q store.Querier, plan, node string) (*M
 // the parent accepted); before any acceptance the work report of the relationship's current head event does, bound to that event, generation and revision so a later push cannot inherit an
 // earlier report, and the newest submission of that event decides. No head, an ambiguous head, no report or a newest report that names no pull request is no link: the store is not guessed from.
 func (s *Scheduler) pullRequestOf(ctx context.Context, q store.Querier, rel relRow, hasRelationship bool, acc Acceptance, hasAcceptance bool) (*PullRequestLink, error) {
+	if hasAcceptance && acc.agent != nil {
+		return nil, nil // an agent node lands on a commit route: it has no pull request
+	}
 	if hasAcceptance {
 		link := &PullRequestLink{HeadSHA: acc.HeadSHA, Number: acc.PRNumber, Source: PRSourceAcceptance}
 		var forge string
@@ -755,6 +773,15 @@ func (s *Scheduler) outsideDenominator(ctx context.Context, q store.Querier, pla
 	accepted, err := column("SELECT DISTINCT node_id FROM dag_acceptances WHERE plan_id = ?", plan)
 	if err != nil {
 		return OutsideDenominator{}, err
+	}
+	if has, err := tableExists(ctx, q, "dag_agent_acceptances"); err != nil {
+		return OutsideDenominator{}, err
+	} else if has {
+		agentAccepted, err := column("SELECT DISTINCT node_id FROM dag_agent_acceptances WHERE plan_id = ?", plan)
+		if err != nil {
+			return OutsideDenominator{}, err
+		}
+		accepted = append(accepted, agentAccepted...)
 	}
 	held, err := column("SELECT subject_key FROM execution_slots WHERE subject_kind = ? AND state = 'held'", SlotSubjectKind)
 	if err != nil {

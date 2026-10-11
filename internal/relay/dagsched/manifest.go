@@ -184,8 +184,13 @@ func (s *Scheduler) buildInput(ctx context.Context, q store.Querier, e dag.SnapE
 		if err != nil {
 			return nil, nil, err
 		}
-		input["acceptance_id"], input["relationship_id"], input["execution_generation"] = a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration
-		input["event_id"], input["revision_hash"] = a.EventID, a.RevisionHash
+		if a.agent != nil {
+			// the result an agent accepted is a commit of an execution: the input names the acceptance and the execution, and has no relationship, generation, event or revision (dag.InputSurfaceAgent)
+			input["acceptance_id"], input["execution_id"], input["surface"] = a.AcceptanceID, a.agent.ExecutionID, dag.InputSurfaceAgent
+		} else {
+			input["acceptance_id"], input["relationship_id"], input["execution_generation"] = a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration
+			input["event_id"], input["revision_hash"] = a.EventID, a.RevisionHash
+		}
 		if e.PinsCodeHead {
 			input["head_sha"] = a.HeadSHA
 			return input, nil, nil

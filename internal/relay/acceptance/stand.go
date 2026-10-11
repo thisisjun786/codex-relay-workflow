@@ -34,6 +34,10 @@ func Own(relationshipID string, generation int64, eventID, revisionHash, head st
 	return Stand{RelationshipID: relationshipID, Generation: generation, EventID: eventID, RevisionHash: revisionHash, Head: head}
 }
 
+// OwnOfAgent is what an agent acceptance (R05, dag_agent_acceptances) stands on: itself. An agent node has no relationship, generation, event or revision, and a base refresh is recorded for a
+// relationship's acceptance only (Stands finds none for an agent acceptance's id), so the head it was accepted with is the head integration is judged on.
+func OwnOfAgent(head string) Stand { return Stand{Head: head} }
+
 // RefreshDigest is the identity of a base refresh: its refresh_id is the digest of everything it
 // records but the time and the author, so a row written by hand under another content is not read as
 // one. The spelling matches the scheduler's, because existing stores hold ids it produced.

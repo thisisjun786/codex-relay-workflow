@@ -2,8 +2,6 @@ package manage
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -168,73 +166,53 @@ func branchReadPlan(ctx context.Context, q store.Querier, plan string) ([]branch
 	return nodes, edges, snap.Revision, nil
 }
 
-// branchReadReleased reads the nodes the relay released or executed. A bundle that holds one of them
-// cannot be taken out, so it is not a candidate. A release owns its node only while it is open: a
-// release that dag-release-close closed does not (CRW-1048), and the open ones are the scheduler's
-// own reading (dagsched.OpenReleaseNodes), not a query of this file's.
+// branchReadReleased reads the nodes the relay released or executed, on either side: a managed start or an execution of a relationship, or an agent execution (R06). A bundle that holds one of them
+// cannot be taken out, so it is not a candidate. A release owns its node only while it is open: a release that dag-release-close closed does not (CRW-1048), and the open ones are the scheduler's own
+// reading (dagsched.ExecutedNodes, which skips an agent row for the managed recovery and counts it as an execution), not a query of this file's.
 func branchReadReleased(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
-	out, err := dagsched.OpenReleaseNodes(ctx, q, plan)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := dagReviewRows(ctx, q, "SELECT node_id FROM dag_node_executions WHERE plan_id = ?", []any{plan}, func(rows *sql.Rows) (string, error) {
-		var id string
-		err := rows.Scan(&id)
-		return id, err
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, id := range rows {
-		out[id] = true
-	}
-	return out, nil
-}
-
-// branchActiveAcceptance is one node's active acceptance: the row whose stand the integration
-// judgement is asked about, and the row a recorded base refresh is keyed by.
-type branchActiveAcceptance struct {
-	acceptanceID, relationshipID, eventID, revisionHash, headSHA string
-	generation                                                   int64
-}
-
-// branchAcceptanceOf reads one node's active acceptance; found is false when it has none.
-func branchAcceptanceOf(ctx context.Context, q store.Querier, plan, node string) (branchActiveAcceptance, bool, error) {
-	var row branchActiveAcceptance
-	err := q.QueryRowContext(ctx, "SELECT acceptance_id, relationship_id, execution_generation, event_id, revision_hash, COALESCE(head_sha, '')"+
-		" FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND state = 'active'", plan, node).
-		Scan(&row.acceptanceID, &row.relationshipID, &row.generation, &row.eventID, &row.revisionHash, &row.headSHA)
-	if errors.Is(err, sql.ErrNoRows) {
-		return branchActiveAcceptance{}, false, nil
-	}
-	if err != nil {
-		return branchActiveAcceptance{}, false, err
-	}
-	return row, true, nil
+	return dagsched.ExecutedNodes(ctx, q, plan)
 }
 
 // branchIntegratedNodes is the set of the plan's nodes the relay's own integration judgement counts
 // as integrated, so the connectivity graph drops exactly the nodes the scheduler calls landed and
-// keeps every node it does not. The judgement is dagsched's ExecutionIntegrated, so a node the
-// parent never marked merged, whose accepted head was not observed in every target it has to land
-// on, or whose observed head is not the head it stands on stays live. What an acceptance stands on
-// is resolved with acceptance.StandOf over the same snapshot's querier, so an acceptance a recorded
-// base refresh moved to a later generation is judged at the stand it holds now rather than at the
-// generation it was accepted in.
+// keeps every node it does not. The node's acceptance is read through the union reader
+// (dagsched.CurrentAcceptance), whichever side holds it (R06). For a relationship the judgement is
+// dagsched's ExecutionIntegrated, so a node the parent never marked merged, whose accepted head was
+// not observed in every target it has to land on, or whose observed head is not the head it stands
+// on stays live; what an acceptance stands on is resolved with acceptance.StandOf over the same
+// snapshot's querier, so an acceptance a recorded base refresh moved to a later generation is judged
+// at the stand it holds now rather than at the generation it was accepted in. For an agent the
+// judgement is the scheduler's own as well (AgentAcceptanceIntegrated: the agent marked row and the
+// observations of the head in every target); an agent acceptance stands on itself. A node that holds
+// an acceptance on both sides is read as neither, and stays live.
 func branchIntegratedNodes(ctx context.Context, st *store.Store, plan string, nodes []branchPlanNode) (map[string]bool, error) {
 	scheduler := &dagsched.Scheduler{Store: st}
 	q := st.Q(ctx)
 	out := map[string]bool{}
 	for _, node := range nodes {
-		row, found, err := branchAcceptanceOf(ctx, q, plan, node.nodeID)
+		current, found, err := dagsched.CurrentAcceptance(ctx, q, plan, node.nodeID)
+		if dagsched.CrossKindHeld(err) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			continue
 		}
-		stand, err := acceptance.StandOf(ctx, q, row.acceptanceID, row.relationshipID,
-			row.generation, row.eventID, row.revisionHash, row.headSHA)
+		if current.Kind == dagsched.AcceptanceAgent {
+			integrated, err := scheduler.AgentAcceptanceIntegrated(ctx, q, current.Agent)
+			if err != nil {
+				return nil, err
+			}
+			if integrated {
+				out[node.nodeID] = true
+			}
+			continue
+		}
+		row := current.Relationship
+		stand, err := acceptance.StandOf(ctx, q, row.AcceptanceID, row.RelationshipID,
+			row.ExecutionGeneration, row.EventID, row.RevisionHash, row.HeadSHA)
 		if err != nil {
 			return nil, err
 		}

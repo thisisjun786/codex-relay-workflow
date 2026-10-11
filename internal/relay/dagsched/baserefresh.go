@@ -59,12 +59,18 @@ func refreshDigest(acc, relationship string, generation int64, event, revision, 
 
 // standOf reads what an acceptance stands on now: the newest valid base refresh recorded for it, else its own.
 func (s *Scheduler) standOf(ctx context.Context, q store.Querier, a Acceptance) (acceptanceStand, error) {
+	if a.agent != nil {
+		return acceptance.OwnOfAgent(a.HeadSHA), nil // an agent acceptance stands on itself: no base refresh is recorded for it
+	}
 	return acceptance.StandOf(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration, a.EventID, a.RevisionHash, a.HeadSHA)
 }
 
 // stoodOn is every head the acceptance has stood on: its own and the head of each valid base refresh recorded for it, newest first. A merge turn of the node, or a check of its pull request, made for any
 // of them is the node's own (the newest is what it stands on now; the others are what it stood on before a record moved it).
 func (s *Scheduler) stoodOn(ctx context.Context, q store.Querier, a Acceptance) ([]string, error) {
+	if a.agent != nil {
+		return []string{a.HeadSHA}, nil
+	}
 	return acceptance.Chain(ctx, q, a.AcceptanceID, a.RelationshipID, a.ExecutionGeneration, a.HeadSHA)
 }
 
@@ -136,12 +142,15 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if err := lifecycleRefusal(snap, n, "recording its base refresh", true); err != nil {
 		return out, err
 	}
-	acc, hasAcc, err := loadActiveAcceptance(ctx, q, plan, node)
+	acc, hasAcc, err := activeAcceptanceOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
 	}
 	if !hasAcc || acc.HeadSHA == "" {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s has no accepted head: a base refresh is recorded for a result the parent accepted", node)
+	}
+	if acc.agent != nil {
+		return out, refuse(contract.RefusalDispositionConflict, "node %s was accepted by an agent (acceptance %s): an agent acceptance stands on its own head and no base refresh is recorded for it", node, acc.AcceptanceID)
 	}
 	out.AcceptanceID = acc.AcceptanceID
 	if err := s.observableRelationship(ctx, q, acc, actor); err != nil {
@@ -366,7 +375,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		if err := lifecycleRefusal(current, cn, "recording its base refresh", true); err != nil {
 			return err
 		}
-		now, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
+		now, found, err := activeAcceptanceOf(txCtx, tx, plan, node)
 		if err != nil {
 			return err
 		}
@@ -438,27 +447,13 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 // refreshContributors freezes exact accepted and valid refresh heads of other
 // nodes in this plan/repository. A landing with no such identity remains manual.
 func (s *Scheduler) refreshContributors(ctx context.Context, q store.Querier, plan, node, repository string, names []string, declarations map[string][]Region) (map[string][][]Region, error) {
-	rows, err := q.QueryContext(ctx, "SELECT "+acceptanceColumns+" FROM dag_acceptances WHERE plan_id = ? AND state = 'active' ORDER BY acceptance_id", plan)
-	if err != nil {
-		return nil, err
-	}
-	var acceptances []Acceptance
-	for rows.Next() {
-		a, err := scanAcceptance(rows)
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
-		acceptances = append(acceptances, a)
-	}
-	err = rows.Err()
-	rows.Close()
+	acceptances, err := activeAcceptancesOf(ctx, q, plan, false)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string][][]Region{}
 	for _, a := range acceptances {
-		if a.NodeID == node || a.AcceptanceID != AcceptanceDigest(a) {
+		if a.NodeID == node || !acceptanceIntact(a) {
 			continue
 		}
 		repo, err := canonicalRepository(a.Repository)
@@ -485,7 +480,7 @@ func (s *Scheduler) refreshContributors(ctx context.Context, q store.Querier, pl
 
 // refreshCarries is whether the node's active acceptance stands, through a recorded base refresh, on the current generation of its relationship.
 func (s *Scheduler) refreshCarries(ctx context.Context, q store.Querier, plan, node string, rel relRow) (bool, error) {
-	acc, has, err := loadActiveAcceptance(ctx, q, plan, node)
+	acc, has, err := activeAcceptanceOf(ctx, q, plan, node)
 	if err != nil || !has {
 		return false, err
 	}

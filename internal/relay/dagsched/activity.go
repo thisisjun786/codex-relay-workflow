@@ -144,7 +144,7 @@ func (s *Scheduler) Activity(ctx context.Context, q store.Querier, plan string) 
 			return Activity{}, err
 		}
 		if n.AcceptanceID != "" {
-			acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+			acc, has, err := tolerantAcceptanceOf(ctx, q, plan, n.NodeID)
 			if err != nil {
 				return Activity{}, err
 			}
@@ -171,6 +171,9 @@ func relationshipsOf(l NodeLinks) []string {
 	seen := map[string]bool{}
 	var ids []string
 	for _, e := range l.Executions {
+		if e.ExecutionID != "" {
+			continue // an execution of an agent has no relationship: its evidence is read by node
+		}
 		if !seen[e.RelationshipID] {
 			seen[e.RelationshipID] = true
 			ids = append(ids, e.RelationshipID)
@@ -182,7 +185,7 @@ func relationshipsOf(l NodeLinks) []string {
 
 // artifactOf is the artifact link of a non_pr node's acceptance: nothing for any other kind of node.
 func artifactOf(kind string, a Acceptance) *ArtifactLink {
-	if kind != dag.NodeNonPR {
+	if kind != dag.NodeNonPR || a.agent != nil { // an agent acceptance names no output manifest
 		return nil
 	}
 	return &ArtifactLink{AcceptanceID: a.AcceptanceID, RelationshipID: a.RelationshipID, EventID: a.EventID, RevisionHash: a.RevisionHash, OutputManifestRef: a.OutputManifestRef, EvidenceDigest: a.EvidenceDigest}
@@ -190,6 +193,22 @@ func artifactOf(kind string, a Acceptance) *ArtifactLink {
 
 // commitLinkOf is the commit-path link of an acceptance: present only for an acceptance made by the commit path (a verification row and no forge row).
 func commitLinkOf(ctx context.Context, q store.Querier, tables *tableSet, a Acceptance) (*CommitLink, error) {
+	if a.agent != nil {
+		// the commit proof of an agent acceptance is in its row: the verification record, and the integration refs its batches moved (integrationRefsOf reads the agent stage rows too)
+		if a.agent.Head == "" {
+			return nil, nil
+		}
+		link := &CommitLink{AcceptanceID: a.AcceptanceID, HeadCommit: a.agent.Head, TreeSHA: a.agent.TreeSHA, BaseCommit: a.agent.Base, RecordDigest: a.agent.VerificationDigest, RecordedAt: a.agent.AcceptedAt}
+		refs, err := integrationRefsOf(ctx, q, a.AcceptanceID)
+		if err != nil {
+			return nil, err
+		}
+		if refs == nil {
+			refs = []string{}
+		}
+		link.IntegrationRefs = refs
+		return link, nil
+	}
 	if ok, err := tables.has(ctx, "dag_acceptance_verifications"); err != nil || !ok {
 		return nil, err
 	}
@@ -255,6 +274,8 @@ var evidenceSources = []entrySource{
 	{"verdicts", EvidenceVerdict, "SELECT e.relationship_id, e.execution_generation, v.event_id, v.verdict_turn_id, v.verdict, v.decided_at FROM verdicts v JOIN events e ON e.event_id = v.event_id WHERE e.relationship_id IN (%s)", byRelationships, nil},
 	{"dag_verified_heads", EvidenceVerifiedHead, "SELECT relationship_id, execution_generation, event_id, verdict_turn_id, head_sha, recorded_at FROM dag_verified_heads WHERE relationship_id IN (%s)", byRelationships, nil},
 	{table: "dag_base_refreshes", source: EvidenceBaseRefresh, by: byNode, read: baseRefreshEntries},
+	// the acceptance of an agent node (R06): no relationship, generation or event; the state is the row's place in the node's acceptance chain
+	{"dag_agent_acceptances", EvidenceAcceptance, "SELECT '', NULL, '', a.acceptance_id, CASE WHEN EXISTS (SELECT 1 FROM dag_agent_acceptances n WHERE n.supersedes_acceptance_id = a.acceptance_id) THEN 'superseded' ELSE 'active' END, a.accepted_at FROM dag_agent_acceptances a WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
 	{"dag_acceptances", EvidenceAcceptance, "SELECT relationship_id, execution_generation, event_id, acceptance_id, state, accepted_at FROM dag_acceptances WHERE plan_id = ? AND node_id = ?", byNode, nil},
 	// A revalidation names the event it was ruled on, which after a base refresh stands on a later generation than the acceptance: the entry takes that event's relationship and generation, and no
 	// generation when the store does not hold the event.
@@ -263,6 +284,8 @@ var evidenceSources = []entrySource{
 	{"dag_acceptance_verifications", EvidenceCommitVerification, "SELECT a.relationship_id, a.execution_generation, a.event_id, v.record_digest, v.head_commit, v.recorded_at FROM dag_acceptance_verifications v JOIN dag_acceptances a ON a.acceptance_id = v.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", byNode, nil},
 	// A pre-merge record is stored for the head the stand was on (accepted_head): the entry takes the identity of that head, as a merge check does. The re-validation's record is the one integration
 	// reads once the criteria were re-registered, and is stored after the re-validation row itself.
+	{"dag_agent_acceptances", EvidenceCommitVerification, "SELECT '', NULL, '', a.verification_digest, a.head, a.accepted_at FROM dag_agent_acceptances a WHERE a.plan_id = ? AND a.node_id = ? AND a.verification_digest <> ''", byNode, nil},
+	{"dag_agent_acceptances", EvidencePremerge, "SELECT '', NULL, '', a.premerge_digest, a.premerge_evaluated_head, a.accepted_at FROM dag_agent_acceptances a WHERE a.plan_id = ? AND a.node_id = ? AND a.premerge_digest <> ''", byNode, nil},
 	{table: "dag_acceptance_premerge", source: EvidencePremerge, by: byNode, read: premergeEntriesOf("dag_acceptance_premerge")},
 	{table: "dag_revalidation_premerge", source: EvidenceRevalidationPremerge, by: byNode, read: premergeEntriesOf("dag_revalidation_premerge")},
 }

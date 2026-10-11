@@ -433,7 +433,7 @@ func bundleHasExclusive(regions []Region) bool {
 	return false
 }
 
-// bundleReleased is the nodes of a plan that have a release or a managed start on record.
+// bundleReleased is the nodes of a plan that have a release or a managed start on record, of either side.
 func bundleReleased(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
 	rows, err := q.QueryContext(ctx, "SELECT node_id FROM dag_releases WHERE plan_id = ? UNION SELECT node_id FROM dag_release_requests WHERE plan_id = ?", plan, plan)
 	if err != nil {
@@ -448,7 +448,22 @@ func bundleReleased(ctx context.Context, q store.Querier, plan string) (map[stri
 		}
 		out[id] = true
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// the store has one connection: the rows are closed before the next query is made
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// an agent release is a row of kind initial or correction in the node's agent chain (R06): a node an agent was given is released as one a managed start was
+	agent, err := agentReleasedNodes(ctx, q, plan)
+	if err != nil {
+		return nil, err
+	}
+	for id := range agent {
+		out[id] = true
+	}
+	return out, nil
 }
 
 // bundleRegions is the union of the members' regions with one entry per place (repository, path, kind, key), sorted: the shape dag-region-declare reads, which

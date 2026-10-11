@@ -47,7 +47,7 @@ func (s *Scheduler) proveAcceptedRefresh(ctx context.Context, q store.Querier, s
 	if accepted, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptances WHERE relationship_id = ? AND execution_generation = ? AND revision_hash = ? LIMIT 1", []any{rel.ID, rel.Generation, head.RevisionHash}, &one); err != nil || accepted {
 		return nil, err
 	}
-	active, hasActive, err := loadActiveAcceptance(ctx, q, plan, node)
+	active, hasActive, err := activeAcceptanceOf(ctx, q, plan, node)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +200,11 @@ func (s *Scheduler) settleAcceptRefresh(ctx context.Context, q store.Querier, pl
 	if !reflect.DeepEqual(contributors, proof.contributors) {
 		return nil, "", moved("the contributor heads")
 	}
-	var activeID string
-	if _, err := queryOne(ctx, q, "SELECT acceptance_id FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND state = 'active'", []any{plan, node}, &activeID); err != nil {
+	activeID := ""
+	if active, has, err := activeAcceptanceOf(ctx, q, plan, node); err != nil {
 		return nil, "", err
+	} else if has {
+		activeID = active.AcceptanceID
 	}
 	if activeID != proof.activeAcceptance {
 		return nil, "", moved("the acceptance this one replaces")

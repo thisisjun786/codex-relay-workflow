@@ -664,7 +664,7 @@ var designClassification = map[string]struct{ classes, owners string }{
 }
 
 // The set is computed from the code (the AST and the type-checked call graph) and every file of it has a classified row with an owner issue; no row names a file outside the set; the classification of the
-// files the design names is the design's.
+// files the design names is the design's; and every node-scoped row is migrated (R06).
 func TestEveryZoneReaderClassified(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	set := newReaderAnalysis(t, root, "internal/relay", "internal/manage").readerSet()
@@ -705,6 +705,10 @@ func TestEveryZoneReaderClassified(t *testing.T) {
 		node := strings.Contains(row.Class, "node-scoped")
 		if node && row.Migrated == "n/a" || !node && row.Migrated != "n/a" {
 			t.Errorf("%s: class %s with migrated %s (line %d): only a node-scoped row is migrated or not, any other is n/a", file, row.Class, row.Migrated, row.Line)
+		}
+		// R06 (CRW-1214): every reader that answers about a node reads both sides of it
+		if node && row.Migrated != "yes" {
+			t.Errorf("%s: the node-scoped row (line %d) is migrated %q, want yes: the reader has to read the union of the two sides", file, row.Line, row.Migrated)
 		}
 	}
 	for file, row := range byFile {

@@ -195,6 +195,45 @@ func markedStageRows(ctx context.Context, q store.Querier, integrationRef string
 			out = append(out, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// the marked rows of an agent acceptance are node-level rows of dag_agent_integration_stages, joined to the batch-level intent in dag_integration_stages the same way (R06). The two tables have
+	// rowids of their own, so an agent row is ordered after the relationship rows of the same age by the order of its batch's rows: the newest wins by the position it was written at.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	agentRows, err := agentMarkedStageRows(ctx, q, integrationRef)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, agentRows...), nil
+}
+
+// agentMarkedStageRows are the marked rows of agent acceptances for the batches of the ref. The rowid of the agent table orders them among themselves; against the rows of dag_integration_stages the
+// batch-level intent row of the same batch gives the position (the rowid of the intent in dag_integration_stages), which is the order the batches were written in.
+func agentMarkedStageRows(ctx context.Context, q store.Querier, integrationRef string) ([]orderedAcceptance, error) {
+	has, err := tableExists(ctx, q, "dag_agent_integration_stages")
+	if err != nil || !has {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, "SELECT b.rowid, c.plan_id, c.node_id, c.acceptance_id, c.head, b.detail FROM dag_agent_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = ''"+
+		" WHERE c.stage IN ('marked', 'mark_pending') AND c.acceptance_id <> '' ORDER BY c.rowid")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []orderedAcceptance
+	for rows.Next() {
+		var r orderedAcceptance
+		var detail string
+		if err := rows.Scan(&r.at, &r.plan, &r.node, &r.acceptance, &r.head, &detail); err != nil {
+			return nil, err
+		}
+		if intentRef(detail) == integrationRef {
+			out = append(out, r)
+		}
+	}
 	return out, rows.Err()
 }
 
@@ -291,6 +330,33 @@ func reconciledMoveCandidates(ctx context.Context, q store.Querier, batch, head,
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// the node-level intents of agent candidates are rows of dag_agent_integration_stages (R06)
+	if has, err := tableExists(ctx, q, "dag_agent_integration_stages"); err != nil {
+		return nil, err
+	} else if has {
+		agentRows, err := q.QueryContext(ctx, "SELECT node_id, acceptance_id, head FROM dag_agent_integration_stages WHERE batch_id = ? AND stage = 'intent' ORDER BY rowid", batch)
+		if err != nil {
+			return nil, err
+		}
+		for agentRows.Next() {
+			var node, acceptance, sha string
+			if err := agentRows.Scan(&node, &acceptance, &sha); err != nil {
+				_ = agentRows.Close()
+				return nil, err
+			}
+			frozen[node] = markedAcceptance{node: node, acceptance: acceptance, head: sha}
+		}
+		if err := agentRows.Err(); err != nil {
+			_ = agentRows.Close()
+			return nil, err
+		}
+		if err := agentRows.Close(); err != nil {
+			return nil, err
+		}
+	}
 	var out []markedAcceptance
 	for node := range covered {
 		if c, ok := frozen[node]; ok {
@@ -320,7 +386,7 @@ func (s *Scheduler) integratedAcceptanceStale(ctx context.Context, q store.Queri
 		stale.Reason = StaleNodeRemoved
 		return stale, true, nil
 	}
-	active, found, err := loadActiveAcceptance(ctx, q, plan, node)
+	active, found, err := activeAcceptanceOf(ctx, q, plan, node)
 	if err != nil {
 		return stale, false, err
 	}

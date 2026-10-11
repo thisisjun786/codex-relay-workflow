@@ -104,6 +104,12 @@ func OpenReleaseNodes(ctx context.Context, q store.Querier, plan string) (map[st
 	}
 	out := map[string]bool{}
 	for _, node := range nodes {
+		// an agent execution is not a managed recovery target (R06): the node belongs to the agent until a closure ends it, and no managed start stands behind it to close or to release again
+		if _, agent, err := currentAgentExecution(ctx, q, plan, node); err != nil {
+			return nil, err
+		} else if agent {
+			continue
+		}
 		_, found, err := latestRelease(ctx, q, plan, node)
 		if err != nil {
 			return nil, err
@@ -301,6 +307,10 @@ func (s *Scheduler) copyReliedOn(ctx context.Context, q store.Querier, sha strin
 	if bound, err := queryOne(ctx, q, "SELECT 1 FROM dag_node_executions WHERE manifest_digest = ? UNION ALL SELECT 1 FROM dag_acceptances WHERE manifest_digest = ? LIMIT 1", []any{digest, digest}, &one); err != nil || bound {
 		return "relied_on", err
 	}
+	// the manifest an agent execution was released under, or an agent acceptance consumed, is relied on as the relationship's is (R06)
+	if bound, err := agentManifestBound(ctx, q, digest); err != nil || bound {
+		return "relied_on", err
+	}
 	if issue != "" {
 		if owned, err := queryOne(ctx, q, "SELECT 1 FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL LIMIT 1", []any{issue}, &one); err != nil || owned {
 			return "relied_on", err
@@ -382,6 +392,12 @@ func (s *Scheduler) CloseRelease(ctx context.Context, plan, node, actor, digest,
 			return err
 		}
 		issue = n.IssueKey
+		// an agent execution is not a managed recovery target (R06): its release is no managed start, so there is no request to close and no slot of a managed start to return
+		if cur, agent, err := currentAgentExecution(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if agent {
+			return refuse(contract.RefusalDispositionConflict, "%s: node %s is held by agent execution %s, an agent release and not a managed start, so dag-release-close has no request to close for it", LiveAgentExecution, node, cur.ExecutionID)
+		}
 		parents, err := projectParents(txCtx, tx, snap.ProjectKey)
 		if err != nil {
 			return err

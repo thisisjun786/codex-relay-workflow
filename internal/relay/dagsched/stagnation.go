@@ -79,7 +79,7 @@ func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string
 	// a node that landed is never run again, so the ladder has nothing to say about it
 	since := int64(0)
 	head := ""
-	acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+	acc, has, err := tolerantAcceptanceOf(ctx, q, plan, n.NodeID)
 	if err != nil {
 		return nil, err
 	}

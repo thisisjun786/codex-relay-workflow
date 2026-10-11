@@ -181,7 +181,10 @@ func (s *dagReviewStore) dagReviewReadFacts(ctx context.Context, st *store.Store
 }
 
 // dagReviewExecutions reads which relationship each node of the plan was released to. It is the
-// link the host reading uses to decide whether an active child belongs to this plan.
+// link the host reading uses to decide whether an active child belongs to this plan. An agent node
+// (R06) has no relationship and no child: its executions are in the scheduler's own reading of the
+// plan (Progress, node links), which the review's release and re-execution checks take, so this link
+// lists the nodes of relationships only.
 func (s *dagReviewStore) dagReviewExecutions(ctx context.Context, planID string) ([]dagReviewExecution, error) {
 	return dagReviewRows(ctx, s.db,
 		"SELECT node_id, relationship_id FROM dag_node_executions WHERE plan_id = ? ORDER BY node_id, relationship_id",
@@ -207,29 +210,75 @@ func (s *dagReviewStore) dagReviewEdges(ctx context.Context, planID string) ([]d
 
 // dagReviewAcceptances reads the plan's active acceptances, which is how a merge turn's
 // relationship is tied to the node it landed. The acceptance's own integration is not judged here.
+//
+// An agent node's acceptance (R06) is the last row of its chain in dag_agent_acceptances that no
+// later row follows and no closure ends. It names no relationship (a merge turn never carries it),
+// so its relationship is empty and a lane turn never ties to it; the row is read so that the node's
+// observations are attributed to the plan.
 func (s *dagReviewStore) dagReviewAcceptances(ctx context.Context, planID string) ([]dagReviewAcceptance, error) {
-	return dagReviewRows(ctx, s.db,
+	out, err := dagReviewRows(ctx, s.db,
 		"SELECT acceptance_id, node_id, relationship_id FROM dag_acceptances WHERE plan_id = ? AND state = 'active' ORDER BY acceptance_id",
 		[]any{planID}, func(rows *sql.Rows) (dagReviewAcceptance, error) {
 			var acceptance dagReviewAcceptance
 			err := rows.Scan(&acceptance.acceptanceID, &acceptance.nodeID, &acceptance.relationshipID)
 			return acceptance, err
 		})
+	if err != nil {
+		return nil, err
+	}
+	present, err := s.hasTable(ctx, "dag_agent_acceptances")
+	if err != nil || !present {
+		return out, err
+	}
+	closures, err := s.hasTable(ctx, "dag_agent_closures")
+	if err != nil {
+		return nil, err
+	}
+	query := "SELECT a.acceptance_id, a.node_id, '' FROM dag_agent_acceptances a WHERE a.plan_id = ?" +
+		" AND NOT EXISTS (SELECT 1 FROM dag_agent_acceptances n WHERE n.supersedes_acceptance_id = a.acceptance_id)"
+	if closures {
+		query += " AND NOT EXISTS (SELECT 1 FROM dag_agent_closures c WHERE c.subject_kind = 'acceptance' AND c.subject_id = a.acceptance_id)"
+	}
+	agents, err := dagReviewRows(ctx, s.db, query+" ORDER BY a.acceptance_id", []any{planID}, func(rows *sql.Rows) (dagReviewAcceptance, error) {
+		var acceptance dagReviewAcceptance
+		err := rows.Scan(&acceptance.acceptanceID, &acceptance.nodeID, &acceptance.relationshipID)
+		return acceptance, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append(out, agents...), nil
 }
 
 // dagReviewObservations reads the target and the instant of every integration observation the
 // plan's acceptances carry. What an observation says about containment is not read: this review
 // asks only whether a landing was observed in the target the turn landed on.
 func (s *dagReviewStore) dagReviewObservations(ctx context.Context, planID string) ([]dagReviewObservation, error) {
-	return dagReviewRows(ctx, s.db,
+	scan := func(rows *sql.Rows) (dagReviewObservation, error) {
+		var observation dagReviewObservation
+		err := rows.Scan(&observation.acceptanceID, &observation.repository, &observation.baseRef, &observation.observedAt)
+		return observation, err
+	}
+	out, err := dagReviewRows(ctx, s.db,
 		"SELECT o.acceptance_id, o.repository, o.base_ref, o.observed_at"+
 			" FROM dag_integration_observations o JOIN dag_acceptances a ON a.acceptance_id = o.acceptance_id"+
-			" WHERE a.plan_id = ? ORDER BY o.acceptance_id, o.observed_seq",
-		[]any{planID}, func(rows *sql.Rows) (dagReviewObservation, error) {
-			var observation dagReviewObservation
-			err := rows.Scan(&observation.acceptanceID, &observation.repository, &observation.baseRef, &observation.observedAt)
-			return observation, err
-		})
+			" WHERE a.plan_id = ? ORDER BY o.acceptance_id, o.observed_seq", []any{planID}, scan)
+	if err != nil {
+		return nil, err
+	}
+	// the observations of an agent node's acceptance (R06) are keyed by the agent acceptance id in the same table
+	present, err := s.hasTable(ctx, "dag_agent_acceptances")
+	if err != nil || !present {
+		return out, err
+	}
+	agents, err := dagReviewRows(ctx, s.db,
+		"SELECT o.acceptance_id, o.repository, o.base_ref, o.observed_at"+
+			" FROM dag_integration_observations o JOIN dag_agent_acceptances a ON a.acceptance_id = o.acceptance_id"+
+			" WHERE a.plan_id = ? ORDER BY o.acceptance_id, o.observed_seq", []any{planID}, scan)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, agents...), nil
 }
 
 // dagReviewRegions reads the latest declaration of every node, with its grade and its stated hold

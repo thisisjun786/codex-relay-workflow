@@ -58,6 +58,10 @@ func (s *Scheduler) checkInputs(ctx context.Context, q store.Querier, plan strin
 // acceptedEntries are the artifacts the accepted event's receipt declared and the roots of the predecessor's relationship, with a finding when the list cannot be used: an absent,
 // empty or malformed list, or roots that do not read, is not an input a successor can consume.
 func (s *Scheduler) acceptedEntries(ctx context.Context, q store.Querier, a Acceptance) (entries []consumed, roots []string, ref string, finding *BlockedFinding, err error) {
+	if a.agent != nil {
+		// an agent acceptance hands over a commit (its head), not a receipt that lists artifacts: an artifact edge that is not a code pin has nothing to hand over (B-17, an empty list is not a success)
+		return nil, nil, "", &BlockedFinding{"B-17", BlockedInputMissing, "the acceptance of agent execution " + a.agent.ExecutionID + " hands over a commit and declares no list of artifacts: the edge has to pin the code head"}, nil
+	}
 	var receipt, rootsJSON string
 	found, err := queryOne(ctx, q, "SELECT e.receipt, COALESCE(e.manifest_ref, ''), r.artifact_roots FROM events e JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.event_id = ?",
 		[]any{a.EventID}, &receipt, &ref, &rootsJSON)

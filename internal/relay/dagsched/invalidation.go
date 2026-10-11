@@ -231,18 +231,19 @@ func (s *Scheduler) staleInput(ctx context.Context, q store.Querier, plan string
 		if acceptance == "" || from == "" {
 			continue // a decision input has no acceptance
 		}
-		var one int
-		active, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptances WHERE acceptance_id = ? AND plan_id = ? AND node_id = ? AND state = 'active'", []any{acceptance, plan, from}, &one)
+		// the acceptance the node consumed is still the active one of its node when it is the node's current acceptance, whichever side holds it
+		current, has, err := acceptanceOf(ctx, q, plan, from)
+		if crossKindHeld(err) {
+			current, has, err = NodeAcceptance{}, false, nil // a node that holds both kinds has no current acceptance to rest on
+		}
 		if err != nil {
 			return nil, err
 		}
-		if active {
+		if has && current.AcceptanceID == acceptance {
 			continue
 		}
 		st := &Stale{Cause: CauseInputChanged, Seed: from, EdgeID: id, Predecessor: from, ConsumedAcceptance: acceptance, ConsumedManifest: c.acc.ManifestDigest}
-		if current, has, err := loadActiveAcceptance(ctx, q, plan, from); err != nil {
-			return nil, err
-		} else if has {
+		if has {
 			st.CurrentAcceptance = current.AcceptanceID
 		}
 		st.Text = fmt.Sprintf("over edge %s it consumed acceptance %s of %s, which is no longer the active acceptance of that node (now %s)", id, short(acceptance), from, short(st.CurrentAcceptance))
@@ -258,7 +259,7 @@ func (s *Scheduler) prepare(ctx context.Context, q store.Querier, plan string, s
 		return nil
 	}
 	for _, n := range snap.Nodes {
-		acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+		acc, has, err := tolerantAcceptanceOf(ctx, q, plan, n.NodeID)
 		if err != nil {
 			return err
 		}
@@ -507,6 +508,12 @@ func (s *Scheduler) landingChanged(ctx context.Context, q store.Querier, status 
 	if acc.HeadSHA != textOf(in["head_sha"]) {
 		return true, nil
 	}
+	if acc.agent != nil {
+		// the landed commit of an agent acceptance is the merge commit its batch recorded for the observation that satisfied the edge (landedOf, agentLandedSHA), not the tip an observation read: the
+		// satisfying observation is the earliest of the current containment run and is fixed, so the commit it names is what the node consumed unless another landing replaced it
+		landed, err := landedOf(ctx, q, status.ObservationID)
+		return landed != textOf(in["landed_sha"]), err
+	}
 	var one int
 	named, err := queryOne(ctx, q, "SELECT 1 FROM dag_integration_observations base"+
 		" JOIN dag_integration_observations o ON o.acceptance_id = base.acceptance_id AND o.repository = base.repository AND o.base_ref = base.base_ref"+
@@ -534,7 +541,7 @@ func (s *Scheduler) stalePredecessorReading(ctx context.Context, q store.Querier
 	if above.Seed != "" {
 		st.Seed = above.Seed
 	}
-	if active, has, err := loadActiveAcceptance(ctx, q, plan, pred.NodeID); err != nil {
+	if active, has, err := tolerantAcceptanceOf(ctx, q, plan, pred.NodeID); err != nil {
 		return nil, err
 	} else if has {
 		st.CurrentAcceptance = active.AcceptanceID

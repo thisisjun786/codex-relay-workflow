@@ -456,8 +456,7 @@ func measureCancelled(ctx context.Context, q store.Querier, plan string, snap da
 		if n.Lifecycle != dag.LifeCancelled {
 			continue
 		}
-		var one int
-		started, err := queryOne(ctx, q, "SELECT 1 FROM dag_node_executions WHERE plan_id = ? AND node_id = ? LIMIT 1", []any{plan, n.NodeID}, &one)
+		started, err := nodeHasExecuted(ctx, q, plan, n.NodeID)
 		if err != nil {
 			return nil, err
 		}
