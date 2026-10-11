@@ -247,7 +247,7 @@ exists before the relationship and is answerable without asking the relay anythi
 ## Three-level linkage and execution ownership
 
 The records these rows constrain are described in [linkage.md](linkage.md); the role contract
-they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
+they implement is OPS-7.4 and the shared "Scope of each level" (`crw-canon/references/hierarchy.md`).
 
 | # | Invariant | Enforced in | Status |
 |---|---|---|---|

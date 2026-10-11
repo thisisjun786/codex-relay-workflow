@@ -10,7 +10,8 @@ after finishing work. Ground the choice in the product outcome and live evidence
 
 ## Read the request and state
 
-Read [Integrations](../crw-plan/references/integrations.md) for canonical
+Read the shared [Linear model](../crw-canon/references/linear-model.md) and
+[delivery](../crw-canon/references/delivery.md) for canonical
 documents, access, inherited scope, and workflow ownership. Resolve the target
 from the current assignment, linked Linear items, and repository identity. Use
 the active project when the context identifies it; compare projects only when
@@ -31,7 +32,7 @@ Distinguish these two situations. An empty backlog does not prove a fresh start;
 a Done label or completed agent turn does not prove the outcome is delivered.
 
 When repository identity affects readiness, apply the shared
-[repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository).
+[repository resolution](../crw-canon/references/linear-model.md#resolve-the-implementation-repository).
 Read the issue's repository label, explicit target and existing assignment;
 reconcile disagreement before execution. Project context does not assign an
 edit target. Distinguish resuming preserved work from a new baseline.
@@ -69,7 +70,7 @@ disagreement, a scope change, new ownership or a shared resource is their common
 decision even when those parents agree. Where the projects
 answer to different supervisors, a requirement for one of them goes to that project's own
 supervisor, and only a genuinely shared decision with no common supervisor goes to the user. All of this follows
-[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope). Do not start a successor
+[scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level). Do not start a successor
 whose prerequisite is unverified. If the required result is verified, choose the
 next ready dependency or milestone step that advances the product outcome.
 Do not repeatedly audit completed work or demand deployment when the agreed
