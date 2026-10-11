@@ -45,6 +45,7 @@ func assertSingleConnectionRead(t *testing.T, f *fixture, plan, wantReady string
 // These tests read Ready through *sql.DB with a short deadline: before the fix the deadline expires and no node is released,
 // after it the independent node answers ready.
 func TestReadyOnTheSingleConnectionStoreDoesNotStallOnACorrectionGeneration(t *testing.T) {
+	t.Parallel()
 	t.Run("a correction generation read for its ruling", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()

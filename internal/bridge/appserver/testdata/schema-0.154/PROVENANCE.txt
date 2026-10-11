@@ -1,0 +1,5 @@
+JSON Schema of the Codex App Server protocol, codex-cli 0.154.0.
+
+Generated with `codex app-server generate-json-schema --out <dir>` (stable surface, no --experimental)
+and copied here unmodified. Only the files the tests read are kept; a file keeps the name and the
+relative path the generator gave it, so a fuller copy of the same output merges without a conflict.

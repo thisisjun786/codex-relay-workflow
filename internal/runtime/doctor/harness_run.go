@@ -25,7 +25,6 @@ package doctor
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,10 +35,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -221,8 +219,8 @@ func harnessRunActiveSurface(env host.LookupEnv) *string {
 	if value, set := env("CODEX_SURFACE"); set {
 		// An environment value is bytes Node's UTF-8 decoder already read: the raw ED A0 80 becomes
 		// three U+FFFD there, where harnessReportJSONString reads the same bytes as a stored lone
-		// surrogate. Decode here so the two do not disagree (source.DecodeUTF8 is that decoder).
-		return harnessRunString(source.DecodeUTF8([]byte(value)))
+		// surrogate. Decode here so the two do not disagree (jsnode.DecodeUTF8 is that decoder).
+		return harnessRunString(jsnode.DecodeUTF8([]byte(value)))
 	}
 	if value, set := env("CODEX_APP_PORT"); set && value != "" {
 		return harnessRunString("app")
@@ -429,42 +427,12 @@ func harnessRunParseOptions(args []string, env host.LookupEnv) (HarnessOptions, 
 // a trailing newline and no HTML escaping, so <, >, & and the em dash stay as the oracle printed
 // them.
 func harnessRunWriteJSON(w io.Writer, report HarnessReport) error {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(report); err != nil {
+	out, err := jsnode.Stringify(report, "  ")
+	if err != nil {
 		return err
 	}
-	_, err := w.Write(harnessRunUnescapeSeparators(buffer.Bytes()))
+	_, err = w.Write(append(out, '\n'))
 	return err
-}
-
-// harnessRunUnescapeSeparators rewrites the \u2028 and \u2029 escapes encoding/json always emits
-// back to the characters themselves, which JSON.stringify writes literally (cli.ts:83). The
-// report carries the manifest version and the environment's active surface, so a separator in
-// either must not change the bytes. An escaped backslash (\\u2028) is data and stays as it is.
-func harnessRunUnescapeSeparators(data []byte) []byte {
-	out := make([]byte, 0, len(data))
-	for i := 0; i < len(data); {
-		if data[i] == '\\' && i+1 < len(data) {
-			if i+5 < len(data) && data[i+1] == 'u' && (string(data[i+2:i+6]) == "2028" || string(data[i+2:i+6]) == "2029") {
-				if string(data[i+2:i+6]) == "2028" {
-					out = utf8.AppendRune(out, '\u2028')
-				} else {
-					out = utf8.AppendRune(out, '\u2029')
-				}
-				i += 6
-				continue
-			}
-			out = append(out, data[i], data[i+1])
-			i += 2
-			continue
-		}
-		out = append(out, data[i])
-		i++
-	}
-	return out
 }
 
 // harnessRunExec is the real HarnessRunner: run file with args under the timeout and answer the
@@ -486,7 +454,7 @@ func harnessRunExec(file string, args []string, timeout time.Duration) HarnessRu
 	// surrogate harnessReportJSONString would spell as its escape. Decode here, so every consumer of
 	// a run -- the codex version, the features stderr cut and the ast-grep output -- sees the same
 	// text the oracle saw. A string a test passes to the check directly is unaffected.
-	out, errOut := source.DecodeUTF8(stdout.Bytes()), source.DecodeUTF8(stderr.Bytes())
+	out, errOut := jsnode.DecodeUTF8(stdout.Bytes()), jsnode.DecodeUTF8(stderr.Bytes())
 	if ctx.Err() == context.DeadlineExceeded || errors.Is(err, exec.ErrWaitDelay) {
 		return HarnessRun{Status: harnessRunInt(harnessDriftKilled), Stdout: out, Stderr: errOut, Killed: true}
 	}

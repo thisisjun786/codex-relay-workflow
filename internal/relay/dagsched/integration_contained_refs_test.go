@@ -13,6 +13,7 @@ import (
 // the named batch merges X, the next run marks Y with no merge and no verification, and observing Y on the branch then
 // satisfies Y's integrated edge to Z.
 func TestContainedNodeCompletesOnTheBranchThatContainsIt(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "y", files: map[string]string{"y.txt": "y\n"}})
 	k.addChildNode("x", k.heads["y"], "x.txt")
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-z", addRelNode("z", dag.NodeImplementation), addEdge("yz", "y", "z", dag.EdgeIntegrated, doc{"target_repository": k.repo.path}))
@@ -67,6 +68,7 @@ func TestContainedNodeCompletesOnTheBranchThatContainsIt(t *testing.T) {
 // CRW-965 (revision of parent decision D4): a node whose only batch failed before its move names no ref, so its edge
 // waits; the failed attempt leaves nothing that a completion could read.
 func TestNodeWhoseOnlyBatchFailedBeforeItsMoveNamesNoRef(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "p", files: map[string]string{"p.txt": "p\n"}})
 	k.acceptByCommit("p")
 	ctx := context.Background()

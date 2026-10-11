@@ -31,6 +31,7 @@ func (k *batchKit) commitEdgeStatusOf(t *testing.T, edgeID string) EdgeStatus {
 // CRW-965 (parent decision d5): a commit-accepted node satisfies a code-pinned artifact_verified edge without a
 // pull request, with and without its integration. The acceptance is made by the production commit path.
 func TestCommitAcceptedNodeSatisfiesAPinnedArtifactEdge(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.putPlan("g", 1, "g-r2", addRelNode("b", dag.NodeNonPR),
 		addEdge("ab", "a", "b", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": k.repo.path, "target_base_ref": "dev"}))

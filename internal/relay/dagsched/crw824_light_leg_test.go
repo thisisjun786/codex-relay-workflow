@@ -33,6 +33,7 @@ func crw824LightScript() *ghScript {
 
 // The projection carries testSkipped for the light leg and leaves it false otherwise.
 func TestCRW824ForgeProjectionCarriesTestSkipped(t *testing.T) {
+	t.Parallel()
 	pr := crw824LightScript().read(t)
 	carried := map[string]bool{}
 	for _, c := range pr.Checks {
@@ -48,6 +49,7 @@ func TestCRW824ForgeProjectionCarriesTestSkipped(t *testing.T) {
 
 // A row without testSkipped gains no field, and a row with it keeps the field set to true.
 func TestCRW824RebuiltRowsCarryTestSkippedOnlyWhenSet(t *testing.T) {
+	t.Parallel()
 	rows := forgeRows([]Check{
 		{RunID: "workflow-run:9:go-product (test-2)#0", Name: "go-product (test-2)", HeadSHA: forgeHead, Conclusion: "success", Attempt: 1},
 		{RunID: "workflow-run:9:go-product (test-1)#0", Name: "go-product (test-1)", HeadSHA: forgeHead, Conclusion: "success", Attempt: 1, TestSkipped: true},
@@ -68,6 +70,7 @@ func TestCRW824RebuiltRowsCarryTestSkippedOnlyWhenSet(t *testing.T) {
 // A restated handoff record that states testSkipped as anything but a boolean reads false, the same
 // strict read merge-evidence's testSkippedJobs uses.
 func TestCRW824ANonBooleanTestSkippedReadsFalse(t *testing.T) {
+	t.Parallel()
 	for _, value := range []any{"true", 1, nil} {
 		snapshot := map[string]any{"pinned": map[string]any{"state": "open", "headSha": forgeHead},
 			"handoff": map[string]any{"checks": []any{map[string]any{"runId": "workflow-run:9:go-product (test-1)#0", "name": "go-product (test-1)", "headSha": forgeHead, "conclusion": "success", "attempt": 1, "testSkipped": value}}}}
@@ -81,6 +84,7 @@ func TestCRW824ANonBooleanTestSkippedReadsFalse(t *testing.T) {
 // The same reading answers checks_stale: the required test leg concluded success without running its
 // tests, so the head is not merge evidence.
 func TestCRW824ForgeRowsAnswerChecksStaleForTheLightLeg(t *testing.T) {
+	t.Parallel()
 	pr := crw824LightScript().read(t)
 	if len(pr.CheckProblems) != 1 || !strings.HasPrefix(pr.CheckProblems[0], "checks_stale: ") {
 		t.Fatalf("check problems = %v", pr.CheckProblems)

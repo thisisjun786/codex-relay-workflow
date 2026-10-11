@@ -9,6 +9,7 @@ import (
 // CRW-965 (parent decisions D1 and D2): the record judge compares the tool values with the record's own pins and the
 // platform, and leaves goFlags and goEnv to the writer. The kit's tree declares no tool (CRW-1026 judges the declared ones). These tests pin both sides of that boundary.
 func TestVerificationJudgeLeavesGoFlagsAndGoEnvToTheWriter(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	head := k.heads["a"]
 	keys, err := CommitVerificationKeys(context.Background(), k.repo.path, head)
@@ -39,6 +40,7 @@ func TestVerificationJudgeLeavesGoFlagsAndGoEnvToTheWriter(t *testing.T) {
 // CRW-965 (parent decision D2): a stored verification stands for the keys the verifier would judge now only when every key
 // matches, the platform included. A missing key or another platform verifies again.
 func TestVerifiedKeysHoldOnlyForTheSamePlatform(t *testing.T) {
+	t.Parallel()
 	now := map[string]string{"tree": "t", "ci_digest": "c", "dependency_go_sum": "g", "dependency_web_lock": "", "os": "linux", "arch": "amd64"}
 	same := map[string]string{}
 	for key, value := range now {

@@ -87,6 +87,8 @@ var zoneInventory = map[string][]string{
 	// CRW-952 (appended statements): the pre-merge record of an acceptance, and of a revalidation.
 	"dag_acceptance_premerge":   {"acceptance_id", "record_digest", "record_json", "evaluated_head", "accepted_head", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_revalidation_premerge": {"revalidation_id", "acceptance_id", "record_digest", "record_json", "evaluated_head", "accepted_head", "recorded_by", "coordinator_epoch", "recorded_at"},
+	// CRW-974 (appended statement): the marks the rowid -1 guards of the append-only tables keep while an insert runs.
+	"dag_zone_rowid_marks": {"table_name"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

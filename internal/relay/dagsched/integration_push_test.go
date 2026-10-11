@@ -39,6 +39,7 @@ func (k *batchKit) pushRepo(t *testing.T, remote string) {
 // TestPushFastForwardsTheSameCommit: the remote branch takes the integration commit by a fast-forward, and a second
 // push is up to date (c7).
 func TestPushFastForwardsTheSameCommit(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)
@@ -63,6 +64,7 @@ func TestPushFastForwardsTheSameCommit(t *testing.T) {
 // c7: the remote dev points at a commit the integration branch does not contain. Nothing is pushed, the command reports
 // merge_base_mismatch, and the remote keeps its commit.
 func TestPushRefusesToOverwriteARemoteThatHasMoved(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)
@@ -88,6 +90,7 @@ func TestPushRefusesToOverwriteARemoteThatHasMoved(t *testing.T) {
 // c6: a GitHub outage. ls-remote reads the remote, the push cannot reach it: the push is deferred, the integration the
 // batch recorded stands, the acceptance and the integrated count go through, and the same push completes later.
 func TestOutageDefersOnlyThePushAndTheIntegrationCompletes(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)

@@ -11,11 +11,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // GitEnv is base without the variables that point git at another repository (inherited, they would redirect
@@ -76,9 +77,15 @@ var discoveryAnswer = regexp.MustCompile(`\A(?:warning: [^\n]*\n)*fatal: not a g
 // a probe of the session binding is bound by gitprobe.Timeout.
 const captureTimeout = 5 * time.Minute
 
-// run runs git in cwd under the probe policy with the capture's bounds and returns its stdout.
-func run(cwd string, limit int, args ...string) ([]byte, error) {
-	return Probe(cwd, ProbeOptions{Limit: limit, Timeout: captureTimeout}, args...)
+// run runs git in cwd under the probe policy with the capture's bounds and returns its stdout. The probe's messages are in the C
+// locale (LC_ALL=C), so NotARepository can tell a directory in no repository from a git that failed to read one whatever the
+// user's language is.
+func run(ctx context.Context, group bool, cwd string, limit int, args ...string) ([]byte, error) {
+	o := ProbeOptions{Limit: limit, Timeout: captureTimeout, Env: []string{"LC_ALL=C"}}
+	if group {
+		return ProbeContext(ctx, cwd, o, args...)
+	}
+	return Probe(cwd, o, args...)
 }
 
 // Probe runs git in cwd under gitprobe's read-only probe policy (every inherited GIT_* variable removed, no
@@ -91,9 +98,24 @@ func Probe(cwd string, o ProbeOptions, args ...string) ([]byte, error) {
 	return runBounded(cwd, "git", args, gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
 }
 
+// ProbeContext is Probe owned by the caller's ctx, for a caller that must not leave git running behind it (a hook that stops
+// waiting for the answer): git runs in a process group of its own, and when ctx ends, the time limit passes or the output limit
+// is exceeded the whole group is killed, so a clean, smudge or process filter that git started ends with it, and ProbeContext
+// returns only once git has been reaped. Probe itself does not make the group: the foreground process group of a terminal
+// command (Ctrl-C) reaches git there as it always has.
+func ProbeContext(ctx context.Context, cwd string, o ProbeOptions, args ...string) ([]byte, error) {
+	return runBoundedCtx(ctx, true, cwd, "git", args, gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
+}
+
 // runBounded runs name with args in cwd and env and returns its stdout, within limit bytes of output and timeout.
 func runBounded(cwd, name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runBoundedCtx(context.Background(), false, cwd, name, args, env, limit, timeout)
+}
+
+// runBoundedCtx is runBounded that ctx ends as well as the time limit; group runs name in a process group of its own that is
+// killed whole (see ProbeContext).
+func runBoundedCtx(parent context.Context, group bool, cwd, name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	outR, outW, err := os.Pipe()
 	if err != nil {
@@ -105,7 +127,21 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 		return nil, err
 	}
 	defer func() { _, _ = outR.Close(), errR.Close() }()
-	cmd := exec.Command(name, args...)
+	var cmd *exec.Cmd
+	if group {
+		cmd = exec.CommandContext(ctx, name, args...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		// The group leader is not reaped before Wait returns, so its pid still names the group here; a group that is already gone
+		// is no failure.
+		cmd.Cancel = func() error {
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return err
+			}
+			return nil
+		}
+	} else {
+		cmd = exec.Command(name, args...)
+	}
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, env, outW, errW
 	err = cmd.Start()
 	_, _ = outW.Close(), errW.Close() // the child holds its own copies
@@ -121,7 +157,13 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 		stderr   bytes.Buffer
 		drainers sync.WaitGroup
 	)
-	stopReading := func() { // with mu held
+	// stopReading ends the child and closes the read ends; wholeGroup also kills its process group, which is only done while the
+	// leader has not been reaped (the output limit, which the readers hit before Wait): an ended ctx kills the group through
+	// cmd.Cancel, which exec runs only before Wait returns.
+	stopReading := func(wholeGroup bool) { // with mu held
+		if wholeGroup {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		_ = cmd.Process.Kill()
 		_, _ = outR.Close(), errR.Close()
 	}
@@ -130,7 +172,7 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 		defer mu.Unlock()
 		if !over {
 			late = true
-			stopReading()
+			stopReading(false)
 		}
 	})
 	defer stop()
@@ -142,7 +184,7 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 			mu.Lock()
 			if used += n; used > limit && !over && !late {
 				over = true
-				stopReading()
+				stopReading(group)
 			}
 			if !over && !late {
 				keep.Write(buf[:n])
@@ -164,6 +206,8 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 	case over:
 		return nil, errors.New("output exceeds the limit")
 	case late:
+		return nil, ctx.Err()
+	case group && werr != nil && ctx.Err() != nil: // exec ended the child at the deadline before the callback above ran
 		return nil, ctx.Err()
 	}
 	if werr != nil {
@@ -195,7 +239,7 @@ type statusRecord struct {
 func parseStatusZ(out []byte) []statusRecord {
 	var fields [][]uint16
 	for _, field := range bytes.Split(out, []byte{0}) {
-		fields = append(fields, utf16.Encode([]rune(decodeUTF8(field))))
+		fields = append(fields, utf16.Encode([]rune(jsnode.DecodeUTF8(field))))
 	}
 	fields = fields[:len(fields)-1] // what follows the last NUL is an unterminated field, which is dropped
 	var records []statusRecord
@@ -214,44 +258,4 @@ func parseStatusZ(out []byte) []statusRecord {
 		records = append(records, rec)
 	}
 	return records
-}
-
-// DecodeUTF8 is decodeUTF8 for a caller that reads paths and git output the way Node does.
-func DecodeUTF8(b []byte) string { return decodeUTF8(b) }
-
-// decodeUTF8 decodes b as Node's Buffer.toString("utf8") does: each maximal invalid subpart becomes one U+FFFD
-// (the WHATWG rule), where Go's own conversion emits one per byte.
-func decodeUTF8(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	var sb strings.Builder
-	for len(b) > 0 {
-		r, n := utf8.DecodeRune(b)
-		if r == utf8.RuneError && n == 1 {
-			n = maximalSubpart(b)
-		}
-		sb.WriteRune(r)
-		b = b[n:]
-	}
-	return sb.String()
-}
-
-// maximalSubpart is the length of the longest prefix of b, whose first rune is invalid, that could begin a
-// well-formed sequence: the lead byte plus the following bytes that some completion with 0x80 keeps valid.
-func maximalSubpart(b []byte) int {
-	want := 1
-	switch c := b[0]; {
-	case c >= 0xC2 && c <= 0xDF:
-		want = 2
-	case c >= 0xE0 && c <= 0xEF:
-		want = 3
-	case c >= 0xF0 && c <= 0xF4:
-		want = 4
-	}
-	n := 1
-	for n < min(want, len(b)) && utf8.Valid(append(slices.Clone(b[:n+1]), bytes.Repeat([]byte{0x80}, want-n-1)...)) {
-		n++
-	}
-	return n
 }

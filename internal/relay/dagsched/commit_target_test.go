@@ -11,6 +11,7 @@ import (
 // outgoing integrated edge names the checkout; the edge's base ref is not part of what integrated means for such a node,
 // so the successor becomes satisfied once the node is observed on the integration branch.
 func TestCommitAcceptedNodeCompletesOnTheIntegrationBranchItMoved(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.putPlan("g", 1, "g-r2", addRelNode("b", dag.NodeNonPR),
 		addEdge("ab", "a", "b", dag.EdgeIntegrated, doc{"target_repository": k.repo.path, "target_base_ref": "dev"}))

@@ -215,8 +215,104 @@ No refusal reason is added. A cursor that names a revision the plan does not hav
 * **Transactions.** The reads are read transactions like `ReadProgress`: on a store opened for writing a transaction takes the write lock (`BEGIN IMMEDIATE`) though it writes nothing, and a reader that must not take it opens the store read-only, as `dag-progress` does. Through a read-only store (`mode=ro`, `query_only`) every function here works and writes nothing; the tests hash every row of every table, the journal included, before and after.
 
 
+## Activity
+
+`dag-progress/1` states where every node stands. It does not state what has been recorded for a node since, and it carries no stagnation reading. That is the job of a second, standalone query that
+leaves `dag-progress/1` and every digest built on it (the summary outbox's, the rebuild's) exactly as they are:
+
+```
+crw relay [--state DIR] dag-activity --plan P
+```
+
+JSON on stdout, exit 0, with its own schema id `dag-activity/1` and its own `digest`. It opens the store as `dag-progress` does (mode=ro, `query_only`, never created), reads the store and nothing else,
+reads no clock, and writes nothing: the refusals are the same (`unregistered_scope` for a plan the store does not hold, `store_absent`, the parser's exit 2 for a missing `--plan`, exit 3 for a
+projection that cannot be printed). No command, table, zone statement or refusal reason is written by it, and nothing reads the document back; the Linear summary still states `dag-progress`.
+
+| Key | Meaning |
+| --- | --- |
+| `ok`, `schema` | `true`, `dag-activity/1` |
+| `plan_id`, `project_key`, `plan_revision`, `state_digest`, `plan_state` | as in `dag-progress` |
+| `progress` | `schema`, `digest` and `cursor` of the `dag-progress/1` view the stages were taken from, in the same read transaction ([below](#how-the-document-is-pinned-to-the-progress-view)) |
+| `stagnation` | the nodes at each rung of the repair ladder, as `pass.stagnation` of `dag-ready` counts them |
+| `nodes` | one entry per live node, by node id (below) |
+| `digest` | the sha256 of the printed document without this key: equal store state, equal digest |
+
+A node entry has the node's `node_id`, `issue_key`, `kind`, `title`, and `stage`, `state`, `disposition`, `reason` and `detail` exactly as `dag-progress` prints them, and then:
+
+* `evidence`: the last durable verification change recorded for the node, labelled `evidence`; null when there is none.
+* `activity`: the last recorded child activity of the node, labelled `activity`; null when there is none.
+* `stagnation`: the node's stagnation reading, or null (below).
+* `links`: `relationship`, `thread` and `pull_request` spelled as in `dag-progress`, and `artifact` and `commit` (below).
+
+### Evidence and activity are two things
+
+Both entries read the rows of every execution the plan ever bound to the node (`dag_node_executions`), and each is the newest of its sources. An entry carries `label`, `relationship_id`,
+`execution_generation` (null for a row the store cannot tie to one generation: a row keyed by the task alone, an observation of a turn that neither its stored event nor a single admission ties to one generation, a revalidation whose event the store does not hold, or a check of a head no acceptance or refresh names; a past observation is never given the generation the relationship stands on now), `event_id` (null for a row that is not about an event), `ref` (the stored identity of the row itself: a turn, a check, an
+acceptance, a record digest, the child's thread), `change` (what the row says: an outcome, a verdict, a status), `recorded_at` (the time the store recorded) and `source`.
+
+| Label | `source` | Table | `recorded_at` |
+| --- | --- | --- | --- |
+| `evidence` | `verdict` | `verdicts` (the ruling on an event) | `decided_at` |
+| `evidence` | `verified_head` | `dag_verified_heads` | `recorded_at` |
+| `evidence` | `base_refresh` | `dag_base_refreshes` (only a refresh the acceptance stands on: its relationship, a generation not before the acceptance's, an id that is the digest of what it records) | `recorded_at` |
+| `evidence` | `acceptance` | `dag_acceptances` | `accepted_at` |
+| `evidence` | `revalidation` | `dag_acceptance_revalidations` | `revalidated_at` |
+| `evidence` | `merge_check` | `dag_merge_checks` | `recorded_at` |
+| `evidence` | `commit_verification` | `dag_acceptance_verifications` | `recorded_at` |
+| `evidence` | `premerge_record` | `dag_acceptance_premerge` | `recorded_at` |
+| `evidence` | `revalidation_premerge` | `dag_revalidation_premerge` (the record a re-validation was judged on, the one integration reads once the criteria were re-registered) | `recorded_at` |
+| `activity` | `child_event` | `events` produced by the child | `last_seen_at` |
+| `activity` | `turn_admitted` | `generation_turns` | `admitted_at` |
+| `activity` | `poll` | `poll_observations` (only a poll that read the turn) | `last_polled_at` |
+| `activity` | `turn_observation` | `observations` | `observed_at` |
+| `activity` | `child_lifecycle` | `recipient_lifecycle` of the child's thread | `observed_at` |
+
+A `base_refresh` entry carries the refresh's own relationship, generation, event and `ref` (the refresh id), and `change` is the head the acceptance then stood on. A `revalidation` entry carries the relationship and generation of the event it was ruled on (after a base refresh, the refreshed generation), not those of the acceptance. A `merge_check` entry carries the identity of
+the head the check judged (`dag_merge_checks.head_sha`): the acceptance's generation and event when that is the accepted head, the refresh's when it is the head of a valid base refresh, and no generation
+and no event for a head neither names.
+
+A `poll` entry is the time of the newest poll that read the turn (`last_polled_at`). The row keeps the status of the newest attempt, so when that attempt failed (the host reported the turn absent, a transport error) the status is not the one observed at that time: the entry keeps the time and its `change` is null. A `premerge_record` or `revalidation_premerge` entry carries the identity of the head the record was stored for (`accepted_head`, with `change` the head it evaluated): the acceptance's generation and event when that is the accepted head, the refresh's when it is the head of a valid base refresh of the acceptance, and no generation and no event for a head neither names, or that more than one execution names.
+
+A store that lacks one of these tables (a store that predates it) is answered without it.
+
+"Newest" compares the recorded times with one another and never with the present; a tie is broken by source, relationship, generation and the stored identities, so two readings of one store state
+choose the same row. A child report is activity and is not evidence; a ruling is evidence and is not activity; the two entries never merge into one "last seen".
+
+Activity is display only. The stage of a node is `dag-progress`'s, and activity is never read by it, so a child that only sends heartbeats (polls, turns admitted, lifecycle observations) changes no
+stage, no count, no evidence and no `dag-progress` digest, however late the store says the heartbeat was recorded. An overdue state would have to come from a durable event, and none is derived. Tokens,
+turns and node counts are not used to describe how complete the work is.
+
+### Stagnation
+
+`stagnation` is the object `dag-ready` reads for the node ([the scheduler](dag-scheduler.md): CRW-801, section 80 S-1), taken from the same reading the stages come from: `node_id`, `count`, `cause`
+(`repeated_finding` or `repeated_check_failure`), `rung` (`retry_same_packet`, `edit_packet`, `split_node`, `neighbour_repair`, `full_replan`), `next` (the next rung), `finding_digest` and
+`last_event_id`. It is present once the same finding has been carried by two consecutive corrections of the node (or the same required checks failed again on the same head), changes rung as the count
+grows, resets when the finding changes, and is null for a node that was never corrected twice and for a node that landed. Top-level `stagnation` counts the nodes at each rung, every rung printed. It is
+derived from rows the store already keeps and writes nothing, so a replay of the same rows reads the same object.
+
+### Artifact and commit links
+
+* `artifact`: for a `non_pr` node with an active acceptance, `acceptance_id`, `relationship_id`, `execution_generation`, `event_id`, `revision_hash`, `output_manifest_ref` and `evidence_digest` as the
+  acceptance stored them; otherwise null. The bytes are not read.
+* `commit`: for a node accepted by the commit path (a verification record and no forge identity), `acceptance_id`, `head_commit`, `tree_sha`, `base_commit`, `record_digest`, `recorded_at` from the
+  verification record and `integration_refs`, the refs its batches moved; otherwise null.
+* `pull_request` is the link `dag-progress` prints.
+
+### How the document is pinned to the progress view
+
+The document is built in one read transaction from `Scheduler.ProgressSnapshotOf`, so its stages and the evidence, activity and links beside them are one state of the store. `progress.digest` is the
+digest `dag-progress` prints for that state, and `progress.cursor` is the cursor of that state's snapshot ([Rebuilding the view](#rebuilding-the-view)): a reader that replays the view from the zero
+cursor, or from a snapshot and the events after its cursor, ends at a snapshot whose cursor is `progress.cursor` and whose projection has the digest `progress.digest`. Activity rows are not events of
+that rebuild (they move neither the digest nor the cursor); they are read from the store at the same state.
+
+### Agent executions
+
+Agent executions (`flow_events`, `calls`, `dag_agent_executions`) are not in this store yet. When they are, `dag-activity` reads them through the union reader of the agent execution readers, and its row
+goes into the reader classification table with them; the table above is the list of what it reads today.
+
 ## What is not here
 
+* [Activity](#activity) (`dag-activity`) is a separate document and is not a part of `dag-progress/1`: nothing here shows what a node's child last did, or a node's stagnation.
 * The Linear summary is [the summary outbox](dag-outbox.md): it states the live view, so it reads `Scheduler.Progress` in the transaction that appends its entry and compares digests, and writes its own table. It does not use the rebuild (a summary is a whole document, not a delta). No command wraps the rebuild: a command that prints a delta would be a new document to specify and would add a command to the relay.
 * The metrics contract 8.6 records for the evaluation (makespan, idle slot minutes, wake latencies) are not derived here, and no figure here is a target.
 * The byte checks of the artifacts are `dag-ready`'s ([the scheduler](dag-scheduler.md#input-checks)).

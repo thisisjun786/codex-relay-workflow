@@ -70,6 +70,7 @@ func TestGenerationOpenIsRefusedWhereTheRouteIsARevalidation(t *testing.T) {
 
 // The same for an implementation node accepted on its pull request, the case the issue reports.
 func TestGenerationOpenIsRefusedForAnAcceptedImplementationNodeWhoseCriteriaChanged(t *testing.T) {
+	t.Parallel()
 	a := newAcceptRefreshKit(t)
 	if _, err := a.acceptWith(""); err != nil {
 		t.Fatalf("accept: %v", err)

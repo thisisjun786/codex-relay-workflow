@@ -10,6 +10,7 @@ import (
 // containment observation) must not merge that candidate again or report a merge commit for it. Only the new candidate
 // is merged, verified and reported.
 func TestIntegrationBatchDoesNotMergeACandidateTheBranchAlreadyHolds(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	runs := 0
 	base := stubVerifier(writeStubVerifier(t))

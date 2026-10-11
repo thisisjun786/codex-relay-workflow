@@ -9,8 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // GoalplanReadDiagnostic and GoalplanReadResult are goalplan.ts:679-688.
@@ -79,7 +80,7 @@ func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadRes
 	if err != nil {
 		return readFailure("unreadable", path, err.Error(), ""), revivalLossFile{}
 	}
-	decoded := source.DecodeUTF8(raw)
+	decoded := jsnode.DecodeUTF8(raw)
 	dec := json.NewDecoder(strings.NewReader(decoded))
 	dec.UseNumber()
 	var parsed any

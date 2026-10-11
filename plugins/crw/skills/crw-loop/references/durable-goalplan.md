@@ -115,6 +115,11 @@ This is the on-disk shape under `.crw/goalplans/<slug>/goalplan.json`
 - `crw pabcd loop decide --session <id> --id <id> --answer <text> [--cwd <path>]` — record the user reply. This changes only the decision record; phase status and blockedReason stay as they were.
 - `crw pabcd loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]` — `--id` takes
   a generated `c-N` id; read it from `crw pabcd loop show` or the goalplan file.
+- `crw pabcd loop unbind --session <id> [--cwd <path>]` — release the goalplan slug the session is bound to, for a plan bound by mistake. It
+  clears only the session's slug (and the Stop guard's work-phase pointer for it), leaves the goalplan file and its ledger untouched, and
+  appends one `unbound` row to the transition ledger; afterwards `update_goal` complete no longer reads a bound goalplan. It runs from IDLE only
+  and a repeat is a no-op. A session stranded in a phase is first closed with `crw pabcd orchestrate reset --session <id>` (which keeps the
+  slug), then released with this verb. The chat command `orchestrate unbind` is the same release. This verb is not listed in `loop --help`.
 
 The parser rejects unknown flags, stray positionals, missing values, and flags belonging to another verb before dispatch. Every value flag also accepts `--flag=value`, which is the way to pass a value that starts with `--`.
 

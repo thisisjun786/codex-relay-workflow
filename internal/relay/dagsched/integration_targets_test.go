@@ -9,6 +9,7 @@ import (
 // CRW-965 (parent decision D4): only an integration ref a batch has moved is a completion target. A batch that failed
 // before its move, on another ref, adds nothing to the refs an acceptance completes on.
 func TestIntegrationTargetsCountOnlyMovedRefs(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()

@@ -30,6 +30,7 @@ func crw826UnacceptedAmbiguous(k *releaseKit, plan, node string) accepted {
 // correction (refused today), and one receipt in that generation reads the sole head and is
 // accepted.
 func TestAnUnacceptedNodeWhosePreviousGenerationIsAmbiguousIsRecoveredByAHandOpenedGeneration(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	r := crw826UnacceptedAmbiguous(k, "rp", "A")
@@ -70,6 +71,7 @@ func TestAnUnacceptedNodeWhosePreviousGenerationIsAmbiguousIsRecoveredByAHandOpe
 // not accepted yet is corrected by a ruling, and the generation opened by hand is not a second
 // route for it.
 func TestAnUnacceptedNodeWithASingleHeadIsNotRecoveredByAHandOpenedGeneration(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	r := k.reportNode("rp", "A", acceptOpts{})
@@ -91,6 +93,7 @@ func TestAnUnacceptedNodeWithASingleHeadIsNotRecoveredByAHandOpenedGeneration(t 
 // A generation opened by hand is bound to the manifest it was opened for: without --manifest-digest
 // nothing is bound, whether the previous generation is ambiguous or not.
 func TestAHandOpenedGenerationForAnAmbiguousNodeStillNeedsItsManifest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	r := crw826UnacceptedAmbiguous(k, "rp", "A")

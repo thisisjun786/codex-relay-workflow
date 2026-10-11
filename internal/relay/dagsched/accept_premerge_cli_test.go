@@ -46,6 +46,7 @@ func premergeCLIExpect(t *testing.T, m map[string]any, code int, want string) {
 // TestPremergeCLINamesEachRefusal drives the nine refusal names that a record can cause, plus the clean accept, through
 // the binary. The tenth name, premerge_after_evaluation_missing, is driven by TestPremergeCLIAfterEvaluationAndMergeChains.
 func TestPremergeCLINamesEachRefusal(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		none   bool
@@ -96,6 +97,7 @@ func TestPremergeCLINamesEachRefusal(t *testing.T) {
 // TestPremergeCLIReplayNeedsNoRecord: the clean accept stores the record; the same output again is a replay that names
 // no record and is answered replayed true.
 func TestPremergeCLIReplayNeedsNoRecord(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
 	m, code := premergeCLIRun(t, k, premergeRaw(t, premergeRecordOf(t, k)))
@@ -151,6 +153,7 @@ func premergeCLIShape(t *testing.T, shape string) (*commitAcceptKit, string) {
 // (20 characters or more); a chain of up to four dev-only merges keeps the evaluation; a fifth merge, a hand-resolved merge
 // and a merge of a commit outside dev do not (CRW-952 answer 2 and c5).
 func TestPremergeCLIAfterEvaluationAndMergeChains(t *testing.T) {
+	t.Parallel()
 	const statement = "the later commit adds one file"
 	cases := []struct {
 		name      string

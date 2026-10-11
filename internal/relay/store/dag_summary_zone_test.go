@@ -89,12 +89,12 @@ func TestDAGSummaryOutboxTransitions(t *testing.T) {
 	zoneRefuses(t, db, "a change of a superseded entry", summaryUpdate("plan-1", "doc-a", 2, "attempts = 5"))
 }
 
-// The newest-sibling rule is a second line behind the single open entry: with the open-entry index out of the way (a store a future build
+// The newest-sibling rule is a second line behind the single open entry: with the open-entry index and its CRW-974 guard out of the way (a store a future build
 // alters), an entry that has a newer sibling still cannot be claimed or confirmed.
 func TestDAGSummaryOutboxOlderEntryIsNeverClaimedOrConfirmedOverANewerOne(t *testing.T) {
 	t.Parallel()
 	db := zoneOpenedDB(t)
-	zoneMustExec(t, db, summaryPlan, summaryInsert("plan-1", "doc-a", 1, 1, "pending"), "DROP INDEX dag_summary_outbox_open", summaryInsert("plan-1", "doc-a", 1, 2, "pending"))
+	zoneMustExec(t, db, summaryPlan, summaryInsert("plan-1", "doc-a", 1, 1, "pending"), "DROP INDEX dag_summary_outbox_open", "DROP TRIGGER dag_summary_outbox_open_key_guard", summaryInsert("plan-1", "doc-a", 1, 2, "pending"))
 	zoneRefuses(t, db, "a claim of the older entry", summaryUpdate("plan-1", "doc-a", 1, "state = 'claimed', claim_token = 'tok-1'"))
 	zoneMustExec(t, db, summaryUpdate("plan-1", "doc-a", 2, "state = 'claimed', claim_token = 'tok-1'"))
 	zoneMustExec(t, db, summaryUpdate("plan-1", "doc-a", 2, "state = 'confirmed', claim_token = NULL, confirmed_at = '2026-10-02T00:00:02Z'"))

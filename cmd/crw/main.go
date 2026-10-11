@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
@@ -211,6 +212,7 @@ func modes() []mode {
 		}},
 		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"map", false, runRepoMap},
+		{"flow", false, func(c invocation) int { return engine.RunCLI(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
 		{"version", true, showVersion}, {"--version", false, showVersion},
 	}

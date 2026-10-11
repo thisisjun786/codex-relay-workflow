@@ -29,6 +29,7 @@ func (k *batchKit) addChildNode(name, parent, file string) {
 // candidate contained in a head the relay verified. The next batch marks it from its frozen row, with no merge and no
 // verifier call.
 func TestContainedCandidateIsMarkedAfterABatchDiedAfterMovingTheBranch(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()
@@ -69,6 +70,7 @@ func TestContainedCandidateIsMarkedAfterABatchDiedAfterMovingTheBranch(t *testin
 // CRW-965 (parent decision, cases 2 and 4): a named batch merges X, whose history contains Y's head. The next run marks Y
 // as already contained, and the stage rows agree with the events the run reports.
 func TestContainedCandidateOfANamedBatchIsMarkedOnTheNextRun(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "y", files: map[string]string{"y.txt": "y\n"}})
 	k.addChildNode("x", k.heads["y"], "x.txt")
 	k.acceptByCommit("y")
@@ -121,6 +123,7 @@ func TestContainedCandidateOfANamedBatchIsMarkedOnTheNextRun(t *testing.T) {
 // CRW-965 (parent decision, case 3): a branch head no recorded batch verified does not launder a candidate. Y is reported
 // as contained_unverified, is not marked, and stays a ready candidate.
 func TestContainedCandidateWaitsWhenTheBranchHeadWasNeverVerified(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "y", files: map[string]string{"y.txt": "y\n"}})
 	k.addChildNode("x", k.heads["y"], "x.txt")
 	k.acceptByCommit("y")

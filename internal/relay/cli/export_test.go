@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -33,3 +34,14 @@ func AccessReceipt(ctx context.Context, state string, probed store.ProbeResult) 
 func WorkerReadiness(observation contract.OrderedObject, requirements any, policyFile string) contract.OrderedObject {
 	return workerReadiness(observation, requirements, declaredPolicy(policyFile))
 }
+
+// SetJournalTailPoll shortens the pause between journal-tail's reads while it waits, for a test
+// that does not want to sit a whole second per poll. The command's own pause is one second.
+func SetJournalTailPoll(pause time.Duration) func() {
+	previous := journalTailPoll
+	journalTailPoll = pause
+	return func() { journalTailPoll = previous }
+}
+
+// OpenJournalTailStore is the store journal-tail reads the journal through.
+var OpenJournalTailStore = openJournalTailStore

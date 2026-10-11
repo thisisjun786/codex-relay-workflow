@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -337,7 +338,7 @@ type member struct {
 func object(members []member) ([]byte, error) {
 	b := []byte{'{'}
 	for i, m := range members {
-		key, err := stringify(m.key, "")
+		key, err := jsnode.Stringify(m.key, "")
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +346,7 @@ func object(members []member) ([]byte, error) {
 		if nested, ok := m.value.([]member); ok {
 			value, err = object(nested)
 		} else {
-			value, err = stringify(m.value, "")
+			value, err = jsnode.Stringify(m.value, "")
 		}
 		if err != nil {
 			return nil, err

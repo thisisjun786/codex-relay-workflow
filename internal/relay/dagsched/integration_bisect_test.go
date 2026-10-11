@@ -2,7 +2,6 @@ package dagsched
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -14,15 +13,14 @@ func writePairVerifier(t *testing.T) string {
 	stub := writeStubVerifier(t)
 	script := filepath.Join(t.TempDir(), "verify-pair.sh")
 	body := "#!/bin/sh\nif [ -e x.txt ] && [ -e y.txt ]; then\n  echo 'x.txt and y.txt together fail' >&2\n  exit 1\nfi\nexec " + stub + "\n"
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, body)
 	return script
 }
 
 // CRW-965 (parent decision D5): a candidate the bisection leaves out only because it breaks a prefix is reported as not
 // proven failing, never as failed; it gets no mark and stays ready, and the next batch integrates it.
 func TestIntegrationBatchReportsACandidateThatOnlyBreaksTheSetAsNotProvenFailing(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"x.txt": "x\n"}},
 		batchNode{name: "b", files: map[string]string{"y.txt": "y\n"}})

@@ -70,6 +70,10 @@ type pumpSettings struct {
 	IssuePattern       string `json:"issue_pattern"`
 	Footer             string `json:"footer"`
 	RolloutReports     *bool  `json:"rollout_reports"`
+	// DagReviewSeconds is the seconds between DAG reviews (default 600) and CapacitySeconds the
+	// seconds between capacity judgements (default 1800); see pump_signals.go.
+	DagReviewSeconds *int `json:"dag_review_seconds"`
+	CapacitySeconds  *int `json:"capacity_seconds"`
 }
 
 // pumpSettingsFrom reads the pump section of a configuration. An absent key leaves the default in
@@ -145,7 +149,21 @@ type pumpState struct {
 	// that pin is acted on. A state written before the key existed reads as no thread searched.
 	QueueLegacyChecked map[string]bool `json:"queue_legacy_checked"`
 
+	// dry is set for the round being collected when it is a dry run, so a source reads without
+	// writing anything of its own. commits are the steps the sources asked to run once the round's
+	// pending events are durable (a source with a state of its own that must not move first).
+	// dirty is set by a commit that changed this state again, which the round then saves once more.
+	dry     bool
+	commits []pumpCommitStep
+	dirty   bool
+
 	extra map[string]json.RawMessage
+}
+
+// pumpCommitStep is one source's step to run after the pending events are saved.
+type pumpCommitStep struct {
+	source string
+	run    func() error
 }
 
 // pumpReview776QueuePin is one frozen queue batch: the notice names it carried, the body it sent
@@ -539,6 +557,9 @@ func pumpCollect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pump
 			pumpLog(cfg, fmt.Sprintf("source %s %s", source.Name(), res.Status))
 			continue
 		}
+		if res.Commit != nil {
+			st.commits = append(st.commits, pumpCommitStep{source: source.Name(), run: res.Commit})
+		}
 		for _, ev := range res.Events {
 			if ev.ID == "" || seen[ev.ID] || st.Sent[ev.ID] {
 				continue
@@ -566,6 +587,7 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 	if err != nil {
 		return 1, err
 	}
+	st.dry = dry
 	pumpCollect(ctx, e, cfg, &st, s, now)
 	// pending reaches disk before anything is sent, so a crash at any point leaves the events
 	// recoverable and an offset never advances past an undelivered event. A management thread that
@@ -575,7 +597,22 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
 		}
+		// A source's own state moves only now that its events are durable. A failure is that
+		// source's alone: it is logged, and its next read converges on the same event ids.
+		for _, step := range st.commits {
+			if err := step.run(); err != nil {
+				pumpLog(cfg, "source "+step.source+" commit: "+err.Error())
+			}
+		}
+		// What a commit recorded about itself is saved too. Losing that save only makes the next
+		// read treat the commit as not made, which converges on the same ids.
+		if st.dirty {
+			if err := st.pumpSave(cfg); err != nil {
+				pumpLog(cfg, "state save after the commits: "+err.Error())
+			}
+		}
 	}
+	st.commits, st.dirty = nil, false
 	switch {
 	case cfg.ManagementThread == "":
 		pumpLog(cfg, "no management_thread; the management batch waits, the parent queue still runs")
@@ -702,6 +739,11 @@ type pumpSource interface {
 type pumpSourceResult struct {
 	Status string
 	Events []pumpEvent
+	// Commit, when set, persists a state the source keeps outside the pump's. The pump runs it
+	// after the round's pending events are durable and never in a dry run, so an event is never
+	// lost to a state that moved first; a Commit that fails or is never reached is repeated by the
+	// next read, which produces the same event ids.
+	Commit func() error
 }
 
 // pumpSources is the one registry. A later node adds its own source by adding a line here; the
@@ -709,6 +751,9 @@ type pumpSourceResult struct {
 var pumpSources = []pumpSource{
 	pumpRolloutSource{},
 	pumpPRSource{},
+	pumpSignalDagSource{},
+	pumpSignalCapacitySource{},
+	pumpSignalAuditSource{},
 }
 
 // pumpQueueSortedNames lists one queue directory's notice file names, sorted, so the body and

@@ -9,6 +9,7 @@ import (
 // moving transaction, and the batch moves nothing. The change is made by the test hook that runs in the verification step.
 
 func TestPremergeMovingTransactionRefusesACandidateChangedAfterSelection(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	stub := stubVerifier(writeStubVerifier(t))

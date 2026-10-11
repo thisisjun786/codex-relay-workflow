@@ -11,6 +11,7 @@ import (
 // is refused. A tool the verified commit does not declare and the record does not pin is not judged (the kit's tree declares
 // none; CRW-1026 covers the declared ones in verification_pins_test.go), and goFlags and goEnv stay the writer's.
 func TestVerificationRecordPinsMustMatchTheirTools(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	ctx := context.Background()
 	keys, err := CommitVerificationKeys(ctx, k.repo.path, k.head)

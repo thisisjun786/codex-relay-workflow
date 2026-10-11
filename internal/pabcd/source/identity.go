@@ -6,6 +6,7 @@ package source
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,27 +70,55 @@ const (
 // Pass the repository (worktree) root. Git reports entry paths relative to the root and they are read under cwd, so
 // below the root an entry has no content or another file's (same relative path), and an edit can leave the hash
 // unchanged: an oracle defect that is kept.
-func Capture(cwd string, o Options) Identity { return captureWithLimit(cwd, o, maxGitOutput) }
+func Capture(cwd string, o Options) Identity {
+	id, _ := capture(context.Background(), false, cwd, o, maxGitOutput)
+	return id
+}
+
+// CaptureProbed is Capture that also says why the identity is unavailable: the error of the git status that could not answer
+// (nil for a resolved identity). It tells a directory in no repository, NotARepository(err), from a git that failed (could not
+// start, could not read the tree, ran out of time): the identity is KindUnavailable in both.
+func CaptureProbed(cwd string, o Options) (Identity, error) {
+	return capture(context.Background(), false, cwd, o, maxGitOutput)
+}
+
+// CaptureContext is CaptureProbed for a caller that must not leave work running behind it: the git it runs is owned by ctx
+// (ProbeContext: its own process group, killed whole when ctx ends, reaped before the call returns) and the hashing of the dirty
+// files stops at the next file or chunk once ctx has ended, with ctx's error.
+func CaptureContext(ctx context.Context, cwd string, o Options) (Identity, error) {
+	return capture(ctx, true, cwd, o, maxGitOutput)
+}
 
 func captureWithLimit(cwd string, o Options, limit int) Identity {
+	id, _ := capture(context.Background(), false, cwd, o, limit)
+	return id
+}
+
+func capture(ctx context.Context, group bool, cwd string, o Options, limit int) (Identity, error) {
 	now := o.Now
 	if now == nil {
 		now = time.Now
 	}
 	capturedAt := now().UTC().Format("2006-01-02T15:04:05.000Z")
 	commitSha := ""
-	if out, err := run(cwd, limit, "rev-parse", "HEAD"); err == nil {
+	if out, err := run(ctx, group, cwd, limit, "rev-parse", "HEAD"); err == nil {
 		commitSha = strings.TrimSpace(string(out))
 	}
-	status, err := run(cwd, limit, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	status, err := run(ctx, group, cwd, limit, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
-		return Identity{Kind: KindUnavailable, CapturedAt: capturedAt}
+		return Identity{Kind: KindUnavailable, CapturedAt: capturedAt}, err
 	}
-	return resolve(cwd, commitSha, capturedAt, status, o)
+	return resolveContext(ctx, cwd, commitSha, capturedAt, status, o)
 }
 
 // resolve turns git's status output into the identity of a tree whose head is commitSha.
 func resolve(cwd, commitSha, capturedAt string, status []byte, o Options) Identity {
+	id, _ := resolveContext(context.Background(), cwd, commitSha, capturedAt, status, o)
+	return id
+}
+
+// resolveContext is resolve that stops hashing once ctx has ended, with an unavailable identity and ctx's error.
+func resolveContext(ctx context.Context, cwd, commitSha, capturedAt string, status []byte, o Options) (Identity, error) {
 	state := utf16.Encode([]rune(stateDirPrefix))
 	var kept []statusRecord
 	for _, r := range parseStatusZ(status) {
@@ -99,9 +128,13 @@ func resolve(cwd, commitSha, capturedAt string, status []byte, o Options) Identi
 	}
 	id := Identity{Kind: KindResolved, CommitSha: commitSha, CapturedAt: capturedAt}
 	if len(kept) > 0 {
-		id.Dirty, id.TreeHash = true, hashRecords(cwd, kept)
+		hash, err := hashRecords(ctx, cwd, kept)
+		if err != nil {
+			return Identity{Kind: KindUnavailable, CapturedAt: capturedAt}, err
+		}
+		id.Dirty, id.TreeHash = true, hash
 	}
-	return id
+	return id, nil
 }
 
 func isGenerated(path []uint16, generated []string) bool {

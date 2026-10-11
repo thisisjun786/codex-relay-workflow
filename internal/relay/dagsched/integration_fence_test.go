@@ -9,6 +9,7 @@ import (
 // CRW-965 (parent decision, D6): an epoch claimed by another coordinator after the verification and before the swap refuses
 // the batch, and the branch does not move.
 func TestIntegrationBatchRefusesAnEpochClaimedBeforeTheSwap(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	base := stubVerifier(writeStubVerifier(t))
@@ -31,6 +32,7 @@ func TestIntegrationBatchRefusesAnEpochClaimedBeforeTheSwap(t *testing.T) {
 // CRW-965 (parent decision, D6): a crash between the swap and the commit leaves the planned intent. The next run records the
 // move once, without a second move, and marks the candidate the branch already holds.
 func TestIntegrationBatchReconcilesAPlannedMoveAfterACrash(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()

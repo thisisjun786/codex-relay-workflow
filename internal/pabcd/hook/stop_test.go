@@ -335,17 +335,13 @@ func TestStopContextPressureTailReleasesWithoutSpendingTheBudget(t *testing.T) {
 // IDLE with an active goal and a bound plan: the goal-idle arming block, with the remaining work named
 // (hook.ts:1694-1738, GOAL-IDLE-CONTINUE-01).
 func TestStopGoalIdleBlockNamesTheWork(t *testing.T) {
-	cwd, env := stopRig(t, "active")
-	sessionHookStateFile(t, cwd, stopSID, func(s *state.State) { s.Slug = "export" })
-	stopWritePlan(t, cwd, "export", func(p *goalplan.Goalplan) {
-		p.WorkPhases = []goalplan.GoalplanWorkPhase{stopWorkPhase("wp1", "Exporter", goalplan.WorkPhasePending)}
-		p.Criteria = []goalplan.GoalplanCriterion{{ID: "c-1", Scenario: "s", ExpectedEvidence: "green", Status: goalplan.CriterionOpen}}
-	})
+	// A git workspace, where the arming command can run (CRW-145: the non-git block is TestStopGoalIdleBlockDropsTheArmingOptionWithoutAGitSource).
+	cwd, env := stopIdleRig(t, true)
 	got := stopBlockReason(t, stopRun(cwd, env))
 	want := "[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.\n" +
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.\n" +
-		"Either start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n" +
-		"or close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.\n" +
+		"Close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.\n" +
+		"Or start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n" +
 		"LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.\n" +
 		"Ready work phases: wp1 (Exporter)\n" +
 		"Required evidence: green\n" +
@@ -358,7 +354,7 @@ func TestStopGoalIdleBlockNamesTheWork(t *testing.T) {
 	}
 	// CRW-1107: IDLE->P takes no attest (phase-control.md), so neither platform's command carries one or an attest file
 	win := StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "win32", env)
-	if r := stopBlockReason(t, win); !strings.Contains(r, "\nEither start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n") || strings.Contains(r, "attest") {
+	if r := stopBlockReason(t, win); !strings.Contains(r, "\nOr start the next work-phase now: `CRW pabcd orchestrate P --session rec-s1`\n") || strings.Contains(r, "attest") {
 		t.Errorf("win32 goal-idle block: %q", r)
 	}
 }

@@ -13,7 +13,7 @@ workflow starts only on a manual dispatch, and integration does not wait on it.
 
 | Command | Where CI runs it |
 | --- | --- |
-| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)); and that `go.mod` and `go.sum` are what `go mod tidy` writes, checked offline (`GOPROXY=off`, `GONOPROXY=none`, `GOSUMDB=off`: no module download, also none for a module an inherited `GOPRIVATE` or `GONOPROXY` names, and no checksum database lookup) by `go mod tidy -diff`, which prints a note instead of failing when the module cache lacks a module the import graph needs |
+| `crw-dev ci validate` | `validate`: skill metadata, local Markdown links (and, for the documents under `plugins/crw/skills` and `docs`, the `#fragment` of each link: it must be a heading slug of the file it leads to, by GitHub's rule, or an explicit `id` or `name` attribute of an HTML element outside code (the slug is taken from the rendered heading text, in which an inline link, and a full or collapsed reference link whose label a complete CommonMark link reference definition (destination, optional title, nothing after them on the line) defines, is its text; a setext heading is its whole paragraph; the attribute value is read with its character references decoded and an HTML comment, which opens only where markup can and never inside a quoted attribute value, holds no element), and a target that cannot be read is an error, not a pass; `TestSkillAnchorsResolve`), the base rule of the skill inventory map ([docs/skills/README.md](skills/README.md)), and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)); and that `go.mod` and `go.sum` are what `go mod tidy` writes, checked offline (`GOPROXY=off`, `GONOPROXY=none`, `GOSUMDB=off`: no module download, also none for a module an inherited `GOPRIVATE` or `GONOPROXY` names, and no checksum database lookup) by `go mod tidy -diff`, which prints a note instead of failing when the module cache lacks a module the import graph needs |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the CXC corpus lint (which also holds the plugin's hook declarations to K1; `crw-dev cxc hooks` regenerates them), the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it. The file ends in a comment that seals everything above it: a file that still matches its seal is replaced freely, because every line the fragments no longer produce is the old text of an edited or removed fragment; a file that does not match (edited by hand, or written before the seal) is refused when it holds an entry, compared as its whole line, that no fragment produces. It also refuses when the file or the fragments cannot be read, or when both are missing from this repository, whatever is left of `docs/port`) |
@@ -309,6 +309,61 @@ reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`,
 again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit
 (they differ by 20 s or more from run to run), move packages, and compare medians.
 
+`relay/dagsched` is the largest test package (about 38k lines of tests), and under host load it once
+ran past the 10 minute budget of its binary (CRW-1190). Its time went to building a store for every
+fixture (the frozen schema, its fence and the DAG zone's DDL, each statement parsed again by every
+connection) and to about 160 tests that ran one after another; no test of it sleeps. A fixture without
+an App Server socket is now a copy of one prepared store with its takeover mirror re-homed, the stub
+verifier carries its helper variables in the script instead of `t.Setenv`, and the tests that write an
+executable do so under `syscall.ForkLock`, so 121 more tests run in parallel; the 43 that remain
+sequential set the process environment, change the directory or assign a package variable. Measured on one host (load 16 to 25, the test binary of the package, three runs each,
+alternating): wall clock 103, 83, 82 s before and 47, 52, 37 s after; user plus system CPU 142, 156, 146 s
+before and 114, 128, 117 s after. Under five `nice -n 19` spinners, `make test-part TEST_PART=1` took 69, 75
+and 40 s with `relay/dagsched` at 53, 60 and 25 s, against the 600 s of its budget, so the budget stays.
+
+### The `internal/manage` test time
+
+`go test ./internal/manage/` ran its 1,014 registered tests (1,011 PASS and 3 SKIP) one after another and took 829 s on the shared host
+(load 30 to 50 on 20 CPUs, `nice` 12, `-json` log in `/scratch/crw/diag-manage/manage.json`), so the integration's
+10 minute bound for a package was close. The time was not CPU (a 79-test slice used 16% of a CPU): a run makes about 15,500 fsyncs and 5,800
+processes, and each fsync waits behind the other writers of the disk. Method: read the per-test
+`Elapsed` of `go test -json`, take the biggest costs first, count the processes and fsyncs a test makes
+(`strace -f -y -e trace=execve,fsync`, test directories are named after the test), change, and measure the whole
+package again. The tests run under the `TMPDIR` the caller sets (no memory-backed temporary root). Whole-package times,
+same host, same command (`go test -count=1`, through `heavy_slot.sh`), `load1` read before and after the command:
+
+| Step | Package time |
+| --- | --- |
+| before (`TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants` alone took 289 s) | 829 s at load 40 |
+| the 375 overlap combinations as parallel subtests | 146 s at load 19 |
+| and the pre-merge tests copy a built repository pair | 128 s and 138 s at load 20 to 37 |
+| the same, after merging dev at `fc5e5bd87` (1,106 registered tests: 1,103 PASS and 3 SKIP; CRW-692 added 87 of the 92 new ones) | 211 s at load 17 to 25 |
+| the same plus this lane's last test (1,107 registered), run 1 | 591 s at load 20 to 25 |
+| the same, run 2 | 241 s at load 31 to 18 |
+
+The spread is the disk, not the suite. In run 1 one test, `TestPumpSignalCapacityStateWrittenAgainByteForByteEndsTheProposal`,
+took 229 s and its neighbours 17 to 33 s, where run 2 and the earlier runs took under 1 s each: the host's I/O pressure
+(`/proc/pressure/io`, `full avg10` 19 to 41) stalled every fsync for minutes. A run on an idle disk is a fraction of
+the 10 minute bound; one that meets a stall can come within seconds of it (run 1 ended at 591 s of 600 s).
+`go test -race -gcflags=all=-d=checkptr=0 -count=1` takes longer than the default `-timeout` here (it timed out at
+600 s once, and with `-timeout 30m` took 1,351 s at load 18 to 20); the race run is a developer check, not a CI step,
+so pass a larger `-timeout` to it.
+
+- The overlap combinations (CRW-991) are parallel subtests: each has its own state directory, fake bridge and
+  clock, and the parent sets the homes once, because `t.Setenv` is refused in a parallel test
+  (`pumpTestEnvHomeless`). Names, the 375 combinations and every assertion are unchanged. Run it with
+  `-race -gcflags=all=-d=checkptr=0` after a change: with checkptr on, the relay store's own pointer arithmetic
+  stops any test that opens a store.
+- `premergeTestNewRepo` built a git remote and a clone with sixteen git commands per test (the pre-merge tests made 2,917 of
+  the 5,833 processes of a run). It builds each repository spec once, under a directory the run removes, and copies the
+  pair, then sets the copy's origin with `git remote set-url origin`, so a `TMPDIR` whose name holds a backslash, a tab or
+  a newline (git writes those escaped in its configuration) still works
+  (`TestPremergeTestCopyRepoKeepsOddTemporaryPaths`). The commits carry a fixed identity and date, so the
+  copy is the repository the build made.
+- An earlier version of this lane put the tests' `TMPDIR` on `/dev/shm` (47 s and 43 s before the dev merge, 52 s after).
+  It is removed: a helper process re-run by a test made its own `/dev/shm` root that nothing removed, and a small or
+  full tmpfs that passed a probe still failed every fixture write.
+
 ## Leftover isolation trees
 
 Nothing removes a `crw-relay-test-*` directory a run leaves: a test binary killed by `go test -timeout` or by
@@ -358,7 +413,7 @@ their own authorization. The installer tests use temporary destinations and leav
 installed skills alone. The validator is repository-owned structural validation, not the Codex
 validator or proof of instruction quality: its metadata checker reads this repository's
 single-line frontmatter and interface strings (not general YAML), and its link check covers inline
-local paths outside fenced examples, not remote URLs, reference-style links or heading fragments.
+local paths outside code (fenced, indented, code spans) and raw HTML blocks, and the `#fragment` of a link in `plugins/crw/skills` and `docs` (not remote URLs, reference-style links or the fragments of other documents).
 The ordinary CI environment has no Linear credentials, CXC installation, App Server or private
 runtime state.
 

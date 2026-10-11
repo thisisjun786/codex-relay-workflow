@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // nl is the newline a stub script is assembled with, kept out of the literals so the script's own
@@ -51,7 +53,7 @@ func TestLiveCatalogTellsUnsupportedFromAFailure(t *testing.T) {
 		}
 		// The marshalled answer must carry the unsupported state, not the cached state: the cached
 		// object is merged into the response, so overriding the struct field alone would be lost.
-		wire := string(must(Stringify(c, "")))
+		wire := string(must(jsnode.Stringify(c, "")))
 		if !strings.Contains(wire, "\""+string(CatalogUnsupported)+"\"") {
 			t.Fatalf("the wire answer does not carry the unsupported state: %s", wire)
 		}

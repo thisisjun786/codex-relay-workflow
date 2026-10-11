@@ -1,0 +1,12 @@
+{
+  "issue": "CRW-1185",
+  "intentionally-changed": [
+    {
+      "id": "hook__session-start-healing-declared-features__mtime_cache_hit_skips_codex",
+      "reason": "CRW-1185 (known-defects/CRW-1185.md): the SessionStart report no longer trusts a legacy-only mtime cache (allEnabled, cachedKeys and a matching configMtimeMs with no probe evidence). The marker is measured instead: one features list call runs and nothing is written. The stub lists every soft flag on, so the output stays silent, as the oracle's is.",
+      "set": {
+        "calls/0": "{\"cmd\":\"codex\",\"argv\":[\"features\",\"list\"],\"cwd\":\"${WS}\"}"
+      }
+    }
+  ]
+}

@@ -114,6 +114,7 @@ func (f *fixture) recordStandHead(a accepted, head string) {
 // same finding raise the count to 2 and name edit_packet, a third names split_node, and the controls reset the count, ignore a
 // generation opened by hand, read no object for a node that landed, and read a repeated failed check as its own cause.
 func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.T) {
+	t.Parallel()
 	t.Run("two corrections with the same finding reach the threshold and name edit_packet, a third names split_node", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()
@@ -330,6 +331,7 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 // TestTheStagnationLadderStopsAtFullReplan is the second red test the issue body names: the rung stops at the last one, a reading past
 // it stays there, and the reading is a function of the store (two reads agree, byte for byte, and nothing is written).
 func TestTheStagnationLadderStopsAtFullReplan(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	stagnatingPlan(f, "sp")
@@ -384,6 +386,7 @@ func TestTheStagnationLadderStopsAtFullReplan(t *testing.T) {
 // the same required-name set with checks_pending rows transparent; and it must find the ruling that opened a correction generation at the nearest live generation below it, so a withdrawn generation
 // neither counts nor breaks. Each subtest is one of the reproduced cases, and the two controls at the end pin the copies the merge lane writes.
 func TestTheStagnationCounterReadsTheHeadItStandsOnAndCountsDistinctAttempts(t *testing.T) {
+	t.Parallel()
 	t.Run("P1-1 failures on the head a base refresh moved the acceptance to are counted", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()

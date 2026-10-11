@@ -12,6 +12,7 @@ import (
 // TestPremergePullRequestRecordMustNameThePullRequestHead: a record that names another head is premerge_head_mismatch;
 // a record that names the pull request head accepts.
 func TestPremergePullRequestRecordMustNameThePullRequestHead(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.declare("rp", "I", "i.go")
@@ -35,6 +36,7 @@ func TestPremergePullRequestRecordMustNameThePullRequestHead(t *testing.T) {
 // TestPremergeSupersedesNeedsItsOwnRecord: a --supersedes acceptance without a record is premerge_missing; with a record
 // of its own it replaces the active acceptance.
 func TestPremergeSupersedesNeedsItsOwnRecord(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.reportNode("rp", "I", acceptOpts{})

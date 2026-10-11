@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // HookObservationMaxAgeMS is HOOK_OBSERVATION_MAX_AGE_MS (hook-observation.mjs:13): a record older than a
@@ -82,7 +84,7 @@ func ReadHookObservations(q ObservationQuery) HookObservations {
 	}
 	agent := "null"
 	if q.AgentID != nil {
-		agent = jsString(*q.AgentID)
+		agent = jsnode.JSString(*q.AgentID)
 	}
 	dir := filepath.Join(q.CodexHome, "crw", "hook-observations", observationDigest([]byte(q.SessionID)), observationDigest([]byte(agent)))
 	names, err := os.ReadDir(dir)
@@ -214,7 +216,7 @@ func observationRecord(path string, q ObservationQuery, root, version, manifest 
 	if when := at.UnixMilli(); when > q.NowMS || q.NowMS-when > q.MaxAgeMS {
 		return HookObservation{}, false
 	}
-	slot := observationDigest([]byte("["+jsString(component)+","+jsString(event)+","+jsString(entrypoint)+"]")) + ".json"
+	slot := observationDigest([]byte("["+jsnode.JSString(component)+","+jsnode.JSString(event)+","+jsnode.JSString(entrypoint)+"]")) + ".json"
 	if entrypoint != Entrypoint || !inside || record["entrypointDigest"] != manifest || filepath.Base(path) != slot {
 		return HookObservation{}, false
 	}

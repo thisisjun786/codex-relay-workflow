@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -79,36 +80,6 @@ func dirNames(dir string) ([]string, error) {
 	return f.Readdirnames(-1)
 }
 
-// jsString is JSON.stringify of a string. encoding/json cannot stand in for it: it writes U+2028 and U+2029 as escapes, which
-// JSON.stringify never does.
-func jsString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case r == '\b':
-			b.WriteString(`\b`)
-		case r == '\f':
-			b.WriteString(`\f`)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r < 0x20:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
-
 // WriteUnrecordableMarker records, outside the session file, that the verdict of an agent could not be recorded in it: it needs
 // no lock, cannot be lost to a concurrent writer and does not depend on the session file being readable. It has the type
 // MarkerWriter, so the SubagentStop gate passes it to RecordTombstone. A second marker for one session and agent in the same
@@ -128,7 +99,7 @@ func writeUnrecordableMarker(cwd, sessionID, agentID string, now time.Time) erro
 		return err
 	}
 	name := fmt.Sprintf("%s-%s-%d.json", state.SanitizeKey(sessionID), state.SanitizeKey(agentID), now.UnixMilli())
-	body := `{"sessionId":` + jsString(sessionID) + `,"agentId":` + jsString(agentID) + `,"at":"` + now.UTC().Format("2006-01-02T15:04:05.000Z") + "\"}\n"
+	body := `{"sessionId":` + jsnode.JSString(sessionID) + `,"agentId":` + jsnode.JSString(agentID) + `,"at":"` + now.UTC().Format("2006-01-02T15:04:05.000Z") + "\"}\n"
 	return createExclusive(filepath.Join(unrecordableDir(cwd), name), body)
 }
 

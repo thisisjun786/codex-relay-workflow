@@ -28,6 +28,7 @@ func (k *batchKit) acceptByCommitForCriteria(node string) AcceptResult {
 // batch verifies the node afresh. An integrated node is never merged or verified again, an unrevalidated candidate is
 // not ready, and the frozen rows name the criteria set each candidate is verified under.
 func TestIntegrationBatchReadsACriteriaChangeAsDecided(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
 	runs := 0
 	base := stubVerifier(writeStubVerifier(t))

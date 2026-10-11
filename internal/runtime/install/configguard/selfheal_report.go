@@ -15,8 +15,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"golang.org/x/sys/unix"
@@ -30,8 +30,10 @@ import (
 // user's Codex configuration, so the port keeps the diagnosis and drops every write: it reads the
 // declared state, and when a soft flag crw declares is off it says so once per key, naming the
 // command the user can run. There is no enable call, no marker write, no manifest write and no
-// backup. The rest of the oracle's rule (the opt-out marker, the all-enabled cache, a key the user
-// turned off after a heal, an unreadable listing) is kept exactly, including its silence.
+// backup. The rest of the oracle's rule (the opt-out marker, a key the user turned off after a heal,
+// an unreadable listing) is kept exactly, including its silence. The one intended difference is the oracle's all-enabled
+// cache: a marker that carries no probe evidence (allEnabled, cachedKeys, configMtimeMs only) is measured like any other and
+// does not answer silently (CRW-1185); the consent guards before the measurement are unchanged.
 //
 // Fail-open, as the oracle: every failure path exits 0 without output, because a config-guard
 // problem must never stop a session from starting.
@@ -51,7 +53,8 @@ const (
 	SelfHealReportOff SelfHealReportAction = "off"
 )
 
-// The three skips, spelled as the oracle's SelfHealOutcome reasons.
+// The three skips, spelled as the oracle's SelfHealOutcome reasons. SelfHealReasonCached is no longer returned by the report
+// path (CRW-1185): a legacy mtime cache is not trusted, so the round measures instead of answering "cached".
 const (
 	SelfHealReasonOptedOut       = "opted-out"
 	SelfHealReasonCached         = "cached"
@@ -91,16 +94,9 @@ func SelfHealReport(deps SelfHealReportDeps) []SelfHealReportOutcome {
 	}
 
 	healable := SelfHealReportableFeatures()
-	configMtimeMs := selfHealReportMtimeMs(filepath.Join(deps.CodexHome, "config.toml"))
-	// A cache that predates a SOFT_FEATURES addition must not vouch for the new key.
-	cacheCoversCurrentKeys := marker != nil && marker.CachedKeys != nil && selfHealReportCovers(marker.CachedKeys, healable)
-	// A marker that carries verified evidence, even evidence that no longer parses, is judged by the
-	// evidence alone: the mtime cache an older CXC wrote must not vouch ahead of a newer explicit
-	// finding (CRW-1150).
-	if marker != nil && marker.Probe == nil && !marker.probeSeen && marker.AllEnabled != nil && *marker.AllEnabled && cacheCoversCurrentKeys &&
-		marker.ConfigMtimeMs != nil && configMtimeMs != nil && *marker.ConfigMtimeMs == *configMtimeMs {
-		return []SelfHealReportOutcome{{Action: SelfHealReportSkipped, Reason: SelfHealReasonCached}}
-	}
+	// The oracle's mtime cache (allEnabled, cachedKeys, configMtimeMs) is not trusted by this report path (CRW-1185): a
+	// marker that carries no probe evidence measures like any other, so a soft flag that is off still gets its notice at
+	// every SessionStart, and the report writes nothing. The cache is the only way a legacy-only marker got a silent answer.
 
 	healedKeys := []string{}
 	if marker != nil {
@@ -242,31 +238,11 @@ func selfHealReportHome(env host.LookupEnv) (string, error) {
 	return filepath.Join(base, ".codex"), nil
 }
 
-// selfHealReportMtimeMs is statSync(path).mtimeMs; nil when the path does not exist. Node adds the
-// seconds and the nanoseconds apart, so the port does too: a single float64(UnixNano()) loses
-// precision above 2^53 ns (1970 + about 104 days) and the last bit decides this equality.
-func selfHealReportMtimeMs(path string) *float64 {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil
-	}
-	ms := selfHealReportMsOf(info.ModTime())
-	return &ms
-}
-
-// selfHealReportMsOf is msOf (internal/relay/job/store.go:418): mtimeMs with the fractions kept.
+// selfHealReportMsOf is msOf (internal/relay/job/store.go:418): mtimeMs with the fractions kept. Node adds the seconds and
+// the nanoseconds apart, so the port does too: a single float64(UnixNano()) loses precision above 2^53 ns (1970 + about 104
+// days). The report path no longer compares mtimes (CRW-1185); the tests write a legacy marker's configMtimeMs with it.
 func selfHealReportMsOf(t time.Time) float64 {
 	return float64(t.Unix())*1e3 + float64(t.Nanosecond())/1e6
-}
-
-// selfHealReportCovers is the cache guard's "cachedKeys covers every soft key" test.
-func selfHealReportCovers(have []string, want []DeclaredFeature) bool {
-	for _, key := range want {
-		if !selfHealReportContains(have, string(key)) {
-			return false
-		}
-	}
-	return true
 }
 
 func selfHealReportContains(list []string, want string) bool {
@@ -338,7 +314,7 @@ func selfHealReportRunOne(ctx context.Context, file string, args []string) (resu
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = selfHealReportWaitDelay
 	runErr := cmd.Run()
-	result = CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
+	result = CodexRunResult{Stdout: jsnode.DecodeUTF8(out.buffer.Bytes()), Stderr: jsnode.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
 	// exec.ErrWaitDelay is a probe that exited while a descendant still held its output open: the
 	// list that arrived may be cut short, and a cut list would read an enabled flag as off. spawnSync
 	// has no timeout and waits for the whole list; the hook has a time limit, so the port ends the wait

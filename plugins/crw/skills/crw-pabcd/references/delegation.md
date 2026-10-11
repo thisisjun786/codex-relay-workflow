@@ -365,9 +365,17 @@ at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01 
 ## Configured first fallback
 
 When a role has `fallback` configured, the main session uses `crw role helper dispatch`
-with JSON on stdin before its first native call. The command selects and records
+with JSON on stdin before a native spawn of that role. The command selects and records
 candidates; it does not invoke a model or native tool. SessionStart announces this
 protocol. A PreToolUse reminder after a direct call cannot retroactively manage it.
+
+Dispatch is the default procedure, not a prohibition. When the user's current request
+explicitly asks for a direct native spawn (for example "native, without dispatch"), spawn
+it as asked, for any role (explorer, executor, reviewer or architect): the spawn hook
+allows it and marks it unmanaged (its notice reads "This direct spawn is not managed by
+first-fallback tracking"), and an unmanaged spawn creates no managed receipt. Do not
+refuse such a request because of this section; it removes no capability and changes
+neither the managed spawn's receipt and marker rules nor the hook's decision.
 
 1. `start`: supply `sessionId`, a unique `dispatchId`, and `role`.
 2. `claim`: supply those IDs and the returned `attemptId`. Only `action:spawn`

@@ -54,6 +54,10 @@ type DagReviewAnomaly struct {
 	Node   string `json:"node"`
 	Issue  string `json:"issue"`
 	Detail string `json:"detail"`
+	// ref names what the anomaly is about when Kind, Plan, Node and Issue do not (the call id of a
+	// duplicated tool result), so a caller that keeps a set of anomalies tells two apart. It is not
+	// part of the JSON report.
+	ref string
 }
 
 // Check is one reading the review could not take. State is measured or unmeasured; an

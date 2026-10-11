@@ -36,6 +36,7 @@ func (k *batchKit) revalidateCriteria(t *testing.T, node, digest string) {
 // CRW-965 (criteria c2 as read by the parent): a contained candidate whose criteria set changed is verified again with no
 // merge, and only an unchanged criteria set is covered by the stored verification.
 func TestContainedCandidateIsVerifiedAgainWhenItsCriteriaChanged(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()
@@ -72,6 +73,7 @@ func TestContainedCandidateIsVerifiedAgainWhenItsCriteriaChanged(t *testing.T) {
 // CRW-965 (parent decision D3, the criteria part): a candidate revalidated while its merged tree is being verified is not
 // published on the old verification. The swap is refused, and the branch does not move.
 func TestIntegrationBatchRefusesACandidateRevalidatedDuringVerification(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	base := stubVerifier(writeStubVerifier(t))
@@ -99,6 +101,7 @@ func TestIntegrationBatchRefusesACandidateRevalidatedDuringVerification(t *testi
 // CRW-965 (parent decision D6, the recovery): a move the reconciliation recorded after a crash is pushable, because its
 // planned intent carries the verified head.
 func TestPushAfterAReconciledMoveIsAllowed(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)
@@ -133,6 +136,7 @@ func TestPushAfterAReconciledMoveIsAllowed(t *testing.T) {
 // CRW-965 (parent decision D4, the attempt that moved nothing): an attempt that failed before its move on one ref adds no
 // completion target, and a later candidate that lands on another ref completes only there.
 func TestIntegrationTargetsIgnoreAnAttemptThatMovedNothing(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})

@@ -1,0 +1,62 @@
+{
+  "backwardsCursor": "back-1",
+  "data": [
+    {
+      "completedAt": 1790000010,
+      "durationMs": 10000,
+      "error": null,
+      "id": "turn-c",
+      "items": [
+        {
+          "content": [
+            {
+              "text": "crw-flow-op: call-1/t1",
+              "text_elements": [],
+              "type": "text"
+            }
+          ],
+          "id": "u-turn-c",
+          "type": "userMessage"
+        },
+        {
+          "id": "m-turn-c",
+          "phase": "final_answer",
+          "text": "{\"c\":1}",
+          "type": "agentMessage"
+        }
+      ],
+      "itemsView": "full",
+      "startedAt": 1790000000,
+      "status": "completed"
+    },
+    {
+      "completedAt": 1790000010,
+      "durationMs": 10000,
+      "error": null,
+      "id": "turn-b",
+      "items": [
+        {
+          "content": [
+            {
+              "text": "crw-flow-op: call-1/t1",
+              "text_elements": [],
+              "type": "text"
+            }
+          ],
+          "id": "u-turn-b",
+          "type": "userMessage"
+        },
+        {
+          "id": "m-turn-b",
+          "phase": "final_answer",
+          "text": "{\"b\":1}",
+          "type": "agentMessage"
+        }
+      ],
+      "itemsView": "full",
+      "startedAt": 1790000000,
+      "status": "completed"
+    }
+  ],
+  "nextCursor": "cursor-2"
+}

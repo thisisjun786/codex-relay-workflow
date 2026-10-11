@@ -205,6 +205,21 @@ tables (decision D-01):
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
   later issue needs arrives as an appended `ALTER TABLE ... ADD COLUMN` that every open runs, so a fresh store and an upgraded store read the
   same text. `testdata/dag_zone_shipped.json` holds the text each object had when it shipped.
+* an append-only table (one with a `<table>_no_delete` trigger: 17 of them) refuses `INSERT OR REPLACE` of a stored key as well (CRW-974). The
+  UPDATE and DELETE triggers cannot see a REPLACE, which deletes the row it replaces without running a DELETE trigger while `recursive_triggers`
+  is OFF (the store's setting, unchanged). Each key of such a table (the primary key, each UNIQUE, each partial UNIQUE with its `WHERE`) has a
+  `BEFORE INSERT` guard named `<table>_<key>_guard`, appended to the statements, that raises the text SQLite gives a plain INSERT of that key
+  (`UNIQUE constraint failed: <table>.<column>, ...`); the extended result code of the refusal is the trigger's (1811) and not the index's.
+  `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING` on a stored key are refused as well, and no writer uses either on these tables.
+  Each table also has `<table>_rowid_guard` (an `INSERT OR REPLACE` that names a stored rowid is refused with `UNIQUE constraint failed: <table>.rowid`)
+  and, because a BEFORE INSERT trigger reads -1 for every rowid SQLite assigns, `<table>_rowid_minus1_mark_guard` and `<table>_rowid_minus1_guard`:
+  the first notes in `dag_zone_rowid_marks` whether a stored row has rowid -1 as a row that reads -1 arrives, the second (AFTER INSERT) refuses
+  that row with the same text when it then lands under -1, which only a REPLACE of the stored row does. An assigned insert is never refused, so a
+  table whose largest rowid is -2 (the next assigned is -1) stays writable.
+  A guard stands aside for an earlier trigger of its table under `NOT COALESCE((<that trigger's WHEN>), 0)`, so a NULL condition never lets a
+  row through. The key `(plan_id, document, seq)` of `dag_summary_outbox` has no guard: `dag_summary_outbox_order` already refuses every entry whose `seq` is not the
+  next of its stream. `store.MissingZoneKeyGuards` is the read-only check, after an install, that a store holds every guard its build declares
+  (empty once a write open of that build has run).
 
 **The schema gate.** The swap gate compares the text of the objects a store holds with the text a candidate declares
 ([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). This build declares the zone, and the

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -82,7 +82,7 @@ func scpRemote(raw string) (host, path string, ok bool) {
 func scpKeyPath(path string) string { return strings.ReplaceAll(path, "%", "%25") }
 
 func pack(host, path string) string {
-	host = Lower(text.Trim(host))
+	host = jsnode.Lower(text.Trim(host))
 	path = strings.Trim(strings.ReplaceAll(text.Trim(path), "\\", "/"), "/")
 	if len(path) >= 4 && strings.ToLower(path[len(path)-4:]) == ".git" {
 		path = path[:len(path)-4]
@@ -122,7 +122,7 @@ func readOriginUrl(cwd string) string {
 	if cmd.Run() != nil || ctx.Err() != nil {
 		return ""
 	}
-	return text.Trim(source.DecodeUTF8(out.buffer.Bytes()))
+	return text.Trim(jsnode.DecodeUTF8(out.buffer.Bytes()))
 }
 
 func repoKeyForCwd(cwd string, readers ...ReadOriginUrl) string {

@@ -670,7 +670,7 @@ func TestSelfHealEvidenceFailedRecordingCannotResurrectTheLegacyCache(t *testing
 
 // probeEvidence that does not parse (an older form without layersSha256, or a damaged record) is not
 // the same as no probeEvidence at all: the legacy cache beside it does not vouch, and a marker that
-// never carried probeEvidence keeps the oracle's cache hit.
+// never carried probeEvidence is measured too (CRW-1185: the report no longer trusts the legacy cache).
 func TestSelfHealEvidenceUnparsableRecordDoesNotRestoreTheLegacyCache(t *testing.T) {
 	home := selfHealReportTempHome(t)
 	path := selfHealReportWriteConfig(t, home)
@@ -698,8 +698,9 @@ func TestSelfHealEvidenceUnparsableRecordDoesNotRestoreTheLegacyCache(t *testing
 		selfHealReportMarkerMtimeMs(t, plainPath)+"}\n")
 	runner.calls = nil
 	outcomes = SelfHealReport(SelfHealReportDeps{CodexHome: plain, Cwd: selfHealEvidenceCwd(t, plain), Run: runner.run})
-	if len(runner.calls) != 0 || len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonCached {
-		t.Fatalf("a legacy-only marker lost the cache hit: %+v %v", outcomes, runner.calls)
+	// CRW-1185: a legacy-only marker is measured, not answered from its cache: the soft flag that is off gets its notice.
+	if runner.listings() != 1 || len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+		t.Fatalf("a legacy-only marker was answered from the cache instead of measured: %+v %v", outcomes, runner.calls)
 	}
 }
 
@@ -1108,63 +1109,73 @@ func TestSelfHealEvidenceFailedRecordingReturnsAtTheDeadlineWhileTheMarkerLockIs
 	}
 }
 
-// CRW-1169 correction: the deadline bounds how long the caller waits, never whether a failed
-// recording retires the oracle's mtime cache. A legacy-only marker (no probeEvidence) whose recording
-// already ran out of time, with the marker lock free, is retired before the call returns, like the
-// synchronous drop retired it, so the next SessionStart does not return "cached" over flags the
-// command just changed.
-func TestSelfHealEvidenceFailedRecordingPastTheDeadlineStillRetiresTheLegacyCache(t *testing.T) {
-	cases := []struct {
-		name string
-		ctx  func() (context.Context, context.CancelFunc)
-	}{
-		{"deadline already ended", func() (context.Context, context.CancelFunc) {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			return ctx, cancel
-		}},
-		{"deadline ends while the listing runs", nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+// CRW-1185 (replaces the CRW-1169 correction, which retired the legacy cache before an expired deadline returned): a recording
+// whose deadline has ended before its failed drop begins returns at once and touches no marker, so a stalled marker write
+// cannot hold the caller. The report path no longer trusts a legacy-only cache, so the retirement is not needed for it.
+func TestSelfHealEvidenceFailedRecordingPastTheDeadlineDoesNotTouchTheMarker(t *testing.T) {
+	for _, hold := range []bool{false, true} {
+		name := "deadline already ended"
+		if hold {
+			name = "deadline ends while the listing runs"
+		}
+		t.Run(name, func(t *testing.T) {
 			home := selfHealReportTempHome(t)
 			path := selfHealReportWriteConfig(t, home)
-			selfHealReportWriteMarker(t, home, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
+			marker := selfHealReportWriteMarker(t, home, "{\"allEnabled\":true,\"cachedKeys\":[\"default_mode_request_user_input\",\"goals\"],\"configMtimeMs\":"+
 				selfHealReportMarkerMtimeMs(t, path)+"}\n")
-			cwd := selfHealEvidenceCwd(t, home)
-			var ctx context.Context
-			run := (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
-			if tc.ctx != nil {
-				c, cancel := tc.ctx()
-				defer cancel()
-				ctx = c
-			} else {
-				c, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-				defer cancel()
-				ctx = c
-				inner := run
-				run = func(args []string) CodexRunResult {
-					if len(args) > 0 && args[0] == "features" {
-						<-c.Done()
-						return CodexRunResult{ExitCode: 1}
-					}
-					return inner(args)
-				}
-			}
-			if err := RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx}); err != nil {
+			markerBefore, err := os.ReadFile(marker)
+			if err != nil {
 				t.Fatal(err)
 			}
-			// The marker lock is free, so the retirement is done before the call returns: a CLI that
-			// exits right after it (enable renders and exits) cannot lose it to an unfinished goroutine.
-			marker, err := ReadSelfHealMarkerFile(home)
-			if err != nil || marker == nil || marker.Probe != nil || (marker.AllEnabled != nil && *marker.AllEnabled) {
-				t.Fatalf("the failed recording returned with the legacy cache still authoritative: %+v %v", marker, err)
+			cwd := selfHealEvidenceCwd(t, home)
+			// The first marker publication stalls: an expired drop that reached it would hold the caller there.
+			entered, _, release := stallSelfHealPublication(t)
+			defer release()
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if hold {
+				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+				cancel()
 			}
-			// The project layer now turns a soft flag off while config.toml and its mtime are unchanged.
+			defer cancel()
+			inner := (&selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOn}).run
+			run := func(args []string) CodexRunResult {
+				if len(args) > 0 && args[0] == "features" {
+					if hold {
+						<-ctx.Done()
+					}
+					return CodexRunResult{ExitCode: 1}
+				}
+				return inner(args)
+			}
+			returned := make(chan error, 1)
+			go func() {
+				returned <- RecordSelfHealEvidence(RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: run, Ctx: ctx})
+			}()
+			select {
+			case err := <-returned:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				release()
+				t.Fatal("an expired deadline held the recording: the drop waited on the marker write it should not start")
+			}
+			select {
+			case <-entered:
+				t.Fatal("the expired drop reached the marker publication")
+			default:
+			}
+			if markerAfter, err := os.ReadFile(marker); err != nil || string(markerAfter) != string(markerBefore) {
+				t.Fatalf("an expired drop rewrote the legacy marker: %q err=%v", markerAfter, err)
+			}
+			// The report does not trust the legacy cache the marker still holds: the soft flag that is off gets its notice.
 			runner := &selfHealEvidenceRunner{version: "codex-cli 1.2.3", listing: selfHealReportSoftOff}
 			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Cwd: cwd, Run: runner.run})
 			if runner.listings() != 1 || len(outcomes) == 0 || outcomes[0].Action != SelfHealReportOff {
-				t.Fatalf("the hook trusted the cache after a failed recording: %+v %v", outcomes, runner.calls)
+				t.Fatalf("the hook trusted the legacy cache after an expired recording: %+v %v", outcomes, runner.calls)
 			}
 		})
 	}

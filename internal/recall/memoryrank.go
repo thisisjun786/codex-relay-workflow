@@ -9,6 +9,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -305,7 +306,7 @@ func groupHit(lowerText string, group QueryGroup) bool {
 
 func firstMatchStartLine(content string, groups []QueryGroup) int {
 	for i, line := range text.SplitLines(content) {
-		lower := Lower(line)
+		lower := jsnode.Lower(line)
 		if slices.ContainsFunc(groups, func(group QueryGroup) bool { return groupHit(lower, group) }) {
 			return i + 1
 		}
@@ -353,7 +354,7 @@ func originalUnits(original string, lowerUnits int) int {
 }
 
 func excerptAround(content string, term QueryTerm, span int) string {
-	lower := Lower(content)
+	lower := jsnode.Lower(content)
 	at := TermIndexOf(lower, term, 0)
 	if at < 0 {
 		return memorySlice(content, 0, span)

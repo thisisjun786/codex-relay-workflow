@@ -12,6 +12,7 @@ import (
 // record was stored for. The candidate's record is held with premerge_head_mismatch.
 
 func TestPremergeStandHeadAfterAHandResolvedRefreshIsJudgedAndHeld(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	// the scenario's acceptance was made without a record: store the record of the accepted head, in the stored shape

@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -143,7 +144,7 @@ func Coerce(v any) *Attestation {
 	str := func(key string) string { s, _ := rec[key].(string); return text.Trim(s) }
 	att := &Attestation{
 		From: state.Phase(from), To: state.Phase(to), Did: str("did"),
-		AuditOutput: str("auditOutput"), AuditVerdict: lowerJS(str("auditVerdict")), AuditResidual: str("auditResidual"),
+		AuditOutput: str("auditOutput"), AuditVerdict: jsnode.Lower(str("auditVerdict")), AuditResidual: str("auditResidual"),
 		AuditRounds: finite(rec["auditRounds"]), CheckOutput: str("checkOutput"), ExitCode: finite(rec["exitCode"]),
 		PlanUnit: str("planUnit"), WorkPhaseID: str("workPhaseId"), TestReceiptPath: str("testReceiptPath"),
 	}
@@ -168,7 +169,7 @@ func Coerce(v any) *Attestation {
 		}
 		reason, _ := d["reason"].(string)
 		word, _ := d["disposition"].(string)
-		att.AuditBlockers = append(att.AuditBlockers, BlockerDisposition{Blocker: blocker, Disposition: lowerJS(text.Trim(word)), Reason: text.Trim(reason)})
+		att.AuditBlockers = append(att.AuditBlockers, BlockerDisposition{Blocker: blocker, Disposition: jsnode.Lower(text.Trim(word)), Reason: text.Trim(reason)})
 	}
 	return att
 }
@@ -250,7 +251,7 @@ func Validate(from, to state.Phase, att *Attestation) Result {
 		// failed gets none.
 		missing := len(reasons)
 		if att.ExitCode != nil && *att.ExitCode != 0 {
-			add(`C -> D requires a passing check, but the attestation reports exitCode %s. Fix the failure (orchestrate B) before advancing.`, jsNumber(*att.ExitCode))
+			add(`C -> D requires a passing check, but the attestation reports exitCode %s. Fix the failure (orchestrate B) before advancing.`, jsnode.NumberString(*att.ExitCode))
 		}
 		if missing > 0 && att.TestReceiptPath == "" {
 			add("C -> D on a goalplan-bound session ALSO requires \"testReceiptPath\" (CHECK-BINDING-01), produced by `crw pabcd receipt test -- <command>`. Supplying it now avoids another round trip.")

@@ -1,0 +1,13 @@
+{
+  "method": "error",
+  "params": {
+    "error": {
+      "additionalDetails": null,
+      "codexErrorInfo": "usageLimitExceeded",
+      "message": "usage limit reached"
+    },
+    "threadId": "thread-a",
+    "turnId": "turn-a1",
+    "willRetry": false
+  }
+}

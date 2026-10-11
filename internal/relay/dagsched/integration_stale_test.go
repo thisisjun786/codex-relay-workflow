@@ -97,6 +97,7 @@ func (k *batchKit) changeCriteria(node string) string {
 // The plan's criteria for an integrated node change after the integration: the node is listed with the digests, and a node
 // whose criteria did not change is not.
 func TestStaleNodesListAnIntegratedNodeWhoseCriteriaChangedAfterTheIntegration(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
@@ -114,6 +115,7 @@ func TestStaleNodesListAnIntegratedNodeWhoseCriteriaChangedAfterTheIntegration(t
 
 // A successful revalidation of the same output under the plan's criteria clears the node.
 func TestStaleNodesClearAfterARevalidationOfTheSameOutput(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	head := k.integrateNodes(t, "dev-int", "a")
 	changed := k.changeCriteria("a")
@@ -133,6 +135,7 @@ func TestStaleNodesClearAfterARevalidationOfTheSameOutput(t *testing.T) {
 
 // A node integrated by an earlier batch is in the pushed head of a later batch and is listed from there.
 func TestStaleNodesReadIntegratedNodesOfEarlierBatches(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
@@ -154,6 +157,7 @@ func TestStaleNodesReadIntegratedNodesOfEarlierBatches(t *testing.T) {
 // A candidate the batch split out was never integrated, and a node integrated on another ref (or not contained in the
 // pushed head) is not read for this one.
 func TestStaleNodesExcludeSplitCandidatesAndOtherRefs(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}},
@@ -190,6 +194,7 @@ func TestStaleNodesExcludeSplitCandidatesAndOtherRefs(t *testing.T) {
 
 // An integrated acceptance that is no longer the node's active one is listed under its identity.
 func TestStaleNodesListASupersededAcceptance(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	head := k.integrateNodes(t, "dev-int", "a")
 	k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE plan_id = 'g' AND node_id = 'a' AND state = 'active'")
@@ -201,6 +206,7 @@ func TestStaleNodesListASupersededAcceptance(t *testing.T) {
 
 // A node the plan retired after its integration is listed as removed.
 func TestStaleNodesListARetiredNode(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
@@ -215,6 +221,7 @@ func TestStaleNodesListARetiredNode(t *testing.T) {
 // The list only informs: the push goes through with stale nodes, writes nothing to the store, and a list that cannot be read
 // is reported next to the push.
 func TestPushWithStaleNodesStillPushesAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)
@@ -259,6 +266,7 @@ func TestPushWithStaleNodesStillPushesAndWritesNothing(t *testing.T) {
 // A merge whose mark the criteria change refused (the branch moved, the mark stayed pending) is in the pushed head all the
 // same: the push lists it, still pushes, and a split candidate of the same batch stays out of the list.
 func TestPushListsAMergedNodeWhoseMarkStayedPending(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	remote := bareRemote(t)
 	k.pushRepo(t, remote)
@@ -288,6 +296,7 @@ func TestPushListsAMergedNodeWhoseMarkStayedPending(t *testing.T) {
 // head all the same: the push lists them (verification round 2, finding 4). A later batch that marks one of them leaves the
 // other unmarked, and both are still listed.
 func TestPushListsTheMergesOfABatchThatStoppedBeforeAnyMark(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
@@ -323,6 +332,7 @@ func TestPushListsTheMergesOfABatchThatStoppedBeforeAnyMark(t *testing.T) {
 // Partial marks: the moved batch stopped before its marks, and a later batch marked only one of its merges (from the frozen
 // row, as contained). The unmarked merge stays listed next to the marked one.
 func TestStaleNodesListAMoveWhoseMarksArePartial(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
@@ -352,6 +362,7 @@ func TestStaleNodesListAMoveWhoseMarksArePartial(t *testing.T) {
 // reconciliation (no batch row): its verified candidates are in the head and are listed; a candidate the same batch split
 // out is not.
 func TestStaleNodesListTheVerifiedCandidatesOfAReconciledMove(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t,
 		batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}},
 		batchNode{name: "c", files: map[string]string{"c.txt": "c\n", "bad.txt": "bad\n"}})
@@ -389,6 +400,7 @@ func TestStaleNodesListTheVerifiedCandidatesOfAReconciledMove(t *testing.T) {
 // integrated a newer acceptance of the node on a branch of the same name, a head the pushed one does not contain
 // (verification round 3, d4). The pushed head holds the superseded one and says so, whichever head is read.
 func TestStaleNodesJudgeTheAcceptanceTheHeadContainsNotANewerOneOutsideIt(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	pending := k.integrateNodes(t, "dev-int", "a") // checkout 1: integrated, not pushed
 	var first string

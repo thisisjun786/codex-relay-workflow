@@ -2,8 +2,6 @@
 package recall
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -11,6 +9,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -237,27 +236,6 @@ func ParseFlags(args []string) (ParsedFlags, error) {
 
 // JSON.stringify does not HTML-escape or escape Unicode line separators.
 func flagJSONQuote(s string) string {
-	var b bytes.Buffer
-	encoder := json.NewEncoder(&b)
-	encoder.SetEscapeHTML(false)
-	_ = encoder.Encode(s)
-	in := bytes.TrimSuffix(b.Bytes(), []byte{'\n'})
-	out := make([]byte, 0, len(in))
-	for i := 0; i < len(in); i++ {
-		switch {
-		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
-			out = append(out, "\u2028"...)
-			i += 5
-		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
-			out = append(out, "\u2029"...)
-			i += 5
-		default:
-			out = append(out, in[i])
-			if in[i] == '\\' && i+1 < len(in) {
-				i++
-				out = append(out, in[i])
-			}
-		}
-	}
-	return string(out)
+	b, _ := jsnode.Stringify(s, "") // one string cannot fail
+	return string(b)
 }

@@ -80,6 +80,11 @@ type Reply struct {
 	// ServerRequests names server-to-client requests raised ahead of the answer, about the
 	// request's params.threadId.
 	ServerRequests []string
+	// SchemaParams gives those requests the params the generated codex schema defines for each method:
+	// the two legacy approvals (execCommandApproval, applyPatchApproval) name their thread in
+	// conversationId and carry no threadId. Without it every request carries threadId, turnId and a
+	// command, the shape the older tests were written against.
+	SchemaParams bool
 	// Close, when set, closes the connection with this frame and sends no answer.
 	Close *CloseFrame
 }
@@ -101,6 +106,7 @@ type Malformed struct {
 type ServerRequest struct {
 	ID     string
 	Method string
+	Params json.RawMessage
 }
 
 // Answer is the client's reply to a server-to-client request.
@@ -373,10 +379,11 @@ func (s *Server) record(apply func(*Server)) {
 	s.recorded = make(chan struct{})
 }
 
-func (s *Server) nextServerRequest(method string) string {
+func (s *Server) nextServerRequest(method string, params map[string]any) string {
+	raw, _ := json.Marshal(params)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := fmt.Sprintf("server-%d", len(s.raised)+1)
-	s.raised = append(s.raised, ServerRequest{ID: id, Method: method})
+	s.raised = append(s.raised, ServerRequest{ID: id, Method: method, Params: raw})
 	return id
 }

@@ -387,10 +387,9 @@ func updateSelfHealMarkerWithin(home string, wait time.Duration, requireLock boo
 // fails, and it is not retried within the command; the next drop or publication retires the cache.
 //
 // When ctx has already ended before the drop begins (a slow codex used the time up), there is no
-// deadline left to wait within, yet the command changed the flags, so a legacy-only allEnabled cache
-// must not vouch for them again: the one non-blocking try runs before the call returns, as the
-// synchronous drop did, and only a held lock leaves the drop to an abandoned goroutine. nil ctx means
-// no deadline.
+// deadline left to wait within, so the drop does not run at all (CRW-1185): the report path no longer
+// trusts a legacy-only allEnabled cache, which is what the retirement existed for. nil ctx means no
+// deadline.
 func dropSelfHealEvidence(ctx context.Context, home string) error {
 	update := func() (*SelfHealMarker, error) {
 		marker, err := ReadSelfHealMarkerFile(home)
@@ -419,10 +418,9 @@ func dropSelfHealEvidence(ctx context.Context, home string) error {
 		}
 		return wait()
 	case ctx.Err() != nil:
-		if err := try(); !errors.Is(err, errSelfHealMarkerBusy) {
-			return err
-		}
-		go func() { _ = wait() }()
+		// The deadline ended before the drop began (CRW-1185): no read, lock or write follows it, so a stalled filesystem cannot
+		// hold the caller past the deadline. A probe record needs no drop to stay honest: the report path reads it only while its
+		// codex version and config and layer digests match, and a command that changed the flags changed config.toml.
 		return nil
 	}
 	dropped := make(chan error, 1)

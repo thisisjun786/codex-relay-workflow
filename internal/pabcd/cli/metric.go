@@ -6,7 +6,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -15,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -183,23 +183,6 @@ func metricCliNumber(raw string) float64 {
 	return f
 }
 
-// metricCliNumberText is String(number) of the oracle's template literals. json.Marshal spells finite
-// numbers as ES6 does (1e21 is 1e+21, 1e-7 is 1e-7); a zero is "0" because String(-0) is "0".
-func metricCliNumberText(f float64) string {
-	switch {
-	case math.IsNaN(f):
-		return "NaN"
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	b, _ := json.Marshal(f)
-	return string(b)
-}
-
 // metricCliQuote is JSON.stringify of one string, over the package's encoder (SetEscapeHTML(false) plus the
 // U+2028/U+2029 pass). Encoding one string cannot fail.
 func metricCliQuote(s string) string {
@@ -274,7 +257,7 @@ func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) 
 			return CliResult{Code: 0, Output: metric.Encode(record)}, nil
 		}
 		return CliResult{Code: 0, Output: fmt.Sprintf("metric record: %s=%s best=%s source=%s",
-			record.MetricName, metricCliNumberText(record.Value), metricCliNumberText(record.Best), record.Source)}, nil
+			record.MetricName, jsnode.NumberString(record.Value), jsnode.NumberString(record.Best), record.Source)}, nil
 
 	case "ingest":
 		source, sourceOK := metricCliSource(argv, metric.EvaluateSh)
@@ -303,7 +286,7 @@ func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) 
 		lines := make([]string, 0, len(records))
 		for _, r := range records {
 			lines = append(lines, fmt.Sprintf("%s=%s best=%s source=%s phase=%s",
-				r.MetricName, metricCliNumberText(r.Value), metricCliNumberText(r.Best), r.Source, r.WorkPhaseID))
+				r.MetricName, jsnode.NumberString(r.Value), jsnode.NumberString(r.Best), r.Source, r.WorkPhaseID))
 		}
 		return CliResult{Code: 0, Output: strings.Join(lines, "\n")}, nil
 
@@ -335,7 +318,7 @@ func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) 
 		if !ok {
 			return CliResult{Code: 1, Output: "null"}, nil
 		}
-		return CliResult{Code: 0, Output: `{"metricName":` + metricCliQuote(name) + `,"value":` + metricCliNumberText(value) + "}"}, nil
+		return CliResult{Code: 0, Output: `{"metricName":` + metricCliQuote(name) + `,"value":` + jsnode.NumberString(value) + "}"}, nil
 	}
 	return CliResult{Code: 1, Output: metricCliUsage}, nil
 }

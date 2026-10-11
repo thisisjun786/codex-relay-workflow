@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	jstext "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"golang.org/x/sys/unix"
 )
@@ -159,8 +159,13 @@ func goalplanLockAcquire(parent *os.File, real, slug string, o *GoalplanWriteLoc
 		}
 		err := unix.Mkdirat(int(parent.Fd()), GoalplanLockDir, 0o777)
 		if err == nil {
+			var created unix.Stat_t
+			haveCreated := unix.Fstatat(int(parent.Fd()), GoalplanLockDir, &created, unix.AT_SYMLINK_NOFOLLOW) == nil
 			lock, err := openAt(parent, GoalplanLockDir, dir, unix.O_RDONLY|unix.O_DIRECTORY, true, 0)
 			if err != nil {
+				if haveCreated {
+					goalplanLockRemoveCreated(parent, created)
+				}
 				return nil, nil, err
 			}
 			writeLockOwner(lock, dir, now)
@@ -196,6 +201,22 @@ func goalplanLockAcquire(parent *os.File, real, slug string, o *GoalplanWriteLoc
 		}
 		sleep(delays[attempt])
 	}
+}
+
+// goalplanLockRemoveCreated removes the lock directory this acquisition made when it could not open it (CRW-1185
+// evaluation d1), so a lock nobody holds does not make every later attempt report the slug busy. Only the directory whose
+// device and inode are the ones recorded right after the mkdir is removed, and only while it is empty (the rmdir refuses
+// otherwise), so a lock another holder replaced it with stays. The check and the rmdir are not atomic against a
+// noncooperating remover, as for releaseLock.
+func goalplanLockRemoveCreated(parent *os.File, created unix.Stat_t) {
+	var now unix.Stat_t
+	if unix.Fstatat(int(parent.Fd()), GoalplanLockDir, &now, unix.AT_SYMLINK_NOFOLLOW) != nil {
+		return
+	}
+	if now.Dev != created.Dev || now.Ino != created.Ino || now.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return
+	}
+	_ = unix.Unlinkat(int(parent.Fd()), GoalplanLockDir, unix.AT_REMOVEDIR)
 }
 
 // WithGoalplanCreationLock takes slug's goalplan write lock for a creator whose plan does not exist
@@ -308,7 +329,7 @@ func readGoalplanLockOwnerText(lock *os.File, dir string) string {
 	if err != nil {
 		return "(owner.json unavailable)"
 	}
-	s := jstext.Trim(source.DecodeUTF8(b))
+	s := jstext.Trim(jsnode.DecodeUTF8(b))
 	if s == "" {
 		return "(empty owner.json)"
 	}
@@ -324,7 +345,7 @@ func writeLockOwner(lock *os.File, dir string, now func() string) {
 		return
 	}
 	defer file.Close()
-	_, _ = fmt.Fprintf(file, "{\"pid\":%d,\"acquiredAt\":%s}\n", os.Getpid(), quote(now()))
+	_, _ = fmt.Fprintf(file, "{\"pid\":%d,\"acquiredAt\":%s}\n", os.Getpid(), jsnode.JSString(now()))
 }
 
 // GoalplanLockHolder is what a waiter can learn about slug's goalplan write lock. The four answers

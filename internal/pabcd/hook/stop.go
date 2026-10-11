@@ -34,11 +34,13 @@
 // under the lock reads the metrics ledger and the bound goalplan once and shares them, a Stop after
 // the turn's announced total cap reads and writes nothing, and a prompt without turn_id that lands before
 // the lock releases the earlier turn's Stop (the turn generation). CRW-1107.md: the goal-idle block's IDLE->P
-// command carries no attest.
+// command carries no attest. CRW-386.md: a session the registry verifies as a project parent or a supervisor gets no goal-idle block
+// (StopHandleWithRole). CRW-145.md: the goal-idle block names the honest exits first and drops the arming option where the source
+// identity cannot be resolved.
 package hook
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"maps"
 	"math"
@@ -47,13 +49,15 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
+	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The budgets of the Stop loop (hook.ts:1403-1411). StopMaxBlocks bounds consecutive blocks at one
@@ -84,12 +88,23 @@ type StopAnswer struct{ Stdout, Context string }
 // attest-file commands); empty selects this host's platform. env resolves the goals database and the
 // crw invocation of the commands in the block.
 func StopHandle(p StopPayload, platform string, env host.LookupEnv) StopAnswer {
-	return stopHandle(p, platform, env, state.WithSessionLock)
+	return stopHandleWith(p, platform, env, state.WithSessionLock, nil)
+}
+
+// StopHandleWithRole is StopHandle with the role reader of CRW-386: role is called at most once, only for a Stop that would
+// answer the goal-idle block, with the payload's cwd and session id. nil is no reader (every session keeps the oracle's behavior).
+func StopHandleWithRole(p StopPayload, platform string, env host.LookupEnv, role func(cwd, sessionID string) PromptRole) StopAnswer {
+	return stopHandleWith(p, platform, env, state.WithSessionLock, role)
 }
 
 // stopHandle takes the session lock as an argument so that a test can land a participating writer's
 // update, or a lock that cannot be taken, where the oracle's unlocked write would have been.
 func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error) StopAnswer {
+	return stopHandleWith(p, platform, env, lock, nil)
+}
+
+// stopHandleWith is stopHandle with the role reader (nil: none, every session keeps the oracle's behavior).
+func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, role func(cwd, sessionID string) PromptRole) StopAnswer {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -121,8 +136,26 @@ func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cw
 		if stopContextPressure(p) {
 			return StopAnswer{}
 		}
+		// CRW-386 (port: fixed): a session the registry verifies as a project parent or a supervisor runs no PABCD loop for itself
+		// (decision 6), so the block that tells it to arm the next work-phase is withheld whole: a release, no budget spent, no
+		// write, whether or not a goalplan is bound. The read comes after every other release, so only a Stop that would block
+		// reads the registry, and an unknown role (no reader, no binding, a mixed role, a store that cannot be read) keeps the block.
+		// A seat that took an explicit request to implement a task in this session (loopArmSeen, ImplementsHere) is that task's
+		// implementer and not acting as a coordinating seat, so it keeps the block and the registry is not read for it.
+		if role != nil && !st.LoopArmSeen && role(p.Cwd, p.SessionID).Coordinates() {
+			return StopAnswer{}
+		}
+		// CRW-145: the source-identity investigation (git status, hashing the dirty files) is slow, so it is made here, before the
+		// session lock is taken, and the block built under the lock uses its answer. It is made only when the counter, judged on
+		// the state read above, leaves a block: a per-phase or total cap release answers without it. The lock judges the counter
+		// again; a block it finds that this judgment did not foresee (a writer changed the state in between) has no investigated
+		// answer and offers the oracle's arming command, as a timed-out investigation does.
+		arming := stopArming{ok: true}
+		if stopBlockAhead(p, st, plan) {
+			arming = stopCanArm(p.Cwd, p.SessionID)
+		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
-			return stopGoalIdleBlock(fresh, snap.plan, p.SessionID, env)
+			return stopGoalIdleBlock(fresh, snap.plan, arming, p.SessionID, env)
 		})
 	}
 
@@ -473,7 +506,7 @@ func stopSystemMessage(message string) string {
 }
 
 func stopMarshal(v any) string {
-	b, err := role.Stringify(v, "")
+	b, err := jsnode.Stringify(v, "")
 	if err != nil {
 		return ""
 	}
@@ -635,22 +668,116 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, sessionID, p
 	return ResolveCRWInDirective(strings.Join(lines, "\n"), env)
 }
 
+// stopCheckBound is the source-identity predicate of `orchestrate P` for a goalplan-bound session, owned by the context it is
+// given (the git it runs ends with it); a variable so a test can see where it runs.
+var stopCheckBound = sourcesession.CheckBoundContext
+
+// stopSourceBudget bounds the source-identity investigation of one Stop (git status and the hashing of the dirty files): the
+// Stop wiring has 15 seconds in all. stopSourceGrace is how long the Stop then waits for an investigation it has cancelled to
+// finish ending (its git is killed whole and reaped, see stopCanArm) before it answers anyway.
+var (
+	stopSourceBudget = 5 * time.Second
+	stopSourceGrace  = 2 * time.Second
+)
+
+// stopArming is the answer of stopCanArm: whether `orchestrate P` can run for the session and, when it cannot, why (the
+// CheckBound verdict).
+type stopArming struct {
+	ok     bool
+	reason string
+	cause  sourcesession.GateCause
+	probe  error // the failure of the git behind sourcesession.CauseProbeFailed
+}
+
+// stopCanArm is whether `orchestrate P` can run for the session, judged by stopCheckBound within stopSourceBudget. An
+// investigation that does not finish in the budget is no evidence that arming is impossible, so the answer is then the oracle's
+// (the command is offered). The budget is the investigation's own deadline and not only the time the Stop waits for it: at the
+// deadline the investigation is cancelled, its git (and any clean filter git started) is killed and reaped, and the Stop waits
+// up to stopSourceGrace for that, so no git started for a Stop is left running behind the hook process. An answer that arrives
+// as the deadline passes is not a verdict (a cancelled probe reports its cancellation as a failure).
+func stopCanArm(cwd, sessionID string) stopArming {
+	ctx, cancel := context.WithTimeout(context.Background(), stopSourceBudget)
+	defer cancel()
+	done := make(chan sourcesession.GateResult, 1)
+	go func() { done <- stopCheckBound(ctx, cwd, sessionID) }()
+	var got sourcesession.GateResult
+	select {
+	case got = <-done:
+	case <-ctx.Done():
+		cancel()
+		grace := time.NewTimer(stopSourceGrace)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+		}
+		return stopArming{ok: true}
+	}
+	if ctx.Err() != nil {
+		return stopArming{ok: true}
+	}
+	return stopArming{ok: got.OK, reason: got.Reason, cause: got.Cause, probe: got.Probe}
+}
+
+// stopBlockAhead is whether the counter, judged on st (read before the lock) with the bound goalplan plan and the session's
+// metric rows, leaves a block; the lock judges it again on the state it finds.
+func stopBlockAhead(p StopPayload, st state.State, plan *goalplan.Goalplan) bool {
+	_, outcome := stopBump(st, stopSnapshot{plan: plan, rows: metric.ReadObjectiveMetrics(p.Cwd, p.SessionID)})
+	return outcome == stopBumpBlock
+}
+
+// stopArmingRefusal is the line of a goal-idle block whose next work-phase cannot be armed. Only a session without a source
+// binding whose working directory has no git source identity is cleared by binding a git source tree, so only it is offered the
+// command. A git that could not answer (CauseProbeFailed) is named by its failure, because binding runs the same git; any other
+// refusal (a corrupt, foreign or moved binding, a bound worktree without an identity) is named as CheckBound gave it, because a
+// binding is immutable and the bind command would be refused the same way.
+func stopArmingRefusal(a stopArming) string {
+	if a.cause == sourcesession.CauseProbeFailed {
+		detail := strings.Join(strings.Fields(fmt.Sprint(a.probe)), " ")
+		return "The next work-phase cannot be armed from this workspace: git could not read the source tree (" + detail + "), and a goalplan-bound cycle cannot be closed without a resolved source identity (C -> D needs a test receipt bound to a commit), so entering P is refused. Binding a git source tree does not clear this (binding runs the same git); make git work for this workspace first."
+	}
+	if a.cause == sourcesession.CauseUnavailable {
+		return "The next work-phase cannot be armed from this workspace: it has no resolvable git source identity, and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. To make arming possible, bind a git source tree: `crw relay session source <absolute-path> --json`."
+	}
+	reason := strings.Join(strings.Fields(a.reason), " ")
+	switch {
+	case a.cause == sourcesession.CauseBoundUnavailable: // CheckBound's own text would offer the bind command
+		reason = "its bound source worktree has no resolvable git source identity"
+	case reason == "":
+		reason = "the source check gave no reason"
+	}
+	return "The next work-phase cannot be armed from this workspace: the session's source identity cannot be resolved (" + reason + "), and a goalplan-bound cycle cannot be closed without one (C -> D needs a test receipt bound to a commit), so entering P is refused. Binding a different source tree does not clear this (a session's source binding is immutable); resolve what the reason names first."
+}
+
 // stopGoalIdleBlock is buildGoalIdleBlock (hook.ts:1694-1738): the Stop block for a goal ACTIVE with a
-// bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: arm the next
-// work-phase, or close the goal for real.
+// bound goalplan but no PABCD cycle in flight. The reason names the two honest exits: close the goal for real, or arm the next
+// work-phase.
 //
 // CRW-1107: IDLE->P takes no attest (plugins/crw/skills/crw-pabcd/references/phase-control.md), but the
 // oracle's command carried one with a placeholder `did` (and win32 an attest file to write it to), which
 // agents copied into the ledger as evidence. The command is the plain entry on every platform.
-func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, sessionID string, env host.LookupEnv) string {
-	startNext := "Either start the next work-phase now: `crw pabcd orchestrate P --session " + sessionID + "`"
+//
+// CRW-145 (port: fixed): the oracle led with the arming command and named the honest exits after it, and offered the command
+// where it cannot run: `orchestrate P` of a goalplan-bound session is refused while the session has no resolvable source
+// identity (session.CheckBound, the same predicate the command applies, so a non-git working directory whose session is bound to a
+// git source worktree keeps the option). The block now names the honest exits first and, when the identity cannot be resolved,
+// says why the next work-phase cannot be armed in place of the command (and does not end the unit-chain line with it): the bind
+// command where binding clears the refusal, CheckBound's reason otherwise (stopArmingRefusal). The block is still a block: the
+// counter, the caps and every other line are the oracle's.
+func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, arming stopArming, sessionID string, env host.LookupEnv) string {
 	lines := []string{
 		"[crw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.",
 		"GOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.",
-		startNext,
-		"or close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.",
-		"LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.",
+		"Close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.",
 	}
+	chain := " (append it to the goalplan, then orchestrate P)"
+	if arming.ok {
+		lines = append(lines, "Or start the next work-phase now: `crw pabcd orchestrate P --session "+sessionID+"`")
+	} else {
+		lines = append(lines, stopArmingRefusal(arming))
+		chain = " (append it to the goalplan)"
+	}
+	lines = append(lines, "LOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase"+chain+". \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.")
 	switch work := stopReadWorkContext(st.Slug, plan); {
 	case work != nil:
 		lines = append(lines, work.lines()...)
@@ -670,7 +797,7 @@ func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd
 	if len(plateau.Values) > 0 {
 		texts := make([]string, len(plateau.Values))
 		for i, v := range plateau.Values {
-			texts[i] = stopNumberText(v)
+			texts[i] = jsnode.NumberString(v)
 		}
 		values = strings.Join(texts, " -> ")
 	}
@@ -720,25 +847,6 @@ func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd
 		reason += "\n\n" + advisory
 	}
 	return stopEnvelope(reason)
-}
-
-// stopNumberText is a finite number as JavaScript prints it in a template literal.
-func stopNumberText(f float64) string {
-	switch {
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case math.IsNaN(f):
-		return "NaN"
-	case f == 0:
-		return "0"
-	}
-	text, err := json.Marshal(f)
-	if err != nil {
-		return fmt.Sprint(f)
-	}
-	return string(text)
 }
 
 // stopRenderAdvisory is renderGroundingAdvisoryForStop (hook.ts:1899-1917): at phase C, the native-surface

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // Refusal is why a native session could not be verified. Its text is the oracle's message, shown to
@@ -62,7 +64,7 @@ func resolveNativeSession(cwd string, env LookupEnv, account func() (string, err
 	// stored cwd) and where the OS answers with one (canonical, getcwd); ids and sources cannot match
 	// whichever way they are decoded. The database root is not decoded (CRW-1136): it is listed and
 	// opened as the bytes the environment gave.
-	cwd = decodeUTF8([]byte(cwd))
+	cwd = jsnode.DecodeUTF8([]byte(cwd))
 	canonicalCwd, err := canonical(cwd)
 	if info, statErr := os.Lstat(canonicalCwd); err != nil || statErr != nil || !info.IsDir() {
 		return NativeSession{}, noWorkdir
@@ -117,7 +119,7 @@ func resolveNativeSession(cwd string, env LookupEnv, account func() (string, err
 	// node:sqlite hands TEXT to JavaScript decoded as UTF-8 with U+FFFD for each invalid sequence, so
 	// the path the oracle resolves is not always the bytes stored (a known defect, kept).
 	stored, _ := rowCwd.(string)
-	stored = decodeUTF8([]byte(stored))
+	stored = jsnode.DecodeUTF8([]byte(stored))
 	if !filepath.IsAbs(stored) {
 		return refuse(badStoredCwd)
 	}
@@ -239,7 +241,7 @@ func canonical(path string) (string, error) {
 		}
 		pending = target
 	}
-	return decodeUTF8([]byte(resolved)), nil
+	return jsnode.DecodeUTF8([]byte(resolved)), nil
 }
 
 // safe is false when a scanned INTEGER is beyond what a JavaScript number holds exactly: node:sqlite

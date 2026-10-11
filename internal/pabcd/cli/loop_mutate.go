@@ -36,7 +36,7 @@ import (
 // owns change the plan the session is bound to. The terminal row judges it against the native session before
 // the command runs (CRW-1108).
 func LoopMutationSession(args LoopCliArgs) string {
-	if args.Verb != LoopVerbInit && !loopIsMutatingVerb(args.Verb) {
+	if args.Verb != LoopVerbInit && args.Verb != LoopVerbUnbind && !loopIsMutatingVerb(args.Verb) {
 		return ""
 	}
 	return loopSessionID(args)

@@ -14,9 +14,9 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -362,7 +362,7 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 	var files []goalplan.PlanFileHash
 	seen := map[string]bool{}
 	for _, p := range paths {
-		p = source.DecodeUTF8([]byte(p))
+		p = jsnode.DecodeUTF8([]byte(p))
 		abs, err := reviewRoundArgsAbs(cwd, p)
 		if err != nil {
 			return nil, "", err

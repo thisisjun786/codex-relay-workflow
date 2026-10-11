@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -91,7 +91,7 @@ func targetReadFailure(kind TargetKind, path string, err error) error {
 }
 
 func targetParseJSON(kind TargetKind, path string, b []byte) (any, error) {
-	v, err := harnessParseBounded(source.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
+	v, err := harnessParseBounded(jsnode.DecodeUTF8(b), pyjson.LoadOptions{Surrogates: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
 		return nil, &TargetParseError{kind, path, err}
 	}
@@ -426,15 +426,8 @@ func targetString(v any) string {
 	case bool:
 		return strconv.FormatBool(x)
 	case json.Number:
-		n, _ := strconv.ParseFloat(string(x), 64)
-		if n == 0 {
-			return "0"
-		}
-		b, e := json.Marshal(n)
-		if e != nil {
-			return strconv.FormatFloat(n, 'g', -1, 64)
-		}
-		return string(b)
+		n, _ := strconv.ParseFloat(string(x), 64) // out of range is an infinity, as it is in JavaScript
+		return jsnode.NumberString(n)
 	case pyjson.Object:
 		return "[object Object]"
 	case []any:

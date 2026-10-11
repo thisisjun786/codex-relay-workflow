@@ -81,6 +81,7 @@ func (k *commitAcceptKit) acceptWithPremerge(raw []byte) (AcceptResult, error) {
 }
 
 func TestPremergeAcceptNamesEachRefusal(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		mutate func(*premerge.Record)
@@ -138,6 +139,7 @@ func TestPremergeAcceptNamesEachRefusal(t *testing.T) {
 
 // A stored record is read back with the acceptance, and a pure replay names none (answer 2).
 func TestPremergeIsStoredAndAPureReplayNeedsNone(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
 	first, err := k.acceptWithPremerge(premergeRaw(t, premergeRecordOf(t, k)))
@@ -156,6 +158,7 @@ func TestPremergeIsStoredAndAPureReplayNeedsNone(t *testing.T) {
 
 // An acceptance taken before the gate has no record: the attach stores one under the same acceptance id once (answer 5).
 func TestPremergeAttachStoresOnceUnderTheSameAcceptance(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
 	first, err := k.acceptWithPremerge(premergeRaw(t, premergeRecordOf(t, k)))
@@ -177,6 +180,7 @@ func TestPremergeAttachStoresOnceUnderTheSameAcceptance(t *testing.T) {
 // The head relation is read by git: plain commits keep the evaluation with a statement, dev-only merges keep it up to four
 // merges, and a hand-resolved merge, a merge with a second parent outside the base, and a fifth merge do not.
 func TestPremergeHeadRelationReadsTheShapesOfTheHead(t *testing.T) {
+	t.Parallel()
 	repo := newGitRepo(t)
 	repo.git("checkout", "-q", "-b", "feature")
 	evaluated := repo.commit("shared.txt", "feature-evaluated")
@@ -228,6 +232,7 @@ func TestPremergeHeadRelationReadsTheShapesOfTheHead(t *testing.T) {
 // The integration check reads the stored record: a candidate whose record is gone is held with premerge_missing and is not
 // a candidate (answer 3).
 func TestPremergeHoldsACandidateWithoutItsRecord(t *testing.T) {
+	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
 	if _, err := k.acceptWithPremerge(premergeRaw(t, premergeRecordOf(t, k))); err != nil {

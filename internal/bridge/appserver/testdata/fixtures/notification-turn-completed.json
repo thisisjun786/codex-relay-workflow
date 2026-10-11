@@ -1,0 +1,16 @@
+{
+  "method": "turn/completed",
+  "params": {
+    "threadId": "thread-a",
+    "turn": {
+      "completedAt": 1790000042,
+      "durationMs": 42000,
+      "error": null,
+      "id": "turn-a1",
+      "items": [],
+      "itemsView": "notLoaded",
+      "startedAt": 1790000000,
+      "status": "completed"
+    }
+  }
+}

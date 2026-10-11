@@ -33,11 +33,14 @@ const (
 	LoopVerbMeetCriterion LoopVerb = "meet-criterion"
 	LoopVerbAsk           LoopVerb = "ask"
 	LoopVerbDecide        LoopVerb = "decide"
-	LoopVerbHelp          LoopVerb = "help"
+	// LoopVerbUnbind is a CRW addition (CRW-146): the oracle has no verb that releases a session's goalplan slug.
+	LoopVerbUnbind LoopVerb = "unbind"
+	LoopVerbHelp   LoopVerb = "help"
 )
 
 // loopVerbList is the VERBS set in insertion order (:127-140), as the unknown-verb
-// message prints it.
+// message prints it. It stays the oracle's list, and so does the usage block (RenderLoopHelp): both are pinned
+// to recorded oracle bytes, so the CRW-146 addition unbind is named in the docs and not in them.
 const loopVerbList = "init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide"
 
 // loopFlag is one flag goalplan-cli.ts accepts (:142-148).
@@ -79,7 +82,7 @@ func loopIsVerb(v LoopVerb) bool {
 	switch v {
 	case LoopVerbInit, LoopVerbShow, LoopVerbValidate, LoopVerbSteer, LoopVerbAddCriterion,
 		LoopVerbAddWorkPhase, LoopVerbReady, LoopVerbAddTask, LoopVerbCompleteTask,
-		LoopVerbMeetCriterion, LoopVerbAsk, LoopVerbDecide:
+		LoopVerbMeetCriterion, LoopVerbAsk, LoopVerbDecide, LoopVerbUnbind:
 		return true
 	}
 	return false
@@ -116,6 +119,8 @@ func loopRuleFor(verb LoopVerb) loopRule {
 		return loopRule{allowed: []loopFlag{loopFlagSession, loopFlagWorkPhase, loopFlagID, loopFlagOutcome, loopFlagCwd}}
 	case LoopVerbMeetCriterion:
 		return loopRule{allowed: []loopFlag{loopFlagSession, loopFlagID, loopFlagEvidence, loopFlagCwd}}
+	case LoopVerbUnbind:
+		return loopRule{allowed: []loopFlag{loopFlagSession, loopFlagCwd}}
 	case LoopVerbAsk:
 		return loopRule{
 			allowed:    []loopFlag{loopFlagSession, loopFlagID, loopFlagQuestion, loopFlagRecommendation, loopFlagOption, loopFlagWorkPhase, loopFlagCwd},

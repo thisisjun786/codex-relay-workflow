@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -20,11 +21,11 @@ func ContextOutput(event, ctx string) string {
 	if norm == "" {
 		return ""
 	}
-	body := jsString(norm)
+	body := jsnode.JSString(norm)
 	if units := utf16.Encode([]rune(norm)); len(units) > MaxContext {
 		body = truncated(units[:MaxContext-64])
 	}
-	return `{"hookSpecificOutput":{"hookEventName":` + jsString(event) + `,"additionalContext":` + body + `}}` + "\n"
+	return `{"hookSpecificOutput":{"hookEventName":` + jsnode.JSString(event) + `,"additionalContext":` + body + `}}` + "\n"
 }
 
 // contextHead backs off one unit if a UTF-16 cut would split an astral character.
@@ -37,7 +38,7 @@ func contextHead(units []uint16) string {
 
 // truncated retains the UTF-16 limit and marker without emitting an unpaired surrogate.
 func truncated(units []uint16) string {
-	return jsString(contextHead(units) + "\n\n[truncated]")
+	return jsnode.JSString(contextHead(units) + "\n\n[truncated]")
 }
 
 // ContextSection lets callers retain identity, snapshot and gate instructions
