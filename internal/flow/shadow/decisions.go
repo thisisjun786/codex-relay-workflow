@@ -39,7 +39,8 @@ type Decision struct {
 // Derive reads the decisions of a run from its journal rows, in row order. A prepared row of an agent call that continues a
 // handle is not a decision (the thread exists); any other prepared row is a spawn, or a flush when the call's output schema
 // is one of batchSchemas (the digests of the batch verdict schema) and its role is a reviewer. A crw.tierStep call is a tier
-// decision on the node of the executor-t1 call that carries its step id. An engine escalation row is an escalation.
+// decision on the node of the executor-t1 call that carries its step id. An engine escalation row is an escalation. A call that
+// a resumed run prepared again is one decision: its first prepared row counts.
 func Derive(events []engine.Event, batchSchemas map[string]bool) []Decision {
 	stepNode := map[string]string{}
 	for _, e := range events {
@@ -52,12 +53,14 @@ func Derive(events []engine.Event, batchSchemas map[string]bool) []Decision {
 		}
 	}
 	var out []Decision
+	prepared := map[string]bool{}
 	for _, e := range events {
 		switch {
 		case e.Kind == engine.KindCall && e.Event == engine.EvPrepared && e.Op == "agent":
-			if strData(e.Data, "resume_of") != "" {
+			if strData(e.Data, "resume_of") != "" || prepared[e.CallID] {
 				continue
 			}
+			prepared[e.CallID] = true
 			d := Decision{Kind: KindSpawn, Node: strData(e.Data, "node"), Role: strData(e.Data, "role"), Family: strData(e.Data, "family"),
 				Pair: strData(e.Data, "model") + "/" + strData(e.Data, "effort"), CallID: e.CallID, Label: e.Label, Seq: e.Seq}
 			if d.Family == "reviewer" && batchSchemas[strData(e.Data, "schema_digest")] {

@@ -317,3 +317,30 @@ func TestShadowReplaysRecordedFailures(t *testing.T) {
 		t.Errorf("counts %v, replay %+v", got, rep.Runs[0].Replay)
 	}
 }
+
+// TestDeriveCountsACallOnce reads the decisions of a journal in which a resumed run prepared a call again: one spawn, the first
+// row's. A call that continues a handle is no spawn, and a tier step takes its node from the call that carries its step id.
+func TestDeriveCountsACallOnce(t *testing.T) {
+	prepared := func(seq int, call, role, node string, extra map[string]any) engine.Event {
+		data := map[string]any{"role": role, "family": role, "node": node, "model": "m", "effort": "e"}
+		for k, v := range extra {
+			data[k] = v
+		}
+		return engine.Event{Seq: seq, Kind: engine.KindCall, CallID: call, Op: "agent", Event: engine.EvPrepared, Data: data}
+	}
+	events := []engine.Event{
+		prepared(1, "c_1", "executor", "n1", nil),
+		prepared(2, "c_1", "executor", "n1", nil), // the resumed run prepares it again
+		prepared(3, "c_2", "executor", "n1", map[string]any{"resume_of": "c_1"}),
+		{Seq: 4, Kind: engine.KindCall, CallID: "c_3", Op: "crw.tierStep", Event: engine.EvCompleted, Data: map[string]any{"step_decision": "step_3"}},
+		prepared(5, "c_4", "executor-t1", "n2", map[string]any{"step_decision": "step_3"}),
+	}
+	got := shadow.Derive(events, nil)
+	var kinds []string
+	for _, d := range got {
+		kinds = append(kinds, d.Kind+":"+d.Node+":"+d.Role)
+	}
+	if want := []string{"spawn:n1:executor", "tier:n2:executor-t1", "spawn:n2:executor-t1"}; !slices.Equal(kinds, want) {
+		t.Errorf("decisions = %v, want %v", kinds, want)
+	}
+}
