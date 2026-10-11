@@ -1,6 +1,6 @@
 // Package engine runs CRW workflow scripts: it gives a loaded script (internal/flow/script) its globals, assigns every
 // call its (path, position) identity, journals what the script asked and what it got, and drives agent calls through a
-// Backend. The fake backend is the only backend F01 ships; the journal is in memory (store persistence is F06).
+// Backend. The journal is in memory unless the caller gives one (internal/flow/journal persists it in the relay store).
 package engine
 
 import (
@@ -48,7 +48,8 @@ type Config struct {
 	Workflow string
 	Backend  Backend
 	Policy   *Policy
-	// Journal receives every row; nil is a fresh in-memory journal.
+	// Journal receives every row; nil is a fresh in-memory journal. A journal that can fail to store a row implements
+	// FailingJournal: the engine then sends nothing whose intent row could not be stored.
 	Journal Journal
 	// Args is the JSON value the script reads as args.
 	Args json.RawMessage
@@ -567,6 +568,20 @@ func (e *Engine) resume(ctx context.Context) {
 	for node := range RecoveryHolds(e.j, e.runID) {
 		e.stopNode(node, ReasonRecoveryHold)
 	}
+}
+
+// recorded reports whether the journal of a resumed run already holds the completed row of a call that only records a fact
+// (crw.tierStep): such a call is not recorded again. A run that does not resume a journal records every call.
+func (e *Engine) recorded(callID string) bool {
+	if e.cfg.Resume == nil {
+		return false
+	}
+	for _, ev := range CallEvents(e.j, callID) {
+		if ev.Seq < e.startSeq && ev.Event == EvCompleted {
+			return true
+		}
+	}
+	return false
 }
 
 // escalateUnknown writes the dispatch_unknown escalation of a call once.

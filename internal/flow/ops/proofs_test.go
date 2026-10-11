@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -548,5 +549,40 @@ func TestRetiredAttemptWorktreeNotProven(t *testing.T) {
 	// the file the retired attempt left is not in the current snapshot
 	if out := gitIn(t, f.wt, "ls-tree", "-r", "--name-only", np.Snapshot); out == "" || strings.Contains(out, "leftover.txt") {
 		t.Errorf("snapshot of the current attempt: %q", out)
+	}
+}
+
+// The working files are the state an earlier call left: that call stands and the later one, whose edits are gone, does not.
+func TestEarlierCallStateLeavesLaterCallsUnproven(t *testing.T) {
+	f := newFx(t)
+	f.edit("a.txt", "built\n")
+	f.complete("t1")
+	f.prepare("t2", engine.PlaceContinued, f.wt, "")
+	f.edit("src/c.txt", "fixed\n")
+	f.complete("t2")
+	expectProven(t, f.prove(), map[string]bool{"t1": true, "t2": true})
+	f.edit("src/c.txt", "gamma\n") // the fix is undone
+	np := f.prove()
+	expectProven(t, np, map[string]bool{"t1": true, "t2": false})
+	if np.InvalidFrom != "t2" || np.Foreign != "snapshot" {
+		t.Errorf("%+v", np)
+	}
+	// the files back at the commit's tree, with nothing recorded after it: neither call is proven, and the commit stays
+	if err := os.Remove(filepath.Join(f.wt, "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, f.wt, "checkout", "-q", "--", "a.txt")
+	np = f.prove()
+	expectProven(t, np, map[string]bool{"t1": false, "t2": false})
+	if np.InvalidFrom != "t1" {
+		t.Errorf("the working files are the start commit's tree: %+v", np)
+	}
+}
+
+// A node with no attempt worktree in the journal has nothing to prove against.
+func TestNodeWithoutWorktreeIsAnError(t *testing.T) {
+	f := newFx(t)
+	if _, err := f.prover.Node(ctx, f.events, "n9"); err == nil || !errors.Is(err, ErrNoWorktree) {
+		t.Errorf("%v", err)
 	}
 }

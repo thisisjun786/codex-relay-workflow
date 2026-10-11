@@ -33,8 +33,17 @@ func (s *scriptVM) tierStep(call goja.FunctionCall) goja.Value {
 		args = append(args, raw)
 	}
 	argsJSON, _ := json.Marshal(args)
+	if s.e.recorded(id) {
+		// a resumed run does not record a call the journal already holds: the step decision is the one it recorded
+		return s.stepResult(path, position, stepID)
+	}
 	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: "crw.tierStep", Label: "crw.tierStep", Event: EvCompleted,
 		Data: map[string]any{"result": string(mustJSON(map[string]any{"id": stepID, "checkpoint": nil})), "step_decision": stepID, "evidence_digest": digestJSON(argsJSON)}})
+	return s.stepResult(path, position, stepID)
+}
+
+// stepResult resolves the call with the step decision {id, checkpoint}.
+func (s *scriptVM) stepResult(path *pathState, position int, stepID string) goja.Value {
 	step := s.vm.NewObject()
 	_ = step.Set("id", stepID)
 	_ = step.Set("checkpoint", goja.Null())

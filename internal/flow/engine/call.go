@@ -334,7 +334,25 @@ func (c *callRun) event(ev string, data map[string]any) Event {
 	c.mu.Lock()
 	c.lastSeq, c.lastEvent = row.Seq, ev
 	c.mu.Unlock()
+	if err := journalErr(c.e.j); err != nil {
+		c.e.fail(ErrKindEngine, fmt.Errorf("the journal cannot be written: %w", err))
+	}
 	return row
+}
+
+// journalDown ends a call whose intent row could not be stored, before the request that row announces is sent: a request
+// whose intent is not durable could not be recovered. The call writes no row (nothing can be stored) and the run ends with
+// the journal's error.
+func (c *callRun) journalDown() (CallResult, bool) {
+	err := journalErr(c.e.j)
+	if err == nil {
+		return CallResult{}, false
+	}
+	c.e.fail(ErrKindEngine, fmt.Errorf("the journal cannot be written: %w", err))
+	c.mu.Lock()
+	seq := c.lastSeq
+	c.mu.Unlock()
+	return c.result(StatusSuperseded, ReasonCancelled, seq, nil), true
 }
 
 // prepare writes the call's intent row before anything is sent.
@@ -384,6 +402,14 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 		data = map[string]any{}
 	}
 	data["reason"] = reason
+	// what the call used and whether it repaired are part of its result: every terminal row names them, so the result is
+	// restored from the call's rows alone (a held call has used tokens too)
+	if _, ok := data["tokens"]; !ok && c.tokens != (Tokens{}) {
+		data["tokens"] = c.tokens
+	}
+	if _, ok := data["repair_used"]; !ok && c.repairUsed {
+		data["repair_used"] = true
+	}
 	row := c.event(ev, data)
 	return c.result(status, reason, row.Seq, data)
 }
@@ -730,6 +756,9 @@ func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	}
 	send := max(1, c.send)
 	c.event(EvThreadRequested, c.creationIntent(map[string]any{"cwd": cwd}, send))
+	if res, down := c.journalDown(); down {
+		return res, true
+	}
 	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
 	if err != nil {
 		return c.fromError(ctx, err), true
@@ -759,6 +788,9 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 	cwd := c.placement.Path
 	send := max(1, c.send)
 	c.event(EvForkRequested, c.creationIntent(map[string]any{"thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "prefix": threadPrefix(e.j, p.resume.ThreadID, p.resume.ThroughTurnID), "cwd": cwd}, send))
+	if res, down := c.journalDown(); down {
+		return res, true
+	}
 	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
 		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
 	if err != nil {
@@ -996,6 +1028,9 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				resend = false
 			}
 			c.event(EvTurnRequested, intent)
+			if res, down := c.journalDown(); down {
+				return res
+			}
 			c.repairUsed = c.repairUsed || repair
 			turnCtx, endTurn := c.beginTurn(ctx, op)
 			out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{

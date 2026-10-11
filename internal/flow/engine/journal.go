@@ -43,8 +43,8 @@ var terminalEvents = map[string]string{
 	EvSuperseded:     StatusSuperseded,
 }
 
-// Event is one append-only journal row. The in-memory journal stands in for the zone tables (flow_runs, flow_calls,
-// flow_events) that arrive with the store (F06); a row is never updated.
+// Event is one append-only journal row. The journal persists in the zone tables (flow_runs, flow_calls, flow_events;
+// internal/flow/journal) and a row is never updated.
 type Event struct {
 	Seq      int            `json:"seq"`
 	RunID    string         `json:"runId"`
@@ -64,6 +64,22 @@ type Journal interface {
 	Append(e Event) Event
 	// Events returns every row in append order.
 	Events() []Event
+}
+
+// FailingJournal is implemented by a journal that can fail to store a row (a persistent one). Err is the first failure, nil
+// while every row was stored. The engine stops sending when an intent row could not be stored, and ends the run when any
+// row could not: a request whose intent is not durable is a request nobody can recover.
+type FailingJournal interface {
+	Journal
+	Err() error
+}
+
+// journalErr is the stored-row failure of a journal, nil for a journal that cannot fail.
+func journalErr(j Journal) error {
+	if f, ok := j.(FailingJournal); ok {
+		return f.Err()
+	}
+	return nil
 }
 
 // MemoryJournal is the in-memory journal.
