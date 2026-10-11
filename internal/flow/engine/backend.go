@@ -37,7 +37,8 @@ const (
 	// made (held: git failed); nothing was sent to the host.
 	ReasonWorktreeFailed = "worktree_failed"
 	// ReasonRestoreSnapshotMismatch is the reason of a call that adopted a restored worktree whose live snapshot is not
-	// the one the restore verified: it sent nothing further and its node stops with an escalation.
+	// the one the restore verified: it sent nothing further and its node stops with an escalation. Every later call of
+	// the node in the run ends held with this reason, sending nothing.
 	ReasonRestoreSnapshotMismatch = "restore_snapshot_mismatch"
 )
 
@@ -102,6 +103,9 @@ type TurnOutcome struct {
 	// Text is the turn's last agent message.
 	Text   string
 	Tokens Tokens
+	// TokensUnmeasured is set on a completed turn whose token usage the backend never received (a lost notification,
+	// a turn recovered by a read): Tokens is then not a measurement, and zero is not what the turn used.
+	TokensUnmeasured bool
 	// Failed is set for a terminal failed or interrupted turn.
 	Failed *TurnFailure
 }

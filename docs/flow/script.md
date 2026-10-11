@@ -113,7 +113,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `pipeline(items, ...stages, opts?)` | Runs each item through all stages independently and with no barrier between stages. A stage receives `(previous, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. |
 | `phase(title)`, `log(message)` | Journal a phase or log row. |
 | `args` | The `--args` value. |
-| `budget` | `{total, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). At 80% the engine journals an info row; at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. |
+| `budget` | `{total, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). At 80% the engine journals an info row; at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. A completed turn whose usage the backend never received counts as unmeasured, not as zero: the engine journals a flow row `tokens_unmeasured`, and under a ceiling pauses the run the same way. |
 | `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The child shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a child throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
@@ -213,7 +213,7 @@ stays the intent that was sent and the reconcile pass decides it. Only `null_mod
 
 A turn the engine interrupts - the turns in flight when a usage or rate limit pauses the run - is journaled first
 (`interrupt_requested`, reason `engine_paused`) and ends `held` with reason `engine_paused`, whatever the host reports for
-the interrupted turn; a turn the host reports interrupted with no such row is `held` with `host_interrupted_external`. A
+the interrupted turn (failed, interrupted or completed with a valid answer); a turn the host reports interrupted with no such row is `held` with `host_interrupted_external`. A
 usage or rate limit also writes one flow row `escalation` with reason `quota_or_rate`.
 
 ### Schemas
@@ -377,14 +377,19 @@ There are two ways to get one, and the call's `prepared` row records which (`all
   restored `cwd`, rows `fork_requested` and `fork_started`). Nothing is made, checked out or reset. The live snapshot is compared
   with the digest before `thread_requested` (or `fork_requested`) and again before the call's first `turn_requested`; a
   difference sends nothing more, leaves the call's last row where it was, writes one `escalation` with reason
-  `restore_snapshot_mismatch` and ends the call `unknown`.
+  `restore_snapshot_mismatch` and ends the call `unknown`. The node is stopped for the rest of the run: every later call of
+  the node (a fresh executor call, a continuation of its handle) ends `held` with the same reason, makes no worktree and
+  sends nothing; the next resume restores the boundary in a new lineage.
 
 The `cwd` and `worktree` options of a call are journaled in `prepared` but do not choose its directory: no two calls share one, so
 the allocator does. A continuation that runs in no restored worktree makes nothing and keeps the directory its thread started in. Every other role
 runs in `<state>/flow/<run>/calls/<call_id>/wt`, a detached worktree at the `head` option (else the node's base); a reviewer
 reads it through a read-only thread. The run commits and reads the head from git (`Allocator.Commit`, `Allocator.Head`); a model
-never does. The working snapshot (`Allocator.Snapshot`) is the tree id of every file the worktree holds that git does not
-ignore, computed in a throwaway index.
+never does. Every git command of the allocator runs in the directory it is given: the variables that route git to a
+repository, a work tree or an index (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of `git rev-parse
+--local-env-vars`) are removed from its environment. The working snapshot (`Allocator.Snapshot`) is the tree id of every file the
+worktree holds that git does not ignore - a tracked file is always held, whatever an ignore rule says - computed in a throwaway
+index that starts as a copy of the worktree's own.
 
 ## Dependencies and their supply-chain check
 

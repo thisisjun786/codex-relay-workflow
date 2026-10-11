@@ -135,6 +135,9 @@ type Engine struct {
 	turnsM         sync.Mutex
 	turns          map[*callRun]struct{}
 	quotaEscalated atomic.Bool
+	// stopped are the nodes a restore_snapshot_mismatch stopped.
+	stoppedM sync.Mutex
+	stopped  map[string]bool
 
 	// Everything below is touched only by the loop goroutine.
 	fatalKind string
@@ -403,6 +406,40 @@ func (e *Engine) addTokens(n int64) {
 	if spent >= total {
 		e.pause(ReasonBudgetExhausted)
 	}
+}
+
+// tokensUnmeasured journals a completed turn whose usage was never reported. Under a token ceiling the run cannot tell
+// what it has spent any more, so it stops sending requests the way an exhausted budget does.
+func (e *Engine) tokensUnmeasured(c *callRun, turnID string) {
+	ceiling := e.cfg.TokenBudget > 0
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: "tokens_unmeasured",
+		Data: map[string]any{"call_id": c.id, "node": c.plan.node, "turn_id": turnID, "ceiling": ceiling}})
+	if ceiling {
+		e.pause(ReasonBudgetExhausted)
+	}
+}
+
+// stopNode ends the node's work for the rest of the run; nodeStopped asks whether it was. A call without a node is never
+// stopped.
+func (e *Engine) stopNode(node string) {
+	if node == "" {
+		return
+	}
+	e.stoppedM.Lock()
+	if e.stopped == nil {
+		e.stopped = map[string]bool{}
+	}
+	e.stopped[node] = true
+	e.stoppedM.Unlock()
+}
+
+func (e *Engine) nodeStopped(node string) bool {
+	if node == "" {
+		return false
+	}
+	e.stoppedM.Lock()
+	defer e.stoppedM.Unlock()
+	return e.stopped[node]
 }
 
 // callID derives a call's id from its identity, so it is the same on every run and resume.

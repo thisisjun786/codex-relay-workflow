@@ -19,7 +19,7 @@ type GitFunc func(ctx context.Context, dir string, env []string, args ...string)
 func ExecGit(binary string) GitFunc {
 	return func(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 		cmd := exec.CommandContext(ctx, binary, append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = append(cleanEnvironment(os.Environ()), env...)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		if err := cmd.Run(); err != nil {
@@ -27,6 +27,30 @@ func ExecGit(binary string) GitFunc {
 		}
 		return strings.TrimSpace(stdout.String()), nil
 	}
+}
+
+// repositoryVariables are the environment variables that point git at a repository, a work tree, an index or an object
+// store (git rev-parse --local-env-vars, and the namespace). `git -C <dir>` does not override them, so a process started by
+// a git hook, or from a shell that exports one, would run every command against that other repository.
+var repositoryVariables = map[string]bool{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true, "GIT_COMMON_DIR": true, "GIT_CONFIG": true, "GIT_CONFIG_COUNT": true,
+	"GIT_CONFIG_PARAMETERS": true, "GIT_DIR": true, "GIT_GRAFT_FILE": true, "GIT_IMPLICIT_WORK_TREE": true, "GIT_INDEX_FILE": true,
+	"GIT_NAMESPACE": true, "GIT_NO_REPLACE_OBJECTS": true, "GIT_OBJECT_DIRECTORY": true, "GIT_PREFIX": true,
+	"GIT_REPLACE_REF_BASE": true, "GIT_SHALLOW_FILE": true, "GIT_WORK_TREE": true,
+}
+
+// cleanEnvironment is the environment without the variables that route git to a repository other than the one -C names
+// (and without the numbered GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that GIT_CONFIG_COUNT would activate).
+func cleanEnvironment(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if repositoryVariables[name] || strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // identity is the author and committer of the commits the run makes (the retired-worktree refs and Commit); it is passed
@@ -45,7 +69,11 @@ func (a *Allocator) Snapshot(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(dir)
-	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
+	index := filepath.Join(dir, "index")
+	env := []string{"GIT_INDEX_FILE=" + index}
+	if err := a.seedIndex(ctx, path, index, env); err != nil {
+		return "", err
+	}
 	if _, err := a.git(ctx, path, env, "add", "--all"); err != nil {
 		return "", err
 	}
@@ -54,6 +82,23 @@ func (a *Allocator) Snapshot(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return tree, nil
+}
+
+// seedIndex starts the throwaway index from the worktree's own index, so every tracked file stays in the snapshot even
+// when an ignore rule matches it (git add --all skips an ignored file only when it is untracked). A worktree with no index
+// yet starts from its HEAD, and one with neither starts empty.
+func (a *Allocator) seedIndex(ctx context.Context, path, index string, env []string) error {
+	real, err := a.git(ctx, path, nil, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err == nil {
+		if data, readErr := os.ReadFile(real); readErr == nil {
+			return os.WriteFile(index, data, 0o600)
+		}
+	}
+	if _, err := a.git(ctx, path, nil, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+		return nil
+	}
+	_, err = a.git(ctx, path, env, "read-tree", "HEAD")
+	return err
 }
 
 // Head is the commit a worktree's HEAD is at, read from git.

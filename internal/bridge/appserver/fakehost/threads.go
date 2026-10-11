@@ -77,6 +77,18 @@ type TurnPlan struct {
 	ItemsListError map[string]any
 	// Tokens is the turn's token usage; the zero value is a small fixed usage.
 	Tokens int64
+	// Commentary adds an agentMessage item of phase "commentary" before the final answer, announced like any item.
+	Commentary string
+	// DropFinalItem keeps the final answer in the thread but sends no item/completed for it (every other
+	// notification still goes out): a partial notification stream.
+	DropFinalItem bool
+	// SilentAfterCommentary sends the commentary item and no notification after it: the stream is lost mid-turn.
+	SilentAfterCommentary bool
+	// NoTokenUsage sends no thread/tokenUsage/updated notification for the turn.
+	NoTokenUsage bool
+	// FinishDespiteInterrupt ends a Hang or Gate turn completed when turn/interrupt arrives: the turn won the race
+	// against the interrupt.
+	FinishDespiteInterrupt bool
 }
 
 // TurnRequest is the turn/start request a plan is asked about.
@@ -703,9 +715,13 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 			return
 		}
 	}
+	if interrupted && plan.FinishDespiteInterrupt {
+		interrupted = false
+	}
 	t.mu.Lock()
 	tu.endedAt = t.tick()
 	var failure *Failure
+	var commentary map[string]any
 	switch {
 	case interrupted:
 		tu.status = "interrupted"
@@ -716,6 +732,10 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 		}
 	default:
 		tu.status = "completed"
+		if plan.Commentary != "" {
+			commentary = map[string]any{"type": "agentMessage", "id": "c-" + tu.id, "text": plan.Commentary, "phase": "commentary"}
+			tu.items = append(tu.items, commentary)
+		}
 		item := map[string]any{"type": "agentMessage", "id": "m-" + tu.id, "text": plan.Message, "phase": "final_answer"}
 		tu.items = append(tu.items, item)
 	}
@@ -733,15 +753,19 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 	total := th.used
 	t.mu.Unlock()
 
+	rest := plan.Silent || plan.SilentAfterCommentary
+	if commentary != nil {
+		t.notify(th.id, plan.Silent, Notification{Method: "item/completed", Params: map[string]any{"item": commentary, "threadId": th.id, "turnId": tu.id, "completedAtMs": 1790000040000}})
+	}
 	if message != nil {
-		t.notify(th.id, plan.Silent, Notification{Method: "item/completed", Params: map[string]any{"item": message, "threadId": th.id, "turnId": tu.id, "completedAtMs": 1790000041000}})
+		t.notify(th.id, rest || plan.DropFinalItem, Notification{Method: "item/completed", Params: map[string]any{"item": message, "threadId": th.id, "turnId": tu.id, "completedAtMs": 1790000041000}})
 	}
 	breakdown := func(n int64) map[string]any {
 		return map[string]any{"cachedInputTokens": 0, "inputTokens": n / 2, "outputTokens": n - n/2, "reasoningOutputTokens": 0, "totalTokens": n}
 	}
-	t.notify(th.id, plan.Silent, Notification{Method: "thread/tokenUsage/updated", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "tokenUsage": map[string]any{"last": breakdown(tokens), "total": breakdown(total), "modelContextWindow": 272000}}})
+	t.notify(th.id, rest || plan.NoTokenUsage, Notification{Method: "thread/tokenUsage/updated", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "tokenUsage": map[string]any{"last": breakdown(tokens), "total": breakdown(total), "modelContextWindow": 272000}}})
 	if failure != nil && !failure.NoError {
-		t.notify(th.id, plan.Silent, Notification{Method: "error", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "willRetry": false, "error": map[string]any{"message": failure.Message, "codexErrorInfo": failure.CodexErrorInfo, "additionalDetails": nil}}})
+		t.notify(th.id, rest, Notification{Method: "error", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "willRetry": false, "error": map[string]any{"message": failure.Message, "codexErrorInfo": failure.CodexErrorInfo, "additionalDetails": nil}}})
 	}
-	t.notify(th.id, plan.Silent, Notification{Method: "turn/completed", Params: map[string]any{"threadId": th.id, "turn": final}})
+	t.notify(th.id, rest, Notification{Method: "turn/completed", Params: map[string]any{"threadId": th.id, "turn": final}})
 }

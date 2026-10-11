@@ -310,10 +310,11 @@ func (w *turnWatch) read(ctx context.Context) (*turnState, *appserverReading, er
 
 // finish builds the outcome of a turn the bus reported as ended.
 func (w *turnWatch) finish(ctx context.Context, state *turnState) (engine.TurnOutcome, error) {
-	if state.status != "completed" || w.finalMessage() != "" {
+	if state.status != "completed" || w.sawFinalAnswer() {
 		return w.outcome(state, nil)
 	}
-	// The message did not come over the bus: read the turn's full items.
+	// The final answer did not come over the bus (a commentary message is not it, and a stream that lost the end of the
+	// turn may hold an earlier message only): read the turn's full items, which are the host's own record.
 	readings, err := w.b.client.Bus().ReconcileTurns(ctx, w.spec.ThreadID, []string{w.turnID})
 	if err != nil {
 		return engine.TurnOutcome{}, requestError(err)
@@ -321,9 +322,14 @@ func (w *turnWatch) finish(ctx context.Context, state *turnState) (engine.TurnOu
 	return w.outcome(state, &readings[0])
 }
 
-// finalMessage is the turn's last agent message seen on the bus, preferring the final answer.
-func (w *turnWatch) finalMessage() string {
-	return pickMessage(w.messages)
+// sawFinalAnswer reports whether the bus delivered the turn's final answer.
+func (w *turnWatch) sawFinalAnswer() bool {
+	for _, m := range w.messages {
+		if m.phase == "final_answer" {
+			return true
+		}
+	}
+	return false
 }
 
 // pickMessage is the last final answer among the messages, else the last message.
@@ -356,11 +362,13 @@ func itemMessages(items []json.RawMessage) []message {
 
 // outcome turns a terminal turn into what the engine takes: the last agent message of a completed turn, or the failure
 // of a failed or interrupted one. read is the host's reading of the turn when one was needed; its items must be
-// readable in full for a completed turn that gave no message over the bus.
+// readable in full for a completed turn whose final answer did not come over the bus.
 func (w *turnWatch) outcome(state *turnState, read *appserverReading) (engine.TurnOutcome, error) {
 	out := engine.TurnOutcome{TurnID: w.turnID, Tokens: w.b.turnTokens(w.spec.ThreadID, w.usage)}
 	switch state.status {
 	case "completed":
+		// A completed turn used tokens; no usage notification means the usage is unknown, not zero.
+		out.TokensUnmeasured = w.usage == nil
 		messages := w.messages
 		if read != nil {
 			if !read.Readable {
@@ -369,8 +377,9 @@ func (w *turnWatch) outcome(state *turnState, read *appserverReading) (engine.Tu
 			if op, source, ok := MarkerOf(read.Items); ok && w.spec.Op != "" && op != w.spec.Op {
 				return engine.TurnOutcome{}, &engine.TransportError{Err: &ForeignTurnError{Want: w.spec.Op, Got: op, Source: source}}
 			}
-			if len(messages) == 0 {
-				messages = itemMessages(read.Items)
+			// The host's items are the whole turn; what the bus delivered may be a part of it.
+			if fromHost := itemMessages(read.Items); len(fromHost) > 0 {
+				messages = fromHost
 			}
 		}
 		out.Text = pickMessage(messages)

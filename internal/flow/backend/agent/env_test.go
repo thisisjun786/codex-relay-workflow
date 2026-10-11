@@ -144,6 +144,7 @@ type env struct {
 	state   string
 	runID   string
 	pool    int
+	budget  int64
 
 	gitMu sync.Mutex
 	calls []gitCall
@@ -224,7 +225,7 @@ func (e *env) worktreeAdds() int {
 func (e *env) plan(fn func(fakehost.TurnRequest) fakehost.TurnPlan) { e.threads.OnTurn(fn) }
 
 func (e *env) config() engine.Config {
-	return engine.Config{Backend: e.backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool}
+	return engine.Config{Backend: e.backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget}
 }
 
 // run executes the script body and returns its result.

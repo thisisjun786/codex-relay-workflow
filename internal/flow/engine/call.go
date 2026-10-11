@@ -355,7 +355,7 @@ func (c *callRun) prepare() {
 			c.cwd = p.resume.Cwd
 		}
 	}
-	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil {
+	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil && !c.e.nodeStopped(p.node) {
 		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: c.e.j}
 		pl, err := placer.Place(c.placeReq)
 		if err != nil {
@@ -473,6 +473,11 @@ func mustJSON(v any) []byte {
 
 // gate stops a call that would send a request while the run is paused or over its token ceiling.
 func (c *callRun) gate(ctx context.Context) (CallResult, bool) {
+	if c.e.nodeStopped(c.plan.node) {
+		data := map[string]any{"input_state": c.inputState(), "detail": "the node was stopped: a restored worktree changed after it was verified"}
+		c.heldSnapshot(ctx, data)
+		return c.terminal(EvHeld, StatusHeld, ReasonRestoreSnapshotMismatch, data), true
+	}
 	reason := c.e.pauseReason()
 	if reason == "" {
 		return CallResult{}, false
@@ -627,6 +632,7 @@ func (c *callRun) placementProblem(ctx context.Context, err error) CallResult {
 	case c.aborted(ctx):
 		return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
 	case errors.As(err, &mismatch):
+		c.e.stopNode(c.plan.node)
 		c.mu.Lock()
 		last := c.lastEvent
 		c.mu.Unlock()
@@ -820,6 +826,9 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 		c.tokens.Output += out.Tokens.Output
 		c.tokens.Total += out.Tokens.Total
 		e.addTokens(out.Tokens.Total)
+		if out.TokensUnmeasured {
+			e.tokensUnmeasured(c, out.TurnID)
+		}
 		if f := out.Failed; f != nil {
 			if c.aborted(ctx) {
 				return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
@@ -831,6 +840,14 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 				return c.fromDisposition(ctx, Disposition{Status: StatusHeld, Reason: ReasonHostInterruptedExternal}, f.Message)
 			}
 			return c.fromDisposition(ctx, ClassifyHostFailure(f.CodexErrorInfo), f.Message)
+		}
+		if c.interrupted() != "" {
+			// The engine's own interrupt decides the call whatever the host made of the turn: a turn that completed before
+			// the interrupt took effect is still held for the reason of the intent.
+			if c.aborted(ctx) {
+				return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil)
+			}
+			return c.fromIntent(ctx, "the turn ended completed after the engine interrupted it")
 		}
 		result, verr := c.validate(out.Text, resolved)
 		if verr == nil {
