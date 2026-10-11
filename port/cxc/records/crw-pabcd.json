@@ -242,7 +242,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker (a child forked from the session is tied by the call's result alone) and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. Under multi-agent V2 the created report's agentId is the agent path /root/<task> that spawn_agent returns, which the command resolves to the child's thread id, and the spawn hook issues a V2 call whose task it cannot read to the session's one claimed attempt (CRW-1260).",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker (a child forked from the session is tied by the call's result alone) and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. Under multi-agent V2 the created report's agentId is the agent path /root/<task> that spawn_agent returns, which the command resolves to the child's thread id, and the spawn hook issues a V2 call whose task it cannot read to the attempt of the dispatch its task_name names (CRW-1260).",
       "hunks": [
         {
           "line": 141,
@@ -264,8 +264,8 @@
             "   `agentId`; the command resolves it to the child's thread id in the native database\n",
             "   and records the thread id), then use native wait. Created\n",
             "   requires the spawn hook's issuance of the attempt (a V2 task is host ciphertext whose\n",
-            "   marker the hook cannot read, so the hook issues the session's one claimed attempt, and\n",
-            "   none when the session holds several), and the child's first message\n",
+            "   marker the hook cannot read, so under V2 use the `dispatchId` as the call's `task_name`:\n",
+            "   the hook issues that dispatch's attempt, and none to a call naming none), and the child's first message\n",
             "   must carry this attempt's marker (a child forked from this session starts with the\n",
             "   parent's history, so it is tied by the call's result alone). The marker does not tie the child to the call:\n",
             "   only the host's own result of the issued spawn call naming this `agentId` does, and\n",

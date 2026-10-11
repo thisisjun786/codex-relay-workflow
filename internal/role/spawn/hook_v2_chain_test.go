@@ -16,8 +16,8 @@ import (
 
 // CRW-1260: the whole V2 flow of a managed review, through the real hook and the real checked boundary on a temporary store and
 // a temporary native database. The task of a native V2 spawn is host ciphertext, so the dispatch marker the claim handed out is
-// invisible to the hook; the hook ties the call to the session's one claimed attempt, and the created report by the agent path
-// the call returned ends in a verified receipt that lets the review complete.
+// invisible to the hook; the call names its dispatch by its plaintext task_name, the hook issues that dispatch's claimed attempt,
+// and the created report by the agent path the call returned ends in a verified receipt that lets the review complete.
 
 const (
 	v2ChainSession = "rec-s1"
@@ -90,7 +90,7 @@ func v2ChainRead(t *testing.T, file string) (issued bool, tool string) {
 	return a.SpawnIssued, tool
 }
 
-func TestSpawnHookV2CiphertextSpawnIssuesTheSessionsClaimedAttempt(t *testing.T) {
+func TestSpawnHookV2CiphertextSpawnIssuesTheAttemptItsTaskNameNames(t *testing.T) {
 	const store = `{"roles":{"reviewer":{"mode":"model","model":"gpt-6.1-sol","effort":"high"}}}`
 	cipher := strconv.Quote(spawnV2Fernet())
 	for _, fork := range []string{`"none"`, `"2"`} {
@@ -98,7 +98,8 @@ func TestSpawnHookV2CiphertextSpawnIssuesTheSessionsClaimedAttempt(t *testing.T)
 			c := spawnHookCase{}
 			c.Env.Store = &[]string{store}[0]
 			rig := spawnHookNewRig(t, nil, c)
-			file := v2ChainLedger(t, rig.ws, "review-1", "reviewer")
+			file := v2ChainLedger(t, rig.ws, "independent_review", "reviewer")
+			v2ChainLedger(t, rig.ws, "review-2", "reviewer") // another claimed dispatch of the session, which the call does not name
 			codex, _ := rig.env("CODEX_HOME")
 			input := `{"task_name":"independent_review","agent_type":"reviewer","fork_turns":` + fork + `,"message":` + cipher + `}`
 			answer := RunSpawnAttachHook(v2ChainStdin(rig.ws, "native-1", input), rig.env)
@@ -117,7 +118,7 @@ func TestSpawnHookV2CiphertextSpawnIssuesTheSessionsClaimedAttempt(t *testing.T)
 			}
 
 			v2ChainNative(t, codex, map[string]string{"native-1": v2ChainChild})
-			created := map[string]any{"action": "report", "sessionId": v2ChainSession, "dispatchId": "review-1", "attemptId": "att-1", "outcome": "created", "agentId": v2ChainPath}
+			created := map[string]any{"action": "report", "sessionId": v2ChainSession, "dispatchId": "independent_review", "attemptId": "att-1", "outcome": "created", "agentId": v2ChainPath}
 			out, err := role.CheckedDispatch(context.Background(), rig.ws, created, rig.env, nil)
 			spawnHookMust(t, err)
 			r := out.Attempts[0].Receipt
@@ -132,23 +133,29 @@ func TestSpawnHookV2CiphertextSpawnIssuesTheSessionsClaimedAttempt(t *testing.T)
 	}
 }
 
-// The call is tied only when the session's records leave one choice, and never for what is not a managed child.
+// The call is tied only to the dispatch its task_name names while that dispatch waits for its spawn, and never for what is not a
+// managed child.
 func TestSpawnHookV2CiphertextSpawnLeavesAnUndecidedCallUnissued(t *testing.T) {
 	const store = `{"roles":{"reviewer":{"mode":"model","model":"gpt-6.1-sol","effort":"high"}}}`
 	cipher := strconv.Quote(spawnV2Fernet())
-	reviewer := `{"task_name":"independent_review","agent_type":"reviewer","fork_turns":"2","message":` + cipher + `}`
 	for _, tc := range []struct {
 		name   string
 		extra  func(t *testing.T, ws string) // more records of the session
 		input  string
 		reader string // the dispatch whose attempt must stay unissued
 	}{
-		{"two claimed attempts", func(t *testing.T, ws string) { v2ChainLedger(t, ws, "review-2", "reviewer") }, reviewer, "review-1"},
-		{"a full-history fork", nil, `{"task_name":"independent_review","agent_type":"reviewer","fork_turns":"all","message":` + cipher + `}`, "review-1"},
-		{"another role's call", nil, `{"task_name":"x","agent_type":"architect","fork_turns":"2","message":` + cipher + `}`, "review-1"},
+		{"the one claimed attempt, not named", nil, `{"task_name":"independent_review","agent_type":"reviewer","fork_turns":"2","message":` + cipher + `}`, "review-1"},
+		{"a full-history fork", nil, `{"task_name":"review-1","agent_type":"reviewer","fork_turns":"all","message":` + cipher + `}`, "review-1"},
+		{"another role's call", nil, `{"task_name":"review-1","agent_type":"architect","fork_turns":"2","message":` + cipher + `}`, "review-1"},
 		{"a record that cannot be read", func(t *testing.T, ws string) {
 			spawnHookMust(t, os.WriteFile(filepath.Join(ws, ".crw", "dispatches", v2ChainSession, "broken.json"), []byte("{"), 0o644))
-		}, reviewer, "review-1"},
+		}, `{"task_name":"broken","agent_type":"reviewer","fork_turns":"2","message":` + cipher + `}`, "review-1"},
+		{"a dispatch no longer waiting", func(t *testing.T, ws string) {
+			file := filepath.Join(ws, ".crw", "dispatches", v2ChainSession, "review-1.json")
+			data, err := os.ReadFile(file)
+			spawnHookMust(t, err)
+			spawnHookMust(t, os.WriteFile(file, []byte(strings.Replace(string(data), `"status":"active"`, `"status":"complete"`, 1)), 0o644))
+		}, `{"task_name":"review-1","agent_type":"reviewer","fork_turns":"2","message":` + cipher + `}`, "review-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := spawnHookCase{}
@@ -167,5 +174,112 @@ func TestSpawnHookV2CiphertextSpawnLeavesAnUndecidedCallUnissued(t *testing.T) {
 				t.Fatal("the attempt was issued")
 			}
 		})
+	}
+}
+
+// A ciphertext V2 call that does not name the claimed dispatch by its task_name is not the attempt's call, whatever its
+// agent_type: it is not issued, so its child (here a partial fork the call really made) cannot be recorded without
+// reconciliation and never satisfies the independent review (the guess the session's one claimed attempt once was).
+func TestSpawnHookV2UnnamedCiphertextCallCannotSatisfyTheReview(t *testing.T) {
+	const store = `{"roles":{"reviewer":{"mode":"model","model":"gpt-6.1-sol","effort":"high"}}}`
+	cipher := strconv.Quote(spawnV2Fernet())
+	for _, tc := range []struct{ name, input string }{
+		{"a default-type helper", `{"task_name":"independent_review","agent_type":"default","fork_turns":"2","message":` + cipher + `}`},
+		{"a reviewer-type helper", `{"task_name":"independent_review","agent_type":"reviewer","fork_turns":"2","message":` + cipher + `}`},
+		{"no agent_type", `{"task_name":"independent_review","fork_turns":"2","message":` + cipher + `}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := spawnHookCase{}
+			c.Env.Store = &[]string{store}[0]
+			rig := spawnHookNewRig(t, nil, c)
+			file := v2ChainLedger(t, rig.ws, "review-1", "reviewer")
+			answer := RunSpawnAttachHook(v2ChainStdin(rig.ws, "helper-call", tc.input), rig.env)
+			if !strings.Contains(answer, `"permissionDecision":"allow"`) {
+				t.Fatalf("hook = %q", answer)
+			}
+			if issued, _ := v2ChainRead(t, file); issued {
+				t.Fatal("an unnamed call was issued the claimed attempt")
+			}
+			codex, _ := rig.env("CODEX_HOME")
+			v2ChainNative(t, codex, map[string]string{"helper-call": v2ChainChild})
+			report := map[string]any{"action": "report", "sessionId": v2ChainSession, "dispatchId": "review-1", "attemptId": "att-1", "outcome": "created", "agentId": v2ChainPath}
+			if _, err := role.CheckedDispatch(context.Background(), rig.ws, report, rig.env, nil); err == nil {
+				t.Fatal("the unrelated child was recorded without reconciliation")
+			}
+			report["reconciliation"] = "spawned while the dispatch was claimed"
+			out, err := role.CheckedDispatch(context.Background(), rig.ws, report, rig.env, nil)
+			spawnHookMust(t, err)
+			if r := out.Attempts[0].Receipt; r == nil || r.Correlation == "spawn-result" {
+				t.Fatalf("receipt = %+v", r)
+			}
+			delete(report, "reconciliation")
+			report["outcome"] = "complete"
+			if done, err := role.CheckedDispatch(context.Background(), rig.ws, report, rig.env, nil); err == nil && done.Action == "complete" {
+				t.Fatal("the unrelated child satisfied the independent review")
+			}
+		})
+	}
+}
+
+// Parallel V2 calls that do not name a dispatch are both assembled before either is answered: neither is managed, so neither is
+// denied and the claimed attempt stays unissued.
+func TestSpawnHookV2ParallelUnnamedCallsAreNotDenied(t *testing.T) {
+	c := spawnHookCase{}
+	c.Env.Store = &[]string{`{"roles":{"reviewer":{"mode":"model","model":"gpt-6.1-sol","effort":"high"}}}`}[0]
+	rig := spawnHookNewRig(t, nil, c)
+	file := v2ChainLedger(t, rig.ws, "review-1", "reviewer")
+	before, err := os.ReadFile(file)
+	spawnHookMust(t, err)
+	input := `{"task_name":"independent_review","agent_type":"reviewer","fork_turns":"2","message":` + strconv.Quote(spawnV2Fernet()) + `}`
+	assemble := func(call string) spawnHookAssembly {
+		payload, ok := spawnHookRouteLoad(v2ChainStdin(rig.ws, call, input))
+		if !ok {
+			t.Fatal("payload")
+		}
+		a, deny, stop := spawnHookAssembleWith(spawnHookView(payload), rig.env, &spawnHookCommit{})
+		if stop {
+			t.Fatalf("assemble %s stopped: %q", call, deny)
+		}
+		return a
+	}
+	one, two := assemble("native-1"), assemble("native-2")
+	for _, a := range []spawnHookAssembly{one, two} {
+		if answer := spawnHookRoute(a, rig.env); !strings.Contains(answer, `"permissionDecision":"allow"`) {
+			t.Fatalf("an unnamed parallel call was not allowed: %q", answer)
+		}
+	}
+	if after, _ := os.ReadFile(file); string(after) != string(before) {
+		t.Fatal("the attempt was issued")
+	}
+}
+
+// Two V2 calls that both name the claimed dispatch are two calls carrying its marker: the first is issued the attempt and the
+// second is refused, as a second marker-carrying call is.
+func TestSpawnHookV2TwoCallsNamingTheDispatch(t *testing.T) {
+	c := spawnHookCase{}
+	c.Env.Store = &[]string{`{"roles":{"reviewer":{"mode":"model","model":"gpt-6.1-sol","effort":"high"}}}`}[0]
+	rig := spawnHookNewRig(t, nil, c)
+	file := v2ChainLedger(t, rig.ws, "review-1", "reviewer")
+	input := `{"task_name":"review-1","agent_type":"reviewer","fork_turns":"2","message":` + strconv.Quote(spawnV2Fernet()) + `}`
+	assemble := func(call string) spawnHookAssembly {
+		payload, ok := spawnHookRouteLoad(v2ChainStdin(rig.ws, call, input))
+		if !ok {
+			t.Fatal("payload")
+		}
+		a, deny, stop := spawnHookAssembleWith(spawnHookView(payload), rig.env, &spawnHookCommit{})
+		if stop || a.managed == nil {
+			t.Fatalf("assemble %s: stop=%v deny=%q", call, stop, deny)
+		}
+		return a
+	}
+	one, two := assemble("native-1"), assemble("native-2")
+	if answer := spawnHookRoute(one, rig.env); !strings.Contains(answer, `"permissionDecision":"allow"`) {
+		t.Fatalf("first = %q", answer)
+	}
+	if issued, call := v2ChainRead(t, file); !issued || call != "native-1" {
+		t.Fatalf("issued = %v to %q", issued, call)
+	}
+	if answer := spawnHookRoute(two, rig.env); !strings.Contains(answer, "attempt already issued to another native call") {
+		t.Fatalf("second = %q", answer)
 	}
 }

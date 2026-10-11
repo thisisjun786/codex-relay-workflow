@@ -173,15 +173,20 @@ func spawnHookWithout(o pyjson.Object, keys ...string) pyjson.Object {
 	return out
 }
 
-// spawnHookManagedCiphertext ties a native V2 spawn whose task is ciphertext to the attempt it is for (CRW-1260). The dispatch
-// marker is in the task, which the hook cannot read, so no source resolved; the call is then the session's one claimed attempt
-// that waits for its spawn (role.ManagedSpawnResolver.Pending), narrowed by the role agent_type names. A call that is not a fresh or
-// partial-fork child (a full-history fork is never managed), that already resolved a marker, or for which the session's records
-// leave no single attempt is left unmanaged, as before. A record that cannot be read leaves the call unmanaged too: the issuance
-// is not a reason to refuse a spawn the matching cannot decide. The tie the created check
-// makes afterwards stays the host's own result of this call.
+// spawnHookManagedCiphertext ties a native V2 spawn whose task is ciphertext to the attempt its task_name names (CRW-1260). The
+// dispatch marker is in the task, which the hook cannot read, so no source resolved; the caller names the dispatch by the call's
+// plaintext task_name instead (role.ManagedSpawnResolver.Named), narrowed by the role agent_type names. That is an explicit
+// binding the hook reads from the call, as it reads a marker: the issuance then refuses a second call that names the same attempt,
+// and the created check ties the child to the issued call by the host's result of that call. A call that is not a fresh or
+// partial-fork child (a full-history fork is never managed), that already resolved a marker, or whose task_name names no
+// dispatch of the session waiting for its spawn is left unmanaged, as before: a call that did not name the dispatch is never
+// issued its attempt, so neither an unrelated call's child nor a parallel unrelated call is tied to it.
 func spawnHookManagedCiphertext(a *spawnHookAssembly) {
 	if a.managed != nil || !a.encryptedV2Message || a.sessionID == "" || IsFullHistoryFork(spawnHookView(a.toolInput)) {
+		return
+	}
+	task, _ := a.toolInput.Get("task_name").(string)
+	if task == "" {
 		return
 	}
 	var filter *role.RoleName
@@ -195,7 +200,7 @@ func spawnHookManagedCiphertext(a *spawnHookAssembly) {
 			filter = &r
 		}
 	}
-	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Pending(a.sessionID, a.toolUseID, filter)
+	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Named(a.sessionID, task, a.toolUseID, filter)
 	if err == nil && selection != nil {
 		a.managed, a.dispatchSource = selection, source
 	}

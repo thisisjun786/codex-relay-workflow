@@ -108,14 +108,16 @@ func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSe
 	return &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: root, rootInfo: r.rootInfo, session: session, dispatch: match[1], attempt: match[2]}, nil
 }
 
-// Pending is the attempt a native spawn call is for when the call's message cannot be read (a multi-agent V2 task is host
-// ciphertext, so the dispatch marker in it is invisible to the hook; CRW-1260). The call is tied to an attempt only when the
-// session's own records leave no choice: exactly one active dispatch of the session whose current attempt is claimed and
-// waits for its spawn, or is already issued to this same native call (a hook event delivered twice), and, when roleFilter is
-// set, is a dispatch of that role. None, several, or a record of the session that cannot be read (it might be the one) leave the
-// call unbound (nil), and the child is then recorded only by the report's reconciliation. The source returned is the marker line
-// of the selected attempt, for the binding of a replayed answer. Nothing is written.
-func (r *ManagedSpawnResolver) Pending(session string, toolUseID *string, roleFilter *RoleName) (*ManagedSpawnSelection, string, error) {
+// Named is the attempt a native V2 spawn call whose message cannot be read names by its task_name (CRW-1260). A V2 task is host
+// ciphertext, so the dispatch marker in it is invisible to the hook; the call's plaintext task_name is what the caller writes to
+// name the dispatch, and the hook reads it from the call itself, as it reads a marker. The call names an attempt when task is the
+// id of a dispatch of the session that is active, whose current attempt is claimed, and, when roleFilter is set, whose role it is.
+// A call that names no such dispatch, or a record that cannot be read, is left unbound (nil): the session's other records are
+// never a reason to bind a call that did not name its dispatch, so an unrelated call is not issued an attempt. A call whose tool
+// use id an earlier attempt of the dispatch was issued to (an old event delivered again) is not the current attempt's either.
+// Whether the attempt is still waiting for its spawn is the issuance's to decide under the record's lock, exactly as for a marker.
+// The source returned is the marker line of the attempt, for the binding of a replayed answer. Nothing is written.
+func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, roleFilter *RoleName) (*ManagedSpawnSelection, string, error) {
 	if !r.resolved {
 		r.resolved = true
 		if r.root, r.err = dispatchRoot(r.cwd); r.err == nil {
@@ -128,44 +130,26 @@ func (r *ManagedSpawnResolver) Pending(session string, toolUseID *string, roleFi
 	if _, err := dispatchID(session, "sessionId"); err != nil {
 		return nil, "", err
 	}
-	entries, err := os.ReadDir(filepath.Join(r.root, ".crw", "dispatches", session))
-	if errors.Is(err, os.ErrNotExist) {
+	if _, err := dispatchID(task, "dispatchId"); err != nil {
+		return nil, "", nil // a task name that cannot be a dispatch id names none
+	}
+	d, err := dispatchRead(filepath.Join(r.root, ".crw", "dispatches", session, task+".json"), session, task)
+	if err != nil || len(d.Attempts) == 0 {
 		return nil, "", nil
 	}
-	if err != nil {
-		return nil, "", err
-	}
-	var chosen []*ManagedSpawnSelection
-	var issuedHere *ManagedSpawnSelection
-	for _, entry := range entries {
-		name := entry.Name()
-		if filepath.Ext(name) != ".json" {
-			continue
-		}
-		id := name[:len(name)-len(".json")]
-		d, err := dispatchRead(filepath.Join(r.root, ".crw", "dispatches", session, name), session, id)
-		if err != nil || len(d.Attempts) == 0 {
-			return nil, "", nil // a record that cannot be read may be the one this call is for
-		}
-		a := d.Attempts[len(d.Attempts)-1]
-		if !dispatchIs(d.Status, "active") || !a.Claimed || !dispatchIs(a.Status, "claimed") || roleFilter != nil && d.Role != *roleFilter {
-			continue
-		}
-		sel := &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: r.root, rootInfo: r.rootInfo, session: session, dispatch: d.ID, attempt: a.ID}
-		switch {
-		case !a.SpawnIssued:
-			chosen = append(chosen, sel)
-		case toolUseID != nil && *toolUseID != "" && a.ToolUseID != nil && *a.ToolUseID == *toolUseID:
-			issuedHere = sel
-		}
-	}
-	switch {
-	case issuedHere != nil:
-		chosen = []*ManagedSpawnSelection{issuedHere}
-	case len(chosen) != 1:
+	a := d.Attempts[len(d.Attempts)-1]
+	if !dispatchIs(d.Status, "active") || !a.Claimed || !dispatchIs(a.Status, "claimed") || roleFilter != nil && d.Role != *roleFilter {
 		return nil, "", nil
 	}
-	return chosen[0], "[CRW-DISPATCH:" + chosen[0].dispatch + ":" + chosen[0].attempt + "]", nil
+	if toolUseID != nil && *toolUseID != "" {
+		for _, earlier := range d.Attempts[:len(d.Attempts)-1] {
+			if earlier.ToolUseID != nil && *earlier.ToolUseID == *toolUseID {
+				return nil, "", nil
+			}
+		}
+	}
+	sel := &ManagedSpawnSelection{Candidate: a.Candidate, Role: d.Role, root: r.root, rootInfo: r.rootInfo, session: session, dispatch: d.ID, attempt: a.ID}
+	return sel, "[CRW-DISPATCH:" + d.ID + ":" + a.ID + "]", nil
 }
 
 // IssueManagedSpawn consumes issuance under the ledger lock (oracle:250-267).

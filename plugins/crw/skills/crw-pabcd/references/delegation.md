@@ -380,8 +380,8 @@ protocol. A PreToolUse reminder after a direct call cannot retroactively manage 
    `agentId`; the command resolves it to the child's thread id in the native database
    and records the thread id), then use native wait. Created
    requires the spawn hook's issuance of the attempt (a V2 task is host ciphertext whose
-   marker the hook cannot read, so the hook issues the session's one claimed attempt, and
-   none when the session holds several), and the child's first message
+   marker the hook cannot read, so under V2 use the `dispatchId` as the call's `task_name`:
+   the hook issues that dispatch's attempt, and none to a call naming none), and the child's first message
    must carry this attempt's marker (a child forked from this session starts with the
    parent's history, so it is tied by the call's result alone). The marker does not tie the child to the call:
    only the host's own result of the issued spawn call naming this `agentId` does, and
