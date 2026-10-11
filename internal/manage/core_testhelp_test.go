@@ -48,6 +48,7 @@ func coreMain(m *testing.M) int {
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(root) }()
+	defer premergeTestRepoTemplatesRemove()
 	for key, path := range map[string]string{
 		"HOME":            filepath.Join(root, "home"),
 		"CODEX_HOME":      filepath.Join(root, "codex"),

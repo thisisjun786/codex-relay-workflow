@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -121,11 +123,11 @@ func premergeTestWrite(t *testing.T, root string, files map[string]string) {
 	}
 }
 
-// premergeTestNewRepo builds the remote with dev and refs/pull/7/head, and a checkout of it. The pull
-// request branch is cut from the base; dev then moves on, so the merge is a real one.
-func premergeTestNewRepo(t *testing.T, spec premergeTestRepoSpec) premergeTestRepo {
+// premergeTestBuildRepo builds the remote with dev and refs/pull/7/head, and a checkout of it, under
+// root. The pull request branch is cut from the base; dev then moves on, so the merge is a real one.
+// Every commit carries a fixed identity and date, so two builds of one spec make the same commits.
+func premergeTestBuildRepo(t *testing.T, root string, spec premergeTestRepoSpec) premergeTestRepo {
 	t.Helper()
-	root := t.TempDir()
 	work, remote, checkout := filepath.Join(root, "work"), filepath.Join(root, "remote.git"), filepath.Join(root, "checkout")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
@@ -154,6 +156,119 @@ func premergeTestNewRepo(t *testing.T, spec premergeTestRepoSpec) premergeTestRe
 	premergeTestGit(t, work, "push", "--quiet", "origin", "dev")
 	premergeTestGit(t, root, "clone", "--quiet", remote, checkout)
 	return premergeTestRepo{checkout: checkout, remote: remote, head: head, dev: dev}
+}
+
+// premergeTestRepoTemplates holds, for each repository spec, the repositories built once under a
+// directory the whole run shares (removed by premergeTestRepoTemplatesRemove when the run ends), so a
+// test copies a built pair instead of running sixteen git commands to make one.
+var (
+	premergeTestTemplateMu   sync.Mutex
+	premergeTestTemplateRoot string
+	premergeTestTemplates    = map[string]premergeTestRepo{}
+)
+
+// premergeTestRepoTemplatesRemove deletes the shared template directory.
+func premergeTestRepoTemplatesRemove() {
+	premergeTestTemplateMu.Lock()
+	defer premergeTestTemplateMu.Unlock()
+	if premergeTestTemplateRoot != "" {
+		_ = os.RemoveAll(premergeTestTemplateRoot)
+		premergeTestTemplateRoot = ""
+	}
+	premergeTestTemplates = map[string]premergeTestRepo{}
+}
+
+// premergeTestNewRepo is a private copy of the repositories the spec describes: the remote with dev
+// and refs/pull/7/head, and a checkout of it whose origin is the copied remote.
+func premergeTestNewRepo(t *testing.T, spec premergeTestRepoSpec) premergeTestRepo {
+	t.Helper()
+	// The spec's fields are unexported, so the key is their printed form (fmt prints maps in key order).
+	key := fmt.Sprintf("%q|%q", spec.prFiles, spec.devFiles)
+	premergeTestTemplateMu.Lock()
+	template, ok := premergeTestTemplates[key]
+	if !ok {
+		if premergeTestTemplateRoot == "" {
+			root, err := os.MkdirTemp("", "crw-manage-premerge-repos-")
+			if err != nil {
+				premergeTestTemplateMu.Unlock()
+				t.Fatal(err)
+			}
+			premergeTestTemplateRoot = root
+		}
+		// A failed build leaves no entry, and the unlock runs even when t.Fatal ends this goroutine.
+		func() {
+			defer premergeTestTemplateMu.Unlock()
+			dir, err := os.MkdirTemp(premergeTestTemplateRoot, "spec-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			template = premergeTestBuildRepo(t, dir, spec)
+			premergeTestTemplates[key] = template
+		}()
+	} else {
+		premergeTestTemplateMu.Unlock()
+	}
+	root := t.TempDir()
+	from := filepath.Dir(template.checkout)
+	premergeTestCopyTree(t, filepath.Join(from, "remote.git"), filepath.Join(root, "remote.git"))
+	premergeTestCopyTree(t, template.checkout, filepath.Join(root, "checkout"))
+	// The checkout's origin is the remote it was cloned from: point it at the copy.
+	config := filepath.Join(root, "checkout", ".git", "config")
+	raw, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), template.remote) {
+		t.Fatalf("the template checkout's config does not name %s:\n%s", template.remote, raw)
+	}
+	if err := os.WriteFile(config, []byte(strings.ReplaceAll(string(raw), template.remote, filepath.Join(root, "remote.git"))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return premergeTestRepo{checkout: filepath.Join(root, "checkout"), remote: filepath.Join(root, "remote.git"), head: template.head, dev: template.dev}
+}
+
+// premergeTestCopyTree copies a directory tree with its modes, symbolic links and modification times.
+func premergeTestCopyTree(t *testing.T, from, to string) {
+	t.Helper()
+	err := filepath.WalkDir(from, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(from, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(to, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case entry.IsDir():
+			return os.MkdirAll(target, 0o755)
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		default:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, data, 0o600); err != nil {
+				return err
+			}
+			if err := os.Chmod(target, info.Mode().Perm()); err != nil {
+				return err
+			}
+			return os.Chtimes(target, info.ModTime(), info.ModTime())
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 // premergeTestCleanSpec is a pull request that adds a file and edits a.go, against a dev that added
