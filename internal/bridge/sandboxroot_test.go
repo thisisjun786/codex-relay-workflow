@@ -206,3 +206,68 @@ func TestSendMessageRefusesReportedHomeWritableRoots(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1265 (pre-merge evaluation of f0691fdd, d2): a creation that states no policy and no roots leaves
+// the writable roots to the host's configuration, and the host answers thread/start with the roots the
+// thread got. An account home among them withholds the title and the initial prompt (the thread stays
+// retained, the receipt records the refusal); a safe answer goes on as before.
+func TestCreateThreadsWithholdPromptWhenHostAnswersWithHomeWritableRoot(t *testing.T) {
+	w := sandboxroottest.Fake(t)
+	cwd := w.Mkdir(t, w.Sandbox, "run")
+	answer := func(roots ...any) fakehost.Reply {
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd}, "cwd": cwd, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": roots}}}
+	}
+	refused := func(t *testing.T, receipt map[string]any, err error, host *fakehost.Server) {
+		t.Helper()
+		var code any
+		if err != nil {
+			var refusal *sandboxroot.Refusal
+			if !errors.As(err, &refusal) {
+				var rpc interface{ Error() string }
+				if !errors.As(err, &rpc) || !strings.Contains(err.Error(), sandboxroot.Code) {
+					t.Fatalf("err=%v", err)
+				}
+			}
+			code = sandboxroot.Code
+		} else {
+			code = pyjson.Map(receipt["rpcError"])["code"]
+		}
+		if code != sandboxroot.Code {
+			t.Fatalf("receipt=%v err=%v", receipt, err)
+		}
+		if host.Count("turn/start") != 0 || host.Count("thread/name/set") != 0 {
+			t.Fatalf("the title or the prompt went out: %v", hostMethods(host))
+		}
+	}
+	t.Run("create_thread", func(t *testing.T) {
+		b, host := testBridge(t)
+		host.Respond("thread/start", answer(w.Home))
+		host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+		receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: "inherited-home", CWD: cwd, Sandbox: "workspace-write", Prompt: "hi", Title: "t", Model: "explicit-model", Effort: "high"})
+		refused(t, receipt, err, host)
+		if host.Count("thread/start") != 1 {
+			t.Fatalf("calls %v", hostMethods(host))
+		}
+	})
+	t.Run("create_worktree_thread", func(t *testing.T) {
+		// A worktree thread states its whole policy, so a root the host adds is a finding that withholds the prompt already.
+		destination := filepath.Join(w.Worktrees, "isolated")
+		b, host, input := worktreeAt(t, destination)
+		policy := map[string]any{"type": "workspaceWrite", "writableRoots": []any{destination}, "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}
+		input.Sandbox, input.Policy = "workspace-write", policy
+		host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": destination}, "cwd": destination, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{destination, w.Home}, "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}, "runtimeWorkspaceRoots": []any{destination}}})
+		receipt, err := b.CreateWorktreeThread(context.Background(), input)
+		if err != nil || receipt["status"] != "failed" || host.Count("turn/start") != 0 || host.Count("thread/name/set") != 0 {
+			t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
+		}
+	})
+	t.Run("a safe answer goes on", func(t *testing.T) {
+		b, host := testBridge(t)
+		host.Respond("thread/start", answer(cwd))
+		host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+		receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: "inherited-safe", CWD: cwd, Sandbox: "workspace-write", Prompt: "hi", Model: "explicit-model", Effort: "high"})
+		if err != nil || receipt["status"] != "accepted" || host.Count("turn/start") != 1 {
+			t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
+		}
+	})
+}

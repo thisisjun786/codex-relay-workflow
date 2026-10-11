@@ -362,6 +362,39 @@ func resumeRootRefusal(settings *resumeSettings, mode string) *resumeFailure {
 	return &resumeFailure{Reason: sandboxroot.Code, Detail: err.Error() + "; nothing was sent"}
 }
 
+// resumeLiveRefusal asks the sandbox-root rule about what the host says a thread runs with now (CRW-1265): the cwd, the
+// runtime workspace roots, the sandbox policy's writable roots and the config's sandbox_workspace_write.writable_roots of its
+// thread/read or thread/resume answer. A loaded thread keeps the settings it had, so the record's own are not the whole
+// picture. The sandbox judged is the one the host reports, and for a thread/read, which a resume then sets, the recorded mode
+// too; one that cannot be told counts as on (mode is never empty). after names the step for the detail.
+func resumeLiveRefusal(object map[string]any, mode string, beforeResume bool, after string) *resumeFailure {
+	thread, _ := object["thread"].(map[string]any)
+	cwd, _ := thread["cwd"].(string)
+	if cwd == "" {
+		cwd, _ = object["cwd"].(string)
+	}
+	roots := append(sandboxroot.RootsOf(object), sandboxroot.RootsOf(thread)...)
+	sandbox := sandboxroot.Unknown
+	for _, reported := range []any{thread["sandbox"], object["sandbox"]} {
+		if kind := sandboxroot.SandboxOf(reported); kind != sandboxroot.Unknown {
+			sandbox = kind
+			break
+		}
+	}
+	modes := []string{sandbox}
+	if sandbox == sandboxroot.Unknown {
+		modes = []string{mode}
+	} else if beforeResume {
+		modes = append(modes, mode)
+	}
+	for _, one := range modes {
+		if err := sandboxroot.CheckAll(cwd, roots, one); err != nil {
+			return &resumeFailure{Reason: sandboxroot.Code, Detail: "the host reports a thread that runs where a sandboxed Codex may not: " + err.Error() + "; " + after}
+		}
+	}
+	return nil
+}
+
 // resumeRun is one child-resume: two relay reads, then one App Server connection carrying
 // thread/read, thread/resume, mcpServerStatus/list and turn/start. Nothing is sent until the
 // thread is not active and the settings and the servers agree with the record; --dry-run stops
@@ -462,6 +495,14 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if read.Thread.Status.Type == "active" {
 		return nil, &resumeFailure{Reason: resumeThreadActive, Detail: "the thread is active; nothing was sent"}
 	}
+	// CRW-1265: the settings the thread has now count, not only the ones the record carries.
+	var live map[string]any
+	if err := json.Unmarshal(raw, &live); err != nil {
+		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/read result: " + err.Error()}
+	}
+	if refusal := resumeLiveRefusal(live, mode, true, "nothing was sent"); refusal != nil {
+		return nil, refusal
+	}
 	// CRW-1140: the child's PABCD state lives at the cwd the host reports for it now, not at the
 	// recorded cwd, which a later settings record may have changed. A record that would resume the
 	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
@@ -518,6 +559,14 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	var resumedSettings struct{ Model, ReasoningEffort, Cwd string }
 	if err := json.Unmarshal(resumed, &resumedSettings); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
+	}
+	// CRW-1265: the settings the resumed thread reports are what the turn would run under.
+	var resumedLive map[string]any
+	if err := json.Unmarshal(resumed, &resumedLive); err != nil {
+		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
+	}
+	if refusal := resumeLiveRefusal(resumedLive, mode, false, "the child was resumed but no turn was started"); refusal != nil {
+		return nil, refusal
 	}
 	if err := stateroot.Moved(rootEnv, read.Thread.Cwd, resumedSettings.Cwd, child); err != nil {
 		return nil, &resumeFailure{Reason: stateroot.CodeOf(err), Detail: err.Error() + "; the child was resumed but no turn was started"}

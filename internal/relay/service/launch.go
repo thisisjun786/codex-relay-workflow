@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
@@ -97,6 +98,12 @@ func (s *Service) environment() []string {
 	env := os.Environ()
 	if s.Scope.Authority == "isolated" {
 		env = environmentSet(env, ScopeEnv, s.Scope.Root)
+	}
+	// CRW-1265: the child runs in the state directory (launch), so a policy the environment names relative to this
+	// process's directory is handed over as the path that names the same file; the supervisor of `service run` gets
+	// its worker's policy this way, and startCommand sets the variable again from the policy the launch resolved.
+	if value, ok := os.LookupEnv(execution.EnvPolicy); ok && value != "" {
+		env = environmentSet(env, execution.EnvPolicy, s.callerPath(value))
 	}
 	return environmentSet(env, "CODEX_SESSION_RELAY_STATE", s.Selection.Path)
 }

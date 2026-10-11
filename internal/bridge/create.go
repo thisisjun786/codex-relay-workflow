@@ -205,6 +205,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 			return err
 		}
+		if err = createdRefusal(observed, in.Sandbox); err != nil {
+			return err
+		}
 		if findings := contract.Findings(observed); len(findings) > 0 {
 			first := findings[0]
 			message := findingText(first.Code, first.Field, first.Returned, first.Expected) + "; initial prompt withheld. Inspect creation receipt. The thread remains retained."

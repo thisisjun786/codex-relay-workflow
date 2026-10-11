@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -218,7 +219,7 @@ func load() *rules {
 	r.rawBases = []string{configured}
 	home := codexHome(getenv, accountHome)
 	if home != "" {
-		if raw, err := os.ReadFile(filepath.Join(home, "config.toml")); err == nil {
+		if raw, err := os.ReadFile(crwconfig.JoinRoot(home, "config.toml")); err == nil {
 			if doc, err := tomledit.Decode(string(raw)); err == nil {
 				r.codexDoc = doc
 			}
@@ -244,12 +245,40 @@ func load() *rules {
 	if r.unusable == nil {
 		r.sandboxBase = base
 	}
-	r.worktreeBase = []string{best(roots[crwconfig.RootWorktree].Path)}
-	if home != "" {
-		r.worktreeBase = append(r.worktreeBase, best(filepath.Join(home, "worktrees")))
+	// CRW-1265: CODEX_HOME and the configured roots are paths the kernel resolves, a link followed by ".." included, so what is
+	// derived below them is joined as raw text, never cleaned first (crwconfig.JoinRoot).
+	r.worktreeBase = nil
+	for _, base := range []string{roots[crwconfig.RootWorktree].Path, codexWorktrees(home)} {
+		if resolved, ok := baseOf(base); ok {
+			r.worktreeBase = append(r.worktreeBase, resolved)
+		}
 	}
 	r.projects = r.projectRoots(file, base, baseErr == nil && r.unusable == nil)
 	return r
+}
+
+// codexWorktrees is the directory Codex keeps its worktrees in, below its home as raw text ("" without a home).
+func codexWorktrees(home string) string {
+	if home == "" {
+		return ""
+	}
+	return crwconfig.JoinRoot(home, "worktrees")
+}
+
+// baseOf is best for a base that may not exist yet. A base that does not exist and holds a ".." element has no
+// lexical reading to fall back on (the kernel would resolve it through a link, and it cannot), so it names nothing;
+// an empty base names nothing either.
+func baseOf(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real, true
+	}
+	if slices.Contains(strings.Split(path, "/"), "..") {
+		return "", false
+	}
+	return filepath.Clean(path), true
 }
 
 func containsString(list []string, s string) bool {

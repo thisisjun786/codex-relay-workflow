@@ -183,3 +183,46 @@ func TestStartHandsTheChildTheCallersRelativePolicy(t *testing.T) {
 		t.Fatal("a child left in the caller's directory did not get the policy as the caller gave it")
 	}
 }
+
+// CRW-1265 (pre-merge evaluation of f0691fdd, d4). `service run` supervises from the caller's directory
+// and spawns its worker in the state directory, and the policy the worker reads is the one the
+// environment names: environment(), which SpawnWorker and startCommand both start from, hands over the
+// path that names the caller's file (a link followed by ".." included). A value that is absolute, an
+// unset variable and a child that stays in the caller's directory keep it as it was.
+func TestEnvironmentHandsTheWorkerTheCallersRelativePolicy(t *testing.T) {
+	root := t.TempDir()
+	caller, sub, state := filepath.Join(root, "caller"), filepath.Join(root, "other", "sub"), filepath.Join(root, "state")
+	for _, dir := range []string{caller, sub, state} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(sub, filepath.Join(caller, "link")); err != nil {
+		t.Fatal(err)
+	}
+	policyOf := func(s *Service) (string, bool) {
+		for _, v := range s.environment() {
+			if value, ok := strings.CutPrefix(v, execution.EnvPolicy+"="); ok {
+				return value, true
+			}
+		}
+		return "", false
+	}
+	production := &ScopeRegistry{Authority: "production"}
+	t.Chdir(caller)
+	wd, _ := os.Getwd()
+	for stated, want := range map[string]string{"policy.json": wd + "/policy.json", "link/../policy.json": wd + "/link/../policy.json", "/abs/policy.json": "/abs/policy.json"} {
+		t.Setenv(execution.EnvPolicy, stated)
+		if got, ok := policyOf(&Service{Selection: store.StateSelection{Path: state}, Scope: production}); !ok || got != want {
+			t.Errorf("%q reached the worker as %q (set %v), want %q", stated, got, ok, want)
+		}
+	}
+	t.Setenv(execution.EnvPolicy, "policy.json")
+	if got, _ := policyOf(&Service{Selection: store.StateSelection{Path: "state"}, Scope: production}); got != "policy.json" {
+		t.Errorf("a child left in the caller's directory got %q", got)
+	}
+	os.Unsetenv(execution.EnvPolicy)
+	if got, ok := policyOf(&Service{Selection: store.StateSelection{Path: state}, Scope: production}); ok {
+		t.Errorf("an unset policy reached the worker as %q", got)
+	}
+}

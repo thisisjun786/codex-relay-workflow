@@ -223,7 +223,9 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	if deny, stopped := spawnHookManaged(&a, sources); stopped {
 		return stop(deny)
 	}
-	spawnHookManagedCiphertext(&a)
+	if deny, stopped := spawnHookManagedCiphertext(&a); stopped {
+		return stop(deny)
+	}
 	var minted string
 	if _, _, resolved := spawnGrantScope(obj); resolved && !spawnedBySubagent && strings.Contains(message, SubspawnToken) {
 		_ = os.MkdirAll(tmpRoot, 0o700)

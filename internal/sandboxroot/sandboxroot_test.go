@@ -202,3 +202,56 @@ func TestRootsOfListsEveryWritableRoot(t *testing.T) {
 		t.Fatalf("roots of a sandbox mode: %v", got)
 	}
 }
+
+// CRW-1265 (pre-merge evaluation of f0691fdd, d5). CODEX_HOME is a path the kernel resolves: a symbolic link
+// followed by ".." names the link target's parent, not the link's own. The rule reads config.toml and derives
+// the worktree base from that directory, so a project the Codex configuration registers and a linked worktree
+// under the Codex worktrees are still allowed, and the decoy next to the link is not read.
+func TestCodexHomeLinkFollowedByDotDotNamesTheKernelsDirectory(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(parts ...string) string {
+		dir := filepath.Join(parts...)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	write := func(path, text string) {
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home, scratch := mk(root, "home", "jun"), mk(root, "scratch", "crw")
+	codex := mk(root, "else", "codex")
+	sub := mk(codex, "sub")
+	project := mk(root, "projects", "app")
+	repo := mk(codex, "worktrees", "abc", "repo")
+	write(filepath.Join(repo, ".git"), "gitdir: /nowhere\n")
+	write(filepath.Join(codex, "config.toml"), "[projects.\""+project+"\"]\ntrust_level = \"trusted\"\n")
+	cfg := mk(root, "cfg")
+	write(filepath.Join(cfg, "config.toml"), "# the decoy: no projects\n")
+	mk(cfg, "worktrees", "abc", "repo") // not the Codex worktrees
+	if err := os.Symlink(sub, filepath.Join(cfg, "link")); err != nil {
+		t.Fatal(err)
+	}
+	crw := filepath.Join(root, "crw.json")
+	write(crw, `{"paths":{"sandbox_root":"`+scratch+`","worktree_root":"`+filepath.Join(root, "data", "worktrees")+`"}}`)
+	env := map[string]string{"HOME": home, "CODEX_HOME": cfg + "/link/..", "CRW_CONFIG": crw}
+	t.Cleanup(Inject(func(name string) string { return env[name] }, home))
+	if err := Check(project, "workspace-write"); err != nil {
+		t.Fatalf("a project the Codex configuration registers: %v", err)
+	}
+	if err := Check(repo, "workspace-write"); err != nil {
+		t.Fatalf("a linked worktree under the Codex worktrees: %v", err)
+	}
+	if err := CheckDestination(filepath.Join(codex, "worktrees", "def", "repo"), "workspace-write"); err != nil {
+		t.Fatalf("a destination under the Codex worktrees: %v", err)
+	}
+	// The decoy directory next to the link is no worktree base.
+	if err := CheckDestination(filepath.Join(cfg, "worktrees", "def", "repo"), "workspace-write"); err == nil {
+		t.Fatal("the lexical spelling's worktrees directory was taken for a base")
+	}
+}

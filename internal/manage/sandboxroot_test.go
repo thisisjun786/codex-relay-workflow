@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
@@ -213,5 +214,71 @@ func TestRelayHelperInStateDirectoryKeepsConfigAndPolicyEnvironment(t *testing.T
 	want := []string{filepath.Join(start, "c.json"), filepath.Join(wd, "p.json"), wantState}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("child saw %q, want %q", got, want)
+	}
+}
+
+// CRW-1265 (pre-merge evaluation of f0691fdd, d3). The record is safe, but the loaded child runs where a
+// sandboxed Codex may not (the account home as its cwd, a home writable root kept, a sandbox policy or a
+// config root that names the home): the settings thread/read reports, and the ones thread/resume answers
+// with, are judged too. A thread/read refusal sends nothing (the dry run included); a thread/resume refusal
+// starts no turn.
+func TestChildResumeRefusesLiveHomeSettings(t *testing.T) {
+	w := sandboxroottest.Fake(t)
+	run := w.Mkdir(t, w.Sandbox, "run")
+	settings := `{"task":"01child","usable":true,"settings":{"sandbox":{"type":"workspaceWrite","writableRoots":["` + run + `"],"networkAccess":false},"approvalPolicy":"never","cwd":"` + run + `","runtimeWorkspaceRoots":["` + run + `"],"model":"m","reasoningEffort":"xhigh"}}`
+	thread := func(extra map[string]any) map[string]any {
+		out := map[string]any{"model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "idle"}}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	home := []any{w.Home}
+	for _, c := range []struct {
+		name         string
+		read, resume map[string]any // the extra members of the thread/read thread and of the thread/resume result
+		methods      []string       // the App Server methods that ran
+		rule         string
+	}{
+		{"the thread runs in the account home", map[string]any{"cwd": w.Home, "sandbox": map[string]any{"type": "workspaceWrite"}}, nil, []string{"thread/read"}, sandboxroot.RuleAccountHome},
+		{"the thread keeps a home writable root", map[string]any{"cwd": run, "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": home}}, nil, []string{"thread/read"}, sandboxroot.RuleAccountHome},
+		{"the thread reports a home runtime root and no sandbox", map[string]any{"cwd": run, "runtimeWorkspaceRoots": home}, nil, []string{"thread/read"}, sandboxroot.RuleAccountHome},
+		{"the resume answers with a home writable root", nil, map[string]any{"cwd": run, "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": home}}, []string{"thread/read", "thread/resume"}, sandboxroot.RuleAccountHome},
+		{"the resume answers with the home as its cwd", nil, map[string]any{"cwd": w.Home, "sandbox": map[string]any{"type": "workspaceWrite"}}, []string{"thread/read", "thread/resume"}, sandboxroot.RuleAccountHome},
+	} {
+		for _, dry := range []bool{false, true} {
+			if dry && c.resume != nil {
+				continue // the dry run stops after thread/read
+			}
+			t.Run(c.name, func(t *testing.T) {
+				host := resumeHost(t, "idle")
+				host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": thread(c.read)}})
+				answer := map[string]any{"model": "m", "reasoningEffort": "xhigh"}
+				for k, v := range c.resume {
+					answer[k] = v
+				}
+				host.Respond("thread/resume", fakehost.Reply{Result: answer})
+				exe, _ := resumeRelayScript(t, resumeTestAssignment, settings, 0)
+				e, _, _ := resumeEnv(t, exe)
+				_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "go", dryRun: dry})
+				var failure *resumeFailure
+				if !errors.As(err, &failure) || failure.Reason != sandboxroot.Code || !strings.Contains(failure.Detail, c.rule) {
+					t.Fatalf("dry=%v: want a %s refusal, got %v", dry, c.rule, err)
+				}
+				if methods := resumeHostMethods(host); strings.Join(methods, ",") != strings.Join(c.methods, ",") {
+					t.Fatalf("dry=%v: the App Server ran %v, want %v", dry, methods, c.methods)
+				}
+			})
+		}
+	}
+	// A thread that runs in a dedicated root with safe roots is resumed and its turn started as before.
+	host := resumeHost(t, "idle")
+	safe := map[string]any{"cwd": run, "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{run}}, "runtimeWorkspaceRoots": []any{run}}
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": thread(safe)}})
+	host.Respond("thread/resume", fakehost.Reply{Result: map[string]any{"model": "m", "reasoningEffort": "xhigh", "cwd": run, "sandbox": safe["sandbox"], "runtimeWorkspaceRoots": []any{run}}})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, settings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	if _, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha", "beta"), resumeOptions{relationship: "rel-1", message: "go"}); err != nil || host.Count("turn/start") != 1 {
+		t.Fatalf("a safe thread: %v, calls %v", err, resumeHostMethods(host))
 	}
 }

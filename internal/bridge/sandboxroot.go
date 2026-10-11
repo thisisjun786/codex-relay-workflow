@@ -85,3 +85,18 @@ func reportedSandbox(state map[string]any) []any {
 func reportedRoots(state map[string]any) []string {
 	return append(sandboxroot.RootsOf(pyjson.Map(state["thread"])), sandboxroot.RootsOf(state)...)
 }
+
+// createdRefusal judges the writable roots the host's answer to thread/start says the new thread got
+// (CRW-1265). A creation that states no policy and no roots leaves them to the host's configuration, which may
+// hold the account home; the roots the request names were judged before the host was called, these are the ones
+// it added. A refusal withholds the title and the initial prompt; the thread stays retained.
+func createdRefusal(created map[string]any, sandbox string) error {
+	roots := append(sandboxroot.RootsOf(created), sandboxroot.RootsOf(pyjson.Map(created["thread"]))...)
+	err := rootRefusal("thread/start", sandboxroot.CheckAll("", roots, effectiveSandbox(sandbox, nil, reportedSandbox(created)...)))
+	var rpc *appserver.RPCError
+	if errors.As(err, &rpc) {
+		rpc.Message += "; initial prompt withheld. Inspect creation receipt. The thread remains retained."
+		rpc.Object["message"] = rpc.Message
+	}
+	return err
+}
