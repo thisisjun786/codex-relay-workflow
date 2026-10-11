@@ -395,11 +395,12 @@ func TestStandbyBoundCoversReadTurn(t *testing.T) {
 	t.Run("the bound cuts a slow read", func(t *testing.T) {
 		t.Parallel()
 		k, app := waitKit(t, 30*time.Millisecond, time.Millisecond)
-		k.start.Adapter = &slowReadApp{waitApp: app, delay: 2 * time.Second}
+		// The read would take 30s; the call answering well inside that (10s leaves room for a loaded host) shows the cut.
+		k.start.Adapter = &slowReadApp{waitApp: app, delay: 30 * time.Second}
 		started := time.Now()
 		got := k.run()
-		if got["reason"] != "standby_incomplete" || time.Since(started) > time.Second {
-			t.Fatalf("a 30ms bound over a 2s read: %v/%v after %v", got["state"], got["reason"], time.Since(started))
+		if got["reason"] != "standby_incomplete" || time.Since(started) > 10*time.Second {
+			t.Fatalf("a 30ms bound over a 30s read: %v/%v after %v", got["state"], got["reason"], time.Since(started))
 		}
 	})
 	t.Run("the caller's cancellation is not the bound", func(t *testing.T) {
