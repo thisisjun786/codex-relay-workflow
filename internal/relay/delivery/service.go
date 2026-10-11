@@ -323,7 +323,8 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // delivery holds a line for longer than one backoff at a time.
 //
 // It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), then the
-// state DeferredBusy, now and the two hourly caps (the orchestrator class's, then the ordinary one):
+// state DeferredBusy, now, the two hourly caps (the orchestrator class's, then the ordinary one) and the
+// window's two stamps again (an event already counted in the window is not refused by the cap):
 // see busyHeadArgs. A candidate is behind the head when the
 // head's key is smaller than its own, compared as row values in the order eligibleOrder sorts.
 //
@@ -348,12 +349,12 @@ var busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible
 	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR (bw.event_id IS NOT NULL AND bw.spent_at IS NULL))" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
-	" AND COALESCE(bs.spent, 0) < CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END) WHERE rn = 1)"
+	" AND (COALESCE(bs.spent, 0) < CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END OR " + store.EventCountedSQL("b.event_id") + ")) WHERE rn = 1)"
 
 // busyHeadArgs are the arguments of busyHeadSQL at now.
 func (d *Service) busyHeadArgs(now float64) []any {
 	window, _ := d.Policy.RateWindows(now)
-	return append(store.RelationshipSendsArgs(window), DeferredBusy, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
+	return append(store.RelationshipSendsArgs(window), DeferredBusy, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds))
 }
 
 // behindBusyHead reports whether an older delivery to this delivery's recipient is waiting out a busy
@@ -494,7 +495,7 @@ func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWa
 }
 
 // eligibility is the join and predicate of a due delivery and their arguments at now (the four
-// stamps of the window's two counts, the eight of the busy heads, then the predicate's). A delivery whose relationship has
+// stamps of the window's two counts, the ten of the busy heads, then the predicate's). A delivery whose relationship has
 // already spent its hourly budget for the recipient (the cap of its relationship class: an orchestrator's
 // own, or the ordinary one) is not due until the window reopens: it would
 // only be refused, and a runaway relationship's refused rows must not take the attempts its calm
@@ -513,8 +514,8 @@ func (d *Service) eligibility(now float64) (string, string, []any) {
 		" LEFT JOIN " + store.OrchestratorTasksSQL + " ot ON ot.task_id = r.parent_task_id" +
 		" LEFT JOIN delivery_wakes dw ON dw.event_id = d.event_id"
 	args := append(store.RelationshipSendsArgs(window), d.busyHeadArgs(now)...)
-	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
-	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END AND bh.event_id IS NULL", args
+	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds))
+	return join, eligibleBase + " AND (COALESCE(sbspent.spent, 0) < CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END OR " + store.EventCountedSQL("d.event_id") + ") AND bh.event_id IS NULL", args
 }
 
 // dueFrom is what the due-delivery reads select from: a delivery with its relationship and event.
@@ -666,8 +667,10 @@ func (s *superseded) Error() string { return "superseded: " + s.reason }
 
 // pacing reads send_pacing on the ctx-aware querier: the recipient's gap since its latest send of
 // any relationship, and the hour count of the relationship's own distinct events sent to that recipient,
-// against the cap of the relationship's class.
-func (d *Service) pacing(ctx context.Context, relationship, recipient string, now float64) (Obj, error) {
+// against the cap of the relationship's class. subject names the event (or message) the send is for:
+// one already counted in the hour is a retry that adds no distinct event, which the hour cap does not
+// refuse; the zero subject is a new send.
+func (d *Service) pacing(ctx context.Context, relationship, recipient string, now float64, subject store.SendSubject) (Obj, error) {
 	window, earliest := d.Policy.RateWindows(now)
 	last, err := one(ctx, d.Store, "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ? AND window_start BETWEEN ? AND ?", recipient, earliest, window)
 	if err != nil {
@@ -681,25 +684,40 @@ func (d *Service) pacing(ctx context.Context, relationship, recipient string, no
 	if err != nil {
 		return nil, err
 	}
+	counted, err := d.Store.SubjectCounted(ctx, subject, window)
+	if err != nil {
+		return nil, err
+	}
 	var lastAt *float64
 	if last != nil && !last.N("last") {
 		v := last.F("last")
 		lastAt = &v
 	}
-	return d.Policy.PacingAt(now, sends, d.Policy.HourlyCapFor(orchestrator), lastAt), nil
+	return d.Policy.PacingAt(now, sends, d.Policy.HourlyCapFor(orchestrator), counted, lastAt), nil
 }
 
-// SendRefusal is send_refusal: why relationship may not wake recipient at now, or "".
+// SendRefusal is send_refusal: why relationship may not wake recipient at now with a new send, or "".
 func (d *Service) SendRefusal(ctx context.Context, relationship, recipient string, now float64) (string, error) {
-	p, err := d.pacing(ctx, relationship, recipient, now)
+	return d.SendRefusalFor(ctx, relationship, recipient, now, store.SendSubject{})
+}
+
+// SendRefusalFor is SendRefusal for the send of subject: a retry of an event or message the hour
+// already counts is not refused by the hour cap, which counts distinct events.
+func (d *Service) SendRefusalFor(ctx context.Context, relationship, recipient string, now float64, subject store.SendSubject) (string, error) {
+	p, err := d.pacing(ctx, relationship, recipient, now, subject)
 	return pyjson.Text(p.Get("reason")), err
 }
 
-// ReserveSend is reserve_send, inside the caller's claim transaction. It reads the relationship's
+// ReserveSend is reserve_send for a new send (ReserveSendFor).
+func (d *Service) ReserveSend(ctx context.Context, relationship, recipient string, now float64) (string, error) {
+	return d.ReserveSendFor(ctx, relationship, recipient, now, store.SendSubject{})
+}
+
+// ReserveSendFor is reserve_send, inside the caller's claim transaction. It reads the relationship's
 // hour count before the caller writes its own attempt row, so the send being reserved is not
 // counted against itself, and it records the send on the recipient's row, where the gap lives.
-func (d *Service) ReserveSend(ctx context.Context, relationship, recipient string, now float64) (string, error) {
-	refused, err := d.SendRefusal(ctx, relationship, recipient, now)
+func (d *Service) ReserveSendFor(ctx context.Context, relationship, recipient string, now float64, subject store.SendSubject) (string, error) {
+	refused, err := d.SendRefusalFor(ctx, relationship, recipient, now, subject)
 	if err != nil || refused != "" {
 		return refused, err
 	}
@@ -708,16 +726,16 @@ func (d *Service) ReserveSend(ctx context.Context, relationship, recipient strin
 	return "", err
 }
 
-func (d *Service) rateLimited(ctx context.Context, relationship, recipient string, now float64) (bool, error) {
+func (d *Service) rateLimited(ctx context.Context, relationship, recipient string, now float64, subject store.SendSubject) (bool, error) {
 	if d.RateLimited != nil {
 		return d.RateLimited(recipient, now), nil
 	}
-	refused, err := d.SendRefusal(ctx, relationship, recipient, now)
+	refused, err := d.SendRefusalFor(ctx, relationship, recipient, now, subject)
 	return refused != "", err
 }
 
-func (d *Service) pacedUntil(ctx context.Context, relationship, recipient string, now float64) (float64, error) {
-	p, err := d.pacing(ctx, relationship, recipient, now)
+func (d *Service) pacedUntil(ctx context.Context, relationship, recipient string, now float64, subject store.SendSubject) (float64, error) {
+	p, err := d.pacing(ctx, relationship, recipient, now, subject)
 	if err != nil {
 		return 0, err
 	}
@@ -950,7 +968,7 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		}
 		// The budget is spent before this claim writes its own attempt row, so the count the
 		// refusal reads is the sends already made, not this one.
-		refused, err := d.ReserveSend(ctx, row.S("relationship_id"), recipient, now)
+		refused, err := d.ReserveSendFor(ctx, row.S("relationship_id"), recipient, now, store.SendSubject{EventID: eventID})
 		if err != nil {
 			return err
 		}
@@ -1106,12 +1124,12 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	if err := assertAssignmentDelivery(relationship, row.S("kind"), recipient, &thread, &eventRID, manifestPaths(event)); err != nil {
 		return nil, err
 	}
-	limited, err := d.rateLimited(ctx, row.S("relationship_id"), recipient, at)
+	limited, err := d.rateLimited(ctx, row.S("relationship_id"), recipient, at, store.SendSubject{EventID: eventID})
 	if err != nil {
 		return nil, err
 	}
 	if limited {
-		when, err := d.pacedUntil(ctx, row.S("relationship_id"), recipient, at)
+		when, err := d.pacedUntil(ctx, row.S("relationship_id"), recipient, at, store.SendSubject{EventID: eventID})
 		if err != nil {
 			return nil, err
 		}
@@ -1146,7 +1164,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	var gone *superseded
 	switch {
 	case errors.Is(err, errPaced):
-		when, err := d.pacedUntil(ctx, row.S("relationship_id"), recipient, at)
+		when, err := d.pacedUntil(ctx, row.S("relationship_id"), recipient, at, store.SendSubject{EventID: eventID})
 		if err != nil {
 			return nil, err
 		}

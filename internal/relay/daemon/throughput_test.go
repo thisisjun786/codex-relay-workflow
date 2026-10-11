@@ -791,3 +791,65 @@ func TestThroughputWokenTickKeepsTheReadBudget(t *testing.T) {
 		return all
 	}(), 4)
 }
+
+// A woken tick reads the woken children first but keeps the first read of each class that waits, within the
+// first two reads, however many woken turns one class holds and however often the daemon is woken
+// (CRW-1210): a run of woken staged claims cannot take the budget from the other work, nor the reverse.
+func TestThroughputWokenTickKeepsBothClassesRead(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		// plain are the indexes with no staged claim; the rest are staged. woken are the woken indexes.
+		plain, woken []int
+		firstClasses [2]bool // whether the first two reads are of a staged relationship, in order
+	}{
+		{"woken staged turns, one plain turn waits", []int{0}, []int{1, 2, 3, 4}, [2]bool{true, false}},
+		{"woken plain turn, staged turns wait", []int{0, 1}, []int{0, 1}, [2]bool{false, true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, s := throughputStore(t)
+			const relationships = 5
+			for i := range relationships {
+				seedIndexed(t, s, i)
+				if !slices.Contains(c.plain, i) {
+					stageClaim(t, s, i, name("anchor", i))
+				}
+			}
+			host := &observationHost{status: "inProgress"}
+			d := New(s, host, movingClock(), nil)
+			d.Policy.MaxSends, d.Policy.MaxTurnReads = -1, 4
+			var woken []string
+			for _, i := range c.woken {
+				woken = append(woken, name("child", i))
+			}
+			// The daemon is woken tick after tick: the plain turn is read by every one of them.
+			for tick := range 3 {
+				before := len(host.reads)
+				if _, err := d.Tick(WithWoken(ctx, woken)); err != nil {
+					t.Fatal(err)
+				}
+				var read []int
+				for _, turn := range host.reads[before:] {
+					read = append(read, indexOf(turn))
+				}
+				if len(read) != 4 {
+					t.Fatalf("woken tick %d read %v, want the budget of 4", tick, read)
+				}
+				for n, want := range c.firstClasses {
+					if staged := !slices.Contains(c.plain, read[n]); staged != want {
+						t.Fatalf("woken tick %d read %v: read %d is staged=%v, want %v (one read of each class within the first two)", tick, read, n, staged, want)
+					}
+				}
+				if !slices.Contains(woken, name("child", read[0])) {
+					t.Fatalf("woken tick %d read %v: the first read is not of a woken child", tick, read)
+				}
+				for _, plain := range c.plain {
+					if !slices.Contains(read, plain) && !slices.Contains(c.woken, plain) {
+						t.Fatalf("woken tick %d read %v: the plain turn %d waits and was not read", tick, read, plain)
+					}
+				}
+			}
+		})
+	}
+}

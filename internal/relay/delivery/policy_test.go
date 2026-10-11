@@ -36,7 +36,7 @@ func (f *fixture) spendMessage(rid, recipient, message string, transports int, n
 // nothing does.
 func (f *fixture) pacingOf() (reason string, sends, capacity int64) {
 	f.t.Helper()
-	p, err := f.delivery.pacing(f.ctx, f.rid, parent, f.clock.Now())
+	p, err := f.delivery.pacing(f.ctx, f.rid, parent, f.clock.Now(), store.SendSubject{})
 	mustDo(f.t, err)
 	if p == nil {
 		return "", 0, 0
@@ -171,5 +171,63 @@ func TestOrchestratorClassBudget(t *testing.T) {
 	mustDo(t, err)
 	if reason, _, capacity := f.pacingOf(); reason != HourlyCap || capacity != int64(ordinary) {
 		t.Fatalf("after the binding ended: %q cap %d, want %s at %d", reason, capacity, HourlyCap, ordinary)
+	}
+}
+
+// A retry of an event the hour already counts adds no distinct event, so the hour cap does not refuse
+// it: at the cap, the counted event stays due, still heads its recipient's busy line, is let through the
+// preflight and the claim, and is delivered; a new event is still refused. What bounds the retry is its
+// own attempt cap and the recipient's gap.
+func TestRetryOfCountedEventAtCap(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, "")
+	event := f.queuedEvent(regOpts{})
+	const other = "a-new-event-never-sent"
+	now := f.clock.Now()
+	capacity := int(f.delivery.Policy.MaxSendsPerRelationshipPerHour)
+
+	// The event has one counted attempt this hour, and capacity-1 other events fill the rest.
+	f.spendAttempts(f.rid, parent, event, 1, now)
+	_, err := execSQL(f.ctx, f.store, "UPDATE deliveries SET attempt_count = 1 WHERE event_id = ?", event)
+	mustDo(t, err)
+	for i := 1; i < capacity; i++ {
+		f.spendAttempts(f.rid, parent, fmt.Sprintf("seed-retry-%d", i), 1, now)
+	}
+	if got := f.sendsOf(f.rid, parent); got != int64(capacity) {
+		t.Fatalf("the hour counts %d events, want the cap %d", got, capacity)
+	}
+	// The gap since those sends is over (their stamps are at the window's opening), so only the cap is in play.
+	if reason, _, _ := f.pacingOf(); reason != HourlyCap {
+		t.Fatalf("a new send at the cap: %q, want %s", reason, HourlyCap)
+	}
+	if refused, err := f.delivery.SendRefusalFor(f.ctx, f.rid, parent, f.clock.Now(), store.SendSubject{EventID: event}); err != nil || refused != "" {
+		t.Fatalf("the retry of a counted event at the cap: %q, %v; want none", refused, err)
+	}
+	if refused, err := f.delivery.SendRefusalFor(f.ctx, f.rid, parent, f.clock.Now(), store.SendSubject{EventID: other}); err != nil || refused != HourlyCap {
+		t.Fatalf("a new event at the cap: %q, %v; want %s", refused, err, HourlyCap)
+	}
+	if due := f.eligible(); !slices.Contains(due, event) {
+		t.Fatalf("due at the cap: %v, want the counted event %s", due, event)
+	}
+
+	// It still heads its recipient's busy line at the cap: a wake finds it.
+	_, err = execSQL(f.ctx, f.store, "UPDATE deliveries SET state = ?, next_eligible_at = ? WHERE event_id = ?", DeferredBusy, f.clock.Now()+100, event)
+	mustDo(t, err)
+	woke, err := f.delivery.WakeBusyHead(f.ctx, f.row(event).S("recipient_thread_id"), f.clock.Now())
+	mustDo(t, err)
+	if !woke {
+		t.Fatal("a counted event at the cap does not head its recipient's busy line")
+	}
+
+	// And the claim delivers it.
+	record := f.mustAttempt(event, at(f.clock.Now()))
+	if record == nil || pyjson.Text(record.Get("deliveryState")) == HourlyCap {
+		t.Fatalf("the retry at the cap was paced: %v", record)
+	}
+	if n := f.count("SELECT COUNT(*) AS c FROM attempts WHERE event_id = ?", event); n != 2 {
+		t.Fatalf("%d attempts of the retried event, want 2", n)
+	}
+	if got := f.sendsOf(f.rid, parent); got != int64(capacity) {
+		t.Fatalf("the retry changed the hour count to %d, want it to stay %d", got, capacity)
 	}
 }

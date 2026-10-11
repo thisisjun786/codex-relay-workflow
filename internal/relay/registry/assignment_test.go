@@ -492,7 +492,7 @@ func TestPacingReadsTheCapOfTheRelationshipsClass(t *testing.T) {
 		{59, true, nil, 0},
 		{60, true, "hourly_cap", 60},
 	} {
-		got := p.pacing(now, c.sends, nil, c.orchestrator)
+		got := p.pacing(now, c.sends, nil, c.orchestrator, false)
 		if c.reason == nil {
 			if got != nil {
 				t.Errorf("%d sends (orchestrator %v): paced by %v, want none", c.sends, c.orchestrator, got)

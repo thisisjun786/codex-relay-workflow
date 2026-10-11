@@ -131,7 +131,10 @@ func (p RetryPolicy) rateWindows(now float64) (int64, int64) {
 }
 
 // pacing is RetryPolicy.pacing for a relationship of class orchestrator or not; nil is None.
-func (p RetryPolicy) pacing(now float64, sends any, last any, orchestrator bool) contract.OrderedObject {
+//
+// counted says the event is already one of the distinct events the hour counts: its retry adds none, so the
+// hour cap does not refuse it (a cap of zero still does).
+func (p RetryPolicy) pacing(now float64, sends any, last any, orchestrator, counted bool) contract.OrderedObject {
 	window, _ := p.rateWindows(now)
 	count, _ := toFloat(sends)
 	p.MaxSendsPerHour = p.hourlyCap(orchestrator)
@@ -141,7 +144,7 @@ func (p RetryPolicy) pacing(now float64, sends any, last any, orchestrator bool)
 		g := l + p.MinSendIntervalSeconds
 		gapEnds = &g
 	}
-	if count >= float64(p.MaxSendsPerHour) {
+	if count >= float64(p.MaxSendsPerHour) && (p.MaxSendsPerHour <= 0 || !counted) {
 		if p.MaxSendsPerHour <= 0 {
 			return append(append(contract.OrderedObject{{Key: "reason", Value: "hourly_cap"}, {Key: "reopensAt", Value: nil}}, reading...),
 				contract.Field{Key: "detail", Value: "a cap of zero refuses every send; only a changed policy reopens it"})
@@ -400,6 +403,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		"       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"+
 		"         AND h.state = 'host_lost_turn') AS host_lost_attempts,"+
 		"       "+store.RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id")+" AS rate_sends,"+
+		"       "+store.EventCountedSQL("d.event_id")+" AS rate_counted,"+
 		"       "+store.OrchestratorParentSQL("r.parent_task_id")+" AS rate_orchestrator,"+
 		"       (SELECT MAX(last_send_at) FROM recipient_rate"+
 		"         WHERE recipient_task_id = d.recipient_task_id"+
@@ -424,7 +428,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		"  LEFT JOIN delivery_supersession sx ON sx.event_id = e.event_id"+
 		"  LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		lifecycleWithholdJoin("lf", "e", "d")+
-		" WHERE e.event_id = ?", append(store.RelationshipSendsArgs(float64(window)), earliest, window, eventID)...)
+		" WHERE e.event_id = ?", append(append(store.RelationshipSendsArgs(float64(window)), store.SendStamp(float64(window)), store.SendStamp(float64(window)+rateWindowSeconds)), earliest, window, eventID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +447,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		}
 		var pacing any
 		if contains(notSentStates, state) && !pyvalue.Truthy(row.Get("hold_reason")) {
-			pacing = pacingHolding(v.Policy.pacing(now, row.Get("rate_sends"), row.Get("rate_last"), pyvalue.Truthy(row.Get("rate_orchestrator"))), row.Get("next_eligible_at"))
+			pacing = pacingHolding(v.Policy.pacing(now, row.Get("rate_sends"), row.Get("rate_last"), pyvalue.Truthy(row.Get("rate_orchestrator")), pyvalue.Truthy(row.Get("rate_counted"))), row.Get("next_eligible_at"))
 		}
 		reading := SettingsHoldReading(holdColumnsOf(row))
 		var settingsHold any

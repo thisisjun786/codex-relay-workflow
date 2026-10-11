@@ -979,7 +979,10 @@ distinct events (12), counted over both queues from the attempts the relay alrea
 count stored for it (I-225, I-475). A send is an event, not an attempt (CRW-1210): an event tried
 again and again is one send, and what stops its repetition is its own attempt cap (`MaxAttempts`,
 held at `attempt_cap`; a busy recipient has `BusyMaxAttempts`), so the hour is spent by new events
-and a retried one cannot read as a runaway. An event none of whose attempts woke anybody is not
+and a retried one cannot read as a runaway. The cap refuses a new event, not the retry of one the hour
+already counts: a retry adds no distinct event, so an event or supervisor message with a counted attempt
+in the window stays due, still heads its recipient's busy line, and is claimed at the cap (the recipient's
+gap and the event's own attempt cap still hold). An event none of whose attempts woke anybody is not
 counted: a delivery attempt that failed before the send or found the recipient busy, and a supervisor
 transport that sent nothing and may be retried; a claim still in flight, or one whose outcome is
 unknown, counts until it settles. A relationship of class `orchestrator` - its parent holds the live
@@ -1200,7 +1203,9 @@ a socket method, and the daemon runs a tick at once instead of waiting out the 2
 A tick that wakes begins at least one second after the last one began, whatever the number of Stops,
 so the per-tick budgets hold and a storm of Stops is one tick a second with each woken thread listed
 once; the threads that woke a tick have their turns read first by the observation pass, ahead of the
-longest-waiting turns of the others. The 20 s tick is the backstop: a wake that is dropped (the
+longest-waiting turns of the others, except that the first read of each class that waits (a staged claim,
+or other work) is reserved, so a run of woken turns of one class cannot take the budget from the other,
+however often the daemon is woken. The 20 s tick is the backstop: a wake that is dropped (the
 channel holds 256), or a Stop that ends before the host marks its turn finished, is made up by the
 next tick, and a daemon nobody wakes ticks exactly as before.
 

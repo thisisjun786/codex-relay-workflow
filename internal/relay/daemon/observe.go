@@ -136,12 +136,22 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 	default:
 		order, floor = slices.Concat(others[:1], staged, others[1:]), 2
 	}
-	if woken := Woken(ctx); len(woken) > 0 {
+	if woken := Woken(ctx); len(woken) > 0 && budget >= 2 {
 		// The children whose Stop woke this tick (CRW-1210): their turns are read first, in the order the
-		// deal gave them, ahead of the longest-waiting turns of the others.
+		// deal gave them, ahead of the longest-waiting turns of the others. The first read of each class that
+		// waits is still reserved, within the first two (the pass's floor): a run of woken turns of one class
+		// cannot take the budget from the other, however often the daemon is woken. With one read to give,
+		// the longest-waiting turn keeps it.
 		slices.SortStableFunc(order, func(a, b read) int {
 			return cmp.Compare(b2i(!slices.Contains(woken, a.p.child)), b2i(!slices.Contains(woken, b.p.child)))
 		})
+		if floor == 2 {
+			if j := slices.IndexFunc(order, func(r read) bool { return r.class != order[0].class }); j > 1 {
+				other := order[j]
+				copy(order[2:j+1], order[1:j])
+				order[1] = other
+			}
+		}
 	}
 	share := max(1, d.Policy.MinRelationshipShare, budget/len(work))
 	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}

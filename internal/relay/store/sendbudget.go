@@ -51,6 +51,55 @@ func RelationshipSendsSQL(relationship, recipient string) string {
 		" AND (sbs.send_attempted <> 'no' OR sbs.retry_safe = 0)))"
 }
 
+// SendSubject names the one thing a send is about: a delivery's event, or a supervisor message. The zero
+// value names nothing, and a send that names nothing is a new one.
+type SendSubject struct{ EventID, MessageID string }
+
+// notSendStates is the attempt states that are not a send: the claim settled as a send that never left.
+const notSendStates = "('withheld_pre_send', 'deferred_busy')"
+
+// EventCountedSQL is the SQL condition that an event already counts in an hour window: an attempt of it
+// is one RelationshipSendsSQL counts. A retry of such an event adds no distinct event to the window, so
+// the hour cap does not refuse it (what bounds it is its own attempt cap and the recipient gap). event
+// is a SQL operand; the condition takes the window's two stamps.
+func EventCountedSQL(event string) string {
+	return "EXISTS (SELECT 1 FROM attempts cta WHERE cta.event_id = " + event + " AND cta.sent_at >= ? AND cta.sent_at < ?" +
+		" AND (cta.state IS NULL OR cta.state NOT IN " + notSendStates + "))"
+}
+
+// MessageCountedSQL is EventCountedSQL for a supervisor message: a transport of it is one
+// RelationshipSendsSQL counts. It takes the window's two stamps.
+func MessageCountedSQL(message string) string {
+	return "EXISTS (SELECT 1 FROM supervisor_attempts cts WHERE cts.message_id = " + message + " AND cts.transport_started_at >= ? AND cts.transport_started_at < ?" +
+		" AND (cts.send_attempted <> 'no' OR cts.retry_safe = 0))"
+}
+
+// SubjectCounted is whether the subject already counts in the hour window that opens at window. A read
+// inside a transaction sees that transaction's writes, so a claim that reads it before inserting its own
+// attempt row does not count itself.
+func (s *Store) SubjectCounted(ctx context.Context, subject SendSubject, window float64) (bool, error) {
+	from, to := SendStamp(window), SendStamp(window+3600)
+	var query string
+	switch {
+	case subject.EventID != "":
+		query = "SELECT " + EventCountedSQL("?") + " AS counted"
+		return s.counted(ctx, query, subject.EventID, from, to)
+	case subject.MessageID != "":
+		query = "SELECT " + MessageCountedSQL("?") + " AS counted"
+		return s.counted(ctx, query, subject.MessageID, from, to)
+	}
+	return false, nil
+}
+
+func (s *Store) counted(ctx context.Context, query string, args ...any) (bool, error) {
+	row, err := s.One(ctx, query, args...)
+	if err != nil || row == nil {
+		return false, err
+	}
+	n, _ := row.Get("counted").(int64)
+	return n != 0, nil
+}
+
 // RelationshipSpentSQL is a derived table of what every relationship has sent to every recipient
 // inside an hour window: one row per (relationship_id, recipient_task_id) with its count in spent.
 // It takes the four stamps of RelationshipSendsArgs and counts the same two kinds of row as
