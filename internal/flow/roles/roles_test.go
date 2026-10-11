@@ -1,0 +1,213 @@
+package roles
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/role/agents"
+)
+
+// TestEmbeddedAgentsUnchanged pins the bytes of the CXC role definitions to the cut: the overlay is appended to
+// them and never edits them, so the sha-256 of each file is the one it had when the engine's overlays were written.
+func TestEmbeddedAgentsUnchanged(t *testing.T) {
+	cut := map[string]string{
+		"architect.toml": "c285250433d4e6187bdf0bd73623e10bcf38d13789e5d9d8ff632d80d4fa2672",
+		"executor.toml":  "4ee08fdb36e34adf2cee76a98ceb71f69de9cc6f6d7b8a13b5f398b3884ba04f",
+		"explorer.toml":  "5c1e712b2c66fded83fead2fceb36d4e74fc40f9cc00fa798d9855704434f2c2",
+		"reviewer.toml":  "e68ffbf7ea309245cb622a9cfad8a95d2c51c5dec6dacdff10bf1347c92a8bde",
+	}
+	entries, err := agents.FS.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != len(cut) {
+		t.Fatalf("the cut has %d role definitions, the directory has %d", len(cut), len(entries))
+	}
+	for name, want := range cut {
+		raw, err := agents.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(raw)
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s: sha-256 %s, the cut has %s", name, got, want)
+		}
+		// The registration embeds the same directory; the file on disk is what both read.
+		onDisk, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "role", "agents", name))
+		if err != nil || string(onDisk) != string(raw) {
+			t.Errorf("%s: the embedded bytes differ from the file (%v)", name, err)
+		}
+	}
+}
+
+func TestOverlayAppendsToEmbeddedPrompt(t *testing.T) {
+	for _, name := range Names {
+		base, err := Base(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		overlay, err := Overlay(name, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		prompt, err := Prompt(name, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(prompt, base) {
+			t.Errorf("%s: the prompt does not start with the role definition", name)
+		}
+		if prompt != base+Separator+overlay {
+			t.Errorf("%s: the prompt is not the definition, a blank line and the overlay", name)
+		}
+		if !strings.HasPrefix(overlay, "# CRW flow overlay: "+name+"\n") {
+			t.Errorf("%s: the overlay does not open with its heading: %q", name, firstLine(overlay))
+		}
+		if !strings.HasSuffix(overlay, "\n") || strings.HasSuffix(overlay, "\n\n") {
+			t.Errorf("%s: the overlay ends in exactly one newline", name)
+		}
+		// The overlay says what it adds on the points the design names.
+		for _, point := range []string{"cwd", "output schema"} {
+			if !strings.Contains(strings.ToLower(overlay), point) {
+				t.Errorf("%s: the overlay does not say anything about %s", name, point)
+			}
+		}
+	}
+	if _, err := Prompt("child", Options{}); err == nil {
+		t.Error("a relay role has no overlay")
+	}
+	// The second tier and the final reviewer are built on the definitions of their families.
+	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer"} {
+		a, _ := Base(role)
+		b, _ := Base(family)
+		if a != b {
+			t.Errorf("%s is built on the %s definition", role, family)
+		}
+	}
+	// Executors read the crw-dev-* skills by name, and every skill the overlays name exists.
+	executor, _ := Overlay("executor", Options{})
+	for _, skill := range []string{"crw-dev", "crw-dev-frontend", "crw-dev-backend", "crw-dev-testing", "crw-dev-debugging", "crw-dev-scaffolding"} {
+		if !strings.Contains(executor, "`"+skill+"`") {
+			t.Errorf("the executor overlay does not name the %s skill", skill)
+		}
+	}
+	for _, name := range Names {
+		for _, opts := range []Options{{}, {QA: name == "executor"}} {
+			overlay, _ := Overlay(name, opts)
+			for _, skill := range regexp.MustCompile("`(crw-[a-z-]+)` skill|`(crw-dev[a-z-]*)`").FindAllStringSubmatch(overlay, -1) {
+				skillName := skill[1] + skill[2]
+				if _, err := os.Stat(filepath.Join(repoRoot(t), "plugins", "crw", "skills", skillName, "SKILL.md")); err != nil {
+					t.Errorf("%s overlay names the skill %s, which does not exist: %v", name, skillName, err)
+				}
+			}
+		}
+	}
+}
+
+// TestOverlayReplacesLeafSentence: the overlay names the LEAF sentence of the definition and says what applies instead.
+func TestOverlayReplacesLeafSentence(t *testing.T) {
+	helper := regexp.MustCompile(`up to one helper in this call, and it must have agent_type 'explorer'`)
+	none := regexp.MustCompile(`zero helpers in this call \(0\)`)
+	for _, row := range []struct {
+		role   string
+		opts   Options
+		helper bool
+	}{
+		{"executor", Options{}, true}, {"executor-t1", Options{}, true}, {"architect", Options{}, true},
+		{"reviewer", Options{}, true}, {"reviewer-final", Options{}, true},
+		{"explorer", Options{}, false}, {"executor", Options{QA: true}, false},
+	} {
+		base, _ := Base(row.role)
+		overlay, err := Overlay(row.role, row.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		label := row.role
+		if row.opts.QA {
+			label += " (QA)"
+		}
+		// A definition with the sentence is named by the sentence; the architect's has none and the overlay says so.
+		if strings.Contains(base, LeafSentence) {
+			if !strings.Contains(overlay, `begins "`+LeafSentence+`"`) {
+				t.Errorf("%s: the overlay does not point at the LEAF sentence by its opening words", label)
+			}
+			if !strings.Contains(overlay, "does not apply to this engine call") {
+				t.Errorf("%s: the overlay does not say the sentence is replaced", label)
+			}
+		} else if row.role != "architect" || !strings.Contains(overlay, "carries no leaf sentence") {
+			t.Errorf("%s: the definition has no LEAF sentence and the overlay does not say so", label)
+		}
+		switch {
+		case row.helper && (!helper.MatchString(overlay) || none.MatchString(overlay)):
+			t.Errorf("%s: the overlay must allow one explorer helper", label)
+		case !row.helper && (!none.MatchString(overlay) || helper.MatchString(overlay)):
+			t.Errorf("%s: the overlay must allow zero helpers", label)
+		}
+		if !strings.Contains(overlay, "CRW-SUBSPAWN-ALLOWED has no effect") {
+			t.Errorf("%s: the overlay does not say CRW-SUBSPAWN-ALLOWED has no effect", label)
+		}
+	}
+	for _, name := range []string{"executor", "reviewer", "explorer"} {
+		base, _ := Base(name)
+		if !strings.Contains(base, LeafSentence) {
+			t.Errorf("the %s definition lost the LEAF sentence this package points at", name)
+		}
+	}
+}
+
+// TestQAOverlayForbidsOracleSpawn: the QA overlay does not start the two oracle passes and asks for the captures.
+func TestQAOverlayForbidsOracleSpawn(t *testing.T) {
+	overlay, err := Overlay("executor", Options{QA: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Do not start the two oracle passes of section 5 of the `crw-qa` skill yourself",
+		"SP-QA-2",
+		"Do not call spawn_agent",
+		"the receipt field `captures`",
+		"A capture that is not listed in `captures` does not exist for the gate",
+		"scratch worktree",
+	} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("the QA overlay lacks %q", want)
+		}
+	}
+	plain, _ := Overlay("executor", Options{})
+	if plain == overlay || strings.Contains(plain, "oracle") {
+		t.Error("the ordinary executor overlay is not the QA overlay")
+	}
+	// The QA call is an executor call and nothing else.
+	for _, role := range []string{"reviewer", "explorer", "architect"} {
+		if _, err := Overlay(role, Options{QA: true}); err == nil {
+			t.Errorf("%s has no QA overlay", role)
+		}
+	}
+	// The guidance names the skill sections it points at.
+	skill, err := os.ReadFile(filepath.Join(repoRoot(t), "plugins", "crw", "skills", "crw-qa", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, heading := range []string{"## 5. Oracle passes", "## 6. Teardown receipts"} {
+		if !strings.Contains(string(skill), heading) {
+			t.Errorf("the crw-qa skill has no %q the overlay points at", heading)
+		}
+	}
+}
+
+func firstLine(s string) string { line, _, _ := strings.Cut(s, "\n"); return line }
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("no caller")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..", "..")
+}
