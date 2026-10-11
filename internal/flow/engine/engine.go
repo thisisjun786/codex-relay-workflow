@@ -185,10 +185,18 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}}
+	// A run that resumes a journal read the policy under another digest before: the change is journaled before any live
+	// call, and only calls that start a thread afterwards take the new pairs.
+	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
-		"meta": json.RawMessage(prog.MetaJSON),
+		"meta": json.RawMessage(prog.MetaJSON), "policy_source": cfg.Policy.Source, "policy_digest": cfg.Policy.Digest,
 	}})
+	if repinned {
+		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: EvPolicyRepinned, Data: map[string]any{
+			"old": prior.Digest, "new": cfg.Policy.Digest, "old_source": prior.Source, "new_source": cfg.Policy.Source,
+		}})
+	}
 
 	root := &pathState{id: RootPath}
 	main, err := e.newScriptVM(prog, root, 0, args)
@@ -271,6 +279,28 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	res.Logs = e.logs
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
 	return res, nil
+}
+
+// EvPolicyRepinned is the run event a resumed run writes when the policy file it reads has another digest than the one
+// the run last recorded.
+const EvPolicyRepinned = "policy_repinned"
+
+// priorPolicy is the policy the journal last recorded for the run (its source and digest) and whether the policy the
+// run reads now has another digest.
+func priorPolicy(j Journal, runID string, now *Policy) (prior Policy, repinned bool) {
+	found := false
+	for _, ev := range j.Events() {
+		if ev.Kind != KindRun || ev.RunID != runID {
+			continue
+		}
+		digest, ok := ev.Data["policy_digest"].(string)
+		if !ok {
+			continue
+		}
+		prior.Digest, found = digest, true
+		prior.Source, _ = ev.Data["policy_source"].(string)
+	}
+	return prior, found && prior.Digest != now.Digest
 }
 
 func helperDigests(p *script.Program) []map[string]any {

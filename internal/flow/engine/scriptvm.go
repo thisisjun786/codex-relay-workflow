@@ -147,6 +147,7 @@ func (s *scriptVM) install() error {
 	crw := vm.NewObject()
 	_ = crw.Set("classify", s.classify)
 	_ = crw.Set("clock", s.clock)
+	_ = crw.Set("tierStep", s.tierStep)
 	_ = vm.Set("crw", crw)
 
 	x := vm.NewObject()

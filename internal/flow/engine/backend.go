@@ -40,6 +40,8 @@ type ThreadSpec struct {
 	CallID string
 	Role   string
 	Pair   Pair
+	// Sandbox is the sandbox of the role's thread (read-only or workspace-write).
+	Sandbox string
 	// Cwd is the call's private working directory ("" lets the backend choose).
 	Cwd string
 }
