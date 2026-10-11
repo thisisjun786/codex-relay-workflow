@@ -1335,6 +1335,75 @@ func TestCheckpointCountsAreReportedPerProjectNeverAsAnInitiative(t *testing.T) 
 	}
 }
 
+// The backlog count is signed, so one project's backlog reason is not the initiative's crossing
+// (CRW-1218): with the same baseline, project A's backlog grows by sixteen and B's drains by sixteen,
+// so A alone names backlog_net_4h while the approved set's net is zero; and A at +10 with B at +6 nets
+// sixteen while neither report names the signal. crw-run-initiative therefore keeps backlog_net_4h out
+// of the per-project promotion and sums the signed counts of every approved project first; its test
+// applies the procedure to the same two scenarios.
+func TestCheckpointBacklogNetIsSignedPerProjectSoTheInitiativeSumsIt(t *testing.T) {
+	issue := func(id int, project, created, state, completed string) string {
+		row := fmt.Sprintf("{\"identifier\":\"CRW-%d\",\"project\":\"%s\",\"createdAt\":\"%s\",\"state\":\"%s\"", id, project, created, state)
+		if completed != "" {
+			row += ",\"completedAt\":\"" + completed + "\""
+		}
+		return row + "}"
+	}
+	for _, scenario := range []struct {
+		name           string
+		grownA, grownB int
+		drainedB       int
+		wantA, wantB   int
+		wantReasonA    bool
+		wantSum        int
+		wantCrossed    bool
+	}{
+		{name: "A +16, B -16", grownA: 16, drainedB: 16, wantA: 16, wantB: -16, wantReasonA: true, wantSum: 0, wantCrossed: false},
+		{name: "A +10, B +6", grownA: 10, grownB: 6, wantA: 10, wantB: 6, wantSum: 16, wantCrossed: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := checkpointNewFixture(t)
+			f.scope("relationship-a", "project-a")
+			f.scope("relationship-b", "project-b")
+			f.close()
+			f.record("project-a", checkpointAt(1), "the shared checkpoint")
+			f.record("project-b", checkpointAt(1), "the shared checkpoint")
+			var rows []string
+			for i := 0; i < scenario.grownA; i++ {
+				rows = append(rows, issue(1000+i, "project-a", checkpointAt(23), "Backlog", ""))
+			}
+			for i := 0; i < scenario.grownB; i++ {
+				rows = append(rows, issue(2000+i, "project-b", checkpointAt(23), "Backlog", ""))
+			}
+			for i := 0; i < scenario.drainedB; i++ {
+				rows = append(rows, issue(3000+i, "project-b", checkpointAt(10), "Done", checkpointAt(23)))
+			}
+			export := checkpointWriteInput(t, t.TempDir(), "linear-export.json", "{\"issues\":["+strings.Join(rows, ",")+"]}")
+			reports := checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil)
+			a, b := checkpointReport(t, reports, "project-a"), checkpointReport(t, reports, "project-b")
+			if a.Counts.BacklogNet4h == nil || *a.Counts.BacklogNet4h != scenario.wantA {
+				t.Fatalf("project-a backlog net = %v, want %d", a.Counts.BacklogNet4h, scenario.wantA)
+			}
+			if b.Counts.BacklogNet4h == nil || *b.Counts.BacklogNet4h != scenario.wantB {
+				t.Fatalf("project-b backlog net = %v, want %d", b.Counts.BacklogNet4h, scenario.wantB)
+			}
+			if got := checkpointHasReason(a, checkpointSignalBacklog); got != scenario.wantReasonA {
+				t.Errorf("project-a names backlog_net_4h = %v, want %v: %+v", got, scenario.wantReasonA, a)
+			}
+			if checkpointHasReason(b, checkpointSignalBacklog) {
+				t.Errorf("project-b names backlog_net_4h at %d: %+v", *b.Counts.BacklogNet4h, b)
+			}
+			sum := *a.Counts.BacklogNet4h + *b.Counts.BacklogNet4h
+			if sum != scenario.wantSum {
+				t.Errorf("the approved set's signed backlog net = %d, want %d", sum, scenario.wantSum)
+			}
+			if crossed := sum > checkpointDefaultThresholds.BacklogNet; crossed != scenario.wantCrossed {
+				t.Errorf("the approved set's backlog crossing (%d against more than %d) = %v, want %v", sum, checkpointDefaultThresholds.BacklogNet, crossed, scenario.wantCrossed)
+			}
+		})
+	}
+}
+
 // A project key that would escape the checkpoint directory is refused rather than written.
 func TestCheckpointRecordRefusesAPathEscape(t *testing.T) {
 	coreTempHome(t)

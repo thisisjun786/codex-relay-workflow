@@ -82,12 +82,18 @@ and no initiative aggregate. A project's `due` is therefore never the initiative
 same baseline and ten landed merges each are both not due on merges while the initiative has reached twenty. Read the
 reports of every approved project and judge the initiative from them:
 
-- A report whose reasons name a signal other than `running_hours` is a crossing inside the approved set, so the initiative is due.
-- Otherwise sum each count over the approved projects' reports and compare the sum to the same threshold:
-  `merges_since_checkpoint`, `needs_changes_or_split_2h`, `pair_eval_p0p1_since_checkpoint` and `backlog_net_4h`. A count that
-  is `null` is `unmeasured` for that project, and the sum of the measured ones is only a lower bound, so the signal is judged from the
+- A report whose reasons name a signal other than `running_hours` and `backlog_net_4h` is a crossing inside the approved set, so the
+  initiative is due: those counts never fall, so the initiative's sum is at least that project's count.
+- Otherwise sum each of those counts over the approved projects' reports and compare the sum to the same threshold:
+  `merges_since_checkpoint`, `needs_changes_or_split_2h` and `pair_eval_p0p1_since_checkpoint`. A count that is `null` is
+  `unmeasured` for that project, and the sum of the measured ones is only a lower bound, so the signal is judged from the
   coordination record instead. `milestone_integrated` is the number of milestones that crossed, so it is due when any
   project's is above zero. The elapsed time is the smallest `running_hours` among the reports, the latest baseline in the set.
+- `backlog_net_4h` is a signed net change, issues created minus issues closed in the window, so one project's growth can be
+  another's drain and no project's backlog reason is the initiative's answer. Always sum the signed `backlog_net_4h` of every
+  approved project first, then compare that sum to the threshold: the backlog signal is due when it exceeds fifteen. A
+  project at +16 beside one at -16 is not due on the backlog; two at +10 and +6 are. When any approved project's count is
+  `null`, the measured sum bounds nothing in either direction, so the backlog signal is judged from the coordination record.
 
 Where the command is not installed, or a signal is `unmeasured` in a report, the initiative lead judges the same signals from its own
 records rather than treating the missing tool as a reason to skip the check.

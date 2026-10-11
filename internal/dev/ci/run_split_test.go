@@ -303,6 +303,106 @@ func TestInitiativeCheckpointAggregatesPerProjectReports(t *testing.T) {
 	}
 }
 
+// midpointBullets is each top-level bullet of a section with its indented continuation lines, joined by spaces.
+func midpointBullets(section string) []string {
+	var bullets []string
+	open := false
+	for _, line := range strings.Split(section, "\n") {
+		switch {
+		case strings.HasPrefix(line, "- "):
+			bullets = append(bullets, strings.TrimPrefix(line, "- "))
+			open = true
+		case open && strings.HasPrefix(line, "  ") && strings.TrimSpace(line) != "":
+			bullets[len(bullets)-1] += " " + strings.TrimSpace(line)
+		default:
+			open = false
+		}
+	}
+	return bullets
+}
+
+var backtickedName = regexp.MustCompile("`([a-z0-9_]+)`")
+
+// TestInitiativeCheckpointSumsTheSignedBacklogBeforeJudging: `backlog_net_4h` is a signed net change (created minus
+// closed in the window, checkpointBacklogNet), so one project's backlog reason is never the initiative's crossing.
+// Project A at +16 and project B at -16 with the same baseline net zero over the approved set although A's report names
+// the signal; A at +10 and B at +6 net sixteen although neither report names it. The procedure is applied to both
+// scenarios as written: the signals its promotion bullet excepts, then the sum of the approved projects' backlog. The
+// bullet that sums it says the count is signed and that an unmeasured one is judged from the coordination record,
+// because a partial signed sum bounds nothing.
+func TestInitiativeCheckpointSumsTheSignedBacklogBeforeJudging(t *testing.T) {
+	section, ok := reportSectionOf(splitRead(t, runInitiativeSkill), "Long-run midpoint check")
+	if !ok {
+		t.Fatal("crw-run-initiative has no Long-run midpoint check section")
+	}
+	_, thresholds := checkpointCountNames(t)
+	threshold := 0
+	for _, r := range thresholds["backlog"] {
+		threshold = threshold*10 + int(r-'0')
+	}
+	var promote, backlog string
+	for _, bullet := range midpointBullets(section) {
+		if promote == "" && strings.Contains(bullet, "so the initiative is due") {
+			promote = bullet
+			continue
+		}
+		if backlog == "" && strings.Contains(bullet, "`backlog_net_4h`") && strings.Contains(bullet, "sum") {
+			backlog = bullet
+		}
+	}
+	if promote == "" {
+		t.Fatal("the midpoint procedure has no bullet that makes one project's reason the initiative's crossing")
+	}
+	clause := regexp.MustCompile(`other than (.*?) is a crossing`).FindStringSubmatch(promote)
+	if clause == nil {
+		t.Fatalf("the promotion bullet does not say which signals it excepts (\"other than ... is a crossing\"): %s", promote)
+	}
+	excepted := map[string]bool{}
+	for _, m := range backtickedName.FindAllStringSubmatch(clause[1], -1) {
+		excepted[m[1]] = true
+	}
+	for _, monotone := range []string{"merges_since_checkpoint", "needs_changes_or_split_2h", "pair_eval_p0p1_since_checkpoint", "milestone_integrated"} {
+		if excepted[monotone] {
+			t.Errorf("the promotion bullet excepts `%s`, a count that never falls, so one project's crossing is the initiative's", monotone)
+		}
+	}
+	if !excepted["running_hours"] || !excepted["backlog_net_4h"] {
+		t.Errorf("the promotion bullet does not except both `running_hours` and `backlog_net_4h`: %s", promote)
+	}
+	if backlog == "" {
+		t.Error("no bullet sums `backlog_net_4h` over the approved projects")
+	} else {
+		for _, phrase := range []string{"signed", "every approved project", "coordination record", "fifteen"} {
+			if !strings.Contains(backlog, phrase) {
+				t.Errorf("the signed backlog bullet does not say %q: %s", phrase, backlog)
+			}
+		}
+	}
+
+	for _, scenario := range []struct {
+		name string
+		a, b int
+		want bool
+	}{
+		{"A +16, B -16", 16, -16, false},
+		{"A +10, B +6", 10, 6, true},
+		{"A +16, B +0", 16, 0, true},
+	} {
+		due := false
+		for _, net := range []int{scenario.a, scenario.b} {
+			if net > threshold && !excepted["backlog_net_4h"] {
+				due = true // the project's backlog reason promoted as the initiative's crossing
+			}
+		}
+		if !due && backlog != "" {
+			due = scenario.a+scenario.b > threshold
+		}
+		if due != scenario.want {
+			t.Errorf("%s: the procedure as written judges due=%v, want %v (the approved set's signed net is %d against more than %d)", scenario.name, due, scenario.want, scenario.a+scenario.b, threshold)
+		}
+	}
+}
+
 // TestEntryPointsNameTheSkillOwners: the planning owner table sends an initiative's execution to crw-run-initiative, and the
 // plugin's user-facing description names the initiative executor and no deleted skill (CRW-1218 d3).
 func TestEntryPointsNameTheSkillOwners(t *testing.T) {
