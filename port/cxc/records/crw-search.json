@@ -215,9 +215,9 @@
     },
     {
       "file": "references/lunasearch.md",
-      "reason": "CRW-1220: the description names the web corpus and the Luna lane; the dispatcher sections are one heading; the Luna lane is merged in as references/lunasearch.md",
+      "reason": "CRW-1220 correction: an unusable explorer setting is reported and repaired, a re-issued spawn is refused again",
       "add": true,
-      "sha256": "c89fac7d0b30666036eff059af1cdf0f7f2aebfebbfff03eb2bcdb8bc9881f2e"
+      "sha256": "f0acc7a310b544e642eee9795753be7b9c61868adb8efc87899502e7540475f8"
     }
   ]
 }

@@ -24,7 +24,7 @@ relative links between these documents are identical in both installations.
 
 ## Family invariants
 
-> **Role boundary (canonical, `crw-dev-frontend` and `crw-dev-uiux-design` link here):**
+> **Role boundary (canonical; `crw-dev-frontend` and `crw-dev-uiux-design` carry the same paragraph):**
 > `crw-dev` owns universal process, evidence, and safety rules. `crw-dev-uiux-design` owns
 > design intent, direction, and concept judgment. `crw-dev-frontend` owns concrete frontend
 > implementation and rendered tell enforcement. Anti-slop has three layers: `crw-dev` =

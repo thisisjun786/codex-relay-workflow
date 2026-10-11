@@ -23,7 +23,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Separate code/PR review from Linear delivery checking and logical-consistency audits without changing the upstream review process. CRW-1116: the plan-audit verdict contract names the two closing lines (LAUNCH, then VERDICT) and the GO-WITH-FIXES (blockers=N) form the PABCD observer now parses and records. CRW-1218: the contradiction audit is part of crw-check, so the ownership boundary names crw-check for it. CRW-1220: the description is scoped to the independent review; the author side of review moves to crw-dev; the test auditor gates move here from crw-dev-testing; the parent session wording names the dispatching task",
+      "reason": "CRW-1220 correction: the quarantine exception names the ci-pipeline file of crw-dev-testing",
       "hunks": [
         {
           "line": 3,
@@ -230,7 +230,7 @@
             "- Deleted assertions without replacement\n",
             "- Snapshot updates without visual/behavioral verification\n",
             "- Coverage exclusions added in the same PR as the fix\n",
-            "- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`references/ci-pipeline.md` §5.3)\n",
+            "- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`../crw-dev-testing/references/ci-pipeline.md` §5.3)\n",
             "- Threshold reductions (e.g., coverage 80% → 60%)\n",
             "- Type assertion suppressions (`as any`, `@ts-ignore`) in test files\n",
             "\n",

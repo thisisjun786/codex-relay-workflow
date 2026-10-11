@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The development, search and tool skills (CRW-1220): crw-dev is a classifier and router, each of the
@@ -695,5 +697,123 @@ func TestRepoGovernanceInCanon(t *testing.T) {
 				t.Errorf("no error contains %q:\n%s", want, got)
 			}
 		}
+	})
+}
+
+// auditorGateReferenceErrors is the relative references of the test auditor gates that moved into the
+// reviewer skill: a `references/*.md` path in that section is resolved against the reviewer's own directory,
+// so a path that names a file of crw-dev-testing has to say so with a ../crw-dev-testing/ prefix.
+func auditorGateReferenceErrors(root string) []string {
+	const reviewer = devSkillsRoot + "crw-dev-code-reviewer/"
+	section := headingSection(skillText0(root, reviewer+"SKILL.md"), "## Test auditor gates")
+	if section == "" {
+		return []string{reviewer + "SKILL.md: no Test auditor gates section"}
+	}
+	var errs []string
+	for _, m := range regexp.MustCompile("`((?:\\.\\./[a-z0-9-]+/)?references/[A-Za-z0-9_./-]+\\.md)").FindAllStringSubmatch(section, -1) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(reviewer+m[1]))); err != nil {
+			errs = append(errs, reviewer+"SKILL.md: the auditor gates name "+m[1]+", which is not a file of the reviewer skill")
+		}
+	}
+	return errs
+}
+
+func TestAuditorGateReferencesResolve(t *testing.T) {
+	t.Run("the checked-in skills", func(t *testing.T) {
+		if errs := auditorGateReferenceErrors(repoRoot()); len(errs) > 0 {
+			t.Errorf("%s", strings.Join(errs, "\n"))
+		}
+	})
+	t.Run("fixture: a reference of another skill without its prefix fails", func(t *testing.T) {
+		r := newRepo(t)
+		r.write(devSkillsRoot+"crw-dev-code-reviewer/SKILL.md", "## Test auditor gates\n\nsee `references/ci-pipeline.md` §5.3 and `../crw-dev-testing/references/ci-pipeline.md` and `references/tech-debt.md`\n")
+		r.write(devSkillsRoot+"crw-dev-code-reviewer/references/tech-debt.md", "x\n")
+		r.write(devSkillsRoot+"crw-dev-testing/references/ci-pipeline.md", "x\n")
+		r.commit()
+		expectEqual(t, "errors", auditorGateReferenceErrors(r.root), []string{devSkillsRoot + "crw-dev-code-reviewer/SKILL.md: the auditor gates name references/ci-pipeline.md, which is not a file of the reviewer skill"})
+	})
+}
+
+// lunaRefusalRecoveryErrors compares the recovery the Luna lane tells to the refusal the hook gives: the
+// repair command is read out of the store's own refusal text, and the lane document has to name it, because
+// a spawn re-issued against the same store is refused again.
+func lunaRefusalRecoveryErrors(root string) []string {
+	refusal := (&role.UnusableSettingsError{Path: "/store/subagents.json", Role: "explorer", Reason: "model is empty"}).Error()
+	command := regexp.MustCompile(`run (crw role helper reset \S+)`).FindStringSubmatch(refusal)
+	if command == nil {
+		return []string{"role.UnusableSettingsError no longer names a reset command: " + refusal}
+	}
+	refPath := devSkillsRoot + "crw-search/references/lunasearch.md"
+	if !strings.Contains(skillText0(root, refPath), command[1]) {
+		return []string{refPath + ": the unusable-settings recovery does not name `" + command[1] + "`, which the refusal names"}
+	}
+	return nil
+}
+
+func TestLunaRefusalRecoveryNamesTheRepair(t *testing.T) {
+	t.Run("the checked-in skills", func(t *testing.T) {
+		if errs := lunaRefusalRecoveryErrors(repoRoot()); len(errs) > 0 {
+			t.Errorf("%s", strings.Join(errs, "\n"))
+		}
+	})
+	t.Run("fixture: a lane document without the repair command fails", func(t *testing.T) {
+		r := newRepo(t)
+		r.write(devSkillsRoot+"crw-search/references/lunasearch.md", "re-issue the same spawn\n")
+		r.commit()
+		expectEqual(t, "errors", len(lunaRefusalRecoveryErrors(r.root)), 1)
+	})
+}
+
+// consumerClaimErrors checks the two statements that a shared section has consumers: the canonical role
+// boundary of skill-family.md says which skills link to it, and the security ownership matrix says which
+// skills link to its section. A skill named there has to carry the link.
+func consumerClaimErrors(root string) []string {
+	var errs []string
+	family := skillText0(root, devSkillsRoot+"crw-canon/references/skill-family.md")
+	named := func(text, pattern string) []string {
+		m := regexp.MustCompile(pattern).FindStringSubmatch(text)
+		if m == nil {
+			return nil
+		}
+		var names []string
+		for _, n := range crwSkillName.FindAllStringSubmatch(m[1], -1) {
+			names = append(names, n[1])
+		}
+		return names
+	}
+	for _, name := range named(family, `Role boundary \(canonical,([^)]*)\)`) {
+		if !strings.Contains(skillText0(root, devSkillsRoot+name+"/SKILL.md"), "skill-family.md") {
+			errs = append(errs, name+"/SKILL.md: skill-family.md says it links to the role boundary, and it carries no link")
+		}
+	}
+	security := skillText0(root, devSkillsRoot+"crw-dev-security/SKILL.md")
+	for _, name := range named(security, "(?m)^([^\n]*) link to this section[^\n]*$") {
+		body := skillText0(root, devSkillsRoot+name+"/SKILL.md")
+		if !regexp.MustCompile(`dev-security[^\n]*§10|§10[^\n]*dev-security`).MatchString(body) {
+			errs = append(errs, name+"/SKILL.md: crw-dev-security says it links to the ownership matrix, and it names no §10 of dev-security")
+		}
+	}
+	return errs
+}
+
+func TestSharedSectionConsumersCarryTheLink(t *testing.T) {
+	t.Run("the checked-in skills", func(t *testing.T) {
+		if errs := consumerClaimErrors(repoRoot()); len(errs) > 0 {
+			t.Errorf("%s", strings.Join(errs, "\n"))
+		}
+	})
+	t.Run("fixture: a named consumer without the link fails", func(t *testing.T) {
+		r := newRepo(t)
+		r.write(devSkillsRoot+"crw-canon/references/skill-family.md", "> **Role boundary (canonical, `crw-dev-frontend` and `crw-dev-uiux-design` link here):**\n")
+		r.write(devSkillsRoot+"crw-dev-frontend/SKILL.md", "[family](../crw-canon/references/skill-family.md)\n")
+		r.write(devSkillsRoot+"crw-dev-uiux-design/SKILL.md", "its own paragraph\n")
+		r.write(devSkillsRoot+"crw-dev-security/SKILL.md", "`crw-dev-data` and `crw-dev-backend` link to this section when ownership is unclear.\n")
+		r.write(devSkillsRoot+"crw-dev-data/SKILL.md", "per dev-security §10\n")
+		r.write(devSkillsRoot+"crw-dev-backend/SKILL.md", "nothing\n")
+		r.commit()
+		expectEqual(t, "errors", consumerClaimErrors(r.root), []string{
+			"crw-dev-uiux-design/SKILL.md: skill-family.md says it links to the role boundary, and it carries no link",
+			"crw-dev-backend/SKILL.md: crw-dev-security says it links to the ownership matrix, and it names no §10 of dev-security",
+		})
 	})
 }

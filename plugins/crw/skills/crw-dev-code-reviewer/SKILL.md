@@ -436,7 +436,7 @@ Red flags that trigger escalation:
 - Deleted assertions without replacement
 - Snapshot updates without visual/behavioral verification
 - Coverage exclusions added in the same PR as the fix
-- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`references/ci-pipeline.md` §5.3)
+- `@skip` or `.skip()` added to failing tests — unless it is a `TEST-FLAKE-QUARANTINE-01` quarantine carrying all four required fields (`../crw-dev-testing/references/ci-pipeline.md` §5.3)
 - Threshold reductions (e.g., coverage 80% → 60%)
 - Type assertion suppressions (`as any`, `@ts-ignore`) in test files
 

@@ -44,7 +44,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. CRW-1220: section 10 is the one ownership matrix and the other skills link to it",
+      "reason": "CRW-1220 correction: the ownership matrix lists the skills that link to it as they are",
       "hunks": [
         {
           "line": 4,
@@ -72,7 +72,7 @@
             "This matrix clarifies who defines, implements, and verifies each security control across the skill bundle:\n"
           ],
           "new": [
-            "This is the one matrix of who defines, implements, and verifies each security control across the skill bundle; other skills link here and do not restate it:\n"
+            "This is the one matrix of who defines, implements, and verifies each security control across the skill bundle; a skill that needs an owner links here instead of adding a row:\n"
           ]
         },
         {
@@ -81,7 +81,7 @@
             "Reference this matrix from `dev-backend` and `dev-frontend` when ownership is unclear.\n"
           ],
           "new": [
-            "`crw-dev-backend`, `crw-dev-frontend` and `crw-dev-data` link to this section when ownership is unclear.\n"
+            "`crw-dev-data` links to this section when ownership is unclear; `crw-dev-frontend` §15.2 lists the rows of the controls it implements.\n"
           ]
         }
       ]

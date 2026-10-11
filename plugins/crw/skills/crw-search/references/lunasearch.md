@@ -28,11 +28,14 @@ this branch. Luna lanes are safe to fan out because discovery writes nothing, wh
 transfer to parallel write work. Branch or worktree lanes need one task each; see
 [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md).
 
-If the spawn is refused because the role has no usable setting, do not retry with a probe. Fall through to
-serial dispatch: re-issue the same spawn so the helper inherits the main session model, and state plainly which
-path each agent took. There is no silent fallback to another model and no catalog round trip: the refusal is
-the signal, and the serial retry is the recovery. Reasoning effort stays low; final judgment stays in the main
-session.
+If the spawn is refused with `unusable helper role settings`, the role store cannot be read for the explorer
+role, and the same spawn is refused again against the same store: do not re-issue it and do not probe the
+catalog. Report the refusal text as the blocker. The operator repairs it with `crw role helper reset explorer`
+(the explorer then inherits the main session model) or by correcting the file, and the lane is dispatched after
+that. Until then run the lanes' queries in the main session, one lane at a time, and state plainly which path
+each lane took. A role with no override already inherits the main session model on the first spawn and needs
+no recovery. There is no silent fallback to another model: the refusal is the signal. Reasoning effort stays
+low; final judgment stays in the main session.
 
 ## Subagent Skill Attachment
 
