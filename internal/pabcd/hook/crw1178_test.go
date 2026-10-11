@@ -33,7 +33,7 @@ func crw1178Cache(t *testing.T, cwd string) {
 }
 
 // crw1178Route is the way past a cache refusal both guards name.
-const crw1178Route = "remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
+const crw1178Route = "then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
 
 // CRW-1178 (S2R2-F1) as decided after verification round 8: a test run beside the __pycache__ an earlier run left is refused by both
 // guards, as at the base, because code inside the run can make any entry current; but the refusal is the reader's, names the cache

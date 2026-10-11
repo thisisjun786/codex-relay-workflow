@@ -264,8 +264,11 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 // pycacheRoute and pycachePrefixRoute are the ways past a cache refusal. The cache is removed by a command of its own (in the same
 // command the entry is still there when the text is read), and the run then writes no new one; a prefix is not set for the run, or
 // the interpreter is told to ignore PYTHON* variables. Both fit the reason bound of the hooks with the file named (see shortRel).
+// CRW-1189 (R3-S2-F4): the removal is spelled in forms the Codex execution policy lets through. It refuses `rm -rf __pycache__` ("rm -f
+// style commands are not permitted"), and so sent an agent looking for a second way; `rm <file>` and `find ... -prune -exec rm -r {} +`
+// passed it. The project is the working directory, which is where the inventory walks.
 const (
-	pycacheRoute       = "; remove __pycache__ in a separate command first, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
+	pycacheRoute       = "; in a separate command first, `rm` that file or run `find . -name __pycache__ -prune -exec rm -r {} +`, then run with python -B (PYTHONDONTWRITEBYTECODE=1) so no new cache is written"
 	pycachePrefixRoute = "; unset PYTHONPYCACHEPREFIX in the environment and do not set it in the command, or run python -E -B"
 )
 
@@ -273,14 +276,17 @@ const (
 // it: an entry of a __pycache__ directory is removed with that directory; any other .pyc is a module of its own, removed by name.
 func pycacheRefusal(rel string) error {
 	if filepath.Base(filepath.Dir(rel)) == "__pycache__" {
-		return unreadablef("module imports compiled code that is not read (%s)%s", shortRel(rel), pycacheRoute)
+		return unreadablef("module imports compiled code that is not read (%s)%s", shortRelLimit(rel, 88), pycacheRoute)
 	}
-	return unreadablef("module imports compiled code that is not read (%s); remove it in a separate command first", shortRel(rel))
+	return unreadablef("module imports compiled code that is not read (%s); `rm` that file in a separate command first", shortRel(rel))
 }
 
 // shortRel bounds a project-relative name for a reason, keeping its start and its file name.
-func shortRel(rel string) string {
-	const limit = 96
+func shortRel(rel string) string { return shortRelLimit(rel, 96) }
+
+// shortRelLimit is shortRel with the bound the reason can afford: the cache refusals carry a route as long as the name and stay within the
+// 320 bytes the hooks keep of a reader's reason.
+func shortRelLimit(rel string, limit int) string {
 	if len(rel) <= limit {
 		return rel
 	}
@@ -524,11 +530,45 @@ func moduleCodePath(v string) bool {
 	return strings.HasSuffix(v, ".py") || strings.HasSuffix(v, ".pyc") || strings.Contains(v, ".so") || strings.HasSuffix(v, ".pyd") || names[filepath.Base(v)] || strings.Contains(v, "__pycache__")
 }
 
+// moduleCarriedProgram names the record of a program the reader does not read that may rewrite module imports: a program given inline
+// (awk, sed, perl and the like), a script file, or an archive extraction. The text is what the refusal calls it (CRW-1189, R3-S2-F3: the
+// refusal did not say which part of a pipeline it was), and false means the record is none of them.
+func moduleCarriedProgram(e Exec) (string, bool) {
+	name := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '`' {
+			return -1
+		}
+		return r
+	}, e.Name)
+	switch {
+	case e.Kind == KindScriptFile:
+		if e.Script.Known && e.Script.Value != "" {
+			return "the script file `" + shortRel(strings.Map(func(r rune) rune {
+				if r < 0x20 || r == 0x7f || r == '`' {
+					return -1
+				}
+				return r
+			}, e.Script.Value)) + "`", true
+		}
+		return "a script file", true
+	case e.Inline != nil:
+		if name == "" {
+			return "a carried program", true
+		}
+		return "the `" + shortRel(name) + "` program", true
+	case e.Name == "tar" || e.Name == "unzip":
+		return "`" + e.Name + "` (an archive extraction)", true
+	}
+	return "", false
+}
+
 // moduleWriterRefusal is the refusal of one record that may write module imports: a carried program, an archive extraction, a redirection
-// or a copy-like command whose destination is not known or is a code path.
+// or a copy-like command whose destination is not known or is a code path. A carried program is named and the way past is given: the
+// reader cannot show that the module run imports only what it read while the program runs in the same command, so it runs in a command
+// of its own, before or after the module run.
 func moduleWriterRefusal(e Exec) error {
-	if e.Kind == KindScriptFile || e.Inline != nil || e.Name == "tar" || e.Name == "unzip" {
-		return unreadablef("a carried program may rewrite module imports")
+	if what, ok := moduleCarriedProgram(e); ok {
+		return unreadablef("%s may rewrite module imports; run it in a separate command, before or after the module run", what)
 	}
 	for _, r := range e.Redirs {
 		if strings.Contains(r.Op, ">") && (!r.Target.Known || moduleCodePath(r.Target.Value)) {
@@ -586,6 +626,9 @@ func (w *walker) writersBesideModules() error {
 			beside := e.Ctx.Background || e.Ctx.Coprocess || e.Ctx.ProcSubst || (mctx.pipeID != 0 && e.Ctx.pipeID == mctx.pipeID)
 			if !beside {
 				continue
+			}
+			if what, ok := moduleCarriedProgram(e); ok {
+				return unreadablef("%s may rewrite module imports and runs beside the module run (background, coprocess, process substitution or the same pipeline); run it before or after the module in a separate command", what)
 			}
 			if err := moduleWriterRefusal(e); err != nil {
 				return unreadablef("%s: a command runs beside the module run (background, coprocess, process substitution or the same pipeline); run it before or after the module in a separate command", err.(*Unreadable).Reason)

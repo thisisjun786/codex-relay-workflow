@@ -153,7 +153,7 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
-			return err
+			return sessionBusy(err)
 		}
 		if attempt == 0 && onBusy != nil {
 			onBusy()
@@ -185,6 +185,26 @@ func orchestrateInterruptLockWait(ctx context.Context, cwd, sessionID string, fn
 		return err
 	}
 	return fn()
+}
+
+// SessionBusyError is the busy error of a session lock whose wait ran out, worded for the caller who sees it (CRW-1189, R3-S2-F2):
+// another crw command is using the session, nothing was changed and the same command can be run again. It wraps the lock file's
+// *fs.PathError, so errors.Is(err, fs.ErrExist) and errors.As to a *fs.PathError still answer for it, and its text keeps the
+// oracle's "open <lock>: file exists" after the new words. The wait itself (the oracle's schedule, about 250 ms) is unchanged.
+type SessionBusyError struct{ Err error }
+
+func (e *SessionBusyError) Error() string {
+	return "session state is busy: another crw command is using this session; retry the same command in a moment (nothing was changed): " + e.Err.Error()
+}
+
+func (e *SessionBusyError) Unwrap() error { return e.Err }
+
+// sessionBusy words a give-up on a held lock; any other error is returned as it is.
+func sessionBusy(err error) error {
+	if errors.Is(err, fs.ErrExist) {
+		return &SessionBusyError{Err: err}
+	}
+	return err
 }
 
 // sessionLock is a held session lock: the descriptor that carries the kernel lock and the identity of the file it locked.
