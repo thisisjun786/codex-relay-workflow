@@ -123,7 +123,7 @@ func (s *scanner) agent(call *agentCall) {
 		s.checkResult(r, RuleResumeArg, "agent.call resume", call.line)
 	}
 	if call.refusal != nil && call.refusal.Cause == "alias_ambiguous" {
-		s.add(RuleAliasAmbiguous, call.line, call.label, "%s", call.refusal.Detail)
+		s.add(RuleAliasAmbiguous, call.line, call.label, "%s", strings.TrimPrefix(call.refusal.Detail, "alias_ambiguous: "))
 	}
 	// An executor-t1 call carries the stepDecision crw.tierStep returned on its own path. A continuation inherits it.
 	if call.role == "executor-t1" && !call.resume {

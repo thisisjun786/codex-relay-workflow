@@ -231,6 +231,14 @@ func TestLintLabelUniquePerPath(t *testing.T) {
 	r = lintFile(t, "label-in-loop.js")
 	wantRules(t, r, RuleLabelDuplicate)
 	clean(t, "labels-ok.js")
+	// A loop that can leave early may run its call once: the dry run decides whether it repeats.
+	if r := lintText(t, "for (let round = 0; round < 2; round++) {\n  await agent(`find ${round}`, { agentType: 'explorer', label: 'find' })\n  if (!args) break\n}\nreturn 1"); !r.OK() {
+		t.Errorf("%v", r.Diagnostics)
+	}
+	r = lintText(t, "for (let round = 0; round < 2; round++) {\n  await agent(`find ${round}`, { agentType: 'explorer', label: 'find' })\n  if (round === 1) break\n}\nreturn 1")
+	if wantRules(t, r, RuleLabelDuplicate); len(r.Diagnostics) != 1 || r.Diagnostics[0].Source != sourceTrace {
+		t.Errorf("the repeat is seen by the dry run: %+v", r.Diagnostics)
+	}
 	// The same label on two paths is fine.
 	if r := lintText(t, "const out = await parallel([1, 2].map((x) => async () => agent(`look ${x}`, { agentType: 'explorer', label: 'look' })))\nreturn out.length"); !r.OK() {
 		t.Errorf("%v", r.Diagnostics)

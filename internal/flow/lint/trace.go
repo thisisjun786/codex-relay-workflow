@@ -60,7 +60,7 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 			detail, _ := e.Data["detail"].(string)
 			switch {
 			case cause == "alias_ambiguous":
-				add(RuleAliasAmbiguous, e.Label, "%s", detail)
+				add(RuleAliasAmbiguous, e.Label, "%s", strings.TrimPrefix(detail, "alias_ambiguous: "))
 			case reason == engine.ReasonMissingStepDecision:
 				add(RuleTierStepDecision, e.Label, "the executor-t1 call %q has no stepDecision from crw.tierStep: %s", e.Label, detail)
 			default:

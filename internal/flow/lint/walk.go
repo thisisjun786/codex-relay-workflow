@@ -97,7 +97,9 @@ type walker struct {
 	fn    *fnInfo
 	life  bool
 	exits []*exit
-	loops int
+	// loopFree has one entry per enclosing loop: whether its body has no break, return or throw, so every round reaches
+	// every call in it.
+	loopFree []bool
 }
 
 // flow checks lifecycle, labels and reviewer family over the body of every function.
@@ -376,6 +378,35 @@ func (w *walker) stmt(n ast.Statement, st *state) {
 	}
 }
 
+// leavesEarly reports whether a loop body has a break, a return or a throw outside the functions nested in it: then a
+// round may be the last, and whether a call in the body repeats is for the dry run to say.
+func leavesEarly(body ast.Statement) bool {
+	found := false
+	var rec func(n any)
+	rec = func(n any) {
+		if found {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.FunctionLiteral, *ast.ArrowFunctionLiteral:
+			return
+		case *ast.ReturnStatement, *ast.ThrowStatement:
+			found = true
+			return
+		case *ast.BranchStatement:
+			if x.Token == token.BREAK {
+				found = true
+				return
+			}
+		}
+		for _, c := range children(n) {
+			rec(c)
+		}
+	}
+	rec(body)
+	return found
+}
+
 // truthy reports whether a loop test is the literal true (a loop that exits only through break or return).
 func truthy(e ast.Expression) bool {
 	b, ok := e.(*ast.BooleanLiteral)
@@ -387,7 +418,7 @@ func truthy(e ast.Expression) bool {
 func (w *walker) loop(test, update ast.Expression, body ast.Statement, hasTest bool, st *state) {
 	head := st.clone()
 	breaks := &state{labels: map[string]bool{}}
-	w.loops++
+	w.loopFree = append(w.loopFree, !leavesEarly(body))
 	for i := 0; i < 4; i++ {
 		cur := head.clone()
 		w.expr(test, cur)
@@ -404,7 +435,7 @@ func (w *walker) loop(test, update ast.Expression, body ast.Statement, hasTest b
 		}
 		head = next
 	}
-	w.loops--
+	w.loopFree = w.loopFree[:len(w.loopFree)-1]
 	exitState := &state{labels: map[string]bool{}}
 	if hasTest {
 		exitState = head.clone()
@@ -465,8 +496,8 @@ func (w *walker) agent(call *agentCall, st *state) {
 		switch {
 		case st.labels[call.label]:
 			w.s.add(RuleLabelDuplicate, call.line, call.label, "label %q is used by an earlier call on this path; labels are unique within a path", call.label)
-		case w.loops > 0:
-			w.s.add(RuleLabelDuplicate, call.line, call.label, "label %q is on a call inside a loop, so every round repeats it; labels are unique within a path (put the round in the label)", call.label)
+		case len(w.loopFree) > 0 && w.loopFree[len(w.loopFree)-1]:
+			w.s.add(RuleLabelDuplicate, call.line, call.label, "label %q is on a call inside a loop that leaves only when its rounds are done, so every round repeats it; labels are unique within a path (put the round in the label)", call.label)
 		}
 		st.labels[call.label] = true
 	}

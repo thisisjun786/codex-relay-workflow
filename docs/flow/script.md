@@ -271,7 +271,7 @@ report, not a finding.
 | --- | --- |
 | `lifecycle_land_twice`, `lifecycle_land_without_review`, `lifecycle_order` | A lifecycle automaton per function that calls `crw.commit`, `crw.verify`, `crw.review` or `crw.land`: build once (a rebuild is allowed until the node has landed), then rounds of commit, verify, review, then land at most once, from a completed review. A violation is reported when it is illegal on every path that reaches it. |
 | `reviewer_family_same` | A review call (its prompt is `crw.reviewPacket(...)` or its label starts with `review`) whose role family is the family of the author call before it. |
-| `label_duplicate` | A label used twice on one path, or on a call in a loop (the round goes in the label). Calls without a label do not count. |
+| `label_duplicate` | A label used twice on one path, or on a call in a loop that has no break, return or throw (every round repeats it; the round goes in the label). A loop that can leave early is judged by the dry run, which sees whether the call really repeats. Calls without a label do not count. |
 | `executor_t1_without_step_decision` | An `executor-t1` call without a `stepDecision` that `crw.tierStep` returned in the same function (a continuation inherits it from its handle). |
 | `classify_arg`, `resume_arg` | `crw.classify(...)` or `resume:` given something other than an `agent.call` result or its handle: the output of `agent()`, a `.output`, a bare value. |
 | `determinism_stub` | `Date.now()`, `Math.random()`, `new Date()` and `Date()`. |
