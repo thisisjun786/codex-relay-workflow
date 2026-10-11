@@ -384,7 +384,7 @@ neither the managed spawn's receipt and marker rules nor the hook's decision.
    candidate's model/effort (null inherits the original session). Preserve the role.
 3. Every report includes `sessionId`, `dispatchId`, and the current `attemptId`.
    Report `outcome:created` and the actual `agentId` (under multi-agent V2, where
-   `spawn_agent` returns the agent path `/root/<task>` and no thread id, that path is the
+   `spawn_agent` returns the agent path `root/<task>`, written with a leading slash, and no thread id, that path is the
    `agentId`; the command resolves it to the child's thread id in the native database
    and records the thread id), then use native wait. Created
    requires the spawn hook's issuance of the attempt (a V2 task is host ciphertext whose
