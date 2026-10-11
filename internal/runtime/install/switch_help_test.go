@@ -30,7 +30,7 @@ func TestInstallSwitchHelpDescribesCXCAsTheEmergencyStop(t *testing.T) {
 	if strings.Contains(help, "does not re-activate CXC") {
 		t.Errorf("switch --help promises that switch cxc does not re-activate CXC, but the restore can turn a remaining CXC plugin on:\n%s", help)
 	}
-	for _, want := range []string{"emergency", "hooks", "when one is missing", "is left as it is", "only what the switch recorded", "never installs CXC", "comes back on"} {
+	for _, want := range []string{"emergency", "hooks", "when one is missing", "is left as it is", "only what the switch recorded", "never installs CXC", "comes back on", "recorded as enabled = false", "with no recorded entry"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("switch --help lacks %q:\n%s", want, help)
 		}
@@ -72,9 +72,9 @@ func TestInstallSwitchStatusConflictKeepsJSONNoteAndExplainsEmergencyStopInText(
 	if strings.Contains(out, "return to CXC") || !strings.Contains(out, "emergency stop") || !strings.Contains(out, "hooks off") {
 		t.Fatalf("human status lacks the emergency-stop explanation:\n%s", out)
 	}
-	// The CXC plugin is on in this home, and switch cxc leaves it on.
-	if strings.Contains(out, "does not re-activate CXC") || !strings.Contains(out, "a CXC plugin that is on stays on") {
-		t.Fatalf("the conflict note must say a CXC plugin that is on stays on:\n%s", out)
+	// The CXC plugin is on in this home and no switch recorded its line, so switch cxc leaves it on.
+	if strings.Contains(out, "does not re-activate CXC") || !strings.Contains(out, "no CXC plugin line is recorded, so the CXC plugin stays on") {
+		t.Fatalf("the conflict note must say that with no recorded line the CXC plugin stays on:\n%s", out)
 	}
 }
 
@@ -140,4 +140,58 @@ func (h *switchHome) mustRun(args ...string) string {
 		h.t.Fatalf("switch %v: exit %d stderr=%q", args, code, errOut)
 	}
 	return out
+}
+
+// CRW-1256 evaluation (fix round 3): `switch cxc` puts back the CXC plugin line recorded before `switch crw`
+// (configguard RunSwitch, RestoreTableKeyExact), so in a conflict the CXC plugin stays on only when no line
+// is recorded or the recorded line leaves it on; a recorded enabled = false turns it off. The human conflict
+// note must say which, and the real `switch cxc` must then do what the note said.
+func TestInstallSwitchConflictNoteFollowsTheRecordedCXCLine(t *testing.T) {
+	const cxcOn = "[plugins.\"crw@crw\"]\nenabled=true\n\n[plugins.\"codexclaw@codexclaw\"]\nenabled=true\n"
+	const cxcOff = "[plugins.\"crw@crw\"]\nenabled=true\n\n[plugins.\"codexclaw@codexclaw\"]\nenabled=false\n"
+	for name, tc := range map[string]struct {
+		before  string // config.toml at `switch crw`; "" means no switch ran (no record)
+		note    string // what the human conflict note says
+		cxcOnAt bool   // the CXC plugin after the real `switch cxc`
+	}{
+		"recorded enabled=true":  {cxcOn, "puts back the recorded CXC plugin line `enabled=true`, so the CXC plugin stays on", true},
+		"recorded enabled=false": {cxcOff, "puts back the recorded CXC plugin line `enabled=false`, so the CXC plugin is turned off", false},
+		"no record":              {"", "no CXC plugin line is recorded, so the CXC plugin stays on", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newSwitchHome(t, cxcOn)
+			if tc.before != "" {
+				if err := os.WriteFile(filepath.Join(h.home, "config.toml"), []byte(tc.before), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				h.mustRun("crw")
+			} else {
+				// No switch ran: a damaged switch.json reads as crw (on).
+				if err := os.MkdirAll(filepath.Dir(hookswitch.Path(h.home)), 0o777); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(hookswitch.Path(h.home), []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The CXC plugin is turned on by hand since: a conflict.
+			if err := os.WriteFile(filepath.Join(h.home, "config.toml"), []byte(cxcOn), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if s := h.status(); s.State != "conflict" || (tc.before != "") != s.Record.Present {
+				t.Fatalf("status = %+v, want a conflict (record present %v)", s, tc.before != "")
+			}
+			out := h.mustRun("status")
+			if !strings.Contains(out, tc.note) {
+				t.Errorf("the conflict note lacks %q:\n%s", tc.note, out)
+			}
+			if !tc.cxcOnAt && strings.Contains(out, "stays on") {
+				t.Errorf("the conflict note says the CXC plugin stays on, but switch cxc turns it off:\n%s", out)
+			}
+			h.mustRun("cxc")
+			if s := h.status(); s.Plugins["codexclaw"].Enabled != tc.cxcOnAt || s.Switch.Active != "cxc" {
+				t.Fatalf("after switch cxc: CXC plugin enabled %v active %q, want enabled %v active cxc\n%s", s.Plugins["codexclaw"].Enabled, s.Switch.Active, tc.cxcOnAt, h.config())
+			}
+		})
+	}
 }

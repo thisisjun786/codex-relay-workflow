@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/hookswitch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
@@ -35,7 +36,9 @@ const switchUsage = "Usage:\n" +
 	"`switch cxc` is the emergency stop of the ported hooks: it turns them off and puts back, byte for byte,\n" +
 	"only what the switch recorded as changed. It never installs CXC. A CXC plugin entry that `switch crw`\n" +
 	"turned off from enabled = true is put back as it was, so on a home that still holds one the plugin\n" +
-	"comes back on, with the CXC role files the switch replaced. `features disable` does not touch the switch.\n"
+	"comes back on, with the CXC role files the switch replaced; one recorded as enabled = false is put back\n" +
+	"to false, so a CXC plugin turned on since is turned off again; with no recorded entry the CXC plugin is\n" +
+	"left as it is. `status` says which applies in a conflict. `features disable` does not touch the switch.\n"
 
 // The four states status reports.
 const (
@@ -93,6 +96,9 @@ type SwitchStatus struct {
 	Roles     []switchRoleStatus            `json:"roles"`
 	Record    switchRecordStatus            `json:"record"`
 	Notes     []string                      `json:"notes,omitempty"`
+	// stopNote is the human conflict line: what `switch cxc` does to the CXC plugin, worked out from
+	// the recorded line. It is not part of the JSON document.
+	stopNote string
 }
 
 type switchKeyOut struct {
@@ -264,7 +270,7 @@ func renderSwitch(stdout io.Writer, asJSON bool, status *SwitchStatus, result *s
 	}
 	if status.State == switchStateConflict {
 		// Human text only: the Notes of the JSON document keep their wording.
-		fmt.Fprintln(stdout, "note: `crw install switch cxc` is the emergency stop: it turns the ported CRW hooks off, and a CXC plugin that is on stays on; `crw install switch crw` turns it off")
+		fmt.Fprintln(stdout, "note: `crw install switch cxc` is the emergency stop: it turns the ported CRW hooks off and "+status.stopNote)
 	}
 	return OK
 }
@@ -329,7 +335,13 @@ func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 		}
 		s.Roles = append(s.Roles, switchRoleStatus{Role: string(name), Path: role.RoleFilePath(home, name), Owner: owner})
 	}
-	if m, err := configguard.ReadInstallManifest(home); err != nil {
+	m, err := configguard.ReadInstallManifest(home)
+	var rec *configguard.SwitchRecord
+	if m != nil {
+		rec = m.Switch
+	}
+	s.stopNote = switchStopCXCNote(string(config), rec)
+	if err != nil {
 		s.Notes = append(s.Notes, err.Error())
 	} else if m != nil && m.Switch != nil {
 		s.Record = switchRecordStatus{Present: true, Active: m.Switch.Active, Pending: m.Switch.Pending}
@@ -338,6 +350,37 @@ func ReadSwitchStatus(home, pluginRoot string) *SwitchStatus {
 		}
 	}
 	return s
+}
+
+// switchStopCXCNote says what `crw install switch cxc` does to the CXC plugin's enabled key, the way
+// configguard.RunSwitch does it: with a record that holds the values from before `switch crw`, the
+// recorded line is put back (RestoreTableKeyExact), so a recorded enabled = false turns a CXC plugin
+// that was turned on since off again; without one the key is left as it is.
+func switchStopCXCNote(config string, rec *configguard.SwitchRecord) string {
+	const crwOff = "; `crw install switch crw` turns it off"
+	var k *configguard.SwitchKeyRecord
+	if rec != nil && len(rec.Roles) > 0 {
+		for i := range rec.Keys {
+			if rec.Keys[i].Table == `plugins."`+configguard.SwitchCXCPlugin+`"` && rec.Keys[i].Key == "enabled" && rec.Keys[i].TablePresent {
+				k = &rec.Keys[i]
+			}
+		}
+	}
+	if k == nil {
+		return "no CXC plugin line is recorded, so the CXC plugin stays on" + crwOff
+	}
+	recorded := "line (no enabled key)"
+	if k.PriorLine != nil {
+		recorded = "line `" + strings.TrimSpace(*k.PriorLine) + "`"
+	}
+	edited, _, err := configguard.RestoreTableKeyExact(config, k.Table, k.Key, k.PriorLine)
+	if err != nil {
+		return "puts back the recorded CXC plugin " + recorded + ", but cannot now (" + err.Error() + "): it refuses until config.toml is fixed by hand"
+	}
+	if configguard.ReadPluginTableState(edited, configguard.SwitchCXCPlugin).Enabled {
+		return "puts back the recorded CXC plugin " + recorded + ", so the CXC plugin stays on" + crwOff
+	}
+	return "puts back the recorded CXC plugin " + recorded + ", so the CXC plugin is turned off"
 }
 
 func switchTrust(home, pluginRoot string) switchTrustStatus {
