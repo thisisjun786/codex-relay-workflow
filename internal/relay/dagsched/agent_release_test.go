@@ -377,6 +377,12 @@ func TestAgentSecondPacketNoScopeOwnerRefusal(t *testing.T) {
 	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("rp", 0, "rp-r1", issueNode("P1", dag.NodeNonPR, "CRW-F"), issueNode("P2", dag.NodeNonPR, "CRW-F"), issueNode("Q", dag.NodeNonPR, "CRW-G"))
+	// the constraints a managed second owner of the issue meets are the shipped schema's, and they are there
+	for _, index := range []string{"scope_bindings_one_live_owner", "scope_links_one_live_edge", "managed_start_one_pending_issue"} {
+		if k.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", index) != 1 {
+			t.Fatalf("the shipped index %s is not in the store", index)
+		}
+	}
 	scopes := k.count("SELECT COUNT(*) FROM scope_bindings")
 	links := k.count("SELECT COUNT(*) FROM scope_links")
 	first := k.mustReleaseAgent("rp", "P1")

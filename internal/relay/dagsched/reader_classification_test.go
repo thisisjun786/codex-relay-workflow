@@ -43,13 +43,7 @@ type readerEntry struct {
 }
 
 // tablesIn is the frozen tables a string spells.
-func tablesIn(text string) []string {
-	var out []string
-	for _, m := range readerTablePattern.FindAllString(text, -1) {
-		out = append(out, m)
-	}
-	return out
-}
+func tablesIn(text string) []string { return readerTablePattern.FindAllString(text, -1) }
 
 func uniqueSorted(in []string) []string {
 	seen := map[string]bool{}
