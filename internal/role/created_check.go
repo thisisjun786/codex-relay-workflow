@@ -56,6 +56,10 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 	if dispatchIs(b["action"], "report") && (dispatchIs(b["outcome"], "failed") || dispatchIs(b["outcome"], "task_failed")) {
 		gate := dispatchHandoffGate(ctx, env, h)
 		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+			b, err := createdBindAgentPath(ctx, env, d, b)
+			if err != nil {
+				return DispatchResult{}, err
+			}
 			r, err := dispatchReport(d, b, gate)
 			if err == nil && dispatchIs(d.Status, "stopped") {
 				r = dispatchPolicyStopCleanup(d, r)
@@ -64,7 +68,7 @@ func dispatchPinnedChecked(ctx context.Context, cwd string, input any, env host.
 		})
 	}
 	if dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "complete") {
-		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, createdCheckComplete)
+		return dispatchPinnedRunHeld(cwd, input, env, nil, after, false, createdCheckComplete(ctx, env))
 	}
 	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "created") {
 		return RunDispatch(cwd, input, env)
@@ -82,6 +86,10 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 	return func(dir *dispatchPinnedDir, name string, d *Dispatch, b map[string]any) (DispatchResult, error) {
 		a := &d.Attempts[len(d.Attempts)-1]
 		issued, tool, prior := a.SpawnIssued, a.ToolUseID, a.Receipt
+		b, err := createdBindAgentPath(ctx, env, d, b)
+		if err != nil {
+			return DispatchResult{}, err
+		}
 		if _, err := dispatchReport(d, b, nil); err != nil {
 			return DispatchResult{}, err
 		}
@@ -128,7 +136,7 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 		}
 		correlation := "unissued"
 		if issued {
-			if correlation, err = createdCheckTie(ctx, env, d, a, agent, native.FirstMessage); err != nil {
+			if correlation, err = createdCheckTie(ctx, env, d, a, agent, native); err != nil {
 				return DispatchResult{}, err
 			}
 		}
@@ -172,8 +180,10 @@ func createdCheckReporter(ctx context.Context, env host.LookupEnv, h DispatchHos
 // use id in the parent's rollout (createdCheckSpawnResult): naming this child ties it ("spawn-result"); a failed call or one
 // that returned another child refuses the report; no readable result leaves the child "unverified", which cannot satisfy an
 // independent review.
-func createdCheckTie(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, agent, first string) (string, error) {
-	if first != "" {
+func createdCheckTie(ctx context.Context, env host.LookupEnv, d *Dispatch, a *DispatchAttempt, agent string, native createdCheckIdentity) (string, error) {
+	// A child forked from this session starts with a copy of its history, so its first user message is the parent's and carries
+	// no marker of this attempt; only the host's result of the issued call (below) ties such a child (CRW-1260).
+	if first := native.FirstMessage; first != "" && createdForkedFrom(ctx, native.RolloutPath) != d.SessionID {
 		if !managedSpawnCarries(first, d.ID, a.ID) {
 			return "", errors.New("agentId is not the child the issued spawn created: its first message carries no marker of this attempt" + createdCheckCorrection)
 		}
@@ -207,11 +217,14 @@ type createdSpawnResult struct {
 }
 
 // createdCheckSpawnResult reads the host's result of the native spawn call with tool use id call out of the rollout of the
-// session, whose path the native thread database holds. The host writes each collaboration tool call it runs as an item of
-// type CollabAgentToolCall whose id is the call's tool use id (the id the spawn hook received and recorded), and its
-// item_completed event names the threads the call created (receiver_thread_ids). The caller cannot write that event; a line
-// that does not parse is not a result. The look runs under the same 30 s bound as the host's other reads, and the rollout is
-// read within the scan's bounds (dispatchRolloutScan).
+// session, whose path the native thread database holds. Two forms are read, both events the host writes about a call it ran
+// and the caller cannot write. Multi-agent V1 writes each collaboration tool call as an item of type CollabAgentToolCall whose
+// id is the call's tool use id (the id the spawn hook received and recorded); its item_completed event names the threads the
+// call created (receiver_thread_ids). Multi-agent V2 runs spawn_agent as a plain function call whose output holds only the
+// agent path, and writes the thread it created as an item_completed event of type SubAgentActivity (kind "started") whose id
+// is the call's id and whose agent_thread_id is the new thread (CRW-1260; the study's V2 rollouts). The sender of either event
+// is the session; a line that does not parse is not a result. The look runs under the same 30 s bound as the host's other
+// reads, and the rollout is read within the scan's bounds (dispatchRolloutScan).
 func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, call string) (createdSpawnResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -236,28 +249,42 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 	defer f.Close()
 	var out createdSpawnResult
 	err = dispatchRolloutScan(ctx, f, func(line []byte) {
-		// Only a line naming the item type is decoded; the id is compared decoded, however the host escaped it. A line over the
-		// scan's line bound (nil) is not decoded.
-		if !bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) {
+		// Only a line naming one of the two item types is decoded; the id is compared decoded, however the host escaped it. A
+		// line over the scan's line bound (nil) is not decoded.
+		if !bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) && !bytes.Contains(line, []byte(`"SubAgentActivity"`)) {
 			return
 		}
 		var e struct {
 			Type    string `json:"type"`
 			Payload struct {
-				Type string `json:"type"`
-				Item struct {
+				Type   string `json:"type"`
+				Thread string `json:"thread_id"`
+				Item   struct {
 					Type      string   `json:"type"`
 					ID        string   `json:"id"`
 					Tool      string   `json:"tool"`
 					Status    string   `json:"status"`
 					Sender    string   `json:"sender_thread_id"`
 					Receivers []string `json:"receiver_thread_ids"`
+					Kind      string   `json:"kind"`
+					Child     string   `json:"agent_thread_id"`
 				} `json:"item"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal(line, &e) == nil && e.Type == "event_msg" && e.Payload.Type == "item_completed" {
-			if it := e.Payload.Item; it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session {
-				out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
+		if json.Unmarshal(line, &e) != nil || e.Type != "event_msg" || e.Payload.Type != "item_completed" {
+			return
+		}
+		switch it := e.Payload.Item; {
+		case it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session:
+			out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
+		case it.Type == "SubAgentActivity" && it.Kind == "started" && it.ID == call && e.Payload.Thread == session && it.Child != "":
+			// The activity of a V2 spawn is written once the thread exists, so it is a completed call; a call that made two
+			// threads (it does not) would name both.
+			if !out.Seen || out.Status != "completed" {
+				out = createdSpawnResult{Seen: true, Status: "completed"}
+			}
+			if !slices.Contains(out.Children, it.Child) {
+				out.Children = append(out.Children, it.Child)
 			}
 		}
 	})
@@ -270,13 +297,19 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 
 // createdCheckComplete is the complete report at the checked boundary: an independent review is complete only through a child
 // tied to its issued spawn (receipt correlation spawn-result). Every other check is the ledger's.
-func createdCheckComplete(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
-	a := d.Attempts[len(d.Attempts)-1]
-	if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "spawn-result") {
-		return DispatchResult{}, errors.New("this child is not tied to its issued spawn, so it cannot satisfy independent review; " +
-			"report created again once the host shows the issued spawn's result, or close it with outcome stopped")
+func createdCheckComplete(ctx context.Context, env host.LookupEnv) dispatchReporter {
+	return func(_ *dispatchPinnedDir, _ string, d *Dispatch, b map[string]any) (DispatchResult, error) {
+		a := d.Attempts[len(d.Attempts)-1]
+		if d.Role == Reviewer && (a.Receipt == nil || a.Receipt.Correlation != "spawn-result") {
+			return DispatchResult{}, errors.New("this child is not tied to its issued spawn, so it cannot satisfy independent review; " +
+				"report created again once the host shows the issued spawn's result, or close it with outcome stopped")
+		}
+		b, err := createdBindAgentPath(ctx, env, d, b)
+		if err != nil {
+			return DispatchResult{}, err
+		}
+		return dispatchReport(d, b, nil)
 	}
-	return dispatchReport(d, b, nil)
 }
 
 // dispatchPolicyStopCleanup marks the outstanding cleanup of a child a policy stop left recorded: the dispatch is stopped by
@@ -473,6 +506,9 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	cleanup := dispatchIs(d.Status, "stopped") && a.AgentID != nil && !createdCheckClosed(&d, len(d.Attempts)-1)
 	if !dispatchIs(d.Status, "active") && !cleanup {
 		return dispatchResult(&d, nil, ""), nil
+	}
+	if b, err = createdBindAgentPath(ctx, env, &d, b); err != nil {
+		return DispatchResult{}, err
 	}
 	if !dispatchIs(b["executionState"], "stopped") || a.AgentID == nil || !dispatchIs(b["agentId"], *a.AgentID) {
 		return DispatchResult{}, errors.New("recorded child must be stopped and identified")

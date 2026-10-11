@@ -19,6 +19,12 @@ const DispatchGuidance = `Roles with a first fallback use the main-owned dispatc
 // the hook's decision and the managed receipts are unchanged.
 const ExplicitNativeSpawnNote = `CRW: dispatch is the default procedure for these roles, not a prohibition. When the user's current request explicitly asks for a direct native spawn (for example native, without dispatch), spawn it as asked for any role (explorer, executor, reviewer or architect): the spawn hook allows it and marks it unmanaged, and an unmanaged spawn creates no managed receipt.`
 
+// V2TaskNameNote is CRW's V2 rule of the managed path (CRW-1260), said after ExplicitNativeSpawnNote in the SessionStart notice and
+// in the reminder a direct V2 spawn gets: a V2 task is host ciphertext, so the spawn hook cannot read the marker in it, and issues a
+// claimed attempt only to a call whose task_name is the dispatch id of a claim that opted in. It is kept short because the notice,
+// the CXC guidance and the dispatch card share a 4096-unit budget; the delegation reference gives the whole step.
+const V2TaskNameNote = `CRW V2: claim with v2TaskName:true and spawn with task_name equal to the dispatchId.`
+
 // SessionFallbackNotice ports fallback-dispatch-cli.ts:11-21. The existing
 // global-only store replaces the oracle's project layer; reads never write it.
 func SessionFallbackNotice(env host.LookupEnv) (string, error) {
@@ -38,7 +44,7 @@ func fallbackSessionNotice(env host.LookupEnv, render func() (string, error)) (s
 	}
 	parts := []string{}
 	if len(active) > 0 {
-		parts = append(parts, "[crw] First fallback configured for "+strings.Join(active, ", ")+". "+DispatchGuidance+" "+ExplicitNativeSpawnNote)
+		parts = append(parts, "[crw] First fallback configured for "+strings.Join(active, ", ")+". "+DispatchGuidance+" "+ExplicitNativeSpawnNote+" "+V2TaskNameNote)
 	}
 	card, err := render()
 	if err != nil {

@@ -242,7 +242,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. State the dispatch rule of CRW-1257: dispatch is the default procedure of a role with a configured first fallback and not a prohibition, and a direct native spawn the user's current request explicitly asks for is allowed by the spawn hook as unmanaged.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker (a child forked from the session is tied by the call's result alone) and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. Under multi-agent V2 the created report's agentId is the agent path root/<task> (written with a leading slash) that spawn_agent returns, which the command resolves to the child's thread id, and the spawn hook issues a V2 call whose task it cannot read to the attempt of the dispatch its task_name names when the claim opted in with v2TaskName:true, never to a direct call whose name only equals a dispatch id (CRW-1260). State the dispatch rule of CRW-1257: dispatch is the default procedure of a role with a configured first fallback and not a prohibition, and a direct native spawn the user's current request explicitly asks for is allowed by the spawn hook as unmanaged.",
       "hunks": [
         {
           "line": 141,
@@ -276,14 +276,30 @@
           ]
         },
         {
+          "line": 377,
+          "new": [
+            "   Under multi-agent V2 (`spawn_agent` takes `task_name`), add `\"v2TaskName\":true` to\n",
+            "   the claim and give the native call the returned `taskName`, the `dispatchId`, as its\n",
+            "   `task_name`.\n"
+          ]
+        },
+        {
           "line": 378,
           "old": [
             "   Report `outcome:created` and the actual `agentId`, then use native wait. Report\n"
           ],
           "new": [
-            "   Report `outcome:created` and the actual `agentId`, then use native wait. Created\n",
-            "   requires the spawn hook's issuance of the attempt, and the child's first message\n",
-            "   must carry this attempt's marker. The marker does not tie the child to the call:\n",
+            "   Report `outcome:created` and the actual `agentId` (under multi-agent V2, where\n",
+            "   `spawn_agent` returns the agent path `root/<task>`, written with a leading slash, and no thread id, that path is the\n",
+            "   `agentId`; the command resolves it to the child's thread id in the native database\n",
+            "   and records the thread id), then use native wait. Created\n",
+            "   requires the spawn hook's issuance of the attempt (a V2 task is host ciphertext whose\n",
+            "   marker the hook cannot read, so the hook issues the attempt of a claim made with\n",
+            "   `v2TaskName:true` to the V2 call whose `task_name` is its `dispatchId`, and none to any\n",
+            "   other call: a direct call whose name only equals a dispatch id stays unmanaged; an\n",
+            "   explorer-typed call may carry a reviewer or architect dispatch), and the child's first message\n",
+            "   must carry this attempt's marker (a child forked from this session starts with the\n",
+            "   parent's history, so it is tied by the call's result alone). The marker does not tie the child to the call:\n",
             "   only the host's own result of the issued spawn call naming this `agentId` does, and\n",
             "   a child the host cannot yet tie that way is recorded unverified and cannot complete\n",
             "   an independent review until created is reported again. A child spawned while the hook was off is recorded only with\n",

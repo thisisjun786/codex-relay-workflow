@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // testdata/hook/oracle.json holds, besides the cases of hook_test.go, what the CXC v0.2.40 hook printed end to end ("route") and its
@@ -108,10 +109,22 @@ var spawnRouteIntent = map[string]string{
 	"route: prompt override dollar patterns/3": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nA $& B $$ C $' D $` E $1 F $<x> G\\n\\nTASKTEXT\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
 }
 
-// spawnRouteExpect is the recorded answer of a step, or the port's answer for a step CRW-1121 changes.
+// spawnRouteV2Note are the recorded route steps of a direct V2 spawn of a role with a fallback, whose reminder CRW-1260 extends on
+// purpose: the oracle's guidance is followed by role.V2TaskNameNote, the V2 rule of the managed path. Every other byte is recorded.
+var spawnRouteV2Note = map[string]bool{"route: fallback notice/4": true, "route: v2 ciphertext/5": true}
+
+// spawnRouteExpect is the recorded answer of a step, or the port's answer for a step CRW-1121 or CRW-1260 changes.
 func spawnRouteExpect(name string, i int, step spawnRouteStep) spawnRouteStep {
-	if intent, ok := spawnRouteIntent[name+"/"+strconv.Itoa(i+1)]; ok {
+	key := name + "/" + strconv.Itoa(i+1)
+	if intent, ok := spawnRouteIntent[key]; ok {
 		step.Expect, step.ExpectSha256 = intent, ""
+	}
+	if spawnRouteV2Note[key] {
+		const tail = "Never use a dispatch marker to bypass native permissions."
+		if strings.Count(step.Expect, tail) != 1 || !strings.HasSuffix(role.DispatchGuidance, tail) {
+			panic("the recorded V2 reminder of " + key + " does not end the guidance once")
+		}
+		step.Expect = strings.Replace(step.Expect, tail, tail+" "+role.V2TaskNameNote, 1)
 	}
 	return step
 }

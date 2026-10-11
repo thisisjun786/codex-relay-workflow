@@ -74,6 +74,11 @@ type DispatchAttempt struct {
 	// host's result of it (createdCheckTie). It is omitted when empty, which keeps the record the oracle's when the host shows
 	// no marked child.
 	PriorChildren []string `json:"priorChildren,omitempty"`
+	// V2TaskName is the claim's opt-in to being named by a native multi-agent V2 call's task_name (CRW-1260): a V2 task is host
+	// ciphertext, so the spawn hook cannot read this attempt's marker in it, and issues the attempt to a ciphertext call whose
+	// task_name is the dispatch id only when the claim asked for that (role.ManagedSpawnResolver.Named). It is omitted when false,
+	// which keeps the record the oracle's for a claim without it.
+	V2TaskName bool `json:"v2TaskName,omitempty"`
 	// Termination is set by the checked boundary when a handoff relied on an observed end of the child; the parity ledger
 	// never writes it, and a stored one is kept as it was read.
 	Termination *DispatchTermination `json:"termination,omitempty"`
@@ -137,6 +142,8 @@ type DispatchResult struct {
 	Reason                    string             `json:"reason,omitempty"`
 	Candidate                 *DispatchCandidate `json:"candidate,omitempty"`
 	Marker                    string             `json:"marker,omitempty"`
+	// TaskName is the task_name the native V2 call of a claim that opted in (v2TaskName) must carry: the dispatch id (CRW-1260).
+	TaskName string `json:"taskName,omitempty"`
 }
 
 func dispatchIs(v any, s string) bool { got, ok := v.(string); return ok && got == s }
@@ -536,6 +543,13 @@ func dispatchPinnedDecode(data []byte, session, id string) (Dispatch, error) {
 		if prior := dispatchRaw(a.raw, "priorChildren"); prior != nil && json.Unmarshal(prior, &a.PriorChildren) != nil {
 			return d, errors.New("invalid spawn issuance")
 		}
+		switch optIn := dispatchRaw(a.raw, "v2TaskName"); {
+		case optIn == nil || string(optIn) == "false":
+		case string(optIn) == "true":
+			a.V2TaskName = true
+		default:
+			return d, errors.New("invalid attempt v2TaskName")
+		}
 		if a.Status, err = dispatchStatus(dispatchRaw(a.raw, "status"), "ready", "claimed", "running", "reconcile", "failed", "complete"); err != nil {
 			if errors.Is(err, errNotObject) {
 				return d, errors.New("invalid attempt status")
@@ -783,16 +797,31 @@ func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check disp
 		return dispatchResult(&d, nil, ""), nil
 	}
 	if dispatchIs(b["action"], "claim") {
+		// CRW-1260: v2TaskName:true opts the attempt in to being named by a native V2 call's task_name; an absent or false value
+		// claims as the oracle does.
+		optIn := false
+		if v, ok := b["v2TaskName"]; ok {
+			if optIn, ok = v.(bool); !ok {
+				return out, errors.New("v2TaskName must be true or false")
+			}
+		}
 		if a.Claimed || !dispatchIs(a.Status, "ready") {
 			return dispatchResult(&d, "reconcile", "attempt already claimed; do not spawn again"), nil
 		}
 		a.Claimed, a.Status = true, "claimed"
+		if optIn {
+			a.V2TaskName = true
+			a.raw.set("v2TaskName", true)
+		}
 		if err = dispatchSave(dir, name, &d, check); err != nil {
 			return out, err
 		}
 		out = dispatchResult(&d, "spawn", "")
 		out.Candidate = &a.Candidate
 		out.Marker = "[CRW-DISPATCH:" + id + ":" + a.ID + "]"
+		if optIn {
+			out.TaskName = id
+		}
 		return out, nil
 	}
 	if !dispatchIs(b["action"], "report") {
