@@ -936,3 +936,63 @@ func TestRecompileKeepsDecisionEdges(t *testing.T) {
 		}
 	})
 }
+
+// TestPreviewShowsTheKeptDecisionEdges: the preview is the plan the revision leaves, so a decision edge that stays orders its two issues
+// in the width, the critical path, the waves and the edge count just as it does once the revision is applied.
+func TestPreviewShowsTheKeptDecisionEdges(t *testing.T) {
+	node := func(id, kind string) *dag.Node {
+		return &dag.Node{NodeID: id, IssueKey: id, Kind: kind, Title: "issue " + id, CriteriaSetDigest: criteriaDigest([]string{"criterion of " + id})}
+	}
+	seed := dag.Revision{PlanID: "plan-px", ProjectKey: "PX", RequestID: "seed", AuthorTaskID: "t", Changes: []dag.Change{
+		{Op: dag.OpAddNode, Node: node("A", dag.NodeNonPR)}, {Op: dag.OpAddNode, Node: node("B", dag.NodeNonPR)},
+		{Op: dag.OpAddEdge, Edge: &dag.Edge{EdgeID: "gate", FromNodeID: "A", ToNodeID: "B", Kind: dag.EdgeDecision,
+			DecisionSubject: "release", DecisionDigest: "d1", RequiredAuthority: []string{"owner"}}},
+	}}
+	base, _, vs := dag.Apply(dag.State{PlanID: "plan-px"}, seed)
+	if len(vs) > 0 {
+		t.Fatalf("seed refused: %v", vs)
+	}
+	bases := map[string]dag.State{"plan-px": base}
+	check := func(t *testing.T, p Plan) {
+		t.Helper()
+		pv := p.Preview
+		if pv.Edges != 1 || pv.ParallelWidth != 1 || fmt.Sprint(pv.CriticalPath) != "[A B]" || pv.CriticalPathLen != 2 || fmt.Sprint(pv.Waves) != "[[A] [B]]" {
+			t.Errorf("preview edges %d, width %d, critical path %v (%d), waves %v", pv.Edges, pv.ParallelWidth, pv.CriticalPath, pv.CriticalPathLen, pv.Waves)
+		}
+	}
+	t.Run("unchanged", func(t *testing.T) {
+		p := compileOne(t, project(iss("A", nonPR()), iss("B", nonPR())), bases)
+		if p.Status != StatusUnchanged {
+			t.Fatalf("status %s, changes %v", p.Status, changeOps(p))
+		}
+		check(t, p)
+	})
+	t.Run("a retitle", func(t *testing.T) {
+		p := compileOne(t, project(iss("A", nonPR()), iss("B", nonPR(), title("issue B, retitled"))), bases)
+		if ops := changeOps(p); len(ops["retire_edge"]) != 0 || len(ops["update_node"]) != 1 {
+			t.Fatalf("changes %v", ops)
+		}
+		check(t, p)
+		if next := fold(t, base, p); len(next.Edges) != 1 {
+			t.Errorf("the plan has %d edges", len(next.Edges))
+		}
+	})
+	t.Run("an order edge on the same pair is one ordering", func(t *testing.T) {
+		p := compileOne(t, project(iss("A", nonPR()), iss("B", nonPR(), after("A"))), bases)
+		if pv := p.Preview; pv.Edges != 2 || pv.ParallelWidth != 1 || fmt.Sprint(pv.Waves) != "[[A] [B]]" || fmt.Sprint(pv.CriticalPath) != "[A B]" {
+			t.Errorf("preview %+v", pv)
+		}
+	})
+	t.Run("a third issue stays beside the gate", func(t *testing.T) {
+		p := compileOne(t, project(iss("A", nonPR()), iss("B", nonPR()), iss("C", nonPR())), bases)
+		if pv := p.Preview; pv.Edges != 1 || pv.ParallelWidth != 2 || fmt.Sprint(pv.Waves) != "[[A C] [B]]" {
+			t.Errorf("preview %+v", pv)
+		}
+	})
+	t.Run("an order edge against the gate is a cycle", func(t *testing.T) {
+		r := mustRefuse(t, project(iss("A", nonPR(), after("B")), iss("B", nonPR())), bases)
+		if !r.Has("cycle") {
+			t.Errorf("refusal %v", r)
+		}
+	})
+}

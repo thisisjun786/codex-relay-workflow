@@ -306,8 +306,14 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 	// --- the plan revision
 	h := readBase(base)
 	assign(units, h)
-	changes, counts := diff(units, order, p.Target, h, &refusals, p.Key)
-	plan.Preview = preview(units, order, keys, counts, h, groupNames, members, base.Revision, owner)
+	changes, counts, gates := diff(units, order, p.Target, h, &refusals, p.Key)
+	// The plan the revision leaves holds the decision edges that stay as well as the order edges: the preview reads that graph.
+	live := append(append([]pair{}, order...), gates...)
+	if cycle := findCycle(keys, live); cycle != "" {
+		refuse("cycle", "plan", "issues %s form a cycle with the decision edges the plan already holds; a plan is a DAG", cycle)
+		return plan, refusals
+	}
+	plan.Preview = preview(units, live, len(order)+len(gates), keys, counts, h, groupNames, members, base.Revision, owner)
 	if len(refusals) > 0 {
 		return plan, refusals
 	}
@@ -604,14 +610,19 @@ func newEdgeID(from, to string, h baseView, used map[string]bool) string {
 }
 
 // diff is the changes that take the base plan to the handoff, in an order that reads: edges and nodes that leave, nodes that change,
-// nodes that come, edges that come.
-func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusal, project string) ([]dag.Change, ChangeCounts) {
+// nodes that come, edges that come. It also returns the decision edges that stay, as pairs of issue keys.
+func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusal, project string) ([]dag.Change, ChangeCounts, []pair) {
 	var counts ChangeCounts
 	byKey := map[string]*unit{}
 	for _, u := range units {
 		byKey[u.Key] = u
 	}
 	var retireEdges, retireNodes, updates, adds, addEdges []dag.Change
+	var gates []pair
+	keyOf := map[string]string{} // node id -> issue key
+	for _, u := range units {
+		keyOf[u.nodeID] = u.Key
+	}
 	want := map[pair]dag.Edge{} // by node ids
 	edgeIDs := map[pair]string{}
 
@@ -664,6 +675,7 @@ func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusa
 		// neither an order edge compile owns nor something to drop in silence, so it stays while both of its nodes do.
 		if row.Kind == dag.EdgeDecision && desiredIDs[row.FromNodeID] && desiredIDs[row.ToNodeID] {
 			counts.KeepDecisionEdge++
+			gates = append(gates, pair{keyOf[row.FromNodeID], keyOf[row.ToNodeID]})
 			continue
 		}
 		if w, ok := want[e]; ok && edgeIDs[e] == "" && sameEdge(row.Edge, w) {
@@ -698,7 +710,7 @@ func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusa
 	for _, part := range [][]dag.Change{retireEdges, retireNodes, updates, adds, addEdges} {
 		all = append(all, part...)
 	}
-	return all, counts
+	return all, counts, gates
 }
 
 func sameEdge(a, b dag.Edge) bool {
@@ -708,9 +720,10 @@ func sameEdge(a, b dag.Edge) bool {
 
 // --- the preview
 
-func preview(units []*unit, order []pair, keys []string, counts ChangeCounts, h baseView,
+// graph is the order edges and the kept decision edges, edges the live edge count of the plan the revision leaves.
+func preview(units []*unit, graph []pair, edges int, keys []string, counts ChangeCounts, h baseView,
 	groupNames []string, members map[string][]string, baseRev int64, owner map[string]string) Preview {
-	pv := Preview{Nodes: len(units), Edges: len(order), Changes: counts, ExpectedParentRev: baseRev,
+	pv := Preview{Nodes: len(units), Edges: edges, Changes: counts, ExpectedParentRev: baseRev,
 		Issues: []IssuePreview{}, Groups: []GroupPreview{}, Milestones: []MilestoneCount{}, SizeUnreviewed: []string{}, ExternalPrereqs: []ExternalAfter{}, RetiredIssues: []string{}}
 	desired := map[string]bool{}
 	for _, u := range units {
@@ -762,10 +775,10 @@ func preview(units []*unit, order []pair, keys []string, counts ChangeCounts, h 
 	for _, g := range groupNames {
 		pv.Groups = append(pv.Groups, GroupPreview{Group: g, Order: append([]string{}, members[g]...)})
 	}
-	pv.ParallelWidth = width(keys, order)
-	pv.CriticalPath = criticalPath(keys, order)
+	pv.ParallelWidth = width(keys, graph)
+	pv.CriticalPath = criticalPath(keys, graph)
 	pv.CriticalPathLen = len(pv.CriticalPath)
-	pv.Waves = waves(keys, order)
+	pv.Waves = waves(keys, graph)
 	return pv
 }
 
