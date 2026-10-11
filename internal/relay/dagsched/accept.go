@@ -64,6 +64,8 @@ type AcceptResult struct {
 	Sweep *SweepResult
 	// the pull request's repository and base branch, for the tip the sweep measures against
 	prRepository, baseRef string
+	// ExecutionID and ExecutionKind name the execution an acceptance of the agent kind (accept_agent.go) stands on; both are "" for a relationship acceptance.
+	ExecutionID, ExecutionKind string
 }
 
 // slotState is the state and tenure of the newest tenure of a node's slot ("" when it never had one). A slot returned and reserved again (a replay of a release whose slot was returned
@@ -107,8 +109,17 @@ func (s *Scheduler) slotReturner(ctx context.Context, q store.Querier, plan, nod
 	}
 	var one int
 	chain, err := queryOne(ctx, q, "SELECT 1 FROM dag_node_executions e JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.plan_id = ? AND e.node_id = ? AND r.parent_task_id = ? LIMIT 1", []any{plan, node, holder}, &one)
-	if err != nil || !chain {
+	if err != nil {
 		return actor, err
+	}
+	if !chain {
+		// an agent node's chain: the holder is the actor of a row of the node's agent executions (a parent_handover row names the orchestrator that took the node over)
+		if has, err := tableExists(ctx, q, "dag_agent_executions"); err != nil || !has {
+			return actor, err
+		}
+		if chain, err = queryOne(ctx, q, "SELECT 1 FROM dag_agent_executions WHERE plan_id = ? AND node_id = ? AND actor_task_id = ? LIMIT 1", []any{plan, node, holder}, &one); err != nil || !chain {
+			return actor, err
+		}
 	}
 	return holder, nil
 }
@@ -205,6 +216,10 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 	if err != nil || out.AcceptanceID == "" || out.HeadSHA == "" || out.Revalidated {
 		return out, err
 	}
+	if out.ExecutionKind == ExecutionAgent {
+		// the conflict sweep measures the heads of relationships' executions; the live heads of agent executions are read in R06 (docs/relay/agent-execution-readers.md), so an agent acceptance owes none yet
+		return out, nil
+	}
 	// the receipt taken in owes a conflict sweep (conflicts, CRW-410): its head against the other live heads and against the tip of its pull request's base branch. It rests on the acceptance, so a repeat of the
 	// acceptance runs the sweep that a failure left undone and finds one that is done.
 	tipSource := func(ctx context.Context) []SweepTip {
@@ -236,6 +251,12 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	// the plan's hold is read before the forge is (a node the plan paused or ended is not accepted); the transaction below reads it again
 	if err := lifecycleRefusal(snap, n, "accepting its result", false); err != nil {
 		return out, err
+	}
+	// a node whose current execution is an agent execution is accepted by the agent path (accept_agent.go); a node with none, or whose execution is a relationship's, by the path below, unchanged
+	if agent, live, err := currentAgentExecution(ctx, q, plan, node); err != nil {
+		return out, err
+	} else if live {
+		return s.acceptAgent(ctx, snap, n, plan, node, actor, agent, in)
 	}
 	implementation := n.Kind == dag.NodeImplementation
 	commitPath := in.Commit != nil

@@ -3,10 +3,12 @@ package dagsched
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -314,4 +316,235 @@ func refuseLiveRelationshipExecution(ctx context.Context, q store.Querier, plan,
 		return err
 	}
 	return refuse(contract.RefusalDispositionConflict, "%s: node %s of plan %s has a current execution on the relationship side (%s), so an agent is not given the node", LiveRelationshipExecution, node, plan, orDash(rel.RelationshipID, rel.ManagedRequestID))
+}
+
+// The union readers of the node's acceptance (R05, CRW-1213). An agent node's accepted result is a row of dag_agent_acceptances (an acceptance of the frozen dag_acceptances is a relationship's), so a reader that
+// wants "the node's current acceptance" asks acceptanceOf, which looks on both sides. A node has at most one current acceptance of one kind: the agent side is the last row of the node's acceptance chain unless a
+// dag_agent_closures row of kind acceptance ends it, the relationship side is the active row of dag_acceptances, and acceptanceOf fails closed on a store that nevertheless holds both (cross_kind_acceptance).
+// The readers that are node-scoped but still read the relationship side only move to acceptanceOf in R06 (docs/relay/agent-execution-readers.md).
+
+// The kinds of a node's acceptance, named like the kinds of its execution.
+const (
+	AcceptanceRelationship = ExecutionRelationship
+	AcceptanceAgent        = ExecutionAgent
+)
+
+// CrossKindAcceptance is the closed reason of the cross-kind exclusion of acceptances (D-02: it travels in the detail of a disposition_conflict, like the reasons of the executions).
+const CrossKindAcceptance = "cross_kind_acceptance"
+
+// AgentAcceptance is one row of dag_agent_acceptances: the accepted result of an agent execution. Head, Base and everything the head carries are ” for a node without a head.
+type AgentAcceptance struct {
+	AcceptanceID, PlanID, NodeID, ManifestDigest, ExecutionID string
+	// Head is the commit the relay read from git; Base the commit it descends from; Repository the checkout both were proved in and the integration target is judged against.
+	Head, Base, Repository string
+	// The pre-merge record and the verification record the acceptance stands on, with their digests and bodies.
+	PremergeDigest, PremergeJSON, PremergeEvaluatedHead string
+	VerificationDigest, VerificationJSON, TreeSHA       string
+	// CriteriaSetDigest is the criteria set the reviewer saw and the plan fixed.
+	CriteriaSetDigest string
+	// The reviewer call the run recorded, its thread and turn, and the pair it ran on; AuthorPairsDigest is the digest of the author pairs observed when the acceptance was made.
+	ReviewerCallID, ReviewerThreadID, ReviewerTurnID, ReviewerModel, ReviewerEffort string
+	AuthorPairsDigest                                                               string
+	AcceptedBy                                                                      string
+	Epoch                                                                           int64
+	AcceptedAt                                                                      string
+	// Supersedes is the acceptance this one follows in the node's chain, "" for the root.
+	Supersedes string
+}
+
+const agentAcceptanceColumns = "acceptance_id, plan_id, node_id, manifest_digest, execution_id, head, base, repository, premerge_digest, premerge_json, premerge_evaluated_head, verification_digest, verification_json, tree_sha, criteria_set_digest, reviewer_call_id, reviewer_thread_id, reviewer_turn_id, reviewer_model, reviewer_effort, author_pairs_digest, accepted_by_task_id, coordinator_epoch, accepted_at, COALESCE(supersedes_acceptance_id, '')"
+
+// agentAcceptanceInsertColumns are the columns an INSERT names: agentAcceptanceColumns with the NULL of the root read as ”.
+const agentAcceptanceInsertColumns = "acceptance_id, plan_id, node_id, manifest_digest, execution_id, head, base, repository, premerge_digest, premerge_json, premerge_evaluated_head, verification_digest, verification_json, tree_sha, criteria_set_digest, reviewer_call_id, reviewer_thread_id, reviewer_turn_id, reviewer_model, reviewer_effort, author_pairs_digest, accepted_by_task_id, coordinator_epoch, accepted_at, supersedes_acceptance_id"
+
+func scanAgentAcceptance(row interface{ Scan(...any) error }) (AgentAcceptance, error) {
+	var a AgentAcceptance
+	err := row.Scan(&a.AcceptanceID, &a.PlanID, &a.NodeID, &a.ManifestDigest, &a.ExecutionID, &a.Head, &a.Base, &a.Repository, &a.PremergeDigest, &a.PremergeJSON, &a.PremergeEvaluatedHead,
+		&a.VerificationDigest, &a.VerificationJSON, &a.TreeSHA, &a.CriteriaSetDigest, &a.ReviewerCallID, &a.ReviewerThreadID, &a.ReviewerTurnID, &a.ReviewerModel, &a.ReviewerEffort,
+		&a.AuthorPairsDigest, &a.AcceptedBy, &a.Epoch, &a.AcceptedAt, &a.Supersedes)
+	return a, err
+}
+
+// AgentAcceptanceID is the id of the acceptance row of an execution's head under a criteria set: a pure function of the key of the table, so a replay is the same row.
+func AgentAcceptanceID(plan, node, execution, head, criteria string) string {
+	return requestID("agent-acceptance", plan, node, execution, head, criteria)
+}
+
+// agentAcceptanceChainEnd is the last row of a node's acceptance chain, ended or not: the row no other row follows. There is at most one (the successor key of the table), and none for a node that has no
+// agent acceptance. A store whose zone predates the table has none either: a read-only open installs nothing.
+func agentAcceptanceChainEnd(ctx context.Context, q store.Querier, plan, node string) (AgentAcceptance, bool, error) {
+	has, err := tableExists(ctx, q, "dag_agent_acceptances")
+	if err != nil || !has {
+		return AgentAcceptance{}, false, err
+	}
+	a, err := scanAgentAcceptance(q.QueryRowContext(ctx, "SELECT "+agentAcceptanceColumns+" FROM dag_agent_acceptances a WHERE a.plan_id = ? AND a.node_id = ?"+
+		" AND NOT EXISTS (SELECT 1 FROM dag_agent_acceptances n WHERE n.supersedes_acceptance_id = a.acceptance_id)"+
+		" ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1", plan, node))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentAcceptance{}, false, nil
+	}
+	return a, err == nil, err
+}
+
+// currentAgentAcceptance is the node's current agent acceptance: the last row of its chain when no closure of kind acceptance ends it. A superseded row is never current again.
+func currentAgentAcceptance(ctx context.Context, q store.Querier, plan, node string) (AgentAcceptance, bool, error) {
+	end, found, err := agentAcceptanceChainEnd(ctx, q, plan, node)
+	if err != nil || !found {
+		return AgentAcceptance{}, false, err
+	}
+	if _, closed, err := agentClosureOf(ctx, q, "acceptance", end.AcceptanceID); err != nil || closed {
+		return AgentAcceptance{}, false, err
+	}
+	return end, true, nil
+}
+
+// loadAgentAcceptanceByID is the agent acceptance with an id, current or not.
+func loadAgentAcceptanceByID(ctx context.Context, q store.Querier, id string) (AgentAcceptance, bool, error) {
+	has, err := tableExists(ctx, q, "dag_agent_acceptances")
+	if err != nil || !has {
+		return AgentAcceptance{}, false, err
+	}
+	a, err := scanAgentAcceptance(q.QueryRowContext(ctx, "SELECT "+agentAcceptanceColumns+" FROM dag_agent_acceptances WHERE acceptance_id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentAcceptance{}, false, nil
+	}
+	return a, err == nil, err
+}
+
+// agentExecutionStands is whether the execution an acceptance stands on (accepted) is still the work the node's current execution holds: it is the current execution, or one the current execution continues. A
+// parent_handover row continues the execution it follows (the same work under the same manifest, held by another orchestrator); every other kind starts new work, so an acceptance of an earlier
+// execution does not stand on it.
+func agentExecutionStands(ctx context.Context, q store.Querier, current AgentExecution, accepted string) (bool, error) {
+	row := current
+	for {
+		if row.ExecutionID == accepted {
+			return true, nil
+		}
+		if row.Kind != AgentParentHandoff || row.Supersedes == "" {
+			return false, nil
+		}
+		prev, err := scanAgentExecution(q.QueryRowContext(ctx, "SELECT "+agentExecutionColumns+" FROM dag_agent_executions WHERE execution_id = ?", row.Supersedes))
+		if err != nil {
+			return false, err
+		}
+		row = prev
+	}
+}
+
+// NodeAcceptance is the current acceptance of a node on either side: the kind says which field is filled.
+type NodeAcceptance struct {
+	Kind           string // AcceptanceRelationship or AcceptanceAgent
+	PlanID, NodeID string
+	AcceptanceID   string
+	Relationship   Acceptance
+	Agent          AgentAcceptance
+}
+
+// acceptanceOf is the node's current acceptance, whichever side holds it. A node with none answers false. A store in which both sides hold a current acceptance answers a refusal and no record
+// (cross_kind_acceptance): the exclusion of the two executions makes that impossible for a store this build wrote, and a store written another way is not read as either.
+func acceptanceOf(ctx context.Context, q store.Querier, plan, node string) (NodeAcceptance, bool, error) {
+	agent, hasAgent, err := currentAgentAcceptance(ctx, q, plan, node)
+	if err != nil {
+		return NodeAcceptance{}, false, err
+	}
+	rel, hasRel, err := loadActiveAcceptance(ctx, q, plan, node)
+	if err != nil {
+		return NodeAcceptance{}, false, err
+	}
+	switch {
+	case hasAgent && hasRel:
+		return NodeAcceptance{}, false, refuse(contract.RefusalDispositionConflict, "%s: node %s of plan %s has the active acceptance %s on the relationship side and the current agent acceptance %s; neither is read", CrossKindAcceptance, node, plan, rel.AcceptanceID, agent.AcceptanceID)
+	case hasAgent:
+		return NodeAcceptance{Kind: AcceptanceAgent, PlanID: plan, NodeID: node, AcceptanceID: agent.AcceptanceID, Agent: agent}, true, nil
+	case hasRel:
+		return NodeAcceptance{Kind: AcceptanceRelationship, PlanID: plan, NodeID: node, AcceptanceID: rel.AcceptanceID, Relationship: rel}, true, nil
+	}
+	return NodeAcceptance{}, false, nil
+}
+
+// agentMarked is whether the merged mark of an agent acceptance was written: a marked row of the acceptance and its execution in dag_agent_integration_stages (the agent's counterpart of the parent's
+// assignment mark, which an agent node never has).
+func agentMarked(ctx context.Context, q store.Querier, a AgentAcceptance) (bool, error) {
+	has, err := tableExists(ctx, q, "dag_agent_integration_stages")
+	if err != nil || !has {
+		return false, err
+	}
+	var one int
+	return queryOne(ctx, q, "SELECT 1 FROM dag_agent_integration_stages WHERE acceptance_id = ? AND execution_id = ? AND stage = 'marked' LIMIT 1", []any{a.AcceptanceID, a.ExecutionID}, &one)
+}
+
+// agentIntegratedAt is P-INT for one agent acceptance and one target: the head the relay read from git is contained in the target branch by an observation that no later observation contradicts, and the
+// merged mark of the same acceptance and execution was written (agentMarked). A merge turn is no part of it: an agent node never enters one, so an observation carried by a turn does not count differently
+// and a diagnosis of a squash landing does not exist. The observation it returns is the earliest of the current containment run, as integratedAt returns it. dag_integration_observations is keyed by the
+// acceptance id alone, with no relationship column and no foreign key, so the agent acceptance id is stored there as it is.
+func agentIntegratedAt(ctx context.Context, q store.Querier, a AgentAcceptance, repository, baseRef string) (IntegratedAt, error) {
+	var out IntegratedAt
+	if a.Head == "" {
+		return out, nil
+	}
+	marked, err := agentMarked(ctx, q, a)
+	if err != nil || !marked {
+		return out, err
+	}
+	found, err := queryOne(ctx, q, "SELECT o.observation_id, o.observed_at FROM dag_integration_observations o"+
+		" WHERE o.acceptance_id = ? AND o.repository = ? AND o.base_ref = ? AND o.subject_sha = ? AND o.is_ancestor = 1 AND o.reverted_by IS NULL"+
+		"  AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2 WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository"+
+		"   AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
+		" ORDER BY o.observed_seq ASC LIMIT 1", []any{a.AcceptanceID, repository, baseRef, a.Head}, &out.Observation, &out.Since)
+	out.Satisfied = found
+	return out, err
+}
+
+// agentTargets are the targets an agent acceptance has to land on: the integration branches its batches moved, on the repositories of the node's integrated edges, and every target it already has an
+// observation for (nodeTargets, which judges an agent acceptance as a commit acceptance).
+func (s *Scheduler) agentTargets(ctx context.Context, q store.Querier, snap dag.Snapshot, a AgentAcceptance) ([]Target, error) {
+	return s.nodeTargets(ctx, q, snap, Acceptance{AcceptanceID: a.AcceptanceID, PlanID: a.PlanID, NodeID: a.NodeID, HeadSHA: a.Head, Repository: a.Repository})
+}
+
+// agentNodeIntegrated is whether an agent node's accepted head has landed everywhere it has to: it has a head, at least one target, and every target satisfies agentIntegratedAt.
+func (s *Scheduler) agentNodeIntegrated(ctx context.Context, q store.Querier, snap dag.Snapshot, a AgentAcceptance) (bool, []Target, error) {
+	if a.Head == "" {
+		return false, nil, nil
+	}
+	targets, err := s.agentTargets(ctx, q, snap, a)
+	if err != nil || len(targets) == 0 {
+		return false, targets, err
+	}
+	for _, t := range targets {
+		at, err := agentIntegratedAt(ctx, q, a, t.Repository, t.BaseRef)
+		if err != nil || !at.Satisfied {
+			return false, targets, err
+		}
+	}
+	return true, targets, nil
+}
+
+// agentLandedSHA is the commit an agent acceptance landed as: the merge commit the batch recorded for it (dag_integration_batches.merged_json) when the batch merged it, else "" (a head the branch
+// already contained was marked, not merged). The accepted head is not the landed commit when the relay merged the head into the branch: the merge commit is (CRW-1003 d3, the landed_sha attribution).
+func agentLandedSHA(ctx context.Context, q store.Querier, acceptanceID string) (string, error) {
+	has, err := tableExists(ctx, q, "dag_agent_integration_stages")
+	if err != nil || !has {
+		return "", err
+	}
+	rows, err := q.QueryContext(ctx, "SELECT b.merged_json FROM dag_agent_integration_stages k JOIN dag_integration_batches b ON b.batch_id = k.batch_id WHERE k.acceptance_id = ? AND k.stage = 'marked' ORDER BY k.rowid DESC", acceptanceID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return "", err
+		}
+		var merged []struct{ AcceptanceID, MergeCommit string }
+		if json.Unmarshal([]byte(raw), &merged) != nil {
+			continue
+		}
+		for _, m := range merged {
+			if m.AcceptanceID == acceptanceID && m.MergeCommit != "" {
+				return m.MergeCommit, nil
+			}
+		}
+	}
+	return "", rows.Err()
 }

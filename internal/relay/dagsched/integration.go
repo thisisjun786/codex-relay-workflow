@@ -47,10 +47,17 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no head to observe", node, n.Kind)
 	}
-	acc, hasAcc, err := loadActiveAcceptance(ctx, q, plan, node)
+	na, hasAcc, err := acceptanceOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
 	}
+	if hasAcc && na.Kind == AcceptanceAgent {
+		if na.Agent.Head == "" {
+			return out, refuse(contract.RefusalDispositionConflict, "node %s has no accepted head to observe", node)
+		}
+		return s.observeAgentIntegration(ctx, snap, plan, node, actor, explicit, na.Agent)
+	}
+	acc := na.Relationship
 	if !hasAcc || acc.HeadSHA == "" {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s has no accepted head to observe", node)
 	}
@@ -77,23 +84,9 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 	if s.Tips == nil || s.Ancestry == nil {
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "this scheduler has no target reader or ancestry check, so it cannot observe where %s landed", node)
 	}
-	type reading struct {
-		target Target
-		tip    string
-		anc    bool
-		method string
-	}
-	var readings []reading
-	for _, t := range observeNow {
-		tip, err := s.Tips.Tip(ctx, t.Repository, t.BaseRef)
-		if err != nil {
-			return out, err
-		}
-		anc, method, err := s.Ancestry(ctx, t.Repository, stand.Head, tip.SHA)
-		if err != nil {
-			return out, err
-		}
-		readings = append(readings, reading{t, tip.SHA, anc, method})
+	readings, err := s.readTargets(ctx, observeNow, stand.Head)
+	if err != nil {
+		return out, err
 	}
 	if s.testBeforeObserveTx != nil {
 		s.testBeforeObserveTx()
@@ -124,45 +117,8 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			return refuse(contract.RefusalDispositionConflict, "the head %s stands on changed while it was being observed", node)
 		}
 		for _, r := range readings {
-			var subject, tip sql.NullString
-			var lastSeq, lastAnc sql.NullInt64
-			if err := tx.QueryRowContext(txCtx, "SELECT MAX(observed_seq) FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ?", acc.AcceptanceID, r.target.Repository, r.target.BaseRef).Scan(&lastSeq); err != nil {
-				return err
-			}
-			obs := Observation{Repository: r.target.Repository, BaseRef: r.target.BaseRef, SubjectSHA: stand.Head, TipSHA: r.tip, IsAncestor: r.anc, Method: r.method}
-			if lastSeq.Valid {
-				_ = tx.QueryRowContext(txCtx, "SELECT subject_sha, tip_sha, is_ancestor FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
-					acc.AcceptanceID, r.target.Repository, r.target.BaseRef, lastSeq.Int64).Scan(&subject, &tip, &lastAnc)
-				if subject.String == stand.Head && tip.String == r.tip && (lastAnc.Int64 == 1) == r.anc {
-					obs.Replayed, obs.Seq = true, lastSeq.Int64
-					var id string
-					if err := tx.QueryRowContext(txCtx, "SELECT observation_id FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
-						acc.AcceptanceID, r.target.Repository, r.target.BaseRef, lastSeq.Int64).Scan(&id); err != nil {
-						return err
-					}
-					obs.ObservationID = id
-					out.Observations = append(out.Observations, obs)
-					continue
-				}
-			}
-			obs.Seq = lastSeq.Int64 + 1
-			obs.ObservationID = integrationObservationID(acc.AcceptanceID, r.target.Repository, r.target.BaseRef, obs.Seq)
-			// a merge turn that landed this head on this branch carries the observation
-			var turn sql.NullString
-			if err := tx.QueryRowContext(txCtx, "SELECT turn_id FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' ORDER BY turn_id LIMIT 1",
-				r.target.Repository, r.target.BaseRef, stand.Head).Scan(&turn); err != nil && err != sql.ErrNoRows {
-				return err
-			}
-			var carrier any
-			if turn.Valid {
-				carrier, obs.MergeTurnID = turn.String, turn.String
-			}
-			anc := 0
-			if r.anc {
-				anc = 1
-			}
-			if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, merge_turn_id, observed_seq, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-				obs.ObservationID, acc.AcceptanceID, obs.Repository, obs.BaseRef, obs.SubjectSHA, obs.TipSHA, anc, obs.Method, carrier, obs.Seq, s.now()); err != nil {
+			obs, err := recordObservation(txCtx, tx, s.now(), acc.AcceptanceID, stand.Head, r, true)
+			if err != nil {
 				return err
 			}
 			out.Observations = append(out.Observations, obs)
@@ -290,4 +246,176 @@ func (s *Scheduler) ExecutionIntegrated(ctx context.Context, relationship, event
 		}
 	}
 	return true, true, nil
+}
+
+// observedReading is one reading of a target: its tip and whether the head is contained in it, by which method.
+type observedReading struct {
+	target Target
+	tip    string
+	anc    bool
+	method string
+}
+
+// readTargets reads, for each target, the tip of its branch and whether head is contained in it, from the target reader and the ancestry check of the scheduler.
+func (s *Scheduler) readTargets(ctx context.Context, targets []Target, head string) ([]observedReading, error) {
+	var readings []observedReading
+	for _, t := range targets {
+		tip, err := s.Tips.Tip(ctx, t.Repository, t.BaseRef)
+		if err != nil {
+			return nil, err
+		}
+		anc, method, err := s.Ancestry(ctx, t.Repository, head, tip.SHA)
+		if err != nil {
+			return nil, err
+		}
+		readings = append(readings, observedReading{t, tip.SHA, anc, method})
+	}
+	return readings, nil
+}
+
+// recordObservation appends the reading as the next observation of the acceptance on its target, or answers the last one when it says the same (a replay). A merge turn that landed the head on the branch carries the
+// observation when mergeTurn is set: the relationship kind records it; an agent acceptance never enters a merge turn, so its observation names none.
+func recordObservation(ctx context.Context, tx store.Querier, at, acceptanceID, head string, r observedReading, mergeTurn bool) (Observation, error) {
+	var subject, tip sql.NullString
+	var lastSeq, lastAnc sql.NullInt64
+	if err := tx.QueryRowContext(ctx, "SELECT MAX(observed_seq) FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ?", acceptanceID, r.target.Repository, r.target.BaseRef).Scan(&lastSeq); err != nil {
+		return Observation{}, err
+	}
+	obs := Observation{Repository: r.target.Repository, BaseRef: r.target.BaseRef, SubjectSHA: head, TipSHA: r.tip, IsAncestor: r.anc, Method: r.method}
+	if lastSeq.Valid {
+		_ = tx.QueryRowContext(ctx, "SELECT subject_sha, tip_sha, is_ancestor FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
+			acceptanceID, r.target.Repository, r.target.BaseRef, lastSeq.Int64).Scan(&subject, &tip, &lastAnc)
+		if subject.String == head && tip.String == r.tip && (lastAnc.Int64 == 1) == r.anc {
+			obs.Replayed, obs.Seq = true, lastSeq.Int64
+			var id string
+			if err := tx.QueryRowContext(ctx, "SELECT observation_id FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ? AND observed_seq = ?",
+				acceptanceID, r.target.Repository, r.target.BaseRef, lastSeq.Int64).Scan(&id); err != nil {
+				return Observation{}, err
+			}
+			obs.ObservationID = id
+			return obs, nil
+		}
+	}
+	obs.Seq = lastSeq.Int64 + 1
+	obs.ObservationID = integrationObservationID(acceptanceID, r.target.Repository, r.target.BaseRef, obs.Seq)
+	var carrier any
+	if mergeTurn {
+		// a merge turn that landed this head on this branch carries the observation
+		var turn sql.NullString
+		if err := tx.QueryRowContext(ctx, "SELECT turn_id FROM merge_turns WHERE repository = ? AND base_ref = ? AND candidate_head = ? AND state = 'landed' ORDER BY turn_id LIMIT 1",
+			r.target.Repository, r.target.BaseRef, head).Scan(&turn); err != nil && err != sql.ErrNoRows {
+			return Observation{}, err
+		}
+		if turn.Valid {
+			carrier, obs.MergeTurnID = turn.String, turn.String
+		}
+	}
+	anc := 0
+	if r.anc {
+		anc = 1
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, merge_turn_id, observed_seq, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+		obs.ObservationID, acceptanceID, obs.Repository, obs.BaseRef, obs.SubjectSHA, obs.TipSHA, anc, obs.Method, carrier, obs.Seq, at); err != nil {
+		return Observation{}, err
+	}
+	return obs, nil
+}
+
+// observableAgent refuses an observation for a node the actor does not hold: the plan holds it (paused, cancelled; an archived node's landing is still observed), or the actor is not the orchestrator of the last
+// execution of the node's chain, closed or not (a handover appends a row of the new orchestrator).
+func (s *Scheduler) observableAgent(ctx context.Context, q store.Querier, plan, node, actor string) error {
+	if err := lifecycleOpen(ctx, q, plan, node, "observing its integration", true); err != nil {
+		return err
+	}
+	end, found, err := agentChainEnd(ctx, q, plan, node)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return refuse(contract.RefusalUnregisteredRelationship, "node %s has no agent execution", node)
+	}
+	if end.Actor != actor {
+		return notOrchestrator(actor, end)
+	}
+	return nil
+}
+
+// observeAgentIntegration is ObserveIntegration for an agent acceptance (R05): the observations are those of the relationship kind, keyed by the agent acceptance id and never carried by a merge turn; the
+// merged mark is the agent marked row of the same acceptance and execution (agentMarked); the node is integrated when every target satisfies agentIntegratedAt, and then, in the same transaction, its slot goes
+// back with the reason dag_integrated. No conflict sweep follows: the live heads it measures are the relationship kind's until R06 reads the agent's.
+func (s *Scheduler) observeAgentIntegration(ctx context.Context, snap dag.Snapshot, plan, node, actor string, explicit []Target, a AgentAcceptance) (IntegrationResult, error) {
+	out := IntegrationResult{PlanID: plan, NodeID: node, AcceptanceID: a.AcceptanceID}
+	q := s.Store.Q(ctx)
+	if err := s.observableAgent(ctx, q, plan, node, actor); err != nil {
+		return out, err
+	}
+	known, err := s.agentTargets(ctx, q, snap, a)
+	if err != nil {
+		return out, err
+	}
+	observeNow := explicit
+	if len(observeNow) == 0 {
+		observeNow = known
+	}
+	if len(observeNow) == 0 {
+		return out, refuse(contract.RefusalMalformedReceipt, "node %s has no outgoing edge that names where its head lands: name the target to observe", node)
+	}
+	if s.Tips == nil || s.Ancestry == nil {
+		return out, refuse(contract.RefusalMergeTargetUnreadable, "this scheduler has no target reader or ancestry check, so it cannot observe where %s landed", node)
+	}
+	readings, err := s.readTargets(ctx, observeNow, a.Head)
+	if err != nil {
+		return out, err
+	}
+	if s.testBeforeObserveTx != nil {
+		s.testBeforeObserveTx()
+	}
+	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
+		now, _, err := stillLive(txCtx, tx, plan, node)
+		if err != nil {
+			return err
+		}
+		current, found, err := acceptanceOf(txCtx, tx, plan, node)
+		if err != nil {
+			return err
+		}
+		if !found || current.Kind != AcceptanceAgent || current.AcceptanceID != a.AcceptanceID || current.Agent.Head != a.Head {
+			return refuse(contract.RefusalDispositionConflict, "the accepted head of %s changed while it was being observed", node)
+		}
+		if err := s.observableAgent(txCtx, tx, plan, node, actor); err != nil {
+			return err
+		}
+		for _, r := range readings {
+			obs, err := recordObservation(txCtx, tx, s.now(), a.AcceptanceID, a.Head, r, false)
+			if err != nil {
+				return err
+			}
+			out.Observations = append(out.Observations, obs)
+		}
+		required, err := s.agentTargets(txCtx, tx, now, a)
+		if err != nil {
+			return err
+		}
+		complete := len(required) > 0
+		for _, t := range required {
+			at, err := agentIntegratedAt(txCtx, tx, a, t.Repository, t.BaseRef)
+			if err != nil {
+				return err
+			}
+			complete = complete && at.Satisfied
+		}
+		if out.MarkPresent, err = agentMarked(txCtx, tx, a); err != nil {
+			return err
+		}
+		out.Integrated = complete
+		if complete {
+			out.SlotReleased, err = s.releaseSlot(txCtx, tx, plan, node, actor, "dag_integrated")
+		}
+		return err
+	})
+	return out, err
 }

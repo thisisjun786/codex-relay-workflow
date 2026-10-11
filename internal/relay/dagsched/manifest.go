@@ -234,6 +234,19 @@ func (s *Scheduler) buildInput(ctx context.Context, q store.Querier, e dag.SnapE
 // landedOf is the commit the target held when the integration was observed: the landed merge turn's landed commit when the observation was carried by one, else the tip the observation read.
 // It is read from the observation that satisfied the edge, never from another row of the same acceptance.
 func landedOf(ctx context.Context, q store.Querier, observation string) (string, error) {
+	// an observation of an agent acceptance names the merge commit the batch recorded for it, not the tip the observation read and not the accepted head (CRW-1213, d3 of the cancelled CRW-1003)
+	var acceptance string
+	if has, err := queryOne(ctx, q, "SELECT acceptance_id FROM dag_integration_observations WHERE observation_id = ?", []any{observation}, &acceptance); err != nil {
+		return "", err
+	} else if has {
+		if _, isAgent, err := loadAgentAcceptanceByID(ctx, q, acceptance); err != nil {
+			return "", err
+		} else if isAgent {
+			if merged, err := agentLandedSHA(ctx, q, acceptance); err != nil || merged != "" {
+				return merged, err
+			}
+		}
+	}
 	var landed string
 	found, err := queryOne(ctx, q, "SELECT COALESCE(NULLIF(m.landed_sha, ''), o.tip_sha) FROM dag_integration_observations o LEFT JOIN merge_turns m ON m.turn_id = o.merge_turn_id WHERE o.observation_id = ?",
 		[]any{observation}, &landed)

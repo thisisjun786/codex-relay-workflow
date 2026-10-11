@@ -224,16 +224,23 @@ func (s *Scheduler) premergeLeftOut(ctx context.Context, plan string) ([]premerg
 		if n.Kind != dag.NodeImplementation {
 			continue
 		}
-		acc, found, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+		na, found, err := acceptanceOf(ctx, q, plan, n.NodeID)
+		if crossKindHeld(err) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			continue
 		}
+		head := na.Relationship.HeadSHA
+		if na.Kind == AcceptanceAgent {
+			head = na.Agent.Head
+		}
 		_, _, err = s.currentCandidate(ctx, q, plan, snap, n)
 		if reason, held := premergeHeld(err); held {
-			out = append(out, premergeLeft{NodeID: n.NodeID, Reason: reason, AcceptanceID: acc.AcceptanceID, HeadSHA: acc.HeadSHA})
+			out = append(out, premergeLeft{NodeID: n.NodeID, Reason: reason, AcceptanceID: na.AcceptanceID, HeadSHA: head})
 		}
 	}
 	return out, nil
