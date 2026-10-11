@@ -352,11 +352,19 @@ through the heavy-check gate at `nice 12`, `GOFLAGS=-p=4`, the crw binary built 
 | after | 21, 18 | 65 s | 15 s (`TestFeaturesAndConfigCommandsKeepEveryTomlFormValid`) |
 | after, under five `nice -n 19` spinners of six busy threads | 24, 69 | 268 s | 112 s (`TestTheBackupDestinationIsRefusedWhereItCouldNotSurvive`) |
 
-Both packages ran 362 tests with no failure. The three timing tests, `-count=20` under the same five
-spinners (load1 66 to 70, killed afterwards), passed 60 of 60; the spinners at `nice 19` do not slow a
-`nice 12` test as much as the host's other runs did, so this is a load proof, and the failure itself
-was seen only in the unspun runs above (44 s for the evidence test, 51 s for the fork test). The
-temporary root is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`.
+Both packages ran 362 tests with no failure. The timing tests were repeated with `-count=20` under
+five `nice -n 19` spinners of eight busy threads, killed afterwards, through the same gate and Go:
+
+| Code | Load1 (start, end) | Passed |
+| --- | --- | --- |
+| an earlier form of the stall test, which doubled its deadline on each retry | 66, 70 | 60 of 60 (three tests) |
+| `13ad71d83`, the stall test ended by the `featureEvidenceContext` seam, spinners warmed 30 s | 33, 43 | 80 of 80 (four tests, the deadline test included) |
+| `13ad71d83`, again, spinners warmed until load1 reached 48 | 48, 49 | 80 of 80 |
+
+Commits after `13ad71d83` change only this document. The spinners at `nice 19` do not slow a `nice 12`
+test as much as the host's other runs did, so this is a load proof, and the failure itself was seen
+only in the unspun runs above (44 s for the evidence test, 51 s for the fork test). The temporary root
+is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`.
 
 ## Leftover isolation trees
 
