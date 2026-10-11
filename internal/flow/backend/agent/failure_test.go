@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -136,12 +136,20 @@ return [a.status, a.reason, a.handle !== null]`)
 // the host is asked - and the interrupted turn is held engine_paused, never null_model.
 func TestEnginePauseInterruptNotNullModel(t *testing.T) {
 	e := newEnv(t)
+	// the quota failure comes only once the other call's turn is in flight
+	gate := make(chan struct{})
 	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
 		if strings.Contains(r.Text, "quota-call") {
-			return fakehost.TurnPlan{Delay: 500 * time.Millisecond, Fail: &fakehost.Failure{Message: "quota", CodexErrorInfo: "usageLimitExceeded"}}
+			return fakehost.TurnPlan{Gate: gate, Fail: &fakehost.Failure{Message: "quota", CodexErrorInfo: "usageLimitExceeded"}}
 		}
 		return fakehost.TurnPlan{Hang: true}
 	})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = e.host.WaitCount(ctx, "turn/start", 2)
+		close(gate)
+	}()
 	res := e.run(`const out = await parallel([
   async () => agent.call('quota-call', { agentType: 'executor', node: 'a', label: 'quota' }),
   async () => agent.call('long-call', { agentType: 'executor', node: 'b', label: 'long' }),
@@ -169,6 +177,40 @@ return out.map((r) => [r.status, r.reason])`)
 	}
 	if n := len(e.threads.Interrupts()); n != 1 {
 		t.Errorf("%d turn/interrupt requests reached the host, want 1", n)
+	}
+}
+
+// When the host never ends the turn the engine interrupted, the intent still decides the call: it is held engine_paused
+// once the wait for the interrupted turn is over, not left open as a lost request.
+func TestEnginePauseWhenTheHostIgnoresTheInterrupt(t *testing.T) {
+	e := newEnv(t, withInterruptWait(300*time.Millisecond))
+	gate := make(chan struct{})
+	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
+		if strings.Contains(r.Text, "quota-call") {
+			return fakehost.TurnPlan{Gate: gate, Fail: &fakehost.Failure{Message: "quota", CodexErrorInfo: "rateLimitExceeded"}}
+		}
+		return fakehost.TurnPlan{Hang: true, IgnoreInterrupt: true}
+	})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = e.host.WaitCount(ctx, "turn/start", 2)
+		close(gate)
+	}()
+	res := e.run(`const out = await parallel([
+  async () => agent.call('quota-call', { agentType: 'executor', node: 'a', label: 'quota' }),
+  async () => agent.call('long-call', { agentType: 'executor', node: 'b', label: 'long' }),
+])
+return out.map((r) => [r.status, r.reason])`)
+	if got := value[[][]string](t, res); fmt.Sprint(got) != "[[held host_infra_rateLimitExceeded] [held engine_paused]]" {
+		t.Fatalf("%v", got)
+	}
+	rows := kinds(e.rows("long"))
+	if rows[len(rows)-1] != engine.EvHeld || !slices.Contains(rows, engine.EvInterruptRequested) {
+		t.Errorf("rows %v", rows)
+	}
+	if h := e.row("long", engine.EvHeld); h.Data["input_state"] != "delivered" || h.Data["p_held"] == nil {
+		t.Errorf("held %v", h.Data)
 	}
 }
 
@@ -280,18 +322,18 @@ func TestNullCodexErrorInfoHoldsInfraUnknown(t *testing.T) {
 // keeps turn_requested as its last row and the script sees an unknown outcome.
 func TestTurnStartTransportLossIsNotHeld(t *testing.T) {
 	cases := map[string]struct {
-		opts  []envOption
+		ack   time.Duration
 		reply fakehost.Reply
 	}{
 		"connection closed": {reply: fakehost.Reply{Close: &fakehost.CloseFrame{Code: websocket.StatusInternalError, Reason: "gone"}}},
-		"no answer in time": {
-			opts:  []envOption{withBounds(appserver.PhaseBounds{Establish: 5 * time.Second, Transmit: 5 * time.Second, Ack: 150 * time.Millisecond})},
-			reply: fakehost.Reply{Delay: 3 * time.Second},
-		},
+		"no answer in time": {ack: 150 * time.Millisecond, reply: fakehost.Reply{Delay: 3 * time.Second}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := newEnv(t, c.opts...)
+			e := newEnv(t)
+			if c.ack > 0 {
+				e.client.BoundAckOn("turn/start", c.ack)
+			}
 			e.host.Script("turn/start", c.reply)
 			res := e.run(`const a = await agent.call('x', { agentType: 'executor', node: 'n1', label: 'a' }); return [a.status, a.reason, a.handle !== null]`)
 			if got := value[[]any](t, res); fmt.Sprint(got) != "[unknown dispatch_unknown true]" {
@@ -310,5 +352,31 @@ func TestTurnStartTransportLossIsNotHeld(t *testing.T) {
 				t.Errorf("%d threads", n)
 			}
 		})
+	}
+}
+
+// A run that is cancelled while a turn is in flight asks the host to interrupt it, and the call ends superseded (cancelled),
+// not held and not null_model.
+func TestCancelledRunInterruptsTheTurn(t *testing.T) {
+	e := newEnv(t)
+	e.plan(func(fakehost.TurnRequest) fakehost.TurnPlan { return fakehost.TurnPlan{Hang: true} })
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	// the run is cancelled once the call's turn is known to be running
+	e.journal.onAfter(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvTurnStarted {
+			cancel()
+		}
+	})
+	res := e.runWith(ctx, `const a = await agent.call('x', { agentType: 'executor', node: 'n1', label: 'a' }); return a.status`)
+	if res.Status != engine.RunScriptError || res.ErrorKind != engine.ErrKindCancelled {
+		t.Fatalf("run %s/%s", res.Status, res.ErrorKind)
+	}
+	call := calls(res)["a"]
+	if call.Status != engine.StatusSuperseded || call.Reason != engine.ReasonCancelled {
+		t.Errorf("%s/%s", call.Status, call.Reason)
+	}
+	if n := len(e.threads.Interrupts()); n != 1 {
+		t.Errorf("%d turn/interrupt requests reached the host, want 1", n)
 	}
 }

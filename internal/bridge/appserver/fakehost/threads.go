@@ -59,10 +59,16 @@ type TurnPlan struct {
 	Hang bool
 	// Delay holds the turn back before it ends.
 	Delay time.Duration
+	// Gate holds the turn in progress until it is closed (or the turn is interrupted); a test closes it when the
+	// state it needs - another turn in flight - has been reached.
+	Gate <-chan struct{}
 	// Fail ends the turn failed.
 	Fail *Failure
 	// Interrupted ends the turn interrupted without any turn/interrupt request (an external interrupt).
 	Interrupted bool
+	// IgnoreInterrupt keeps a Hang turn in progress when turn/interrupt arrives: the host acknowledges the request and
+	// never ends the turn.
+	IgnoreInterrupt bool
 	// Silent sends no notification for this turn: the thread keeps the result and only a read finds it.
 	Silent bool
 	// SummaryOnly makes thread/turns/list return the turn with itemsView "summary" and no items.
@@ -668,7 +674,19 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 	t.notify(th.id, plan.Silent, Notification{Method: "turn/started", Params: map[string]any{"threadId": th.id, "turn": tu.object(false)}})
 	interrupted := plan.Interrupted
 	if plan.Hang {
+		if plan.IgnoreInterrupt {
+			<-conn.Done()
+			return
+		}
 		select {
+		case <-tu.interrupt:
+			interrupted = true
+		case <-conn.Done():
+			return
+		}
+	} else if plan.Gate != nil {
+		select {
+		case <-plan.Gate:
 		case <-tu.interrupt:
 			interrupted = true
 		case <-conn.Done():

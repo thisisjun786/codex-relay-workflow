@@ -152,12 +152,11 @@ type env struct {
 type envOption func(*envConfig)
 
 type envConfig struct {
-	bounds appserver.PhaseBounds
-	poll   time.Duration
+	poll, interruptWait time.Duration
 }
 
-// withBounds sets the phase bounds of the client (a short ack bound makes a delayed answer a PhaseTimeout).
-func withBounds(b appserver.PhaseBounds) envOption { return func(c *envConfig) { c.bounds = b } }
+// withInterruptWait sets how long the backend waits for an interrupted turn to end.
+func withInterruptWait(d time.Duration) envOption { return func(c *envConfig) { c.interruptWait = d } }
 
 // withPoll sets how long a turn waits for a notification before it reads the turn.
 func withPoll(d time.Duration) envOption { return func(c *envConfig) { c.poll = d } }
@@ -166,7 +165,7 @@ func withPoll(d time.Duration) envOption { return func(c *envConfig) { c.poll = 
 func newEnv(t *testing.T, opts ...envOption) *env {
 	t.Helper()
 	isolate(t)
-	cfg := envConfig{bounds: appserver.DefaultBounds, poll: 25 * time.Millisecond}
+	cfg := envConfig{poll: 25 * time.Millisecond, interruptWait: 5 * time.Second}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -179,7 +178,7 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 	e.state = filepath.Join(e.root, "state")
 	registry := agent.NewThreads()
 	e.owned = registry
-	e.client = appserver.New(e.host.SocketPath, cfg.bounds, agent.ClientOption(registry))
+	e.client = appserver.New(e.host.SocketPath, appserver.DefaultBounds, agent.ClientOption(registry))
 	t.Cleanup(func() { _ = e.client.Close() })
 	realGit := agent.ExecGit("git")
 	var err error
@@ -196,7 +195,7 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.backend, err = agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: registry, PollEvery: cfg.poll, InterruptWait: 5 * time.Second})
+	e.backend, err = agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: registry, PollEvery: cfg.poll, InterruptWait: cfg.interruptWait})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,12 +230,18 @@ func (e *env) config() engine.Config {
 // run executes the script body and returns its result.
 func (e *env) run(body string) *engine.Result {
 	e.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return e.runWith(ctx, body)
+}
+
+// runWith executes the script body under ctx.
+func (e *env) runWith(ctx context.Context, body string) *engine.Result {
+	e.t.Helper()
 	prog, err := script.Load(script.Source{Name: "t.js", Text: []byte(header + body)})
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
 	res, err := engine.Run(ctx, prog, e.config())
 	if err != nil {
 		e.t.Fatal(err)
