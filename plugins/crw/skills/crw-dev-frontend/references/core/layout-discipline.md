@@ -8,7 +8,7 @@
 5. Banned inside hero: tagline below CTAs, trust strip, pricing teaser, feature bullets
 6. "Used by" logo wall → separate section directly below hero
 
-## Hero Composition Grammar (verified 2026-07-09)
+## Hero Composition Grammar
 
 The classic SaaS split hero — left bold headline + subcopy + CTA, right boxed
 product screenshot/mockup card — is the exhausted Stripe(2020)->Linear(2023)

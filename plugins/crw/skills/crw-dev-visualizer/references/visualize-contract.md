@@ -12,10 +12,6 @@ Check these live requirements:
 - the exact response content reference;
 - accessibility and primary interaction verification.
 
-The 2026-09-05 inspection observed visualize 1.0.29, including a 1 MB limit and an
-absolute-path content reference. This is provenance, not a contract to copy forward.
-See `../upstream/visualize-upstream.md` for the inspected hash.
-
 If the host does not expose visualize, use the standalone/browser or text/static
 route from `../SKILL.md`. Do not invent inline support or require the user to install
 a particular optional plugin. Respect the task's current platform and permissions.

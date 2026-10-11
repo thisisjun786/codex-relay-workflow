@@ -28,7 +28,7 @@ Each rule area has exactly one canonical owner. Other skills may contain stubs b
 | Design intent discovery | `dev-uiux-design` | `dev-frontend` |
 | Design judgment | `dev-uiux-design` | `dev-frontend` |
 | Visual document composition / diagram and report rendering and delivery mechanics | `dev-visualizer` | `dev`; format-specific document owners retain PDF/DOCX/Slides mechanics |
-| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |
+| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D/implementation-units, `kwrite`, `search` deep-research |
 | Deep research protocol (SEARCH-DEEP-*) | `search/references/deep-research.md` | `search` Tier 3, `dev` browser-routing |
 | Operational gates | `dev-devops` | `dev-backend`, `dev-scaffolding` |
 | Repository bootstrap (rulesets, merge settings, PR limits) | `crw-canon` `references/repo-bootstrap.md` | `crw-canon` `references/repo-governance.md`, `dev-devops` |

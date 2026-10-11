@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-const source = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'upstream', 'sync-check.sh');
+const source = resolve(dirname(fileURLToPath(import.meta.url)), 'sync-check.sh');
 const hasBash = spawnSync('bash', ['--version']).status === 0;
 test('visualize inspection uses explicit root, version order, and failure states', { skip: !hasBash }, t => {
   const root = mkdtempSync(join(tmpdir(), 'crw-visualize-test-'));

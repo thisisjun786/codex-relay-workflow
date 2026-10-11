@@ -28,4 +28,4 @@ Use these fields to make a candidate reviewable. Keep evidence proportional to t
 
 For each meaningful check record the revision, environment, command, expected observation and observed result. A pre-existing failure needs baseline evidence; an unrun check stays unverified. After a repair, a new failure is investigated against that baseline rather than waived because some other baseline check already failed. Reuse unchanged evidence where applicable and run required repository checks.
 
-Judge benefit separately from green tests. For example, a rule formerly edited in three consumers may now have one owner with those consumers exercising the same behavior; removing compatibility needs evidence that the supported consumers no longer require it. Line count alone establishes neither.
+Judge benefit separately from green tests. For example, a rule once edited in three consumers may now have one owner with those consumers exercising the same behavior; removing compatibility needs evidence that the supported consumers no longer require it. Line count alone establishes neither.

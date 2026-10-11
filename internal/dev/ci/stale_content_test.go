@@ -27,22 +27,28 @@ var staleCxcPatterns = []scanPattern{
 	{regexp.MustCompile(`(?i)codexclaw|\bcxc\b`), "a CodexClaw reference"},
 }
 
-// staleAllowance exempts the lines of the file under Path (a file or a directory) that contain Text:
-// a port-oracle citation the skill keeps on purpose. The list is named and short; an entry says why
-// in Why.
+// staleAllowance exempts the lines of the file under Path (a file or a directory) that contain Text
+// (every line when Text is empty): a port-oracle citation the skill keeps on purpose. The list is
+// named and short; an entry says why in Why.
 type staleAllowance struct {
 	Path, Text, Why string
 }
 
-// staleCxcAllowed is the named list of port-oracle citations the stale-reference scan lets through.
-var staleCxcAllowed = []staleAllowance{}
+// staleCxcAllowed is the named list of port-oracle citations the stale-reference scan lets through:
+// the header of a ported test, which says which original test it replays and under which name
+// table. A skill's instructions never cite the original.
+var staleCxcAllowed = []staleAllowance{
+	{Path: staleSkillsRoot + "crw-qa/tests/qa-validate-evidence.test.mjs", Why: "the header names the original test this one is ported from and the name table it was applied through"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Why: "the header names the original test this one is ported from and the dispatcher cases it does not replay"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-smoke.test.mjs", Why: "the header names the original test this one is ported from and the adaptations of its fixtures"},
+}
 
 // changeHistoryPatterns are notes about how a skill changed rather than what it says now: dropped
 // products, candidate lists, dated verification stamps, renames and redirects.
 var changeHistoryPatterns = []scanPattern{
 	{regexp.MustCompile(`(?i)\bv2 candidates?\b`), "a v2-candidates note"},
 	{regexp.MustCompile(`(?i)^#+\s*Runtime Status\b`), "a Runtime Status section"},
-	{regexp.MustCompile(`(?i)\bskill-hub\b|\bjaw\b`), "a dropped skill-hub or jaw note"},
+	{regexp.MustCompile(`(?i)\bskill-hub\b|\b(?:removed|dropped|retired)\b[^\n]{0,60}\bjaw\b|\bjaw\b[^\n]{0,60}\b(?:removed|dropped|retired)\b`), "a dropped skill-hub or jaw note"},
 	{regexp.MustCompile(`(?i)\bverified 20[0-9]{2}-[0-9]{2}-[0-9]{2}\b|\blast-verified\b`), "a dated verification stamp"},
 	{regexp.MustCompile(`(?i)\bformerly\b|\bredirects here\b|\brenamed from\b|\bwas renamed\b|\bused to (?:be|live|run)\b`), "a rename or history note"},
 }
@@ -184,6 +190,21 @@ func TestNoStaleCxcReferences(t *testing.T) {
 		expectEqual(t, "empty path", rowScanErrors(root, m, "TestNoStaleCxcReferences", staleCxcPatterns, nil),
 			[]string{"deadOrStale[11]: plugins/crw/skills/crw-none/ holds no file to scan"})
 	})
+	t.Run("fixture: an entry without text lets a whole file through", func(t *testing.T) {
+		root, m := scanFixture(t, "TestNoStaleCxcReferences", "done", staleSkillsRoot)
+		allowed := []staleAllowance{{Path: staleSkillsRoot + "crw-a/SKILL.md", Why: "a ported test header"}, {Path: staleSkillsRoot + "crw-c/", Why: "x"}}
+		expectEqual(t, "errors", rowScanErrors(root, m, "TestNoStaleCxcReferences", staleCxcPatterns, allowed), []string(nil))
+	})
+	t.Run("the named list is short, says why and names ported test files", func(t *testing.T) {
+		for _, allowance := range staleCxcAllowed {
+			if allowance.Why == "" || !strings.HasPrefix(allowance.Path, staleSkillsRoot) || !strings.HasSuffix(allowance.Path, ".test.mjs") {
+				t.Errorf("allowance %+v: needs a reason and a ported test file below %s", allowance, staleSkillsRoot)
+			}
+		}
+		if len(staleCxcAllowed) > 5 {
+			t.Errorf("%d allowances; the list stays short", len(staleCxcAllowed))
+		}
+	})
 	t.Run("fixture: the named list lets a kept citation through", func(t *testing.T) {
 		root, m := scanFixture(t, "TestNoStaleCxcReferences", "done", staleSkillsRoot)
 		allowed := []staleAllowance{{Path: staleSkillsRoot + "crw-a/", Text: "cxc oracle", Why: "port-oracle citation"}, {Path: staleSkillsRoot + "crw-c/SKILL.md", Text: "cxc name", Why: "x"}}
@@ -193,6 +214,21 @@ func TestNoStaleCxcReferences(t *testing.T) {
 }
 
 func TestNoChangeHistoryNotes(t *testing.T) {
+	t.Run("a removal note for the jaw registry fails, its name as a live source does not", func(t *testing.T) {
+		re := changeHistoryPatterns[2].re
+		for line, want := range map[string]bool{
+			"### Removed cli-jaw tiers (non-goals)":         true,
+			"The jaw registry was dropped.":                 true,
+			"skill-hub is gone":                             true,
+			"| 1st | **jaw** (registry) | `--source jaw` |": false,
+			"Always try jaw first, then clawhub.":           false,
+			"crw skill search <query> (jaw first)":          false,
+		} {
+			if re.MatchString(line) != want {
+				t.Errorf("%q: match = %v, want %v", line, !want, want)
+			}
+		}
+	})
 	t.Run("the checked-in table", func(t *testing.T) {
 		if errs := scanRealTree(t, "TestNoChangeHistoryNotes", changeHistoryPatterns, nil); len(errs) > 0 {
 			t.Errorf("%s", strings.Join(errs, "\n"))

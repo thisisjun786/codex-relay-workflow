@@ -2,7 +2,7 @@
 
 Use this reference for any multi-page report a person will read to decide
 something: client progress reports, research reports, proposals, review
-documents. [reader-documents.md](reader-documents.md) (READER-DOC-01..05) owns the
+documents. [reader-documents.md](../../crw-dev/references/reader-documents.md) (READER-DOC-01..05) owns the
 reader contract and answer-first structure; this file owns what a report needs
 on top of that so it reads like a professional publication rather than a
 transcript of the work. Rule IDs are REPORT-*. STRICT rules are checked before

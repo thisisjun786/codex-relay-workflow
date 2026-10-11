@@ -20,14 +20,18 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata and resolve the reader-document link through the renamed CRW dev folder.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for Korean prose polishing (윤문) — revising existing Korean text to read like a person wrote it: removing translationese and AI idioms, fixing register/tone breaks, varying rhythm, replacing abstract endings, while preserving meaning exactly. Applies to docs, articles, announcements, READMEs, UI copy, and any Korean output the agent writes. Triggers: 윤문, 다듬어, 다듬어줘, 자연스럽게, 매끄럽게, 교정, 고쳐줘, AI투, 번역투, Korean polish, kwrite, proofread Korean.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-07\"\n",
             "  short-description: \"Korean prose polishing: AI-tell removal + register consistency + meaning-exact revision.\"\n"
+          ],
+          "new": [
+            "description: \"Korean prose polishing (윤문): revise existing Korean text so it reads as written by a person, removing translationese and AI idioms, fixing register breaks and varying rhythm while keeping the meaning exact. Triggers: 윤문, 다듬어줘, 자연스럽게, 매끄럽게, 교정, AI투, 번역투, Korean polish, kwrite.\"\n"
           ]
         },
         {

@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # Usage: scaffold-audit.sh [project-path]
-# Checks whether a project follows the structural scaffold rules in this skill.
+# Checks whether a project follows the structural scaffold rules in this skill: feature-based
+# layout, colocation, public boundary exports, source-of-truth docs, .env safety, file length and
+# agent/context instructions. crw-dev-backend links to this script for the same audit.
 
 DIR="${1:-.}"
 PASS=0
@@ -115,11 +117,17 @@ else
   check "Source-of-truth docs/signals absent (optional for small repos)" "warn"
 fi
 
-# 5. No .env committed
+# 5. .env safety: no .env file, .env ignored by git, .env.example present
+ENV_IGNORED=false
+if [ -f "$DIR/.gitignore" ] && grep -Eq '(^|/)\.env($|[[:space:]]|#)' "$DIR/.gitignore"; then
+  ENV_IGNORED=true
+fi
 if [ -f "$DIR/.env" ]; then
   check "No .env committed (.env file found!)" "fail"
+elif ! $ENV_IGNORED; then
+  check ".env is not listed in .gitignore" "fail"
 elif [ -f "$DIR/.env.example" ]; then
-  check ".env.example exists (no .env)" "pass"
+  check ".env safety (.gitignore + .env.example)" "pass"
 else
   check ".env.example missing" "warn"
 fi

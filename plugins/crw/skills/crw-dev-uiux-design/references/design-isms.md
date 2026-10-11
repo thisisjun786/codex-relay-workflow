@@ -97,7 +97,7 @@ border: 1px solid #999; border-radius: 8px;
 
 ### 1.12 Liquid Glass (Apple, 2025-2026)
 Glassmorphism's successor as a SYSTEM material, not a card style (Apple HIG
-Materials, verified 2026-07-07). Dynamic translucent layer reserved for
+Materials). Dynamic translucent layer reserved for
 floating controls/navigation; content scrolls beneath and peeks through.
 Adapts to context and user settings (reduced transparency, increased
 contrast). Named material states (canonical: `dev-frontend` `liquid-glass.md`):
@@ -154,7 +154,7 @@ Related: 1.12 (material rules), `product-personalities.md` Aside profile (chip v
 
 ---
 ### 1.15 AI Serif Editorial (2024-2026 serif renaissance)
-The AI-brand serif turn (verified 2026-07-09): display serif at LIGHT weights +
+The AI-brand serif turn: display serif at LIGHT weights +
 sans UI + mono technical accent — never "make everything serif". Measured:
 claude.ai `Anthropic Serif` 56px/weight 330 (identity by Geist: Styrene +
 Tiempos); Perplexity's Comet leads with Editorial New (Studio Freight);

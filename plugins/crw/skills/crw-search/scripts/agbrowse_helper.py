@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """agbrowse_helper.py — lazy agbrowse resolver for crw-search Tier 2 (lazygap_impl 070.1).
 
-agbrowse is cli-jaw's browse layer extracted as a server-free npm package: HTTP-first proof
+agbrowse is a server-free npm package: HTTP-first proof
 with a local browser only as escalation. crw adopts it as an OPT-IN, lazily-resolved
 Tier-2 PROOF helper for known URLs — never a hard dependency. If it cannot be resolved, this
 prints an actionable install hint and exits 3; Tier 2 then falls back to Browser Use exactly

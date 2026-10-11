@@ -75,15 +75,55 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for backend, API, server, or database work — API design, architecture, database optimization, security hardening, error handling, middleware, observability, queues, and long-lived connections. Triggers: 'backend', 'API', 'REST', 'GraphQL', 'schema', 'migration', 'query optimization', 'middleware', 'OTel', 'caching', 'Result pattern', 'server', '백엔드', 'API 작업', '마이그레이션', '쿼리 최적화'.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Framework-agnostic backend guidance for APIs, architecture, data access, and operations.\"\n",
             "  keywords: [\"API\", \"REST\", \"endpoint\", \"middleware\", \"database\", \"ORM\", \"cache\", \"queue\", \"error handling\"]\n"
+          ],
+          "new": [
+            "description: \"Backend, API, server and database work: API design, architecture, database optimization, error handling, middleware, observability, queues, long-lived connections. Triggers: backend, API, REST, GraphQL, schema, migration, query optimization, middleware, OTel, caching, 백엔드, 마이그레이션, 쿼리 최적화.\"\n"
+          ]
+        },
+        {
+          "line": 89,
+          "old": [
+            "**Node/framework defaults (verified 2026-07-02):** production uses Active/Maintenance LTS — Node 24 (Active) for new services. Framework: Fastify for greenfield Node APIs; Express 5 for legacy/ecosystem compatibility; Hono for edge/serverless/multi-runtime Web-Standards APIs. New TS validation baseline: Zod v4 (read the migration guide before upgrading v3 projects).\n"
+          ],
+          "new": [
+            "**Node/framework defaults:** production uses Active/Maintenance LTS — Node 24 (Active) for new services. Framework: Fastify for greenfield Node APIs; Express 5 for legacy/ecosystem compatibility; Hono for edge/serverless/multi-runtime Web-Standards APIs. New TS validation baseline: Zod v4 (read the migration guide before upgrading v3 projects).\n"
+          ]
+        },
+        {
+          "line": 119,
+          "old": [
+            "**Hybrid pattern (verified 2026-07-02 — OpenAPI 3.1+, prefer 3.2 where tooling supports; tRPC v11; Apollo Federation ONLY for multi-subgraph supergraphs):**\n"
+          ],
+          "new": [
+            "**Hybrid pattern (OpenAPI 3.1+, prefer 3.2 where tooling supports; tRPC v11; Apollo Federation ONLY for multi-subgraph supergraphs):**\n"
+          ]
+        },
+        {
+          "line": 332,
+          "old": [
+            "- Say **Redis-compatible**, not Redis-only (verified 2026-07-02): prefer **Valkey** (Linux Foundation, BSD) for permissive OSS/self-hosted defaults; choose Redis when managed-service, module, or license posture justifies it.\n"
+          ],
+          "new": [
+            "- Say **Redis-compatible**, not Redis-only: prefer **Valkey** (Linux Foundation, BSD) for permissive OSS/self-hosted defaults; choose Redis when managed-service, module, or license posture justifies it.\n"
+          ]
+        },
+        {
+          "line": 346,
+          "old": [
+            "- **OTel maturity (verified 2026-07-02):** traces/metrics are Stable in JS/Python; **logs are still Development** — baseline is trace/span-correlated structured logs + OTel traces/metrics.\n"
+          ],
+          "new": [
+            "- **OTel maturity:** traces/metrics are Stable in JS/Python; **logs are still Development** — baseline is trace/span-correlated structured logs + OTel traces/metrics.\n"
           ]
         }
       ]
@@ -132,6 +172,78 @@
           ]
         }
       ]
+    },
+    {
+      "file": "scripts/README.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 5,
+          "old": [
+            "## scaffold-audit.sh\n"
+          ],
+          "new": [
+            "## Scaffold audit\n"
+          ]
+        },
+        {
+          "line": 7,
+          "old": [
+            "Audit existing project structure for compliance with backend/scaffolding conventions owned by `dev-scaffolding`.\n"
+          ],
+          "new": [
+            "The structure audit of a backend project is the one script the scaffolding skill owns,\n",
+            "[scaffold-audit.sh](../../crw-dev-scaffolding/scripts/scaffold-audit.sh):\n"
+          ]
+        },
+        {
+          "line": 10,
+          "old": [
+            "bash scripts/scaffold-audit.sh [project-path]\n"
+          ],
+          "new": [
+            "bash <crw-dev-scaffolding skill directory>/scripts/scaffold-audit.sh [project-path]\n"
+          ]
+        },
+        {
+          "line": 13,
+          "old": [
+            "Checks 7 items:\n",
+            "1. Feature-based structure (`src/` with domain folders)\n",
+            "2. Colocation (logic + test + schema together)\n"
+          ],
+          "new": [
+            "It checks:\n",
+            "1. Feature-based structure (`src/` with domain folders, no type-based directories)\n",
+            "2. Colocation (logic + test together; Go files next to their `_test.go`)\n"
+          ]
+        },
+        {
+          "line": 17,
+          "old": [
+            "4. project planning or history docs\n",
+            "5. `.env` safety (`.env` in `.gitignore`, `.env.example` exists)\n"
+          ],
+          "new": [
+            "4. Source-of-truth docs (`docs/`, `plans/`, `adr/`, `architecture/`, `README.md`, `AGENTS.md`)\n",
+            "5. `.env` safety (no `.env` file, `.env` in `.gitignore`, `.env.example` present)\n"
+          ]
+        },
+        {
+          "line": 20,
+          "old": [
+            "7. `AGENTS.md` exists\n"
+          ],
+          "new": [
+            "7. Agent/context instructions (`AGENTS.md` or `CLAUDE.md`)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "scripts/scaffold-audit.sh",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "remove": true
     }
   ]
 }

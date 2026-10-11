@@ -45,7 +45,7 @@ For government, public-service, finance, healthcare, education administration, o
 - Large Korean headings need optical restraint; avoid hero-scale type inside tools.
 - Test labels with long Hangul strings before delivery.
 
-### Korean Hero / Large Display Type (verified 2026-07-08)
+### Korean Hero / Large Display Type
 
 Big bold Hangul is NOT the same as big bold Latin. Each Korean syllable is a
 dense, near-square block with little ascender/descender rhythm, so at the same
@@ -91,7 +91,7 @@ Sources: live pages toss.im, about.daangn.com, kakaocorp.com, woowahan.com,
 navercorp.com, musinsa.com; Typotheque CJK typesetting; Morisawa Hangeul guide;
 W3C Korean Layout Requirements (KLREQ); Pretendard / Wanted Sans / Spoqa docs.
 
-### Korean Serif / Myeongjo Display (verified 2026-07-09)
+### Korean Serif / Myeongjo Display
 
 The Latin serif renaissance has a Korean lane, but it is **editorial myeongjo
 display**, not a verified KR-AI-brand wave — do not claim Korean AI services

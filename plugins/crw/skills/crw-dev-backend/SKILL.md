@@ -1,6 +1,6 @@
 ---
 name: crw-dev-backend
-description: "MUST USE for backend, API, server, or database work — API design, architecture, database optimization, security hardening, error handling, middleware, observability, queues, and long-lived connections. Triggers: 'backend', 'API', 'REST', 'GraphQL', 'schema', 'migration', 'query optimization', 'middleware', 'OTel', 'caching', 'Result pattern', 'server', '백엔드', 'API 작업', '마이그레이션', '쿼리 최적화'."
+description: "Backend, API, server and database work: API design, architecture, database optimization, error handling, middleware, observability, queues, long-lived connections. Triggers: backend, API, REST, GraphQL, schema, migration, query optimization, middleware, OTel, caching, 백엔드, 마이그레이션, 쿼리 최적화."
 ---
 
 # Dev-Backend — Production-Grade Backend Engineering
@@ -82,7 +82,7 @@ When the request has **unspecified technology or unclear scope**, clarify before
 
 If the user already specifies clear tech (e.g. "FastAPI로 REST API 만들어줘"), **skip this entirely**.
 
-**Node/framework defaults (verified 2026-07-02):** production uses Active/Maintenance LTS — Node 24 (Active) for new services. Framework: Fastify for greenfield Node APIs; Express 5 for legacy/ecosystem compatibility; Hono for edge/serverless/multi-runtime Web-Standards APIs. New TS validation baseline: Zod v4 (read the migration guide before upgrading v3 projects).
+**Node/framework defaults:** production uses Active/Maintenance LTS — Node 24 (Active) for new services. Framework: Fastify for greenfield Node APIs; Express 5 for legacy/ecosystem compatibility; Hono for edge/serverless/multi-runtime Web-Standards APIs. New TS validation baseline: Zod v4 (read the migration guide before upgrading v3 projects).
 
 For new Node backend source files, prefer `.ts` when the repo supports TypeScript or is greenfield. Inherit `dev` TypeScript strict-compatibility rules.
 If backend boundaries are unclear, read existing source-of-truth docs/logs first, then document routes, services, repositories, data stores, and runtime commands in the repo's existing SOT before broad implementation.
@@ -112,7 +112,7 @@ See `references/core/architecture.md` for full decision matrices.
 | **gRPC** | Internal microservices, high-perf binary, bidirectional streaming | Browser clients (without gRPC-Web), public APIs |
 | **tRPC** | TypeScript monorepo, internal tools, rapid prototyping | Polyglot environments, public APIs |
 
-**Hybrid pattern (verified 2026-07-02 — OpenAPI 3.1+, prefer 3.2 where tooling supports; tRPC v11; Apollo Federation ONLY for multi-subgraph supergraphs):**
+**Hybrid pattern (OpenAPI 3.1+, prefer 3.2 where tooling supports; tRPC v11; Apollo Federation ONLY for multi-subgraph supergraphs):**
 ```
 Public/Partner → REST (OpenAPI 3.1)
 Mobile/Web BFF → GraphQL (Apollo Federation)
@@ -325,7 +325,7 @@ See `references/core/api-design.md` for protocol-specific patterns (REST, GraphQ
 ## 6. Caching Strategy
 
 **Decision rules:**
-- Say **Redis-compatible**, not Redis-only (verified 2026-07-02): prefer **Valkey** (Linux Foundation, BSD) for permissive OSS/self-hosted defaults; choose Redis when managed-service, module, or license posture justifies it.
+- Say **Redis-compatible**, not Redis-only: prefer **Valkey** (Linux Foundation, BSD) for permissive OSS/self-hosted defaults; choose Redis when managed-service, module, or license posture justifies it.
 - Cache only after correctness is proven on the uncached path.
 - Prefer cache-aside by default; use write-through only when strong consistency matters.
 - Every key has a namespace, version, stable identifier, TTL, and invalidation trigger.
@@ -339,7 +339,7 @@ See `references/core/caching.md` for TTL guidance, Redis patterns, CDN rules, in
 ## 7. Observability (OpenTelemetry)
 
 **Decision rules:**
-- **OTel maturity (verified 2026-07-02):** traces/metrics are Stable in JS/Python; **logs are still Development** — baseline is trace/span-correlated structured logs + OTel traces/metrics.
+- **OTel maturity:** traces/metrics are Stable in JS/Python; **logs are still Development** — baseline is trace/span-correlated structured logs + OTel traces/metrics.
 - Production services emit traces, metrics, and structured JSON logs with `requestId`, `traceId`, and `spanId`.
 - Start with OTel auto-instrumentation, then add custom spans only for business-critical or non-instrumented work.
 - Never log PII, secrets, full request/response bodies, or noisy stack traces outside error boundaries.

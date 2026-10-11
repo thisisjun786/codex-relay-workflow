@@ -33,23 +33,147 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for project setup, feature scaffolding, structural audits, or documentation scaffolding — applies feature-based layout, colocation, public boundary exports, repo-first convention reuse, and source-of-truth doc planning. Triggers: scaffold, scaffolding, new project, init project, new feature, add module, project setup, structure audit, architecture docs, source-of-truth docs, monorepo setup, API docs, 스캐폴딩, 새 프로젝트, 새 기능, 구조 점검, 모듈 추가.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Project and module scaffolding with repo-first convention reuse and structural audits.\"\n"
+          ],
+          "new": [
+            "description: \"Project setup, feature scaffolding, structural audits and source-of-truth docs: feature-based layout, colocation, boundary exports, repo-first convention reuse. Triggers: scaffold, scaffolding, new project, new feature, add module, monorepo setup, API docs, 스캐폴딩, 새 프로젝트, 모듈 추가.\"\n"
+          ]
+        },
+        {
+          "line": 24,
+          "old": [
+            "| `references/implementation-log.md` | C2+/multi-phase/cross-session work units | Full devlog routine: decade-numbered plan folders, P-concretize → A-audit → D-archive loop, mainstream design-doc/RFC mapping |\n"
+          ]
+        },
+        {
+          "line": 50,
+          "old": [
+            "3. Read existing `README.md`, `AGENTS.md`, `CLAUDE.md`, `devlog/`, `docs/`, `plans/`, `adr/`, `architecture/`, or equivalent source-of-truth docs before proposing new structure.\n"
+          ],
+          "new": [
+            "3. Read existing `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/`, `plans/`, `adr/`, `architecture/`, or equivalent source-of-truth docs before proposing new structure.\n"
+          ]
+        },
+        {
+          "line": 57,
+          "old": [
+            "### CRW-First Durable Docs\n"
+          ],
+          "new": [
+            "### Source-of-Truth Placement\n"
+          ]
+        },
+        {
+          "line": 59,
+          "old": [
+            "**Rule (SCAF-SOT-01):** In crw or any repo that already uses durable devlog/source-of-truth conventions, prefer the existing `devlog/` placement, local numbering scheme, and source-of-truth paths before proposing generic `docs/` + `plans/`.\n"
+          ],
+          "new": [
+            "**Rule (SCAF-SOT-01):** A product decision is canonical in Linear and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the Linear issue instead of restating the decision.\n"
+          ]
+        },
+        {
+          "line": 70,
+          "old": [
+            "## 2.1 Lightweight Source of Truth (implementation-unit devlog)\n"
+          ],
+          "new": [
+            "## 2.1 Lightweight Source of Truth\n"
+          ]
+        },
+        {
+          "line": 72,
+          "old": [
+            "The implementation-unit devlog routine (`devlog/_plan/` units — `pabcd` §Work-Phase\n",
+            "Loop, UNIT-RESIDENCE-01) is the DEFAULT for C2+ work where the repository uses it.\n",
+            "C0/C1 follow the record exemptions in `dev` §0.1; do not create a unit just for them. Propose the `docs/`/`plans/`\n",
+            "architecture docs when:\n"
+          ],
+          "new": [
+            "The numbered plan documents of a C2+ unit are workspace-local execution evidence owned by\n",
+            "[Implementation units](../crw-pabcd/references/implementation-units.md); scaffolding does not\n",
+            "create or number them. C0/C1 record exemptions are owned by crw-dev §0.1. Propose the\n",
+            "`docs/`/`plans/` architecture docs when:\n"
+          ]
+        },
+        {
+          "line": 77,
+          "old": [
+            "C0/C1 record exemptions are owned by crw-dev §0.1; this routine does not override them.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 94,
+          "old": [
+            "Folder names are advisory. If the repo already has `devlog/`, `docs/`, `adr/`, `plans/`,\n"
+          ],
+          "new": [
+            "Folder names are advisory. If the repo already has `docs/`, `adr/`, `plans/`,\n"
+          ]
+        },
+        {
+          "line": 108,
+          "old": [
+            "Implementation-unit devlog method:\n",
+            "- Split large work into phase-level documents instead of one huge plan —\n",
+            "  dependency-ordered (PHASE-SPLIT-01), ALL written to diff-level up front\n",
+            "  (DIFFLEVEL-ROADMAP-01; both defined in `pabcd`).\n",
+            "- Keep diff-level plans in files, not chat: exact paths, NEW/MODIFY/DELETE, before/after diffs for MODIFY, complete content for NEW.\n",
+            "- Keep chat summaries short: explain the phase, show a compact tree/change map, then link the plan file.\n",
+            "- Move completed plan folders to an archive/done area if the repo already uses that convention.\n"
+          ],
+          "new": [
+            "Keep diff-level plans in files, not chat; keep chat summaries short: explain the phase,\n",
+            "show a compact tree/change map, then link the plan file. Phase naming is owned by\n",
+            "[Implementation units](../crw-pabcd/references/implementation-units.md) (LEXICO-SPLIT-01).\n"
           ]
         },
         {
           "line": 116,
           "old": [
-            "Phase naming is owned by [Implementation units](../pabcd/references/implementation-units.md)\n"
+            "Phase naming is owned by [Implementation units](../pabcd/references/implementation-units.md)\n",
+            "(LEXICO-SPLIT-01). Use the existing three-digit convention; do not mix two-digit names.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 121,
+          "old": [
+            "This gate governs introducing a convention, not routine unit subfolders in an\n",
+            "existing devlog/_plan. Create a unit only when required; crw-dev §0.1 does not\n",
+            "require a new unit for a C0/C1 fast-path record.\n"
           ],
           "new": [
-            "Phase naming is owned by [Implementation units](../crw-pabcd/references/implementation-units.md)\n"
+            "This gate governs introducing a convention, not routine subfolders of a convention the repository\n",
+            "already has.\n"
+          ]
+        },
+        {
+          "line": 207,
+          "old": [
+            "| Plan folders        | `YYMMDD_slug/`        | `260510_feature_bootstrap/`  |\n",
+            "| Phase docs          | decade-prefixed `NNN_slug.md`, `000_*` is the index (LEXICO-SPLIT-01) | `000_plan.md`, `010_phase1_build.md` |\n"
+          ],
+          "new": [
+            "| Plan documents      | owned by [Implementation units](../crw-pabcd/references/implementation-units.md) | |\n"
+          ]
+        },
+        {
+          "line": 301,
+          "old": [
+            "1. Follow decade numbering (../pabcd/references/implementation-units.md, LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
+          ],
+          "new": [
+            "1. Follow decade numbering ([Implementation units](../crw-pabcd/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
           ]
         }
       ]
@@ -68,24 +192,51 @@
     },
     {
       "file": "references/implementation-log.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "remove": true
+    },
+    {
+      "file": "scripts/scaffold-audit.sh",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 5,
           "old": [
-            "[Implementation units](../../pabcd/references/implementation-units.md);\n"
+            "# Checks whether a project follows the structural scaffold rules in this skill.\n"
           ],
           "new": [
-            "[Implementation units](../../crw-pabcd/references/implementation-units.md);\n"
+            "# Checks whether a project follows the structural scaffold rules in this skill: feature-based\n",
+            "# layout, colocation, public boundary exports, source-of-truth docs, .env safety, file length and\n",
+            "# agent/context instructions. crw-dev-backend links to this script for the same audit.\n"
           ]
         },
         {
-          "line": 73,
+          "line": 118,
           "old": [
-            "[Reader documents](../../dev/references/reader-documents.md). Evidence, receipts and\n"
+            "# 5. No .env committed\n"
           ],
           "new": [
-            "[Reader documents](../../crw-dev/references/reader-documents.md). Evidence, receipts and\n"
+            "# 5. .env safety: no .env file, .env ignored by git, .env.example present\n",
+            "ENV_IGNORED=false\n",
+            "if [ -f \"$DIR/.gitignore\" ] && grep -Eq '(^|/)\\.env($|[[:space:]]|#)' \"$DIR/.gitignore\"; then\n",
+            "  ENV_IGNORED=true\n",
+            "fi\n"
+          ]
+        },
+        {
+          "line": 121,
+          "new": [
+            "elif ! $ENV_IGNORED; then\n",
+            "  check \".env is not listed in .gitignore\" \"fail\"\n"
+          ]
+        },
+        {
+          "line": 122,
+          "old": [
+            "  check \".env.example exists (no .env)\" \"pass\"\n"
+          ],
+          "new": [
+            "  check \".env safety (.gitignore + .env.example)\" \"pass\"\n"
           ]
         }
       ]

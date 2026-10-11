@@ -41,7 +41,7 @@ A browser screenshot, successful open command or HTML file is not a PDF export.
 
 ## Build the reading order
 
-Structure follows [Reader documents](reader-documents.md);
+Structure follows [Reader documents](../../crw-dev/references/reader-documents.md);
 the rest of this section is print-specific.
 
 Use a bounded text measure and a clear heading scale; avoid a cover that pushes

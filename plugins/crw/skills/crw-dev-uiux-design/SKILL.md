@@ -1,6 +1,6 @@
 ---
 name: crw-dev-uiux-design
-description: "MUST USE for UI/UX direction and design judgment — vague visual briefs, onboarding, empty/error/loading states, layout vocabulary, typography breaks, favicons, logos, and brand identity choices. Pairs with crw-dev-frontend: this skill decides the design direction, then load crw-dev-frontend to implement it. Triggers: make it look good, modern, clean, aesthetic, onboarding, empty state, error state, favicon, logo, design system, 깔끔하게, 모던하게, 감성적으로."
+description: "UI/UX direction and design judgment: vague visual briefs, onboarding, empty, error and loading states, layout, typography, favicons, logos, brand identity. Hands the chosen direction to crw-dev-frontend. Triggers: make it look good, modern, clean, onboarding, empty state, favicon, logo, 깔끔하게, 모던하게."
 ---
 
 # UI/UX Design: Intent Discovery, Patterns & Product Vocabulary
@@ -43,14 +43,15 @@ Use browser fetch/open/text/get-dom/snapshot only after candidate URLs exist.
 > §1.5 and stays STRICT/DEFAULT.
 
 > **`dev` is always on:** `dev` §0.0 Work Classifier, §0.2 Rule Classes, §3 Verification
-> Gate, §5 Safety Rules, and Family Invariants (FAMILY-SLOP-01, FAMILY-CITE-01,
-> FAMILY-PROOF-01) apply to all work governed by this skill. They are not restated here.
+> Gate, §5 Safety Rules, and the [Family invariants](../crw-canon/references/skill-family.md#family-invariants)
+> (FAMILY-SLOP-01, FAMILY-CITE-01, FAMILY-PROOF-01) apply to all work governed by this skill.
+> They are not restated here.
 
 ## Modular References
 
 | File | When to Read | What It Covers |
 |------|-------------|----------------|
-| `references/design-isms.md` | User names a style/movement | 16 design movements with CSS signatures, incl. Liquid Glass + Liquid Editorial default kit (2025-2026) + AI Serif Editorial + Organic Capsule (verified 2026-07-09) |
+| `references/design-isms.md` | User names a style/movement | 16 design movements with CSS signatures, incl. Liquid Glass + Liquid Editorial default kit (2025-2026) + AI Serif Editorial + Organic Capsule |
 | `references/design-read-example.md` | Learning or reviewing Design Read format | Filled-in Design Read + dial setting example |
 | `references/design-award-sources.md` | Looking for real-world design references | Tiered sourcing guide: 8 award/gallery sites, what each is best for, how to search |
 | `references/product-personalities.md` | User references a product | 10 product DNA profiles with exact tokens, incl. 2026 AI-product pastel + OpenAI warm-sans organic + Anthropic serif bookish |

@@ -61,10 +61,8 @@ messages and inter-agent communication are retained, which makes main's synthesi
 available promotion route. Child completion is not verification; write what you
 verified, not what the child claimed. Durable memory writes keep using the existing
 explicit-request gate; do not add an automatic writer.
-Repository-only provenance for lifecycle, economy, isolation, skill transport and
-topology: `structure/20_pabcd_dispatch_doctrine.md` §3. This is not an installed
-prerequisite; do not assume the path exists inside the plugin payload. An explicitly
-required task source still must be loaded or reported missing before its governed action.
+An explicitly required task source still must be loaded or reported missing before its
+governed action.
 
 ### Discovery packet
 
@@ -359,8 +357,7 @@ still govern dispatch and completion scope.
 Dispatching phase-N+1 work while phase N is building is default-OFF. Only
 phase-invariant external research that reads no repository state may overlap phases.
 Mark its results `candidate — unverified`, then revalidate them against the landed tree
-at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01 in
-`structure/20_pabcd_dispatch_doctrine.md` §3 (repository-only provenance, not an installed prerequisite).
+at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01.
 
 ## Configured first fallback
 

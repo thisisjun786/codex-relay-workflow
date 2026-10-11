@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata and resolve peer/browser policy links through the renamed CRW dev folder. CRW-1220: the description names the web corpus and the Luna lane; the dispatcher sections are one heading; the Luna lane is merged in as references/lunasearch.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 3,
@@ -79,10 +79,10 @@
         {
           "line": 129,
           "new": [
-            "### Removed cli-jaw tiers (non-goals — do not re-add)\n",
-            "crw has no server runtime, so the cli-jaw 4-tier ladder does not carry over.\n",
-            "Do **not** reintroduce any of these removed backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.\n",
-            "There is no codex-native equivalent and J-10 removed them deliberately.\n",
+            "### Tiers crw does not provide (non-goals)\n",
+            "crw has no server runtime, so the search ladder has no server-side tiers.\n",
+            "Do **not** offer any of these backends as available: a progrok tier, a hosted web-AI wait (Grok Expert / GPT Pro), or an Exa / Tavily / Perplexity / Brave provider promise.\n",
+            "There is no codex-native equivalent.\n",
             "\n",
             "## For a dispatcher\n",
             "\n",
@@ -218,6 +218,36 @@
       "reason": "CRW-1220 correction: an unusable explorer setting is reported and repaired, a re-issued spawn is refused again",
       "add": true,
       "sha256": "f0acc7a310b544e642eee9795753be7b9c61868adb8efc87899502e7540475f8"
+    },
+    {
+      "file": "references/query-rewrite.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 27,
+          "old": [
+            "Request: \"요즘 cli-jaw 비슷한 오픈소스 뭐 있어\"\n"
+          ],
+          "new": [
+            "Request: \"요즘 aider 비슷한 오픈소스 뭐 있어\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "scripts/agbrowse_helper.py",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 4,
+          "old": [
+            "agbrowse is cli-jaw's browse layer extracted as a server-free npm package: HTTP-first proof\n"
+          ],
+          "new": [
+            "agbrowse is a server-free npm package: HTTP-first proof\n"
+          ]
+        }
+      ]
     }
   ]
 }

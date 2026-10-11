@@ -3,7 +3,7 @@
 Implementation rules for Apple-class translucent materials ("Liquid Glass"),
 classic glassmorphism, and the cheaper pill-over-imagery alternative.
 Sources: Apple HIG Materials + aside.com rendered measurements + dcinside
-practitioner notes (verified 2026-07-07; evidence:
+practitioner notes (evidence:
 `devlog/_fin/260707_liquid_glass_motion_trends/000_research.md`).
 Design judgment (is glass domain-correct at all?) is owned by
 `dev-uiux-design` - this file owns material recipes. Top-bar composition,

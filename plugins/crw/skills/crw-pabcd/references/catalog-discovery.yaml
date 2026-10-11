@@ -12,7 +12,6 @@
 # order, how to resolve `implies`/`derived_from`) lives in dev-pabcd SKILL.md prose.
 # Automated runtime filtering is out of scope and would escalate to code.
 version: 1
-last-verified: 2026-07-04
 
 # Ascending stage order. A conforming consumer MUST iterate this ascending and MUST NOT
 # present a stage until all earlier stages are answered (enforced by SKILL.md prose).

@@ -272,8 +272,7 @@ worktree's `goalplans/<slug>/` with its work phases and criteria; an
 accepted transition row in that worktree's `ledger.jsonl`; and the
 orchestrate call exiting zero in the child's rollout. The checkout's own
 state tree is where all of it lands, and none of it appeared in the source
-checkout. That tree was `.codexclaw/` on the CXC plugin this was measured on; in CRW it is `.crw/`
-with the same layout.
+checkout. That tree is `.crw/`.
 
 Require all four together, because three cheaper signals each look like activation
 and none of them is:

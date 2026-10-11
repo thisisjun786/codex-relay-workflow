@@ -60,7 +60,7 @@ test("bounded research without a capability returns an explicit issue and gap", 
 test("retrieval request is bounded and a valid result merges stable ids without dropping supplied evidence", async () => {
   let request;
   const result = await prepareResearch(model("bounded-lookup"), {
-    metadata: { skillVersion: "skill-2", packageVersion: "package-8", hostAdapter: "aside" },
+    metadata: { skillVersion: "skill-2", packageVersion: "package-8", hostAdapter: "example-host" },
     retrieve: async (value) => {
       request = value;
       return {
@@ -183,7 +183,7 @@ test("operational CLI reads only frozen JSON, emits provenance, and exits nonzer
   const metadata = join(dir, "metadata.json");
   const script = resolve(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "report-intake.mjs");
   writeFileSync(input, JSON.stringify(model()));
-  writeFileSync(metadata, JSON.stringify({ skillVersion: "skill-cli", packageVersion: "package-cli", sourceSha: "b".repeat(40), hostAdapter: "aside" }));
+  writeFileSync(metadata, JSON.stringify({ skillVersion: "skill-cli", packageVersion: "package-cli", sourceSha: "b".repeat(40), hostAdapter: "example-host" }));
   const env = { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_CACHE_HOME: join(home, "cache") };
   const ok = spawnSync(process.execPath, [script, input, "--metadata", metadata], { encoding: "utf8", env, timeout: 10_000 });
   assert.equal(ok.status, 0, ok.stderr);

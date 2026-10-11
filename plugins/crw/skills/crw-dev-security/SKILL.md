@@ -298,4 +298,4 @@ This is the one matrix of who defines, implements, and verifies each security co
 | Dependency security | `dev-security` §7 | CI pipeline owner | `npm audit` / `pip-audit` in CI |
 | Agentic AI safety | `dev-security` `references/agentic-ai-security.md` | Agent builder | Scenario testing (`dev-testing`) |
 
-`crw-dev-data` links to this section when ownership is unclear; `crw-dev-frontend` §15.2 lists the rows of the controls it implements.
+`crw-dev-data` links to this section when ownership is unclear; `crw-dev-frontend` §11.2 lists the rows of the controls it implements.

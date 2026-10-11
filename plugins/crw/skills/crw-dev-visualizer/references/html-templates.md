@@ -99,7 +99,7 @@ Wrap raw SVG markup in the base shell. No external dependencies needed.
 ```
 
 **Notes:**
-- SVG `viewBox` width 680 matches cli-jaw convention but can be adjusted
+- SVG `viewBox` width 680 is the default width but can be adjusted
 - The container provides horizontal scroll on narrow viewports
 - SVG inherits body text color; use explicit fills for colored elements
 - For dark/light theme awareness, use CSS classes:
@@ -561,7 +561,7 @@ scripts and place each diagram in its own `<section>`:
 </section>
 ```
 
-## Color Palette (cli-jaw compatible)
+## Color Palette
 
 These colors work in both light and dark mode:
 

@@ -12,7 +12,7 @@ they do not establish that the conversation supports a renderer.
 | Browser is available, inline rendering is not established | Return the standalone file; inspect in-browser only for computed/exported output or a reported defect (VIZ-VERIFY-SCALE-01) |
 | No renderer/exporter is available | Provide useful editable source/text and state which verification/output is unavailable |
 
-An exposed host contract takes priority over `reference/visualize-contract.md`.
+An exposed host contract takes priority over `references/visualize-contract.md`.
 Do not emit historical directives, assume an app version, or use a local server's
 health response as proof that the user is reading its UI. The embedded contract
 and its extractor are maintenance provenance, not an alternative renderer owner.
@@ -26,9 +26,9 @@ the entrypoint selects computed/exported verification or the user asks for it.
 - Use an absolute path on the executor that writes the file. A writable file is
   not automatically conversation-readable; follow the host's declared artifact path.
 - System temporary space is suitable for disposable inspection, not durable delivery.
-- Follow the available browser's current documentation. Aside is suitable for the
-  user's signed-in browser and research; other available browser tools are valid
-  for local QA. Do not assume a vendor-specific method or force an installation.
+- Follow the available browser's current documentation. A signed-in browser suits
+  research and any available browser tool is valid for local QA. Do not assume a
+  vendor-specific method or force an installation.
 - Some browser surfaces cannot open file URLs. If HTTP is required, serve only the
   artifact directory on loopback with a task-owned process and available port.
   Record its handle, inspect the page, and stop only that process after use.

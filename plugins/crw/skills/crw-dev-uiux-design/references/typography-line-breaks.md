@@ -93,7 +93,7 @@ without leaving vim                               ← balanced, semantic
 
 ---
 
-## Dynamic Rewrap Judgment (verified 2026-07-07)
+## Dynamic Rewrap Judgment
 
 Text must break at natural phrase boundaries at ANY width, not just canonical
 breakpoints — containers resize continuously (drag-resizable panels,

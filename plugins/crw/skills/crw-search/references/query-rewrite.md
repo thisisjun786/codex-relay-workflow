@@ -24,7 +24,7 @@ Request: "리액트 19 새로운 기능 좀 정리해줘"
 - `React 19 release notes official`
 - `react.dev React 19 changelog`
 
-Request: "요즘 cli-jaw 비슷한 오픈소스 뭐 있어"
+Request: "요즘 aider 비슷한 오픈소스 뭐 있어"
 - `open source AI agent CLI 2026`
 - `cli coding agent framework comparison`
 - `autonomous coding agent github`
