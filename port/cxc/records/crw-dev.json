@@ -408,6 +408,21 @@
       ]
     },
     {
+      "file": "references/reader-documents.md",
+      "reason": "CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
+      "hunks": [
+        {
+          "line": 129,
+          "old": [
+            "`kwrite`; general output hygiene is `dev` FAMILY-SLOP-01. Limit a revision to one\n"
+          ],
+          "new": [
+            "`kwrite`; general output hygiene is FAMILY-SLOP-01 in [Family invariants](../../crw-canon/references/skill-family.md#family-invariants). Limit a revision to one\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "references/skill-catalog.md",
       "reason": "Drop the Telegram delivery row: the port has no messenger delivery.",
       "hunks": [
@@ -424,6 +439,15 @@
       "reason": "CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
       "hunks": [
         {
+          "line": 31,
+          "old": [
+            "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `dev` Family Invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |\n"
+          ],
+          "new": [
+            "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |\n"
+          ]
+        },
+        {
           "line": 34,
           "old": [
             "| Repository bootstrap (rulesets, merge settings, PR limits) | `dev-devops` `references/repo-bootstrap.md` | `dev-devops` §2.9 |\n",
@@ -432,6 +456,19 @@
           "new": [
             "| Repository bootstrap (rulesets, merge settings, PR limits) | `crw-canon` `references/repo-bootstrap.md` | `crw-canon` `references/repo-governance.md`, `dev-devops` |\n",
             "| Agent PR intake and supersede (`DEVOPS-AGENT-*`, `DEVOPS-PR-SUPERSEDE-01`) | `crw-canon` `references/agent-pr-intake.md` | `crw-canon` `references/repo-governance.md`, `dev` stacked-prs, `dev-devops` agent-infra-safety, ci-cd-deploy |\n"
+          ]
+        },
+        {
+          "line": 48,
+          "old": [
+            "| Anti-slop output | `dev` §Family Invariants | all `dev-*` |\n",
+            "| file:line evidence | `dev` §Family Invariants | all `dev-*` |\n",
+            "| Completion proof | `dev` §Family Invariants | `pabcd`, all `dev-*` |\n"
+          ],
+          "new": [
+            "| Anti-slop output | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |\n",
+            "| file:line evidence | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |\n",
+            "| Completion proof | `dev` §3 verification gate; `crw-canon` `references/skill-family.md` (Family invariants) | `pabcd`, all `dev-*` |\n"
           ]
         }
       ]

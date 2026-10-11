@@ -28,7 +28,7 @@ Each rule area has exactly one canonical owner. Other skills may contain stubs b
 | Design intent discovery | `dev-uiux-design` | `dev-frontend` |
 | Design judgment | `dev-uiux-design` | `dev-frontend` |
 | Visual document composition / diagram and report rendering and delivery mechanics | `dev-visualizer` | `dev`; format-specific document owners retain PDF/DOCX/Slides mechanics |
-| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `dev` Family Invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |
+| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |
 | Deep research protocol (SEARCH-DEEP-*) | `search/references/deep-research.md` | `search` Tier 3, `dev` browser-routing |
 | Operational gates | `dev-devops` | `dev-backend`, `dev-scaffolding` |
 | Repository bootstrap (rulesets, merge settings, PR limits) | `crw-canon` `references/repo-bootstrap.md` | `crw-canon` `references/repo-governance.md`, `dev-devops` |
@@ -45,8 +45,8 @@ Each rule area has exactly one canonical owner. Other skills may contain stubs b
 | C2+ P-phase loop-spec output fields | pabcd references/plan-output.md | pabcd P router, phase-plan |
 | Repair and optimization method | pabcd references/loop-engineering.md and optimization.md respectively | loop |
 | PABCD workflow | `pabcd` | — |
-| Anti-slop output | `dev` §Family Invariants | all `dev-*` |
-| file:line evidence | `dev` §Family Invariants | all `dev-*` |
-| Completion proof | `dev` §Family Invariants | `pabcd`, all `dev-*` |
+| Anti-slop output | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |
+| file:line evidence | `crw-canon` `references/skill-family.md` (Family invariants) | all `dev-*` |
+| Completion proof | `dev` §3 verification gate; `crw-canon` `references/skill-family.md` (Family invariants) | `pabcd`, all `dev-*` |
 
 When updating a rule, update the canonical owner first, then verify stubs still point correctly.

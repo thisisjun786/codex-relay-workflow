@@ -126,7 +126,7 @@ exhibits, appendix, notice): the REPORT-* rules and the paged template in
 ## Layer order for polish
 
 Structure first (this reference), sentences second. Korean sentence polish is
-`kwrite`; general output hygiene is `dev` FAMILY-SLOP-01. Limit a revision to one
+`kwrite`; general output hygiene is FAMILY-SLOP-01 in [Family invariants](../../crw-canon/references/skill-family.md#family-invariants). Limit a revision to one
 or two structural interventions; a document that is rearranged wholesale on every
 pass loses the reader's map.
 
