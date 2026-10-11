@@ -212,3 +212,27 @@ func TestAddIssueAdvisoryLimitsWording(t *testing.T) {
 		t.Errorf("crw-add-issue names %q, which a later issue brings in", found)
 	}
 }
+
+// An initiative lead calls crw-add-issue but writes no project record: the project orchestrator owns
+// the project and its issues, so the initiative lead hands it the drafted body and the orchestrator
+// registers it.
+func TestAddIssueInitiativeLeadHandsTheBodyToTheOwner(t *testing.T) {
+	text := readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")
+	callers := normalized(sectionOf(text, "Who calls"))
+	if regexp.MustCompile(`(?i)initiative lead (registers|creates|writes) an issue`).MatchString(callers) {
+		t.Errorf("Who calls lets an initiative lead register an issue itself:\n%s", callers)
+	}
+	missing := wordingMissing(callers, []string{
+		`(?i)initiative lead[^.]*writes nothing`,
+		`(?i)initiative lead[^.]*hands[^.]*body[^.]*project orchestrator`,
+		`(?i)project orchestrator[^.]*registers it`,
+		`\(\.\./crw-canon/references/hierarchy\.md#scope-of-each-level\)`,
+	})
+	if len(missing) > 0 {
+		t.Errorf("Who calls lacks: %s\n%s", strings.Join(missing, "\n  "), callers)
+	}
+	write := normalized(sectionOf(text, "Check, write, read back"))
+	if !regexp.MustCompile(`(?i)write intent[^.]*(from )?(a|the) project orchestrator or (a|the) user`).MatchString(write) {
+		t.Errorf("Check, write, read back does not limit the write to a project orchestrator or the user:\n%s", write)
+	}
+}
