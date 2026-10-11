@@ -1,0 +1,106 @@
+{
+  "claudeSha256": "3dfe7c8de693e3feeb978d5885b7e303fd323d7f7325e694c5384ed07c06d2e8",
+  "value": {
+    "missing": [
+      "CRW-932",
+      "CRW-900",
+      "CRW-910",
+      "CRW-895",
+      "CRW-706",
+      "CRW-704",
+      "CRW-1005",
+      "CRW-1013",
+      "CRW-1015",
+      "CRW-1016",
+      "CRW-1017",
+      "CRW-1018",
+      "CRW-1019",
+      "CRW-1020",
+      "CRW-1047",
+      "CRW-711",
+      "CRW-195",
+      "CRW-564",
+      "CRW-192",
+      "CRW-392",
+      "CRW-201",
+      "CRW-203",
+      "CRW-202",
+      "CRW-204",
+      "CRW-161",
+      "CRW-549",
+      "CRW-1051",
+      "CRW-550"
+    ],
+    "rows": []
+  },
+  "calls": [
+    {
+      "path": "root/1:0",
+      "position": 1,
+      "label": "scout:g1",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:1",
+      "position": 1,
+      "label": "scout:g2",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:2",
+      "position": 1,
+      "label": "scout:g3",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    },
+    {
+      "path": "root/1:3",
+      "position": 1,
+      "label": "scout:g4",
+      "role": "explorer",
+      "sandbox": "read-only",
+      "status": "refused",
+      "reason": "schema_not_strict",
+      "requestedPair": {
+        "model": "haiku",
+        "effort": "medium"
+      },
+      "configuredPair": {
+        "model": "",
+        "effort": ""
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "origin": "the Claude Code Workflow tool's own copy of the script a session ran, under <claude config dir>/projects/<project>/<session>/workflows/scripts/",
+  "file": "routing-smoke-test-wf_3dcc89b2-950.js",
+  "session": "99e249af-32db-5177-b296-f111ba8224f9",
+  "sha256": "8f99bdad5c254510d264c0c1ef4d2b53cb912f13d115a3ef1db16ae3124fc444",
+  "bytes": 662,
+  "modified": "2026-10-08T20:06:21Z"
+}

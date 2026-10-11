@@ -172,7 +172,9 @@ func TestParityCorpus(t *testing.T) {
 			}
 			// A build is a call that writes; it never falls to a read-only role, and an investigation never writes.
 			for _, c := range got.Calls {
-				if c.Status != StatusCompleted {
+				// The schemas of a real Claude script are not strict, and the engine refuses such a call whatever its
+				// role; no other refusal is expected of any script.
+				if c.Status != StatusCompleted && !(isReal(name) && c.Status == StatusRefused && c.Reason == ReasonSchemaNotStrict) {
 					t.Errorf("%s: call %s %s: %s %s", name, c.Path, c.Label, c.Status, c.Reason)
 				}
 				switch {
@@ -180,7 +182,7 @@ func TestParityCorpus(t *testing.T) {
 					if c.Sandbox != SandboxWorkspaceWrite || !strings.HasPrefix(c.Role, "executor") {
 						t.Errorf("%s: the build %s ran as %s in %s", name, c.Label, c.Role, c.Sandbox)
 					}
-				case strings.HasPrefix(c.Label, "find:") || strings.HasPrefix(c.Label, "sweep:"):
+				case strings.HasPrefix(c.Label, "find:") || strings.HasPrefix(c.Label, "sweep:") || strings.HasPrefix(c.Label, "scout:"):
 					if c.Role != "explorer" || c.Sandbox != SandboxReadOnly {
 						t.Errorf("%s: the investigation %s ran as %s in %s", name, c.Label, c.Role, c.Sandbox)
 					}
@@ -194,6 +196,55 @@ func TestParityCorpus(t *testing.T) {
 				t.Errorf("claude.js changed since the golden was cut (%s, %v)", cut.ClaudeSHA256, err)
 			}
 		})
+	}
+}
+
+// isReal reports whether a corpus directory holds a real original (it names its source).
+func isReal(name string) bool {
+	_, err := os.Stat(filepath.Join(parityDir, name, "source.json"))
+	return err == nil
+}
+
+// TestParityCorpusProvenance: at least six scripts of the corpus are real originals whose claude.js is the file the
+// source record names, byte for byte.
+func TestParityCorpusProvenance(t *testing.T) {
+	real := 0
+	for _, name := range parityNames(t) {
+		if !isReal(name) {
+			continue
+		}
+		real++
+		raw, err := os.ReadFile(filepath.Join(parityDir, name, "source.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var src struct {
+			Origin, File, Session, SHA256, Modified string
+			Bytes                                   int
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&src); err != nil {
+			t.Errorf("%s/source.json: %v", name, err)
+			continue
+		}
+		claude, err := os.ReadFile(filepath.Join(parityDir, name, "claude.js"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(claude)
+		if src.SHA256 != hex.EncodeToString(sum[:]) || src.Bytes != len(claude) {
+			t.Errorf("%s: claude.js is not the original source.json names (%s, %d bytes)", name, src.SHA256, src.Bytes)
+		}
+		if !strings.HasSuffix(src.File, ".js") || src.Session == "" || src.Origin == "" || src.Modified == "" {
+			t.Errorf("%s/source.json does not say where the original came from: %+v", name, src)
+		}
+		if _, err := os.Stat(filepath.Join(parityDir, name, "child-review.js")); err == nil {
+			t.Errorf("%s: a real original has no written helper files", name)
+		}
+	}
+	if real < 6 {
+		t.Errorf("the corpus holds %d real originals, at least six", real)
 	}
 }
 
@@ -241,6 +292,40 @@ func TestParityCorpusRoles(t *testing.T) {
 	g = goldenOf(t, "nested-workflow")
 	if c := find(g, "review:design"); c.Path != "root/2:workflow" || c.Role != "architect" {
 		t.Errorf("a call of the nested workflow runs on the child path: %+v", c)
+	}
+
+	// The real originals: the explicit effort of a build and of its verification is recorded, not applied; a judge that
+	// states xhigh is the final reviewer; a fix on the second tier is a write; a scout is read-only. Their schemas are not
+	// strict, so every call that carries one is refused for that reason alone, before any thread starts (no configured
+	// pair is observed).
+	g = goldenOf(t, "real-routing-smoke-test")
+	if build := find(g, "build:haiku"); build.Role != "executor" || build.Sandbox != SandboxWorkspaceWrite || build.RequestedPair != (Pair{"haiku", "medium"}) || build.ConfiguredPair != executor || build.Status != StatusCompleted {
+		t.Errorf("%+v", build)
+	}
+	if verify := find(g, "verify:sol"); verify.Role != "reviewer" || verify.Sandbox != SandboxReadOnly || verify.RequestedPair != (Pair{"haiku", "high"}) || verify.ConfiguredPair != reviewer || verify.Status != StatusCompleted {
+		t.Errorf("%+v", verify)
+	}
+	g = goldenOf(t, "real-register-fixpass")
+	if fix := find(g, "fix:register"); fix.Role != "executor-t1" || fix.Sandbox != SandboxWorkspaceWrite || fix.Status != StatusCompleted || fix.ConfiguredPair != policy.Roles["executor-t1"].Pair {
+		t.Errorf("%+v", fix)
+	}
+	if rb := find(g, "readback"); rb.Role != "reviewer" || rb.RequestedPair.Effort != "high" || rb.ConfiguredPair != (Pair{}) || rb.Reason != ReasonSchemaNotStrict {
+		t.Errorf("%+v", rb)
+	}
+	g = goldenOf(t, "real-wave1-judge-per-lane")
+	if len(g.Calls) < 2 {
+		t.Errorf("a judge for each lane: %+v", g.Calls)
+	}
+	for _, c := range g.Calls {
+		if c.Role != "reviewer-final" || c.Sandbox != SandboxReadOnly || c.RequestedPair.Effort != "xhigh" || c.ConfiguredPair != (Pair{}) || c.Reason != ReasonSchemaNotStrict {
+			t.Errorf("%+v", c)
+		}
+	}
+	g = goldenOf(t, "real-port-scout")
+	for _, c := range g.Calls {
+		if c.Role != "explorer" || c.Sandbox != SandboxReadOnly || c.RequestedPair != (Pair{"haiku", "medium"}) || c.ConfiguredPair != (Pair{}) || c.Reason != ReasonSchemaNotStrict {
+			t.Errorf("a scout: %+v", c)
+		}
 	}
 
 	// The original runs too, and the calls the port edits are the ones that stop: an isolation-less haiku with the

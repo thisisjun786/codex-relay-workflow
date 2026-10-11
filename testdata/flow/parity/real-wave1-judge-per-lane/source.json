@@ -1,0 +1,8 @@
+{
+  "origin": "the Claude Code Workflow tool's own copy of the script a session ran, under <claude config dir>/projects/<project>/<session>/workflows/scripts/",
+  "file": "crw-wave1-judge-per-lane-wf_61fa4452-a4c.js",
+  "session": "442c785d-2216-450c-abfc-7493af9adb2d",
+  "sha256": "faf080bcef174011ee73bf02f9243a98b37adf88f98f33589e79ded7233e344b",
+  "bytes": 3310,
+  "modified": "2026-10-10T12:08:56Z"
+}
