@@ -55,6 +55,10 @@ type pass struct {
 	until     time.Time
 	relations map[string]delivery.Relationship
 	used      [2]map[string]int // reads this tick, by class and relationship
+	// owed are the reads of the order an unwoken tick would make first, which a woken tick makes after its woken
+	// reads when the time bound has stopped it (CRW-1210); read are the turns the pass has read.
+	owed []read
+	read map[read]bool
 	// deferred are the turns this pass read that ended failed or interrupted, in the order they were read. Settling
 	// such a turn asks whether a later turn of its generation holds a final child receipt (laterReceipt), and what
 	// turns a staged claim into one is the settlement of a completed turn, so these ends wait until the pass has
@@ -87,7 +91,8 @@ func (o *pass) settleDeferred(ctx context.Context) {
 
 // spent reports whether the pass has used the time Policy.MaxObserveSeconds allows it, and says so once. The
 // first reads, one for each class that waits, are made whatever the clock says, so a slow class cannot keep the
-// other out of the tick.
+// other out of the tick. A woken tick that the bound stopped makes, after the reads it made, the floor reads of the
+// order an unwoken tick would make (pass.owed), whatever the clock says, so the turns nobody woke keep rotating.
 //
 // A read that goes ahead is bounded by the time that is left: spent records the instant the pass runs out (until),
 // and the host call of that read ends then, as the clock check would end the pass before its next read. The instant
@@ -136,7 +141,12 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 	default:
 		order, floor = slices.Concat(others[:1], staged, others[1:]), 2
 	}
+	var owed []read
 	if woken := Woken(ctx); len(woken) > 0 && budget > floor {
+		// owed are the reads an unwoken tick would make first (its floor): the pass makes them whatever the
+		// clock says, after the woken reads, so a woken read that spends the whole time bound cannot keep the
+		// turns nobody woke from rotating (see below).
+		owed = slices.Clone(order[:floor])
 		// The children whose Stop woke this tick (CRW-1210): their turns are read first, in the order the
 		// deal gave them, ahead of the longest-waiting turns of the others, but they take at most the reads
 		// past the pass's floor (budget-floor). The rest of the order is the one an unwoken tick reads, from
@@ -164,7 +174,7 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 		}
 	}
 	share := max(1, d.Policy.MinRelationshipShare, budget/len(work))
-	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}
+	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, owed: owed, read: map[read]bool{}, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}
 	// Whatever ends the loop (the budget, the time, a failure), the failed and interrupted ends it has read are
 	// settled before it returns, as each was when it was read. A cancelled context refuses every store call, and
 	// leaves them to the next tick; a store this process has halted refuses nothing but is not written (CRW-945).
@@ -182,29 +192,53 @@ func (d *Daemon) observe(ctx context.Context, report *Report) (err error) {
 		if d.haltedStore || o.reads >= budget || o.spent() {
 			break
 		}
-		if o.used[next.class][next.p.id] >= share {
-			continue
-		}
-		r, ok := o.relations[next.p.id]
-		if !ok {
-			if r, err = delivery.LoadRelationship(ctx, d.Store, next.p.id); err != nil {
-				return err
-			}
-			o.relations[next.p.id] = r
-		}
-		o.reads++
-		o.used[next.class][next.p.id]++
-		var turn *store.TurnReference
-		if turn, err = d.read(ctx, o.until, r, next.t.id, report); err != nil {
+		if err = o.step(ctx, next, share); err != nil {
 			return err
 		}
-		switch {
-		case turn == nil:
-		case turn.Status == "completed":
-			d.settle(ctx, r, *turn, report)
-		default:
-			o.deferred = append(o.deferred, endedTurn{r, *turn})
+	}
+	// A pass the time bound stopped before the reads an unwoken tick would make first owes them (CRW-1210): a
+	// woken child whose read takes the whole bound, woken again before every tick, would otherwise be the first
+	// read of each tick and the others never read. They are read as the floor's reads are, whatever the clock
+	// says, and the turn read moves behind the others for the next tick as in a tick nobody woke.
+	o.until = time.Time{}
+	for _, next := range o.owed {
+		if d.haltedStore || o.reads >= budget {
+			break
 		}
+		if err = o.step(ctx, next, share); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// step reads one turn of the schedule, unless the relationship has had its share of the class or the turn was read
+// already, and settles or defers its end.
+func (o *pass) step(ctx context.Context, next read, share int) (err error) {
+	d, report := o.d, o.report
+	if o.used[next.class][next.p.id] >= share || o.read[next] {
+		return nil
+	}
+	r, ok := o.relations[next.p.id]
+	if !ok {
+		if r, err = delivery.LoadRelationship(ctx, d.Store, next.p.id); err != nil {
+			return err
+		}
+		o.relations[next.p.id] = r
+	}
+	o.reads++
+	o.used[next.class][next.p.id]++
+	o.read[next] = true
+	turn, err := d.read(ctx, o.until, r, next.t.id, report)
+	if err != nil {
+		return err
+	}
+	switch {
+	case turn == nil:
+	case turn.Status == "completed":
+		d.settle(ctx, r, *turn, report)
+	default:
+		o.deferred = append(o.deferred, endedTurn{r, *turn})
 	}
 	return nil
 }
