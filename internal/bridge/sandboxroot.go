@@ -100,3 +100,24 @@ func createdRefusal(created map[string]any, sandbox string) error {
 	}
 	return err
 }
+
+// resumedRefusal judges the cwd and the writable roots the host's answer to thread/resume says the
+// thread now runs with (CRW-1265), the way createdRefusal judges thread/start. A resume that states no
+// policy and no roots keeps the host's configured ones, which may hold the account home; the thread/read
+// answer and the request were judged before the host was called, these are the ones the resume picked up.
+// A refusal withholds the message; the thread stays resumed and no turn is started.
+func resumedRefusal(resumed map[string]any, sandbox string, policy map[string]any) error {
+	thread := pyjson.Map(resumed["thread"])
+	roots := append(sandboxroot.RootsOf(resumed), sandboxroot.RootsOf(thread)...)
+	cwd := pyjson.Text(resumed["cwd"])
+	if cwd == "" {
+		cwd = pyjson.Text(thread["cwd"])
+	}
+	err := rootRefusal("thread/resume", sandboxroot.CheckAll(cwd, roots, effectiveSandbox(sandbox, policy, reportedSandbox(resumed)...)))
+	var rpc *appserver.RPCError
+	if errors.As(err, &rpc) {
+		rpc.Message += "; the thread was resumed but no turn was started; message withheld"
+		rpc.Object["message"] = rpc.Message
+	}
+	return err
+}

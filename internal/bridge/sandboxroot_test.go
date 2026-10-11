@@ -207,6 +207,59 @@ func TestSendMessageRefusesReportedHomeWritableRoots(t *testing.T) {
 	}
 }
 
+// CRW-1265 (verification of d90085b2): a send that states no policy resumes the thread under the roots
+// the host's configuration gives it, and the host reports them in its thread/resume answer, not in
+// thread/read. The answer is judged before turn/start: an account home among its roots withholds the
+// message (the thread stays resumed), for a notLoaded and an idle thread alike; a safe answer goes on.
+func TestSendMessageRefusesHomeRootsOnlyTheResumeAnswerReports(t *testing.T) {
+	w := sandboxroottest.Fake(t)
+	run := w.Mkdir(t, w.Sandbox, "run")
+	answer := func(extra map[string]any) fakehost.Reply {
+		result := map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": run}, "cwd": run, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "workspaceWrite"}}
+		for k, v := range extra {
+			result[k] = v
+		}
+		return fakehost.Reply{Result: result}
+	}
+	home := map[string]map[string]any{
+		"policy writable root":  {"sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{w.Home}}},
+		"runtimeWorkspaceRoots": {"runtimeWorkspaceRoots": []any{run, w.Home}},
+		"thread runtime roots":  {"thread": map[string]any{"id": "thread-1", "cwd": run, "runtimeWorkspaceRoots": []any{w.Home}}},
+		"home cwd":              {"cwd": w.Home},
+	}
+	for _, status := range []string{"notLoaded", "idle"} {
+		for name, extra := range home {
+			t.Run(status+"/"+name, func(t *testing.T) {
+				b, host := testBridge(t)
+				host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": status}, "cwd": run}}})
+				host.Respond("thread/resume", answer(extra))
+				host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+				receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "resume-home", ThreadID: "thread-1", Message: "work", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
+				rpc := pyjson.Map(receipt["rpcError"])
+				if err != nil || receipt["status"] != "failed" || rpc["code"] != sandboxroot.Code || receipt["delivery"] != "not_delivered" {
+					t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
+				}
+				if !strings.Contains(pyjson.Text(rpc["message"]), "the thread was resumed but no turn was started; message withheld") {
+					t.Fatalf("message=%v", rpc["message"])
+				}
+				if host.Count("turn/start") != 0 {
+					t.Fatalf("a turn was started: %v", hostMethods(host))
+				}
+			})
+		}
+		t.Run(status+"/a safe answer goes on", func(t *testing.T) {
+			b, host := testBridge(t)
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": status}, "cwd": run}}})
+			host.Respond("thread/resume", answer(map[string]any{"runtimeWorkspaceRoots": []any{run}, "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{run}}}))
+			host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+			receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "resume-safe", ThreadID: "thread-1", Message: "work", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
+			if err != nil || receipt["status"] != "accepted" || host.Count("turn/start") != 1 {
+				t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
+			}
+		})
+	}
+}
+
 // CRW-1265 (pre-merge evaluation of f0691fdd, d2): a creation that states no policy and no roots leaves
 // the writable roots to the host's configuration, and the host answers thread/start with the roots the
 // thread got. An account home among them withholds the title and the initial prompt (the thread stays

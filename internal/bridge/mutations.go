@@ -218,6 +218,9 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			}
 			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": first.Code, "message": message}}
 		}
+		if err = resumedRefusal(resumed, contract.Sandbox, contract.ExpectedPolicy); err != nil {
+			return err
+		}
 		if moveErr != nil {
 			message := moveErr.Error() + "; the thread was resumed but no turn was started, message withheld"
 			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": stateroot.CodeOf(moveErr), "message": message}}
