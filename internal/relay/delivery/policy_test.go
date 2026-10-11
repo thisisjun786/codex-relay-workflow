@@ -231,3 +231,70 @@ func TestRetryOfCountedEventAtCap(t *testing.T) {
 		t.Fatalf("the retry changed the hour count to %d, want it to stay %d", got, capacity)
 	}
 }
+
+// A cap of zero refuses every send, the retry of an event the hour already counts included (PacingAt), and
+// the due read and the busy-head read say the same: such a retry is not due, and it heads no busy line, so it
+// takes no idle wake it could not use (CRW-1210, verification round 2).
+func TestZeroCapExcludesCountedRetry(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, "")
+	event := f.queuedEvent(regOpts{})
+	f.spendAttempts(f.rid, parent, event, 1, f.clock.Now())
+	f.delivery.Policy.MaxSendsPerRelationshipPerHour = 0
+	if refused, err := f.delivery.SendRefusalFor(f.ctx, f.rid, parent, f.clock.Now(), store.SendSubject{EventID: event}); err != nil || refused != HourlyCap {
+		t.Fatalf("the counted retry under a cap of zero: %q, %v; want %s", refused, err, HourlyCap)
+	}
+	if due := f.eligible(); slices.Contains(due, event) {
+		t.Errorf("a cap of zero refuses the counted retry but the due read lists it: %v", due)
+	}
+	_, err := execSQL(f.ctx, f.store, "UPDATE deliveries SET state = ?, next_eligible_at = ? WHERE event_id = ?", DeferredBusy, f.clock.Now()+100, event)
+	mustDo(t, err)
+	woke, err := f.delivery.WakeBusyHead(f.ctx, f.row(event).S("recipient_thread_id"), f.clock.Now())
+	mustDo(t, err)
+	if woke {
+		t.Error("a counted retry a cap of zero refuses still heads its recipient's busy line and takes an idle wake")
+	}
+}
+
+// A busy delivery whose relationship class has a cap of zero holds no line, even when its event is already
+// counted: a delivery of another relationship (of class orchestrator, with a cap of its own) to the same
+// recipient is due and is delivered (CRW-1210, verification round 2).
+func TestZeroCapCountedHeadDoesNotBlockAnotherClass(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, "")
+	// An ordinary relationship's correction to child, already counted this hour and waiting out a busy backoff.
+	older := f.readyEvent(regOpts{recipients: []string{parent, child}})
+	_, err := f.delivery.Enqueue(f.ctx, older, Revision, child)
+	mustDo(t, err)
+	f.spendAttempts(f.rid, child, older, 1, f.clock.Now())
+	_, err = execSQL(f.ctx, f.store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, attempt_count = 1 WHERE event_id = ?", DeferredBusy, f.clock.Now()+100, older)
+	mustDo(t, err)
+	f.clock.Advance(10)
+	// child is the parent of grandchild and holds the live parent binding of a project: an orchestrator.
+	const grandchild = "grandchild-task"
+	f.host.addThread(grandchild)
+	rid := f.register(regOpts{issue: "REL-2", dispatchRequest: "dispatch-grand", parent: child, parentCwd: f.root, child: grandchild, childRoot: f.root, turn: "grand-turn", noSettings: true})
+	payload := f.readyPayload(rid, 1, []string{f.artifact("grand-output.txt", "result")}, 1, turnRef{grandchild, "grand-turn", "completed"})
+	_, err = f.accept(payload, store.AcceptOptions{})
+	mustDo(t, err)
+	newer := payload.Get("eventId").(string)
+	_, err = f.delivery.Enqueue(f.ctx, newer, "", "")
+	mustDo(t, err)
+	f.holdsLive(child, "PROJECT")
+	f.delivery.Policy.MaxSendsPerRelationshipPerHour = 0
+	if refused, err := f.delivery.SendRefusalFor(f.ctx, rid, child, f.clock.Now(), store.SendSubject{EventID: newer}); err != nil || refused != "" {
+		t.Fatalf("the orchestrator's completion: %q, %v; want no refusal", refused, err)
+	}
+	if due := f.eligible(); !slices.Contains(due, newer) {
+		t.Errorf("a counted correction under a cap of zero holds the line of the orchestrator's completion: due %v, want %s", due, newer)
+	}
+	if behind, err := f.delivery.behindBusyHead(f.ctx, newer, f.clock.Now()); err != nil || behind {
+		t.Errorf("the orchestrator's completion is behind a head a cap of zero refuses: %v, %v", behind, err)
+	}
+	// The attempt passes the line and asks the recipient. (This fixture's recipient is bound as a parent with
+	// no role policy configured, so the settings check withholds it; what matters is that it was asked.)
+	f.mustAttempt(newer, at(f.clock.Now()))
+	if state := f.row(newer).S("state"); state == Queued {
+		t.Errorf("the attempt of the orchestrator's completion stopped at a head a cap of zero refuses: state %s", state)
+	}
+}

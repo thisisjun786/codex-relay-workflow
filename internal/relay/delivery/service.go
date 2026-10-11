@@ -323,9 +323,12 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // delivery holds a line for longer than one backoff at a time.
 //
 // It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), the
-// window's two stamps again (the events it counts: one already counted is not refused by the cap, as its
-// retry adds no distinct event), then the state DeferredBusy, now and the two hourly caps (the
-// orchestrator class's, then the ordinary one): see busyHeadArgs. A candidate is behind the head when the
+// window's two stamps again (the events it counts: one already counted is not refused by a cap above zero,
+// as its retry adds no distinct event, and a cap of zero refuses it as PacingAt does), then the state
+// DeferredBusy, now and the two hourly caps (the orchestrator class's, then the ordinary one): see
+// busyHeadArgs. The cap is compared with the count the claim would read: zero for a counted event, which a
+// cap above zero lets through and a cap of zero does not, and the relationship's spent count otherwise, so a
+// head a cap of zero refuses holds no line, whichever other class waits behind it (CRW-1210). A candidate is behind the head when the
 // head's key is smaller than its own, compared as row values in the order eligibleOrder sorts.
 //
 // CRW-904 adds recipient_thread_id and next_eligible_at to what this names, so the idle edge can hold a
@@ -350,7 +353,7 @@ var busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible
 	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR (bw.event_id IS NOT NULL AND bw.spent_at IS NULL))" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
-	" AND (COALESCE(bs.spent, 0) < CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END OR bc.event_id IS NOT NULL)) WHERE rn = 1)"
+	" AND CASE WHEN bo.task_id IS NOT NULL THEN ? ELSE ? END > CASE WHEN bc.event_id IS NOT NULL THEN 0 ELSE COALESCE(bs.spent, 0) END) WHERE rn = 1)"
 
 // busyHeadArgs are the arguments of busyHeadSQL at now.
 func (d *Service) busyHeadArgs(now float64) []any {
@@ -502,7 +505,8 @@ func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWa
 // only be refused, and a runaway relationship's refused rows must not take the attempts its calm
 // siblings need. The count is read against the live policy cap, so a cap raised mid-window takes
 // effect on the next tick. The spent counts are one grouped read joined to the candidates, not an
-// expression evaluated for each of them.
+// expression evaluated for each of them. The retry of an event the hour already counts is due under a
+// cap above zero (it adds no distinct event) and not under a cap of zero, as PacingAt answers the claim.
 //
 // A delivery is also not due while an older delivery to the same recipient is waiting out a busy
 // backoff (busyHeadSQL): the recipient was found busy, so the older delivery is the one that goes
@@ -518,7 +522,7 @@ func (d *Service) eligibility(now float64) (string, string, []any) {
 	args := append(store.RelationshipSendsArgs(window), store.SendStamp(window), store.SendStamp(window+RateWindowSeconds))
 	args = append(args, d.busyHeadArgs(now)...)
 	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.HourlyCapFor(true), d.Policy.HourlyCapFor(false))
-	return join, eligibleBase + " AND (COALESCE(sbspent.spent, 0) < CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END OR ct.event_id IS NOT NULL) AND bh.event_id IS NULL", args
+	return join, eligibleBase + " AND CASE WHEN ot.task_id IS NOT NULL THEN ? ELSE ? END > CASE WHEN ct.event_id IS NOT NULL THEN 0 ELSE COALESCE(sbspent.spent, 0) END AND bh.event_id IS NULL", args
 }
 
 // dueFrom is what the due-delivery reads select from: a delivery with its relationship and event.
