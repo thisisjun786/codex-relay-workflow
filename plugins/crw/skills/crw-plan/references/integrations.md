@@ -176,7 +176,7 @@ Load the existing owner for the requested operation:
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
 | Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-run goal mode](../../crw-run/references/goal-mode.md) |
 | Carry one task's authorized objective through a scoped PABCD completion loop | `crw-loop`, with `crw-pabcd` for the phases |
-| Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
+| Execute an initiative's approved projects through their existing parents, or run its midpoint check | [crw-run-initiative](../../crw-run-initiative/SKILL.md), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-check](../../crw-check/SKILL.md#find-contradictions) |
 | Diagnose structural debt after a verified cycle and plan bounded repairs; execute only selected authorized work | [crw-refactor](../../crw-refactor/SKILL.md) |

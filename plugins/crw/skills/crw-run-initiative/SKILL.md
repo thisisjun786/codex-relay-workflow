@@ -77,9 +77,20 @@ record which crossing the check consumed, so a milestone that is already fully i
 crossed its threshold, does not make every later idle turn due again. Where `crw manage checkpoint record` exists it holds
 that baseline; where it does not, the coordination record does.
 
-Where `crw manage checkpoint` exists, read its verdict for these signals. Where the command is not installed, or a signal it
-reports is `unmeasured`, the initiative lead judges the same signals from its own records rather than treating the missing tool as a
-reason to skip the check.
+`crw manage checkpoint` reads one project at a time: one report per project, each counted from that project's own baseline,
+and no initiative aggregate. A project's `due` is therefore never the initiative's answer: two approved projects with the
+same baseline and ten landed merges each are both not due on merges while the initiative has reached twenty. Read the
+reports of every approved project and judge the initiative from them:
+
+- A report whose reasons name a signal other than `running_hours` is a crossing inside the approved set, so the initiative is due.
+- Otherwise sum each count over the approved projects' reports and compare the sum to the same threshold:
+  `merges_since_checkpoint`, `needs_changes_or_split_2h`, `pair_eval_p0p1_since_checkpoint` and `backlog_net_4h`. A count that
+  is `null` is `unmeasured` for that project, and the sum of the measured ones is only a lower bound, so the signal is judged from the
+  coordination record instead. `milestone_integrated` is the number of milestones that crossed, so it is due when any
+  project's is above zero. The elapsed time is the smallest `running_hours` among the reports, the latest baseline in the set.
+
+Where the command is not installed, or a signal is `unmeasured` in a report, the initiative lead judges the same signals from its own
+records rather than treating the missing tool as a reason to skip the check.
 
 **When to run it.** On a turn that is only waiting: no merge-lane turn is held, no issue child needs a decision now, and the next
 action would otherwise be idle observation. A midpoint check never interrupts a lane it does not own, and it is not a reason to
@@ -95,8 +106,10 @@ stop one.
 3. A midpoint optimization pass over the packet, the rules, the bundling and the test speed, changing only what the current
    approval covers.
 
-**What it records.** Write the outcome into the coordination record, and where `crw manage checkpoint record` exists, record the
-baseline time and the crossings consumed there so the next check measures from it. The midpoint check is a diagnosis: it
+**What it records.** Write the outcome into the coordination record. Where `crw manage checkpoint record` exists, run
+`crw manage checkpoint record --project <project> --summary-file <summary>` for every approved project with the same summary, since the
+command records one project per call and the next check sums counts that all start at this check. Record the crossings consumed in the
+coordination record as well. The midpoint check is a diagnosis: it
 records and proposes. Work worth fixing becomes an issue under the concept bundle rules, and anything not worth doing
 now goes to the sweep label Backlog, but both are Linear writes and need scope covering them: where the current authorization
 does not cover creating or relabeling issues, return the candidates as proposals with the check's evidence instead of writing

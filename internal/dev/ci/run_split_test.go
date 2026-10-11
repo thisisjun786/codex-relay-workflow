@@ -243,6 +243,103 @@ func TestMidpointTriggerSingleOwner(t *testing.T) {
 	}
 }
 
+// checkpointCountNames reads the JSON names of the counts crw manage checkpoint reports and the default thresholds
+// from the command's source, so the initiative procedure is checked against the command it consumes.
+func checkpointCountNames(t *testing.T) (names map[string]bool, thresholds map[string]string) {
+	t.Helper()
+	src := splitRead(t, "internal/manage/checkpoint.go")
+	block := regexp.MustCompile(`(?s)type CheckpointCounts struct \{(.*?)\n\}`).FindStringSubmatch(src)
+	if block == nil {
+		t.Fatal("internal/manage/checkpoint.go has no CheckpointCounts struct")
+	}
+	names = map[string]bool{}
+	for _, m := range regexp.MustCompile("`json:\"([a-z0-9_]+)\"`").FindAllStringSubmatch(block[1], -1) {
+		names[m[1]] = true
+	}
+	def := regexp.MustCompile(`Merges: (\d+), RunningHours: (\d+), NeedsChangesOrSplit: (\d+), PairEvalP0P1: (\d+), BacklogNet: (\d+)`).FindStringSubmatch(src)
+	if def == nil {
+		t.Fatal("internal/manage/checkpoint.go has no default thresholds line")
+	}
+	thresholds = map[string]string{"merges": def[1], "hours": def[2], "needs": def[3], "pair": def[4], "backlog": def[5]}
+	return names, thresholds
+}
+
+// TestInitiativeCheckpointAggregatesPerProjectReports: crw manage checkpoint reports one project at a time (its
+// manage test pins that two projects at ten merges each are both not due), so the initiative lead's midpoint
+// procedure must say how the approved projects' reports become one crossing and how one check is recorded for all of
+// them. The count names it sums are the command's real count names, and its thresholds are the command's defaults.
+func TestInitiativeCheckpointAggregatesPerProjectReports(t *testing.T) {
+	skill := splitRead(t, runInitiativeSkill)
+	section, ok := reportSectionOf(skill, "Long-run midpoint check")
+	if !ok {
+		t.Fatal("crw-run-initiative has no Long-run midpoint check section")
+	}
+	counts, thresholds := checkpointCountNames(t)
+	for _, name := range []string{"merges_since_checkpoint", "needs_changes_or_split_2h", "pair_eval_p0p1_since_checkpoint", "backlog_net_4h", "milestone_integrated", "running_hours"} {
+		if !counts[name] {
+			t.Errorf("the command no longer reports the count %s: update the test with the procedure", name)
+		}
+		if !strings.Contains(section, "`"+name+"`") {
+			t.Errorf("the midpoint procedure does not name the count `%s` it aggregates", name)
+		}
+	}
+	for _, phrase := range []string{
+		"one report per project",
+		"no initiative aggregate",
+		"sum",
+		"never the initiative's answer",
+		"checkpoint record --project",
+		"every approved project",
+	} {
+		if !strings.Contains(section, phrase) {
+			t.Errorf("the midpoint procedure does not say %q", phrase)
+		}
+	}
+	words := map[string]string{"20": "twenty", "8": "eight", "3": "three", "2": "two", "15": "fifteen"}
+	for key, want := range map[string]string{"merges": " merges", "hours": " continuous hours", "needs": " or more needs-changes", "pair": " or more P0 or P1", "backlog": " issues in the last four hours"} {
+		if !strings.Contains(strings.ToLower(section), words[thresholds[key]]+strings.ToLower(want)) {
+			t.Errorf("the midpoint procedure's %s threshold does not match the command's default %s", key, thresholds[key])
+		}
+	}
+}
+
+// TestEntryPointsNameTheSkillOwners: the planning owner table sends an initiative's execution to crw-run-initiative, and the
+// plugin's user-facing description names the initiative executor and no deleted skill (CRW-1218 d3).
+func TestEntryPointsNameTheSkillOwners(t *testing.T) {
+	integrations := "plugins/crw/skills/crw-plan/references/integrations.md"
+	found := false
+	for _, line := range strings.Split(splitRead(t, integrations), "\n") {
+		if !strings.HasPrefix(line, "|") || !strings.Contains(line, "initiative's approved projects") {
+			continue
+		}
+		found = true
+		if !strings.Contains(line, "](../../crw-run-initiative/SKILL.md)") || strings.Contains(line, "](../../crw-run/SKILL.md)") {
+			t.Errorf("%s: the initiative execution row does not name crw-run-initiative as its owner: %s", integrations, line)
+		}
+	}
+	if !found {
+		t.Errorf("%s has no row for an initiative's approved projects", integrations)
+	}
+	var manifest struct {
+		Interface struct {
+			LongDescription string `json:"longDescription"`
+		} `json:"interface"`
+	}
+	if err := json.Unmarshal([]byte(splitRead(t, "plugins/crw/.codex-plugin/plugin.json")), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	long := manifest.Interface.LongDescription
+	if long == "" {
+		t.Fatal("plugins/crw/.codex-plugin/plugin.json has no interface.longDescription")
+	}
+	if !strings.Contains(long, "Run Initiative") {
+		t.Error("the plugin longDescription does not name the initiative executor")
+	}
+	if strings.Contains(long, "Logic") {
+		t.Error("the plugin longDescription still advertises Logic, a skill that was merged into Check")
+	}
+}
+
 // pinnedRunPath is a path below crw-run that Go code or a Go test pins.
 var pinnedRunPath = regexp.MustCompile(`crw-run/((?:references|scripts)/[A-Za-z0-9_./*-]*[A-Za-z0-9*]|SKILL\.md)`)
 

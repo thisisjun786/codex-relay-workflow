@@ -1302,6 +1302,39 @@ func TestCheckpointProjectFilter(t *testing.T) {
 	}
 }
 
+// The command has no initiative aggregate (CRW-1218 d1): two projects with the same baseline and ten
+// merges each both stay below the merges threshold although the pair has reached twenty, so a reader that
+// judges an initiative across its projects sums the per-project counts and never reads one project's
+// due flag as the initiative's answer. crw-run-initiative states that procedure; its test reads the
+// count names below.
+func TestCheckpointCountsAreReportedPerProjectNeverAsAnInitiative(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-a", "project-a")
+	f.scope("relationship-b", "project-b")
+	for i := 0; i < 10; i++ {
+		f.mergeTurn(fmt.Sprintf("turn-a-%02d", i), "project-a", "landed", checkpointAt(2+float64(i)/60))
+		f.mergeTurn(fmt.Sprintf("turn-b-%02d", i), "project-b", "landed", checkpointAt(2+float64(i)/60))
+	}
+	f.close()
+	f.record("project-a", checkpointAt(1), "the shared checkpoint")
+	f.record("project-b", checkpointAt(1), "the shared checkpoint")
+
+	reports := checkpointRead(t, f, CheckpointOptions{}, nil)
+	if len(reports) != 2 {
+		t.Fatalf("want one report per project, got %+v", reports)
+	}
+	sum := 0
+	for _, report := range reports {
+		if checkpointHasReason(report, checkpointSignalMerges) {
+			t.Errorf("%s reports the merges signal with ten merges, below the threshold of %d: %+v", report.Project, checkpointDefaultThresholds.Merges, report)
+		}
+		sum += report.Counts.MergesSinceCheckpoint
+	}
+	if sum != checkpointDefaultThresholds.Merges {
+		t.Errorf("the per-project merges sum to %d, want %d (the initiative's crossing)", sum, checkpointDefaultThresholds.Merges)
+	}
+}
+
 // A project key that would escape the checkpoint directory is refused rather than written.
 func TestCheckpointRecordRefusesAPathEscape(t *testing.T) {
 	coreTempHome(t)

@@ -54,8 +54,9 @@ func TestScheduleJudgmentSingleSource(t *testing.T) {
 			t.Errorf("%s does not give the report word %s", scheduleJudgeMD, word)
 		}
 	}
-	// The report words that define a verdict are in the judgment reference alone.
-	defining := regexp.MustCompile(`앞섬|계획대로|지연 위험|판단 불가`)
+	// The report words are defined in the judgment reference alone: another file may use a word in an example or a
+	// report, but a table row that gives a word its meaning is a second definition.
+	definingRow := regexp.MustCompile(`(?m)^\| *(앞섬|계획대로|지연 위험|지연|판단 불가|Ahead|On plan|At risk|Late|Undecidable) *\|`)
 	err := filepath.WalkDir(filepath.Join(repoRoot(), "plugins/crw/skills"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
 			return err
@@ -68,8 +69,8 @@ func TestScheduleJudgmentSingleSource(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if loc := defining.FindString(string(data)); loc != "" {
-			t.Errorf("%s uses the verdict word %q: the verdicts are defined in %s alone", filepath.ToSlash(rel), loc, scheduleJudgeMD)
+		if loc := definingRow.FindString(string(data)); loc != "" {
+			t.Errorf("%s has the table row %q: the verdicts are defined in %s alone", filepath.ToSlash(rel), loc, scheduleJudgeMD)
 		}
 		return nil
 	})
@@ -90,6 +91,65 @@ func TestScheduleJudgmentSingleSource(t *testing.T) {
 		if verdictRow.MatchString(splitRead(t, file)) {
 			t.Errorf("%s holds a verdict decision table", file)
 		}
+	}
+}
+
+// TestScheduleReportWordsTranslateTheTable: each Report words reading cites exactly the decision-table rows that give
+// its verdict, so the words are a translation of the rules and cannot define a second reading (CRW-1218 d2). The
+// readings of a completed-late result and of an unconfirmed baseline follow the table: an achieved result after its
+// deadline is Late (row 4), and an unconfirmed baseline makes the baseline axis Undecidable (row 1).
+func TestScheduleReportWordsTranslateTheTable(t *testing.T) {
+	judge := splitRead(t, scheduleJudgeMD)
+	order, ok := reportSectionOf(judge, "Order the verdict")
+	if !ok {
+		t.Fatal("no Order the verdict section")
+	}
+	rowsOf := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\| *(\d+) *\|.*\| *(Ahead|On plan|At risk|Late|Undecidable)\b[^|]*\|$`).FindAllStringSubmatch(order, -1) {
+		rowsOf[m[2]] = append(rowsOf[m[2]], m[1])
+	}
+	if len(rowsOf) != 5 {
+		t.Fatalf("the decision table gives verdict rows for %v, want the five verdicts", rowsOf)
+	}
+	words, ok := reportSectionOf(judge, "Report words")
+	if !ok {
+		t.Fatal("no Report words section")
+	}
+	readingOf := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\| *(Ahead|On plan|At risk|Late|Undecidable) *\| *[^|]+\| *([^|]+)\|$`).FindAllStringSubmatch(words, -1) {
+		readingOf[m[1]] = m[2]
+	}
+	for verdict, rows := range rowsOf {
+		reading, ok := readingOf[verdict]
+		if !ok {
+			t.Errorf("Report words has no reading for %s", verdict)
+			continue
+		}
+		cited := map[string]bool{}
+		for _, m := range regexp.MustCompile(`\brows? (\d+(?:(?:,| and) \d+)*)`).FindAllStringSubmatch(reading, -1) {
+			for _, n := range regexp.MustCompile(`\d+`).FindAllString(m[1], -1) {
+				cited[n] = true
+			}
+		}
+		for _, row := range rows {
+			if !cited[row] {
+				t.Errorf("the reading of %s does not cite row %s, which gives that verdict", verdict, row)
+			}
+			delete(cited, row)
+		}
+		for extra := range cited {
+			t.Errorf("the reading of %s cites row %s, which gives another verdict", verdict, extra)
+		}
+	}
+	if strings.Contains(readingOf["Late"], "does not exist") {
+		t.Error("the reading of Late requires the result to be absent, but row 4 is an achieved result that landed after the deadline")
+	}
+	unconfirmed := regexp.MustCompile(`(?s)Where a Schedule baseline is \x60unconfirmed\x60.*?\n\n`).FindString(words)
+	if unconfirmed == "" {
+		t.Fatal("Report words does not say what an unconfirmed baseline reports")
+	}
+	if !strings.Contains(unconfirmed, "판단 불가") || strings.Contains(unconfirmed, "survive") {
+		t.Errorf("an unconfirmed baseline makes the baseline axis undecidable (Judge both axes); Report words says: %s", unconfirmed)
 	}
 }
 
