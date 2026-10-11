@@ -695,7 +695,7 @@ func TestAgentLandedShaIsRecordedMergeCommit(t *testing.T) {
 		t.Fatalf("observation = %+v", obs.Observations[0])
 	}
 	acceptance := k.currentAcceptance("a").AcceptanceID
-	if got, err := agentLandedSHA(ctx, q, acceptance); err != nil || got != mergeCommit {
+	if got, err := agentLandedSHA(ctx, q, acceptance, k.repo.path, "dev-int"); err != nil || got != mergeCommit {
 		t.Fatalf("agentLandedSHA = %q, %v; want the recorded merge commit %s", got, err, mergeCommit)
 	}
 	if got, err := landedOf(ctx, q, obs.Observations[0].ObservationID); err != nil || got != mergeCommit || got == head || got == second.NewHead {
@@ -753,5 +753,88 @@ func TestAgentMarkPendingIsCompletedByTheNextBatch(t *testing.T) {
 	k.sched.Tips, k.sched.Ancestry = newLegacyLocalTipReader(t), GitAncestry{}.Ancestry
 	if obs, err := k.sched.ObserveIntegration(ctx, "g", "a", "parent-2", []Target{{Repository: k.repo.path, BaseRef: "dev-int"}}); err != nil || !obs.Integrated {
 		t.Fatalf("observe: %+v, %v", obs, err)
+	}
+}
+
+// The ownership of an agent node is proved again in the transaction that moves the branch: an orchestrator that lost the node by a handover while the merged tree was being verified does not move the
+// branch (the acceptance, head and criteria are unchanged and the node's execution is the one the acceptance stands on, so the frozen candidate itself is still current). The new orchestrator's batch then
+// merges it (CRW-1213, evaluation d3).
+func TestAgentIntegrateRechecksOrchestratorBeforeTheMove(t *testing.T) {
+	t.Parallel()
+	spec := agentSpec{name: "a", files: fileOf("a")}
+	k := newAgentKit(t, spec)
+	k.acceptAll(spec)
+	ctx := context.Background()
+	verify := stubVerifier(writeStubVerifier(t))
+	handed := false
+	deps := IntegrationBatchDeps{Update: updateIntegrationRef, Verify: func(ctx context.Context, dir string, env []string) error {
+		if !handed {
+			handed = true
+			k.handover("a", "parent-2")
+		}
+		return verify(ctx, dir, env)
+	}}
+	_, err := k.sched.IntegrateBatch(ctx, k.batchIn(), deps)
+	wantAgentRefusal(t, "the previous orchestrator moving the branch after a handover during the verification", err, contract.RefusalScopeRoleMismatch, AgentNotOrchestrator)
+	if tip, found, err := integrationBranchTip(ctx, k.repo.path, "dev-int"); err != nil || found {
+		t.Fatalf("the branch moved to %q (%v) although the node changed hands", tip, err)
+	}
+	if n := k.count("SELECT COUNT(*) FROM dag_integration_batches"); n != 0 {
+		t.Fatalf("%d batch rows after the refusal", n)
+	}
+	in := k.batchIn()
+	in.Actor = "parent-2"
+	if res, err := k.sched.IntegrateBatch(ctx, in, IntegrationBatchDeps{Update: updateIntegrationRef, Verify: verify}); err != nil || len(res.Merged) != 1 {
+		t.Fatalf("batch by the new orchestrator: %+v, %v", res, err)
+	}
+}
+
+// landed_sha of an observation is the merge commit of the target the observation read: the same acceptance integrated into two refs of one checkout (starting at different tips, so with two merge
+// commits) answers each observation with the merge commit of its own ref, whichever batch was marked last (CRW-1213, evaluation d4).
+func TestAgentLandedShaIsThatOfTheObservedTarget(t *testing.T) {
+	t.Parallel()
+	spec := agentSpec{name: "a", files: fileOf("a")}
+	k := newAgentKit(t, spec)
+	k.acceptAll(spec)
+	ctx := context.Background()
+	q := k.s.Q(ctx)
+	first, err := k.integrate(t)
+	if err != nil || len(first.Merged) != 1 {
+		t.Fatalf("batch into dev-int: %+v, %v", first, err)
+	}
+	// a second integration ref that starts at another tip
+	k.repo.git("checkout", "-q", "-B", "dev-b", "dev")
+	k.repo.write("other.txt", "other\n")
+	k.repo.git("add", "other.txt")
+	k.repo.git("commit", "-q", "-m", "another tip")
+	k.repo.git("checkout", "-q", "dev")
+	in := k.batchIn()
+	in.IntegrationRef, in.BaseRef = "dev-int-b", "dev-b"
+	second, err := k.sched.IntegrateBatch(ctx, in, IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef})
+	if err != nil || len(second.Merged) != 1 {
+		t.Fatalf("batch into dev-int-b: %+v, %v", second, err)
+	}
+	mergeA, mergeB := first.Merged[0].MergeCommit, second.Merged[0].MergeCommit
+	if mergeA == "" || mergeB == "" || mergeA == mergeB {
+		t.Fatalf("merge commits %q and %q, want two different ones", mergeA, mergeB)
+	}
+	k.sched.Tips = newLegacyLocalTipReader(t)
+	k.sched.Ancestry = GitAncestry{}.Ancestry
+	for ref, want := range map[string]string{"dev-int": mergeA, "dev-int-b": mergeB} {
+		obs, err := k.sched.ObserveIntegration(ctx, "g", "a", "parent", []Target{{Repository: k.repo.path, BaseRef: ref}})
+		if err != nil || len(obs.Observations) != 1 {
+			t.Fatalf("observe %s: %+v, %v", ref, obs, err)
+		}
+		if got, err := landedOf(ctx, q, obs.Observations[0].ObservationID); err != nil || got != want {
+			t.Fatalf("landedOf the observation of %s = %q, %v; want its merge commit %s", ref, got, err, want)
+		}
+	}
+	// an older observation does not change when a later batch is marked
+	again, err := k.sched.ObserveIntegration(ctx, "g", "a", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev-int"}})
+	if err != nil || len(again.Observations) != 1 {
+		t.Fatalf("observe dev-int again: %+v, %v", again, err)
+	}
+	if got, err := landedOf(ctx, q, again.Observations[0].ObservationID); err != nil || got != mergeA {
+		t.Fatalf("landedOf the second observation of dev-int = %q, %v; want %s", got, err, mergeA)
 	}
 }

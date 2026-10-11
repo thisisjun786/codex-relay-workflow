@@ -237,6 +237,20 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 				if !current {
 					return refuse(contract.RefusalMergeCandidateMoved, "candidate %s (acceptance %s) is no longer current after the verification of %s: the branch did not move, and the next batch freezes again without it", m.NodeID, m.AcceptanceID, in.IntegrationRef)
 				}
+				if m.ExecutionKind == ExecutionAgent {
+					// the owner of an agent node is the orchestrator that holds its current execution, and a handover keeps the acceptance standing: the actor is proved again here, so a batch of an orchestrator that
+					// lost the node while the merged tree was being verified does not move the branch (CRW-1213)
+					cur, live, err := executionOf(txCtx, s.Store.Q(txCtx), in.Plan, m.NodeID)
+					if err != nil {
+						return err
+					}
+					if !live || cur.Kind != ExecutionAgent {
+						return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to integrate", m.NodeID)
+					}
+					if cur.Agent.Actor != in.Actor {
+						return notOrchestrator(in.Actor, cur.Agent)
+					}
+				}
 			}
 			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
 				return refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
@@ -1353,6 +1367,11 @@ func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchI
 		return err
 	}
 	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+		// the same verified head recorded again (the earlier run of this batch was refused after its verification, and the run that takes it over verifies the same tree) is the same fact, the same row
+		var one int
+		if exists, err := queryOne(txCtx, s.Store.Q(txCtx), "SELECT 1 FROM dag_integration_stages WHERE stage_id = ?", []any{registry.CoordinationID("dis", batch, "intent", "", string(detail))}, &one); err != nil || exists {
+			return err
+		}
 		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, string(detail))
 	})
 }

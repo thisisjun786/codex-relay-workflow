@@ -134,6 +134,11 @@ type journalCall struct {
 	run string
 	// noPair leaves out the thread_started row, so the pair the host read back is unknown.
 	noPair bool
+	// resumeOf makes the call a continuation of that earlier call: the engine records its prepared row with resume_of and the pair the thread was read back with (configured_model, configured_effort) and
+	// emits no thread_started row of its own.
+	resumeOf string
+	// selfReported leaves the criteria digest out of detail_json (the input the call was given) and names it only in the verdict document the reviewer answered.
+	selfReported bool
 }
 
 // record writes the journal rows of a call: prepared, thread_started (the configured pair), and the terminal completed row. It returns the call id.
@@ -158,19 +163,31 @@ func (k *agentKit) record(c journalCall) string {
 		k.exec("INSERT INTO flow_calls (call_id, event_seq, run_id, path, position, kind, role, event, commit_sha, thread_id, turn_id, plan_id, node_id, execution_id, result_bytes, detail_json, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			id, seq, c.run, c.role+":"+c.node, 0, "agent", c.role, event, c.head, thread, turn, "g", c.node, c.execution, result, detail, k.clock())
 	}
-	row(1, "prepared", "", "", nil, "")
+	prepared := ""
+	if c.resumeOf != "" {
+		d, _ := json.Marshal(map[string]string{"resume_of": c.resumeOf, "thread_id": "thread-" + c.resumeOf, "configured_model": c.model, "configured_effort": c.effort})
+		prepared = string(d)
+	}
+	row(1, "prepared", "", "", nil, prepared)
 	thread, turn := "thread-"+id, "turn-"+id
-	if !c.noPair {
+	if c.resumeOf != "" {
+		thread = "thread-" + c.resumeOf
+	} else if !c.noPair {
 		detail, _ := json.Marshal(map[string]string{"model": c.model, "effort": c.effort})
 		row(2, "thread_started", thread, "", nil, string(detail))
 	}
 	var result any
 	detail := ""
 	if c.verdict != "" {
-		raw, _ := json.Marshal(map[string]any{"verdict": c.verdict, "summary": "recorded by the test"})
+		doc := map[string]any{"verdict": c.verdict, "summary": "recorded by the test"}
+		if c.selfReported {
+			doc["criteria_digest"] = c.criteria
+		} else {
+			d, _ := json.Marshal(map[string]string{"criteria_digest": c.criteria})
+			detail = string(d)
+		}
+		raw, _ := json.Marshal(doc)
 		result = string(raw)
-		d, _ := json.Marshal(map[string]string{"criteria_digest": c.criteria})
-		detail = string(d)
 	}
 	row(3, "completed", thread, turn, result, detail)
 	return id

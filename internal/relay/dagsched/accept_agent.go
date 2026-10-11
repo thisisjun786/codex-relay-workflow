@@ -34,8 +34,8 @@ import (
 //
 //   - a reviewer call is the terminal row (event completed, kind agent, role reviewer or reviewer-final) of a call that carries the plan, the node and the execution; commit_sha is the head the review was
 //     made on (empty for a node without a head); result_bytes is the canonical verdict document, whose member verdict is verified or needs_changes; detail_json names the criteria_digest the reviewer's input
-//     carried. The latest such row of the execution for the head decides, so a later needs_changes withdraws an earlier verified.
-//   - the pair a call ran on is the configured pair the host read back for the call's thread: the thread_started row of the call, whose detail_json names model and effort.
+//     carried (a digest the verdict document names itself is not read: it is the reviewer's claim, not a record of its input). The latest such row of the execution for the head decides, so a later needs_changes withdraws an earlier verified.
+//   - the pair a call ran on is the configured pair the host read back for the call's thread: the thread_started row of the call, whose detail_json names model and effort. A continuation (resume) has no thread_started row: its prepared row names resume_of and the pair the thread was read back with (configured_model, configured_effort), and that is its pair.
 //   - an author pair is the pair of a completed call of the node whose role is executor, executor-t1 or architect, whatever execution of the node it ran in, and the pair of the execution rows the node has.
 
 // The closed reasons of the agent path. D-02: this build registers no new refusal reason, so each travels in the detail of a disposition_conflict.
@@ -348,18 +348,15 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the run recorded no completed reviewer call of execution %s on head %s, so the result has no verdict", ReviewerMissing, e.ExecutionID, orDash(head))
 	}
 	var verdict struct {
-		Verdict        string `json:"verdict"`
-		CriteriaDigest string `json:"criteria_digest"`
+		Verdict string `json:"verdict"`
 	}
 	_ = json.Unmarshal([]byte(result), &verdict)
+	// the criteria the reviewer saw are the digest its input recorded (detail_json), never a digest the reviewer wrote into its own verdict: that would be a claim about the input, not a record of it
 	var seen struct {
 		CriteriaDigest string `json:"criteria_digest"`
 	}
 	_ = json.Unmarshal([]byte(detail), &seen)
 	review.Verdict, review.CriteriaDigest = verdict.Verdict, seen.CriteriaDigest
-	if review.CriteriaDigest == "" {
-		review.CriteriaDigest = verdict.CriteriaDigest
-	}
 	if review.Verdict != "verified" {
 		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the latest reviewer call %s of execution %s ruled %q, not verified", ReviewerNotVerified, review.CallID, e.ExecutionID, review.Verdict)
 	}
@@ -385,19 +382,35 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 	return review, authors, nil
 }
 
-// callPair is the pair a call's thread was configured with, as the host read it back: the thread_started row of the call. Empty when the call has none.
+// callPair is the pair a call's thread was configured with, as the host read it back. A call that opened a thread has the thread_started row. A continuation (resume) opens none: the engine records, in its
+// prepared row, resume_of and the pair the continued thread was read back with (configured_model, configured_effort), and that is its pair. Empty when the call has neither.
 func callPair(ctx context.Context, q store.Querier, call, run string) (agentPair, error) {
 	var detail string
 	found, err := queryOne(ctx, q, "SELECT detail_json FROM flow_calls WHERE call_id = ? AND run_id = ? AND event = 'thread_started' ORDER BY event_seq DESC LIMIT 1", []any{call, run}, &detail)
-	if err != nil || !found {
+	if err != nil {
 		return agentPair{}, err
 	}
-	var pair struct {
-		Model  string `json:"model"`
-		Effort string `json:"effort"`
+	if found {
+		var pair struct {
+			Model  string `json:"model"`
+			Effort string `json:"effort"`
+		}
+		_ = json.Unmarshal([]byte(detail), &pair)
+		return agentPair{Model: pair.Model, Effort: pair.Effort}, nil
 	}
-	_ = json.Unmarshal([]byte(detail), &pair)
-	return agentPair{Model: pair.Model, Effort: pair.Effort}, nil
+	if found, err = queryOne(ctx, q, "SELECT detail_json FROM flow_calls WHERE call_id = ? AND run_id = ? AND event = 'prepared' ORDER BY event_seq DESC LIMIT 1", []any{call, run}, &detail); err != nil || !found {
+		return agentPair{}, err
+	}
+	var prepared struct {
+		ResumeOf string `json:"resume_of"`
+		Model    string `json:"configured_model"`
+		Effort   string `json:"configured_effort"`
+	}
+	_ = json.Unmarshal([]byte(detail), &prepared)
+	if prepared.ResumeOf == "" {
+		return agentPair{}, nil
+	}
+	return agentPair{Model: prepared.Model, Effort: prepared.Effort}, nil
 }
 
 // authorPairs are the distinct pairs the node's author calls ran on, sorted: every completed executor, executor-t1 or architect call of the node (whatever execution of its chain it ran in: the commits of

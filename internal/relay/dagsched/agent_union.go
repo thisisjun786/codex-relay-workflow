@@ -519,14 +519,16 @@ func (s *Scheduler) agentNodeIntegrated(ctx context.Context, q store.Querier, sn
 	return true, targets, nil
 }
 
-// agentLandedSHA is the commit an agent acceptance landed as: the merge commit the batch recorded for it (dag_integration_batches.merged_json) when the batch merged it, else "" (a head the branch
-// already contained was marked, not merged). The accepted head is not the landed commit when the relay merged the head into the branch: the merge commit is (CRW-1003 d3, the landed_sha attribution).
-func agentLandedSHA(ctx context.Context, q store.Querier, acceptanceID string) (string, error) {
+// agentLandedSHA is the commit an agent acceptance landed as on one target: the merge commit the batch that moved that target recorded for it (dag_integration_batches.merged_json, the batch whose
+// repository and integration_ref are the observation's repository and base_ref) when the batch merged it, else "" (a head the branch already contained was marked, not merged). The accepted head is not the
+// landed commit when the relay merged the head into the branch: the merge commit is (CRW-1003 d3, the landed_sha attribution). An acceptance integrated into several targets has one merge commit per
+// target, so the target selects it; of several marked batches of the same target the latest one decides.
+func agentLandedSHA(ctx context.Context, q store.Querier, acceptanceID, repository, baseRef string) (string, error) {
 	has, err := tableExists(ctx, q, "dag_agent_integration_stages")
 	if err != nil || !has {
 		return "", err
 	}
-	rows, err := q.QueryContext(ctx, "SELECT b.merged_json FROM dag_agent_integration_stages k JOIN dag_integration_batches b ON b.batch_id = k.batch_id WHERE k.acceptance_id = ? AND k.stage = 'marked' ORDER BY k.rowid DESC", acceptanceID)
+	rows, err := q.QueryContext(ctx, "SELECT b.merged_json FROM dag_agent_integration_stages k JOIN dag_integration_batches b ON b.batch_id = k.batch_id WHERE k.acceptance_id = ? AND k.stage = 'marked' AND b.repository = ? AND b.integration_ref = ? ORDER BY k.rowid DESC", acceptanceID, repository, baseRef)
 	if err != nil {
 		return "", err
 	}

@@ -364,3 +364,53 @@ func TestAgentAcceptIsTheOrchestratorsAlone(t *testing.T) {
 		t.Fatalf("%d acceptances", n)
 	}
 }
+
+// The criteria a reviewer saw are the digest its input carried (detail_json of the call), never a digest the reviewer wrote into its own verdict: a verdict document that names the plan's current digest
+// while the call records no input digest proves nothing about the input, and the acceptance is refused criteria_set_changed (CRW-1213, evaluation d1).
+func TestAgentAcceptCriteriaDigestIsTheRecordedInput(t *testing.T) {
+	t.Parallel()
+	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
+	k := newAgentKit(t, one("self"), one("input"))
+	criteria := releaseCriteriaDigest()
+	k.author("self", authorModel)
+	k.record(journalCall{role: "reviewer", node: "self", model: reviewerModel, head: k.heads["self"], verdict: "verified", criteria: criteria, selfReported: true})
+	_, err := k.accept("self")
+	wantAgentRefusal(t, "a verdict that names the digest the call never recorded as its input", err, contract.RefusalCriteriaSetChanged, "saw criteria -")
+	if n := k.agentAcceptanceRows(); n != 0 {
+		t.Fatalf("%d acceptances after the refusal", n)
+	}
+	k.author("input", authorModel)
+	k.review("input", reviewerModel, "verified", criteria)
+	if _, err := k.accept("input"); err != nil {
+		t.Fatalf("the recorded input digest is refused: %v", err)
+	}
+}
+
+// A continued call (agent.call with resume) is read through its prepared row: the engine records resume_of and the pair the thread was read back with (configured_model, configured_effort) there and emits
+// no thread_started row for the continuation. A continued reviewer is judged on that pair, and a continued author counts among the author pairs, so a resumed author of the reviewer's family refuses a
+// fresh reviewer of that family even when the author's first call never completed (CRW-1213, evaluation d2).
+func TestAgentAcceptReadsContinuedCalls(t *testing.T) {
+	t.Parallel()
+	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
+	k := newAgentKit(t, one("resumedreviewer"), one("resumedauthor"))
+	criteria := releaseCriteriaDigest()
+
+	k.author("resumedreviewer", authorModel)
+	first := k.review("resumedreviewer", reviewerModel, "needs_changes", criteria)
+	again := k.record(journalCall{role: "reviewer", node: "resumedreviewer", model: reviewerModel, head: k.heads["resumedreviewer"], verdict: "verified", criteria: criteria, resumeOf: first})
+	res, err := k.accept("resumedreviewer")
+	if err != nil {
+		t.Fatalf("a continued reviewer: %v", err)
+	}
+	row, found, err := loadAgentAcceptanceByID(context.Background(), k.s.Q(context.Background()), res.AcceptanceID)
+	if err != nil || !found || row.ReviewerCallID != again || row.ReviewerModel != reviewerModel || row.ReviewerEffort != "high" {
+		t.Fatalf("the row = %+v (%v, %v), want the continued call %s on %s/high", row, found, err, again, reviewerModel)
+	}
+
+	// the node's author is a continuation of a call that never completed, on the reviewer's family; the first author is another family
+	k.author("resumedauthor", authorModel)
+	k.record(journalCall{role: "executor", node: "resumedauthor", model: reviewerModel, head: k.heads["resumedauthor"], resumeOf: "call-that-ended-held"})
+	k.review("resumedauthor", reviewerModel, "verified", criteria)
+	_, err = k.accept("resumedauthor")
+	wantAgentRefusal(t, "a continued author of the reviewer's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+}
