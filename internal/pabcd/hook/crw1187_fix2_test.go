@@ -2,10 +2,17 @@ package hook
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
 )
+
+// crw1187PEP701 is whether the interpreter reads a quote of an f-string inside its replacement field (Python 3.12 or later): on an
+// older one the source is a syntax error, and the run executes nothing that could be measured.
+func crw1187PEP701(python string) bool {
+	return exec.Command(python, "-c", "d = {'k': 1}\nf\"{d[\"k\"]}\"\n").Run() == nil
+}
 
 // CRW-1187 verification fix round 2, end to end with the real interpreter and both guards: each source ran code outside the inventory
 // (evil.py writes the memory note) and both guards refuse the run.
@@ -29,7 +36,11 @@ func TestCRW1187FixRound2SourceSpellingsAreRefusedByBothGuards(t *testing.T) {
 			crw1187Write(t, cwd, map[string]string{"test_probe.py": "LIB = " + strconv.Quote(lib) + "\n" + prefix})
 			const cmd = "python3 -B -m unittest"
 			crw1187Refused(t, cwd, env, cmd, "test_probe.py")
-			// the interpreter does run it (Python 3.12 or later reads the PEP 701 form): that is what the refusal is for
+			// the interpreter does run it (Python 3.12 or later reads the PEP 701 form): that is what the refusal is for; an older one
+			// fails on that form with a syntax error, and the refusals above are all that can be checked
+			if label == "pep701_os_sys" && !crw1187PEP701(python) {
+				t.Skip("the interpreter is older than Python 3.12 (PEP 701), the form is a syntax error there")
+			}
 			crw1178Run(t, bash, python, cwd, filepath.Dir(root), cmd)
 			if b, err := os.ReadFile(marker); err != nil || string(b) != "unread code ran" {
 				t.Fatalf("the probe did not execute the unread code (%v)", err)

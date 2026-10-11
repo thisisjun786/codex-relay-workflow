@@ -14,6 +14,9 @@ import (
 // fetches at run time (getattr on a name built from pieces, globals(), exec of a string) is the reader's general limit and is not
 // claimed here.
 
+// writeAPIAttrs are the attributes of os, shutil, posix and pathlib that write, copy, move or link a file (a regular expression group).
+const writeAPIAttrs = `(?:copy|copy2|copyfile|copyfileobj|copytree|move|rename|renames|replace|link|symlink|extract|open|fdopen|unpack_archive|make_archive)`
+
 var (
 	// importSysAttr: the attributes of sys that decide where the interpreter finds code.
 	importSysAttrs = "path|pycache_prefix|meta_path|path_hooks|path_importer_cache|__dict__"
@@ -25,8 +28,12 @@ var (
 	reCodeLiteral   = regexp.MustCompile(`["'][^"'\n]*(\.(py|pyc|pyd|so|pth)|__pycache__[^"'\n]*)["']`)
 	// reWriteAPI: a call that writes, copies, moves or links a file, by a name that is not an everyday word (a bare copy, move or replace is a
 	// method of strings and containers) or qualified by os or shutil, or imported from them; open with a write mode.
-	reWriteAPI = regexp.MustCompile(`\b(write_text|write_bytes|copyfile|copy2|copytree|copymode|symlink_to|hardlink_to|extractall|truncate|O_WRONLY|O_RDWR|O_CREAT|O_APPEND)\b` +
-		`|\b(os|shutil|posix|pathlib)\s*\.\s*(copy|move|rename|renames|replace|link|symlink|extract|open)\b` +
+	reWriteAPI = regexp.MustCompile(`\b(write_text|write_bytes|copyfile|copy2|copytree|copymode|copyfileobj|unpack_archive|make_archive|symlink_to|hardlink_to|extractall|truncate|O_WRONLY|O_RDWR|O_CREAT|O_APPEND)\b` +
+		`|\b(os|shutil|posix|pathlib)\s*\.\s*` + writeAPIAttrs + `\b` +
+		`|\.\s*extract\s*\(` +
+		// a path object moved onto an import location (Path('x').rename('late.py'), p.replace(Path('late.py'))): the one operand is a code name
+		// (str.replace has two, so a replace of ".py" in a name is not this)
+		`|\.\s*(rename|replace)\s*\(\s*(?:(?:[\w.]*\bPath|PurePath)\s*\(\s*)?[rbuf]*["'][^"'\n]*(\.(py|pyc|pyd|so|pth)|__pycache__[^"'\n]*)["']\s*\)+` +
 		`|\bfrom\s+(shutil|os|posix)\s+import\s*\(|\bfrom\s+(shutil|os|posix)\s+import\s+[^\n]*\b(copy|move|rename|renames|replace|link|symlink)\b` +
 		`|\bopen\s*\([^)]*["'][rbtU]*[wax+][a-z+]*["']`)
 	reGetattrCall = regexp.MustCompile(`\b(getattr|setattr|delattr|vars)\s*\(\s*(?:\(\s*)*([A-Za-z_][A-Za-z_0-9]*)\b`)
@@ -87,6 +94,10 @@ func moduleSourceRefusalOf(src string, stmts []string) string {
 		case "importlib", "builtins":
 			if m := regexp.MustCompile(`\b` + qa + reAttrAfter + `__dict__\b`).FindString(src); m != "" {
 				return "reads the namespace of " + mod + " (" + a + ".__dict__)"
+			}
+		case "writer":
+			if m := regexp.MustCompile(`\b` + qa + `\s*\.\s*` + writeAPIAttrs + `\b`).FindString(src); m != "" && reCodeLiteral.MatchString(src) {
+				return "writes, copies or links a file at an import location (" + strings.Join(strings.Fields(m), "") + " with a name ending .py, .pyc, .so, .pth or in __pycache__)"
 			}
 		}
 		if mod == "importlib" {
@@ -463,6 +474,10 @@ var builtinsByName = map[string]bool{"getattr": true, "setattr": true, "delattr"
 
 var sysCodeNames = map[string]bool{"path": true, "pycache_prefix": true, "meta_path": true, "path_hooks": true, "path_importer_cache": true, "__dict__": true}
 
+// writerModules are the modules whose attributes write, copy, move or link files: a name the source gives them (import shutil as sh) is
+// matched against the attributes of writeAPIAttrs like the module's own name (CRW-1187).
+var writerModules = map[string]bool{"os": true, "shutil": true, "posix": true, "pathlib": true}
+
 // pyImportStatement judges an import statement: it names the sys aliases, and refuses a bring-in of an import-path attribute of sys,
 // of the import machinery or of the imp module.
 func pyImportStatement(stmt string, aliases map[string]string) string {
@@ -489,6 +504,8 @@ func pyImportStatement(stmt string, aliases map[string]string) string {
 				return "imports " + mod
 			case (mod == "sys" || mod == "importlib" || mod == "builtins") && len(it) == 3 && it[1] == "as":
 				aliases[it[2]] = mod
+			case writerModules[mod] && len(it) == 3 && it[1] == "as":
+				aliases[it[2]] = "writer"
 			}
 		}
 	case "from":

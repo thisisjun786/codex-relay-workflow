@@ -424,19 +424,25 @@ var moduleFixedNames = func() map[string]bool {
 type moduleRun struct{ first, end int }
 
 // moduleSafePath is whether the run starts with no entry for the working directory in sys.path: -I, or -P with PYTHONPATH proven unset
-// or empty (-P alone keeps PYTHONPATH, which may name the directory; a text that spells the name or may build a variable name at run
-// time proves nothing; neither does a reading that is given no environment). The python -m of json.tool and py_compile then imports
+// or empty (-P alone keeps PYTHONPATH, which may name the directory; -EP ignores it; a text that spells the name, builds it from parts the walk
+// knows (printf -v "$N$M") or may build a variable name at run time proves nothing; neither does a reading that is given no environment). The python -m of json.tool and py_compile then imports
 // nothing from the directory.
 func (w *walker) moduleSafePath(args []Word, assigns []Assign, st *state) bool {
-	isolated, noPath := false, false
+	isolated, noPath, noEnv := false, false, false
 	for _, a := range args {
 		if !a.Known || !strings.HasPrefix(a.Value, "-") || strings.HasPrefix(a.Value, "--") || strings.HasPrefix(a.Value, "-m") {
 			continue
 		}
 		isolated = isolated || strings.Contains(a.Value[1:], "I")
 		noPath = noPath || strings.Contains(a.Value[1:], "P")
+		noEnv = noEnv || strings.Contains(a.Value[1:], "E")
 	}
 	if isolated {
+		return true
+	}
+	if noPath && noEnv {
+		// -E makes the interpreter ignore every PYTHON* variable, PYTHONPATH among them, and -P leaves the directory out of sys.path: the
+		// environment, and the names the text builds, cannot put it back (CRW-1187).
 		return true
 	}
 	if !noPath || w.pythonPathNamed || w.prefixUnknown || moduleAssigned("PYTHONPATH", assigns) {
@@ -531,11 +537,13 @@ func moduleWriterRefusal(e Exec) error {
 				return unreadablef("module import may be rewritten")
 			}
 		}
-	case "uniq", "split", "csplit", "patch", "rsync", "gzip", "bzip2", "xz", "zstd", "zip", "sed":
+	case "uniq", "split", "csplit", "patch", "rsync", "gzip", "bzip2", "xz", "zstd", "zip", "sed",
+		"shuf", "iconv", "xxd", "openssl", "gpg", "gpg2", "ar", "cpio", "bsdtar", "7z", "7za", "7zr", "jar", "ed", "ex", "truncate":
 		// programs that write a file an operand names (the output of uniq, a piece of split, a patched or compressed file): refused
-		// when an operand they are given is a code path. An operand the reader cannot evaluate is not held against them.
+		// when an operand they are given is a code path, or cannot be evaluated (read OUT <<< late.py; ... | uniq payload.txt "$OUT"), as
+		// for cp, tee and sort (CRW-1187).
 		for _, a := range e.Args {
-			if a.Known && moduleCodePath(a.Value) {
+			if !a.Known || moduleCodePath(a.Value) {
 				return unreadablef("module import may be rewritten")
 			}
 		}

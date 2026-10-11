@@ -120,7 +120,8 @@ func TestCRW1187FixRound1SortOutputBesideTheModuleRunIsRefused(t *testing.T) {
 // has the environment answers (the GitHub guard reads the hook's own PYTHONPATH now, see the hook tests). -I stays safe either way.
 func TestCRW1187FixRound1NoEnvironmentProvesNothingForP(t *testing.T) {
 	more := map[string]string{"keyword.py": "x = 1\n", "d.json": "{}"}
-	for _, cmd := range []string{"python3 -P -B -m json.tool d.json", "python3 -EP -B -m json.tool d.json", "python3 -P -m json.tool d.json"} {
+	// (-EP is not here: -E ignores PYTHONPATH, so it needs no environment, see TestCRW1187FixRound3EIgnoresPythonPathForP)
+	for _, cmd := range []string{"python3 -P -B -m json.tool d.json", "python3 -P -m json.tool d.json"} {
 		cwd := crw1187Project(t, "x = 1\n", more)
 		if reason := crw1187ReasonEnv(t, cmd, cwd, nil); reason == "" {
 			t.Errorf("%s: allowed with no environment", cmd)
