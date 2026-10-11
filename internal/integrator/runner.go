@@ -22,6 +22,10 @@ type Runner struct {
 	Sleep func(ctx context.Context, d time.Duration) error
 	// Env is the environment programs start with (nil: the process's).
 	Env []string
+	// Prepare, when set, makes in place what the programs of a real run need on disk (the manage
+	// command sets it to make the configured build_work). It runs right before the gate,
+	// record-version or verification command starts, never in DryRun, which makes no directory.
+	Prepare func() error
 
 	// hookMove is a test seam: it runs while a pending file is being moved, after the head the
 	// file holds was read and before the file leaves pending/.
@@ -45,6 +49,14 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+// prepare runs the Prepare seam (nil: nothing to do).
+func (r *Runner) prepare() error {
+	if r.Prepare == nil {
+		return nil
+	}
+	return r.Prepare()
 }
 
 func (r *Runner) baseEnv() []string {

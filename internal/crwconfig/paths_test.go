@@ -39,6 +39,12 @@ func rootsDefaults(home string) map[string]string {
 		RootTemp:     filepath.Join("/tmp", "crw"),
 		RootData:     filepath.Join(share, "crw", "data"),
 		RootManage:   filepath.Join(state, "crw", "manage"),
+		// the three tool roots have no default: unset means the tool's own
+		RootBuildCache:  "",
+		RootModuleCache: "",
+		RootBuildWork:   "",
+		RootLog:         filepath.Join(state, "crw", "logs"),
+		RootRelayState:  filepath.Join(state, "codex-session-relay"),
 	}
 }
 
@@ -50,7 +56,12 @@ func rootsCheck(t *testing.T, roots map[string]Root, want map[string]string, sou
 		t.Fatalf("the roots number %d, want %d", len(roots), len(want))
 	}
 	for name, path := range want {
-		if got := roots[name]; got.Path != path || got.Source != source {
+		wantSource := source
+		if path == "" {
+			// an unset root has no default to come from an environment variable
+			wantSource = SourceDefault
+		}
+		if got := roots[name]; got.Path != path || got.Source != wantSource {
 			t.Errorf("%s = %+v, want %q from %q", name, got, path, source)
 		}
 	}
@@ -77,14 +88,19 @@ func TestRootsFollowTheXdgVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	rootsCheck(t, roots, map[string]string{
-		RootTools:    filepath.Join(data, "crw", "tools"),
-		RootCache:    filepath.Join(cache, "crw"),
-		RootScratch:  filepath.Join(cache, "crw", "scratch"),
-		RootWorktree: filepath.Join(data, "crw", "worktrees"),
-		RootEvidence: filepath.Join(state, "crw", "evidence"),
-		RootTemp:     filepath.Join(temp, "crw"),
-		RootData:     filepath.Join(data, "crw", "data"),
-		RootManage:   filepath.Join(state, "crw", "manage"),
+		RootTools:       filepath.Join(data, "crw", "tools"),
+		RootCache:       filepath.Join(cache, "crw"),
+		RootScratch:     filepath.Join(cache, "crw", "scratch"),
+		RootWorktree:    filepath.Join(data, "crw", "worktrees"),
+		RootEvidence:    filepath.Join(state, "crw", "evidence"),
+		RootTemp:        filepath.Join(temp, "crw"),
+		RootData:        filepath.Join(data, "crw", "data"),
+		RootManage:      filepath.Join(state, "crw", "manage"),
+		RootBuildCache:  "",
+		RootModuleCache: "",
+		RootBuildWork:   "",
+		RootLog:         filepath.Join(state, "crw", "logs"),
+		RootRelayState:  filepath.Join(state, "codex-session-relay"),
 	}, SourceEnv)
 }
 

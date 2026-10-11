@@ -400,6 +400,22 @@ func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, reques
 // bridge binary is used as it stands; without one the running executable is started in its bridge
 // mode. The execution policy rides in the child's environment, where the bridge reads it.
 func deliverDial(ctx context.Context, e *Env, cfg *Config) (*deliverBridge, error) {
+	cmd, err := deliverBridgeCommand(e, cfg)
+	if err != nil {
+		return nil, err
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "crw-manage", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, &mcp.ClientSessionOptions{ProtocolVersion: deliverProtocol})
+	if err != nil {
+		return nil, fmt.Errorf("crw manage: start the bridge: %w", err)
+	}
+	return &deliverBridge{session: session}, nil
+}
+
+// deliverBridgeCommand is the bridge child deliverDial starts: the configured bridge binary, or this
+// executable in its bridge mode, with the execution policy and, like every child this tool starts,
+// the configuration and the tool roots this tool was started with (coreChildEnv, CRW-958).
+func deliverBridgeCommand(e *Env, cfg *Config) (*exec.Cmd, error) {
 	command := cfg.Bridge.Binary
 	var args []string
 	if command == "" {
@@ -411,12 +427,10 @@ func deliverDial(ctx context.Context, e *Env, cfg *Config) (*deliverBridge, erro
 	}
 	cmd := exec.Command(command, args...)
 	cmd.Env = append(os.Environ(), deliverPolicyEnv+"="+cfg.Bridge.ExecutionPolicy)
-	client := mcp.NewClient(&mcp.Implementation{Name: "crw-manage", Version: "1"}, nil)
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, &mcp.ClientSessionOptions{ProtocolVersion: deliverProtocol})
-	if err != nil {
-		return nil, fmt.Errorf("crw manage: start the bridge: %w", err)
+	if err := coreChildEnv(cmd, cfg); err != nil {
+		return nil, fmt.Errorf("crw manage: the bridge's tool roots: %w", err)
 	}
-	return &deliverBridge{session: session}, nil
+	return cmd, nil
 }
 
 // call runs one tool. A call that never got an answer is returned as a transport failure, so the

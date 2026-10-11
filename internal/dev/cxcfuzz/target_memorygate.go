@@ -24,7 +24,7 @@ func memorygateTarget() Target {
 		Name:     "memorygate",
 		Generate: memoryGateGenerate,
 		Go:       memoryGateGo,
-		Oracle:   Oracle{Command: "node", Shim: shimPath("memorygate"), Root: DefaultOracleRoot},
+		Oracle:   Oracle{Command: "node", Shim: shimPath("memorygate"), Root: OracleRoot()},
 		Compare:  memoryGateCompare,
 		Reading:  memoryGateReading,
 	}

@@ -68,7 +68,9 @@ service on another host or establish that an earlier test process is still runni
 Runtime state lives outside any repository, in
 `$XDG_STATE_HOME/codex-session-relay/<endpoint-hash>/` (mode 0700), holding `relay.sqlite3`,
 `daemon.lock`, `daemon.pid` and `daemon.log`. Precedence, highest first: `--state`,
-`CODEX_SESSION_RELAY_STATE`, `XDG_STATE_HOME`, then `~/.local/state`.
+`CODEX_SESSION_RELAY_STATE`, the configuration file's `paths.relay_state`, `XDG_STATE_HOME`, then
+`~/.local/state`. A configured `paths.log_root` moves `daemon.log` out of the store directory
+([where crw keeps its files](../runtime-install.md#where-crw-keeps-its-files)).
 
 **Every process must point at the same state directory.** The child emitting, the parent
 acknowledging and the daemon delivering share one store; a mismatched `--state` means they simply do
