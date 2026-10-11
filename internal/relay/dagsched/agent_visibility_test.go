@@ -388,3 +388,91 @@ func TestAgentNodeIntegratedVisibleToProgress(t *testing.T) {
 		t.Fatalf("the integrated node still holds its slot: %+v", a)
 	}
 }
+
+// An acceptance of an execution does not stand on new work: a correction after the acceptance is an execution nobody accepted, so the node reads running again and an edge out of it is not satisfied by the
+// acceptance of the execution before (blocked:stale_head), while a handover, which continues the same work, leaves both as they were.
+func TestAgentAcceptanceDoesNotStandOnNewWork(t *testing.T) {
+	t.Parallel()
+	specs := []agentSpec{{name: "a", files: fileOf("a")}, {name: "b", files: fileOf("b"), unreleased: true}}
+	k := newAgentKit(t, specs...)
+	k.pinnedEdge("ab", "a", "b")
+	k.judged("a")
+	k.mustAccept("a")
+	k.handover("a", "parent2")
+	if st := k.edgeStatusOf("ab"); !st.Satisfied {
+		t.Fatalf("the edge after a handover = %+v, want it satisfied by the acceptance of the work the new orchestrator continues", st)
+	}
+	var cur AgentExecution
+	cur, live, err := currentAgentExecution(context.Background(), k.s.Q(context.Background()), "g", "a")
+	if err != nil || !live {
+		t.Fatalf("no current execution: %v", err)
+	}
+	k.exec("INSERT INTO dag_agent_executions (execution_id, plan_id, node_id, attempt, kind, manifest_digest, role, tier, actor_task_id, coordinator_epoch, decided_at, supersedes_execution_id) VALUES ('correction-1','g','a',?,?,?,?,?,?,?,?,?)",
+		cur.Attempt+1, AgentCorrection, cur.ManifestDigest, cur.Role, cur.Tier, "parent2", 0, k.clock(), cur.ExecutionID)
+	if st := k.edgeStatusOf("ab"); st.Satisfied || st.Reason != BlockedStaleHead {
+		t.Fatalf("the edge after a correction = %+v, want blocked:stale_head", st)
+	}
+	if a := progressNode(t, k.readProgress(), "a"); a.State != StateRunning {
+		t.Fatalf("a after a correction reads %s, want running (new work nobody accepted)", a.State)
+	}
+}
+
+// A node that holds a current execution or acceptance on both sides is read as neither: it is ambiguous, the reading of the rest of the plan goes on, and an edge out of it is blocked, not an error.
+func TestAgentCrossKindNodeIsAmbiguousAndTheRestOfThePlanIsRead(t *testing.T) {
+	t.Parallel()
+	specs := []agentSpec{{name: "r", files: fileOf("r"), relationship: true}, {name: "a", files: fileOf("a")}, {name: "b", files: fileOf("b"), unreleased: true}}
+	k := newAgentKit(t, specs...)
+	k.pinnedEdge("rb", "r", "b")
+	k.acceptAll(specs[0], specs[1])
+	var manifest string
+	if err := k.s.DB.QueryRow("SELECT manifest_digest FROM dag_node_executions WHERE plan_id = 'g' AND node_id = 'r' LIMIT 1").Scan(&manifest); err != nil {
+		t.Fatal(err)
+	}
+	k.exec("INSERT INTO dag_agent_executions (execution_id, plan_id, node_id, attempt, kind, manifest_digest, role, tier, actor_task_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+		"e-forced", "g", "r", 1, AgentInitial, manifest, "executor", "executor", "parent", 0, k.clock())
+	k.exec("INSERT INTO dag_agent_acceptances (acceptance_id, plan_id, node_id, manifest_digest, execution_id, criteria_set_digest, reviewer_call_id, reviewer_model, author_pairs_digest, accepted_by_task_id, coordinator_epoch, accepted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+		"acc-forced", "g", "r", manifest, "e-forced", releaseCriteriaDigest(), "call", reviewerModel, "authors", "parent", 0, k.clock())
+	p := k.readProgress()
+	if r := progressNode(t, p, "r"); r.Stage != StageAmbiguous || r.AcceptanceID != "" {
+		t.Fatalf("the node that holds both kinds reads stage %s acceptance %q, want ambiguous with none", r.Stage, r.AcceptanceID)
+	}
+	if a := progressNode(t, p, "a"); a.Stage != StageAccepted {
+		t.Fatalf("a, which holds one kind, reads %s: the rest of the plan is read", a.Stage)
+	}
+	if st := k.edgeStatusOf("rb"); st.Satisfied || st.Reason != BlockedAmbiguousHead {
+		t.Fatalf("the edge out of the node that holds both kinds = %+v, want blocked:ambiguous_head", st)
+	}
+}
+
+// The evidence the activity document keeps of an agent node is its acceptance, its verification record and its pre-merge record, and its commit link names the commit proof the row holds and the integration
+// ref its batch moved.
+func TestAgentEvidenceVisibleToActivity(t *testing.T) {
+	t.Parallel()
+	specs := []agentSpec{{name: "a", files: fileOf("a")}}
+	k := newAgentKit(t, specs...)
+	k.acceptAll(specs...)
+	if res, err := k.integrate(t); err != nil || len(res.Merged) != 1 {
+		t.Fatalf("batch: %+v, %v", res, err)
+	}
+	row := k.currentAcceptance("a").Agent
+	act, err := k.sched.ReadActivity(context.Background(), "g")
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	for _, n := range act.Nodes {
+		if n.NodeID != "a" {
+			continue
+		}
+		if n.Evidence == nil || n.Evidence.RecordedAt != row.AcceptedAt {
+			t.Fatalf("the evidence of the agent node = %+v, want an entry recorded at the acceptance (%s)", n.Evidence, row.AcceptedAt)
+		}
+		if n.Commit == nil || n.Commit.HeadCommit != row.Head || n.Commit.TreeSHA != row.TreeSHA || n.Commit.RecordDigest != row.VerificationDigest || len(n.Commit.IntegrationRefs) != 1 || n.Commit.IntegrationRefs[0] != "dev-int" {
+			t.Fatalf("the commit link of the agent node = %+v, want the row's commit proof and the ref dev-int", n.Commit)
+		}
+		if n.Artifact != nil || n.PullRequest != nil {
+			t.Fatalf("an agent node has no artifact link and no pull request: %+v %+v", n.Artifact, n.PullRequest)
+		}
+		return
+	}
+	t.Fatal("the activity document holds no node a")
+}
