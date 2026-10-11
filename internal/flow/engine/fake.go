@@ -239,20 +239,40 @@ func synthesize(root, n map[string]any, depth int) any {
 }
 
 // synthesizeNumber picks a number that satisfies minimum, maximum, exclusiveMinimum, exclusiveMaximum and multipleOf:
-// 0 when that is allowed, else the value nearest to 0 that is.
+// 0 when that is allowed, else a value at or near the bound that keeps 0 out. Only the bounds the schema names take
+// part. A number without multipleOf is continuous, so a range that holds no whole number still has an answer; an
+// integer or a multipleOf is found by walking the multiples away from that bound.
 func synthesizeNumber(n map[string]any, integer bool) any {
 	num := func(k string) (float64, bool) { v, ok := n[k].(float64); return v, ok }
-	lo, hasLo := num("minimum")
-	hi, hasHi := num("maximum")
-	loEx, hasLoEx := num("exclusiveMinimum")
-	hiEx, hasHiEx := num("exclusiveMaximum")
+	type bound struct {
+		v         float64
+		set, excl bool
+	}
+	// The tighter of the inclusive and the exclusive bound on each side.
+	var lower, upper bound
+	if v, ok := num("minimum"); ok {
+		lower = bound{v, true, false}
+	}
+	if v, ok := num("exclusiveMinimum"); ok && (!lower.set || v >= lower.v) {
+		lower = bound{v, true, true}
+	}
+	if v, ok := num("maximum"); ok {
+		upper = bound{v, true, false}
+	}
+	if v, ok := num("exclusiveMaximum"); ok && (!upper.set || v <= upper.v) {
+		upper = bound{v, true, true}
+	}
 	step, hasStep := num("multipleOf")
 	if !hasStep || step <= 0 {
 		step, hasStep = 0, false
 	}
 	ok := func(v float64) bool {
 		switch {
-		case hasLo && v < lo, hasHi && v > hi, hasLoEx && v <= loEx, hasHiEx && v >= hiEx:
+		case math.IsInf(v, 0) || math.IsNaN(v):
+			return false
+		case lower.set && (v < lower.v || lower.excl && v == lower.v):
+			return false
+		case upper.set && (v > upper.v || upper.excl && v == upper.v):
 			return false
 		case integer && v != math.Trunc(v):
 			return false
@@ -264,50 +284,47 @@ func synthesizeNumber(n map[string]any, integer bool) any {
 	if ok(0) {
 		return 0
 	}
+	// 0 is a whole number and a multiple of anything, so a bound keeps it out: the lower one (the range lies above 0)
+	// or else the upper one (below 0). Start at that bound and move into the range.
+	from, to, dir := upper, lower, -1.0
+	if lower.set && (lower.v > 0 || lower.excl && lower.v == 0) {
+		from, to, dir = lower, upper, 1.0
+	}
+	if !from.set {
+		return 0
+	}
+	if !integer && !hasStep {
+		cands := []float64{from.v}
+		if to.set {
+			cands = append(cands, from.v+(to.v-from.v)/2)
+		} else {
+			cands = append(cands, from.v+dir*math.Max(1, math.Abs(from.v)/2))
+		}
+		cands = append(cands, math.Nextafter(from.v, dir*math.Inf(1)))
+		for _, c := range cands {
+			if ok(c) {
+				return c
+			}
+		}
+		return 0
+	}
 	unit := step
 	if unit == 0 {
 		unit = 1
 	}
-	// Walk away from 0 on the side the bounds allow, one multiple at a time (a fractional multipleOf of an integer needs
-	// a few more).
-	up := hasLo || hasLoEx || !(hasHi || hasHiEx)
-	var from float64
-	switch {
-	case up && hasLo && hasLoEx:
-		from = math.Max(lo, loEx)
-	case up && hasLo:
-		from = lo
-	case up && hasLoEx:
-		from = loEx
-	case hasHi && hasHiEx:
-		from = math.Min(hi, hiEx)
-	case hasHi:
-		from = hi
-	case hasHiEx:
-		from = hiEx
-	}
-	k := math.Ceil(from / unit)
-	dir := 1.0
-	if !up {
-		k, dir = math.Floor(from/unit), -1
+	// One multiple at a time (a fractional multipleOf of an integer needs a few more).
+	k := math.Ceil(from.v / unit)
+	if dir < 0 {
+		k = math.Floor(from.v / unit)
 	}
 	for i := 0; i < 10000; i++ {
 		if v := (k + dir*float64(i)) * unit; ok(v) {
 			return v
 		}
 	}
-	// A range with room between its bounds but no multiple in the steps above: its middle.
-	if !integer && !hasStep && (hasLo || hasLoEx) && (hasHi || hasHiEx) {
-		a, b := math.Max(lo, loEx), math.Min(hi, hiEx)
-		if !hasLo {
-			a = loEx
-		}
-		if !hasHi {
-			b = hiEx
-		}
-		if mid := (a + b) / 2; ok(mid) {
-			return mid
-		}
+	// Past 2^53 every float is whole and adding 1 changes nothing: the next float is the next integer.
+	if v := math.Nextafter(from.v, dir*math.Inf(1)); !hasStep && ok(v) {
+		return v
 	}
 	return 0
 }

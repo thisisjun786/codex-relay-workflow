@@ -185,6 +185,42 @@ return [r.status, r.reason, r.output, r.meta.repairUsed]`)
 	}
 }
 
+// A number without multipleOf is continuous: a range that holds no whole number still has an answer, and a bound that
+// the schema does not name plays no part (positive, negative and mixed ranges, inclusive and exclusive bounds).
+func TestFakeSynthesisContinuousBounds(t *testing.T) {
+	props := map[string]string{
+		"pos":        `{"type":"number","minimum":0.3,"maximum":0.7}`,
+		"posex":      `{"type":"number","exclusiveMinimum":0.3,"exclusiveMaximum":0.7}`,
+		"posminonly": `{"type":"number","exclusiveMinimum":0.3}`,
+		"postight":   `{"type":"number","minimum":0.3,"exclusiveMinimum":0.4,"maximum":0.5}`,
+		"neg":        `{"type":"number","minimum":-0.7,"maximum":-0.3}`,
+		"negex":      `{"type":"number","exclusiveMinimum":-0.7,"exclusiveMaximum":-0.3}`,
+		"negmaxonly": `{"type":"number","exclusiveMaximum":-0.3}`,
+		"negtight":   `{"type":"number","minimum":-0.5,"maximum":-0.3,"exclusiveMaximum":-0.4}`,
+		"mixbelow0":  `{"type":"number","minimum":-0.7,"exclusiveMaximum":0}`,
+		"mixabove0":  `{"type":"number","exclusiveMinimum":0,"maximum":0.5}`,
+		"mixexex":    `{"type":"number","exclusiveMinimum":-0.25,"exclusiveMaximum":0}`,
+		"huge":       `{"type":"number","exclusiveMinimum":1e300}`,
+		"hugeneg":    `{"type":"number","exclusiveMaximum":-1e300}`,
+		"intpos":     `{"type":"integer","minimum":0.3,"maximum":1.7}`,
+		"intneg":     `{"type":"integer","minimum":-1.7,"maximum":-0.3}`,
+		"fracneg":    `{"type":"number","multipleOf":0.25,"maximum":-0.3}`,
+	}
+	for name, p := range props {
+		t.Run(name, func(t *testing.T) {
+			schema := `{"type":"object","properties":{"n":` + p + `},"required":["n"],"additionalProperties":false}`
+			h := newHarness(t)
+			res := h.run(`const r = await agent.call('x', { agentType: 'explorer', schema: ` + schema + ` })
+return [r.status, r.reason, r.output, r.meta.repairUsed]`)
+			v := value[[]any](t, res)
+			if v[0] != "completed" || v[3] != false {
+				b, _ := json.Marshal(v)
+				t.Errorf("%s", b)
+			}
+		})
+	}
+}
+
 // d6: the printed value of a run holds no journal sequence numbers either.
 func TestCLIValueHoldsNoSequenceNumbers(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "seq.js")
