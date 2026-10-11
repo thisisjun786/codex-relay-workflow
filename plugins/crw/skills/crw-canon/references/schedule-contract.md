@@ -112,7 +112,7 @@ Reading this contract grants nothing. Recording a schedule stays inside the plan
 the request already carries; a check-only or draft-only request returns these fields as a proposal
 and writes none of them; and a registered date is not an assignment, an execution start, an
 installation or a restart. The Plan-side procedure that builds, checks and records these fields is
-[Schedule and dependency roadmap](scheduling.md).
+[Schedule and dependency roadmap](../../crw-plan/references/scheduling.md).
 
 A consumer judges the result rather than its wording: every in-scope subject has a row or an
 explicit `undetermined`; what was read back equals what was written; running the same request again
