@@ -64,7 +64,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/dagsched/mergechecks.go` | `node-scoped-acceptance` | `R06` | no | the history of merge checks per acceptance |
 | `internal/relay/dagsched/mergejudge.go` | `node-scoped-acceptance` | `R06` | no | merge judgement of an accepted node |
 | `internal/relay/dagsched/mergeorder_derive.go` | `node-scoped-release` | `R06` | no | the merge order among the nodes that hold a release or an execution |
-| `internal/relay/dagsched/nodestate.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the derived state of a node (stateOf) |
+| `internal/relay/dagsched/nodestate.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | no | the derived state of a node (stateOf); a current agent execution already holds the node and its regions there (R04), the rest of the union is R06 |
 | `internal/relay/dagsched/optimism.go` | `node-scoped-acceptance` | `R06` | no | local-optimistic release reads landings |
 | `internal/relay/dagsched/outbox.go` | `caller` | `R06` | n/a | the summary outbox calls Scheduler.Progress |
 | `internal/relay/dagsched/outbox_cli.go` | `caller` | `R06` | n/a | dag-summary commands: call EnqueueSummary and SummaryStatus (outbox.go) |

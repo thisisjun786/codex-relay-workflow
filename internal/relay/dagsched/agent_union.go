@@ -255,7 +255,14 @@ func releaseOf(ctx context.Context, q store.Querier, plan, node, manifest string
 	if err != nil {
 		return NodeExecution{}, false, err
 	}
-	var out NodeExecution
+	rel, hasRel, err := relationshipReleaseOf(ctx, q, plan, node)
+	if err != nil {
+		return NodeExecution{}, false, err
+	}
+	// a store in which both sides hold a current execution is read as neither, whatever manifest is asked for (the same refusal as executionOf)
+	if hasAgent && hasRel {
+		return NodeExecution{}, false, refuse(contract.RefusalDispositionConflict, "%s: node %s of plan %s has a current execution on the relationship side (%s) and a current agent execution (%s); neither is read", CrossKindExecution, node, plan, orDash(rel.RelationshipID, rel.ManagedRequestID), cur.ExecutionID)
+	}
 	if hasAgent {
 		// the release the current execution stands on is the nearest row of kind initial or correction at or before it in the chain
 		row := cur
@@ -264,22 +271,12 @@ func releaseOf(ctx context.Context, q store.Querier, plan, node, manifest string
 				return NodeExecution{}, false, err
 			}
 		}
-		hasAgent = (row.Kind == AgentInitial || row.Kind == AgentCorrection) && row.ManifestDigest == manifest
-		if hasAgent {
-			out = NodeExecution{Kind: ExecutionAgent, PlanID: plan, NodeID: node, ManifestDigest: manifest, Epoch: row.Epoch, DecidedAt: row.DecidedAt, Agent: row}
+		if (row.Kind == AgentInitial || row.Kind == AgentCorrection) && row.ManifestDigest == manifest {
+			return NodeExecution{Kind: ExecutionAgent, PlanID: plan, NodeID: node, ManifestDigest: manifest, Epoch: row.Epoch, DecidedAt: row.DecidedAt, Agent: row}, true, nil
 		}
+		return NodeExecution{}, false, nil
 	}
-	rel, hasRel, err := relationshipReleaseOf(ctx, q, plan, node)
-	if err != nil {
-		return NodeExecution{}, false, err
-	}
-	hasRel = hasRel && rel.ManifestDigest == manifest
-	switch {
-	case hasAgent && hasRel:
-		return NodeExecution{}, false, refuse(contract.RefusalDispositionConflict, "%s: node %s of plan %s holds a release of manifest %s on both sides", CrossKindExecution, node, plan, manifest)
-	case hasAgent:
-		return out, true, nil
-	case hasRel:
+	if hasRel && rel.ManifestDigest == manifest {
 		return rel, true, nil
 	}
 	return NodeExecution{}, false, nil
