@@ -63,7 +63,11 @@ type BatchPlanDocument struct {
 
 // BatchIssue is one issue as the Linear tools give it, reduced to what the selector reads.
 type BatchIssue struct {
-	ID          string
+	// ID is the name the issue goes by in the plan: its identifier, or its id when it has none.
+	ID string
+	// Keys is every name the entry gave the issue (its identifier and its id, as given), so the same
+	// issue written once by identifier and once by UUID is one issue. Empty means ID alone.
+	Keys        []string
 	Title       string
 	Description string
 	Labels      []string
@@ -201,6 +205,11 @@ func BatchParseIssues(raw []byte) ([]BatchIssue, error) {
 		if issue.ID == "" {
 			return nil, fmt.Errorf("issue %d has no id or identifier", i+1)
 		}
+		for _, key := range []string{in.Identifier, in.ID} {
+			if key = strings.TrimSpace(key); key != "" {
+				issue.Keys = append(issue.Keys, key)
+			}
+		}
 		if len(in.Labels) > 0 && string(in.Labels) != "null" {
 			var names []json.RawMessage
 			if err := json.Unmarshal(in.Labels, &names); err != nil {
@@ -252,20 +261,34 @@ func batchBacklog(states []string) (bool, string) {
 
 // BatchPlan is the selection. An issue is selected only when it is Backlog, carries the label (no case)
 // and passes the release gate (skill.CheckIssueReady, the one implementation of it); every other issue is
-// held with the first gate that stopped it and that gate's reasons. A repeated issue is judged once.
+// held with the first gate that stopped it and that gate's reasons. A repeated issue is judged once,
+// whether it is repeated by the same name or by its identifier and its id (the names compare without case).
 // The order of the input is kept, so the same input gives the same plan.
 func BatchPlan(label string, issues []BatchIssue) BatchPlanDocument {
 	plan := BatchPlanDocument{Schema: batchPlanSchema, Label: label, Selected: []BatchSelected{}, Held: []BatchHeld{}}
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	hold := func(issue BatchIssue, gate string, reasons ...string) {
 		plan.Held = append(plan.Held, BatchHeld{Issue: issue.ID, Title: issue.Title, Gate: gate, Reasons: reasons})
 	}
 	for _, issue := range issues {
-		if seen[issue.ID] {
-			hold(issue, batchGateDuplicate, fmt.Sprintf("duplicate: %s appears more than once in the input; only its first entry is judged", issue.ID))
+		keys := issue.Keys
+		if len(keys) == 0 {
+			keys = []string{issue.ID}
+		}
+		first := ""
+		for _, key := range keys {
+			if f, ok := seen[strings.ToLower(key)]; ok {
+				first = f
+				break
+			}
+		}
+		if first != "" {
+			hold(issue, batchGateDuplicate, fmt.Sprintf("duplicate: %s appears more than once in the input (first as %s); only its first entry is judged", issue.ID, first))
 			continue
 		}
-		seen[issue.ID] = true
+		for _, key := range keys {
+			seen[strings.ToLower(key)] = issue.ID
+		}
 		if ok, got := batchBacklog(issue.States); !ok {
 			if got == "" {
 				hold(issue, batchGateState, "no state in the input: the issue is not assumed to be in Backlog")

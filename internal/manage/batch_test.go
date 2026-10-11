@@ -182,3 +182,50 @@ func TestBatchPlanReadsAFileAndWritesNothing(t *testing.T) {
 		t.Errorf("a missing issues file exits 0")
 	}
 }
+
+// The same Linear issue can be given as its UUID and as its identifier (the caller's list may hold both
+// shapes); the plan keeps the id-identifier correspondence and judges it as one issue.
+func TestBatchPlanJudgesAnIssueGivenAsUUIDAndIdentifierOnce(t *testing.T) {
+	const uuid = "0b6f8a2e-1c3d-4e5f-9a7b-8c9d0e1f2a3b"
+	body := batchJSON(t, batchReadyBody)
+	withBoth := `{"id":"` + uuid + `","identifier":"CRW-1","title":"t","description":` + body + `,"status":"Backlog","labels":["night"]}`
+	byUUID := `{"id":"` + uuid + `","title":"t","description":` + body + `,"status":"Backlog","labels":["night"]}`
+	byIdentifier := `{"identifier":"CRW-1","title":"t","description":` + body + `,"status":"Backlog","labels":["night"]}`
+	other := `{"id":"CRW-2","title":"t","description":` + body + `,"status":"Backlog","labels":["night"]}`
+	for name, tc := range map[string]struct {
+		list     []string
+		selected string
+		held     string
+	}{
+		"both then uuid":        {[]string{withBoth, byUUID}, "CRW-1", uuid},
+		"uuid then both":        {[]string{byUUID, withBoth}, uuid, "CRW-1"},
+		"both then identifier":  {[]string{withBoth, byIdentifier}, "CRW-1", "CRW-1"},
+		"identifier then both":  {[]string{byIdentifier, withBoth}, "CRW-1", "CRW-1"},
+		"both, other, uuid":     {[]string{withBoth, other, byUUID}, "CRW-1,CRW-2", uuid},
+		"upper-case uuid again": {[]string{withBoth, strings.Replace(byUUID, uuid, strings.ToUpper(uuid), 1)}, "CRW-1", strings.ToUpper(uuid)},
+	} {
+		auditListHome(t)
+		e, _, _ := auditTestEnv(t)
+		code, out, errOut := batchRun(t, e, "["+strings.Join(tc.list, ",")+"]", "plan", "--label", "night")
+		if code != 0 {
+			t.Fatalf("%s: exit %d: %s%s", name, code, out, errOut)
+		}
+		var plan struct {
+			Selected []struct{ Issue string }       `json:"selected"`
+			Held     []struct{ Issue, Gate string } `json:"held"`
+		}
+		if err := json.Unmarshal([]byte(out), &plan); err != nil {
+			t.Fatal(err)
+		}
+		var selected []string
+		for _, s := range plan.Selected {
+			selected = append(selected, s.Issue)
+		}
+		if strings.Join(selected, ",") != tc.selected {
+			t.Errorf("%s: selected %v, want %s: the issue is selected once", name, selected, tc.selected)
+		}
+		if len(plan.Held) != 1 || plan.Held[0].Gate != batchGateDuplicate || plan.Held[0].Issue != tc.held {
+			t.Errorf("%s: the repeat is held as a duplicate (%s): %s", name, tc.held, out)
+		}
+	}
+}

@@ -2,6 +2,8 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,21 +148,27 @@ func batchKey(key string) string {
 	if batchKeyValid(key) {
 		return key
 	}
-	return strconv.Quote(key)
+	return batchQuoted(key)
 }
 
 // batchText is free text of the digest as the report shows it: one line, every run of white space or
-// control characters (newlines, carriage returns, line and paragraph separators) folded to one space.
-// Free text never starts a report line, so on one line it can neither add a heading nor a list item
-// nor end the section it stands in.
+// control characters (newlines, carriage returns, line and paragraph separators) folded to one space,
+// and '&', '<' and '>' written as character references. Free text never starts a report line, so on one
+// line it can neither add a heading nor a list item nor end the section it stands in; and it holds no
+// raw HTML, so a viewer that allows HTML in Markdown shows the text, never a tag of the digest's.
 func batchText(text string) string {
-	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+	return batchHTMLEscaper.Replace(strings.Join(strings.Fields(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return ' '
 		}
 		return r
-	}, text)), " ")
+	}, text)), " "))
 }
+
+var batchHTMLEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// batchQuoted is free text quoted on one line, for a value the report shows inside quotation marks.
+func batchQuoted(text string) string { return batchHTMLEscaper.Replace(strconv.Quote(text)) }
 
 // BatchReport renders the morning report of a digest. checkedAt is when the report was made. It reads
 // only the digest: an item is placed by what the digest records, and what the record does not show is
@@ -188,13 +196,13 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 			name += " " + t
 		}
 		if seen[item.Issue] {
-			unverified = append(unverified, fmt.Sprintf("%s: 같은 이슈가 중복 기록됨 (첫 기록만 사용, 뒤 기록 결과 %q)", key, item.Outcome))
+			unverified = append(unverified, fmt.Sprintf("%s: 같은 이슈가 중복 기록됨 (첫 기록만 사용, 뒤 기록 결과 %s)", key, batchQuoted(item.Outcome)))
 			continue
 		}
 		seen[item.Issue] = true
 		reason := batchText(item.Reason)
 		if !selected[item.Issue] {
-			decision = append(decision, fmt.Sprintf("%s: 선택 목록 밖 이슈가 실행 기록에 있다 (결과 %q). 해제 경위를 확인해야 한다", name, item.Outcome))
+			decision = append(decision, fmt.Sprintf("%s: 선택 목록 밖 이슈가 실행 기록에 있다 (결과 %s). 해제 경위를 확인해야 한다", name, batchQuoted(item.Outcome)))
 			counts[batchOutcomeDecision]++
 			continue
 		}
@@ -229,7 +237,7 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 				decision = append(decision, fmt.Sprintf("%s: %s", name, reason))
 			}
 		default:
-			unverified = append(unverified, fmt.Sprintf("%s: 알 수 없는 결과 %q (분류하지 않음)", key, item.Outcome))
+			unverified = append(unverified, fmt.Sprintf("%s: 알 수 없는 결과 %s (분류하지 않음)", key, batchQuoted(item.Outcome)))
 		}
 	}
 	for _, key := range selectedKeys {
@@ -297,8 +305,8 @@ func BatchReport(d BatchDigest, checkedAt time.Time) string {
 	return b.String()
 }
 
-// batchSlug is a label as a file name part: letters and digits, the rest folded to one dash, so a label
-// can never name a path.
+// batchSlug is a label as a readable file name part: letters and digits, the rest folded to one dash, so
+// a label can never name a path. Many labels fold to one slug; batchReportPath adds the label's digest.
 func batchSlug(label string) string {
 	var b strings.Builder
 	dash := true
@@ -321,15 +329,23 @@ func batchSlug(label string) string {
 	return slug
 }
 
-// batchReportPath is where a digest's report is written: <state_dir>/batch/reports/<date>-<label>.md,
-// the date being the finish day in the digest's own offset (the morning the report is read), or today
-// when the run recorded no finish.
+// batchLabelDigest is a stable short digest of the real label (as the digest gives it), so two labels
+// that fold to the same slug, or share its first 64 characters, never name the same report file.
+func batchLabelDigest(label string) string {
+	sum := sha256.Sum256([]byte(label))
+	return hex.EncodeToString(sum[:6])
+}
+
+// batchReportPath is where a digest's report is written:
+// <state_dir>/batch/reports/<date>-<label slug>-<label digest>.md, the date being the finish day in the
+// digest's own offset (the morning the report is read), or today when the run recorded no finish. The
+// same label on the same day is the same batch and its report is rewritten.
 func batchReportPath(e *Env, d BatchDigest) string {
 	day := e.Now().UTC().Format("2006-01-02")
 	if t, err := time.Parse(time.RFC3339, d.FinishedAt); err == nil {
 		day = t.Format("2006-01-02")
 	}
-	return crwconfig.JoinRoot(coreDefaults(e).StateDir, "batch", "reports", day+"-"+batchSlug(d.Label)+".md")
+	return crwconfig.JoinRoot(coreDefaults(e).StateDir, "batch", "reports", day+"-"+batchSlug(d.Label)+"-"+batchLabelDigest(d.Label)+".md")
 }
 
 func batchRunReport(_ context.Context, e *Env, args []string) int {

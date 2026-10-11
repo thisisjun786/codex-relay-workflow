@@ -4,8 +4,10 @@ A night batch is a set of Backlog issues chosen by one label and run once while 
 (CRW-1040). Its morning report is a status report in the form
 [crw-status](../SKILL.md) already requires: the conclusion first, then what moved, then what is
 waiting, then the evidence and what stays unverified. `crw manage batch report --digest FILE` writes
-it into the management state directory at `<state_dir>/batch/reports/<finish date>-<label>.md`, from
-the run digest the night run leaves. Nothing in the report is written from memory of the run: an item is
+it into the management state directory at `<state_dir>/batch/reports/<finish date>-<label>-<label digest>.md`, from
+the run digest the night run leaves. The label digest is a short hash of the label as the digest gives it,
+so two labels never share a report file (labels that differ only in punctuation or case, or share a long
+prefix, still differ); the same label on the same day is the same batch and its report is rewritten. Nothing in the report is written from memory of the run: an item is
 placed by what the digest records.
 
 ## Sections
@@ -48,6 +50,9 @@ ended: finished, deadline, budget, stopped), `providers` (`name`, `observed`, `d
 `_` and `.`, starting and ending with a letter or digit; a digest with another key is refused. Free text
 (the label, a title, a reason, evidence, `stopped`, a provider's name and detail) is shown on one line, every
 line break or other white space or control run folded to one space, so it never adds a heading or an item
-to the report. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which
+to the report, and `&`, `<` and `>` are written as `&amp;`, `&lt;` and `&gt;`, so HTML in it is shown as
+text and never as a tag (a fake heading or item) in a viewer that allows HTML in Markdown. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which
 reads the Linear issues the caller supplies and selects those in Backlog that carry the label and pass
-the release gate (`crw skill issue-ready check`), holding the others with their reasons.
+the release gate (`crw skill issue-ready check`), holding the others with their reasons. An issue the list
+gives twice, even once by its identifier and once by its UUID, is judged once; the repeat is held as a
+duplicate.

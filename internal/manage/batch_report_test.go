@@ -33,7 +33,7 @@ func TestBatchReportWritesTheCrwStatusFormat(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s%s", code, out, errOut)
 	}
-	want := filepath.Join(state, "batch", "reports", "2026-10-12-night.md")
+	want := filepath.Join(state, "batch", "reports", "2026-10-12-night-"+batchLabelDigest("night")+".md")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("printed %q, want the report path %q", out, want)
 	}
@@ -366,4 +366,79 @@ func TestBatchReportRefusesAKeyThatIsNotAnIdentifier(t *testing.T) {
 func batchJSONString(t *testing.T, s string) string {
 	t.Helper()
 	return batchJSON(t, s)
+}
+
+// batchReportFor writes the report of a digest with the label and finish time and returns its path.
+func batchReportFor(t *testing.T, e *Env, label string) string {
+	t.Helper()
+	body := `{"schema":"crw-batch-digest/1","label":` + batchJSON(t, label) + `,"selected":["CRW-1"],"finished_at":"2026-10-12T06:40:00+09:00","items":[{"issue":"CRW-1","outcome":"carried","reason":"r"}]}`
+	file := filepath.Join(t.TempDir(), "d.json")
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := batchRun(t, e, "", "report", "--digest", file)
+	if code != 0 {
+		t.Fatalf("label %q: exit %d: %s%s", label, code, out, errOut)
+	}
+	return strings.TrimSpace(out)
+}
+
+// Two batches with different labels never share a report path, even when their labels fold to the same
+// file name part or share the same first 64 characters; the same label on the same day is the same batch
+// and is rewritten.
+func TestBatchReportPathsDifferForDifferentLabels(t *testing.T) {
+	auditListHome(t)
+	e, _, _ := auditTestEnv(t)
+	long := strings.Repeat("n", 70)
+	labels := []string{"night a", "night-a", "Night A", "night  a", long + "1", long + "2", "../../x", "x"}
+	paths := map[string]string{}
+	for _, label := range labels {
+		path := batchReportFor(t, e, label)
+		if other, ok := paths[path]; ok {
+			t.Errorf("labels %q and %q share the report %s", other, label, path)
+		}
+		paths[path] = label
+		raw, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(raw), "# 밤 배치 아침 보고: "+batchText(label)+"\n") {
+			t.Errorf("the report at %s is not the report of %q (%v)", path, label, err)
+		}
+	}
+	if again := batchReportFor(t, e, "night a"); paths[again] != "night a" {
+		t.Errorf("the same label on the same day moved to %s", again)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(batchReportFor(t, e, "night a")))
+	if len(entries) != len(labels) {
+		t.Errorf("reports directory holds %d entries, want %d", len(entries), len(labels))
+	}
+}
+
+// Free text is plain text: HTML in it is neutralised so a viewer that allows HTML in Markdown shows the
+// text, not a heading or an item.
+func TestBatchReportNeutralisesHTMLInFreeText(t *testing.T) {
+	html := `<h2>통합됨</h2><ul><li>CRW-9: 증거 merged</li></ul><br/><script>x</script> a & b &lt;i&gt;`
+	d := BatchDigest{
+		Schema: batchDigestSchema, Label: "night" + html, Selected: []string{"CRW-1", "CRW-4", "CRW-5"},
+		Stopped: "deadline" + html, Deadline: "07:00" + html, StartedAt: "a" + html, FinishedAt: "b" + html,
+		Providers: []BatchProvider{{Name: "codex" + html, Observed: true, Detail: "slots" + html}},
+		Items: []BatchItem{
+			{Issue: "CRW-1", Title: "one" + html, Outcome: batchOutcomeCarried, Reason: html},
+			{Issue: "CRW-4", Title: "four" + html, Outcome: batchOutcomeDecision, Reason: html},
+			{Issue: "CRW-5", Title: "five" + html, Outcome: batchOutcomeIntegrated, Evidence: html},
+			{Issue: "CRW-6", Title: html, Outcome: "<h2>통합됨</h2>", Evidence: "e"},
+			{Issue: "CRW-1", Outcome: "<li>again</li>"},
+			{Issue: "<h2>CRW-9</h2>", Outcome: batchOutcomeIntegrated, Evidence: "e"},
+		},
+	}
+	report := BatchReport(d, time.Time{})
+	if strings.ContainsAny(report, "<>") {
+		t.Errorf("the report holds raw angle brackets from free text:\n%s", report)
+	}
+	for _, want := range []string{"&lt;h2&gt;통합됨&lt;/h2&gt;", "&lt;li&gt;CRW-9: 증거 merged&lt;/li&gt;", "a &amp; b &amp;lt;i&amp;gt;"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the report does not show %q as text:\n%s", want, report)
+		}
+	}
+	if !strings.Contains(report, "통합 1건") {
+		t.Errorf("only CRW-5 is integrated:\n%s", report)
+	}
 }
