@@ -1,0 +1,15 @@
+{
+  "backwardsCursor": "items-back-2",
+  "data": [
+    {
+      "item": {
+        "id": "m-turn-a",
+        "phase": "final_answer",
+        "text": "{\"a\":1}",
+        "type": "agentMessage"
+      },
+      "turnId": "turn-a"
+    }
+  ],
+  "nextCursor": null
+}
