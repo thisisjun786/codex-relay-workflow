@@ -216,6 +216,10 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 	if declared == nil {
 		return Cell(reading.Unreadable, false, "the candidate reported object names without their definitions, so the schemas could not be compared on anything but names", record.Get(candidate, "command"), nil)
 	}
+	named, ok := namedZone(record.Get(candidate, "zone"))
+	if !ok {
+		return Cell(reading.Unreadable, false, "the candidate named its additive zone in a form that is not a list of schema object keys, so which of its objects belong to the zone was not read", record.Get(candidate, "command"), nil)
+	}
 	command := record.Get(storeAnswer, "command")
 	if record.Get(storeAnswer, "present") == false {
 		return Cell(NoStore, true, "no store exists at the resolved selection, so there is nothing whose schema could disagree. That is absence and not agreement", command, Object{{Key: "dbPath", Value: record.Get(storeAnswer, "dbPath")}})
@@ -246,15 +250,30 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 	// differences with an answer of their own; a changed object, or any object outside the zone, never
 	// reaches either and keeps the answers below.
 	if len(changed) == 0 && (len(lost) == 0) != (len(added) == 0) {
-		zone, err := zoneObjects()
+		known, err := zoneObjects()
 		if err != nil {
 			return Cell(reading.Unreadable, false, "which schema objects belong to the additive DAG zone could not be derived: "+err.Error(), command, nil)
 		}
+		// An arrival is the zone's when this build's zone statements create it or the candidate names it as its own zone
+		// among the objects it declares (CRW-1267): a build older than the candidate does not know the zone objects the
+		// candidate appends, and the candidate creates every one it names on its first write-open, so the answer does not
+		// depend on which crw asks. A departure is the zone's only by this build's own zone: a name the candidate gives
+		// describes an object it creates, never one it leaves behind, so no candidate answer turns the loss of an object
+		// into the zone's departure.
+		arriving := make(map[string]bool, len(known)+len(named))
+		for name := range known {
+			arriving[name] = true
+		}
+		for _, name := range named {
+			if _, declares := declared[name]; declares {
+				arriving[name] = true
+			}
+		}
 		zoneEvidence := append(evidenceValue, record.Object{{Key: "zoneOnly", Value: true}}...)
 		switch {
-		case len(lost) > 0 && inZone(lost, zone):
+		case len(lost) > 0 && inZone(lost, known):
 			return Cell(NarrowsZone, true, "the store holds objects of the additive DAG zone that this candidate does not declare: "+strings.Join(lost, ", ")+". An older runtime opens such a store and ignores the zone's tables (D-01), so returning to it loses nothing and is not refused; the zone stays in the store and a newer runtime reads it again.", command, zoneEvidence)
-		case len(added) > 0 && inZone(added, zone):
+		case len(added) > 0 && inZone(added, arriving):
 			return Cell(ExtendsZone, true, "the candidate declares objects of the additive DAG zone that the store does not hold: "+strings.Join(added, ", ")+". Nothing in the store is lost or rewritten, and the candidate creates them on its first write-open (D-01). OPS-4.5 still requires a copied backup of the whole state directory first, so this refuses unless the command is run with --backup-state-to DIR: it copies the state directory (copy only, byte for byte) after the daemon and in-flight cells pass and before the swap, records the copy, and then allows the swap.", command, zoneEvidence)
 		}
 	}
@@ -296,7 +315,7 @@ func strs(values []string) []any {
 // zoneObjects are the schema objects (the keys SchemaObjectsQuery gives: kind, a space and the name) that
 // the additive DAG zone creates: its statements applied alone to an empty in-memory database, the same
 // statements a writable open runs and DeclaredSchema declares. They are derived, not matched by a name
-// prefix, so a dag_ object this build does not know is not the zone's and keeps the plain answers.
+// prefix, so a dag_ object neither this build nor the candidate names as the zone's keeps the plain answers.
 var zoneObjects = sync.OnceValues(func() (map[string]bool, error) {
 	db, err := sql.Open("sqlite", "file::memory:")
 	if err != nil {
@@ -326,6 +345,27 @@ var zoneObjects = sync.OnceValues(func() (map[string]bool, error) {
 	}
 	return objects, rows.Err()
 })
+
+// namedZone is the zone a candidate names in its declared schema (DeclaredSchema's "zone"): a list of schema object keys.
+// A candidate built before the zone was named says nothing (absent or null), which names no object; any other form is not
+// read, and ok is false. SchemaCell counts a name only for an object the candidate declares and only for its arrival.
+func namedZone(value any) (names []string, ok bool) {
+	if value == nil {
+		return nil, true
+	}
+	listed, isList := value.([]any)
+	if !isList {
+		return nil, false
+	}
+	for _, item := range listed {
+		name, isText := item.(string)
+		if !isText {
+			return nil, false
+		}
+		names = append(names, name)
+	}
+	return names, true
+}
 
 func inZone(names []string, zone map[string]bool) bool {
 	for _, name := range names {
@@ -542,11 +582,12 @@ func readCatalog(ctx context.Context, path string) (Object, error) {
 }
 
 // DeclaredSchema is the schema this build installs: its DDL script and then its guard indexes
-// applied to an in-memory database, asked SchemaObjectsQuery. This is what the candidate binary
-// prints for `crw doctor declared-schema --json`.
+// applied to an in-memory database, asked SchemaObjectsQuery, and which of those objects are its
+// additive zone ("zone", the keys its zone statements create, sorted). This is what the candidate
+// binary prints for `crw doctor declared-schema --json`.
 func DeclaredSchema(ctx context.Context) Object {
 	unreadable := func(err error) Object {
-		return Object{{Key: "readable", Value: false}, {Key: "objects", Value: nil}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: err.Error()}}
+		return Object{{Key: "readable", Value: false}, {Key: "objects", Value: nil}, {Key: "zone", Value: nil}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: err.Error()}}
 	}
 	ddl, guards, err := store.SchemaStatements()
 	if err != nil {
@@ -594,7 +635,18 @@ func DeclaredSchema(ctx context.Context) Object {
 	if err := rows.Err(); err != nil {
 		return unreadable(err)
 	}
-	return Object{{Key: "readable", Value: true}, {Key: "objects", Value: objects}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: nil}}
+	// The zone is named beside the objects, so a gate run by a build that does not know this build's zone statements
+	// still reads their arrival as the zone's (SchemaCell, CRW-1267).
+	known, err := zoneObjects()
+	if err != nil {
+		return unreadable(err)
+	}
+	zone := make([]string, 0, len(known))
+	for name := range known {
+		zone = append(zone, name)
+	}
+	sort.Strings(zone)
+	return Object{{Key: "readable", Value: true}, {Key: "objects", Value: objects}, {Key: "zone", Value: strs(zone)}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: nil}}
 }
 
 // CandidateSchema is runtime_install.candidate_tables for a Go candidate: executed as the
