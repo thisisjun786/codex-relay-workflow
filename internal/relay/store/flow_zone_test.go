@@ -77,10 +77,20 @@ func agentSeed(t *testing.T, db *sql.DB) {
 		fmt.Sprintf("INSERT INTO dag_input_manifests (manifest_digest, node_id, body_json, rule_version_json, coordinator_epoch, created_at) VALUES ('%s','n1','{\"v\":2}','{}',0,'2026-10-11T00:00:00Z')", strings.Repeat("b", 64)))
 }
 
-// agentExecRow is the INSERT of one execution; id, node, kind and supersedes are SQL literals.
+// agentExecRow is the INSERT of one execution; id, node, kind and supersedes are SQL literals. The attempt of a row that supersedes another is the attempt of that one plus one (a supersedes that
+// names no row leaves it NULL, and the row is refused all the same).
 func agentExecRow(id, node, kind, supersedes string) string {
+	attempt := "1"
+	if supersedes != "NULL" {
+		attempt = "(SELECT attempt + 1 FROM dag_agent_executions WHERE execution_id = " + supersedes + ")"
+	}
+	return agentExecRowAt(id, "'plan-1'", node, attempt, kind, supersedes)
+}
+
+// agentExecRowAt is the INSERT of one execution with its plan and attempt given as SQL as well.
+func agentExecRowAt(id, plan, node, attempt, kind, supersedes string) string {
 	return fmt.Sprintf("INSERT INTO dag_agent_executions (execution_id, plan_id, node_id, attempt, kind, manifest_digest, role, tier, actor_task_id, coordinator_epoch, decided_at, supersedes_execution_id)"+
-		" VALUES (%s,'plan-1',%s,1,%s,'%s','executor','executor','task-orchestrator',1,'2026-10-11T00:00:05Z',%s)", id, node, kind, zoneDigest, supersedes)
+		" VALUES (%s,%s,%s,%s,%s,'%s','executor','executor','task-orchestrator',1,'2026-10-11T00:00:05Z',%s)", id, plan, node, attempt, kind, zoneDigest, supersedes)
 }
 
 func agentCloseRow(kind, id, state string) string {
@@ -303,7 +313,7 @@ func TestZoneShippedSnapshot(t *testing.T) {
 			want = append(want, "trigger "+g.insertTrigger())
 		}
 	}
-	want = append(want, "index dag_agent_executions_node", "index dag_agent_executions_root", "index dag_agent_executions_successor")
+	want = append(want, "index dag_agent_executions_node", "index dag_agent_executions_root", "index dag_agent_executions_successor", "trigger dag_agent_executions_chain_check")
 	for _, key := range want {
 		text, ok := shipped[key]
 		if !ok {
@@ -367,12 +377,38 @@ func TestAgentExecutionAppendOnly(t *testing.T) {
 	zoneRefuses(t, db, "a kind outside the vocabulary", agentExecRow("'e10'", "'n3'", "'redefinition'", "NULL"))
 	zoneRefuses(t, db, "a manifest that is not stored", strings.Replace(agentExecRow("'e11'", "'n3'", "'initial'", "NULL"), zoneDigest, strings.Repeat("c", 64), 1))
 	zoneRefuses(t, db, "a plan that does not exist", strings.Replace(agentExecRow("'e12'", "'n3'", "'initial'", "NULL"), "'plan-1'", "'plan-none'", 1))
-	zoneRefuses(t, db, "an attempt of zero", strings.Replace(agentExecRow("'e13'", "'n3'", "'initial'", "NULL"), ",1,'initial'", ",0,'initial'", 1))
+	zoneRefuses(t, db, "an attempt of zero", agentExecRowAt("'e13'", "'plan-1'", "'n3'", "0", "'initial'", "NULL"))
 	// a closure ends a subject once
 	zoneRefuses(t, db, "a second closure of one execution", agentCloseRow("'execution'", "'e2'", "'escalated'"))
 	zoneRefuses(t, db, "a closure state outside the vocabulary", agentCloseRow("'execution'", "'e1'", "'abandoned'"))
 	zoneRefuses(t, db, "a closure subject outside the vocabulary", agentCloseRow("'node'", "'e1'", "'cancelled'"))
 	zoneMustExec(t, db, agentCloseRow("'acceptance'", "'e2'", "'revoked'")) // the same id as an acceptance is another subject
+}
+
+// A chain stays on one node of one plan and runs forward: a row that supersedes a row of another node or another plan, or one that is not a later attempt, is refused, and what it would have followed stays
+// the node's current last row (an INSERT whose foreign key only checked that the execution exists let another node's row end A's chain).
+func TestAgentExecutionChainStaysOnOneNode(t *testing.T) {
+	t.Parallel()
+	db := openedZone(t)
+	agentSeed(t, db)
+	zoneMustExec(t, db, "INSERT INTO dag_plans VALUES ('plan-2','PRJ-A','task-a','2026-10-11T00:00:00Z')",
+		agentExecRow("'a1'", "'nA'", "'initial'", "NULL"), agentExecRow("'i1'", "'nI'", "'initial'", "NULL"),
+		agentExecRowAt("'p2'", "'plan-2'", "'nA'", "1", "'initial'", "NULL"))
+	zoneMustExec(t, db, agentExecRowAt("'a2'", "'plan-1'", "'nA'", "3", "'correction'", "'a1'")) // a later attempt may skip numbers
+	before := zoneRows(t, db, "dag_agent_executions")
+	zoneRefuses(t, db, "a row of another node that supersedes A's", agentExecRowAt("'x-node'", "'plan-1'", "'nI'", "4", "'tier_step'", "'a2'"))
+	zoneRefuses(t, db, "a row of another plan that supersedes A's", agentExecRowAt("'x-plan'", "'plan-2'", "'nA'", "4", "'tier_step'", "'a2'"))
+	zoneRefuses(t, db, "a row of the same attempt", agentExecRowAt("'x-same'", "'plan-1'", "'nA'", "3", "'tier_step'", "'a2'"))
+	zoneRefuses(t, db, "a row of an earlier attempt", agentExecRowAt("'x-back'", "'plan-1'", "'nA'", "2", "'tier_step'", "'a2'"))
+	if after := zoneRows(t, db, "dag_agent_executions"); !slices.Equal(before, after) {
+		t.Fatalf("a refused row changed the table:\n%v\n%v", before, after)
+	}
+	// the row that continues A's chain is still accepted, and it is the one that follows a2
+	zoneMustExec(t, db, agentExecRowAt("'a3'", "'plan-1'", "'nA'", "4", "'tier_step'", "'a2'"))
+	var successor string
+	if err := db.QueryRow("SELECT execution_id FROM dag_agent_executions WHERE supersedes_execution_id = 'a2'").Scan(&successor); err != nil || successor != "a3" {
+		t.Fatalf("the successor of a2 = %q (%v)", successor, err)
+	}
 }
 
 // The key columns of the agent tables refuse NULL (CRW-835) and a REPLACE of a stored key or rowid (CRW-974), for each of the three keys of the
@@ -397,7 +433,7 @@ func TestAgentZoneNullAndNoReplaceGuards(t *testing.T) {
 	cases := []struct{ table, statement, want string }{
 		{"dag_agent_executions", replace(agentExecRow("'e1'", "'n9'", "'initial'", "NULL")), "UNIQUE constraint failed: dag_agent_executions.execution_id"},
 		{"dag_agent_executions", replace(agentExecRow("'e3'", "'n1'", "'initial'", "NULL")), "UNIQUE constraint failed: dag_agent_executions.plan_id, dag_agent_executions.node_id"},
-		{"dag_agent_executions", replace(agentExecRow("'e4'", "'n4'", "'tier_step'", "'e1'")), "UNIQUE constraint failed: dag_agent_executions.supersedes_execution_id"},
+		{"dag_agent_executions", replace(agentExecRow("'e4'", "'n1'", "'tier_step'", "'e1'")), "UNIQUE constraint failed: dag_agent_executions.supersedes_execution_id"},
 		{"dag_agent_closures", replace(agentCloseRow("'execution'", "'e2'", "'revoked'")), "UNIQUE constraint failed: dag_agent_closures.subject_kind, dag_agent_closures.subject_id"},
 	}
 	for _, c := range cases {
