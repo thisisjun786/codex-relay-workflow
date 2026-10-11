@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "id": "m1",
+      "issue": "CRW-0001",
+      "size": "M",
+      "brief": "/briefs/m1.md",
+      "criteria": "/briefs/m1-criteria.md",
+      "wt": "/worktrees/m1",
+      "progress": "/state/m1/progress.md",
+      "tmp": "/scratch/m1",
+      "base": "0000000"
+    },
+    {
+      "id": "s1",
+      "issue": "CRW-0002",
+      "size": "S",
+      "brief": "/briefs/s1.md",
+      "criteria": "/briefs/s1-criteria.md",
+      "wt": "/worktrees/s1",
+      "progress": "/state/s1/progress.md",
+      "tmp": "/scratch/s1",
+      "base": "0000000"
+    }
+  ],
+  "pool": 1
+}

@@ -87,11 +87,16 @@ func runParity(t *testing.T, name, file string) (*Result, []Event) {
 	if err != nil {
 		t.Fatalf("%s/%s: %v", name, file, err)
 	}
+	// A script that reads args gets the ones args.json holds.
+	args, err := os.ReadFile(filepath.Join(parityDir, name, "args.json"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	journal := NewMemoryJournal()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	res, err := Run(ctx, prog, Config{
-		Backend: NewFake(), Policy: parityPolicy(t), Journal: journal, RunID: "run-parity", OmitSeq: true,
+		Backend: NewFake(), Policy: parityPolicy(t), Journal: journal, RunID: "run-parity", OmitSeq: true, Args: args,
 		Workflows: func(n, p string) (*script.Program, error) { return loadSibling(dir, n, p) },
 	})
 	if err != nil {
@@ -148,6 +153,17 @@ func TestParityCorpus(t *testing.T) {
 			t.Errorf("the corpus lacks %s", want)
 		}
 	}
+	// Among the real originals is a build, its verification by agentType 'ocx-gpt-6-1-sol' with effort 'high', and a
+	// fix after it.
+	realBVF := ""
+	for _, name := range names {
+		if isReal(name) && buildVerifyFix(corpusLines(t, name, "claude.js")) {
+			realBVF = name
+		}
+	}
+	if realBVF == "" {
+		t.Errorf("no real original is a build, an agentType 'ocx-gpt-6-1-sol' verification with effort 'high' and a fix")
+	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			got := goldenOf(t, name)
@@ -197,6 +213,29 @@ func TestParityCorpus(t *testing.T) {
 			}
 		})
 	}
+}
+
+var (
+	buildCall  = regexp.MustCompile("agent\\(.*label: [`'\"]build:")
+	verifyCall = regexp.MustCompile(`agent\(.*agentType: 'ocx-gpt-6-1-sol'.*effort: 'high'`)
+	fixCall    = regexp.MustCompile("agent\\(.*label: [`'\"]fix:")
+)
+
+// buildVerifyFix reports whether a script has a build call, then a verification call by agentType 'ocx-gpt-6-1-sol'
+// with effort 'high', then a fix call, in the order of its text.
+func buildVerifyFix(lines []string) bool {
+	stage := 0
+	for _, line := range lines {
+		switch {
+		case stage == 0 && buildCall.MatchString(line):
+			stage = 1
+		case stage == 1 && verifyCall.MatchString(line):
+			stage = 2
+		case stage == 2 && fixCall.MatchString(line):
+			return true
+		}
+	}
+	return false
 }
 
 // isReal reports whether a corpus directory holds a real original (it names its source).
@@ -311,6 +350,31 @@ func TestParityCorpusRoles(t *testing.T) {
 	}
 	if rb := find(g, "readback"); rb.Role != "reviewer" || rb.RequestedPair.Effort != "high" || rb.ConfiguredPair != (Pair{}) || rb.Reason != ReasonSchemaNotStrict {
 		t.Errorf("%+v", rb)
+	}
+	// The real build->verify->fix: a size M build is the second tier and a size S build the first, both writes; the
+	// schemas refuse them, so the verification step is resolved from the original's own options.
+	g = goldenOf(t, "real-security-build-verify-fix")
+	for label, role := range map[string]string{"build:m1": "executor-t1", "build:s1": "executor"} {
+		if c := find(g, label); c.Role != role || c.Sandbox != SandboxWorkspaceWrite || c.Reason != ReasonSchemaNotStrict || c.RequestedPair.Effort != "high" {
+			t.Errorf("%+v", c)
+		}
+	}
+	verifyLine := ""
+	for _, line := range corpusLines(t, "real-security-build-verify-fix", "claude.js") {
+		if verifyCall.MatchString(line) {
+			verifyLine = line
+		}
+	}
+	opt := func(key string) string {
+		m := regexp.MustCompile(key + `: '([^']*)'`).FindStringSubmatch(verifyLine)
+		if m == nil {
+			return ""
+		}
+		return m[1]
+	}
+	r, ref := policy.ResolveFresh(CallOpts{AgentType: opt("agentType"), Model: opt("model"), Effort: opt("effort"), Isolation: opt("isolation")})
+	if ref != nil || r.Role != "reviewer" || r.RequestedPair != (Pair{"haiku", "high"}) || r.Spec.Pair != reviewer || roleSandbox(r.Role) != SandboxReadOnly {
+		t.Errorf("the verification step of the original (%s): %+v %+v", verifyLine, r, ref)
 	}
 	g = goldenOf(t, "real-wave1-judge-per-lane")
 	if len(g.Calls) < 2 {
