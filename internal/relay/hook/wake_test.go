@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 // wakeRecorder is the wake function of a served Stop: the threads it was told, in order.
@@ -129,5 +133,35 @@ func TestWakeIsOptionalForHandleControl(t *testing.T) {
 	verdict, _ := serveStop(t, "default_receipted", nil, nil)
 	if verdict["decision"] != "release" {
 		t.Fatalf("%v", verdict)
+	}
+}
+
+// End to end across the control handler and the daemon loop: the Stop of a managed child, served by
+// HandleControlWake, wakes the loop, whose next tick runs about a second later (the debounce) instead of after
+// the poll interval, which is thirty seconds here, and is told the child's thread.
+func TestWakeRunsTickWithoutPollInterval(t *testing.T) {
+	waker := daemon.NewWaker()
+	var session string
+	var told [][]string
+	tick := func(ctx context.Context) (daemon.Report, error) {
+		told = append(told, daemon.Woken(ctx))
+		if len(told) == 1 {
+			// The child's turn ends while the daemon is between ticks: its Stop reaches the control handler.
+			_, session = serveStop(t, "default_receipted", waker.Wake, nil)
+		}
+		return daemon.Report{}, nil
+	}
+	two := 2
+	began := time.Now()
+	reports, err := daemon.RunWoken(t.Context(), tick, delivery.SystemClock{}, 30, &two, nil, nil, waker)
+	took := time.Since(began)
+	if err != nil || len(reports) != 2 {
+		t.Fatalf("%d ticks, %v", len(reports), err)
+	}
+	if took > 15*time.Second {
+		t.Fatalf("the woken tick came after %v, not before the 30 s poll interval", took)
+	}
+	if len(told[0]) != 0 || !slices.Equal(told[1], []string{session}) || session == "" {
+		t.Fatalf("ticks were told %v, want none and then the child's thread %q", told, session)
 	}
 }
