@@ -141,6 +141,13 @@ func TestTraceExportContract(t *testing.T) {
 	if want := []string{"dag_agent_closures:escalation", "flow_spawn_decisions:inline", "flow_step_decisions:tier"}; !slices.Equal(sources, want) {
 		t.Errorf("decisions = %v, want %v", sources, want)
 	}
+	var journal []string
+	for _, j := range tr.Journal {
+		journal = append(journal, j.Kind+":"+j.Subject)
+	}
+	if want := []string{"delivery_deferred_busy:ev-2", "delivery_deferred_busy:ev-3", "delivery_queued:ev-1", "event_accepted:ev-1"}; !slices.Equal(journal, want) {
+		t.Errorf("relay journal rows = %v, want %v (a row of another kind is not carried)", journal, want)
+	}
 	if len(tr.Deliveries) != 3 || tr.Deliveries[1].FirstSentAt != tracetest.At(210) || tr.Deliveries[1].Sends != 2 || tr.Deliveries[2].FirstSentAt != "" {
 		t.Errorf("deliveries = %+v", tr.Deliveries)
 	}

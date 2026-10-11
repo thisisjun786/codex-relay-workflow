@@ -933,6 +933,32 @@
       ]
     }
   ],
+  "journal": [
+    {
+      "seq": 1,
+      "at": "2026-10-12T09:03:20Z",
+      "kind": "delivery_deferred_busy",
+      "subject": "ev-2"
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-12T09:03:25Z",
+      "kind": "delivery_deferred_busy",
+      "subject": "ev-3"
+    },
+    {
+      "seq": 3,
+      "at": "2026-10-12T09:03:20Z",
+      "kind": "delivery_queued",
+      "subject": "ev-1"
+    },
+    {
+      "seq": 5,
+      "at": "2026-10-12T09:03:22Z",
+      "kind": "event_accepted",
+      "subject": "ev-1"
+    }
+  ],
   "deliveries": [
     {
       "eventId": "ev-1",

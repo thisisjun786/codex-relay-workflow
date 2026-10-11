@@ -29,6 +29,7 @@ type Trace struct {
 	Schema      string       `json:"schema"`
 	Source      Source       `json:"source"`
 	Runs        []Run        `json:"runs"`
+	Journal     []JournalRow `json:"journal"`
 	Deliveries  []Delivery   `json:"deliveries"`
 	Acceptances []Acceptance `json:"acceptances"`
 	Integration []Batch      `json:"integration"`
@@ -154,6 +155,16 @@ type Decision struct {
 	FromTier        string `json:"fromTier,omitempty"`
 	ToTier          string `json:"toTier,omitempty"`
 	At              string `json:"at"`
+}
+
+// JournalRow is a row of the relay's own journal table (the audit log journal-tail reads, ordered by its seq) that belongs to
+// the lifecycle the trace follows: a delivery, a DAG or flow row, an acceptance, an acknowledgement, a verdict, a sync
+// enqueue. The row's detail is not carried.
+type JournalRow struct {
+	Seq     int64  `json:"seq"`
+	At      string `json:"at"`
+	Kind    string `json:"kind"`
+	Subject string `json:"subject,omitempty"`
 }
 
 // Delivery is the relay's delivery of one event: when it was queued, when its first counted send started, how many sends and
@@ -314,6 +325,13 @@ func Parse(data []byte) (*Trace, error) {
 func (t *Trace) Validate() error {
 	if t.Schema != Schema {
 		return fmt.Errorf("trace schema is %q, want %q", t.Schema, Schema)
+	}
+	var lastJournal int64
+	for _, j := range t.Journal {
+		if j.Seq <= lastJournal {
+			return fmt.Errorf("relay journal row %d follows row %d: rows are in strictly increasing order", j.Seq, lastJournal)
+		}
+		lastJournal = j.Seq
 	}
 	seen := map[string]bool{}
 	for i := range t.Runs {

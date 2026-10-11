@@ -107,12 +107,15 @@ func build(ctx context.Context, r reader, opts Options) (*Trace, error) {
 	if !b.tables["schema_meta"] {
 		return nil, errors.New("the file is not a relay store: it has no schema_meta table")
 	}
-	t := &Trace{Schema: Schema, Runs: []Run{}, Deliveries: []Delivery{}, Acceptances: []Acceptance{}, Integration: []Batch{}}
+	t := &Trace{Schema: Schema, Runs: []Run{}, Journal: []JournalRow{}, Deliveries: []Delivery{}, Acceptances: []Acceptance{}, Integration: []Batch{}}
 	_ = r.QueryRowContext(ctx, `SELECT value FROM schema_meta WHERE key = 'store_id'`).Scan(&t.Source.StoreID)
 	if t.Acceptances, err = b.acceptances(); err != nil {
 		return nil, err
 	}
 	if t.Integration, err = b.batches(); err != nil {
+		return nil, err
+	}
+	if t.Journal, err = b.journal(); err != nil {
 		return nil, err
 	}
 	if t.Deliveries, err = b.deliveries(); err != nil {
@@ -666,6 +669,40 @@ func (b *builder) batches() ([]Batch, error) {
 		return out[i].BatchID < out[k].BatchID
 	})
 	return out, nil
+}
+
+// journalKinds are the relay journal rows the trace carries: the kinds that begin with one of these prefixes, and the listed ones.
+var (
+	journalPrefixes = []string{"delivery\\_", "dag\\_", "flow\\_"}
+	journalListed   = []string{"event_accepted", "acknowledged", "ack_verified", "verdict_recorded", "verdict_superseded", "sync_enqueued", "reconciled"}
+)
+
+// journal reads the relay journal rows of the lifecycle the trace follows, by seq.
+func (b *builder) journal() ([]JournalRow, error) {
+	out := []JournalRow{}
+	var where []string
+	var args []any
+	for _, p := range journalPrefixes {
+		where = append(where, `kind LIKE ? ESCAPE '\'`)
+		args = append(args, p+"%")
+	}
+	where = append(where, `kind IN (`+strings.TrimSuffix(strings.Repeat("?,", len(journalListed)), ",")+`)`)
+	for _, k := range journalListed {
+		args = append(args, k)
+	}
+	rows, err := b.query([]string{"journal"}, `SELECT seq, at, kind, COALESCE(subject, '') FROM journal WHERE `+strings.Join(where, " OR ")+` ORDER BY seq`, args...)
+	if err != nil || rows == nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var j JournalRow
+		if err := rows.Scan(&j.Seq, &j.At, &j.Kind, &j.Subject); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
 }
 
 // busyDeferred and the counted states are the delivery policy's own (store.RelationshipSendsSQL): an attempt that settled as

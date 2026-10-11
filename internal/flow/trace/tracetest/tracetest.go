@@ -199,6 +199,12 @@ func nullable(s string) any {
 	return s
 }
 
+// Journal inserts a row of the relay's journal table.
+func (b *Builder) Journal(kind, subject, at string) {
+	b.T.Helper()
+	b.Exec(`INSERT INTO journal (at, kind, subject, detail) VALUES (?, ?, ?, '')`, at, kind, subject)
+}
+
 // IntegrationStage inserts a dag_integration_stages row (node "" is the batch-level row).
 func (b *Builder) IntegrationStage(batch, plan, stage, node, acceptance, detail, at string) {
 	b.T.Helper()
