@@ -423,7 +423,16 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 		}
 		for _, c := range candidates {
 			// each frozen row names the criteria set the batch verifies the candidate under (CRW-965, parent decision d2)
-			if err := s.stageRow(txCtx, in, batch, "intent", c, c.CriteriaSetDigest); err != nil {
+			frozen := c.CriteriaSetDigest
+			if c.ExecutionKind == ExecutionAgent {
+				// an agent row also names how far the acceptance's observations of this target went when the batch froze it: an observation up to that point was made before this batch could land
+				// the head, so this batch's merge commit is never its landed_sha (agentLandedSHA; CRW-1213, evaluation d4)
+				var ierr error
+				if frozen, ierr = agentIntentDetail(txCtx, s.Store.Q(txCtx), c, in.Checkout, in.IntegrationRef); ierr != nil {
+					return ierr
+				}
+			}
+			if err := s.stageRow(txCtx, in, batch, "intent", c, frozen); err != nil {
 				return err
 			}
 		}

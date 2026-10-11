@@ -235,15 +235,17 @@ func (s *Scheduler) buildInput(ctx context.Context, q store.Querier, e dag.SnapE
 // It is read from the observation that satisfied the edge, never from another row of the same acceptance.
 func landedOf(ctx context.Context, q store.Querier, observation string) (string, error) {
 	// an observation of an agent acceptance names the merge commit the batch recorded for it on the target the observation read (its repository and ref), not the tip the observation read, not the accepted
-	// head and not the merge commit of another target the same acceptance was integrated into (CRW-1213, d3 of the cancelled CRW-1003)
+	// head, not the merge commit of another target the same acceptance was integrated into (CRW-1213, d3 of the cancelled CRW-1003) and not the merge commit of a batch frozen after the observation was made
+	// (its sequence number bounds the batches that can be its landing, so a later reintegration of the same target leaves it as it was; CRW-1213, evaluation d4)
 	var acceptance, repository, baseRef string
-	if has, err := queryOne(ctx, q, "SELECT acceptance_id, repository, base_ref FROM dag_integration_observations WHERE observation_id = ?", []any{observation}, &acceptance, &repository, &baseRef); err != nil {
+	var seq int64
+	if has, err := queryOne(ctx, q, "SELECT acceptance_id, repository, base_ref, observed_seq FROM dag_integration_observations WHERE observation_id = ?", []any{observation}, &acceptance, &repository, &baseRef, &seq); err != nil {
 		return "", err
 	} else if has {
 		if _, isAgent, err := loadAgentAcceptanceByID(ctx, q, acceptance); err != nil {
 			return "", err
 		} else if isAgent {
-			if merged, err := agentLandedSHA(ctx, q, acceptance, repository, baseRef); err != nil || merged != "" {
+			if merged, err := agentLandedSHA(ctx, q, acceptance, repository, baseRef, seq); err != nil || merged != "" {
 				return merged, err
 			}
 		}

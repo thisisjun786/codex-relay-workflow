@@ -695,7 +695,7 @@ func TestAgentLandedShaIsRecordedMergeCommit(t *testing.T) {
 		t.Fatalf("observation = %+v", obs.Observations[0])
 	}
 	acceptance := k.currentAcceptance("a").AcceptanceID
-	if got, err := agentLandedSHA(ctx, q, acceptance, k.repo.path, "dev-int"); err != nil || got != mergeCommit {
+	if got, err := agentLandedSHA(ctx, q, acceptance, k.repo.path, "dev-int", obs.Observations[0].Seq); err != nil || got != mergeCommit {
 		t.Fatalf("agentLandedSHA = %q, %v; want the recorded merge commit %s", got, err, mergeCommit)
 	}
 	if got, err := landedOf(ctx, q, obs.Observations[0].ObservationID); err != nil || got != mergeCommit || got == head || got == second.NewHead {
@@ -836,5 +836,63 @@ func TestAgentLandedShaIsThatOfTheObservedTarget(t *testing.T) {
 	}
 	if got, err := landedOf(ctx, q, again.Observations[0].ObservationID); err != nil || got != mergeA {
 		t.Fatalf("landedOf the second observation of dev-int = %q, %v; want %s", got, err, mergeA)
+	}
+}
+
+// landed_sha of an observation is bound to the landing the observation proved: the same acceptance integrated into the same target again, after the target lost the first merge (a negative
+// observation in between), leaves the earlier observation on the first merge commit and gives the new observation the later one. The batch that froze the acceptance names how far the acceptance's
+// observations of that target went before it, so a batch frozen after an observation is never the landing that observation proved (CRW-1213, evaluation d4, verification round 2).
+func TestAgentLandedShaOfAnObservationOutlivesAReintegration(t *testing.T) {
+	t.Parallel()
+	spec := agentSpec{name: "a", files: fileOf("a")}
+	k := newAgentKit(t, spec)
+	k.acceptAll(spec)
+	ctx := context.Background()
+	q := k.s.Q(ctx)
+	first, err := k.integrate(t)
+	if err != nil || len(first.Merged) != 1 {
+		t.Fatalf("first integration: %+v, %v", first, err)
+	}
+	positive, err := k.observe("a")
+	if err != nil || len(positive.Observations) != 1 || !positive.Observations[0].IsAncestor {
+		t.Fatalf("first observation: %+v, %v", positive, err)
+	}
+	id := positive.Observations[0].ObservationID
+	mergeA := first.Merged[0].MergeCommit
+	if got, err := landedOf(ctx, q, id); err != nil || got != mergeA {
+		t.Fatalf("landedOf the first observation = %q, %v; want %s", got, err, mergeA)
+	}
+	// the target loses the merge: its ref is set to a history that does not contain the head
+	k.repo.git("checkout", "-q", "-B", "new-tip", "dev")
+	k.repo.write("different-tip.txt", "new target history\n")
+	k.repo.git("add", "different-tip.txt")
+	k.repo.git("commit", "-q", "-m", "replacement target tip")
+	replacement := k.repo.git("rev-parse", "HEAD")
+	k.repo.git("checkout", "-q", "dev")
+	k.repo.git("update-ref", "refs/heads/dev-int", replacement)
+	negative, err := k.observe("a")
+	if err != nil || negative.Integrated || len(negative.Observations) != 1 || negative.Observations[0].IsAncestor {
+		t.Fatalf("negative observation: %+v, %v", negative, err)
+	}
+	second, err := k.integrate(t)
+	if err != nil || len(second.Merged) != 1 {
+		t.Fatalf("second integration: %+v, %v", second, err)
+	}
+	mergeB := second.Merged[0].MergeCommit
+	if mergeB == "" || mergeA == mergeB {
+		t.Fatalf("merge commits %q and %q, want two different ones", mergeA, mergeB)
+	}
+	if got, err := landedOf(ctx, q, id); err != nil || got != mergeA {
+		t.Fatalf("landedOf the first observation after the reintegration = %q, %v; want the merge it proved %s (the later merge is %s)", got, err, mergeA, mergeB)
+	}
+	again, err := k.observe("a")
+	if err != nil || len(again.Observations) != 1 || !again.Observations[0].IsAncestor || again.Observations[0].ObservationID == id {
+		t.Fatalf("observation after the reintegration: %+v, %v", again, err)
+	}
+	if got, err := landedOf(ctx, q, again.Observations[0].ObservationID); err != nil || got != mergeB {
+		t.Fatalf("landedOf the observation after the reintegration = %q, %v; want the later merge %s", got, err, mergeB)
+	}
+	if got, err := landedOf(ctx, q, id); err != nil || got != mergeA {
+		t.Fatalf("landedOf the first observation after a later observation = %q, %v; want %s", got, err, mergeA)
 	}
 }

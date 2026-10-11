@@ -519,24 +519,54 @@ func (s *Scheduler) agentNodeIntegrated(ctx context.Context, q store.Querier, sn
 	return true, targets, nil
 }
 
-// agentLandedSHA is the commit an agent acceptance landed as on one target: the merge commit the batch that moved that target recorded for it (dag_integration_batches.merged_json, the batch whose
-// repository and integration_ref are the observation's repository and base_ref) when the batch merged it, else "" (a head the branch already contained was marked, not merged). The accepted head is not the
-// landed commit when the relay merged the head into the branch: the merge commit is (CRW-1003 d3, the landed_sha attribution). An acceptance integrated into several targets has one merge commit per
-// target, so the target selects it; of several marked batches of the same target the latest one decides.
-func agentLandedSHA(ctx context.Context, q store.Querier, acceptanceID, repository, baseRef string) (string, error) {
+// agentIntentDetail is the detail of the node-level intent row an agent candidate is frozen with: the criteria set the batch verifies it under (as a relationship row names it) and the highest observed_seq of
+// the acceptance's observations of the batch's target (the checkout and integration ref the batch row will name) at the moment the batch froze it, 0 when there is none. Observation sequence numbers grow
+// per acceptance and target, so every observation the batch could have landed the head for has a higher one: that is how agentLandedSHA binds an observation to the landing it proved.
+func agentIntentDetail(ctx context.Context, q store.Querier, c Candidate, repository, integrationRef string) (string, error) {
+	var seq sql.NullInt64
+	if err := q.QueryRowContext(ctx, "SELECT MAX(observed_seq) FROM dag_integration_observations WHERE acceptance_id = ? AND repository = ? AND base_ref = ?", c.AcceptanceID, repository, integrationRef).Scan(&seq); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(agentIntent{CriteriaSetDigest: c.CriteriaSetDigest, ObservedSeqBefore: seq.Int64})
+	return string(raw), err
+}
+
+// agentIntent is the detail of an agent intent row (agentIntentDetail).
+type agentIntent struct {
+	CriteriaSetDigest string `json:"criteria_set_digest"`
+	ObservedSeqBefore int64  `json:"observed_seq_before"`
+}
+
+// agentLandedSHA is the commit an agent acceptance landed as on one target, for the observation with sequence number seq on that target: the merge commit a batch that moved that target recorded for it
+// (dag_integration_batches.merged_json, the batch whose repository and integration_ref are the observation's repository and base_ref) when the batch merged it, else "" (a head the branch already contained
+// was marked, not merged). The accepted head is not the landed commit when the relay merged the head into the branch: the merge commit is (CRW-1003 d3, the landed_sha attribution). An acceptance
+// integrated into several targets has one merge commit per target, so the target selects it. Of several marked batches of the same target, the one that decides is the latest batch frozen BEFORE the
+// observation: its intent row names the highest sequence number of the acceptance's observations of that target when it froze the acceptance (agentIntentDetail), and only a batch whose number is below seq
+// can be the landing the observation proved. A batch frozen later (the target lost the merge and the acceptance was integrated again) has a number at or above seq, so it never changes the answer for an
+// observation already made; the observation made after it answers the new merge commit (CRW-1213, evaluation d4). An intent row whose detail names no number (none of this build) does not bound the batch.
+func agentLandedSHA(ctx context.Context, q store.Querier, acceptanceID, repository, baseRef string, seq int64) (string, error) {
 	has, err := tableExists(ctx, q, "dag_agent_integration_stages")
 	if err != nil || !has {
 		return "", err
 	}
-	rows, err := q.QueryContext(ctx, "SELECT b.merged_json FROM dag_agent_integration_stages k JOIN dag_integration_batches b ON b.batch_id = k.batch_id WHERE k.acceptance_id = ? AND k.stage = 'marked' AND b.repository = ? AND b.integration_ref = ? ORDER BY k.rowid DESC", acceptanceID, repository, baseRef)
+	rows, err := q.QueryContext(ctx, "SELECT b.merged_json, COALESCE((SELECT i.detail FROM dag_agent_integration_stages i WHERE i.batch_id = k.batch_id AND i.acceptance_id = k.acceptance_id AND i.stage = 'intent' ORDER BY i.rowid LIMIT 1), '')"+
+		" FROM dag_agent_integration_stages k JOIN dag_integration_batches b ON b.batch_id = k.batch_id"+
+		" WHERE k.acceptance_id = ? AND k.stage = 'marked' AND b.repository = ? AND b.integration_ref = ? ORDER BY k.rowid DESC", acceptanceID, repository, baseRef)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
+		var raw, intent string
+		if err := rows.Scan(&raw, &intent); err != nil {
 			return "", err
+		}
+		var frozen struct {
+			ObservedSeqBefore *int64 `json:"observed_seq_before"`
+		}
+		if json.Unmarshal([]byte(intent), &frozen) == nil && frozen.ObservedSeqBefore != nil && *frozen.ObservedSeqBefore >= seq {
+			// the batch froze the acceptance after this observation was made: it is a later landing
+			continue
 		}
 		var merged []struct{ AcceptanceID, MergeCommit string }
 		if json.Unmarshal([]byte(raw), &merged) != nil {
