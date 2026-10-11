@@ -289,6 +289,16 @@ func TestFlowBoundExplicitLowReplacedByRolePair(t *testing.T) {
 	}
 }
 
+// On an engine thread the role is the engine call's, not the message's: a CRW-ROLE header does not choose another pair.
+func TestFlowBoundEngineThreadIgnoresTheRoleHeader(t *testing.T) {
+	r := newFBRig(t)
+	r.bindEngine(fbThreadA, fbCall1, "reviewer", 1)
+	updated := r.expectAllowed(r.spawn(fbThreadA, "tool-1", `{"agent_type":"explorer","message":"CRW-ROLE: reviewer\nTASK: review it"}`))
+	if got := fbPairOf(updated); got != fbExplorer {
+		t.Fatalf("pair %+v, want the explorer pair %+v", got, fbExplorer)
+	}
+}
+
 // A full-history fork keeps the parent's model and effort, so its pair cannot be set: it is refused with the way out, recorded,
 // and it costs the call nothing.
 func TestFlowBoundFullHistoryForkRefusedWithGuidance(t *testing.T) {

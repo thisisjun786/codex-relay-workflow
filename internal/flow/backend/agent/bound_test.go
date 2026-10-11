@@ -11,11 +11,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
+
+var _ ops.NativeHost = (*agent.Backend)(nil)
 
 // F14 (CRW-1207): the run tells the spawn hook which threads are its own. Before every turn/start of an engine thread it appends a
 // line {run_id, thread_id, kind engine, call_id, role, nativeAllowance, helperPairs{explorer}, policyDigest} to the thread's file in
@@ -285,5 +290,68 @@ func TestOrchestratorBindingOpensAndCloses(t *testing.T) {
 	// closing again, or a run that never opened one, writes nothing
 	if err := e.backend.CloseOrchestrator(context.Background()); err != nil || len(boundLines(t, orchestrator)) != 2 {
 		t.Fatalf("second close: %v", err)
+	}
+}
+
+// The backend is the host of the run's import: the CollabAgentToolCall items of a turn and the configuration of the thread a
+// native spawn created are read from the host by their ids, and an item the hook never decided is unbound_spawn.
+func TestBackendReadsTheSpawnsOfATurnForTheImport(t *testing.T) {
+	for _, c := range []struct {
+		name, effort, decision string
+		escalates              int
+	}{
+		{"receiver reads the applied pair", "high", ops.ObservationObserved, 0},
+		{"receiver reads another effort", "low", ops.ObservationPairMismatch, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, withBound(nil))
+			applied := e.policy.Roles["explorer"].Pair
+			receiver := e.threads.Seed(fakehost.SeedThread{Model: applied.Model, Effort: c.effort})
+			e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
+				return fakehost.TurnPlan{Message: passMessage, Items: []map[string]any{
+					{"type": "collabAgentToolCall", "id": "tool-1", "tool": "spawnAgent", "status": "completed", "senderThreadId": r.ThreadID,
+						"receiverThreadIds": []any{receiver}, "agentsStates": map[string]any{}, "model": applied.Model, "reasoningEffort": applied.Effort, "prompt": nil},
+					{"type": "collabAgentToolCall", "id": "tool-ghost", "tool": "spawnAgent", "status": "completed", "senderThreadId": r.ThreadID,
+						"receiverThreadIds": []any{}, "agentsStates": map[string]any{}, "model": nil, "reasoningEffort": nil, "prompt": nil},
+				}}
+			})
+			res := e.run(`const S = ` + verdictSchema + `
+const b = await agent.call('build it', { agentType: 'executor', node: 'n1', schema: S, label: 'build' })
+return b.status`)
+			if got := value[string](t, res); got != "completed" {
+				t.Fatal(got)
+			}
+			call := calls(res)["build"]
+			dir := boundDir(t)
+			// what the hook records for the one spawn it decided
+			if err := bound.AppendDecision(dir, bound.Decision{RunID: e.runID, ThreadID: call.Meta.ThreadID, ThreadKind: bound.KindEngine, CallID: call.CallID, ToolUseID: "tool-1",
+				Decision: bound.DecisionAllowed, HelperRole: bound.HelperExplorer, RequestedModel: "someone-elses", RequestedEffort: "low", AppliedModel: applied.Model, AppliedEffort: applied.Effort}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := ops.ImportNativeSpawns(context.Background(), e.backend, dir,
+				ops.NativeTurn{RunID: e.runID, ThreadID: call.Meta.ThreadID, CallID: call.CallID, TurnID: call.Meta.TurnIDs[0], Node: "n1"}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			byTool := map[string]ops.SpawnRow{}
+			for _, r := range got.Rows {
+				if r.Kind == ops.NativeKindObservation {
+					byTool[r.ToolUseID] = r
+				}
+			}
+			if r := byTool["tool-1"]; r.Decision != c.decision || r.RequestedEffort != "low" || r.AppliedEffort != applied.Effort {
+				t.Fatalf("tool-1: %+v", r)
+			}
+			if r := byTool["tool-ghost"]; r.Decision != ops.ObservationUnbound {
+				t.Fatalf("tool-ghost: %+v", r)
+			}
+			reasons := map[string]int{}
+			for _, esc := range got.Escalations {
+				reasons[esc.Reason]++
+			}
+			if reasons[ops.ObservationUnbound] != 1 || reasons[ops.ObservationPairMismatch] != c.escalates {
+				t.Fatalf("escalations %v", reasons)
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -136,4 +137,35 @@ func (b *Backend) CloseOrchestrator(ctx context.Context) error {
 	}
 	b.mu.Unlock()
 	return nil
+}
+
+// TurnItems reads the items of a turn by its recorded id, in full: the CollabAgentToolCall items among them are what the run
+// joins with the hook's ledger (ops.ImportNativeSpawns). It is the ops.NativeHost of the import.
+func (b *Backend) TurnItems(ctx context.Context, threadID, turnID string) ([]json.RawMessage, error) {
+	readings, err := b.client.Bus().ReconcileTurns(ctx, threadID, []string{turnID})
+	if err != nil {
+		return nil, requestError(err)
+	}
+	r := readings[0]
+	switch {
+	case !r.Found:
+		return nil, fmt.Errorf("the host lists no turn %s", turnID)
+	case !r.Readable:
+		return nil, &UnreadableTurnError{ThreadID: threadID, TurnID: turnID, Cause: r.ReadError}
+	}
+	return r.Items, nil
+}
+
+// ThreadConfig is thread/read of a thread: Thread.model and Thread.reasoningEffort, nil for a null. It is the configured pair of a
+// helper a native spawn created, not per-turn telemetry. includeTurns is never sent.
+func (b *Backend) ThreadConfig(ctx context.Context, threadID string) (model, effort *string, err error) {
+	raw, err := b.client.Call(ctx, "thread/read", map[string]any{"threadId": threadID, "includeTurns": false})
+	if err != nil {
+		return nil, nil, requestError(err)
+	}
+	read, err := decodeThread(raw, "thread/read")
+	if err != nil {
+		return nil, nil, err
+	}
+	return read.Model, read.ReasoningEffort, nil
 }
