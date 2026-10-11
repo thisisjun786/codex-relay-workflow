@@ -43,7 +43,7 @@ func textNamesShellTables(src string) bool { return reShellTables.MatchString(sr
 // readings that do not walk a body.
 func plainForExitProof(file *syntax.File, lookup func(string) (string, bool)) bool {
 	if lookup != nil {
-		for _, name := range []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "BASH_FUNC_exit%%", "BASH_FUNC_cd%%", "CDPATH"} {
+		for _, name := range StartupEnvNames {
 			if v, ok := lookup(name); ok && v != "" {
 				return false
 			}
@@ -79,6 +79,39 @@ func plainForExitProof(file *syntax.File, lookup func(string) (string, bool)) bo
 		return plain
 	})
 	return plain
+}
+
+// StartupEnvNames are the variables of the environment a text inherits that a shell reads before it runs a script, and that therefore may
+// define a function named exit or cd, or set an option that changes them: BASH_ENV and ENV name a startup file (bash and sh), ZDOTDIR the
+// directory of the .zshenv that zsh reads, SHELLOPTS and BASHOPTS set options, BASH_FUNC_exit%% and BASH_FUNC_cd%% are exported
+// functions, and CDPATH changes where a bare cd lands. A non-empty value of one of them withdraws the proof of `cd <literal> || exit
+// <digits>` (CRW-1165); an empty one is unset for the shell.
+var StartupEnvNames = []string{"BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "BASH_FUNC_exit%%", "BASH_FUNC_cd%%", "CDPATH"}
+
+// reStartupName is a name of a variable that a shell reads at start, as a text spells it (BASH_FUNC_ is the prefix of every exported function).
+var reStartupName = regexp.MustCompile(`\b(BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS)\b|BASH_FUNC_`)
+
+// textNamesStartupVar is whether a text holds the name of a startup variable (reStartupName). A text can set such a variable in more
+// forms than a plain assignment (${BASH_ENV:=x}, for BASH_ENV in, read BASH_ENV, an arithmetic assignment, getopts), and a name built from
+// known parts (N=BASH_; N+=ENV; printf -v "$N") is a word the builtins that assign see: so the name in the text, or in a word a builtin
+// that assigns variables is given, is enough to withdraw the proof (CRW-1165).
+func textNamesStartupVar(s string) bool { return reStartupName.MatchString(s) }
+
+// noteAssignedNames records what the words of a builtin that assigns variables (export, declare, read, printf -v, ...) may name that the
+// text does not spell: a startup variable, which withdraws the proof for the scripts the text runs, or PYTHONPATH, which -P keeps
+// (CRW-1165, CRW-1187).
+func (w *walker) noteAssignedNames(words []Word) {
+	for _, a := range words {
+		if !a.Known {
+			continue
+		}
+		if textNamesStartupVar(a.Value) {
+			w.startupSet = true
+		}
+		if strings.Contains(a.Value, "PYTHONPATH") {
+			w.pythonPathNamed = true
+		}
+	}
 }
 
 // declFunctionFlag is whether a word of a declaration is an option word that holds f (-f, -fx, -nf).

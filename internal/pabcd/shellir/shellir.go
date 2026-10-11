@@ -325,6 +325,10 @@ type walker struct {
 	// pythonPathNamed is whether a text the walk read spells PYTHONPATH (CRW-1187). moduleRuns are the module runs of the text whose directory
 	// was checked, and pipeSeq numbers its pipelines (Context.pipeID).
 	pythonPathNamed bool
+	// startupSet is whether the text names a variable a shell reads at start (BASH_ENV, ENV, ZDOTDIR, SHELLOPTS, BASHOPTS, an exported
+	// function): by its spelling, or in a word a builtin that assigns variables is given. A script the text runs may then start with a
+	// function named exit from a file, so the scripts of the text get no proof of `cd <literal> || exit <digits>` (CRW-1165).
+	startupSet bool
 	// exitProof is whether the text leaves exit and cd alone, so that `cd <literal> || exit <digits>` proves the cd (CRW-1165).
 	exitProof bool
 	// exitUsed is whether the walk took a cd as proven by the form (cdOrExit).
@@ -876,6 +880,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if mayNamePycachePrefix([]Word{v}) || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "i") {
 				w.prefixUnknown = true
 			}
+			w.noteAssignedNames([]Word{v})
 			// A word that names a variable by a value built at run time (export "${n}PATH=/x") may name CDPATH.
 			if mentionsCdpath([]Word{v}) {
 				st.cdpath = true
@@ -897,6 +902,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if v.Known && textNamesPycachePrefix(v.Value) {
 				w.prefixUnknown = true // a name reference to it, built from parts (declare -n r=${N}PREFIX)
 			}
+			w.noteAssignedNames([]Word{v}) // a name reference to a startup variable (declare -n r=$N)
 		default:
 			asg.Value = Word{Reason: "declared without a value"}
 		}
@@ -1282,6 +1288,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
 		}
+		w.noteAssignedNames(assignedNames(name, words[1:]))
 		if mentionsCdpath(words[1:]) {
 			st.cdpath = true
 		}
@@ -1462,6 +1469,8 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 		st.cdpath = true
 	}
 	w.prefixNamed = w.prefixNamed || textNamesPycachePrefix(text)
+	w.startupSet = w.startupSet || textNamesStartupVar(text)
+	w.pythonPathNamed = w.pythonPathNamed || strings.Contains(text, "PYTHONPATH")
 	return w.stmts(file.Stmts, st, ctx)
 }
 

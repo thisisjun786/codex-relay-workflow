@@ -57,7 +57,7 @@ type ScriptOptions struct {
 	// ExitTainted is Exec.ExitTainted of the record that runs the text: the text that ran it did not leave exit and cd alone, so a
 	// function or option it made may be inherited, and the text is not given the proof of `cd <literal> || exit <digits>`.
 	ExitTainted bool
-	// Startup answers the variables a shell reads at start (BASH_ENV, ENV, SHELLOPTS, BASHOPTS, BASH_FUNC_exit%%, BASH_FUNC_cd%%, CDPATH)
+	// Startup answers the variables a shell reads at start (StartupEnvNames: BASH_ENV, ENV, ZDOTDIR, SHELLOPTS, BASHOPTS, BASH_FUNC_exit%%, BASH_FUNC_cd%%, CDPATH)
 	// from the environment the command inherits, for a reader that is given no environment otherwise. nil: not known, nothing is held
 	// against the proof for them (the other variables stay unknown either way).
 	Startup func(string) (string, bool)
@@ -108,26 +108,28 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 	st.cdpath = st.cdpath || textNamesCdpath(src)
 	w.prefixNamed = textNamesPycachePrefix(src)
 	w.pythonPathNamed = strings.Contains(src, "PYTHONPATH")
+	w.startupSet = textNamesStartupVar(src)
 	startup := lookup
 	if st.startup != nil {
 		startup = st.startup
 	}
-	w.exitProof = st.proveCD && !st.exitTainted && !st.noExitProof && !textNamesShellTables(src) && plainForExitProof(file, startup)
+	w.exitProof = st.proveCD && !st.exitTainted && !st.noExitProof && !w.startupSet && !textNamesShellTables(src) && plainForExitProof(file, startup)
 	if err := w.stmts(file.Stmts, st, Context{top: true}); err != nil {
 		return Result{}, err
 	}
 	if err := w.writersBesideModules(); err != nil {
 		return Result{}, err
 	}
-	if w.prefixUnknown {
-		// A name the text does not spell may be BASH_ENV, ENV or another startup variable (printf -v "$N$M" with N=BASH_ and M=ENV): the
+	if w.prefixUnknown || w.startupSet {
+		// A name the text does not spell may be BASH_ENV, ENV or another startup variable (printf -v "$N$M" with N=BASH_ and M=ENV), or a text names
+		// one in a form that is not a plain assignment (${BASH_ENV:=x}, read BASH_ENV, a name built from known parts): the
 		// scripts the text runs may start with an exit function from a file, so none of them is given the proof, wherever the
 		// assignment stands and whether or not the text used the proof itself (CRW-1165).
 		for i := range w.out {
 			w.out[i].ExitTainted = true
 		}
 	}
-	if w.exitUsed && w.prefixUnknown {
+	if w.exitUsed && (w.prefixUnknown || w.startupSet) {
 		// The form was taken as proof, and the text assigns variables by names it does not spell (read "$N", printf -v "$N", export
 		// "$N"): one of them may be a table that defines a function or an alias named exit (zsh functions, aliases), which the walk cannot
 		// know. Read the text again without the proof (CRW-1165).

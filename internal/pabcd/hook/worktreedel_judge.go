@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
@@ -45,10 +46,9 @@ func worktreeDelRead(command, cwd string, cdpath, tainted bool) (shellir.Result,
 }
 
 // worktreeDelStartupEnv answers the variables a shell reads at start from the hook's own environment, which the command it judges
-// inherits: a startup file, a shell option, an exported function named exit or cd, or a CDPATH. Every other variable is unknown.
+// inherits: a startup file (BASH_ENV, ENV, and ZDOTDIR for zsh), a shell option, an exported function named exit or cd, or a CDPATH. Every other variable is unknown.
 func worktreeDelStartupEnv(name string) (string, bool) {
-	switch name {
-	case "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "BASH_FUNC_exit%%", "BASH_FUNC_cd%%", "CDPATH":
+	if slices.Contains(shellir.StartupEnvNames, name) {
 		return os.LookupEnv(name)
 	}
 	return "", false
