@@ -105,9 +105,9 @@ func TestRelayHelperKeepsRelativePathsOfTheCaller(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("code %d err %v", code, err)
 	}
-	want, _ := filepath.Abs(".")
+	want, _ := os.Getwd()
 	got := strings.Fields(string(stdout))
-	expect := []string{"relay", "--state", state, "--socket", filepath.Join(want, "app.sock"), "settings-record", "--cwd", filepath.Join(want, "work"), "--settings", "@" + filepath.Join(want, "s.json"), "--task", "t"}
+	expect := []string{"relay", "--state", state, "--socket", want + "/./app.sock", "settings-record", "--cwd", want + "/work", "--settings", "@" + want + "/s.json", "--task", "t"}
 	if strings.Join(got, "\n") != strings.Join(expect, "\n") {
 		t.Fatalf("argv %q, want %q", got, expect)
 	}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // relayHelperStderrLimit is how much of a relay command's stderr an error carries: the
@@ -258,6 +260,10 @@ var relayHelperPathFlags = map[string]bool{"--socket": true, "--cwd": true, "--b
 // directory, so a command that runs in the state directory instead reads the paths the caller meant.
 func relayHelperAbsolute(argv []string) []string {
 	out := append([]string(nil), argv...)
+	wd, err := os.Getwd()
+	if err != nil {
+		return out
+	}
 	for i := 0; i+1 < len(out); i++ {
 		if !relayHelperPathFlags[out[i]] {
 			continue
@@ -273,9 +279,7 @@ func relayHelperAbsolute(argv []string) []string {
 		if value == "" || filepath.IsAbs(value) {
 			continue
 		}
-		if abs, err := filepath.Abs(value); err == nil {
-			out[i+1] = prefix + abs
-		}
+		out[i+1] = prefix + crwconfig.JoinRoot(wd, value)
 	}
 	return out
 }
