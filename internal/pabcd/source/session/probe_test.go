@@ -93,7 +93,7 @@ func TestNativeProbeFailureIsUnknownNotOutsideARepository(t *testing.T) {
 			gitIn(t, main, "worktree", "add", "-q", "-b", "work", wt)
 			fail := func() {
 				t.Helper()
-				nativeGit = func(string, ...string) (string, error) { return "", failure }
+				nativeGit = func(prober, string, ...string) (string, error) { return "", failure }
 				t.Cleanup(func() { nativeGit = git })
 			}
 			restore := func() { nativeGit = git }

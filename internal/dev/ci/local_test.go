@@ -57,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@0000000000000000000000000000000000000000 # v4
+      - uses: actions/setup-node@0000000000000000000000000000000000000000 # v4
         with:
           node-version: '24.20.0'
       - name: Say hello

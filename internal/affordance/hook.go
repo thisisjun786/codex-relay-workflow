@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	pabcdhook "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -108,9 +109,31 @@ func RunPostCompactAffordance(raw string) string {
 	return ""
 }
 
-// RunUserPromptAffordance consumes only a regular marker. Concurrent prompts
-// have one unlink winner, and a child cannot consume its parent's queued hint.
+// RoleReader answers what a verified registry read says the hook's session is (harness.RegistryPromptRole in production). It is
+// read-only and answers pabcdhook.PromptRoleUnknown for anything it cannot verify; a nil reader is an unknown role.
+type RoleReader func(cwd, sessionID string) pabcdhook.PromptRole
+
+// coordinates is whether the registry verifies the session as a coordinating seat (a project parent or a supervisor), whose hooks
+// carry no loop pointer (CRW-386, decision 6: a non-implementing seat does not run PABCD). The registry decides the role of any
+// session id the payload names, as it does for Stop and UserPromptSubmit: validSessionID is the rule for printing an id into a
+// pointer, not for whether the id is a session. A missing id, no reader and every role but parent and supervisor keep the
+// oracle's pointers, and so does a seat that took an explicit request to implement a task in this session
+// (pabcdhook.ImplementsHere): it is that task's implementer, and the state is read only for a seat the registry verified.
+func (r RoleReader) coordinates(cwd, sessionID string) bool {
+	return r != nil && sessionID != "" && r(cwd, sessionID).Coordinates() && !pabcdhook.ImplementsHere(cwd, sessionID)
+}
+
+// RunUserPromptAffordance is RunUserPromptAffordanceWithRole with no role reader: every session gets the whole restore.
 func RunUserPromptAffordance(raw string, env host.LookupEnv) string {
+	return RunUserPromptAffordanceWithRole(raw, env, nil)
+}
+
+// RunUserPromptAffordanceWithRole consumes only a regular marker. Concurrent prompts
+// have one unlink winner, and a child cannot consume its parent's queued hint. The restore after a compaction omits the loop
+// pointer for a session the registry verifies as a coordinating seat (CRW-386): without that, SessionStart would withhold the
+// pointer from a parent and the first prompt after a compaction would bring it back. The role is read only once the marker is
+// consumed, so a prompt with no marker reads nothing.
+func RunUserPromptAffordanceWithRole(raw string, env host.LookupEnv, role RoleReader) string {
 	path := RecoveryPath(raw, "UserPromptSubmit", false)
 	if path == "" {
 		return ""
@@ -119,17 +142,30 @@ func RunUserPromptAffordance(raw string, env host.LookupEnv) string {
 	if err != nil || !st.Mode().IsRegular() || os.Remove(path) != nil {
 		return ""
 	}
-	return harness.ContextOutputSections("UserPromptSubmit", []harness.ContextSection{
-		{Text: RenderBackgroundTerminalAffordance()}, {Text: RenderLoopAffordance(env), Required: true},
-		{Text: RenderStackedPrAffordance()}, {Text: RenderQuestionAffordance()},
-	})
+	sections := []harness.ContextSection{{Text: RenderBackgroundTerminalAffordance()}}
+	p := object(raw)
+	cwd, _ := p["cwd"].(string)
+	sid, _ := p["session_id"].(string)
+	if !role.coordinates(cwd, sid) {
+		sections = append(sections, harness.ContextSection{Text: RenderLoopAffordance(env), Required: true})
+	}
+	sections = append(sections, harness.ContextSection{Text: RenderStackedPrAffordance()}, harness.ContextSection{Text: RenderQuestionAffordance()})
+	return harness.ContextOutputSections("UserPromptSubmit", sections)
 }
 
 // RunMapAffordanceSessionStart keeps unconditional pointers on malformed stdin or a failed walk. Only this handler trims before
 // JSON.parse. It renders the answer and records nothing: the hook that writes the answer records it (runHook), so guidance
-// counts as given only once it reached the host (see mapAffordanceSessionStart).
+// counts as given only once it reached the host (see mapAffordanceSessionStart). No role reader: every session gets every pointer.
 func RunMapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) string {
-	answer, _ := mapAffordanceSessionStart(raw, fallbackCwd, env)
+	answer, _ := mapAffordanceSessionStart(raw, fallbackCwd, env, nil)
+	return answer
+}
+
+// RunMapAffordanceSessionStartWithRole is RunMapAffordanceSessionStart with the registry role reader (CRW-386): a session the
+// registry verifies as a project parent or a supervisor gets no loop pointer, which tells an implementer how to arm and run a
+// loop. Malformed stdin has no session, so it keeps every pointer.
+func RunMapAffordanceSessionStartWithRole(raw, fallbackCwd string, env host.LookupEnv, role RoleReader) string {
+	answer, _ := mapAffordanceSessionStart(raw, fallbackCwd, env, role)
 	return answer
 }
 
@@ -142,7 +178,7 @@ const mapAffordanceLeg = "map-affordance"
 // name the command and the workspace size), so a resume of a session that was not given them, or given others, gets them whole. A
 // missing or unknown source always gets the whole list, except the compact start that follows, in the same turn, a resume that gave the
 // whole list (CRW-1180): that one adds nothing, once.
-func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (string, func(written bool)) {
+func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv, role RoleReader) (string, func(written bool)) {
 	cwd, sid, source, transcript := fallbackCwd, "", "", ""
 	if p := object(text.Trim(raw)); p != nil {
 		if s, ok := p["cwd"].(string); ok && s != "" {
@@ -166,9 +202,14 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv) (str
 		}
 		return env(k)
 	}
+	// CRW-386: a verified coordinating seat (project parent, supervisor) is given no loop pointer, in the list and in its record.
+	coordinating := role.coordinates(cwd, sid)
 	fixed := func(env host.LookupEnv) []string {
-		return []string{RenderSkillSearchAffordance(env), RenderKwriteAffordance(), RenderLoopAffordance(env),
-			RenderStackedPrAffordance(), RenderBackgroundTerminalAffordance(), RenderQuestionAffordance()}
+		list := []string{RenderSkillSearchAffordance(env), RenderKwriteAffordance()}
+		if !coordinating {
+			list = append(list, RenderLoopAffordance(env))
+		}
+		return append(list, RenderStackedPrAffordance(), RenderBackgroundTerminalAffordance(), RenderQuestionAffordance())
 	}
 	pointers, identity := fixed(env), fixed(words)
 	if count := CountSourceFiles(cwd); count >= MapAffordanceMinFiles {
@@ -261,7 +302,7 @@ func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 	switch event {
 	case "session-start":
 		var record func(written bool)
-		answer, record = mapAffordanceSessionStart(raw, cwd, env)
+		answer, record = mapAffordanceSessionStart(raw, cwd, env, harness.RegistryPromptRole)
 		n, err := io.WriteString(out, answer)
 		// Only an answer written whole counts as given: a failed or short write leaves no record, so the session's next resume gets
 		// the whole list. A cancelled hook has no effects at all.
@@ -278,7 +319,7 @@ func runHook(ctx context.Context, event string, in io.Reader, out io.Writer, env
 			turn, _ := p["turn_id"].(string)
 			guidancerecord.NoteUserPrompt(env, session, turn)
 		}
-		answer = RunUserPromptAffordance(raw, env)
+		answer = RunUserPromptAffordanceWithRole(raw, env, harness.RegistryPromptRole)
 	}
 	if answer != "" {
 		_, _ = io.WriteString(out, answer)

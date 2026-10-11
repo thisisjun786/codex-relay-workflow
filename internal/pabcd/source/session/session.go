@@ -11,6 +11,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -84,18 +85,32 @@ const probeOutputLimit = 1 << 20
 // stdout. The oracle removed four routing variables and no more, so an inherited GIT_OBJECT_DIRECTORY that does not
 // exist failed every probe of a valid worktree (CRW-1135). Messages are in the C locale so NotARepository can read
 // them. A failure to start, a non-zero exit, a signal, the time limit and too much output are all errors.
-func git(cwd string, args ...string) (string, error) {
-	out, err := source.Probe(cwd, source.ProbeOptions{Limit: probeOutputLimit, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}}, args...)
+//
+// A prober with no context is the command-line verbs' probe (source.Probe). One with a context owns the probe
+// (source.ProbeContext): git runs in a process group of its own that is killed whole when the context ends, and the call returns
+// once git is reaped.
+func git(p prober, cwd string, args ...string) (string, error) {
+	o := source.ProbeOptions{Limit: probeOutputLimit, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}}
+	var out []byte
+	var err error
+	if p.ctx != nil {
+		out, err = source.ProbeContext(p.ctx, cwd, o, args...)
+	} else {
+		out, err = source.Probe(cwd, o, args...)
+	}
 	return text.Trim(jsnode.DecodeUTF8(out)), err
 }
 
+// prober is how one resolution runs git: the zero value as the command-line verbs always have, with a ctx owned by it.
+type prober struct{ ctx context.Context }
+
 // gitIdentity is the worktree identity of cwd, or an error: a repository is mandatory on the source side.
-func gitIdentity(cwd string) (worktree, error) { return gitIdentityWith(git, cwd) }
+func gitIdentity(p prober, cwd string) (worktree, error) { return gitIdentityWith(p, git, cwd) }
 
 // nativeGit is the git the native side's probes run; a test replaces it to fail the native probes alone.
 var nativeGit = git
 
-func gitIdentityWith(run func(string, ...string) (string, error), cwd string) (worktree, error) {
+func gitIdentityWith(p prober, run func(prober, string, ...string) (string, error), cwd string) (worktree, error) {
 	var w worktree
 	for _, probe := range []struct {
 		into *string
@@ -105,7 +120,7 @@ func gitIdentityWith(run func(string, ...string) (string, error), cwd string) (w
 		{&w.commonDir, []string{"rev-parse", "--path-format=absolute", "--git-common-dir"}},
 		{&w.gitDir, []string{"rev-parse", "--absolute-git-dir"}},
 	} {
-		out, err := run(cwd, probe.args...)
+		out, err := run(p, cwd, probe.args...)
 		if err == nil {
 			*probe.into, err = canonical(out)
 		}
@@ -135,11 +150,11 @@ const unknownNative = refusal("Cannot tell whether the session's working directo
 // on git's search path was unreadable; any other failure of that probe is unknownNative. When the probe succeeds,
 // the identity's first error is returned, so a repository whose identity cannot be resolved (a bare one) is not
 // taken for no repository.
-func nativeGitIdentity(cwd string) (w worktree, repo nativeRepo, err error) {
-	if w, err = gitIdentityWith(nativeGit, cwd); err == nil {
+func nativeGitIdentity(p prober, cwd string) (w worktree, repo nativeRepo, err error) {
+	if w, err = gitIdentityWith(p, nativeGit, cwd); err == nil {
 		return w, nativeInRepo, nil
 	}
-	if _, probeErr := nativeGit(cwd, "rev-parse", "--git-dir"); probeErr != nil {
+	if _, probeErr := nativeGit(p, cwd, "rev-parse", "--git-dir"); probeErr != nil {
 		if source.NotARepository(probeErr) && !unreadableGitMarker(cwd) {
 			return worktree{}, nativeOutside, nil
 		}
@@ -311,7 +326,14 @@ func readBinding(cwd, sessionID string) (*Binding, error) {
 // Resolve is the root the session's source work happens in: its binding's worktree, or cwd itself when it has none (the
 // legacy behaviour). A broken binding never falls back to cwd: it is an error, and so is a missing binding for a worktree
 // the session's state pinned, or a source worktree that moved or whose repository identity changed.
-func Resolve(cwd, sessionID string) (string, error) {
+func Resolve(cwd, sessionID string) (string, error) { return resolve(prober{}, cwd, sessionID) }
+
+// ResolveContext is Resolve with the git probes owned by ctx (see git): none outlives the call once ctx has ended.
+func ResolveContext(ctx context.Context, cwd, sessionID string) (string, error) {
+	return resolve(prober{ctx}, cwd, sessionID)
+}
+
+func resolve(p prober, cwd, sessionID string) (string, error) {
 	binding, err := readBinding(cwd, sessionID)
 	if err != nil {
 		return "", err
@@ -329,11 +351,11 @@ func Resolve(cwd, sessionID string) (string, error) {
 	if pinned != "" && binding.SourceRoot != pinned {
 		return "", refusal("Source binding differs from the session's pinned worktree.")
 	}
-	native, repo, err := nativeGitIdentity(cwd)
+	native, repo, err := nativeGitIdentity(p, cwd)
 	if err != nil {
 		return "", err
 	}
-	source, err := gitIdentity(binding.SourceRoot)
+	source, err := gitIdentity(p, binding.SourceRoot)
 	if err != nil {
 		return "", err
 	}
@@ -363,11 +385,11 @@ func Bind(cwd, sessionID, target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	native, repo, err := nativeGitIdentity(cwd)
+	native, repo, err := nativeGitIdentity(prober{}, cwd)
 	if err != nil {
 		return "", err
 	}
-	source, err := gitIdentity(sourceRoot)
+	source, err := gitIdentity(prober{}, sourceRoot)
 	if err != nil {
 		return "", err
 	}

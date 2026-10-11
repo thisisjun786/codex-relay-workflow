@@ -155,6 +155,7 @@ func (s *refreshScenario) pluginVersionMerge(t *testing.T, expectConflict bool, 
 // that merged cleanly from two parents that changed different skill files and whose head re-recorded
 // only the derived version is accepted, and the record names the built-in rule.
 func TestBaseRefreshPluginVersionCleanMerge(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenario(t, false)
 	head := s.pluginVersionMerge(t, false, nil)
 	got, err := s.record()
@@ -166,6 +167,7 @@ func TestBaseRefreshPluginVersionCleanMerge(t *testing.T) {
 
 // A conflicted manifest re-recorded to the version the head derives is accepted as well.
 func TestBaseRefreshPluginVersionConflictedManifest(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenario(t, true)
 	head := s.pluginVersionMerge(t, true, nil)
 	got, err := s.record()
@@ -179,6 +181,7 @@ func TestBaseRefreshPluginVersionConflictedManifest(t *testing.T) {
 // the checker cannot prove the declared rule, the path stays one the parent has to name, and the
 // record keeps it manual. Only the checker's own answer settles a path.
 func TestBaseRefreshPluginVersionCandidateRuleIsNotOverriddenByTheBuiltin(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenarioDeclaring(t, false, []Region{{Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: "regenerate:false"}})
 	s.pluginVersionMerge(t, false, func(t *testing.T, r *gitRepo, recorded string) {
 		pluginVersionWrite(t, r, pluginversion.ManifestRepoPath, pluginVersionManifestText("0.4.0+000000000000", "d"))
@@ -197,6 +200,7 @@ func TestBaseRefreshPluginVersionCandidateRuleIsNotOverriddenByTheBuiltin(t *tes
 // manifest line, a release change, a mode change and another file's clean difference all keep today's
 // refusal, and nothing is written.
 func TestBaseRefreshPluginVersionRefusals(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		mutate func(t *testing.T, r *gitRepo, recorded string)
@@ -263,6 +267,7 @@ func pluginVersionContributor(t *testing.T, s *refreshScenario, rule string) {
 // branch (the selector agrees on the declared rule, so the path is not one the built-in rule is tried
 // on).
 func TestBaseRefreshPluginVersionDeclaredRuleWithContributorStaysManual(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenarioDeclaring(t, true, []Region{{Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: "regenerate:false"}})
 	pluginVersionContributor(t, s, "regenerate:false")
 	s.pluginVersionMerge(t, true, nil)

@@ -9,6 +9,7 @@ import (
 // CRW-965 (parent decision, D2): a batch with only contained candidates runs the verifier exactly when the keys of the
 // covering record no longer hold for the branch head's tree.
 func TestAllContainedBatchVerifiesOnlyWhenTheCoveringKeysChanged(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()
@@ -34,6 +35,7 @@ func TestAllContainedBatchVerifiesOnlyWhenTheCoveringKeysChanged(t *testing.T) {
 // CRW-965 (parent decision, D2): when the covering record's keys do not hold for the branch head's tree, the batch verifies
 // the head without a merge, and the mark is written only after that PASS.
 func TestAllContainedBatchReverifiesWhenTheCoveringKeysNoLongerHold(t *testing.T) {
+	t.Parallel()
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
 	k.acceptByCommit("a")
 	ctx := context.Background()

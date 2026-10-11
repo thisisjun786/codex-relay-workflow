@@ -11,7 +11,7 @@ import (
 // OrchestrateVerb is what a chat command asks for: a phase to enter, or a control verb. IDLE is not a verb.
 type OrchestrateVerb string
 
-// The verbs of VERB_TOKENS. VerbConstructor is not a verb of the grammar: the oracle looks the lower-cased token up in a plain
+// The verbs of VERB_TOKENS, and VerbUnbind (CRW-146, a CRW addition: the oracle has no such verb). VerbConstructor is not a verb of the grammar: the oracle looks the lower-cased token up in a plain
 // object, so the inherited key "constructor" answers with Object, a function, where the other tokens answer with a string. The
 // port's parser no longer answers it (CRW-1109): "constructor" is an unknown verb like any other. The value stays for a Go caller
 // that hands ApplyHumanTransition such a verb directly.
@@ -24,6 +24,7 @@ const (
 	VerbD           OrchestrateVerb = "D"
 	VerbStatus      OrchestrateVerb = "status"
 	VerbReset       OrchestrateVerb = "reset"
+	VerbUnbind      OrchestrateVerb = "unbind"
 	VerbConstructor OrchestrateVerb = "constructor"
 )
 
@@ -61,7 +62,7 @@ func verbToken(token string) (OrchestrateVerb, bool) {
 	switch lower := strings.ToLower(token); lower {
 	case "i", "p", "a", "b", "c", "d":
 		return OrchestrateVerb(strings.ToUpper(lower)), true
-	case "status", "reset":
+	case "status", "reset", "unbind":
 		return OrchestrateVerb(lower), true
 	}
 	// The oracle's plain-object lookup also answers "constructor" (with the function Object); the port answers only the

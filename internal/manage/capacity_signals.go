@@ -26,7 +26,9 @@ import (
 // another issue's file declares. A test replaces them; a failed command is unknown or unmeasured.
 var (
 	capacityExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		out, err := exec.CommandContext(ctx, name, args...).Output()
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.WaitDelay = capacityExecWaitDelay
+		out, err := cmd.Output()
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
@@ -49,6 +51,14 @@ var (
 	}
 )
 
+// capacityExecTimeout bounds one gh call, and capacityExecWaitDelay is how long the command's output
+// pipes may stay open after it was killed (a gh that left a child holding them). A gh that never
+// answers is a signal nobody could read, not a hold on the caller.
+var (
+	capacityExecTimeout   = 30 * time.Second
+	capacityExecWaitDelay = 2 * time.Second
+)
+
 const (
 	// capacitySignalBodyLimit bounds an HTTP answer; capacitySignalTimeout bounds one read.
 	capacitySignalBodyLimit = 8 << 20
@@ -68,6 +78,8 @@ func capacityMergeCount(ctx context.Context, cfg *Config, since time.Time) (*int
 	if cfg.Repository == "" {
 		return nil, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, capacityExecTimeout)
+	defer cancel()
 	out, err := capacityExec(ctx, "gh", "pr", "list", "--repo", cfg.Repository, "--state", "merged",
 		"--base", capacityIntegrationBranch, "--search", "merged:>="+since.UTC().Format(time.RFC3339),
 		"--limit", capacityMergePage, "--json", "number,mergedAt")

@@ -1,0 +1,20 @@
+{
+  "backwardsCursor": "items-back-1",
+  "data": [
+    {
+      "item": {
+        "content": [
+          {
+            "text": "crw-flow-op: call-1/t0",
+            "text_elements": [],
+            "type": "text"
+          }
+        ],
+        "id": "u-turn-a",
+        "type": "userMessage"
+      },
+      "turnId": "turn-a"
+    }
+  ],
+  "nextCursor": "items-2"
+}

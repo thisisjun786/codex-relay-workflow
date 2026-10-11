@@ -43,6 +43,7 @@ func (c *Client) receive(ws *websocket.Conn) {
 				if msg.Method == "turn/completed" && c.subscriptions != nil {
 					c.subscriptions.terminal(ws, msg.Params)
 				}
+				c.bus.publish(msg.Method, msg.Params)
 				select {
 				case c.notifications <- Notification{msg.Method, msg.Params}:
 				default:
@@ -125,15 +126,32 @@ func (c *Client) failReader(ws *websocket.Conn, failure error) {
 	if c.subscriptions != nil {
 		c.subscriptions.lost(ws)
 	}
+	c.bus.lost()
 }
 
 func (c *Client) serverRequest(ws *websocket.Conn, msg incoming) {
 	var params struct {
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
+		ThreadID       string `json:"threadId"`
+		ConversationID string `json:"conversationId"`
+		TurnID         string `json:"turnId"`
 	}
 	_ = json.Unmarshal(msg.Params, &params)
 	approval := approvalMethods[msg.Method]
+	// The opt-in responder answers only what its owner started: a request whose thread the owner claims.
+	// The two legacy approvals (execCommandApproval, applyPatchApproval) carry no threadId; the codex
+	// schema names their thread in conversationId, which only the responder reads. Every other request,
+	// and every request of a client without a responder, takes the path below, attributed by threadId.
+	owned := params.ThreadID
+	if owned == "" && legacyApprovalMethods[msg.Method] {
+		owned = params.ConversationID
+	}
+	if r := c.responder; r != nil && owned != "" && r.owned(owned) {
+		request := ServerRequest{Method: msg.Method, ThreadID: owned, TurnID: params.TurnID, Params: msg.Params}
+		if answer, ok := r.answer(request); ok && Refuses(request, answer) {
+			c.answerWithResponder(ws, msg, request, approval, answer)
+			return
+		}
+	}
 	answered := "refused"
 	if approval {
 		answered = "left_for_thread_approver"
@@ -161,6 +179,38 @@ func (c *Client) serverRequest(ws *websocket.Conn, msg incoming) {
 		return
 	}
 	if err := c.write(context.Background(), ws, map[string]any{"id": id, "error": map[string]any{"code": -32601, "message": "Unsupported client action; this bridge runs no client-side tool. Nothing was run."}}, msg.Method); err != nil {
+		c.retire(ws)
+	}
+}
+
+// answerWithResponder sends the responder's answer and records the request as answered by it. The
+// record is kept in the request ring only: the refusal stream is the default path's, and a request
+// the responder answered is not one of its refusals.
+func (c *Client) answerWithResponder(ws *websocket.Conn, msg incoming, request ServerRequest, approval bool, answer ServerAnswer) {
+	c.mu.Lock()
+	c.total++
+	entry := RequestRecord{c.total, msg.Method, approval, request.ThreadID, request.TurnID, AnsweredByResponder, float64(time.Now().UnixNano()) / 1e9}
+	c.requests = append(c.requests, entry)
+	if len(c.requests) > requestsKept {
+		c.requests = c.requests[1:]
+	}
+	c.mu.Unlock()
+	var id any
+	if err := json.Unmarshal(msg.ID, &id); err != nil {
+		c.retire(ws)
+		return
+	}
+	frame := map[string]any{"id": id}
+	if answer.Error != nil {
+		frame["error"] = map[string]any{"code": answer.Error.Code, "message": answer.Error.Message}
+	} else {
+		result := answer.Result
+		if result == nil {
+			result = map[string]any{}
+		}
+		frame["result"] = result
+	}
+	if err := c.write(context.Background(), ws, frame, msg.Method); err != nil {
 		c.retire(ws)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -76,9 +77,15 @@ var discoveryAnswer = regexp.MustCompile(`\A(?:warning: [^\n]*\n)*fatal: not a g
 // a probe of the session binding is bound by gitprobe.Timeout.
 const captureTimeout = 5 * time.Minute
 
-// run runs git in cwd under the probe policy with the capture's bounds and returns its stdout.
-func run(cwd string, limit int, args ...string) ([]byte, error) {
-	return Probe(cwd, ProbeOptions{Limit: limit, Timeout: captureTimeout}, args...)
+// run runs git in cwd under the probe policy with the capture's bounds and returns its stdout. The probe's messages are in the C
+// locale (LC_ALL=C), so NotARepository can tell a directory in no repository from a git that failed to read one whatever the
+// user's language is.
+func run(ctx context.Context, group bool, cwd string, limit int, args ...string) ([]byte, error) {
+	o := ProbeOptions{Limit: limit, Timeout: captureTimeout, Env: []string{"LC_ALL=C"}}
+	if group {
+		return ProbeContext(ctx, cwd, o, args...)
+	}
+	return Probe(cwd, o, args...)
 }
 
 // Probe runs git in cwd under gitprobe's read-only probe policy (every inherited GIT_* variable removed, no
@@ -91,9 +98,24 @@ func Probe(cwd string, o ProbeOptions, args ...string) ([]byte, error) {
 	return runBounded(cwd, "git", args, gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
 }
 
+// ProbeContext is Probe owned by the caller's ctx, for a caller that must not leave git running behind it (a hook that stops
+// waiting for the answer): git runs in a process group of its own, and when ctx ends, the time limit passes or the output limit
+// is exceeded the whole group is killed, so a clean, smudge or process filter that git started ends with it, and ProbeContext
+// returns only once git has been reaped. Probe itself does not make the group: the foreground process group of a terminal
+// command (Ctrl-C) reaches git there as it always has.
+func ProbeContext(ctx context.Context, cwd string, o ProbeOptions, args ...string) ([]byte, error) {
+	return runBoundedCtx(ctx, true, cwd, "git", args, gitprobe.ProbeEnv(nil, o.Env...), o.Limit, o.Timeout)
+}
+
 // runBounded runs name with args in cwd and env and returns its stdout, within limit bytes of output and timeout.
 func runBounded(cwd, name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runBoundedCtx(context.Background(), false, cwd, name, args, env, limit, timeout)
+}
+
+// runBoundedCtx is runBounded that ctx ends as well as the time limit; group runs name in a process group of its own that is
+// killed whole (see ProbeContext).
+func runBoundedCtx(parent context.Context, group bool, cwd, name string, args, env []string, limit int, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	outR, outW, err := os.Pipe()
 	if err != nil {
@@ -105,7 +127,21 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 		return nil, err
 	}
 	defer func() { _, _ = outR.Close(), errR.Close() }()
-	cmd := exec.Command(name, args...)
+	var cmd *exec.Cmd
+	if group {
+		cmd = exec.CommandContext(ctx, name, args...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		// The group leader is not reaped before Wait returns, so its pid still names the group here; a group that is already gone
+		// is no failure.
+		cmd.Cancel = func() error {
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return err
+			}
+			return nil
+		}
+	} else {
+		cmd = exec.Command(name, args...)
+	}
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, env, outW, errW
 	err = cmd.Start()
 	_, _ = outW.Close(), errW.Close() // the child holds its own copies
@@ -121,7 +157,13 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 		stderr   bytes.Buffer
 		drainers sync.WaitGroup
 	)
-	stopReading := func() { // with mu held
+	// stopReading ends the child and closes the read ends; wholeGroup also kills its process group, which is only done while the
+	// leader has not been reaped (the output limit, which the readers hit before Wait): an ended ctx kills the group through
+	// cmd.Cancel, which exec runs only before Wait returns.
+	stopReading := func(wholeGroup bool) { // with mu held
+		if wholeGroup {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		_ = cmd.Process.Kill()
 		_, _ = outR.Close(), errR.Close()
 	}
@@ -130,7 +172,7 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 		defer mu.Unlock()
 		if !over {
 			late = true
-			stopReading()
+			stopReading(false)
 		}
 	})
 	defer stop()
@@ -142,7 +184,7 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 			mu.Lock()
 			if used += n; used > limit && !over && !late {
 				over = true
-				stopReading()
+				stopReading(group)
 			}
 			if !over && !late {
 				keep.Write(buf[:n])
@@ -164,6 +206,8 @@ func runBounded(cwd, name string, args, env []string, limit int, timeout time.Du
 	case over:
 		return nil, errors.New("output exceeds the limit")
 	case late:
+		return nil, ctx.Err()
+	case group && werr != nil && ctx.Err() != nil: // exec ended the child at the deadline before the callback above ran
 		return nil, ctx.Err()
 	}
 	if werr != nil {

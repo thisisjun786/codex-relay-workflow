@@ -93,6 +93,7 @@ func pluginVersionStoredSteps(t *testing.T, s *refreshScenario) []RefreshStep {
 // TestBaseRefreshVersionOnlyCommit is the CRW-808 accept case: the version-only commit right after the
 // merge is taken, recorded as a regenerate:plugin-version step, and needs no --resolved.
 func TestBaseRefreshVersionOnlyCommit(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenario(t, false)
 	merge, head := s.pluginVersion808Shape(t, nil)
 	got, err := s.record()
@@ -118,6 +119,7 @@ func TestBaseRefreshVersionOnlyCommit(t *testing.T) {
 // TestBaseRefreshVersionOnlyCommitRefusals is the other half: every shape the issue refuses stays
 // refused, and nothing is written.
 func TestBaseRefreshVersionOnlyCommitRefusals(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		mutate func(t *testing.T, r *gitRepo, recorded string)
@@ -175,6 +177,7 @@ func TestBaseRefreshVersionOnlyCommitRefusals(t *testing.T) {
 // The audit of this generation verified by live probe that a deleted manifest and a symlinked manifest
 // are refused, but neither was in the committed suite. They are pinned here.
 func TestBaseRefreshVersionOnlyCommitRefusesADeletedOrLinkedManifest(t *testing.T) {
+	t.Parallel()
 	t.Run("the manifest deleted", func(t *testing.T) {
 		s := newPluginVersionRefreshScenario(t, false)
 		s.pluginVersion808Shape(t, func(t *testing.T, r *gitRepo, recorded string) {
@@ -210,6 +213,7 @@ func TestBaseRefreshVersionOnlyCommitRefusesADeletedOrLinkedManifest(t *testing.
 // version-only step sits on a merge this chain proved, which is the condition the rule states. The
 // audit of this generation raised this composition, so it is pinned here.
 func TestBaseRefreshVersionOnlyCommitBetweenMerges(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenario(t, false)
 	merge1, _ := s.pluginVersion808Shape(t, nil)
 	r := s.repo
@@ -261,6 +265,7 @@ func TestBaseRefreshVersionOnlyCommitBetweenMerges(t *testing.T) {
 }
 
 func TestBaseRefreshVersionOnlyCommitNeedsAProvedMerge(t *testing.T) {
+	t.Parallel()
 	t.Run("the chain's first commit", func(t *testing.T) {
 		s := newPluginVersionRefreshScenario(t, false)
 		// the accepted head itself: the version is recorded there and committed, so the chain's first
@@ -299,6 +304,7 @@ func TestBaseRefreshVersionOnlyCommitNeedsAProvedMerge(t *testing.T) {
 // A product change that records the version too is still refused, and the merge chain on its own is
 // unchanged.
 func TestBaseRefreshVersionOnlyCommitLeavesTheMergeChainAlone(t *testing.T) {
+	t.Parallel()
 	s := newPluginVersionRefreshScenario(t, false)
 	_, merge := s.pluginVersion808Shape(t, nil)
 	// a further single-parent commit that changes a skill file and records the version: not the shape

@@ -96,6 +96,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// anchor here first, as SessionStart does, and writes nothing when the anchor cannot follow, so
 	// no state exists at a cwd the anchor does not track. A thread without an anchor is unaffected.
 	remember := DetectMemoryWriteRequest(p.Prompt)
+	drain := promptSubmitDrainFor(p.Prompt)
 	judge := stateroot.Hold
 	if remember || p.PabcdEnabled {
 		judge = stateroot.Bootstrap
@@ -118,7 +119,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// `crw recall memory allow-write`; it must never break prompt handling, so a failed or
 	// refused write is dropped as the oracle's catch drops one.
 	if remember {
-		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+		_, _, _ = promptSubmitWriteStateReason(lock, p.Cwd, p.SessionID, drain, func(fresh *state.State) bool {
 			fresh.MemoryWriteRequested = true
 			fresh.MemoryWriteTurn = promptSubmitTurn(turn)
 			return true
@@ -137,7 +138,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	if turn != "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTurnID == nil || *current.StopBlockTurnID != turn) {
 		// The turn is judged again on the state the lock found, so a participating writer that
 		// stamped this same turn between the read above and the lock is not overwritten.
-		stampOutcome, _, stampErr := promptSubmitWriteStateReason(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+		stampOutcome, _, stampErr := promptSubmitWriteStateReason(lock, p.Cwd, p.SessionID, drain, func(fresh *state.State) bool {
 			if fresh.StopBlockTurnID != nil && *fresh.StopBlockTurnID == turn {
 				return false
 			}
@@ -178,7 +179,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// releases (CRW-1091, stopSameBinding), as it does when a new turn id is stamped. A state with nothing of the kind to clear (no
 	// Stop counted since the last turn boundary) is not rewritten, as a turnless answer writes nothing (CRW-1159).
 	if turn == "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTotal != 0 || current.StopBlockCapNotified || current.StopBlockTurnID != nil) {
-		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+		_, _, _ = promptSubmitWriteStateReason(lock, p.Cwd, p.SessionID, drain, func(fresh *state.State) bool {
 			if fresh.StopBlockTotal == 0 && !fresh.StopBlockCapNotified && fresh.StopBlockTurnID == nil {
 				return false
 			}
@@ -263,7 +264,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 			// The explicit current-task request is the recipe whatever the registry says, so the read is for the other scopes.
 			role = promptSubmitRole(seams, p.Cwd, p.SessionID)
 		}
-		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role == PromptRoleParent || scope == LoopScopeProject)
+		pointer := scope != LoopScopeCurrentTask && role != PromptRoleTask && (role.Coordinates() || scope == LoopScopeProject)
 		if promptSubmitClaim(lock, p.Cwd, p.SessionID, turn, promptClaimInputs{read: current}, func(fresh *state.State) bool {
 			if !pointer {
 				fresh.LoopArmSeen = true
@@ -358,8 +359,26 @@ func promptSubmitWriteState(lock func(cwd, sessionID string, fn func() error) er
 // (the Stop-budget stamp, the loop-arm branch, prompt_trigger.go's writes) treats a published write as
 // written too, so it answers as the oracle's successful unlocked write does and simply drops the warning.
 func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string) {
-	outcome, warning, _ := promptSubmitWriteStateReason(lock, cwd, sessionID, change)
+	outcome, warning, _ := promptSubmitWriteStateReason(lock, cwd, sessionID, promptSubmitDrainAll, change)
 	return outcome, warning
+}
+
+// promptSubmitDrain is the drain of the session's pending ledger events that a locked write of the prompt entry runs first. Every
+// prompt runs the whole drain (DrainSessionLedger, followups included); the prompt that carries the chat command `orchestrate unbind`
+// runs the rows-only drain (promptSubmitDrainFor), because that command never writes a goalplan (CRW-146).
+type promptSubmitDrain func(cwd, sessionID string)
+
+func promptSubmitDrainAll(cwd, sessionID string) { DrainSessionLedger(cwd, sessionID) }
+
+func promptSubmitDrainRows(cwd, sessionID string) { DrainSessionLedgerRows(cwd, sessionID) }
+
+// promptSubmitDrainFor is the drain the entry of prompt runs: rows only for a prompt whose chat command is the release of a goalplan
+// slug, the whole drain for any other.
+func promptSubmitDrainFor(prompt string) promptSubmitDrain {
+	if command := fsm.ParseOrchestrateCommand(prompt); command != nil && command.Verb == fsm.VerbUnbind {
+		return promptSubmitDrainRows
+	}
+	return promptSubmitDrainAll
 }
 
 // promptSubmitWriteStateReason is promptSubmitWriteStateWarning with the failure's own error: the
@@ -368,11 +387,11 @@ func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() er
 // (the session lock could not be taken, or the write failed before the rename). The bound D-close's
 // Stop-budget stamp reads the reason to answer its busy refusal (CRW-869, finding 3); the other
 // callers keep the two-answer wrapper.
-func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string, error) {
+func promptSubmitWriteStateReason(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, drain promptSubmitDrain, change func(*state.State) bool) (promptSubmitWriteOutcome, string, error) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
 		// CRW-1097: a ledger row an earlier writer of this session left pending is recorded first.
-		DrainSessionLedger(cwd, sessionID)
+		drain(cwd, sessionID)
 		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
 		if unreadable || !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh) {
 			return nil
