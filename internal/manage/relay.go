@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // relayHelperStderrLimit is how much of a relay command's stderr an error carries: the
@@ -229,6 +231,9 @@ func (e *Env) relayHelperRun(ctx context.Context, argv ...string) ([]byte, int, 
 	}
 	cmd := exec.CommandContext(ctx, e.Executable, argv...)
 	cmd.Dir = dir
+	if dir != "" {
+		cmd.Env = relayHelperEnvironment(os.Environ())
+	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = stderr
 	// A command killed at its context's end may leave a child that keeps its output open; Wait then
@@ -283,6 +288,39 @@ func relayHelperAbsolute(argv []string) []string {
 	}
 	return out
 }
+
+// relayHelperEnvironment is env with the relay variables that name a path relative to the caller's
+// directory made absolute against it, the way relayHelperAbsolute treats argv: the execution policy
+// (read after str.strip, as the relay reads it) and the isolated scope directory (a "~" spelling is the
+// relay's to expand, so it is left as it is). Anything else is passed unchanged.
+func relayHelperEnvironment(env []string) []string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return env
+	}
+	out := append([]string(nil), env...)
+	for i, variable := range out {
+		key, value, _ := strings.Cut(variable, "=")
+		switch key {
+		case execution.EnvPolicy:
+			value = pyvalue.Strip(value)
+		case relayScopeEnv:
+			if strings.HasPrefix(value, "~") {
+				continue
+			}
+		default:
+			continue
+		}
+		if value == "" || filepath.IsAbs(value) {
+			continue
+		}
+		out[i] = key + "=" + crwconfig.JoinRoot(wd, value)
+	}
+	return out
+}
+
+// relayScopeEnv is the relay's isolated scope directory variable (service.ScopeEnv).
+const relayScopeEnv = "CODEX_SESSION_RELAY_SCOPE_DIR"
 
 // relayHelperDir is the --state directory of a relay command line when it is an existing absolute directory, else "".
 func relayHelperDir(argv []string) string {

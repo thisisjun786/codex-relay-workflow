@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 )
@@ -115,5 +116,71 @@ func TestRelayHelperKeepsRelativePathsOfTheCaller(t *testing.T) {
 	stdout, _, _, _ = e.relayHelperRun(context.Background(), "relay", "--socket", "./app.sock", "doctor")
 	if strings.Join(strings.Fields(string(stdout)), " ") != "relay --socket ./app.sock doctor" {
 		t.Fatalf("the doctor line was rewritten: %q", stdout)
+	}
+}
+
+// CRW-1265. The relay command runs in the state directory, so an execution policy (or an isolated scope
+// directory) the environment names relative to the caller's directory reaches it as a path that names the
+// same file, a link followed by ".." included; a policy the relay reads from the state directory instead
+// would be another file or none. Absolute values, a scope under "~" and the line that stays in the
+// caller's directory keep the value as it was.
+func TestRelayHelperKeepsTheCallersRelativePolicyEnvironment(t *testing.T) {
+	root := t.TempDir()
+	start, sub, state := filepath.Join(root, "start"), filepath.Join(root, "other", "sub"), filepath.Join(root, "state")
+	for _, dir := range []string{start, sub, state} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(sub, filepath.Join(start, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{filepath.Join(root, "other", "p.json"), filepath.Join(start, "p.json")} {
+		if err := os.WriteFile(f, []byte(f), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := filepath.Join(t.TempDir(), "crw")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$CODEX_THREAD_BRIDGE_EXECUTION_POLICY\"\necho \"$CODEX_SESSION_RELAY_SCOPE_DIR\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(start)
+	e := &Env{Executable: script}
+	run := func(argv ...string) []string {
+		stdout, code, _, err := e.relayHelperRun(context.Background(), argv...)
+		if err != nil || code != 0 {
+			t.Fatalf("%v: code %d err %v", argv, code, err)
+		}
+		return strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
+	}
+	for _, policy := range []string{"p.json", " link/../p.json ", "./link/../p.json"} {
+		meant, err := os.Stat(strings.TrimSpace(policy))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(execution.EnvPolicy, policy)
+		t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "scopes")
+		got := run("relay", "--state", state, "--socket", "s", "service", "status")
+		if !filepath.IsAbs(got[0]) {
+			t.Fatalf("policy %q reached the relay command as %q", policy, got[0])
+		}
+		if named, err := os.Stat(got[0]); err != nil || !os.SameFile(meant, named) {
+			t.Fatalf("policy %q reached the relay command as %q, another file", policy, got[0])
+		}
+		if wd, _ := os.Getwd(); got[1] != wd+"/scopes" {
+			t.Fatalf("the scope directory reached the relay command as %q", got[1])
+		}
+	}
+	for _, kept := range []string{"/abs/p.json", ""} {
+		t.Setenv(execution.EnvPolicy, kept)
+		t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "~/scopes")
+		if got := run("relay", "--state", state, "--socket", "s", "service", "status"); got[0] != kept || got[1] != "~/scopes" {
+			t.Fatalf("kept values were rewritten: %q", got)
+		}
+	}
+	t.Setenv(execution.EnvPolicy, "p.json")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "scopes")
+	if got := run("relay", "--socket", "s", "doctor"); got[0] != "p.json" || got[1] != "scopes" {
+		t.Fatalf("the doctor line's environment was rewritten: %q", got)
 	}
 }
