@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -253,7 +254,7 @@ func RunHelper(parsed HelperArgs, env host.LookupEnv, nativeHome ...string) Help
 	if parsed.Action != "list" {
 		value = cfg.Roles[parsed.Role]
 	}
-	encoded, err := Stringify(value, "  ")
+	encoded, err := jsnode.Stringify(value, "  ")
 	if err != nil {
 		return helperCLIFailure(err.Error())
 	}

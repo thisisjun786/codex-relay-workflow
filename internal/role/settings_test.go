@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // testdata/oracle-settings.json holds what the CXC v0.2.40 oracle's settings API and spawn resolution answered (dist/settings-api.js
@@ -98,7 +100,7 @@ func TestSettingsOracleReplay(t *testing.T) {
 				case op.Error == nil && err != nil:
 					t.Fatalf("%s: error %v", at, err)
 				case op.Error == nil:
-					if text := must(Stringify(got, "")); string(text) != *op.Result {
+					if text := must(jsnode.Stringify(got, "")); string(text) != *op.Result {
 						t.Fatalf("%s: result\n%s\nwant\n%s", at, text, *op.Result)
 					}
 				}

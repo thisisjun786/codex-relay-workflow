@@ -3,39 +3,12 @@ package goalplan
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
-	"strings"
 	"time"
 )
 
 // The JavaScript value rules the plan revival leans on. A plan reader decodes a stored plan with json.Decoder.UseNumber, so a
 // number is a json.Number (a float64 from a caller that already has one is accepted too).
-
-// quote is JSON.stringify of a string: the quote and backslash escaped, \b \f \n \r \t in their short forms, the other control
-// characters as \u00xx, and everything else (U+2028, "<", ">" and "&" included) as it is. projectcfg keeps the same function; it
-// is not exported and lies outside this package's edit region. A lone surrogate cannot reach a Go string (revive.go), so the
-// escape JSON.stringify writes for one is not produced.
-func quote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch short := strings.IndexRune("\b\f\n\r\t", r); {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case short >= 0:
-			b.WriteByte('\\')
-			b.WriteByte("bfnrt"[short])
-		case r < 0x20:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
 
 // jsNumber is a JavaScript number read from a decoded value. JSON.parse reads 1e999 as Infinity; strconv reports it as ErrRange
 // with the infinity as the value, which is kept.

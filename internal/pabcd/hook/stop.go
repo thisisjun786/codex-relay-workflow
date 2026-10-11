@@ -41,7 +41,6 @@ package hook
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
@@ -52,13 +51,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/metric"
 	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
-	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The budgets of the Stop loop (hook.ts:1403-1411). StopMaxBlocks bounds consecutive blocks at one
@@ -507,7 +506,7 @@ func stopSystemMessage(message string) string {
 }
 
 func stopMarshal(v any) string {
-	b, err := role.Stringify(v, "")
+	b, err := jsnode.Stringify(v, "")
 	if err != nil {
 		return ""
 	}
@@ -798,7 +797,7 @@ func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd
 	if len(plateau.Values) > 0 {
 		texts := make([]string, len(plateau.Values))
 		for i, v := range plateau.Values {
-			texts[i] = stopNumberText(v)
+			texts[i] = jsnode.NumberString(v)
 		}
 		values = strings.Join(texts, " -> ")
 	}
@@ -848,25 +847,6 @@ func stopPlateauDivergeBlock(phase state.Phase, plateau metric.PlateauCheck, cwd
 		reason += "\n\n" + advisory
 	}
 	return stopEnvelope(reason)
-}
-
-// stopNumberText is a finite number as JavaScript prints it in a template literal.
-func stopNumberText(f float64) string {
-	switch {
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case math.IsNaN(f):
-		return "NaN"
-	case f == 0:
-		return "0"
-	}
-	text, err := json.Marshal(f)
-	if err != nil {
-		return fmt.Sprint(f)
-	}
-	return string(text)
 }
 
 // stopRenderAdvisory is renderGroundingAdvisoryForStop (hook.ts:1899-1917): at phase C, the native-surface

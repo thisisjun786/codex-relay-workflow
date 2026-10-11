@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 const memoryStage1ChatExcerpt = 400
@@ -105,7 +107,7 @@ func (s *memorySearchState) memoryStage1FillPresence(home string) error {
 		if s.memoryStage1Old(ms) {
 			continue
 		}
-		lower := Lower(body)
+		lower := jsnode.Lower(body)
 		// Presence is evidence the scoped search could return: a row the scope rejects holds no
 		// term for it, so an out-of-scope symbol cannot stop the relaxed pass.
 		id, _ := row["thread_id"].(string)
@@ -198,7 +200,7 @@ func (s *memorySearchState) memoryStage1Search(home string, plan MatchPlan, grou
 			continue
 		}
 		body, ms := memoryStage1Row(row)
-		lower := Lower(body)
+		lower := jsnode.Lower(body)
 		if s.memoryStage1Old(ms) || !PlanMatches(lower, plan) {
 			continue
 		}
@@ -282,7 +284,7 @@ func (s *memorySearchState) memoryStage1Backfill(query string, hits []MemoryHit,
 	if len(hits) == 0 {
 		s.warnings = append(s.warnings, fmt.Sprintf("no memory artifacts matched — %d raw session message(s) shown instead (%s)", len(added), policy))
 	} else {
-		s.warnings = append(s.warnings, fmt.Sprintf("only %d memory artifact(s) matched, at or below the chat fallback threshold %s — %d raw session message(s) added after them (%s)", len(hits), memoryNumberText(threshold), len(added), policy))
+		s.warnings = append(s.warnings, fmt.Sprintf("only %d memory artifact(s) matched, at or below the chat fallback threshold %s — %d raw session message(s) added after them (%s)", len(hits), jsnode.NumberString(threshold), len(added), policy))
 	}
 	return append(hits[:len(hits):len(hits)], added...)
 }

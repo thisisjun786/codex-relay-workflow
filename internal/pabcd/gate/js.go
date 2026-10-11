@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // maxText is V8's longest string, as bytes: the most the oracle's readFileSync(path, "utf8") returns. A longer file is refused.
@@ -40,7 +39,7 @@ func readFile(path string, limit int64) ([]byte, error) {
 
 // decodeJSON is JSON.parse of utf8 bytes: one value and nothing after it, and a number keeps its text so 1e999 reads as Infinity.
 func decodeJSON(data []byte) (any, error) {
-	dec := json.NewDecoder(strings.NewReader(source.DecodeUTF8(data)))
+	dec := json.NewDecoder(strings.NewReader(jsnode.DecodeUTF8(data)))
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
@@ -60,20 +59,6 @@ func jsNumber(v any) (float64, bool) {
 	}
 	f, err := strconv.ParseFloat(string(n), 64)
 	return f, err == nil || errors.Is(err, strconv.ErrRange)
-}
-
-// jsNumberText is a number in a template literal: encoding/json prints a float64 as ECMAScript does, bar the infinities and -0.
-func jsNumberText(f float64) string {
-	switch {
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	text, _ := json.Marshal(f)
-	return string(text)
 }
 
 // dateParses is !Number.isNaN(Date.parse(s)) for the standard spellings only (known-defects names the differences).

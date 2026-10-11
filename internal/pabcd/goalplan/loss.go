@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // revivalLossFile is what the write lock needs of a read besides the plan: the JSON value the file decoded to, which revivalLoss
@@ -214,7 +216,7 @@ func revivalLossKey(path, key string) string {
 	}
 	switch {
 	case !plain:
-		return path + "[" + quote(key) + "]"
+		return path + "[" + jsnode.JSString(key) + "]"
 	case path == "":
 		return key
 	}

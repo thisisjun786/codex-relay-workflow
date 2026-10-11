@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"unicode/utf16"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // maxContentSize is the largest file the oracle hashes: Node's readFileSync refuses a bigger one, and the oracle
@@ -37,7 +39,7 @@ func contentHash(ctx context.Context, abs string) (string, bool, error) {
 		if err != nil {
 			return "", false, nil
 		}
-		sum.Write([]byte(decodeUTF8([]byte(target))))
+		sum.Write([]byte(jsnode.DecodeUTF8([]byte(target))))
 	case info.Mode().IsRegular() && info.Size() <= maxContentSize:
 		file, err := os.Open(abs)
 		if err != nil {

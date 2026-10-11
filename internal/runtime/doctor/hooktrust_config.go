@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 // HookTrustResult is HookTrustResult (hook-trust.ts:59-62): one listed hook (Key, Hash,
@@ -363,5 +365,5 @@ func hookTrustConfigReadConfig(codexHome string, read hookTrustConfigReader) (st
 	if err != nil {
 		return "", false, err
 	}
-	return hookTrustEntriesUTF8(raw), true, nil
+	return jsnode.DecodeUTF8(raw), true, nil
 }

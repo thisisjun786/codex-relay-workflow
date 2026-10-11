@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -307,7 +307,7 @@ func featureRunnerWith(ctx context.Context, env scope.Env, bounded bool) configg
 			cmd.WaitDelay = featureEvidenceWaitDelay
 		}
 		err = cmd.Run()
-		result := configguard.CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
+		result := configguard.CodexRunResult{Stdout: jsnode.DecodeUTF8(out.buffer.Bytes()), Stderr: jsnode.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
 		// A probe that exited while a descendant still held its output open may have a cut-short answer.
 		if !budget.overflow && !errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			result.ExitCode = cmd.ProcessState.ExitCode()

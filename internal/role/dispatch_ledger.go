@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -47,7 +48,7 @@ func (c DispatchCandidate) MarshalJSON() ([]byte, error) {
 		return c.raw.MarshalJSON()
 	}
 	type wire DispatchCandidate
-	return Stringify(wire(c), "")
+	return jsnode.Stringify(wire(c), "")
 }
 
 type DispatchTaskFailure struct {
@@ -87,7 +88,7 @@ type DispatchAttempt struct {
 func (a DispatchAttempt) MarshalJSON() ([]byte, error) {
 	if a.raw == nil {
 		type wire DispatchAttempt
-		return Stringify(wire(a), "")
+		return jsnode.Stringify(wire(a), "")
 	}
 	o := slices.Clone(a.raw)
 	for _, m := range []member{{"claimed", a.Claimed}, {"agentId", a.AgentID}, {"observedModel", a.ObservedModel}, {"code", a.Code}, {"status", a.Status}, {"reconciliation", a.Reconciliation}, {"taskFailure", a.TaskFailure}} {
@@ -119,7 +120,7 @@ type Dispatch struct {
 func (d Dispatch) MarshalJSON() ([]byte, error) {
 	if d.raw == nil {
 		type wire Dispatch
-		return Stringify(wire(d), "")
+		return jsnode.Stringify(wire(d), "")
 	}
 	o := slices.Clone(d.raw)
 	o.set("attempts", d.Attempts)
@@ -615,7 +616,7 @@ func dispatchResult(d *Dispatch, action any, reason string) DispatchResult {
 // (nil: none), then a rename over the record, all through the handle; the temporary file does not outlive a failure.
 func dispatchSave(dir *dispatchPinnedDir, name string, d *Dispatch, check dispatchPinnedCheck) (err error) {
 	temp := name + "." + dispatchUUID() + ".tmp"
-	data, err := Stringify(d, "  ")
+	data, err := jsnode.Stringify(d, "  ")
 	if err != nil {
 		return err
 	}
@@ -699,7 +700,7 @@ func dispatchPinnedRunHeld(cwd string, input any, env host.LookupEnv, check disp
 	if err != nil {
 		return out, err
 	}
-	encoded, err := Stringify(b, "")
+	encoded, err := jsnode.Stringify(b, "")
 	if err != nil {
 		return out, err
 	}

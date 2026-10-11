@@ -15,8 +15,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"golang.org/x/sys/unix"
@@ -314,7 +314,7 @@ func selfHealReportRunOne(ctx context.Context, file string, args []string) (resu
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = selfHealReportWaitDelay
 	runErr := cmd.Run()
-	result = CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
+	result = CodexRunResult{Stdout: jsnode.DecodeUTF8(out.buffer.Bytes()), Stderr: jsnode.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
 	// exec.ErrWaitDelay is a probe that exited while a descendant still held its output open: the
 	// list that arrived may be cut short, and a cut list would read an enabled flag as off. spawnSync
 	// has no timeout and waits for the whole list; the hook has a time limit, so the port ends the wait

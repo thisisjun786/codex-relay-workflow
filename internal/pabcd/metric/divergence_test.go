@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
@@ -278,7 +279,7 @@ func TestWriteDivergenceModeOfAliasedSessionsAtOnceKeepsExactlyOneFile(t *testin
 			won = append(won, id)
 		}
 		raw, _ := os.ReadFile(modePath(cwd, "a-b"))
-		if len(won) != 1 || !strings.Contains(string(raw), rowQuote(won[0])) {
+		if len(won) != 1 || !strings.Contains(string(raw), jsnode.JSString(won[0])) {
 			t.Fatalf("round %d: writes that succeeded: %q; mode file %s", round, won, raw)
 		}
 	}
@@ -317,7 +318,7 @@ func divStep(t *testing.T, cwd string, op divOp) string {
 	t.Helper()
 	failed := func(err error) string {
 		if msg := err.Error(); strings.HasPrefix(msg, "divergence candidate") {
-			return "{\"error\":" + rowQuote(msg) + "}"
+			return "{\"error\":" + jsnode.JSString(msg) + "}"
 		}
 		return "{\"error\":true}"
 	}
@@ -358,7 +359,7 @@ func divStep(t *testing.T, cwd string, op divOp) string {
 		}
 		class, streak := "null", DiscardStreak(rows)
 		if streak.ChangeClass != "" {
-			class = rowQuote(string(streak.ChangeClass))
+			class = jsnode.JSString(string(streak.ChangeClass))
 		}
 		return fmt.Sprintf("{\"changeClass\":%s,\"length\":%d}", class, streak.Length)
 	case "file":
@@ -394,7 +395,7 @@ func divFiles(t *testing.T, cwd string) map[string]string {
 		}
 		raw, err := os.ReadFile(path)
 		rel, _ := filepath.Rel(root, path)
-		files[filepath.ToSlash(rel)] = ledgerUTF8(raw)
+		files[filepath.ToSlash(rel)] = jsnode.DecodeUTF8(raw)
 		return err
 	}))
 	return files

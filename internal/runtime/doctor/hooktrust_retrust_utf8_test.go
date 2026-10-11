@@ -12,7 +12,7 @@ package doctor
 // bytes there reach a person's terminal where the oracle writes U+FFFD.
 //
 // Red first on dev: the seam returns stdout.String() and stderr.String(), so the failure text
-// carries the raw 61 ED A0 80 62. Green once both streams go through source.DecodeUTF8.
+// carries the raw 61 ED A0 80 62. Green once both streams go through jsnode.DecodeUTF8.
 //
 // Every package-level name carries the hookTrustRetrustUTF8 prefix.
 

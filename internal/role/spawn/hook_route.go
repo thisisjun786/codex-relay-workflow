@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -606,8 +607,7 @@ func spawnHookRouteJS(v any) any {
 		case f == 0:
 			return json.Number("0")
 		}
-		spelled, _ := json.Marshal(f) // encoding/json's float encoder is ECMAScript's Number::toString
-		return json.Number(spelled)
+		return json.Number(jsnode.NumberString(f))
 	}
 	return v
 }

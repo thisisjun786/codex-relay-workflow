@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -193,14 +194,14 @@ func jsonObject(members [][2]string, indent bool) string {
 		colon, sep, open, shut = ": ", ",\n  ", "{\n  ", "\n}"
 	}
 	for i, m := range members {
-		parts[i] = rowQuote(m[0]) + colon + m[1]
+		parts[i] = jsnode.JSString(m[0]) + colon + m[1]
 	}
 	return open + strings.Join(parts, sep) + shut
 }
 
 func encodeMode(m DivergenceMode, indent bool) string {
-	return jsonObject([][2]string{{"sessionId", rowQuote(m.SessionID)}, {"active", strconv.FormatBool(m.Active)}, {"objectiveKind", rowQuote(string(m.ObjectiveKind))},
-		{"collapsePoint", rowQuote(string(m.CollapsePoint))}, {"reason", rowQuote(m.Reason)}, {"updatedAt", rowQuote(m.UpdatedAt)}}, indent)
+	return jsonObject([][2]string{{"sessionId", jsnode.JSString(m.SessionID)}, {"active", strconv.FormatBool(m.Active)}, {"objectiveKind", jsnode.JSString(string(m.ObjectiveKind))},
+		{"collapsePoint", jsnode.JSString(string(m.CollapsePoint))}, {"reason", jsnode.JSString(m.Reason)}, {"updatedAt", jsnode.JSString(m.UpdatedAt)}}, indent)
 }
 
 // EncodeMode is JSON.stringify of the mode, without a newline (the oracle's CLI prints it for --json; the file holds the indented form).
@@ -210,27 +211,27 @@ func EncodeMode(m DivergenceMode) string { return encodeMode(m, false) }
 func EncodeCandidate(c DivergenceCandidate) string {
 	urls := make([]string, len(c.SourceURLs))
 	for i, u := range c.SourceURLs {
-		urls[i] = rowQuote(u)
+		urls[i] = jsnode.JSString(u)
 	}
-	m := [][2]string{{"ts", rowQuote(c.TS)}, {"sessionId", rowQuote(c.SessionID)}, {"id", rowQuote(c.ID)}, {"kind", rowQuote(string(c.Kind))}, {"title", rowQuote(c.Title)},
-		{"rationale", rowQuote(c.Rationale)}, {"sourceUrls", "[" + strings.Join(urls, ",") + "]"}, {"status", rowQuote(string(c.Status))}}
+	m := [][2]string{{"ts", jsnode.JSString(c.TS)}, {"sessionId", jsnode.JSString(c.SessionID)}, {"id", jsnode.JSString(c.ID)}, {"kind", jsnode.JSString(string(c.Kind))}, {"title", jsnode.JSString(c.Title)},
+		{"rationale", jsnode.JSString(c.Rationale)}, {"sourceUrls", "[" + strings.Join(urls, ",") + "]"}, {"status", jsnode.JSString(string(c.Status))}}
 	if c.Worktree != nil {
-		m = append(m, [2]string{"worktree", rowQuote(*c.Worktree)})
+		m = append(m, [2]string{"worktree", jsnode.JSString(*c.Worktree)})
 	}
 	if c.MetricName != nil {
-		m = append(m, [2]string{"metricName", rowQuote(*c.MetricName)})
+		m = append(m, [2]string{"metricName", jsnode.JSString(*c.MetricName)})
 	}
 	if c.MetricValue != nil {
 		m = append(m, [2]string{"metricValue", rowNumber(*c.MetricValue)})
 	}
 	if c.Note != nil {
-		m = append(m, [2]string{"note", rowQuote(*c.Note)})
+		m = append(m, [2]string{"note", jsnode.JSString(*c.Note)})
 	}
 	if c.ChangeClass != "" {
-		m = append(m, [2]string{"changeClass", rowQuote(string(c.ChangeClass))})
+		m = append(m, [2]string{"changeClass", jsnode.JSString(string(c.ChangeClass))})
 	}
 	if c.KilledAtPhase != "" {
-		m = append(m, [2]string{"killedAtPhase", rowQuote(string(c.KilledAtPhase))})
+		m = append(m, [2]string{"killedAtPhase", jsnode.JSString(string(c.KilledAtPhase))})
 	}
 	return jsonObject(m, false)
 }
@@ -313,7 +314,7 @@ func ReadDivergenceMode(cwd, sessionID string) (DivergenceMode, bool) {
 	if err != nil {
 		return DivergenceMode{}, false
 	}
-	m := ledgerDoc(ledgerUTF8(raw))
+	m := ledgerDoc(jsnode.DecodeUTF8(raw))
 	owner, _ := m["sessionId"].(string)
 	active, isBool := m["active"].(bool)
 	collapse, _ := m["collapsePoint"].(string)
@@ -423,7 +424,7 @@ func ReadDivergenceCandidates(cwd, sessionID string) []DivergenceCandidate {
 	if err != nil {
 		return out
 	}
-	for _, line := range text.SplitLines(ledgerUTF8(raw)) {
+	for _, line := range text.SplitLines(jsnode.DecodeUTF8(raw)) {
 		if c, ok := candidateRow(line); ok && (sessionID == "" || c.SessionID == sessionID) {
 			out = append(out, c)
 		}

@@ -3,6 +3,7 @@ package gate
 import (
 	"fmt"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -13,6 +14,12 @@ import (
 type CheckGateResult struct {
 	OK     bool
 	Reason string
+}
+
+// exitCodeRefusal is the refusal text for a receipt whose exitCode is not zero: the number interpolated as JavaScript's String() spells
+// it, "NaN" and the infinities included. A parsed receipt cannot carry a NaN (JSON has none), so the helper is what keeps that spelling.
+func exitCodeRefusal(code float64) string {
+	return fmt.Sprintf("the receipt reports exitCode %s; only a passing run closes a check", jsnode.NumberString(code))
 }
 
 // ValidateCheckReceipt verifies the receipt a C>D attestation names (receiptPath is empty when it names none), for bound sessions
@@ -39,7 +46,7 @@ func ValidateCheckReceipt(st state.State, sessionID, receiptPath, cwd string) Ch
 	case parsed.ExitCode == nil:
 		return refuse("the receipt reports exitCode none; only a passing run closes a check")
 	case *parsed.ExitCode != 0:
-		return refuse(fmt.Sprintf("the receipt reports exitCode %s; only a passing run closes a check", jsNumberText(*parsed.ExitCode)))
+		return refuse(exitCodeRefusal(*parsed.ExitCode))
 	case !parsed.CreatedAtProvided:
 		return refuse("the receipt carries no usable createdAt")
 	case parsed.OwnerSessionID == nil || *parsed.OwnerSessionID != sessionID:

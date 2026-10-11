@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 type RequeueCandidate struct {
@@ -85,7 +87,7 @@ func RequeueExhaustedMemoryJobs(home string, options ...RequeueOptions) RequeueR
 	if n := opts.Retries; n != nil && !math.IsNaN(*n) && !math.IsInf(*n, 0) && *n > 0 {
 		if *n < 1 {
 			// An allowance below one floors to zero: the backoff would be cleared and the row still not eligible (known-defects.md :617).
-			return emptyRequeue(MemoryStatusUnavailable, "--retries "+memoryNumberText(*n)+" must be a whole number of at least 1", nil, retries)
+			return emptyRequeue(MemoryStatusUnavailable, "--retries "+jsnode.NumberString(*n)+" must be a whole number of at least 1", nil, retries)
 		}
 		retries = math.Floor(*n)
 	}
@@ -262,7 +264,9 @@ func presentFold(present map[string]bool, name string) bool {
 }
 
 // requeueIsConsolidation is a job kind of the memory consolidation pass, which is not an extraction that can be retried unchanged.
-func requeueIsConsolidation(kind string) bool { return strings.Contains(Lower(kind), "consolidat") }
+func requeueIsConsolidation(kind string) bool {
+	return strings.Contains(jsnode.Lower(kind), "consolidat")
+}
 
 // applyMemoryRequeue writes through a connection that selects the rows itself: the store is opened for writing without CREATE, BEGIN
 // IMMEDIATE takes the write lock, and the rows are selected again on that connection and written in that transaction. The rows that are
@@ -377,7 +381,7 @@ func requeueCauseText(counts CauseCounts) string {
 	})
 	parts := make([]string, len(counts))
 	for i, pair := range counts {
-		parts[i] = pair.Cause + "=" + memoryNumberText(pair.Count)
+		parts[i] = pair.Cause + "=" + jsnode.NumberString(pair.Count)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -415,7 +419,7 @@ func FormatRequeue(r RequeueResult) string {
 		}
 	}
 	if r.Applied {
-		lines = append(lines, "  applied: "+memoryNumberText(r.Changed)+" row(s) given "+memoryNumberText(r.Retries)+" retries")
+		lines = append(lines, "  applied: "+jsnode.NumberString(r.Changed)+" row(s) given "+jsnode.NumberString(r.Retries)+" retries")
 	} else {
 		lines = append(lines, "  dry run — nothing written (pass --apply)")
 	}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 )
 
 type indexRankOracleCase struct {
@@ -268,8 +270,8 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 	for _, corpus := range data.Corpora {
 		for i, c := range corpus.Cases {
 			count++
-			t.Run(corpus.Name+"/"+c.Name+"/"+memoryNumberText(float64(i)), func(t *testing.T) {
-				key := corpus.Name + "/" + c.Name + "/" + memoryNumberText(float64(i))
+			t.Run(corpus.Name+"/"+c.Name+"/"+jsnode.NumberString(float64(i)), func(t *testing.T) {
+				key := corpus.Name + "/" + c.Name + "/" + jsnode.NumberString(float64(i))
 				if fix, ok := fixes.lookup(key); ok {
 					// port: fixed (docs/port-cxc/known-defects/CRW-1128.md): the port's answer in place of the recorded one.
 					var fixed struct {
@@ -339,7 +341,7 @@ func TestIndexRankRecordedOracle(t *testing.T) {
 func TestIndexRankIndexEqualsScan(t *testing.T) {
 	home, db, corpus, now := indexRankCorpus(t, "fixture")
 	for i, c := range corpus.Cases {
-		t.Run(memoryNumberText(float64(i))+"/"+c.Query, func(t *testing.T) {
+		t.Run(jsnode.NumberString(float64(i))+"/"+c.Query, func(t *testing.T) {
 			opts := c.Options
 			opts.Home = home
 			r := indexRankSearch(t, db, opts)

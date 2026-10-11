@@ -166,7 +166,7 @@ func TestPromptDcloseLoneSurrogateRowIsNotTheReplacementCharacterRow(t *testing.
 		{"U+FFFD escape", `wp-\ufffd`, 1, 1},
 		{"U+FFFD character", "wp-�", 1, 1},
 		// Raw bytes, never an escape: the incomplete multi-byte prefix E0 A0 is ONE U+FFFD to Node's
-		// readFileSync utf8 (WHATWG maximal subpart, source.DecodeUTF8) and TWO to a per-byte
+		// readFileSync utf8 (WHATWG maximal subpart, jsnode.DecodeUTF8) and TWO to a per-byte
 		// replacement, so this case fails when the hook reader drops DecodeUTF8 (the CLI control is
 		// TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement).
 		{"raw incomplete multi-byte prefix E0 A0", "wp-\xe0\xa0", 1, 1},

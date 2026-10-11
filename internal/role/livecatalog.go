@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
@@ -52,14 +53,14 @@ type LiveCatalog struct {
 func (c LiveCatalog) MarshalJSON() ([]byte, error) {
 	if c.raw == nil {
 		type plain LiveCatalog
-		return Stringify(plain(c), "")
+		return jsnode.Stringify(plain(c), "")
 	}
 	o := append(object{}, c.raw...)
 	o.set("status", c.Status)
 	if c.Message != "" {
 		o.set("message", c.Message)
 	}
-	return Stringify(o, "")
+	return jsnode.Stringify(o, "")
 }
 
 type CatalogOptions struct {
@@ -155,7 +156,7 @@ func (s catalogSource) key(env host.LookupEnv) string {
 	h, _ := env("CODEX_HOME")
 	cache, _ := env("CODEX_MODELS_CACHE_PATH")
 	ocx, _ := env("OPENCODEX_HOME")
-	b, _ := Stringify([]string{h, cache, p, ocx, s.nativeHome, s.nativePath, s.ocxExe, s.ocxHome}, "")
+	b, _ := jsnode.Stringify([]string{h, cache, p, ocx, s.nativeHome, s.nativePath, s.ocxExe, s.ocxHome}, "")
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -426,7 +427,7 @@ func cachedCatalog(path, key string, now int64) *LiveCatalog {
 // persistCatalog retains ts:71-80's exclusive 0600 temp and rename. This oracle
 // already avoids in-place truncation; failed publication preserves the prior file.
 func persistCatalog(path, key string, c LiveCatalog, rename func(string, string) error) bool {
-	body, err := Stringify(struct {
+	body, err := jsnode.Stringify(struct {
 		Key     string      `json:"key"`
 		Catalog LiveCatalog `json:"catalog"`
 	}{key, c}, "")
