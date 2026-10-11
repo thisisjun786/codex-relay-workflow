@@ -9,6 +9,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill/search"
 )
 
+// skillUsage lists the commands the oracle's usage lists (contract/notes/cxc/CRW-496.json pins this text); the commands CRW added (pair-choice,
+// size-fit, merge-build-check) answer their own --help and stay out of it.
 const skillUsage = "usage: crw skill {hook-probe,issue-ready,issue-size,parent-title,start-policy,base-refresh} ..."
 
 // Run dispatches `crw skill` commands.
@@ -34,6 +36,8 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return runIssueReady(args[1:], stdin, stdout, stderr)
 	case "issue-size":
 		return runIssueSize(args[1:], stdin, stdout, stderr)
+	case "size-fit":
+		return runSizeFit(args[1:], stdin, stdout, stderr)
 	case "parent-title":
 		return runParentTitle(args[1:], stdin, stdout, stderr)
 	case "start-policy":
