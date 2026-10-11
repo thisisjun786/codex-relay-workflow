@@ -118,8 +118,27 @@ else
 fi
 
 # 5. .env safety: no .env file, .env ignored by git, .env.example present
+# Whether Git ignores .env is Git's answer for the project's .gitignore (a `.env*`, `/.env`,
+# `**/.env` or `.en[v]` rule ignores it as well as `.env` does, and a later `!.env` undoes it); a
+# scratch repository holding only that file asks Git without touching the project. With no git
+# on PATH the check reads the file for an `.env` line.
+env_ignored() {
+  [ -f "$DIR/.gitignore" ] || return 1
+  if command -v git >/dev/null 2>&1; then
+    local scratch result=1
+    scratch=$(mktemp -d "${TMPDIR:-/tmp}/scaffold-audit.XXXXXX") || return 1
+    if cp "$DIR/.gitignore" "$scratch/.gitignore" \
+      && git -C "$scratch" init -q >/dev/null 2>&1 \
+      && git -C "$scratch" -c core.excludesFile=/dev/null check-ignore -q --no-index .env >/dev/null 2>&1; then
+      result=0
+    fi
+    rm -rf "$scratch"
+    return $result
+  fi
+  grep -Eq '(^|/)\.env($|[[:space:]]|#)' "$DIR/.gitignore"
+}
 ENV_IGNORED=false
-if [ -f "$DIR/.gitignore" ] && grep -Eq '(^|/)\.env($|[[:space:]]|#)' "$DIR/.gitignore"; then
+if env_ignored; then
   ENV_IGNORED=true
 fi
 if [ -f "$DIR/.env" ]; then

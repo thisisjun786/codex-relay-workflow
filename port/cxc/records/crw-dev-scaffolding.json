@@ -197,7 +197,7 @@
     },
     {
       "file": "scripts/scaffold-audit.sh",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "reason": "CRW-1221 correction: .env is judged ignored by Git's answer for the .gitignore, not by the literal spelling",
       "hunks": [
         {
           "line": 5,
@@ -217,8 +217,27 @@
           ],
           "new": [
             "# 5. .env safety: no .env file, .env ignored by git, .env.example present\n",
+            "# Whether Git ignores .env is Git's answer for the project's .gitignore (a `.env*`, `/.env`,\n",
+            "# `**/.env` or `.en[v]` rule ignores it as well as `.env` does, and a later `!.env` undoes it); a\n",
+            "# scratch repository holding only that file asks Git without touching the project. With no git\n",
+            "# on PATH the check reads the file for an `.env` line.\n",
+            "env_ignored() {\n",
+            "  [ -f \"$DIR/.gitignore\" ] || return 1\n",
+            "  if command -v git >/dev/null 2>&1; then\n",
+            "    local scratch result=1\n",
+            "    scratch=$(mktemp -d \"${TMPDIR:-/tmp}/scaffold-audit.XXXXXX\") || return 1\n",
+            "    if cp \"$DIR/.gitignore\" \"$scratch/.gitignore\" \\\n",
+            "      && git -C \"$scratch\" init -q >/dev/null 2>&1 \\\n",
+            "      && git -C \"$scratch\" -c core.excludesFile=/dev/null check-ignore -q --no-index .env >/dev/null 2>&1; then\n",
+            "      result=0\n",
+            "    fi\n",
+            "    rm -rf \"$scratch\"\n",
+            "    return $result\n",
+            "  fi\n",
+            "  grep -Eq '(^|/)\\.env($|[[:space:]]|#)' \"$DIR/.gitignore\"\n",
+            "}\n",
             "ENV_IGNORED=false\n",
-            "if [ -f \"$DIR/.gitignore\" ] && grep -Eq '(^|/)\\.env($|[[:space:]]|#)' \"$DIR/.gitignore\"; then\n",
+            "if env_ignored; then\n",
             "  ENV_IGNORED=true\n",
             "fi\n"
           ]

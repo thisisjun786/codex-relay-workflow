@@ -132,6 +132,33 @@ func TestScaffoldAuditMergedCoversBothCallers(t *testing.T) {
 		if unignored.code != 1 {
 			t.Errorf("unignored .env: exit = %d, want 1:\n%s", unignored.code, unignored.out)
 		}
+		// Whether .env is ignored is Git's answer for the .gitignore, not the spelling `.env`.
+		for name, gitignore := range map[string]string{
+			"wildcard":              "node_modules\n.env*\n!.env.example\n",
+			"anchored":              "/.env\n",
+			"any depth":             "**/.env\n",
+			"character class":       ".en[v]\n",
+			"after an ignored dir":  "build/\n.env.*\n.env\n",
+			"re-ignored by a later": "!.env\n.env\n",
+		} {
+			ignored := runScaffoldAudit(t, with(node, map[string]string{".gitignore": gitignore}))
+			ignored.have(t, ".env safety (.gitignore + .env.example)", "Fail: 0")
+			if ignored.code != 0 {
+				t.Errorf("%s (%q): exit = %d, want 0:\n%s", name, gitignore, ignored.code, ignored.out)
+			}
+		}
+		for name, gitignore := range map[string]string{
+			"unignored again":     ".env\n!.env\n",
+			"another .env file":   ".env.local\n.envrc\n",
+			"only a comment":      "# .env\n",
+			"a directory pattern": ".env/\n",
+		} {
+			open := runScaffoldAudit(t, with(node, map[string]string{".gitignore": gitignore}))
+			open.have(t, ".env is not listed in .gitignore")
+			if open.code != 1 {
+				t.Errorf("%s (%q): exit = %d, want 1:\n%s", name, gitignore, open.code, open.out)
+			}
+		}
 		noExample := runScaffoldAudit(t, with(node, nil, ".env.example"))
 		noExample.have(t, ".env.example missing")
 		if noExample.code != 0 {

@@ -19,7 +19,7 @@ check the installed one against the record. They are not part of the skill and t
 | --- | --- |
 | `visualize-upstream.md` | The last inspection: the host skill's path rule, SHA-256, version and date |
 | `sync-check.sh` | Compares the installed host skill with that record (`bash docs/port-cxc/visualizer/sync-check.sh`) |
-| `sync-check.test.mjs` | The helper's test (`node --test docs/port-cxc/visualizer/sync-check.test.mjs`) |
+| `sync-check.test.mjs` | The helper's test (`node --test docs/port-cxc/visualizer/sync-check.test.mjs`); `TestVisualizerSyncCheckHelperTestRuns` in `internal/dev/ci` runs it with the rest of the dev tests, because the skill-test CI job collects only `plugins/crw/skills/*/tests` |
 
 A mismatch means the current host instructions have to be read again; they are never copied into the skill.
 A missing local cache is an availability result and not a broken environment. The helper selects the host cache

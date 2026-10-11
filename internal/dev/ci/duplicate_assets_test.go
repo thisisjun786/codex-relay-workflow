@@ -5,6 +5,7 @@ package ci
 import (
 	"crypto/sha256"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -155,4 +156,25 @@ func TestNoDuplicateSkillAssets(t *testing.T) {
 		root, m = duplicateFixture(t, files, "done", duplicateAssetsSkillsRoot+"crw-none/")
 		expectEqual(t, "empty path", duplicateAssetErrors(root, m), []string{"duplicateContent[9]: plugins/crw/skills/crw-none/ holds no file to compare"})
 	})
+}
+
+// The visualizer's host-freshness helper sits outside the skill (docs/port-cxc/visualizer), so the
+// skill-scripts-node collector (plugins/crw/skills/*/tests) does not reach its test. This test is
+// the verification entry point that runs it with the rest of internal/dev/ci.
+func TestVisualizerSyncCheckHelperTestRuns(t *testing.T) {
+	const helperTest = "docs/port-cxc/visualizer/sync-check.test.mjs"
+	if _, err := os.Stat(filepath.Join(repoRoot(), helperTest)); err != nil {
+		t.Fatal(err)
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	got := runCommand(t, repoRoot(), nil, node, "--test", helperTest)
+	if got.code != 0 {
+		t.Errorf("node --test %s: exit %d\n%s%s", helperTest, got.code, got.stdout, got.stderr)
+	}
 }

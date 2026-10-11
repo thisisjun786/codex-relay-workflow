@@ -28,7 +28,7 @@ var staleCxcPatterns = []scanPattern{
 }
 
 // staleAllowance exempts the lines of the file under Path (a file or a directory) that contain Text
-// (every line when Text is empty): a port-oracle citation the skill keeps on purpose. The list is
+// (an entry without Text exempts nothing): a port-oracle citation the skill keeps on purpose. The list is
 // named and short; an entry says why in Why.
 type staleAllowance struct {
 	Path, Text, Why string
@@ -38,9 +38,17 @@ type staleAllowance struct {
 // the header of a ported test, which says which original test it replays and under which name
 // table. A skill's instructions never cite the original.
 var staleCxcAllowed = []staleAllowance{
-	{Path: staleSkillsRoot + "crw-qa/tests/qa-validate-evidence.test.mjs", Why: "the header names the original test this one is ported from and the name table it was applied through"},
-	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Why: "the header names the original test this one is ported from and the dispatcher cases it does not replay"},
-	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-smoke.test.mjs", Why: "the header names the original test this one is ported from and the adaptations of its fixtures"},
+	{Path: staleSkillsRoot + "crw-qa/tests/qa-validate-evidence.test.mjs", Text: "The oracle is CXC v0.2.40 plugins/codexclaw/test/qa-validate-evidence.test.mjs", Why: "the header names the original test this one is ported from"},
+	{Path: staleSkillsRoot + "crw-qa/tests/qa-validate-evidence.test.mjs", Text: "(.codexclaw -> .crw)", Why: "the header names the name table the port applied"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Text: "Ported by CRW-939 from CXC v0.2.40 plugins/codexclaw/test/repo-map-packaging.test.mjs", Why: "the header names the original test this one is ported from"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Text: "name substitution of contract/schema/cxc/name-substitution.json: the skill is crw-repo-map", Why: "the header names the name table the port applied"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Text: "(cxc map --help exits 0 without python deps", Why: "the header names the original dispatcher cases it does not replay"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Text: "bin/codexclaw.mjs, the CXC Node dispatcher", Why: "the header names the original dispatcher this port replaced"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-packaging.test.mjs", Text: "The oracle spawned `cxc map --help`", Why: "the comment names the original spawn it does not replay"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-smoke.test.mjs", Text: "Ported by CRW-939 from CXC v0.2.40 plugins/codexclaw/test/repo-map-smoke.test.mjs", Why: "the header names the original test this one is ported from"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-smoke.test.mjs", Text: "name substitution of contract/schema/cxc/name-substitution.json. Three adaptations:", Why: "the header names the name table the port applied"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-smoke.test.mjs", Text: "plugins/codexclaw/test/fixtures/repo-map/", Why: "the header names the original fixture directory"},
+	{Path: staleSkillsRoot + "crw-repo-map/tests/repo-map-smoke.test.mjs", Text: "CODEXCLAW_SKIP_REPOMAP_SMOKE=1", Why: "the header names the original escape variable"},
 }
 
 // changeHistoryPatterns are notes about how a skill changed rather than what it says now: dropped
@@ -111,7 +119,7 @@ func rowScanErrors(root string, m inventoryMap, test string, patterns []scanPatt
 							continue
 						}
 						for _, allowance := range allowed {
-							if covers(allowance.Path, file) && strings.Contains(line, allowance.Text) {
+							if covers(allowance.Path, file) && allowance.Text != "" && strings.Contains(line, allowance.Text) {
 								continue nextLine
 							}
 						}
@@ -190,18 +198,20 @@ func TestNoStaleCxcReferences(t *testing.T) {
 		expectEqual(t, "empty path", rowScanErrors(root, m, "TestNoStaleCxcReferences", staleCxcPatterns, nil),
 			[]string{"deadOrStale[11]: plugins/crw/skills/crw-none/ holds no file to scan"})
 	})
-	t.Run("fixture: an entry without text lets a whole file through", func(t *testing.T) {
+	t.Run("fixture: an entry without text lets nothing through", func(t *testing.T) {
 		root, m := scanFixture(t, "TestNoStaleCxcReferences", "done", staleSkillsRoot)
 		allowed := []staleAllowance{{Path: staleSkillsRoot + "crw-a/SKILL.md", Why: "a ported test header"}, {Path: staleSkillsRoot + "crw-c/", Why: "x"}}
-		expectEqual(t, "errors", rowScanErrors(root, m, "TestNoStaleCxcReferences", staleCxcPatterns, allowed), []string(nil))
+		if got := rowScanErrors(root, m, "TestNoStaleCxcReferences", staleCxcPatterns, allowed); len(got) == 0 {
+			t.Errorf("entries without Text let the scan skip lines: %v", got)
+		}
 	})
 	t.Run("the named list is short, says why and names ported test files", func(t *testing.T) {
 		for _, allowance := range staleCxcAllowed {
-			if allowance.Why == "" || !strings.HasPrefix(allowance.Path, staleSkillsRoot) || !strings.HasSuffix(allowance.Path, ".test.mjs") {
-				t.Errorf("allowance %+v: needs a reason and a ported test file below %s", allowance, staleSkillsRoot)
+			if allowance.Text == "" || allowance.Why == "" || !strings.HasPrefix(allowance.Path, staleSkillsRoot) || !strings.HasSuffix(allowance.Path, ".test.mjs") {
+				t.Errorf("allowance %+v: needs the citation text, a reason and a ported test file below %s", allowance, staleSkillsRoot)
 			}
 		}
-		if len(staleCxcAllowed) > 5 {
+		if len(staleCxcAllowed) > 12 {
 			t.Errorf("%d allowances; the list stays short", len(staleCxcAllowed))
 		}
 	})
