@@ -47,7 +47,7 @@ func routingRow(generation int64) store.ManagedStartRequestsRow {
 
 func TestRoutingText_GenerationOneIsTheBaselineText(t *testing.T) {
 	t.Parallel()
-	m := &Start{Store: &store.Store{Path: "/state/relay.sqlite3"}, Socket: "/sock"}
+	m := &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: &store.Store{Path: "/state/relay.sqlite3"}, Socket: "/sock"}
 	id := Identity{DispatchRequestID: "managed-business-d", Workspace: "/ws", MarkerRoot: "/marker"}
 	got := m.packet(id, routingRow(1), map[string]any{"prompt": "do the work"}, "assignment-1")
 	if got != generationOneRoutingText {
@@ -119,7 +119,7 @@ func newRoutingRun(t *testing.T) *routingRun {
 	}
 	host := &managedFake{operations: map[string]map[string]any{}, settings: pyjson.Map(pyjson.Map(req["child"])["settings"]), ledger: map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}, standby: "completed"}
 	return &routingRun{t: t, ctx: ctx, store: s, host: host, raw: raw, issueKey: pyjson.Text(req["issueKey"]),
-		start: &Start{Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}}
+		start: &Start{StandbyWait: testStandbyWait, StandbyPoll: testStandbyPoll, Store: s, Adapter: host, Now: func() string { return "2026-09-26T00:00:00.000000+00:00" }, Socket: filepath.Join(dir, "socket"), MarkerRoot: filepath.Join(dir, "markers"), StateSelector: dir, Readiness: func(context.Context, map[string]any) (string, error) { return "", nil }}}
 }
 
 func (x *routingRun) run() map[string]any {

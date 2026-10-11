@@ -417,8 +417,11 @@ another child from an empty ledger.
 Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
 rather than rewriting the assignment; an uncertain delivery is reconciled against the
 bridge's retained operation, never retried under a new identity, and an uncertain creation is
-reconciled by observing the App Server under the same request (below). A running, missing or unknown
-standby returns `incomplete` / `standby_incomplete`. When the recorded standby ends `interrupted`
+reconciled by observing the App Server under the same request (below). The call waits for the standby
+turn to end (the creation watch's `turn/completed` first, the host's record of the turn every second
+otherwise) for up to 60 seconds, so the caller's timeout has to be longer than 60 seconds; a running,
+missing or unknown standby returns `incomplete` / `standby_incomplete` only once that bound has passed, and
+repeating the request waits again. When the recorded standby ends `interrupted`
 or `failed`, a repeat may proceed to the business turn once the host is ready for direct input
 (idle or not loaded, unarchived, with no paused or limited goal). It does not send another standby:
 the standby forbids implementation, the business assignment is self-contained, and the original
@@ -479,7 +482,10 @@ Running it does not wake a parent, write a queue, or publish a new report.
 
 | Observation | Recovery |
 | --- | --- |
-| `incomplete` / `standby_incomplete` | Retry the same request after a known end: `completed`, or `interrupted`/`failed` when the host is ready. Missing, unknown and running turns stay held; no second standby is sent. |
+| `incomplete` / `standby_incomplete` | The call waited 60 seconds without a known end of the standby. Retry the same request after a known end: `completed`, or `interrupted`/`failed` when the host is ready; the retry waits again. Missing, unknown and running turns stay held; no second standby is sent. |
+| `incomplete` / `recipient_not_idle` with `creationReconciliation` `standby_orphan_held` | The registered child (recorded before its standby ended) stands in the host, loaded, under settings or MCP servers other than the request's, with only its standby turn; it cannot be replaced and no business turn is sent while it is loaded. Wait for the host to unload it or run `thread/archive` then `thread/unarchive` on it, then retry the same request. |
+| `incomplete` / `recipient_paused`, `recipient_usage_limited`, `recipient_budget_limited`, `recipient_cannot_accept_input`, `recipient_archived` or `lifecycle_unknown` at stage `business` with `creationReconciliation` `standby_orphan_held` | The unregistered child stands in the host under settings other than the request's with only its standby turn, and the host holds it by a goal, takes no direct input, or has archived it or lost it. It is neither archived nor replaced and nothing is sent. Release the hold on that thread (resume its goal), then retry the same request. |
+| `incomplete` / `lifecycle_unknown` with `creationReconciliation` `standby_orphan_held` | The child stands in the host under settings other than the request's and an archive of it was sent without a recorded answer. It is not archived again and no new child is made; inspect the thread, then repair or release the request. |
 | worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
 | paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
 | creation outcome unknown | Retry the same request: it observes the App Server and continues, creates again after the grace period, or stops with `creationReconciliation` saying why. Do not start a replacement request. |

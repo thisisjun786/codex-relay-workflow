@@ -192,70 +192,100 @@ after a completed durable turn and confirmation that its rollout is resumable, r
 subscriptions and observe `thread/read` reporting `notLoaded`. Other clients may retain subscriptions,
 and unloading is the host's decision. If it remains loaded, an operator can use `thread/archive` then
 `thread/unarchive`; the next relay delivery resumes under the recorded MCP profile. Never unload a
-never-run root. The relay performs no automatic archive or recovery operation beyond the one
-narrow case the managed resend gate owns below, where it lowers an idle child it may then resend
-to under the recorded profile.
+never-run root. The relay performs one automatic archive of a child: the managed start's orphan
+archive below, which replaces the child instead of lowering it.
 
-A managed start can retry the same complete request after a recorded business send
-failed before `turn/start`. It retains that failure under its original bridge operation
-ID and derives at most two successor operation IDs from the managed request and attempt.
-The managed request, fingerprint, slot, relationship, generation and routing dispatch ID
-stay unchanged. An accepted successor passes the bridge ledger's fingerprint-aware lookup
-for the exact packet before replaying admission, never starting a turn again; another
-operation or message occupying its ID is refused.
-Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed
-effect evidence and failures without affirmative pre-turn evidence remain held. Older
-receipts without effect/delivery fields qualify only for the structured
-`thread/resume` / `settings_not_preserved` refusal.
-An explicit pre-turn effect trace must be empty or contain exactly one `thread/resume`;
-unknown, misspelled, duplicate or contradictory effects do not qualify.
+A managed start waits for its standby turn inside the call. It holds the creation's turn watch
+open from the creation until the wait is over, reads the watch's `turn/completed` first and the
+host's own record of the turn (`thread/turns/list`) every second when the watch has not reported
+it, and answers `incomplete` / `standby_incomplete` only when the 60 second bound
+(`Start.StandbyWait`) has passed; a caller's timeout must be longer than the bound. The bound is one
+deadline over the whole wait: a host read that is still running when it passes is cut (the App
+Server client reports that cut as its phase timeout, which the wait counts as the bound and not as a
+host failure), and no read is given a budget of its own. The watch is asked again after every read
+and once more when the bound passes, so a `turn/completed` that arrived during a read or between
+reads ends the wait as completed, and a read that fails on its own (its RPC bound is shorter than
+the wait's) does not discard a `turn/completed` the watch already holds: the watch is asked before
+the read's error is returned, and the error is the call's only when the watch has nothing; a read
+is not cut for the watch, because a request cancelled mid-write closes the connection that carries
+the watch. A turn seen to end is kept for the business step and is not asked of
+the host again, so the watch's proof of completion survives its release. The watch is let go once
+the wait is over and on every way out of the call.
 
-Before a resend, the host must list exactly the recorded standby turn with no continuation
-cursor, then report the same child as `notLoaded`. A child the host holds loaded under other MCP
-settings is lowered once instead of waiting, but only when its immediately preceding business
-failure is the structured `settings_not_preserved` refusal and the same read reports it `idle`:
-the gate checks the journal, asks readiness and the ledger, writes the begin mark, reads the child
-`idle` once more as the last step before the archive (only the host call sits between that read and
-`thread/archive`), calls `thread/archive` then `thread/unarchive`, requires `notLoaded` and the
-standby-only history again, and only then resends with the recorded profile.
-That unload is the one automatic archive the relay performs, and it is bounded to one lowering per
-business attempt inside the existing successor chain: a replay reconstructs the same attempt from
-the retained failure, so the begin mark an earlier lowering wrote before its archive is what stops
-the next one, even when the closing row could not be written. A child that is no longer `idle` at
-that last read is not archived and answers `recipient_not_idle`. An
-`active` child, one whose history shows a foreign turn and one whose preceding failure is not that
-refusal are never archived and hold as before.
-An archive error the host answered with its own JSON-RPC error response is a refusal of that call,
-so this invocation did not apply the archive and the answer is incomplete `recipient_not_idle` with
-no archived-listing check, no unarchive and no send. An error with no host answer read asks the same
-complete archived scan the resend guard uses once, and an answer of `recipient_archived` continues
-exactly as after a successful archive, recording `reply_lost` as the archive result in the row;
-a complete listing that does not hold the child keeps that hold, and a failed or incomplete check keeps it too but leaves the archive unknown. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
-naming the archived thread for an operator in the journal; a child still loaded afterwards answers
-`recipient_not_idle`. Every unload writes a `managed_resend_unloaded` begin row (`phase` `begin`,
-the attempt) before the archive, and a begin row that cannot be written archives nothing. It then
-writes one closing row (`phase` `end`) naming the thread, the archive and unarchive results and
-the load state observed afterwards; once the archive has succeeded that row is written with a
-context that survives the caller's cancellation, because an archived child with no row would
-leave an operator nothing to read. When nothing was archived (the last read was not `idle`, failed or was cancelled, or the archive
-was refused, or a complete archived listing does not hold the child) the closing row says `archive`
-`none` with its reason and the attempt stays available, also when the caller's cancellation
-arrives right after the host's refusal or the complete listing: the closing row is written first and the
-context error is returned. When the archive may have applied and the
-archived listing failed or was incomplete, the closing row says `archive` `unknown` and the attempt
-stays spent: an operator who unarchives the child does not see the same attempt archive it again. Empty, missing-rollout or
-unreadable history stays held as `lifecycle_unknown`; another turn refuses as
-`business_identity_unobserved`. The final business guard repeats the standby-only check after the
-recorded-profile resume.
-The recovery guard retains the complete archived scan and positive thread/goal reads,
-and skips the unnecessary unarchived listing, so its history check fits the existing
-ten-request deadline budget (at most seven calls).
-Live-context observation errors in that recovery guard withhold as retryable
-`not_attempted`; cancellation remains unknown.
-If another client loads the thread between the precheck and resume, the ordinary settings
-verifier still withholds `turn/start` and retains an honest failure; a later invocation
-can use the next bounded successor. No fourth operation is created. Initial guard failures
-recorded as `outcome_unknown` are not recovered by this path.
+When the standby turn has ended and the child is not yet recorded, the start judges the child.
+A child is an orphan when the host reports it `idle` (loaded) with a model, reasoning effort or
+working directory other than the request's, or when the adapter, which resolves the MCP profile of
+the child's role against the host as a resume does, finds that the thread's `mcpServerStatus/list`
+differs from the profile's expectation (a thread read does not report MCP servers), and its history
+is exactly the recorded standby turn:
+a resume cannot change the settings of a thread the host holds loaded, so no business turn could
+start on it under the recorded profile, and nothing else lives on it. The start then archives the
+orphan once and creates the child again under the same managed request, as it creates again after
+a creation that left no usable thread: the new creation has a bridge operation id derived from the
+request and the attempt, and at most three creations are made (`maxCreationAttempts`). A child
+whose history shows any other turn (`business_identity_unobserved`), or whose history cannot be
+read completely (`lifecycle_unknown`), is somebody's work or unknown: it is never archived or
+replaced and the start is held. When the creations are spent the start stops `creation_unknown`
+with `creationReconciliation` `attempts_exhausted` and the last child stays where it is.
+
+A standby that has not ended when the bound passes is not judged: the child is recorded and
+registered and the start answers `standby_incomplete`. A registered child cannot be replaced (the
+reservation publishes one child per request), so the call that later finds the standby ended
+reads the child once more before the business turn: an orphan by the rule above is held as
+`incomplete` / `recipient_not_idle` (`creationReconciliation` `standby_orphan_held`) with nothing
+archived, created or sent, instead of sending a turn whose failure would stay on the request. Once the
+host has unloaded the child (another client closing it, or an operator's `thread/archive` then
+`thread/unarchive`), the resume applies the recorded settings and the business turn goes out.
+
+An orphan is replaced only when the host would let a business turn start on it, whatever way its
+standby turn ended (`completed`, `interrupted` or `failed`): before the archive the start asks the
+host-ready questions of the business step about the old child, and a goal the host holds `paused`,
+`usageLimited` or `budgetLimited`, a child that takes no direct input, or an archived or unknown one,
+holds the request as `incomplete` with that code (`recipient_paused`, `recipient_usage_limited`,
+`recipient_budget_limited`, `recipient_cannot_accept_input`, `recipient_archived`, `lifecycle_unknown`)
+at the `business` stage and `creationReconciliation` `standby_orphan_held`, with nothing archived,
+created or sent. The next call judges the child again and replaces it once the hold has gone.
+
+The archive is a host effect and is bounded by its journal rows. The readiness policy and the ledger
+are asked again before it; a `managed_standby_orphan` row with `archive` `attempting` is written
+before the host call, on a context the caller's cancellation does not end, and a second row
+closes it (`ok`, `refused` when the host answered with its own JSON-RPC error, or `skipped` when
+the last `thread/read` before the archive no longer showed an idle child, or could not be read:
+the start then answers `incomplete` / `recipient_not_idle` (`lifecycle_unknown` for an unreadable
+child), `standby_orphan_held`, registers nothing and sends nothing, and a repeat judges the child again). An archive whose answer
+is lost may have applied, and another client may have unarchived and loaded the child again since:
+neither the archived listing nor a second archive can settle that, so the start answers `incomplete`
+`lifecycle_unknown` (`creationReconciliation` `standby_orphan_held`) and the `attempting` row, which
+no later row closes, keeps every repeat of the request, in this process or after a restart, from
+archiving the thread again. A repeat that finds `ok` or `refused` for the attempt continues with
+the next creation.
+
+A business send that certainly failed before `turn/start` is retained under its original bridge
+operation ID and the start answers `incomplete` / `business_failed`; a new operation ID is not
+derived for it, and the relay neither lowers nor archives the registered child. The managed request,
+fingerprint, slot, relationship, generation and routing dispatch ID never change.
+
+A request that already holds `managed_resend_unloaded` rows from the earlier unload-and-resend
+recovery keeps their meaning, read only: nothing writes such a row, archives or unarchives for it.
+Its successor operation IDs (at most two, derived from the managed request and attempt) are still
+read; an accepted successor passes the bridge ledger's fingerprint-aware lookup for the exact
+packet before replaying admission, never starting a turn again, and another operation or message
+occupying its ID is refused. The newest row of the business attempt decides whether a successor
+that has no attempt yet may be sent: only the closing row of a lowering that archived (`ok`, or
+`reply_lost`) and unarchived (`ok`) the child does, and then only when the host lists exactly the
+recorded standby turn with no continuation cursor and reports the same child as `notLoaded`, as the
+closing row recorded. A begin row without a closing row, and a closing row that records no
+finished lowering (`archive` `none` or `unknown`, an `unarchive` that failed), hold as
+`recipient_not_idle` with no archive and no send, whatever the host reports now (another client may
+have unloaded the child); so does a closing row whose child the host still holds loaded.
+Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed effect evidence
+and failures without affirmative pre-turn evidence are held, as before; an explicit pre-turn effect
+trace must be empty or contain exactly one `thread/resume`. The final business guard repeats the
+standby-only history check for a successor, with the complete archived scan and positive
+thread/goal reads (at most seven calls, inside the ten-request deadline budget). If another client
+loads the thread between the precheck and resume, the ordinary settings verifier still withholds
+`turn/start` and retains an honest failure. Initial guard failures recorded as `outcome_unknown` are
+not recovered by this path.
 
 The inspected bridge and relay resume paths transmit the profile; subscription retirement
 only unsubscribes, and their read paths do not issue an unprofiled resume. The idle edge's

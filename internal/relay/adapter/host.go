@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
@@ -177,16 +179,74 @@ func (a Managed) CreateThread(ctx context.Context, in managed.CreateThreadReques
 		return nil, err
 	}
 	defer release()
-	_, err = a.bridge.CreateThread(run, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: in.Prompt, Title: in.Title, Sandbox: in.Sandbox, Model: in.Model, Effort: in.ReasoningEffort, Role: in.Role, MCPProfile: in.MCPProfile, Roots: in.RuntimeWorkspaceRoots, Policy: in.ExpectedSandboxPolicy})
-	if err != nil {
-		return nil, err
+	receipt, _, err := a.createThread(ctx, run, in, false)
+	return receipt, err
+}
+
+// createThread is the create under an admission the caller holds. Managed consumes decoded JSON lists, while
+// Bridge.call uses []string for runtime roots internally, so the actual retained receipt is read at this boundary.
+// It is read inside the create's own admission, so Close cannot end the ledger between the two, and under the
+// caller's own context, as before: a create that completed is not turned into a cancellation by a drain budget
+// that ended while it was saving. keep leaves the creation's turn watch open and returns it.
+func (a Managed) createThread(ctx, run context.Context, in managed.CreateThreadRequest, keep bool) (map[string]any, *bridge.CreationWatch, error) {
+	request := bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: in.Prompt, Title: in.Title, Sandbox: in.Sandbox, Model: in.Model, Effort: in.ReasoningEffort, Role: in.Role, MCPProfile: in.MCPProfile, Roots: in.RuntimeWorkspaceRoots, Policy: in.ExpectedSandboxPolicy}
+	var watch *bridge.CreationWatch
+	var err error
+	if keep {
+		_, watch, err = a.bridge.CreateThreadWatched(run, request)
+	} else {
+		_, err = a.bridge.CreateThread(run, request)
 	}
-	// Managed consumes decoded JSON lists, while Bridge.call uses []string for
-	// runtime roots internally. Read the actual retained receipt at this boundary.
-	// It is read inside the create's own admission, so Close cannot end the ledger between the two,
-	// and under the caller's own context, as before: a create that completed is not turned into a
-	// cancellation by a drain budget that ended while it was saving.
-	return a.ledger.Get(ctx, in.RequestID)
+	if err != nil {
+		return nil, nil, err
+	}
+	receipt, err := a.ledger.Get(ctx, in.RequestID)
+	if err != nil && watch != nil {
+		watch.Release()
+		watch = nil
+	}
+	return receipt, watch, err
+}
+
+// creationHold keeps the creation's admission and turn watch until Release: the transport does not drain while
+// a managed start waits for the standby turn.
+type creationHold struct {
+	watch   *bridge.CreationWatch
+	release func()
+	once    sync.Once
+}
+
+func (h *creationHold) TurnCompleted(turn string) bool {
+	return h.watch != nil && h.watch.TurnCompleted(turn)
+}
+
+func (h *creationHold) Release() {
+	h.once.Do(func() {
+		if h.watch != nil {
+			h.watch.Release()
+		}
+		h.release()
+	})
+}
+
+// CreateThreadHeld is CreateThread that keeps the creation's turn watch and admission open for the standby wait
+// (managed.HeldCreator). The caller releases the hold once the wait is over, and on every way out.
+func (a Managed) CreateThreadHeld(ctx context.Context, in managed.CreateThreadRequest) (map[string]any, managed.CreationHold, error) {
+	run, release, err := a.admitCreate(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	receipt, watch, err := a.createThread(ctx, run, in, true)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	if watch == nil {
+		// No watch to keep (a scripted transport, or a creation that did not end accepted): the admission is not kept either.
+		release()
+		return receipt, nil, nil
+	}
+	return receipt, &creationHold{watch: watch, release: release}, nil
 }
 func (a Managed) GetOperation(ctx context.Context, id string) (map[string]any, error) {
 	ctx, release, err := a.admitRead(ctx)
@@ -216,4 +276,48 @@ func (a Managed) ReadTurn(ctx context.Context, thread, turn string) (*managed.Tu
 	return &managed.Turn{ID: r.TurnID, Status: status}, nil
 }
 
+// MCPProblem is managed.MCPChecker: it resolves the MCP profile the request states for the child's role (or the role's declared
+// default) against the host, as a resume does, and compares it with the servers the host reports for the loaded thread. It
+// answers "mcpServers" when they differ, and "" when they agree or when there is nothing to decide (no policy, a role that declares
+// no profiles, a profile the host cannot resolve, an answer that cannot be read): the business guard still refuses a thread
+// that reports other servers.
+func (a Managed) MCPProblem(ctx context.Context, thread string, settings map[string]any) (string, error) {
+	if a.bridge == nil || a.bridge.Policy == nil {
+		return "", nil
+	}
+	declared, ok := a.bridge.Policy.Role("child")
+	if !ok || declared.MCP == nil {
+		return "", nil
+	}
+	profile, _ := settings["mcpProfile"].(string)
+	selection, err := declared.SelectMCP("child", profile)
+	if err != nil || selection.Name == "" {
+		return "", nil
+	}
+	ctx, release, err := a.admitRead(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	cwd, _ := settings["cwd"].(string)
+	expected, _, err := bridge.ResolveMCP(ctx, a.hostCall, selection, cwd)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", nil
+	}
+	answer, err := bridge.MCPStatus(ctx, a.hostCall, thread)
+	if err != nil {
+		return "", err
+	}
+	observed, ok := expected.Observe(answer)
+	if !ok || reflect.DeepEqual(observed, expected.Shape()) {
+		return "", nil
+	}
+	return "mcpServers", nil
+}
+
 var _ managed.Adapter = Managed{}
+var _ managed.HeldCreator = Managed{}
+var _ managed.MCPChecker = Managed{}

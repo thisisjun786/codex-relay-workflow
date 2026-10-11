@@ -4,9 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+)
+
+// The standby wait and poll the tests give a Start: a standby that never ends answers standby_incomplete after the bound, and the product's
+// 60 seconds would make every such test a minute long.
+const (
+	testStandbyWait = 40 * time.Millisecond
+	testStandbyPoll = 5 * time.Millisecond
+	// testStandbyInstant makes the wait a single check: a test that counts the host's calls cannot have the poll's.
+	testStandbyInstant = time.Nanosecond
 )
 
 // Code the product no longer calls, kept for the tests that drive it (decision 52).
