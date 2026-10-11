@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,9 @@ func TestFeatureCodexHelper(t *testing.T) {
 		os.Exit(3)
 	}
 	if len(args) == 1 && args[0] == "--version" && os.Getenv("CRW1150_FAKE_VERSION_HANG") != "" {
+		// The stalled probe says when it began to stall: what a test can hold the command to is the time
+		// it takes from here, not the time this process took to start on a loaded host.
+		_ = os.WriteFile(filepath.Join(home, "stalled-since"), []byte(strconv.FormatInt(time.Now().UnixNano(), 10)), 0600)
 		time.Sleep(30 * time.Second)
 		os.Exit(0)
 	}
@@ -82,6 +86,12 @@ func TestFeatureCodexHelper(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// The explicit enable records its evidence under a deadline of seconds (featureEvidenceDeadline), and a
+// codex that is slow to start on a loaded host would miss it and leave the record these tests read
+// absent (CRW-1263). The product's deadline is not what these tests are about, so the package runs
+// with a long one; the one test of the deadline sets its own.
+func init() { featureEvidenceDeadline = 10 * time.Minute }
 
 type featureHome struct {
 	t    *testing.T
@@ -548,34 +558,64 @@ func TestFeaturesEnableWithoutAReadableVersionRecordsNoEvidence(t *testing.T) {
 
 // CRW-1150: the optional recording after an enable shares one short deadline, so a codex whose
 // --version never answers cannot hold an enable that already activated.
+//
+// The deadline starts before the probe process does, and on a loaded host starting it can take
+// longer than a short deadline (CRW-1263): a probe killed before it stalled proves nothing, so the
+// attempt is repeated with twice the deadline until the probe has begun to stall. What is then held
+// to the 10 s margin is the time from the stall to the end of the enable, not the process start.
 func TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe(t *testing.T) {
 	prev := featureEvidenceDeadline
-	featureEvidenceDeadline = 500 * time.Millisecond
 	t.Cleanup(func() { featureEvidenceDeadline = prev })
+	for deadline := 500 * time.Millisecond; deadline <= 64*time.Second; deadline *= 2 {
+		featureEvidenceDeadline = deadline
+		if stalledEvidenceProbeAttempt(t) {
+			return
+		}
+	}
+	t.Fatal("the probe never began to stall within the longest deadline tried")
+}
+
+// stalledEvidenceProbeAttempt runs one enable against a --version that never answers and reports
+// whether the probe began to stall before the deadline ended it; it fails the test when the enable
+// was held.
+func stalledEvidenceProbeAttempt(t *testing.T) (stalled bool) {
+	t.Helper()
 	h := newFeatureHome(t, "")
 	h.env = h.env.With("CRW1150_FAKE_VERSION_HANG", "1")
 	type answer struct {
 		code        int
 		out, errOut string
+		returned    time.Time
 	}
 	done := make(chan answer, 1)
-	start := time.Now()
 	go func() {
 		code, out, errOut := h.run("enable")
-		done <- answer{code, out, errOut}
+		done <- answer{code, out, errOut, time.Now()}
 	}()
+	// The enable returns when the deadline ends the probe, or fails the test when it does not return
+	// at all; this bound is for a hang, and no assertion depends on how much of it passes.
 	select {
 	case a := <-done:
 		if a.code != 0 || !strings.HasPrefix(a.out, "crw: enabled [") {
 			t.Fatalf("exit %d stdout=%q stderr=%q", a.code, a.out, a.errOut)
 		}
-		if elapsed := time.Since(start); elapsed > 10*time.Second {
-			t.Fatalf("the enable ran %v past a %v deadline", elapsed, featureEvidenceDeadline)
+		if marker, err := configguard.ReadSelfHealMarkerFile(h.home); err != nil || marker != nil && marker.Probe != nil {
+			t.Fatalf("evidence recorded without a version: %+v %v", marker, err)
 		}
-	case <-time.After(15 * time.Second):
+		raw, err := os.ReadFile(filepath.Join(h.home, "stalled-since"))
+		if err != nil {
+			return false
+		}
+		since, err := strconv.ParseInt(string(raw), 10, 64)
+		if err != nil {
+			t.Fatalf("stalled-since %q: %v", raw, err)
+		}
+		if held := a.returned.Sub(time.Unix(0, since)); held > 10*time.Second {
+			t.Fatalf("the enable ran %v past the start of the stall under a %v deadline", held, featureEvidenceDeadline)
+		}
+		return true
+	case <-time.After(5 * time.Minute):
 		t.Fatal("a stalled --version held an enable that had already activated")
 	}
-	if marker, err := configguard.ReadSelfHealMarkerFile(h.home); err != nil || marker != nil && marker.Probe != nil {
-		t.Fatalf("evidence recorded without a version: %+v %v", marker, err)
-	}
+	return false
 }

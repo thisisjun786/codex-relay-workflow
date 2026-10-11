@@ -28,22 +28,25 @@ const (
 	// machine whose locking is correct.
 	execBudget     = 2 * time.Second
 	execByteBudget = 64 << 20
-	// execRunaway is what the wall clock is actually asserted against: a ceiling that a hang or a
-	// pathological slowdown still trips, wide enough that no correct run reaches it.
-	execRunaway = 30 * time.Second
+	// execStall is what the wall clock is actually asserted against: the longest stretch in which
+	// no executable was written and run to its end, from the start or since the one before. A
+	// hang trips it. The length of the whole exercise is not asserted: 320 spawned processes take
+	// as long as the host lets them (51 s on a host at load 40, CRW-1263), and a run that keeps
+	// finishing executables has not stalled however long it takes.
+	execStall = 60 * time.Second
 )
 
 // execRace writes and runs execWriters x execIterations fresh executables through write while
 // execForkers goroutines fork and run a program of their own, and answers how many of those
-// executions failed with ETXTBSY, how many bytes of executables were written and how long the
-// exercise took.
+// executions failed with ETXTBSY, how many bytes of executables were written, how long the
+// exercise took and the longest stretch in which none finished.
 //
 // A fork copies every descriptor that is not close-on-exec into the child, and the child holds
 // them until it execs. A path a fork inherited that way is open for writing in another process,
 // and Linux refuses to execute a file open for writing with ETXTBSY, "text file busy"
 // (golang/go#22315). The forkers here are the concurrent forks; each writer writes a fresh path
 // and then runs it.
-func execRace(t *testing.T, write func(target string, body []byte, mode os.FileMode) error) (busy, written int64, elapsed time.Duration) {
+func execRace(t *testing.T, write func(target string, body []byte, mode os.FileMode) error) (busy, written int64, elapsed, stalled time.Duration) {
 	t.Helper()
 	program := execProgram(t)
 	if size := int64(len(program)) * execWriters * execIterations; size > execByteBudget {
@@ -67,6 +70,15 @@ func execRace(t *testing.T, write func(target string, body []byte, mode os.FileM
 		}()
 	}
 	start := time.Now()
+	last := start
+	var progress sync.Mutex
+	finished := func() {
+		progress.Lock()
+		defer progress.Unlock()
+		now := time.Now()
+		stalled = max(stalled, now.Sub(last))
+		last = now
+	}
 	var writers sync.WaitGroup
 	for i := 0; i < execWriters; i++ {
 		writers.Add(1)
@@ -82,19 +94,24 @@ func execRace(t *testing.T, write func(target string, body []byte, mode os.FileM
 				if err := exec.Command(target).Run(); err != nil {
 					if errors.Is(err, syscall.ETXTBSY) {
 						atomic.AddInt64(&busy, 1)
+						finished()
 						continue
 					}
 					t.Errorf("running %s: %v", target, err)
 					return
 				}
+				finished()
 			}
 		}(i)
 	}
 	writers.Wait()
 	elapsed = time.Since(start)
+	progress.Lock()
+	stalled = max(stalled, time.Since(last))
+	progress.Unlock()
 	close(stop)
 	forkers.Wait()
-	return busy, written, elapsed
+	return busy, written, elapsed, stalled
 }
 
 // plainWrite is the write the install package did before this issue: the same open, write and
@@ -142,12 +159,12 @@ func execProgramPath(t *testing.T) string {
 // so no fork lands inside it and every executable runs.
 func TestWriteExecutableSurvivesConcurrentForks(t *testing.T) {
 	t.Parallel()
-	busy, written, elapsed := execRace(t, install.WriteExecutable)
+	busy, written, elapsed, stalled := execRace(t, install.WriteExecutable)
 	if busy != 0 {
 		t.Fatalf("%d of the %d executables written through the helper could not be run: ETXTBSY", busy, execWriters*execIterations)
 	}
-	if elapsed > execRunaway {
-		t.Fatalf("the exercise took %s, over the %s runaway ceiling: it did not finish", elapsed, execRunaway)
+	if stalled > execStall {
+		t.Fatalf("no executable finished for %s, over the %s stall ceiling: the exercise did not progress (it took %s in all)", stalled, execStall, elapsed)
 	}
 	t.Logf("locked: %d executables in %s (the issue's design budget is %s), %d bytes, no ETXTBSY", execWriters*execIterations, elapsed, execBudget, written)
 }
@@ -157,7 +174,7 @@ func TestWriteExecutableSurvivesConcurrentForks(t *testing.T) {
 // host and this moment, so the count is reported, never asserted.
 func TestAPlainWriteRacesConcurrentForks(t *testing.T) {
 	t.Parallel()
-	busy, written, elapsed := execRace(t, plainWrite)
+	busy, written, elapsed, _ := execRace(t, plainWrite)
 	t.Logf("unlocked: %d of %d executables hit ETXTBSY in %s (%d bytes written)", busy, execWriters*execIterations, elapsed, written)
 }
 
