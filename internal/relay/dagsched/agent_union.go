@@ -20,7 +20,8 @@ import (
 //
 //   - on the agent side, the last row of the node's supersedes chain, unless a closure row closes it. The chain cannot branch (the root and the successor of a row are unique keys of the table), so
 //     there is one last row; a closed last row leaves the node with no current agent execution, and an earlier row of the chain, superseded, is never current again;
-//   - on the relationship side, an open release intent, or an execution on a relationship that has not ended (relationshipExecutionCurrent).
+//   - on the relationship side, an open release intent (a release no child is bound to yet), or the newest execution of a relationship that has not ended (relationshipExecutionCurrent): a release that
+//     a child was bound to is history, and ends with its relationship.
 //
 // A node has at most one current execution of one kind: the agent release refuses while a relationship-side execution is current (live_relationship_execution), the relationship release refuses while an
 // agent execution without a closure is current (live_agent_execution), and executionOf fails closed on a store that nevertheless holds both (cross_kind_execution).
@@ -137,9 +138,13 @@ type NodeExecution struct {
 	Agent AgentExecution
 }
 
-// relationshipExecutionCurrent is whether the node's relationship side holds a current execution, and the record that says so. It is current while a release intent is open (latestRelease: a managed
-// start that dag-release-close did not end), or while its executions stand on a relationship that has not ended: active or paused and not replaced, or, when a result of it is accepted, anything but cancelled.
-// A relationship the store does not hold counts as current: the question is whether the node can be given to another kind of execution, and an unreadable record is no reason to say yes.
+// relationshipExecutionCurrent is whether the node's relationship side holds a current execution, and the record that says so.
+//
+// A release is an open INTENT only until a child is bound to it: the managed start of the release (latestRelease: a dag_releases or rereleased row that dag-release-close did not end) has no
+// dag_node_executions row of its managed request yet. An open intent holds the node, whatever the history under it. A bound release is history: dag-release-close never ends it, so what is current is
+// decided by the executions and the relationship they stand on: the newest execution of the relationship the node stands on (a correction's generation and manifest, not the first release's), current
+// while the relationship has not ended: active or paused and not replaced, or, when a result of it is accepted, anything but cancelled. A relationship the store does not hold counts as current: the
+// question is whether the node can be given to another kind of execution, and an unreadable record is no reason to say yes.
 func relationshipExecutionCurrent(ctx context.Context, q store.Querier, plan, node string) (NodeExecution, bool, error) {
 	out := NodeExecution{Kind: ExecutionRelationship, PlanID: plan, NodeID: node}
 	open, intent, err := latestRelease(ctx, q, plan, node)
@@ -147,41 +152,35 @@ func relationshipExecutionCurrent(ctx context.Context, q store.Querier, plan, no
 		return out, false, err
 	}
 	if intent {
-		out.ManifestDigest, out.ManagedRequestID = open.Digest, open.Request
-		if _, err := queryOne(ctx, q, "SELECT coordinator_epoch, decided_at FROM dag_releases WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?", []any{plan, node, open.Digest}, &out.Epoch, &out.DecidedAt); err != nil {
+		var bound int
+		if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND managed_request_id = ?", []any{plan, node, open.Request}, &bound); err != nil {
 			return out, false, err
+		}
+		if bound == 0 {
+			out.ManifestDigest, out.ManagedRequestID = open.Digest, open.Request
+			if _, err := queryOne(ctx, q, "SELECT coordinator_epoch, decided_at FROM dag_releases WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?", []any{plan, node, open.Digest}, &out.Epoch, &out.DecidedAt); err != nil {
+				return out, false, err
+			}
+			return out, true, nil
 		}
 	}
 	var count int
-	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ?", []any{plan, node}, &count); err != nil {
+	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ?", []any{plan, node}, &count); err != nil || count == 0 {
 		return out, false, err
-	}
-	if count == 0 {
-		return out, intent, nil
 	}
 	// the newest execution of the relationship the node stands on
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)
 	if err != nil {
 		return out, false, err
 	}
-	var generation int64
-	var manifest, request string
-	var ok bool
-	if found {
-		ok, err = queryOne(ctx, q, "SELECT execution_generation, manifest_digest, COALESCE(managed_request_id, '') FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ?"+
-			" ORDER BY execution_generation DESC LIMIT 1", []any{plan, node, rel.ID}, &generation, &manifest, &request)
-		if err != nil {
-			return out, false, err
-		}
-	}
-	if !found || !ok {
+	if !found {
 		return out, true, nil
 	}
-	if !intent {
-		out.ManifestDigest, out.ManagedRequestID = manifest, request
+	ok, err := relationshipExecutionRow(ctx, q, plan, node, rel.ID, false, &out)
+	if err != nil {
+		return out, false, err
 	}
-	out.RelationshipID, out.Generation = rel.ID, generation
-	if intent {
+	if !ok {
 		return out, true, nil
 	}
 	_, accepted, err := loadActiveAcceptance(ctx, q, plan, node)
@@ -195,6 +194,25 @@ func relationshipExecutionCurrent(ctx context.Context, q store.Querier, plan, no
 		return out, true, nil
 	}
 	return out, false, nil
+}
+
+// relationshipExecutionRow fills out from the newest execution of a relationship (the newest release row, kind initial or correction, when release is set): its generation, manifest and managed request,
+// and the epoch and time of the release the relationship was started by. It reports whether the relationship has such an execution.
+func relationshipExecutionRow(ctx context.Context, q store.Querier, plan, node, relationship string, release bool, out *NodeExecution) (bool, error) {
+	kinds := ""
+	if release {
+		kinds = " AND kind IN ('initial', 'correction')"
+	}
+	ok, err := queryOne(ctx, q, "SELECT execution_generation, manifest_digest, COALESCE(managed_request_id, '') FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ?"+kinds+
+		" ORDER BY execution_generation DESC LIMIT 1", []any{plan, node, relationship}, &out.Generation, &out.ManifestDigest, &out.ManagedRequestID)
+	if err != nil || !ok {
+		return false, err
+	}
+	out.RelationshipID = relationship
+	// the epoch and the time of the release the relationship was started by: the dag_releases row of its first execution's manifest
+	_, err = queryOne(ctx, q, "SELECT d.coordinator_epoch, d.decided_at FROM dag_node_executions e JOIN dag_releases d ON d.plan_id = e.plan_id AND d.node_id = e.node_id AND d.manifest_digest = e.manifest_digest"+
+		" WHERE e.plan_id = ? AND e.node_id = ? AND e.relationship_id = ? AND e.kind = 'initial' ORDER BY e.execution_generation LIMIT 1", []any{plan, node, relationship}, &out.Epoch, &out.DecidedAt)
+	return true, err
 }
 
 // executionOf is the node's current execution, whichever side holds it. A node with no current execution answers false. A store in which both sides hold a current one answers a refusal and no record
@@ -229,7 +247,7 @@ func orDash(values ...string) string {
 }
 
 // releaseOf is the current release of a node under a manifest, whichever side holds it: on the agent side the row of kind initial or correction (the release fact) of the current chain whose manifest it is,
-// on the relationship side the open intent for the manifest. A release that a closure ended, or that a later release of another manifest followed, is not current.
+// on the relationship side the open intent, or else the newest release row (initial or correction) of the relationship the current execution stands on. A release that a closure ended, that a later release of another manifest followed, or whose relationship ended, is not current.
 func releaseOf(ctx context.Context, q store.Querier, plan, node, manifest string) (NodeExecution, bool, error) {
 	cur, hasAgent, err := currentAgentExecution(ctx, q, plan, node)
 	if err != nil {
@@ -249,24 +267,36 @@ func releaseOf(ctx context.Context, q store.Querier, plan, node, manifest string
 			out = NodeExecution{Kind: ExecutionAgent, PlanID: plan, NodeID: node, ManifestDigest: manifest, Epoch: row.Epoch, DecidedAt: row.DecidedAt, Agent: row}
 		}
 	}
-	intent, hasRel, err := latestRelease(ctx, q, plan, node)
+	rel, hasRel, err := relationshipReleaseOf(ctx, q, plan, node)
 	if err != nil {
 		return NodeExecution{}, false, err
 	}
-	hasRel = hasRel && intent.Digest == manifest
+	hasRel = hasRel && rel.ManifestDigest == manifest
 	switch {
 	case hasAgent && hasRel:
 		return NodeExecution{}, false, refuse(contract.RefusalDispositionConflict, "%s: node %s of plan %s holds a release of manifest %s on both sides", CrossKindExecution, node, plan, manifest)
 	case hasAgent:
 		return out, true, nil
 	case hasRel:
-		rel := NodeExecution{Kind: ExecutionRelationship, PlanID: plan, NodeID: node, ManifestDigest: intent.Digest, ManagedRequestID: intent.Request}
-		if _, err := queryOne(ctx, q, "SELECT coordinator_epoch, decided_at FROM dag_releases WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?", []any{plan, node, intent.Digest}, &rel.Epoch, &rel.DecidedAt); err != nil {
-			return NodeExecution{}, false, err
-		}
 		return rel, true, nil
 	}
 	return NodeExecution{}, false, nil
+}
+
+// relationshipReleaseOf is the release the node's current relationship-side execution stands on: the open intent while no child is bound to it, else the newest release row (initial or correction) of the
+// relationship the execution stands on. A relationship that has ended, or whose result no acceptance keeps, has no current release.
+func relationshipReleaseOf(ctx context.Context, q store.Querier, plan, node string) (NodeExecution, bool, error) {
+	cur, current, err := relationshipExecutionCurrent(ctx, q, plan, node)
+	if err != nil || !current {
+		return NodeExecution{}, false, err
+	}
+	if cur.RelationshipID == "" {
+		return cur, true, nil // the open intent
+	}
+	if _, err := relationshipExecutionRow(ctx, q, plan, node, cur.RelationshipID, true, &cur); err != nil {
+		return NodeExecution{}, false, err
+	}
+	return cur, true, nil
 }
 
 // refuseLiveAgentExecution is the refusal of a relationship release of a node whose agent execution is current: the node is not given to a managed child while an agent holds it.
