@@ -72,6 +72,11 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			rep.moved(r, e, dirBlocked, "head is not a 40-hex commit")
 			continue
 		}
+		if err := r.prepare(); err != nil {
+			r.logf("%s %s prepare: %v", e.Key, e.Head, err)
+			rep.Result, rep.Exit, rep.Error = "error", ExitUsage, err.Error()
+			return rep
+		}
 		note, verdict := r.gate(ctx, e)
 		if ctx.Err() != nil {
 			// A gate the signal ended says nothing about the head.

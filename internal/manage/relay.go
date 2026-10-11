@@ -223,14 +223,41 @@ func coreChildEnv(cmd *exec.Cmd, cfg *Config) error {
 	if cfg == nil {
 		return nil
 	}
+	if err := cfg.tools.Prepare(); err != nil {
+		return err
+	}
+	if env, ok := coreEnvValues(cmd.Env, cfg); ok {
+		cmd.Env = env
+	}
+	return nil
+}
+
+// coreEnvValues builds the environment coreChildEnv gives a child, from base (this process's
+// environment when base is nil), and makes no directory: the configuration file this tool was started
+// with as CRW_CONFIG and the configured tool roots. It reports false when the configuration adds
+// nothing, so a caller keeps the inherited environment. A command that must not touch the disk
+// (integrate --dry-run) builds its environment with this and prepares the roots (ToolRoots.Prepare)
+// only when it is about to start the tool.
+func coreEnvValues(base []string, cfg *Config) ([]string, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	changed := false
 	if cfg.source == crwconfig.SourceConfig && cfg.path != "" {
-		base := cmd.Env
 		if base == nil {
 			base = os.Environ()
 		}
-		cmd.Env = crwconfig.SetEnv(base, "CRW_CONFIG", cfg.path)
+		base = crwconfig.SetEnv(base, "CRW_CONFIG", cfg.path)
+		changed = true
 	}
-	return cfg.tools.ApplyTo(cmd)
+	if len(cfg.tools.Env()) > 0 {
+		if base == nil {
+			base = os.Environ()
+		}
+		base = cfg.tools.Apply(base)
+		changed = true
+	}
+	return base, changed
 }
 
 // relayHelperRun runs one relay command line of the same executable and reports its

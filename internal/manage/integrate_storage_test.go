@@ -12,6 +12,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
 )
 
+// lastIntegrateRunner is the runner the last integrateEnvRun built.
+var lastIntegrateRunner *integrator.Runner
+
 // integrateEnvRun runs one integrate pass over an empty queue with the configuration document doc
 // and returns the environment the runner was built with.
 func integrateEnvRun(t *testing.T, dir, doc string) []string {
@@ -35,6 +38,7 @@ func integrateEnvRun(t *testing.T, dir, doc string) []string {
 	if built == nil {
 		t.Fatal("no runner was built")
 	}
+	lastIntegrateRunner = built
 	return built.Env
 }
 
@@ -63,8 +67,19 @@ func TestStorageIntegrateRunnerCarriesTheToolRoots(t *testing.T) {
 		if got["CRW_CONFIG"] != filepath.Join(dir, "config.json") {
 			t.Errorf("CRW_CONFIG = %q, want the configuration file", got["CRW_CONFIG"])
 		}
+		// Building the environment makes no directory (integrate --dry-run changes nothing); the
+		// runner's Prepare seam makes build_work right before a tool command starts.
+		if _, err := os.Stat(want["GOTMPDIR"]); !os.IsNotExist(err) {
+			t.Errorf("build_work exists before any tool command is about to start: %v", err)
+		}
+		if lastIntegrateRunner == nil || lastIntegrateRunner.Prepare == nil {
+			t.Fatal("the runner has no Prepare seam")
+		}
+		if err := lastIntegrateRunner.Prepare(); err != nil {
+			t.Fatal(err)
+		}
 		if info, err := os.Stat(want["GOTMPDIR"]); err != nil || !info.IsDir() {
-			t.Errorf("build_work was not made before the commands start: %v", err)
+			t.Errorf("build_work was not made by Prepare: %v", err)
 		}
 	})
 	t.Run("nothing configured", func(t *testing.T) {
