@@ -332,11 +332,15 @@ linked into the test's own directory with its digest known, so a test pays for t
 and not for building it. No test, name or assertion was removed, and no product time bound changed.
 The two timing failures were wall-clock verdicts and are now decided without one:
 `TestFeaturesEnableRecordsVerifiedProbeEvidence` read a record the enable writes under its 8 s
-evidence deadline (the product's, unchanged), which a codex slow to start on a loaded host missed
-(marker nil after 44 s); the package now runs with a long deadline and the one test of the deadline,
-`TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe`, is held to the time from the probe's own
-"stalled since" mark to the end of the enable, repeating with a doubled deadline when the probe was
-killed before it began to stall. `TestWriteExecutableSurvivesConcurrentForks` asserted that 320
+evidence deadline (the product's 8 s, unchanged), which a codex slow to start on a loaded host missed
+(marker nil after 44 s); the package now records under a context that no clock ends, through the
+`featureEvidenceContext` seam (default: the context ended by the 8 s deadline, which
+`TestFeatureEvidenceContextIsBoundedByTheEvidenceDeadline` holds to the product's value). The one
+test of the stall, `TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe`, waits until the probe says it
+has begun to stall, ends the recording's context itself, and requires the enable to return with no
+evidence recorded; the probe sleeps 5 minutes, so an enable that ignores the end fails. A 17 s start
+delay of the probe, which failed the earlier retry-with-a-doubled-deadline form, passes.
+`TestWriteExecutableSurvivesConcurrentForks` asserted that 320
 spawned processes finish within 30 s (51 s under load) and now asserts that no stretch of 60 s passes
 without one finishing. Measured on one host with the package's own method (`go test -count=1 -json`
 through the heavy-check gate at `nice 12`, `GOFLAGS=-p=4`, the crw binary built once):

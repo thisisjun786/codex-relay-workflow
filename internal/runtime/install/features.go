@@ -34,6 +34,12 @@ const featureUsage = "Usage:\n" +
 // (CRW-1150). A variable only so a test can shorten it.
 var featureEvidenceDeadline = 8 * time.Second
 
+// featureEvidenceContext gives the recording its context: ctx ended by featureEvidenceDeadline. A variable
+// only so a test can end the recording itself, at a moment it chooses, instead of waiting for a clock.
+var featureEvidenceContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, featureEvidenceDeadline)
+}
+
 // featureEvidenceWaitDelay bounds how long a recording probe's output may be held open after it
 // exited or was killed.
 const featureEvidenceWaitDelay = 2 * time.Second
@@ -74,7 +80,7 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 			// The recording shares one short deadline: it is optional, so an enable that has already
 			// activated is never held by a codex that stops answering.
 			cwd, _ := os.Getwd()
-			evidenceCtx, endEvidence := context.WithTimeout(ctx, featureEvidenceDeadline)
+			evidenceCtx, endEvidence := featureEvidenceContext(ctx)
 			_ = configguard.RecordSelfHealEvidence(configguard.RecordSelfHealEvidenceDeps{CodexHome: home, Cwd: cwd, Run: featureBoundedRunner(evidenceCtx, env.With("CODEX_HOME", home)), Ctx: evidenceCtx})
 			endEvidence()
 			renderFeatureEnable(stdout, stderr, m)
