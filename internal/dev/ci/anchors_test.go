@@ -118,6 +118,75 @@ func TestMarkdownAnchorsReferencesEntitiesComments(t *testing.T) {
 	has("Text <!-- <a id=\"gone\"></a> --> <a id=\"kept\"></a>\n", []string{"kept"}, []string{"gone"})
 }
 
+// A line is a link reference definition only when the whole CommonMark form holds: a destination
+// (closed if in <>, parentheses balanced), an optional title after white space, and nothing after
+// them on the line; otherwise it is paragraph text and a reference link to its label stays literal.
+// An HTML comment starts only where markup can start, never inside a quoted attribute value.
+func TestMarkdownAnchorsDefinitionSyntaxAndCommentContext(t *testing.T) {
+	has := func(text string, want []string, unwanted []string) {
+		t.Helper()
+		anchors := markdownAnchors(text)
+		for _, name := range want {
+			if !anchors[name] {
+				t.Errorf("%q: anchor %q missing from %v", text, name, anchors)
+			}
+		}
+		for _, name := range unwanted {
+			if anchors[name] {
+				t.Errorf("%q: anchor %q must not exist: %v", text, name, anchors)
+			}
+		}
+	}
+	literal := func(definition string) {
+		t.Helper()
+		has("## [Install][guide]\n\n"+definition, []string{"installguide"}, []string{"install"})
+	}
+	reference := func(definition string) {
+		t.Helper()
+		has("## [Install][guide]\n\n"+definition, []string{"install"}, []string{"installguide"})
+	}
+	// Not definitions: trailing text, an unclosed destination or title, unbalanced parentheses.
+	literal("[guide]: https://example.invalid/ trailing\n")
+	literal("[guide]: <https://example.invalid/\n")
+	literal("[guide]: <https://example.invalid/>trailing\n")
+	literal("[guide]: /url \"title\" trailing\n")
+	literal("[guide]: /url \"unclosed title\n")
+	literal("[guide]: /url 'title\n\nstill open'\n")
+	literal("[guide]: /u(rl\n")
+	literal("[guide]: <bar>(baz)\n")
+	literal("[guide]:\n")
+	literal("[guide]:\n\n/url\n")
+	literal("[guide]: <a\nb>\n")
+	literal("[guide] : /url\n")
+	literal("Text first\n[guide]: /url\n")
+	literal("[other]: /url\n[guide]: /url trailing\n")
+	literal("[]: /url\n")
+	// Definitions: the destination or the title on the next line, a title over lines, an empty <>,
+	// a title that fails on its own line leaving the definition before it, a chain of definitions.
+	reference("[guide]: https://example.invalid/\n")
+	reference("[guide]:\n/url\n")
+	reference("[guide]: /url\n'multi\nline title'\n")
+	reference("[guide]: /url (title)   \n")
+	reference("[guide]: <>\n")
+	reference("[guide]: /u(r)l\n")
+	reference("[guide]: /url\n\"title\" trailing\n")
+	reference("[other]: /a\n[guide]: /b \"t\"\n")
+	has("## [Install][gui de]\n\n[gui\nde]: /url\n", []string{"install"}, []string{"installgui-de"})
+	has("## [Install][guide]\n\n[guide]: /url\n\"title\" ok\n", []string{"install"}, nil)
+
+	// Comment markers inside quoted attribute values are part of the value.
+	has("Text <a title='<!--' id=\"kept\"></a> and <a id=\"after\"></a> -->\n", []string{"kept", "after"}, nil)
+	has("<div>\n<a title='<!--' id=\"kept\"></a>\n<a id=\"after\"></a>\n</div>\n", []string{"kept", "after"}, nil)
+	has("Text <a id='a<!--x-->b'></a>\n", []string{"a<!--x-->b"}, []string{"ab", "a b"})
+	has("<div>\n<a id='a<!--x-->b'></a>\n</div>\n", []string{"a<!--x-->b"}, []string{"ab", "a b"})
+	// A backslash-escaped < in a paragraph is a literal character: it opens no comment and no element.
+	has("Text \\<!-- <a id=\"shown\"></a> -->\n", []string{"shown"}, nil)
+	has("Text \\<a id=\"literal\"></a>\n", nil, []string{"literal"})
+	// Real comments still hide what they hold.
+	has("Text <a title='x'></a><!-- <a id=\"gone\"></a> --> <a id=\"kept\"></a>\n", []string{"kept"}, []string{"gone"})
+	has("<div>\n<a title=\"-->\" id=\"kept\"></a>\n<!-- <a id=\"gone\"></a>\n</div>\n", []string{"kept"}, []string{"gone"})
+}
+
 // A list marker needs a space, a tab or the line end after it, the content of a list item and of a
 // block quote is read as blocks of its own, raw HTML blocks hold no Markdown, and a code span runs
 // over the lines of its paragraph.

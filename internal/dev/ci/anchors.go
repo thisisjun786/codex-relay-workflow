@@ -108,27 +108,153 @@ func normalizeLabel(label string) string {
 	return strings.ToLower(strings.Join(strings.Fields(label), " "))
 }
 
-var linkDefinition = regexp.MustCompile(`^ {0,3}\[((?:[^\[\]\\]|\\.)+)\]:[ \t]*\S`)
-
 // referenceLabels is the normalized labels of the link reference definitions that open the
-// paragraphs of the document: lines of the form [label]: destination.
+// paragraphs of the document (see linkDefinition).
 func referenceLabels(blocks []inlineBlock) map[string]bool {
 	labels := map[string]bool{}
 	for _, block := range blocks {
 		if block.isHeading {
 			continue
 		}
-		for _, line := range block.lines {
-			match := linkDefinition.FindStringSubmatch(line.text)
-			if match == nil {
+		for rest := block.joined(); ; {
+			label, n, ok := linkDefinition(rest)
+			if !ok {
 				break
 			}
-			if label := normalizeLabel(match[1]); label != "" {
-				labels[label] = true
-			}
+			labels[label] = true
+			rest = rest[n:]
 		}
 	}
 	return labels
+}
+
+// linkDefinition reads the link reference definition s starts with, as CommonMark reads one: a
+// label in brackets (some non-space text, no unescaped bracket), ':', white space holding at most one
+// line end, a destination (in <> without a line end or an unescaped <, or plain text without spaces
+// or control characters whose parentheses balance), and, after white space, an optional title in
+// double quotes, single quotes or parentheses; nothing but spaces may follow on the line. When the
+// title is not well formed or text follows it, the definition ends with its destination if nothing
+// follows that on its line. It
+// returns the normalized label and the length of s the definition takes, up to its line end.
+func linkDefinition(s string) (label string, n int, ok bool) {
+	if !strings.HasPrefix(s, "[") {
+		return "", 0, false
+	}
+	i := 1
+	for ; ; i++ {
+		if i >= len(s) || s[i] == '[' || i > 1000 {
+			return "", 0, false
+		}
+		if s[i] == '\\' && i+1 < len(s) && isMarkdownPunctuation(rune(s[i+1])) {
+			i++
+			continue
+		}
+		if s[i] == ']' {
+			break
+		}
+	}
+	label = normalizeLabel(s[1:i])
+	if label == "" || i+1 >= len(s) || s[i+1] != ':' {
+		return "", 0, false
+	}
+	i = skipDefinitionSpace(s, i+2)
+	destination := i
+	if i < len(s) && s[i] == '<' {
+		for i++; ; i++ {
+			if i >= len(s) || s[i] == '\n' || s[i] == '<' {
+				return "", 0, false
+			}
+			if s[i] == '\\' && i+1 < len(s) && isMarkdownPunctuation(rune(s[i+1])) {
+				i++
+				continue
+			}
+			if s[i] == '>' {
+				i++
+				break
+			}
+		}
+	} else {
+		depth := 0
+	raw:
+		for ; i < len(s) && s[i] > ' ' && s[i] != 0x7f; i++ {
+			switch {
+			case s[i] == '\\' && i+1 < len(s) && isMarkdownPunctuation(rune(s[i+1])):
+				i++
+			case s[i] == '(':
+				depth++
+			case s[i] == ')':
+				if depth == 0 {
+					break raw
+				}
+				depth--
+			}
+		}
+		if i == destination || depth != 0 {
+			return "", 0, false
+		}
+	}
+	if title := skipDefinitionSpace(s, i); title > i && title < len(s) && strings.ContainsRune("\"'(", rune(s[title])) {
+		if end, ok := definitionTitleEnd(s, title); ok {
+			if line, ok := lineRestBlank(s, end); ok {
+				return label, line, true
+			}
+		}
+	}
+	if line, ok := lineRestBlank(s, i); ok {
+		return label, line, true
+	}
+	return "", 0, false
+}
+
+// skipDefinitionSpace is the index after the spaces and tabs at s[i:], with at most one line end.
+func skipDefinitionSpace(s string, i int) int {
+	lineEnd := false
+	for ; i < len(s); i++ {
+		if s[i] == '\n' {
+			if lineEnd {
+				break
+			}
+			lineEnd = true
+		} else if s[i] != ' ' && s[i] != '\t' {
+			break
+		}
+	}
+	return i
+}
+
+// definitionTitleEnd is the index after the title that opens at s[open] (in double quotes, single
+// quotes or parentheses), and whether it is closed; in a () title an unescaped '(' is not allowed.
+func definitionTitleEnd(s string, open int) (int, bool) {
+	closing := s[open]
+	if closing == '(' {
+		closing = ')'
+	}
+	for i := open + 1; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && i+1 < len(s) && isMarkdownPunctuation(rune(s[i+1])):
+			i++
+		case s[i] == closing:
+			return i + 1, true
+		case s[open] == '(' && s[i] == '(':
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
+// lineRestBlank is the index after the line end that ends s[i:] (or len(s)), and whether only
+// spaces and tabs come before it.
+func lineRestBlank(s string, i int) (int, bool) {
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '\n':
+			return i + 1, true
+		case ' ', '\t':
+		default:
+			return 0, false
+		}
+	}
+	return i, true
 }
 
 // matchingBracket is the index of the ']' that closes the '[' at runes[open], or -1.
@@ -373,22 +499,43 @@ func maskCodeSpans(text string) string {
 	return string(b)
 }
 
-var (
-	htmlComment     = regexp.MustCompile(`(?s)<!--.*?-->`)
-	htmlOpenComment = regexp.MustCompile(`(?s)<!--.*$`)
-)
+var htmlOpenTagAt = regexp.MustCompile(`^(?:` + htmlOpenTag.String() + `)`)
 
 // htmlAnchors is the id and name attribute values (character references decoded, as the browser reads
 // them) of the HTML elements opening in text, which holds no code (maskCodeSpans). An attribute whose
-// name only ends in id (data-id) is not one, and an HTML comment holds no element; in a raw HTML block
-// (block set) a comment that is never closed runs to the end of the block.
+// name only ends in id (data-id) is not one. The text is read from left to right: an element's tag,
+// quoted attribute values and all, is taken whole, so '<!--' or '-->' inside a value is part of the
+// value; an HTML comment opens only where markup can open and holds no element. In a raw HTML block
+// (block set) a comment that is never closed runs to the end of the block; in a paragraph it is
+// text, and so is a backslash-escaped '<'.
 func htmlAnchors(text string, block bool) []string {
-	text = htmlComment.ReplaceAllString(text, " ")
-	if block {
-		text = htmlOpenComment.ReplaceAllString(text, " ")
-	}
 	var found []string
-	for _, tag := range htmlOpenTag.FindAllString(text, -1) {
+	for i := 0; i < len(text); {
+		switch {
+		case !block && text[i] == '\\' && i+1 < len(text) && isMarkdownPunctuation(rune(text[i+1])):
+			i += 2
+			continue
+		case text[i] != '<':
+			i++
+			continue
+		case strings.HasPrefix(text[i:], "<!--"):
+			if end := strings.Index(text[i+2:], "-->"); end >= 0 {
+				i += 2 + end + len("-->")
+				continue
+			}
+			if block {
+				return found
+			}
+			i++
+			continue
+		}
+		loc := htmlOpenTagAt.FindStringIndex(text[i:])
+		if loc == nil {
+			i++
+			continue
+		}
+		tag := text[i : i+loc[1]]
+		i += loc[1]
 		name := strings.IndexAny(tag, " \t/>")
 		for _, attribute := range htmlAttribute.FindAllStringSubmatch(tag[name:], -1) {
 			if key := strings.ToLower(attribute[1]); key != "id" && key != "name" {
