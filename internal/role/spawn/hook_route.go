@@ -344,7 +344,11 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	var notices []string
 	if a.managed == nil && routed.Fallback != nil {
-		notices = append(notices, "[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: "+role.DispatchGuidance)
+		notice := "[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: " + role.DispatchGuidance
+		if a.v2Spawn {
+			notice += " " + role.V2TaskNameNote // a V2 call's managed spawn is named by its task_name (CRW-1260); a V1 call's notice is the oracle's
+		}
+		notices = append(notices, notice)
 	}
 	if a.encryptedV2Message {
 		notices = append(notices, "[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.")

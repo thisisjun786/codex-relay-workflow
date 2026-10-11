@@ -26,18 +26,27 @@ const (
 	v2ChainPath    = "/root/independent_review"
 )
 
+// v2ChainLedger writes a dispatch of the session whose one attempt was claimed with v2TaskName:true, the claim's opt-in to being
+// named by a V2 call's task_name.
 func v2ChainLedger(t *testing.T, ws, dispatch, kind string) string {
+	t.Helper()
+	return v2ChainLedgerOf(t, ws, dispatch, kind, `,"v2TaskName":true`)
+}
+
+// v2ChainLedgerOf writes the dispatch with extra appended to its attempt's members ("" for a claim without the opt-in).
+func v2ChainLedgerOf(t *testing.T, ws, dispatch, kind, extra string) string {
 	t.Helper()
 	file := filepath.Join(ws, ".crw", "dispatches", v2ChainSession, dispatch+".json")
 	spawnHookMust(t, os.MkdirAll(filepath.Dir(file), 0o755))
-	spawnHookMust(t, os.WriteFile(file, []byte(`{"version":1,"sessionId":"`+v2ChainSession+`","id":"`+dispatch+`","role":"`+kind+`","candidates":[{"model":"gpt-6.1-sol","effort":"high"}],"attempts":[{"id":"att-1","candidate":{"model":"gpt-6.1-sol","effort":"high"},"claimed":true,"agentId":null,"observedModel":null,"code":null,"taskFailure":null,"status":"claimed","reconciliation":null,"spawnIssued":false,"toolUseId":null}],"status":"active"}`), 0o644))
+	spawnHookMust(t, os.WriteFile(file, []byte(`{"version":1,"sessionId":"`+v2ChainSession+`","id":"`+dispatch+`","role":"`+kind+`","candidates":[{"model":"gpt-6.1-sol","effort":"high"}],"attempts":[{"id":"att-1","candidate":{"model":"gpt-6.1-sol","effort":"high"},"claimed":true,"agentId":null,"observedModel":null,"code":null,"taskFailure":null,"status":"claimed","reconciliation":null,"spawnIssued":false,"toolUseId":null`+extra+`}],"status":"active"}`), 0o644))
 	return file
 }
 
-// v2ChainNative writes the host's thread database (the codex schema of the columns the boundary reads) with one partial-fork child
-// per id, and the parent's rollout in the form the host writes a V2 spawn: the function call, its SubAgentActivity event and the
-// output that holds the agent path.
-func v2ChainNative(t *testing.T, codex string, calls map[string]string) {
+// v2ChainNative writes the host's thread database (the codex schema of the columns the boundary reads) with one child per id, and
+// the parent's rollout in the form the host writes a V2 spawn: the function call, its SubAgentActivity event and the output that
+// holds the agent path. An empty first makes each child a partial fork of the session (its rollout names the session it was forked
+// from and its first user message is the parent's); otherwise each child is a fresh thread whose first user message is first.
+func v2ChainNative(t *testing.T, codex string, calls map[string]string, first string) {
 	t.Helper()
 	spawnHookMust(t, os.RemoveAll(codex))
 	spawnHookMust(t, os.MkdirAll(codex, 0o755))
@@ -53,8 +62,12 @@ func v2ChainNative(t *testing.T, codex string, calls map[string]string) {
 	for call, child := range calls {
 		source, _ := json.Marshal(map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": v2ChainSession, "depth": 1, "agent_path": v2ChainPath}}})
 		rollout := filepath.Join(codex, "rollout-"+child+".jsonl")
-		spawnHookMust(t, os.WriteFile(rollout, []byte(line(map[string]any{"type": "session_meta", "payload": map[string]any{"id": child, "forked_from_id": v2ChainSession}})+"\n"), 0o600))
-		_, err = db.Exec("INSERT INTO threads VALUES (?,?,?,0,?,?,?,?)", child, rollout, string(source), "You are the orchestrator thread of a benchmark run.", "gpt-6.1-sol", "high", v2ChainPath)
+		meta, message := map[string]any{"id": child, "forked_from_id": v2ChainSession}, "You are the orchestrator thread of a benchmark run."
+		if first != "" {
+			meta, message = map[string]any{"id": child}, first
+		}
+		spawnHookMust(t, os.WriteFile(rollout, []byte(line(map[string]any{"type": "session_meta", "payload": meta})+"\n"), 0o600))
+		_, err = db.Exec("INSERT INTO threads VALUES (?,?,?,0,?,?,?,?)", child, rollout, string(source), message, "gpt-6.1-sol", "high", v2ChainPath)
 		spawnHookMust(t, err)
 		_, err = db.Exec("INSERT INTO thread_spawn_edges VALUES (?,?,'open')", v2ChainSession, child)
 		spawnHookMust(t, err)
@@ -93,7 +106,11 @@ func v2ChainRead(t *testing.T, file string) (issued bool, tool string) {
 func TestSpawnHookV2CiphertextSpawnIssuesTheAttemptItsTaskNameNames(t *testing.T) {
 	const store = `{"roles":{"reviewer":{"mode":"model","model":"gpt-6.1-sol","effort":"high"}}}`
 	cipher := strconv.Quote(spawnV2Fernet())
-	for _, fork := range []string{`"none"`, `"2"`} {
+	for _, tc := range []struct{ fork, first string }{
+		{`"none"`, "[CRW-DISPATCH:independent_review:att-1]\nTASK: review the change"}, // a fresh child: its first message is the task
+		{`"2"`, ""}, // a partial fork: its first message is the parent's
+	} {
+		fork := tc.fork
 		t.Run("fork_turns "+fork, func(t *testing.T) {
 			c := spawnHookCase{}
 			c.Env.Store = &[]string{store}[0]
@@ -117,8 +134,16 @@ func TestSpawnHookV2CiphertextSpawnIssuesTheAttemptItsTaskNameNames(t *testing.T
 				t.Fatalf("redelivered hook = %q", again)
 			}
 
-			v2ChainNative(t, codex, map[string]string{"native-1": v2ChainChild})
 			created := map[string]any{"action": "report", "sessionId": v2ChainSession, "dispatchId": "independent_review", "attemptId": "att-1", "outcome": "created", "agentId": v2ChainPath}
+			if tc.first != "" {
+				// The fresh child's first message is checked for the attempt's marker: one without it is refused, though the issued
+				// call's result names it.
+				v2ChainNative(t, codex, map[string]string{"native-1": v2ChainChild}, "TASK: review the change")
+				if _, err := role.CheckedDispatch(context.Background(), rig.ws, created, rig.env, nil); err == nil || !strings.Contains(err.Error(), "carries no marker of this attempt") {
+					t.Fatalf("a fresh child without the marker was accepted: %v", err)
+				}
+			}
+			v2ChainNative(t, codex, map[string]string{"native-1": v2ChainChild}, tc.first)
 			out, err := role.CheckedDispatch(context.Background(), rig.ws, created, rig.env, nil)
 			spawnHookMust(t, err)
 			r := out.Attempts[0].Receipt
@@ -201,7 +226,7 @@ func TestSpawnHookV2UnnamedCiphertextCallCannotSatisfyTheReview(t *testing.T) {
 				t.Fatal("an unnamed call was issued the claimed attempt")
 			}
 			codex, _ := rig.env("CODEX_HOME")
-			v2ChainNative(t, codex, map[string]string{"helper-call": v2ChainChild})
+			v2ChainNative(t, codex, map[string]string{"helper-call": v2ChainChild}, "")
 			report := map[string]any{"action": "report", "sessionId": v2ChainSession, "dispatchId": "review-1", "attemptId": "att-1", "outcome": "created", "agentId": v2ChainPath}
 			if _, err := role.CheckedDispatch(context.Background(), rig.ws, report, rig.env, nil); err == nil {
 				t.Fatal("the unrelated child was recorded without reconciliation")

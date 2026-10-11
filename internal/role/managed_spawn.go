@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"syscall"
 	"time"
 )
@@ -110,14 +111,17 @@ func (r *ManagedSpawnResolver) preview(session, message string) (*ManagedSpawnSe
 
 // Named is the attempt a native V2 spawn call whose message cannot be read names by its task_name (CRW-1260). A V2 task is host
 // ciphertext, so the dispatch marker in it is invisible to the hook; the call's plaintext task_name is what the caller writes to
-// name the dispatch, and the hook reads it from the call itself, as it reads a marker. The call names an attempt when task is the
-// id of a dispatch of the session that is active, whose current attempt is claimed, and, when roleFilter is set, whose role it is.
-// A call that names no such dispatch, or a record that cannot be read, is left unbound (nil): the session's other records are
-// never a reason to bind a call that did not name its dispatch, so an unrelated call is not issued an attempt. A call whose tool
-// use id an earlier attempt of the dispatch was issued to (an old event delivered again) is not the current attempt's either.
-// Whether the attempt is still waiting for its spawn is the issuance's to decide under the record's lock, exactly as for a marker.
-// The source returned is the marker line of the attempt, for the binding of a replayed answer. Nothing is written.
-func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, roleFilter *RoleName) (*ManagedSpawnSelection, string, error) {
+// name the dispatch, and the hook reads it from the call itself, as it reads a marker. A task_name alone is not that act: a direct
+// native call the user asked for may carry any name, the id of a claimed dispatch included. So the call names an attempt only when
+// the claim opted the attempt in to it (v2TaskName:true, DispatchAttempt.V2TaskName) and task is the id of a dispatch of the
+// session that is active, whose current attempt is claimed, and, when roles is not nil, whose role is one of roles. A call that
+// names no such dispatch, or a record that cannot be read, is left unbound (nil) and unmanaged, keeping its own model and effort:
+// the session's other records are never a reason to bind a call that did not name its dispatch, so an unrelated call is not issued
+// an attempt. A call whose tool use id an earlier attempt of the dispatch was issued to (an old event delivered again) is not the
+// current attempt's either. Whether the attempt is still waiting for its spawn is the issuance's to decide under the record's
+// lock, exactly as for a marker. The source returned is the marker line of the attempt, for the binding of a replayed answer.
+// Nothing is written.
+func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, roles []RoleName) (*ManagedSpawnSelection, string, error) {
 	if !r.resolved {
 		r.resolved = true
 		if r.root, r.err = dispatchRoot(r.cwd); r.err == nil {
@@ -138,7 +142,7 @@ func (r *ManagedSpawnResolver) Named(session, task string, toolUseID *string, ro
 		return nil, "", nil
 	}
 	a := d.Attempts[len(d.Attempts)-1]
-	if !dispatchIs(d.Status, "active") || !a.Claimed || !dispatchIs(a.Status, "claimed") || roleFilter != nil && d.Role != *roleFilter {
+	if !a.V2TaskName || !dispatchIs(d.Status, "active") || !a.Claimed || !dispatchIs(a.Status, "claimed") || roles != nil && !slices.Contains(roles, d.Role) {
 		return nil, "", nil
 	}
 	if toolUseID != nil && *toolUseID != "" {

@@ -175,12 +175,13 @@ func spawnHookWithout(o pyjson.Object, keys ...string) pyjson.Object {
 
 // spawnHookManagedCiphertext ties a native V2 spawn whose task is ciphertext to the attempt its task_name names (CRW-1260). The
 // dispatch marker is in the task, which the hook cannot read, so no source resolved; the caller names the dispatch by the call's
-// plaintext task_name instead (role.ManagedSpawnResolver.Named), narrowed by the role agent_type names. That is an explicit
-// binding the hook reads from the call, as it reads a marker: the issuance then refuses a second call that names the same attempt,
-// and the created check ties the child to the issued call by the host's result of that call. A call that is not a fresh or
-// partial-fork child (a full-history fork is never managed), that already resolved a marker, or whose task_name names no
-// dispatch of the session waiting for its spawn is left unmanaged, as before: a call that did not name the dispatch is never
-// issued its attempt, so neither an unrelated call's child nor a parallel unrelated call is tied to it.
+// plaintext task_name instead, and only for an attempt whose claim opted in to that (v2TaskName:true; role.ManagedSpawnResolver.
+// Named), narrowed by the roles agent_type can carry. That is an explicit binding the hook reads from the call and the record, as it
+// reads a marker: the issuance then refuses a second call that names the same attempt, and the created check ties the child to the
+// issued call by the host's result of that call. A call that is not a fresh or partial-fork child (a full-history fork is never
+// managed), that already resolved a marker, or whose task_name names no opted-in dispatch of the session waiting for its spawn is
+// left unmanaged, as before: a direct native call keeps its own model and effort and consumes no issuance, even when its task_name
+// equals a claimed dispatch's id, and neither an unrelated call's child nor a parallel unrelated call is tied to an attempt.
 func spawnHookManagedCiphertext(a *spawnHookAssembly) {
 	if a.managed != nil || !a.encryptedV2Message || a.sessionID == "" || IsFullHistoryFork(spawnHookView(a.toolInput)) {
 		return
@@ -189,19 +190,25 @@ func spawnHookManagedCiphertext(a *spawnHookAssembly) {
 	if task == "" {
 		return
 	}
-	var filter *role.RoleName
-	if kind, ok := a.toolInput.Get("agent_type").(string); ok {
-		switch kind {
-		case "worker", "executor":
-			r := role.Executor
-			filter = &r
-		case "architect", "reviewer", "explorer":
-			r := role.RoleName(kind)
-			filter = &r
-		}
-	}
-	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Named(a.sessionID, task, a.toolUseID, filter)
+	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Named(a.sessionID, task, a.toolUseID, spawnCiphertextRoles(a.toolInput.Get("agent_type")))
 	if err == nil && selection != nil {
 		a.managed, a.dispatchSource = selection, source
 	}
+}
+
+// spawnCiphertextRoles are the roles a ciphertext call of this agent_type can carry (nil: any). An explorer-typed call can carry
+// the role a CRW-ROLE header in its task names (InferRole lets the header win over explorer), which is how the delegation reference
+// transports a reviewer or an architect where the live schema exposes no such agent type; under V2 that header is ciphertext, so an
+// explorer-typed call may name a dispatch of any of the three roles. Worker or executor, and architect or reviewer, name their role.
+func spawnCiphertextRoles(agentType any) []role.RoleName {
+	kind, _ := agentType.(string)
+	switch kind {
+	case "worker", "executor":
+		return []role.RoleName{role.Executor}
+	case "architect", "reviewer":
+		return []role.RoleName{role.RoleName(kind)}
+	case "explorer":
+		return []role.RoleName{role.Explorer, role.Reviewer, role.Architect}
+	}
+	return nil
 }
