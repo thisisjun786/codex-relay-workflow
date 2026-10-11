@@ -1,25 +1,31 @@
 ---
 name: crw-status
-description: "Report where work actually stands: the goal, the current position, what is moving, what is blocked, what needs Jun's decision, and what is unverified, with investigation depth scaled to the question. Use for 중간점검, '현재 어디까지 됐어?', '상황 알려줘' and whole-portfolio status; use crw-next to choose an action, crw-check to verify delivery against criteria, and crw-logic for contradictions."
+description: "Read-only report of where work stands, by level from manager to issue, with the evidence, and the one next action when asked. Use for '현재 어디까지 됐어?', '상황 알려줘', '다음에 뭐 하지?'. crw-check audits delivery against criteria; crw-run and crw-run-initiative execute."
 ---
 
 # CRW Status
 
-Report what is true right now and how it is known. Jun asks for this as 중간점검, as
-'현재 어디까지 됐어?', or as '전체 프로젝트 어떻게 돼가?'. Standing on its own, that asks for a
-short grounded report rather than a plan, an audit, or a recommendation he did not ask for. Asked
-of a task already executing an initiative he approved, it asks for that report and for the approved
-work to keep moving. Which one it is decides what this call may do, so classify it first.
+Report what is true right now and how it is known, and choose the one action that follows when
+Jun asks for it. He asks for this as '현재 어디까지 됐어?', as '전체 프로젝트 어떻게 돼가?' or as
+'다음에 뭐 하지?'. Standing on its own, that asks for a short grounded report rather than a plan,
+an audit, or a recommendation he did not ask for.
 
-## Keep the four read operations apart
+This skill is read-only. It writes no Linear record, creates or resumes no task, sends no message,
+wakes no project orchestrator or issue child, installs nothing and changes no schedule, whatever
+the state of the work it reports on. Reporting that a project is behind does not authorize starting
+it. A one-word 중간점검 inside a task that leads an initiative is not a read: its owner is
+[crw-run-initiative](../crw-run-initiative/SKILL.md), and when this task holds no such binding the
+request is a status read and is answered here.
 
-Status reports the current situation. [crw-next](../crw-next/SKILL.md) chooses one action to take.
+## Keep the read operations apart
+
+Status reports the current situation and, when asked, chooses one action to take.
 [crw-check](../crw-check/SKILL.md) compares delivery against accepted criteria obligation by
-obligation. [crw-logic](../crw-logic/SKILL.md) investigates a suspected contradiction. Where a
-report surfaces a question one of those owns, name the owner and the question; do not attach a
-full requirement audit or a contradiction hunt to a user who asked how things are going, and never
-start work the standing approval does not already cover. A next action belongs in the report when
-the user asked for one, and is not a required section otherwise.
+obligation, finds contradictions between specifications and evidence, and judges progress against
+the agreed schedule. Where a report surfaces a question one of those owns, name the owner and the
+question; do not attach a full requirement audit or a contradiction hunt to a user who asked how
+things are going, and never start work the standing approval does not already cover. A next action
+belongs in the report when the user asked for one, and is not a required section otherwise.
 
 ## Connect the workflow
 
@@ -27,16 +33,20 @@ Read the shared [Linear model](../crw-canon/references/linear-model.md) and
 [delivery](../crw-canon/references/delivery.md) for canonical documents, connector
 access and which operation owns what, and
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level)
-for the three roles and the names a Korean report gives them. Write the report in an
-evidence-first, short-brief form, without assuming that the reader has been away: the same form serves a routine midpoint check.
+for the levels and the names a Korean report gives them. Write the report in an
+evidence-first, short-brief form, without assuming that the reader has been away.
 When the request bundles several questions or its referent is unclear, restate it and resolve
 silently when the context settles it. Use `crw-recall` only for history the current records no
 longer carry; it does not establish current state.
 
-Two entries have their own procedures. A supervisor's one-word midpoint check over an initiative
-is [Midpoint check](references/midpoint-check.md). Progress against the agreed schedule is
-[Schedule progress](references/schedule-progress.md), and it is a default part of a midpoint or
-status report rather than an extra a user has to request.
+Progress against the agreed schedule is a default part of a status report rather than an extra a
+user has to request: one short verdict with its reason, taken from
+[Schedule judgment](../crw-check/references/schedule-judgment.md), which `crw-check` owns. The
+same inputs give the same verdict from either side, and this skill defines none of the verdicts.
+Where a verdict disagrees with check's, or the evidence is too thin to decide, the route is
+[crw-check](../crw-check/SKILL.md) rather than a deeper investigation here. A verdict changes no
+date and starts no execution; a schedule change belongs to [crw-plan](../crw-plan/SKILL.md) and new
+work to [crw-run](../crw-run/SKILL.md).
 
 The morning report of a night batch is written by `crw manage batch report` in the form of
 [Night batch report](references/night-batch-report.md).
@@ -50,8 +60,8 @@ ID, a Codex task ID, a Desktop project ID and a repository are four different id
 title, a folder or a branch is none of them.
 
 Reading another project because somebody asked about it changes no binding. That holds at every
-level: a temporary question does not repoint a project parent, and a supervision task that answers
-one question about a neighbouring initiative still supervises the initiative it was designated for.
+level: a temporary question does not repoint a project orchestrator, and a task that answers
+one question about a neighbouring initiative still leads the initiative it was designated for.
 A binding changes only by an explicit designation or switch.
 
 Where the conversation already fixes the target, as 'CRW 상황 알려줘' does, state the scope you are
@@ -59,6 +69,30 @@ reporting on and go. Where it does not, do not settle an ambiguous target by pic
 recent, the most convenient, or the closest title match. Ask one question only when the choice
 between candidates would change the answer materially and the evidence in hand cannot decide it,
 and name the candidates in that question.
+
+## Report by level
+
+Read and report from the top down, in this order, and stop at the level the question reaches: the
+manager, then each initiative lead, then each project orchestrator, then each issue.
+
+1. **Manager.** The store seat: the capacity and caps it holds, the decisions waiting for Jun, and
+   what it has handed to the initiative leads and project orchestrators.
+2. **Initiative lead.** Per initiative, its approved project set, the order across projects, the
+   finish condition and whether it holds.
+3. **Project orchestrator.** Per project, its state, its blocker, its schedule verdict and its
+   evidence pointer.
+4. **Issue.** Per issue, its child or executor, its delivery and the evidence at the delivery level
+   its criteria require.
+
+A gap found at a level is reported there and sent one level down, to the owner of that level, never
+past it and never to the reader's own convenience: a gap in an issue goes to its project
+orchestrator, a gap that spans projects goes to the initiative lead that owns both, and a gap in an
+initiative's order goes to the manager. Where the projects answer to different initiative leads, a
+requirement for one of them goes to that project's own lead, and only a genuinely shared decision
+with no common owner goes to Jun. A standalone issue keeps its issue-scoped owner and no project
+orchestrator is invented for it. All of this follows the
+[scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level); reading a level does
+not give this skill that level's authority.
 
 ## Choose the depth before reading
 
@@ -104,67 +138,63 @@ not a status. Then one short status per project, including its schedule verdict.
 waiting, split between what an internal coordinator will settle and what genuinely needs a new
 decision from Jun. Then the evidence you checked and the items still unverified.
 
-Where this call acted, the actions it actually took come before what is waiting, and what is
-waiting separates a normal dependency wait from a decision somebody owes. Failed and unverified
-deliveries go with the other unverified items rather than among the actions.
+What is waiting separates a normal dependency wait from a decision somebody owes. Failed and
+unverified deliveries go with the other unverified items.
 
 Write it in Korean, short, and in the order above. Keep each project's line to its state, its
 blocker and its evidence pointer. Never write that something was handled, fixed or completed unless
-this call produced a new fact that it was. Something sent is not something done, and reporting a
+the records show that it was. Something sent is not something done, and reporting a
 request as progress is the failure this skill exists to prevent.
 
-## Classify the request before deciding what this call may do
+## Choose one next action
 
-Two requests use the same words and do not have the same answer. Decide between them from the
-records, in this order, stopping at the first step that decides.
+Asked what to do next, choose one action from the scoped evidence above and return it with the
+evidence, the reason and the observable completion condition. Do not impose a cycle vocabulary on
+the user or require that the project adopt a workflow.
 
-1. An explicit status-only, report-only, read-only, plan-only, pause or no-contact limit in force
-   for this request settles it: read the records, write nothing, wake nobody. No later step
-   overrides a limit the user stated.
-2. Otherwise this is a checkpoint only if all four hold: this task holds a current supervisor
-   designation for the same stable initiative ID, its approved project set is not yet complete,
-   the execution approval is still in force, and obligations remain inside it. A designation and a
-   binding are different things, and an initiative link is neither
-   ([Initiative supervision](../crw-run/references/initiative-supervision.md)).
-3. Anything else reads. A bare initiative link, a past assignment, a finished execution, or
-   authority you cannot establish from the records is the reading branch. Ambiguity resolves toward
-   reading, because a wake that should not have happened cannot be taken back and a report that
-   should have acted can be followed up in the next message.
+Gather only the evidence the choice needs: the product goal and accepted decisions, the relevant
+Linear criteria and dependencies, active ownership, and the current repository or delivery state.
+Refresh stale facts and page the relevant results before claiming absence. An empty backlog does
+not prove a fresh start, and a Done label or a completed agent turn does not prove the outcome is
+delivered. Where repository identity affects readiness, apply the shared
+[repository resolution](../crw-canon/references/linear-model.md#resolve-the-implementation-repository).
 
-On the reading branch this call writes no Linear, creates or resumes no task, sends no message,
-wakes no parent or child, installs nothing and changes no schedule. Reporting that a project is
-behind does not authorize starting it.
+**Where to start.** Establish the intended user outcome, what already exists, and the constraint
+that prevents progress. Inspect existing plans, code and open work before proposing a new project
+or a duplicate issue. If the outcome is unclear, choose the smallest discovery step that would
+change the decision. Use [crw-define](../crw-define/SKILL.md) when the initiative goal itself needs
+definition. If it is clear, choose the smallest useful first delivery with ready prerequisites, and
+use [crw-plan](../crw-plan/SKILL.md) only when missing scope or dependencies actually prevent
+execution.
 
-On the checkpoint branch, Jun is not asking whether to continue. That was settled when he approved
-the execution, so the call reads the responsible parents, moves the work that approval already
-covers and that is already waiting on somebody, and reports what it did. Asking 다시 진행할까요 on
-every checkpoint is the habit this replaces: it hands back a decision he already made.
+**What follows finished work.** Read the delivered artifact and its completion evidence against the
+agreed criterion and delivery level, reusing valid proof; read
+[Merge readiness](../crw-run/references/merge-readiness.md) only when readiness or integration
+decides the action. If a consequential gap remains, choose its correction or missing verification
+and route it one level down as above. Do not start a successor whose prerequisite is unverified.
+If the required result is verified, choose the next ready dependency that advances the outcome. When
+the whole outcome is complete, say so and recommend stopping instead of inventing more work.
 
-What moves is only what the existing approval covers. A checkpoint starts no new project execution,
-widens no scope, and creates no installation, restart or wake authority the assignment did not
-already carry. Existing permissions, model, effort, ownership and task records are preserved
-exactly. Where a limit blocks a step, report that plainly and carry on with the follow-ups the limit
-does not touch. [Midpoint check](references/midpoint-check.md) owns what the checkpoint may then do,
-including the rule that it is one reconciliation pass and not a scheduler.
+Honor explicit priorities and deadlines, then choose the action that removes the most consequential
+constraint or closes the nearest useful delivery. Do not rank by issue number alone or invent a
+score. Account for active ownership: a recommendation must not create a duplicate writer. Lead with
+one concrete action in plain Korean, link the decisive Linear item or evidence, and give one
+recommendation, not a menu. When Jun has no action to take while authorized work proceeds, say that
+and name the next result to observe.
 
-[crw-check](../crw-check/SKILL.md) resolves execution authority from the same full assignment and
-prior approvals. On one input the two must classify it the same way; if your reading differs from
-check's, one of you is wrong and it is worth settling before acting on it.
-
-The canonical statement of this classification is the shared bullet in
-[Default independent execution](../crw-canon/references/delivery.md#default-independent-execution),
-and it governs. The row a reader following this skill's own links reaches, in
-[Initiative supervision](../crw-run/references/initiative-supervision.md), carries the same two
-branches.
+A "what next?" is advisory: selection launches no work and mutates no Linear. During an active
+authorized run, answer briefly and return control to the existing owner. When execution is also
+requested, hand the chosen action and evidence to [crw-run](../crw-run/SKILL.md) or
+[crw-run-initiative](../crw-run-initiative/SKILL.md) under the existing scope.
 
 ## Return control, and report what was done
 
 A status question that arrives during an authorized run is a question, not a cancellation. Answer
 it and return control to the task that owns the execution, which keeps every obligation it already
-had; a supervisor or parent does not shed its continuing duties because someone asked for a
-progress report, and a checkpoint that moved work returns control the same way. Where the user asks
-for action beyond what the standing approval covers, hand the scoped request to the owner that
-already has it: [crw-run](../crw-run/SKILL.md) for execution, [crw-check](../crw-check/SKILL.md)
+had; an initiative lead or project orchestrator does not shed its continuing duties because someone
+asked for a progress report. Where the user asks for action beyond what the standing approval
+covers, hand the scoped request to the owner that already has it: [crw-run](../crw-run/SKILL.md) or
+[crw-run-initiative](../crw-run-initiative/SKILL.md) for execution, [crw-check](../crw-check/SKILL.md)
 for verification, [crw-plan](../crw-plan/SKILL.md) for a schedule or scope change.
 
 Do not set up recurring or background reporting. Each call is asked for and answered once.

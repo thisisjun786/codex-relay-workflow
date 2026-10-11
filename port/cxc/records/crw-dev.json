@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1218: the polling budget aggregate is owned by the project orchestrator, with a link to crw-run's resource accounting.",
       "hunks": [
         {
           "line": 4,
@@ -126,6 +126,16 @@
           ],
           "new": [
             "- **Choose the repository's delivery path first, then stack only where it uses pull requests (DEV-STACK-01, DEFAULT)** — CRW internal work is a verified task branch that the integrator fast-forwards onto `dev` (`AGENTS.md`, `POLICY.md`): it opens no pull request, so it is never stacked; a large dependent change is sequenced as ordered commits or task branches for the integrator. An external contribution or an in-flight pull request keeps the pull-request path: when a change there splits into 2+ dependency-ordered parts and one PR would be too large to review, publish a bottom-up stack: each branch based on the one below, each PR's base pointing at its parent. Editing a lower layer means cascading the rebase to every layer above before pushing (`DEV-STACK-02`, STRICT). Merging a stack is bottom-up and stays user-authorized (`DEV-STACK-04`, ESCALATE). Canonical rules, depth guidance, anti-patterns, review scope, and tooling: `references/stacked-prs.md`.\n"
+          ]
+        },
+        {
+          "line": 483,
+          "old": [
+            "budget and reserve headroom for the workers; the coordinator owns that aggregate.\n"
+          ],
+          "new": [
+            "budget and reserve headroom for the workers; the project orchestrator owns that\n",
+            "aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).\n"
           ]
         }
       ]

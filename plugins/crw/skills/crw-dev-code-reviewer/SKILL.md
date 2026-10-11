@@ -17,7 +17,7 @@ This skill activates by change-surface for review requests, pre-merge checks, or
 
 `crw-dev-code-reviewer` reviews code changes and pull requests.
 `crw-check` checks delivery against the canonical Linear requirements and issue criteria.
-`crw-logic` finds contradictions and broken invariants across specifications and evidence.
+`crw-check` also finds contradictions and broken invariants across specifications and evidence.
 Use the skill that owns the requested judgment; code review does not certify Linear delivery.
 
 ## Review Posture (REVIEW-POSTURE-01)

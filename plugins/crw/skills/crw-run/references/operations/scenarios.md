@@ -754,7 +754,7 @@ Clauses: OPS-7.1, OPS-8.1, OPS-8.2; the registers are
 [Which register each state word came from](../initiative-supervision.md), the recorded mode is
 [Record the start adjudication](../goal-mode.md#record-the-start-adjudication),
 and the idle action matrix and the goal/activation/continuation split belong to
-[the midpoint check](../../../crw-status/references/midpoint-check.md).
+[the midpoint check](../midpoint-check.md).
 
 Action: name the register of every reading before deciding anything, and restore the recorded start
 policy, re-adjudicating only the fields whose conditions changed. The first three parents are three

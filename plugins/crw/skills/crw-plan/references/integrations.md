@@ -169,7 +169,7 @@ Load the existing owner for the requested operation:
 
 | Request | Owner |
 |---|---|
-| Where to start or what to do next | [crw-next](../../crw-next/SKILL.md) |
+| Where to start or what to do next | [crw-status](../../crw-status/SKILL.md#choose-one-next-action) |
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Turn one short request into one ready issue (a lighter path than a plan) | [crw-add-issue](../../crw-add-issue/SKILL.md) |
@@ -178,7 +178,7 @@ Load the existing owner for the requested operation:
 | Carry one task's authorized objective through a scoped PABCD completion loop | `crw-loop`, with `crw-pabcd` for the phases |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
-| Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
+| Investigate contradictions or broken invariants | [crw-check](../../crw-check/SKILL.md#find-contradictions) |
 | Diagnose structural debt after a verified cycle and plan bounded repairs; execute only selected authorized work | [crw-refactor](../../crw-refactor/SKILL.md) |
 | Find records that fall short of the agreed authoring rules and supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
 

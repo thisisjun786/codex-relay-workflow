@@ -114,6 +114,26 @@ Do not produce a projected completion date, a remaining-work estimate, or a velo
 or rate on any branch. An unachieved result reports how long it has been late and
 nothing about when it will land.
 
+## Report words
+
+A report written in Korean uses these words for the verdicts above, and no other file defines a
+verdict: [crw-status](../../crw-status/SKILL.md) and [crw-plan](../../crw-plan/SKILL.md) cite this
+reference and read the words from here.
+
+| Verdict | Korean report word | Reading |
+|---|---|---|
+| Ahead | 앞섬 | A result is confirmed achieved before its date, with the evidence that achieved it; work that looks fast or a task that finished its turn is not an achievement |
+| On plan | 계획대로 | Everything due by the observation exists, and nothing due next is already known to be at risk |
+| At risk | 지연 위험 | The date has not passed and a listed condition makes reaching it doubtful; there is still time |
+| Late | 지연 | The date has passed and the result due by it does not exist; there is no time left |
+| Undecidable | 판단 불가 | No date, no timezone, no fresh evidence or a failed read; the report carries what was missing and what would make a verdict possible, not a guess |
+
+Where a Schedule baseline is `unconfirmed`, 계획대로 and 앞섬 are unavailable on that axis, because
+both assert that a date was met as originally agreed and no Baseline record separates an original
+target from one moved to wherever the work had reached; 지연, 지연 위험 and 판단 불가 survive.
+One project's schedule line in a portfolio report is the verdict word and the one reason, with the
+rest available on request.
+
 ## Name the risk
 
 Before the deadline, only these observations make a result at risk, and each carries

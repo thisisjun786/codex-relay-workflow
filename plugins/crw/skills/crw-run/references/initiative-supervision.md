@@ -1,7 +1,7 @@
 # Initiative supervision
 
-Run executes the scope its task is bound to. Where that scope is an initiative, this file is the
-entry: how a task becomes that initiative's supervisor, which projects it is executing, when it is
+[crw-run-initiative](../../crw-run-initiative/SKILL.md) executes an initiative's scope, and this file
+is its reference: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
 the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 which also fixes what each level is called in a report to Jun,
@@ -38,9 +38,9 @@ request rather than in the link.
 
 | Request | Owner | Effect on binding |
 |---|---|---|
-| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run](../SKILL.md) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
+| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run-initiative](../../crw-run-initiative/SKILL.md) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
 | Define or plan it | [crw-define](../../crw-define/SKILL.md), [crw-plan](../../crw-plan/SKILL.md) | none; planning creates no supervisor and moves no ownership |
-| How is it going | a status read by default; where this task supervises the initiative and its execution approval is still in force, also a checkpoint | none either way. A standalone request, or one under an explicit status-only, report-only, read-only, plan-only, pause or no-contact limit, reads existing records and wakes nothing. A checkpoint is not only a read: while approved work remains unfinished under an approval still in force, it inspects the existing parents, hands that pending work to the responsible parent on the resume path that parent already has, and reports the actions actually taken. It still binds no supervisor, moves no ownership, and starts nothing for work that already has an owner |
+| How is it going | a [crw-status](../../crw-status/SKILL.md) read by default; where this task supervises the initiative and its execution approval is still in force, also a checkpoint ([midpoint check](midpoint-check.md)) | none either way. A standalone request, or one under an explicit status-only, report-only, read-only, plan-only, pause or no-contact limit, reads existing records and wakes nothing. A checkpoint is not only a read: while approved work remains unfinished under an approval still in force, it inspects the existing parents, hands that pending work to the responsible parent on the resume path that parent already has, and reports the actions actually taken. It still binds no supervisor, moves no ownership, and starts nothing for work that already has an owner |
 | An initiative link carried as context by other work | the operation already running | none; it locates context |
 
 A designation is explicit and names the initiative. A link by itself rebinds no existing parent,
@@ -344,7 +344,7 @@ either. Recovery's own actions stay with
 [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) for the busy, paused,
 cancelled and archived routing, with [Start policy](start-policy.md) for the mode, and with C9
 below for a finished project.
-[The midpoint check](../../crw-status/references/midpoint-check.md) is read for the shape of a
+[The midpoint check](midpoint-check.md) is read for the shape of a
 status reading, its idle rows and its rule that a goal existing, a goal activating and
 continuation observed are three separate readings, and not for the goal default, which
 start-policy.md fixes and which that file predates. This entry adds only the register each word

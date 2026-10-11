@@ -178,7 +178,9 @@ so a result that is late against the schedule baseline still reads as late after
 ## Re-evaluating at a checkpoint
 
 A checkpoint compares each subject with both datums, the schedule baseline and the current target,
-and names which one it measured. What it does next follows the evidence rather than the calendar.
+and names which one it measured. The verdict on each subject is the one in
+[Schedule judgment](../../crw-check/references/schedule-judgment.md), which `crw-check` owns; this
+plan acts on that verdict and defines none. What it does next follows the evidence rather than the calendar.
 
 Where a result was confirmed earlier than its target, every successor whose earliest day moves and
 whose target this plan may move is pulled in during that same turn, inside the schedule-change
