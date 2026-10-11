@@ -1,16 +1,17 @@
 # Midpoint check
 
-One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in a task that supervises an
-initiative. The answer is a short report covering everything that supervision holds and, where the
-execution approval is still in force, the approved work moved along. This file
-is that entry. The roles it walks are the shared
+One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in a task that leads an
+initiative. The answer is a short report covering everything that leadership holds and, where the
+execution approval is still in force, the approved work moved along. This file is the procedure
+of [crw-run-initiative](../../crw-run-initiative/SKILL.md), which owns the midpoint check. The
+roles it walks are the shared
 [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 and the binding it reads is the one
-[Initiative supervision](../../crw-run/references/initiative-supervision.md) established. Its
-existing row classifying a how-is-it-going request as a read that wakes nothing describes the
-reading branch in [the classification](../SKILL.md#classify-the-request-before-deciding-what-this-call-may-do),
-which is still the default; a checkpoint inside an execution approval that is still in force is the
-other branch, and that branch is what this file is mostly about.
+[Initiative supervision](initiative-supervision.md) established. The classification that decides
+between the reading branch and the checkpoint branch is
+[Answer a 중간점검 request](../../crw-run-initiative/SKILL.md#answer-a-중간점검-request); the reading
+branch is a [crw-status](../../crw-status/SKILL.md) report that wakes nothing, and the checkpoint
+branch, an execution approval still in force, is what this file is mostly about.
 
 ## Find the scope without being given a link
 
@@ -42,7 +43,7 @@ supposed to be cheaper than.
 
 Per task, parent and child alike, from the host rather than from its last report: `active` with a
 turn id, `idle`, `notLoaded`, or `systemError`, and when its last turn ended and how. The
-[bridge](../../crw-run/references/bridge.md) owns those readings and the rule that `notLoaded` and
+[bridge](bridge.md) owns those readings and the rule that `notLoaded` and
 a system error are neither running nor finished. A task that has not reported for a day may be
 working; a task that answered an hour ago may have ended waiting for something.
 
@@ -55,19 +56,19 @@ and report both, and read the parent's effective workflow before judging either.
 The workflow is what makes a missing goal a fact or a fault, and since CRW-165 the ordinary answer
 is a fact. A project parent runs goal-free by default, so an absent goal is the normal state and
 never the stall: what returns it is the delivery path, and that is what the report reads. A parent
-in [goal mode](../../crw-run/references/goal-mode.md) was given a goal because someone asked for one, so a
+in [goal mode](goal-mode.md) was given a goal because someone asked for one, so a
 missing, paused or unactivatable goal there is worth leading with. Judge against the mode the
 parent is actually in, read from its recorded `run_mode` and `observation_path` under
-[Start policy](../../crw-run/references/start-policy.md), which now owns which role carries which
+[Start policy](start-policy.md), which now owns which role carries which
 lifecycle by default.
 
 For a parent recorded `goal-free-run` the stall question is the delivery path alone, because an
 absent goal is deliverable. The other no-goal record is `blocked`, a parent that can neither hold a
 goal nor proceed without one, and that one is M14's case rather than a delivery fault. A goal
 blocks only where one exists, which means goal mode or a parent carried over from before
-the default and recorded `goal` by [Start policy](../../crw-run/references/start-policy.md) rather
+the default and recorded `goal` by [Start policy](start-policy.md) rather
 than converted, and there
-[OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
+[OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
 owns which goal statuses the relay treats as blocking, read from there rather than named here. That
 is a real stall with a specific cause, and it looks identical from the outside to a parent nobody
 has anything to send. Pausing a parent's goal is never the way to quiet it, because that is the act
@@ -102,27 +103,27 @@ blocked by a goal compatibility problem is neither idle nor complete: reporting 
 the one fact that explains why nothing is moving. Say which of the three you observed and when.
 
 A status call creates, activates or repairs no goal. Find the task by its stable coordinator binding
-in that parent's coordination record, and route the goal work as [goal mode](../../crw-run/references/goal-mode.md)
+in that parent's coordination record, and route the goal work as [goal mode](goal-mode.md)
 lifecycle work, because that is the operation owner for a goal's creation, activation and recovery;
 `crw-run` executes the project and does not make a parent's goal. Where the record names no
 coordinator, or ownership cannot be established, it is Jun's decision and goes in the report as one.
 That routing is about who is told about a broken goal, which is a different question from which
-role carries which lifecycle by default; [Start policy](../../crw-run/references/start-policy.md)
+role carries which lifecycle by default; [Start policy](start-policy.md)
 owns the second. A goal-free parent is the default rather than a defect, so finding one is not a
 finding at all.
 
 Per delivery, from git and, where a pull request exists, from GitHub: the current head, the CI attempt that applies to that head where hosted CI ran on it, the reviews
 paged to the end, whether the delivery actually landed on its intended target (the integrator's fast-forward, or the pull request's merge while one is open), and whether
 anything was installed or demonstrated afterwards. Use
-[Merge readiness](../../crw-run/references/merge-readiness.md) for what the checks and reviews
+[Merge readiness](merge-readiness.md) for what the checks and reviews
 establish and [Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)
 for what a landing requires. The Devin and Codex reviews are references and not gates
-([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)): a skipped or
+([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)): a skipped or
 missing review is recorded as such, never as a review that passed. Read each reviewer's one run as that
 section reads it (in progress, finished with N threads, skipped, or no signal by a time), and read the review
 threads on the head against the delivery record's `threadsSeen`: a thread the record does not list is a late
 thread, reported as its own row with its grade and whose move it is
-([Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads), case M15).
+([Late review threads](merge-readiness.md#late-review-threads), case M15).
 
 ## Surface the disagreements, not the inventory
 
@@ -132,16 +133,16 @@ where two levels disagree, and four of them recur:
 - The parent is idle while its children's work is still outstanding AND nothing will bring it back.
   Idle alone is not the blocker: under event-driven handoff a parent answers, returns to idle, and
   a delivered event starts its next turn, which
-  [OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting) owns.
+  [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) owns.
   What makes that path a verified one is the readiness list in
-  [Before a parent may wait idle](../../crw-run/references/start-policy.md#before-a-parent-may-wait-idle),
+  [Before a parent may wait idle](start-policy.md#before-a-parent-may-wait-idle),
   read from there rather than from a shorter copy here, because the fact it calls the one usually
   skipped is the one a checkpoint skips too. The blockers are an idle parent with no such path,
   whose child's result sits unread until someone restarts it by hand; a parent
-  [OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
+  [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
   puts out of reach, by its own state, its goal status or its assignment's, which nothing resumes
   automatically whatever arrives for it; and a delivery already held after its retry budget ran out,
-  which [OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path)
+  which [OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path)
   records as terminal and recoverable only by a fresh execution generation. That last one reads as
   an ordinary quiet queue unless held rows are read, so read them.
 - A child ended its turn waiting on a judgement. Its work is not blocked by a defect; it is blocked
@@ -186,8 +187,8 @@ parents keep every obligation they had before the question arrived.
 The initiative level coordinates and does not descend. It hands work to parents and performs
 neither a child's implementation, CI or review nor a parent's technical judgement, acceptance or
 merge. The progress rules Run owns and the handoff shapes in
-[Coordination message](../../crw-run/references/task-packet.md#coordination-message) and the
-[restoration block](../../crw-run/references/task-packet.md#restoration-block) are consumed as they
+[Coordination message](task-packet.md#coordination-message) and the
+[restoration block](task-packet.md#restoration-block) are consumed as they
 stand.
 
 One reconciliation pass, and that is the whole budget. Read the parents, deliver at most one new
@@ -200,9 +201,9 @@ growing inside Status where Run already owns one.
 | Observed on a responsible parent | What the checkpoint does |
 |---|---|
 | `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
-| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent. A delivery already held after its retry budget ran out is not revived by that resume: the parent's own drain on entry is what finds it, and [OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path) makes a fresh execution generation the only recovery |
+| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent. A delivery already held after its retry budget ran out is not revived by that resume: the parent's own drain on entry is what finds it, and [OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path) makes a fresh execution generation the only recovery |
 | `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
-| paused or archived, holding an assignment [OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents) records as inactive, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take. Cancellation is an assignment status there rather than an observable task state, so report it as the assignment's and never infer it from a turn that merely ended |
+| paused or archived, holding an assignment [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) records as inactive, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take. Cancellation is an assignment status there rather than an observable task state, so report it as the assignment's and never infer it from a turn that merely ended |
 | `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
 
 Nothing here recreates a child, duplicates a resume, or nudges a parent that is already moving.
@@ -210,7 +211,7 @@ Nothing here recreates a child, duplicates a resume, or nudges a parent that is 
 ### The idle row needs more than the word idle
 
 `idle` on its own decides nothing, because it is the normal state under event-driven handoff
-([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)). Before
+([OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting)). Before
 sending anything, establish from the records the stable parent relationship, the active turn if
 there is one, the last processed cursor or result, the outstanding items in the coordination record,
 the evidence that a dependency actually released, the verified resume path, and the message identity
@@ -234,14 +235,14 @@ are. Nothing in a checkpoint creates installation or restart authority, and noth
 project that was not already approved.
 
 Where Jun asks for follow-up beyond what the standing approval covers, hand that scoped request to
-the owner that already has it, [crw-run](../../crw-run/SKILL.md) or
+the owner that already has it, [crw-run](../SKILL.md) or
 [crw-check](../../crw-check/SKILL.md), rather than acting on it here. Seeing that a project is
 stalled is not authority to start one nobody approved.
 
 ## Report
 
 Core conclusion, then one short line per project including its
-[schedule verdict](schedule-progress.md), then what this checkpoint actually did, then what is
+[schedule verdict](../../crw-check/references/schedule-judgment.md), then what this checkpoint actually did, then what is
 waiting, split between a normal dependency wait, internal coordination, and the decisions that need
 Jun. Then the evidence checked, the items left unverified, and any delivery that failed or could
 not be confirmed. Korean, short, in that order.
@@ -393,7 +394,7 @@ mismatch and the report leads with that rather than calling it idle, but do not 
 nothing can reach the parent: an absent goal is deliverable under OPS-8.2, so read the delivery
 path and the waiting events separately before naming a cause. The goal statuses that genuinely
 receive nothing whatever arrives are the delivery-blocking set
-[OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
+[OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
 classifies, read from there rather than listed again here so the two cannot diverge. Either way
 the parent needs nothing only while
 nothing is outstanding for it; where something is, the item decides under the precedence above and
@@ -417,6 +418,6 @@ Preserved: the goal lifecycle's own owner, and an accurate reason for the stall.
 
 Observed: a delivery's record was handed over, and a review thread, from Devin or Codex or from any other reviewer,
 now sits on its head that the record's `threadsSeen` does not list. The relay's restatement would read it as `late_finding`, resolved or not.
-Action: report it as its own row, with the thread, its reading against this issue's scope, the stage of the delivery and whose move it is. The handling follows [Late review threads](../../crw-run/references/merge-readiness.md#late-review-threads); a status call reads the thread and triages, replies to and resolves nothing.
+Action: report it as its own row, with the thread, its reading against this issue's scope, the stage of the delivery and whose move it is. The handling follows [Late review threads](merge-readiness.md#late-review-threads); a status call reads the thread and triages, replies to and resolves nothing.
 Preserved: the child's judged dispositions, the coordinator's own triage, and the difference between a review
 that finished and a record that saw it.

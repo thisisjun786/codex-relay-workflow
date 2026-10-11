@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors. The project parent holds no goal by default: it ends its turn when only waiting remains and a delivered relay event resumes it. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Goal mode, an optional native parent goal, is part of this skill and is entered only on an explicit request, including a crw-loop request that names a Linear project to coordinate. Use crw-plan for planning and crw-check for intent drift."
+description: "Coordinate one Linear project through independent issue children: bind, dispatch, observe, verify, correct, integrate and resume. The project orchestrator holds no goal by default and is resumed by a relay event; goal mode only on request. An initiative goes to crw-run-initiative."
 ---
 
 # CRW Run
@@ -11,11 +11,8 @@ one child per issue. Follow the shared
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
 which fixes those three names and the ids they are recorded under and covers
 standalone issues and explicit current-task work. Where the initiative above this
-project has an execution supervisor, it verifies this parent's reported outcome and instructs this
-task, never this task's children; where it has none, nothing changes. An explicit designation
-naming an initiative is handled one level up, through
-[Initiative supervision](references/initiative-supervision.md), which decides where that binding
-belongs rather than assuming it belongs here. Each child owns its
+project has an initiative lead, it verifies this parent's reported outcome and instructs this
+task, never this task's children; where it has none, nothing changes. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -28,7 +25,9 @@ and review work. A child whose effective workflow is `crw-loop` loads
 `crw:crw-loop` and `crw:crw-pabcd` and owns its goal, goalplan and phases.
 Resolve current installed paths; never copy plugin versions from old records.
 `crw-loop` and `crw-pabcd` own those phases and the helper role policy (`crw role helper`)
-owns helper routing; the parent does not adopt a child's FSM.
+owns helper routing; the parent does not adopt a child's FSM. How a child consumes its packet
+and when a task loops are [crw-loop's lane dispatch](../crw-loop/references/lane-dispatch.md); this
+skill writes the packet and does not restate the child's rules.
 
 Read the shared [Linear model](../crw-canon/references/linear-model.md) for Linear document
 authority and tools. Use the available Linear tools
@@ -57,17 +56,7 @@ goal mode, Run returns progress and pending obligations to the same goal-mode pa
 another goal. An explicit no-goal or read-only limit agrees with the default and bars only goal mode,
 and existing scope and authorization survive skill routing.
 
-An initiative link by itself is not a target. Where a request merely cites one, resolve the
-project actually being executed under the shared target rules: the link is context and it rebinds
-no existing parent. Where the request is an explicit designation to execute that initiative's
-agreed projects, that initiative runs through its projects' own parents under
-[Initiative supervision](references/initiative-supervision.md), which also settles which task
-holds the supervisor binding: this one where it already supervises that same initiative or is free
-to take it, and not this one where it is bound to a different scope, since a task holding another
-project or issue would leave that work without its owner. Planning, a status read, a
-citation, an explanation of how the entry works, a usage question, and a quoted or unsubmitted
-example are none of them that designation, and that list is not closed: what makes one is the
-explicit request to execute, never the presence of a link.
+An initiative target is not run here: [crw-run-initiative](../crw-run-initiative/SKILL.md) takes an explicit designation to execute an initiative's projects, and a link merely cited as context rebinds nothing.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
 no-merge, or current-task limits override the default. An issue or milestone
@@ -85,13 +74,12 @@ still govern each action, including task creation and goal activation.
   successors. A milestone, named batch or issue narrows the same project's assignment.
   The parent holds no goal by default and is resumed by the delivery path; the lifecycle of a
   goal the user explicitly asked for is [goal mode](references/goal-mode.md).
-- **Supervise an initiative:** bind the initiative, fix its approved project set and completion
-  boundary, and carry it through those projects' existing parents. Issue planning and issue
-  execution stay with each parent.
-- **Status only:** read existing tasks and evidence without waking them.
 - **Verify completed work:** inspect its exact revision and relevant behavior,
   send in-scope corrections to the existing responsible task, and recheck its
   delivery under the established assignment. Respect explicit report-only limits.
+
+A request only to read where things stand is [crw-status](../crw-status/SKILL.md): it is read-only,
+wakes nothing, and this skill has no read-only mode of its own.
 
 A named-model correction steers the current dispatch; it does not authorize
 global model or helper role policy changes (`crw role helper`). Preserve explicit model and effort per
@@ -136,9 +124,8 @@ work. If the host ends the turn, preserve the unfinished project and exact resum
 not a claim that the first batch completed the request. Where the recorded `observation_path`
 is `event-driven-idle`, the parent yields the turn and the delivery path resumes it on a real
 child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
-future wake-up. A standalone status-only request wakes nothing under either. A checkpoint inside
-an authorized ongoing initiative is not that request: it is handed to the responsible
-parent and handled there as a resume of the authorized run, which re-evaluates outstanding
+future wake-up. A checkpoint handed down by the initiative lead is not a status read: it reaches
+this parent and is handled here as a resume of the authorized run, which re-evaluates outstanding
 child results, pending decision requests, cleared blockers and empty execution slots, then
 continues the successors that approval already covers. Reuse the same parent, children and
 assignments; this adds no scheduler and dispatches nothing that already has an owner. That
@@ -164,50 +151,6 @@ the parent. Returning from Run hands control back to that mode where goal mode i
 Explicit pause/no-goal limits still win, and existing
 parent `.crw/` state must be reconciled through its supported lifecycle, never reset to
 avoid a guard. A parent holding its own goal does not alter the child `crw-loop` defaults.
-
-### Long-run midpoint check
-
-A run that goes on for a long time drifts: a plan's boundaries stop matching what the work turned out to be, review keeps sending
-work back, and the backlog grows faster than it drains. A midpoint check is the periodic look that catches that while the run is
-still authorized, and it is separate from a user's status question, which reads and wakes nothing.
-
-**When one is due.** Any one of these signals is enough:
-
-- every node of one milestone is integrated, counted once per milestone;
-- twenty merges, or eight continuous hours of execution, since the last check;
-- three or more needs-changes rulings or split decisions in the last two hours;
-- two or more P0 or P1 findings from post-merge evaluation of this project's merges since the last check;
-- the backlog's net increase exceeds fifteen issues in the last four hours.
-
-Each signal is a crossing, not a standing state: count every window and every milestone from the last recorded check, and
-record which crossing the check consumed, so a milestone that is already fully integrated, or a window that has already
-crossed its threshold, does not make every later idle turn due again. Where `crw manage checkpoint record` exists it holds
-that baseline; where it does not, the coordination record does.
-
-Where `crw manage checkpoint` exists, read its verdict for these signals. Where the command is not installed, or a signal it
-reports is `unmeasured`, the parent judges the same signals from its own records rather than treating the missing tool as a
-reason to skip the check.
-
-**When to run it.** On a turn that is only waiting: no merge-lane turn is held, no child needs a decision now, and the next
-action would otherwise be idle observation. A midpoint check never interrupts a lane it does not own, and it is not a reason to
-stop one.
-
-**What it looks at.** Three things, in this order:
-
-1. A midpoint review of the goal against its criteria, using `crw-check` and `crw-status`, so a plan that has quietly stopped
-   matching its goal is found before the run finishes against the wrong target.
-2. A midpoint refactor pass with `crw-refactor`, producing zero to three candidate improvements, judged on dead code,
-   duplication and pointless tests. Code the plan has not yet reached is not dead code: a connector or helper that a planned
-   node will use is left where it is.
-3. A midpoint optimization pass over the packet, the rules, the bundling and the test speed, changing only what the current
-   approval covers.
-
-**What it records.** Write the outcome into the coordination record, and where `crw manage checkpoint record` exists, record the
-baseline time and the crossings consumed there so the next check measures from it. The midpoint check is a diagnosis: it
-records and proposes. Work worth fixing becomes an issue under the concept bundle rules above, and anything not worth doing
-now goes to the sweep label Backlog, but both are Linear writes and need scope covering them: where the current authorization
-does not cover creating or relabeling issues, return the candidates as proposals with the check's evidence instead of writing
-them. The release schedule and the lanes do not stop: a midpoint check never pauses a lane or holds a release.
 
 ## Independent implementation tasks
 
@@ -267,7 +210,6 @@ them. Higher-priority host/tool restrictions still apply.
 | Invocation context | Action |
 |---|---|
 | Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, with no parent goal, ending the turn when only waiting remains once the readiness facts hold; host restrictions and an explicit no-goal limit still apply |
-| Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task bound to a different scope, while the initiative's own existing supervisor is the task that continues; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |
@@ -936,7 +878,7 @@ does not fulfill independent verification.
 
 For substantial intent or acceptance uncertainty, use
 [crw-check](../crw-check/SKILL.md) as a bounded audit and retain coordination
-here. Use [crw-logic](../crw-logic/SKILL.md) for a specific suspected logical
+here. Use [crw-check](../crw-check/SKILL.md#find-contradictions) for a specific suspected logical
 violation, and check that evaluation evidence does not merely confirm its own assumption. When
 a nontrivial task packet needs a fresh-reader check, give it to a context-free reviewer through helper delegation (`crw role helper dispatch`) and rewrite that
 packet after changes so it reads as current. Do not run every check on every delivery.
@@ -1191,6 +1133,13 @@ data, active worktrees and shared services stay as they are. `reset`, `clean`,
 time, a scratch-looking name or a full disk is not proof that anything is
 disposable. Keep the three claims apart when reporting: what is proposed for
 cleanup, what was actually deleted, and what capacity that actually returned.
+
+Observation spends a shared resource as well. Parallel children and the task watching them
+typically use the same credentials and the same external API allowance, so polling competes with
+the work being polled. This task, as the project orchestrator, owns that aggregate for its
+project: before sustained observation it reads the actual budget and reserves headroom for the
+children ([the observer shares the lanes' quota](../crw-pabcd/references/dispatch-surfaces.md#the-observer-shares-the-lanes-quota-dispatch-poll-budget-01-default),
+[waiting on work](../crw-loop/references/waiting.md)).
 Proposing is the default, and anything beyond this run's authorized resources is a
 request rather than an action.
 
@@ -1212,9 +1161,9 @@ Recovery starts by restating the run in five lines, read from the
 [coordination record](references/task-packet.md#coordination-record), which is already the place
 these live and already forbids a second store:
 
-- **The fixed binding** — the initiative where this task supervises one, the project or standalone
-  issue it executes, and this task's own id, each by its stable identifier, with the host this task
-  runs on where that has been established.
+- **The fixed binding** — the project or standalone issue this task executes, the initiative above
+  it where one is recorded, and this task's own id, each by its stable identifier, with the host
+  this task runs on where that has been established.
 - **The current temporary target**, where one exists: the other project or issue this task was
   asked to look at, recorded beside the fixed binding rather than in place of it.
 - **The approved scope** in force, with the limits that arrived with it and the start policy this
@@ -1225,8 +1174,8 @@ these live and already forbids a second store:
 
 Those five are what the restatement reports. What it has to establish before reporting them, the
 settings in force and the work that has to survive the restart, is the rest of this subsection. A
-supervisor that restates its projects without the initiative they were approved under has lost the
-boundary rather than a label, which is why the first line carries it.
+restatement that drops the initiative a project was approved under has lost the boundary rather
+than a label, which is why the first line carries it.
 
 Each line carries the time it was observed, because three claims are easy to write as one: what
 the record said when it was written, what a read this turn returned, and what an earlier decision
@@ -1242,8 +1191,7 @@ not refresh is marked unrefreshed with its observation time rather than reported
 
 A record saying completed is a claim rather than a verdict, and it is corroborated against the
 evidence its own delivery shape requires under
-[Implementation Done](../crw-canon/references/linear-model.md#implementation-done) and C9 in
-[Initiative supervision](references/initiative-supervision.md): for implementation work that is
+[Implementation Done](../crw-canon/references/linear-model.md#implementation-done): for implementation work that is
 the delivery landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
 for accepted non-PR work it is the agreed observable result, which has no pull request by design.

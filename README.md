@@ -18,14 +18,13 @@ live Codex hook or Desktop compatibility.
 
 | Skill | Purpose |
 |---|---|
-| [crw-next](plugins/crw/skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work |
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-add-issue](plugins/crw/skills/crw-add-issue/SKILL.md) | Turn one short request into one ready issue: criteria, edit regions, decided answer, tests to write first and done condition, with an open design question held as design first |
 | [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal unless goal mode is explicitly requested |
-| [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Report where work stands, including the supervisor midpoint check and progress against the agreed schedule |
-| [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
-| [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using its own checks and minimal counterexamples |
+| [crw-run-initiative](plugins/crw/skills/crw-run-initiative/SKILL.md) | Lead an initiative's approved projects through their project orchestrators, and own the midpoint check |
+| [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Read-only report of where work stands by level, with progress against the agreed schedule, and the one next action when asked |
+| [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery, find contradictions with minimal counterexamples, judge the schedule, and return in-scope corrections to managed tasks |
 | [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt and plan bounded, behavior-preserving repairs |
 
 The shared references in [crw-canon](plugins/crw/skills/crw-canon/SKILL.md) own Linear document authority and the other rules that more than one skill reads. Keep the skills together because their references link to one another.
@@ -229,14 +228,16 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 
 ```text
 $crw-run [Linear project] 실행하지 말고 이 프로젝트의 project orchestrator로 연결만 해줘.
-$crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
+$crw-status [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
+$crw-run-initiative [Linear initiative link] 승인된 프로젝트들을 기존 project orchestrator를 통해 끝까지 진행해줘.
 $crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
 $crw-run [Linear project link] project orchestrator goal을 열어서 끝까지 진행해줘. (goal mode)
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
-$crw-status 중간점검. 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
-$crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
+$crw-status 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
+$crw-run-initiative 중간점검. 승인된 프로젝트들을 확인하고 이미 승인된 범위의 대기 중인 일을 진행시킨 뒤 보고해줘.
+$crw-check [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 $crw-refactor [initiative cycle or project] 완료 근거와 변경 코드를 확인하고 구조적 부채 후보를 3개 이내로 추천해줘. 진단과 계획까지만.
 $crw-refactor 추천한 1번을 구현하고 검증해줘. 관련 없는 개선은 남겨두고 머지와 배포는 하지 마.
 ```
@@ -321,21 +322,22 @@ repository label identifies its actual edit target. Project names need no produc
 and views remain the user's choice. See the shared
 [Linear operating model](plugins/crw/skills/crw-canon/references/linear-model.md#linear-operating-model).
 
-`crw-next` distinguishes choosing a first step from choosing what follows a
-delivery. It restates an ambiguous request to resolve intent and picks one
-evidence-backed action with a clear completion condition. Standalone advice does
-not launch work; a question during an authorized run does not pause that run.
+`crw-status` reports where the work actually is, by level from the manager down to the issue,
+and sends a gap one level down to its owner. When asked what to do next it distinguishes choosing
+a first step from choosing what follows a delivery, restates an ambiguous request to resolve
+intent and picks one evidence-backed action with a clear completion condition. A portfolio
+question keeps every project's one-line status while only the detail narrows. It separates source,
+checks, an actual merge, installation and observed behavior, shows progress against the agreed
+schedule using `crw-check`'s judgment, and reports what it could not verify. It is read-only: it
+writes nothing and wakes nobody, standalone advice launches no work, and a question during an
+authorized run does not pause that run.
 
-`crw-status` answers the other half of that question: not what to do next, but where
-the work actually is. A bare 중간점검 in a supervision task walks the initiative binding
-down to its project parents and issue children, and a portfolio question keeps every
-project's one-line status while only the detail narrows. It separates source, checks,
-an actual merge, installation and observed behavior, judges progress against the agreed
-schedule, and reports what it could not verify. A standalone status call, and any call carrying an
-explicit report-only, read-only, pause or no-contact limit, writes nothing and wakes nobody. A
-중간점검 inside an initiative execution Jun already approved is the other branch: it checks the
-responsible parents and moves the work that approval already covers, then reports what it actually
-did. Either way it returns control to whoever is executing and starts nothing that was not approved.
+`crw-run-initiative` owns the midpoint check. A bare 중간점검 in a task that leads an initiative
+walks the initiative binding down to its project orchestrators and moves the work that Jun's
+approval already covers, then reports what it actually did; under an explicit report-only,
+read-only, pause or no-contact limit, or without that binding, the request is a `crw-status`
+read. Either way it returns control to whoever is executing and starts nothing that was not
+approved.
 
 During an existing delegated workflow, a completion check sends actionable
 in-scope corrections to the responsible task and verifies the result without

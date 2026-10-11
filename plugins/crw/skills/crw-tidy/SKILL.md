@@ -1,6 +1,6 @@
 ---
 name: crw-tidy
-description: "Find documents and issues that fall short of already-agreed authoring and management rules, and supplement the gaps whose evidence is clear within the requested scope. Use for a rule-conformance sweep or a tidy pass; crw-check owns delivery against criteria, crw-logic owns contradictions, and crw-plan owns changing the rules themselves."
+description: "Find documents and issues that fall short of already-agreed authoring and management rules, and supplement the gaps whose evidence is clear within the requested scope. Use for a rule-conformance sweep or a tidy pass; crw-check owns delivery against criteria and contradictions, and crw-plan owns changing the rules themselves."
 ---
 
 # CRW Tidy
@@ -47,6 +47,6 @@ Write in this order, one item at a time. Read the record again immediately befor
 
 Report the inspected scope, the rule source behind each finding, the actual before and after of every write, the exceptions, the conflicts with the decision each one needs, the unverified items, and the scope you did not reach. Keep those last two visible. A pass that quietly drops them reads as a clean sweep of ground nobody looked at.
 
-Route what tidy does not own. Two currently binding sources that require incompatible things is a contradiction for [crw-logic](../crw-logic/SKILL.md). Whether delivered work meets its accepted criteria, including [Implementation Done](../crw-canon/references/linear-model.md#implementation-done), belongs to [crw-check](../crw-check/SKILL.md). Anything whose fix needs wording that no existing source carries is a change and goes to [crw-plan](../crw-plan/SKILL.md), and so does an unresolved target that execution is now waiting on: report it as the exception it is and send the decision there, rather than settling it here to close a row. Live execution and worker correction stay with [crw-run](../crw-run/SKILL.md); tidy dispatches nothing and wakes no task.
+Route what tidy does not own. Two currently binding sources that require incompatible things is a contradiction for [crw-check](../crw-check/SKILL.md#find-contradictions). Whether delivered work meets its accepted criteria, including [Implementation Done](../crw-canon/references/linear-model.md#implementation-done), belongs to [crw-check](../crw-check/SKILL.md). Anything whose fix needs wording that no existing source carries is a change and goes to [crw-plan](../crw-plan/SKILL.md), and so does an unresolved target that execution is now waiting on: report it as the exception it is and send the decision there, rather than settling it here to close a row. Live execution and worker correction stay with [crw-run](../crw-run/SKILL.md); tidy dispatches nothing and wakes no task.
 
 Under a management assignment that already authorizes record updates, record the summary in the linked Linear coordination document and read it back. A check-only or standalone pass returns that record as a proposal instead, because the wording that made the pass read-only covers this write too. Tidying a record never authorizes changing what that record requires.

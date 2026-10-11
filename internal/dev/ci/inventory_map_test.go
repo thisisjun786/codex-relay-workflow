@@ -443,8 +443,8 @@ func TestSkillInventoryMapComplete(t *testing.T) {
 		}
 		// The pinned copy is the inventory's 83 identifiers, in category order.
 		expectEqual(t, "the pinned identifier copy", ids, canonicalInventoryIDs())
-		if len(m.Rows) != 83 || len(m.Descriptions) != 34 {
-			t.Errorf("%d rows and %d description entries, want 83 and 34", len(m.Rows), len(m.Descriptions))
+		if len(m.Rows) != 83 || len(m.Descriptions) != 32 {
+			t.Errorf("%d rows and %d description entries, want 83 and 32", len(m.Rows), len(m.Descriptions))
 		}
 		if errs := inventoryMapErrors(root, m, ids, rowTestReads, inventoryCompletionMode); len(errs) > 0 {
 			t.Errorf("%d problems:\n%s", len(errs), strings.Join(errs, "\n"))

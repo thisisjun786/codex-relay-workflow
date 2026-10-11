@@ -84,7 +84,7 @@ Judge each result once per axis, first match wins.
 
 | Row | Condition | Verdict |
 |---|---|---|
-| 1 | This axis has no date for this subject, or no Timezone, or the evidence needed to decide is stale, or this is the current axis and the Current target disagrees with the latest Change source's after value | Undecidable, with the reason |
+| 1 | This axis has no date for this subject (a Schedule baseline recorded `unconfirmed` is that case on the baseline axis), or no Timezone, or the evidence needed to decide is stale, or this is the current axis and the Current target disagrees with the latest Change source's after value | Undecidable, with the reason |
 | 2 | Achieved on an earlier calendar day than the target | Ahead |
 | 3 | Achieved on the target day | On plan |
 | 4 | Achieved after the deadline | Late, reporting actual minus target |
@@ -113,6 +113,26 @@ calendar date minus the target date, at least one.
 Do not produce a projected completion date, a remaining-work estimate, or a velocity
 or rate on any branch. An unachieved result reports how long it has been late and
 nothing about when it will land.
+
+## Report words
+
+A report written in Korean uses these words for the verdicts above, and no other file defines a
+verdict: [crw-status](../../crw-status/SKILL.md) and [crw-plan](../../crw-plan/SKILL.md) cite this
+reference and read the words from here. The words translate the table in Order the verdict and add no
+condition to it; each reading names the rows it translates, and the table decides.
+
+| Verdict | Korean report word | Reading |
+|---|---|---|
+| Ahead | 앞섬 | Row 2: a result is confirmed achieved at the required level on an earlier calendar day than its target, with the evidence that achieved it; work that looks fast or a task that finished its turn is not an achievement |
+| On plan | 계획대로 | Rows 3 and 7: the result was achieved on the target day, or it is not achieved and the observation is at or before the deadline with no listed risk observation holding, which says only that nothing was due yet and promises nothing about a date still ahead |
+| At risk | 지연 위험 | Row 6: the result is not achieved, the observation is at or before the deadline and a listed risk observation holds; there is still time |
+| Late | 지연 | Rows 4 and 5: the deadline has passed and the result was achieved after it (report actual minus target) or is not achieved (report elapsed time only) |
+| Undecidable | 판단 불가 | Row 1: no date, no timezone, stale evidence, or a Current target that disagrees with the latest Change source; the report carries what was missing and what would make a verdict possible, not a guess |
+
+Where a Schedule baseline is `unconfirmed`, the baseline axis has no decidable verdict (row 1; see Judge
+both axes), so it reports 판단 불가 for exactly that reason and no other word; the Current target axis
+is judged by the table like any other. One project's schedule line in a portfolio report is the verdict
+word and the one reason, with the rest available on request.
 
 ## Name the risk
 
