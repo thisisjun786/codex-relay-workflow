@@ -240,3 +240,112 @@ return [a.status, b.status]`)
 		t.Errorf("%d tokens_unmeasured rows, want 2", n)
 	}
 }
+
+// The worktree's own index may mark a tracked file assume-unchanged or skip-worktree; the snapshot still hashes the file's
+// working content, and the worktree's own index keeps its flags.
+func TestSnapshotSeesEditsBehindIndexFlags(t *testing.T) {
+	for flag, tag := range map[string]string{"--assume-unchanged": "h", "--skip-worktree": "S"} {
+		t.Run(flag, func(t *testing.T) {
+			e := newEnv(t)
+			wt := filepath.Join(e.root, "flow-wt")
+			git(t, e.repo, "worktree", "add", "--detach", "-q", wt, e.base)
+			ctx := context.Background()
+			before, err := e.alloc.Snapshot(ctx, wt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			git(t, wt, "update-index", flag, "a.txt")
+			writeFile(t, filepath.Join(wt, "a.txt"), "an edit of another length\n")
+			after, err := e.alloc.Snapshot(ctx, wt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after == before {
+				t.Errorf("an edit behind %s left the snapshot at %s", flag, before)
+			}
+			if err := e.alloc.Retire(ctx, "n1", 1, wt); err != nil {
+				t.Fatal(err)
+			}
+			if got := git(t, e.repo, "show", e.alloc.RetiredRef("n1", 1)+":a.txt"); got != "an edit of another length" {
+				t.Errorf("the retired ref holds %q", got)
+			}
+			if got := git(t, wt, "ls-files", "-v", "a.txt"); got != tag+" a.txt" {
+				t.Errorf("the worktree's own index lists %q, want its flag kept (%q)", got, tag+" a.txt")
+			}
+		})
+	}
+}
+
+// A skip-worktree entry whose file is not in the worktree (a sparse checkout) is held with its index content: it is not a
+// deletion.
+func TestSnapshotKeepsSparseEntriesAbsentFromTheWorktree(t *testing.T) {
+	e := newEnv(t)
+	wt := filepath.Join(e.root, "flow-wt")
+	git(t, e.repo, "worktree", "add", "--detach", "-q", wt, e.base)
+	ctx := context.Background()
+	before, err := e.alloc.Snapshot(ctx, wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "update-index", "--skip-worktree", "a.txt")
+	if err := os.Remove(filepath.Join(wt, "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := e.alloc.Snapshot(ctx, wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("a sparse entry absent from the worktree changed the snapshot from %s to %s", before, after)
+	}
+}
+
+// A provider that sets no message phase (0.154 MessagePhase is nullable) still answers over the bus: a completed turn whose
+// last message has no phase, with no commentary seen, is answered by that message without reading the turn, so a read
+// that fails cannot spoil a valid answer.
+func TestPhaselessFinalAnswerComesFromTheBus(t *testing.T) {
+	e := newEnv(t, withPoll(time.Hour))
+	e.plan(func(fakehost.TurnRequest) fakehost.TurnPlan {
+		return fakehost.TurnPlan{Message: passMessage, NullPhase: true, SummaryOnly: true, ItemsListError: map[string]any{"code": -32600, "message": "items are not available"}}
+	})
+	info := startedThread(t, e, "explorer")
+	for k := 1; k <= 2; k++ {
+		out, err := runTurn(t, e, info, "explorer", k, "one")
+		if err != nil {
+			t.Fatalf("turn %d: %v", k, err)
+		}
+		if out.Text != passMessage {
+			t.Errorf("turn %d answered %q", k, out.Text)
+		}
+	}
+	if n := len(e.requests("thread/turns/list", "thread/items/list")); n != 0 {
+		t.Errorf("%d turn reads: a phase-less answer heard on the bus needs none", n)
+	}
+}
+
+// A phase-less answer does not lower the guard of a partial stream: a commentary seen on the bus, or no message at all,
+// still sends the backend to the host's items.
+func TestPhaselessAnswerAfterPartialStreamIsRead(t *testing.T) {
+	cases := map[string]fakehost.TurnPlan{
+		"final item lost":                  {Message: passMessage, NullPhase: true, DropFinalItem: true},
+		"commentary seen, final item lost": {Message: passMessage, NullPhase: true, Commentary: "thinking out loud", DropFinalItem: true},
+		"commentary and final seen":        {Message: passMessage, NullPhase: true, Commentary: "thinking out loud"},
+	}
+	for name, plan := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, withPoll(time.Hour))
+			e.plan(func(fakehost.TurnRequest) fakehost.TurnPlan { return plan })
+			info := startedThread(t, e, "explorer")
+			out, err := runTurn(t, e, info, "explorer", 1, "one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Text != passMessage {
+				t.Errorf("the turn answered %q, want %q", out.Text, passMessage)
+			}
+			if n := len(e.requests("thread/turns/list")); n != 1 {
+				t.Errorf("%d turn reads, want the one read of the host's items", n)
+			}
+		})
+	}
+}

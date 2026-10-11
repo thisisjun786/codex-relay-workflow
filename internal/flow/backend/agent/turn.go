@@ -310,7 +310,7 @@ func (w *turnWatch) read(ctx context.Context) (*turnState, *appserverReading, er
 
 // finish builds the outcome of a turn the bus reported as ended.
 func (w *turnWatch) finish(ctx context.Context, state *turnState) (engine.TurnOutcome, error) {
-	if state.status != "completed" || w.sawFinalAnswer() {
+	if state.status != "completed" || w.busAnswered() {
 		return w.outcome(state, nil)
 	}
 	// The final answer did not come over the bus (a commentary message is not it, and a stream that lost the end of the
@@ -322,14 +322,18 @@ func (w *turnWatch) finish(ctx context.Context, state *turnState) (engine.TurnOu
 	return w.outcome(state, &readings[0])
 }
 
-// sawFinalAnswer reports whether the bus delivered the turn's final answer.
-func (w *turnWatch) sawFinalAnswer() bool {
+// busAnswered reports whether the bus delivered the turn's answer: a final_answer message, or - from a provider that sets
+// no message phase (0.154 MessagePhase is nullable) - a last message without a phase when no commentary was seen. A turn
+// with a commentary message and no final answer, or with no message at all, is read from the host.
+func (w *turnWatch) busAnswered() bool {
+	commentary := false
 	for _, m := range w.messages {
 		if m.phase == "final_answer" {
 			return true
 		}
+		commentary = commentary || m.phase == "commentary"
 	}
-	return false
+	return len(w.messages) > 0 && w.messages[len(w.messages)-1].phase == "" && !commentary
 }
 
 // pickMessage is the last final answer among the messages, else the last message.

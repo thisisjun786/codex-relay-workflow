@@ -74,6 +74,9 @@ func (a *Allocator) Snapshot(ctx context.Context, path string) (string, error) {
 	if err := a.seedIndex(ctx, path, index, env); err != nil {
 		return "", err
 	}
+	if err := a.clearIndexFlags(ctx, path, env); err != nil {
+		return "", err
+	}
 	if _, err := a.git(ctx, path, env, "add", "--all"); err != nil {
 		return "", err
 	}
@@ -85,7 +88,8 @@ func (a *Allocator) Snapshot(ctx context.Context, path string) (string, error) {
 }
 
 // seedIndex starts the throwaway index from the worktree's own index, so every tracked file stays in the snapshot even
-// when an ignore rule matches it (git add --all skips an ignored file only when it is untracked). A worktree with no index
+// when an ignore rule matches it (git add --all skips an ignored file only when it is untracked); clearIndexFlags then
+// takes off the flags that would hide a file's content. A worktree with no index
 // yet starts from its HEAD, and one with neither starts empty.
 func (a *Allocator) seedIndex(ctx context.Context, path, index string, env []string) error {
 	real, err := a.git(ctx, path, nil, "rev-parse", "--path-format=absolute", "--git-path", "index")
@@ -99,6 +103,48 @@ func (a *Allocator) seedIndex(ctx context.Context, path, index string, env []str
 	}
 	_, err = a.git(ctx, path, env, "read-tree", "HEAD")
 	return err
+}
+
+// flagBatch bounds how many paths one update-index command names.
+const flagBatch = 500
+
+// clearIndexFlags clears, in the throwaway index, the per-entry flags the copy of the worktree's index carries over and
+// that make git add skip a file's content: assume-unchanged on every entry, and skip-worktree on every entry whose file is
+// in the worktree. A skip-worktree entry whose file is absent (a sparse checkout) keeps its flag and is held with its
+// index content; it is not a deletion. The worktree's own index keeps its flags.
+func (a *Allocator) clearIndexFlags(ctx context.Context, path string, env []string) error {
+	listing, err := a.git(ctx, path, env, "ls-files", "-v", "-z")
+	if err != nil {
+		return err
+	}
+	var assumed, skipped []string
+	for _, entry := range strings.Split(listing, "\x00") {
+		if len(entry) < 3 || entry[1] != ' ' {
+			continue
+		}
+		tag, name := entry[0], entry[2:]
+		if tag >= 'a' && tag <= 'z' {
+			assumed = append(assumed, name)
+		}
+		if tag == 'S' || tag == 's' {
+			if _, statErr := os.Lstat(filepath.Join(path, filepath.FromSlash(name))); statErr == nil {
+				skipped = append(skipped, name)
+			}
+		}
+	}
+	for _, set := range []struct {
+		flag  string
+		names []string
+	}{{"--no-assume-unchanged", assumed}, {"--no-skip-worktree", skipped}} {
+		for len(set.names) > 0 {
+			n := min(len(set.names), flagBatch)
+			if _, err := a.git(ctx, path, env, append([]string{"update-index", set.flag, "--"}, set.names[:n]...)...); err != nil {
+				return err
+			}
+			set.names = set.names[n:]
+		}
+	}
+	return nil
 }
 
 // Head is the commit a worktree's HEAD is at, read from git.

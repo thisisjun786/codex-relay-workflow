@@ -351,7 +351,10 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 - A turn's operation is `<call_id>/t<k>`. It is sent as `clientUserMessageId` and as the first input line `crw-flow-op: <op>`; a
   turn read back from the host is identified by its `userMessage` item's `clientId` first and by that first line second. The
   call's schema is the turn's `outputSchema`.
-- A turn's end comes over the notification bus. When none comes, or the feed may have lost some, the backend reads the turn it
+- A turn's end comes over the notification bus. A completed turn's answer is its last `final_answer` message on the bus; from a
+  provider that sets no message phase (0.154 `MessagePhase` is nullable) it is a last message without a phase when no
+  `commentary` message came before it. A completed turn with neither is read in full, and the host's items decide its answer.
+  When no end comes, or the feed may have lost some, the backend reads the turn it
   recorded: it pages `thread/turns/list` with `itemsView: full` up to that turn id and reads a turn the list gave only as a
   summary with `thread/items/list`. It never hydrates with `includeTurns`. A turn whose items cannot be read in full is
   unreadable, not empty: the call stays with the reconcile pass.
@@ -389,7 +392,9 @@ never does. Every git command of the allocator runs in the directory it is given
 repository, a work tree or an index (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of `git rev-parse
 --local-env-vars`) are removed from its environment. The working snapshot (`Allocator.Snapshot`) is the tree id of every file the
 worktree holds that git does not ignore - a tracked file is always held, whatever an ignore rule says - computed in a throwaway
-index that starts as a copy of the worktree's own.
+index that starts as a copy of the worktree's own. The copy's assume-unchanged flags are cleared, and so are its skip-worktree
+flags on files the worktree holds, so a flag never hides a file's working content; a skip-worktree entry whose file is absent (a
+sparse checkout) is held with its index content. The worktree's own index keeps its flags.
 
 ## Dependencies and their supply-chain check
 

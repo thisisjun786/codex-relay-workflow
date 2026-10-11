@@ -89,6 +89,9 @@ type TurnPlan struct {
 	// FinishDespiteInterrupt ends a Hang or Gate turn completed when turn/interrupt arrives: the turn won the race
 	// against the interrupt.
 	FinishDespiteInterrupt bool
+	// NullPhase gives the final agentMessage the phase null (0.154 MessagePhase is nullable, and not every provider sets
+	// it): the item and its item/completed notification carry "phase": null.
+	NullPhase bool
 }
 
 // TurnRequest is the turn/start request a plan is asked about.
@@ -737,6 +740,9 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 			tu.items = append(tu.items, commentary)
 		}
 		item := map[string]any{"type": "agentMessage", "id": "m-" + tu.id, "text": plan.Message, "phase": "final_answer"}
+		if plan.NullPhase {
+			item["phase"] = nil
+		}
 		tu.items = append(tu.items, item)
 	}
 	th.active = nil
