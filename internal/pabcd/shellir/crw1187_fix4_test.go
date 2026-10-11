@@ -6,18 +6,17 @@ import "testing"
 
 // P1: a call through a writing module (an alias of it or its own name) whose path operands are all literal names no import can reach
 // writes no module, whatever other string of the source ends .py; the call that does, or one the reader cannot evaluate, stays refused
-// beside a code name.
+// beside a code name. A Path('x') operand is not a literal (TestCRW1187FixRound5PathCallsAreNotLiterals).
 func TestCRW1187FixRound4WriterCallsAreJudgedByTheirDestination(t *testing.T) {
 	for label, body := range map[string]string{
-		"shutil alias, data file":    "import shutil as sh\nNAME = 'calc.py'\nsh.copy('data.txt', 'result.txt')\nimport unittest\n",
-		"shutil alias, keywords":     "import shutil as sh\nNAME = 'calc.py'\nsh.copy(src='data.txt', dst='result.txt', follow_symlinks=False)\nimport unittest\n",
-		"shutil alias, Path operand": "import shutil as sh\nfrom pathlib import Path\nNAME = 'calc.py'\nsh.copyfile(Path('data.txt'), Path('out/result.txt'))\nimport unittest\n",
-		"os alias, rename":           "import os as o\nNAME = 'calc.py'\no.rename('a.txt', 'b.txt')\nimport unittest\n",
-		"shutil by name":             "import shutil\nNAME = 'calc.py'\nshutil.copy('data.txt', 'result.txt')\nimport unittest\n",
-		"os by name, replace":        "import os\nNAME = 'calc.py'\nos.replace('a.json', 'b.json')\nimport unittest\n",
-		"two calls, both data":       "import shutil as sh\nNAME = 'calc.py'\nsh.copy('a.txt', 'b.txt')\nsh.move('b.txt', 'c.txt')\nimport unittest\n",
-		"open for writing, data":     "NAME = 'calc.py'\nopen('result.txt', 'w').write('x')\nimport unittest\n",
-		"open, keyword file":         "NAME = 'calc.py'\nwith open(file='result.txt', mode='a') as f:\n    f.write('x')\nimport unittest\n",
+		"shutil alias, data file": "import shutil as sh\nNAME = 'calc.py'\nsh.copy('data.txt', 'result.txt')\nimport unittest\n",
+		"shutil alias, keywords":  "import shutil as sh\nNAME = 'calc.py'\nsh.copy(src='data.txt', dst='result.txt', follow_symlinks=False)\nimport unittest\n",
+		"os alias, rename":        "import os as o\nNAME = 'calc.py'\no.rename('a.txt', 'b.txt')\nimport unittest\n",
+		"shutil by name":          "import shutil\nNAME = 'calc.py'\nshutil.copy('data.txt', 'result.txt')\nimport unittest\n",
+		"os by name, replace":     "import os\nNAME = 'calc.py'\nos.replace('a.json', 'b.json')\nimport unittest\n",
+		"two calls, both data":    "import shutil as sh\nNAME = 'calc.py'\nsh.copy('a.txt', 'b.txt')\nsh.move('b.txt', 'c.txt')\nimport unittest\n",
+		"open for writing, data":  "NAME = 'calc.py'\nopen('result.txt', 'w').write('x')\nimport unittest\n",
+		"open, keyword file":      "NAME = 'calc.py'\nwith open(file='result.txt', mode='a') as f:\n    f.write('x')\nimport unittest\n",
 	} {
 		if what := moduleSourceRefusal(body); what != "" {
 			t.Errorf("%s: refused: %s", label, what)

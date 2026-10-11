@@ -225,6 +225,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 	if len(files) > maxModuleFiles {
 		return true, unreadablef("module file limit exceeded")
 	}
+	var rels, bodies []string
 	for _, file := range files {
 		if !filepath.IsAbs(file) {
 			file = strings.TrimSuffix(physical, "/") + "/" + file
@@ -243,6 +244,7 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			if what := moduleSourceRefusal(body); what != "" {
 				return true, unreadablef("module source %s %s: the reader cannot read what it loads; remove that from the test sources or keep the code to be run in the project files (python -I does not change this)", shortRel(strings.TrimPrefix(file, physical+"/")), what)
 			}
+			rels, bodies = append(rels, shortRel(strings.TrimPrefix(file, physical+"/"))), append(bodies, body)
 		}
 		if module == "py_compile" || moduleBytecodeEnabled(args[:at], assigns, st) {
 			// -B suppresses import caches, but never explicit py_compile.
@@ -252,6 +254,9 @@ func (w *walker) pythonModule(prog Word, args []Word, assigns []Assign, redirs [
 			w.out = append(w.out, Exec{Kind: KindCommand, Name: name, Args: cacheArgs, Dir: st.dir, Ctx: ctx})
 		}
 		w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: programName(prog.Value), Dir: st.dir, Ctx: ctx, Inline: &Inline{Language: "python", Source: Word{Known: true, Value: body}}})
+	}
+	if what := moduleSourcesReceiverRefusal(rels, bodies); what != "" {
+		return true, unreadablef("module source %s: the reader cannot read what it loads (python -I does not change this)", what)
 	}
 	return true, nil
 }

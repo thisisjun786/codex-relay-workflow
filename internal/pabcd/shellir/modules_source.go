@@ -134,6 +134,9 @@ type pyLexed struct {
 	// that follows a compound header, "if x: import sys as s", is a statement of its own), with comments removed and a line join read
 	// as one space. The text of a string stays in its statement.
 	stmts []string
+	// lines are the logical lines: split only at a newline outside every string and bracket, with comments removed and a line join
+	// read as one space (a decorator over several lines, or one that holds a colon, is one line).
+	lines []string
 	// view is the source without its comments, with each explicit line join (a backslash before a line end) read as one space.
 	view string
 	// code is view with the text of every string that is not an f-string (or a t-string) blanked: an f-string holds expressions, and
@@ -153,6 +156,7 @@ type pyLexer struct {
 	src             string
 	i               int
 	view, cur, code strings.Builder
+	line            strings.Builder
 	out             pyLexed
 }
 
@@ -160,6 +164,7 @@ type pyLexer struct {
 func (l *pyLexer) put(b byte) {
 	l.view.WriteByte(b)
 	l.cur.WriteByte(b)
+	l.line.WriteByte(b)
 	l.code.WriteByte(b)
 }
 
@@ -167,6 +172,7 @@ func (l *pyLexer) put(b byte) {
 func (l *pyLexer) putString(b byte, keep bool) {
 	l.view.WriteByte(b)
 	l.cur.WriteByte(b)
+	l.line.WriteByte(b)
 	if keep || b == '\n' {
 		l.code.WriteByte(b)
 	} else {
@@ -348,6 +354,12 @@ func pyLex(src string) pyLexed {
 		}
 		l.cur.Reset()
 	}
+	flushLine := func() {
+		if s := strings.TrimSpace(l.line.String()); s != "" {
+			l.out.lines = append(l.out.lines, s)
+		}
+		l.line.Reset()
+	}
 	n := len(src)
 	if strings.HasPrefix(src, "\xef\xbb\xbf") {
 		l.i = 3 // a byte order mark is no name
@@ -382,18 +394,22 @@ func pyLex(src string) pyLexed {
 			l.code.WriteByte(c)
 			if depth == 0 {
 				flush()
+				flushLine()
 			} else {
 				l.cur.WriteByte(' ')
+				l.line.WriteByte(' ')
 			}
 			l.i++
 		case c == ';' && depth == 0:
 			l.view.WriteByte(c)
 			l.code.WriteByte(c)
+			l.line.WriteByte(c)
 			flush()
 			l.i++
 		case c == ':' && depth == 0 && !(l.i+1 < n && src[l.i+1] == '='):
 			l.view.WriteByte(c)
 			l.code.WriteByte(c)
+			l.line.WriteByte(c)
 			flush()
 			l.i++
 		default:
@@ -405,6 +421,7 @@ func pyLex(src string) pyLexed {
 		}
 	}
 	flush()
+	flushLine()
 	l.out.view = l.view.String()
 	l.out.code = l.code.String()
 	return l.out
