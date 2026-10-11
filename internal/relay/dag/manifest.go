@@ -30,6 +30,12 @@ var perKind = map[string]manifestRule{
 	EdgeDecision:         {texts: []string{"decision_id", "decision_digest"}, ints: []string{"decision_revision"}},
 }
 
+// InputSurfaceAgent is the value of an input's "surface" when the acceptance it rests on is an agent's (dag_agent_acceptances); an input without the key rests on an acceptance of a relationship.
+const InputSurfaceAgent = "agent"
+
+// agentArtifactInput lists the fields 4.2 requires of an artifact_verified input that rests on an agent's acceptance.
+var agentArtifactInput = manifestRule{texts: []string{"acceptance_id", "execution_id"}}
+
 // CheckManifest reads a manifest body strictly: the required fields of 4.2 present and of their type (a missing
 // value, null and the empty string are the same thing, 4.1), every input shaped for its edge kind, and the optional
 // base, artifacts and volatile snapshots shaped as 4.2 shapes them. Whether a base is required depends on the node's
@@ -95,6 +101,10 @@ func CheckManifest(body map[string]any) []Violation {
 		}
 		kind, _ := in["kind"].(string)
 		rule, known := perKind[kind]
+		if surface, _ := in["surface"].(string); known && kind == EdgeArtifactVerified && surface == InputSurfaceAgent {
+			// the predecessor's result was accepted by an agent (R06): its acceptance names an execution and a commit, and has no relationship, generation, event or revision to record
+			rule = agentArtifactInput
+		}
 		if !known {
 			add(RuleUnknownEdgeKind, path+".kind", "%q is not one of %s, %s, %s", kind, EdgeArtifactVerified, EdgeIntegrated, EdgeDecision)
 			continue

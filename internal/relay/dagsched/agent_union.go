@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -15,7 +16,7 @@ import (
 // The union readers of the node's execution (R04, CRW-1212). A node is run on one of two surfaces: by a managed Codex child, whose release, executions and relationship are rows of the frozen tables
 // (dag_releases, dag_node_executions, relationships), or by an agent of the flow engine, whose release and executions are rows of dag_agent_executions with the closures of dag_agent_closures. Nothing of
 // an agent node is ever written into a frozen table, so a reader that wants "the node's current execution" asks executionOf, which looks on both sides and answers the one that is current, and a
-// reader that wants "the release of this manifest" asks releaseOf. The readers of the frozen tables that need the node-scoped answer move to these in R06 (docs/relay/agent-execution-readers.md lists them);
+// reader that wants "the release of this manifest" asks releaseOf. The readers of the frozen tables that answer about a node read through these (R06; docs/relay/agent-execution-readers.md lists them);
 // the readers that are relationship-scoped stay as they are.
 //
 // What is current:
@@ -321,7 +322,7 @@ func refuseLiveRelationshipExecution(ctx context.Context, q store.Querier, plan,
 // The union readers of the node's acceptance (R05, CRW-1213). An agent node's accepted result is a row of dag_agent_acceptances (an acceptance of the frozen dag_acceptances is a relationship's), so a reader that
 // wants "the node's current acceptance" asks acceptanceOf, which looks on both sides. A node has at most one current acceptance of one kind: the agent side is the last row of the node's acceptance chain unless a
 // dag_agent_closures row of kind acceptance ends it, the relationship side is the active row of dag_acceptances, and acceptanceOf fails closed on a store that nevertheless holds both (cross_kind_acceptance).
-// The readers that are node-scoped but still read the relationship side only move to acceptanceOf in R06 (docs/relay/agent-execution-readers.md).
+// The node-scoped readers read through acceptanceOf (R06; docs/relay/agent-execution-readers.md); the readers that are relationship-scoped stay as they are.
 
 // The kinds of a node's acceptance, named like the kinds of its execution.
 const (
@@ -579,4 +580,335 @@ func agentLandedSHA(ctx context.Context, q store.Querier, acceptanceID, reposito
 		}
 	}
 	return "", rows.Err()
+}
+
+// The node-scoped readers (R06, CRW-1214). A reader that answers a question about a NODE reads both sides through the union readers above; this section holds what they share.
+
+// record is the agent acceptance in the shape the node-scoped readers carry an acceptance in (Acceptance). The fields the two kinds have in common are filled from the row (the id, the plan, the node, the
+// manifest, the criteria, the head and the checkout, who accepted it and when); the fields only a relationship has (the relationship, generation, event and revision, the verdict turn, the output manifest)
+// stay empty, and agent says which row it is. A reader that has to tell the two apart asks agent; every other reader keeps one code path.
+func (a AgentAcceptance) record() Acceptance {
+	row := a
+	return Acceptance{AcceptanceID: a.AcceptanceID, PlanID: a.PlanID, NodeID: a.NodeID, ManifestDigest: a.ManifestDigest, CriteriaSetDigest: a.CriteriaSetDigest,
+		HeadSHA: a.Head, Repository: a.Repository, AcceptedByTask: a.AcceptedBy, CoordinatorEpoch: a.Epoch, AcceptedAt: a.AcceptedAt, SupersedesAcceptanceID: a.Supersedes, State: "active", agent: &row}
+}
+
+// activeAcceptanceOf is the node's current acceptance, whichever side holds it, in the shape of Acceptance (acceptanceOf for a reader that needs only the common fields). It fails as acceptanceOf fails.
+func activeAcceptanceOf(ctx context.Context, q store.Querier, plan, node string) (Acceptance, bool, error) {
+	na, found, err := acceptanceOf(ctx, q, plan, node)
+	if err != nil || !found {
+		return Acceptance{}, false, err
+	}
+	if na.Kind == AcceptanceAgent {
+		return na.Agent.record(), true, nil
+	}
+	return na.Relationship, true, nil
+}
+
+// CurrentExecution and CurrentAcceptance are the union readers for the readers outside this package (internal/manage): the node's current execution and acceptance, whichever side holds it.
+func CurrentExecution(ctx context.Context, q store.Querier, plan, node string) (NodeExecution, bool, error) {
+	return executionOf(ctx, q, plan, node)
+}
+
+func CurrentAcceptance(ctx context.Context, q store.Querier, plan, node string) (NodeAcceptance, bool, error) {
+	return acceptanceOf(ctx, q, plan, node)
+}
+
+// CrossKindHeld reports whether err is the refusal of a node that holds a current execution or acceptance on both sides (cross_kind_execution, cross_kind_acceptance), for the readers outside this package that
+// read such a node as neither.
+func CrossKindHeld(err error) bool { return crossKindHeld(err) }
+
+// AgentAcceptanceIntegrated is whether an agent acceptance's head has landed everywhere it has to (agentNodeIntegrated), for the readers outside this package.
+func (s *Scheduler) AgentAcceptanceIntegrated(ctx context.Context, q store.Querier, a AgentAcceptance) (bool, error) {
+	snap, _, err := dag.SnapshotAt(ctx, q, a.PlanID, 0)
+	if err != nil {
+		return false, err
+	}
+	landed, _, err := s.agentNodeIntegrated(ctx, q, snap, a)
+	return landed, err
+}
+
+// ExecutedNodes are the nodes of a plan that a release or an execution of either side owns or ever bound: an open release intent, a node with an execution of a relationship, and a node with an agent
+// execution (current or closed). A bundle that holds one of them cannot be taken out of the plan.
+func ExecutedNodes(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
+	out, err := OpenReleaseNodes(ctx, q, plan)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range []string{"dag_node_executions", "dag_agent_executions"} {
+		if has, err := tableExists(ctx, q, table); err != nil {
+			return nil, err
+		} else if !has {
+			continue
+		}
+		rows, err := q.QueryContext(ctx, "SELECT DISTINCT node_id FROM "+table+" WHERE plan_id = ?", plan)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var node string
+			if err := rows.Scan(&node); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[node] = true
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// agentExecutionsOf are the execution rows of a node's agent chain in release order (attempt, then id): the history a node-scoped reader lists beside the relationship executions.
+func agentExecutionsOf(ctx context.Context, q store.Querier, plan, node string) ([]AgentExecution, error) {
+	has, err := tableExists(ctx, q, "dag_agent_executions")
+	if err != nil || !has {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, "SELECT "+agentExecutionColumns+" FROM dag_agent_executions WHERE plan_id = ? AND node_id = ? ORDER BY attempt, execution_id", plan, node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AgentExecution
+	for rows.Next() {
+		e, err := scanAgentExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// currentAgentAcceptanceHead is the head of an agent acceptance when it is still the node's current result: its execution is the node's current execution or one it continues. "" is no current head.
+func currentAgentAcceptanceHead(ctx context.Context, q store.Querier, plan string, acc Acceptance) (string, error) {
+	if acc.agent == nil || acc.HeadSHA == "" {
+		return "", nil
+	}
+	cur, live, err := currentAgentExecution(ctx, q, plan, acc.NodeID)
+	if err != nil || !live {
+		return "", err
+	}
+	stands, err := agentExecutionStands(ctx, q, cur, acc.agent.ExecutionID)
+	if err != nil || !stands {
+		return "", err
+	}
+	return acc.HeadSHA, nil
+}
+
+// agentManifestBound is whether an agent execution or an agent acceptance rests on the manifest: the readers that decide whether a frozen copy may go (release_recovery.go) count it as they count the
+// executions and acceptances of a relationship.
+func agentManifestBound(ctx context.Context, q store.Querier, digest string) (bool, error) {
+	for _, table := range []string{"dag_agent_executions", "dag_agent_acceptances"} {
+		has, err := tableExists(ctx, q, table)
+		if err != nil {
+			return false, err
+		}
+		if !has {
+			continue
+		}
+		var one int
+		if bound, err := queryOne(ctx, q, "SELECT 1 FROM "+table+" WHERE manifest_digest = ? LIMIT 1", []any{digest}, &one); err != nil || bound {
+			return bound, err
+		}
+	}
+	return false, nil
+}
+
+// activeAcceptancesOf are the current acceptances of a plan's nodes on both sides, in node order, the relationship rows filtered by headOnly (an acceptance with a head) when it is set. A node has at most one
+// (acceptanceOf); a node whose two sides both claim one is read as neither, as acceptanceOf reads it.
+func activeAcceptancesOf(ctx context.Context, q store.Querier, plan string, headOnly bool) ([]Acceptance, error) {
+	query := "SELECT " + acceptanceColumns + " FROM dag_acceptances WHERE plan_id = ? AND state = 'active'"
+	if headOnly {
+		query += " AND head_sha IS NOT NULL AND head_sha <> ''"
+	}
+	rows, err := q.QueryContext(ctx, query+" ORDER BY node_id", plan)
+	if err != nil {
+		return nil, err
+	}
+	var out []Acceptance
+	for rows.Next() {
+		a, err := scanAcceptance(rows)
+		if err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if has, err := tableExists(ctx, q, "dag_agent_acceptances"); err != nil {
+		return nil, err
+	} else if has {
+		nodeRows, err := q.QueryContext(ctx, "SELECT DISTINCT node_id FROM dag_agent_acceptances WHERE plan_id = ? ORDER BY node_id", plan)
+		if err != nil {
+			return nil, err
+		}
+		var nodes []string
+		for nodeRows.Next() {
+			var node string
+			if err := nodeRows.Scan(&node); err != nil {
+				_ = nodeRows.Close()
+				return nil, err
+			}
+			nodes = append(nodes, node)
+		}
+		if err := nodeRows.Err(); err != nil {
+			_ = nodeRows.Close()
+			return nil, err
+		}
+		if err := nodeRows.Close(); err != nil {
+			return nil, err
+		}
+		for _, node := range nodes {
+			agent, ok, err := currentAgentAcceptance(ctx, q, plan, node)
+			if err != nil {
+				return nil, err
+			}
+			if !ok || headOnly && agent.Head == "" {
+				continue
+			}
+			out = append(out, agent.record())
+		}
+		sort.SliceStable(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+	}
+	return out, nil
+}
+
+// acceptanceIntact is whether an acceptance row is what its id says: the digest of a relationship's row (AcceptanceDigest), the key of an agent's (AgentAcceptanceID).
+func acceptanceIntact(a Acceptance) bool {
+	if a.agent != nil {
+		return AgentAcceptanceID(a.agent.PlanID, a.agent.NodeID, a.agent.ExecutionID, a.agent.Head, a.agent.CriteriaSetDigest) == a.AcceptanceID
+	}
+	return a.AcceptanceID == AcceptanceDigest(a)
+}
+
+// nodeHasExecuted is whether a node ever had an execution on either side: a row of dag_node_executions or of dag_agent_executions. A node that was started and then ended still counts (the readers that
+// count abandoned work, or that decide whether a retired node can be stated about, ask it).
+func nodeHasExecuted(ctx context.Context, q store.Querier, plan, node string) (bool, error) {
+	for _, table := range []string{"dag_node_executions", "dag_agent_executions"} {
+		has, err := tableExists(ctx, q, table)
+		if err != nil {
+			return false, err
+		}
+		if !has {
+			continue
+		}
+		var one int
+		if found, err := queryOne(ctx, q, "SELECT 1 FROM "+table+" WHERE plan_id = ? AND node_id = ? LIMIT 1", []any{plan, node}, &one); err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
+// nodeHadHead is whether a node ever had an accepted head on either side (an acceptance of a relationship or of an agent that names a commit).
+func nodeHadHead(ctx context.Context, q store.Querier, plan, node string) (bool, error) {
+	var one int
+	if found, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND head_sha IS NOT NULL AND head_sha <> '' LIMIT 1", []any{plan, node}, &one); err != nil || found {
+		return found, err
+	}
+	has, err := tableExists(ctx, q, "dag_agent_acceptances")
+	if err != nil || !has {
+		return false, err
+	}
+	return queryOne(ctx, q, "SELECT 1 FROM dag_agent_acceptances WHERE plan_id = ? AND node_id = ? AND head <> '' LIMIT 1", []any{plan, node}, &one)
+}
+
+// nodeAcceptedTimes are the stored times a node was accepted at on either side.
+func nodeAcceptedTimes(ctx context.Context, q store.Querier, plan, node string) ([]string, error) {
+	var out []string
+	for _, table := range []string{"dag_acceptances", "dag_agent_acceptances"} {
+		has, err := tableExists(ctx, q, table)
+		if err != nil {
+			return nil, err
+		}
+		if !has {
+			continue
+		}
+		rows, err := q.QueryContext(ctx, "SELECT accepted_at FROM "+table+" WHERE plan_id = ? AND node_id = ?", plan, node)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var at string
+			if err := rows.Scan(&at); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out = append(out, at)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// nodeCorrections is how many correction executions a node had: the generations dag-correct recorded for a relationship, and the correction rows of an agent chain.
+func nodeCorrections(ctx context.Context, q store.Querier, plan, node string) (int, error) {
+	total := 0
+	for _, table := range []string{"dag_node_executions", "dag_agent_executions"} {
+		has, err := tableExists(ctx, q, table)
+		if err != nil {
+			return 0, err
+		}
+		if !has {
+			continue
+		}
+		var n int
+		if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM "+table+" WHERE plan_id = ? AND node_id = ? AND kind = 'correction'", []any{plan, node}, &n); err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+// agentReleasedNodes are the nodes of a plan that have an agent release on record: a row of kind initial or correction in the node's agent chain (the release fact of its manifest, see releaseOf).
+func agentReleasedNodes(ctx context.Context, q store.Querier, plan string) (map[string]bool, error) {
+	out := map[string]bool{}
+	has, err := tableExists(ctx, q, "dag_agent_executions")
+	if err != nil || !has {
+		return out, err
+	}
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT node_id FROM dag_agent_executions WHERE plan_id = ? AND kind IN ('initial', 'correction')", plan)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var node string
+		if err := rows.Scan(&node); err != nil {
+			return nil, err
+		}
+		out[node] = true
+	}
+	return out, rows.Err()
+}
+
+// tolerantAcceptanceOf is activeAcceptanceOf for a reader whose failure would take the whole reading of a plan down with it (the derived state, the stagnation counter, the facts of dag-progress, the staleness
+// judgement): a node that holds an acceptance on both sides (cross_kind_acceptance) is read as having none, the way the candidates read it, and the reading of every other node goes on. The refusal itself is
+// the answer of the readers that act on the node (acceptanceOf, the integration batch).
+func tolerantAcceptanceOf(ctx context.Context, q store.Querier, plan, node string) (Acceptance, bool, error) {
+	a, found, err := activeAcceptanceOf(ctx, q, plan, node)
+	if crossKindHeld(err) {
+		return Acceptance{}, false, nil
+	}
+	return a, found, err
 }

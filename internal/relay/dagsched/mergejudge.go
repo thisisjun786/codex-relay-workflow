@@ -66,6 +66,19 @@ func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor strin
 	return nil
 }
 
+// mergeAcceptanceOf is the node's current acceptance as the merge lane reads it: a relationship's. An agent acceptance is refused (R06): an agent node lands through dag-integrate on a commit route and never
+// enters a merge turn or a pull request, so there is no pull request to judge and no turn to request for it (the merge-check history of mergechecks.go has no row of one either).
+func mergeAcceptanceOf(ctx context.Context, q store.Querier, plan, node string) (Acceptance, bool, error) {
+	a, found, err := activeAcceptanceOf(ctx, q, plan, node)
+	if err != nil || !found {
+		return a, found, err
+	}
+	if a.agent != nil {
+		return Acceptance{}, true, refuse(contract.RefusalDispositionConflict, "node %s was accepted by an agent (acceptance %s): an agent node lands through dag-integrate on a commit route and never as a pull request, so there is no merge to judge or to request a turn for", node, a.AcceptanceID)
+	}
+	return a, true, nil
+}
+
 // Judge decides whether the accepted pull request of an implementation node may go to the merge lane (criterion c8). The relay reads the pull request and the base branch itself, outside any
 // transaction, and then one transaction applies the rules in order, the first decisive one winning, and appends the judgement to the node's history of merge checks (a judgement that
 // restates the latest one writes nothing). A stale result (invalidation.go: the plan moved under what the accepted result consumed) is not judged at all: a stale result never merges
@@ -91,7 +104,7 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 	if n.Kind != dag.NodeImplementation {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s is a %s node: it has no pull request to merge", node, n.Kind)
 	}
-	acc, has, err := loadActiveAcceptance(ctx, q, plan, node)
+	acc, has, err := mergeAcceptanceOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
 	}
@@ -166,7 +179,7 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err != nil {
 			return err
 		}
-		still, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
+		still, found, err := mergeAcceptanceOf(txCtx, tx, plan, node)
 		if err != nil {
 			return err
 		}
@@ -291,7 +304,7 @@ func (s *Scheduler) predecessorsLanded(ctx context.Context, q store.Querier, pla
 		if e.ToNodeID != node || !(e.Kind == dag.EdgeIntegrated || (e.Kind == dag.EdgeArtifactVerified && e.PinsCodeHead)) {
 			continue
 		}
-		pred, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
+		pred, found, err := activeAcceptanceOf(ctx, q, plan, e.FromNodeID)
 		if err != nil {
 			return false, "", err
 		}
@@ -358,7 +371,7 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		if err != nil {
 			return err
 		}
-		acc, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
+		acc, found, err := mergeAcceptanceOf(txCtx, tx, plan, node)
 		if err != nil {
 			return err
 		}

@@ -54,14 +54,42 @@ func dispositionOf(reason string) string {
 	return class
 }
 
-// stateOf reads a node's execution records: nothing (unowned), a release whose child is not yet bound, or a bound execution.
+// stateOf reads a node's execution records: nothing (unowned), a release whose child is not yet bound, or a bound execution. A node is read on both sides (R06): a current agent execution holds the node
+// and its edit regions, an agent acceptance is read like an acceptance of a relationship, and a node that has neither is read from the frozen tables as it always was.
 func (s *Scheduler) stateOf(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (nodeState, error) {
-	// an agent execution without a closure holds the node and its edit regions like a running child (R04): it is in no frozen table, so the reading below would see an unowned node. The relationship side
-	// is excluded while it is current, so nothing below describes the node better.
-	if cur, live, err := currentAgentExecution(ctx, q, plan, n.NodeID); err != nil {
+	cur, live, err := executionOf(ctx, q, plan, n.NodeID)
+	if crossKindHeld(err) {
+		// a node with a current execution on both sides is read as neither (cross_kind_execution): it is ambiguous, and the reading of the rest of the plan goes on
+		return ownedAs(StateAmbiguousNode, BlockedAmbiguousHead, "the node has a current execution on both sides (cross_kind_execution): neither is read", false), nil
+	}
+	if err != nil {
 		return nodeState{}, err
-	} else if live {
-		return ownedAs(StateRunning, SkipAlreadyOwned, "agent execution "+cur.ExecutionID+" (attempt "+itoa64(cur.Attempt)+", released under manifest "+short(cur.ManifestDigest)+") holds the node until a closure ends it", true), nil
+	}
+	if !live || cur.Kind == ExecutionAgent {
+		// the acceptance of an agent execution: the node is accepted while the acceptance stands on the node's current execution (or on none, when a closure ended it); an acceptance of an earlier
+		// execution does not stand on new work, which is running
+		na, accepted, err := acceptanceOf(ctx, q, plan, n.NodeID)
+		if crossKindHeld(err) {
+			return ownedAs(StateAmbiguousNode, BlockedAmbiguousHead, "the node has an acceptance on both sides (cross_kind_acceptance): neither is read", false), nil
+		}
+		if err != nil {
+			return nodeState{}, err
+		}
+		if accepted && na.Kind == AcceptanceAgent {
+			stands := true
+			if live {
+				if stands, err = agentExecutionStands(ctx, q, cur.Agent, na.Agent.ExecutionID); err != nil {
+					return nodeState{}, err
+				}
+			}
+			if stands {
+				return s.agentAccepted(ctx, q, plan, snap, n, na.Agent)
+			}
+		}
+	}
+	if live && cur.Kind == ExecutionAgent {
+		// an agent execution without a closure holds the node and its edit regions like a running child (R04). The relationship side is excluded while it is current, so nothing below describes the node better.
+		return ownedAs(StateRunning, SkipAlreadyOwned, "agent execution "+cur.Agent.ExecutionID+" (attempt "+itoa64(cur.Agent.Attempt)+", released under manifest "+short(cur.ManifestDigest)+") holds the node until a closure ends it", true), nil
 	}
 	var bound int
 	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM dag_node_executions WHERE plan_id = ? AND node_id = ?", []any{plan, n.NodeID}, &bound); err != nil {
@@ -71,6 +99,41 @@ func (s *Scheduler) stateOf(ctx context.Context, q store.Querier, plan string, s
 		return s.unbound(ctx, q, plan, n)
 	}
 	return s.bound(ctx, q, plan, snap, n)
+}
+
+// agentAccepted is a node whose agent execution was accepted (R05): what landed is judged from the accepted head by the agent's integration (the agent marked row and the observations of its head in every
+// target), and a node that has not landed is accepted, holds its regions while it has a head to land, or is stale when the plan moved under what it consumed. An agent node never enters a merge turn or a
+// pull request, so the merge lane's facts (an eviction, a landing of unknown effect) and the relationship's own status do not apply to it.
+func (s *Scheduler) agentAccepted(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, a AgentAcceptance) (nodeState, error) {
+	acc := a.record()
+	out := nodeState{Owned: true, Acc: acc, HasAcc: true}
+	implementation := n.Kind == dag.NodeImplementation
+	// what landed is judged from the accepted head, whatever kind a later revision gave the node (revalidation.go: a node that landed is never run again)
+	if implementation || a.Head != "" {
+		landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc)
+		if err != nil {
+			return nodeState{}, err
+		}
+		if landed {
+			out.State, out.Disp, out.Reason = StateIntegrated, DispDone, DoneIntegrated
+			out.Detail = "the accepted head " + short(a.Head) + " is contained in every target and marked merged"
+			return out, nil
+		}
+	}
+	if implementation {
+		out.State, out.Holds = StateAccepted, true
+	}
+	stale, err := s.staleOf(ctx, q, plan, snap, n)
+	if err != nil {
+		return nodeState{}, err
+	}
+	if stale != nil {
+		out.State, out.Disp, out.Reason, out.Detail = StateStale, DispStale, stale.Reason(), stale.Text
+		return out, nil
+	}
+	out.State, out.Disp, out.Reason = StateAccepted, DispDone, DoneAccepted
+	out.Detail = "accepted as " + short(a.AcceptanceID)
+	return out, nil
 }
 
 // unbound is a node with no execution: either nobody has touched it, or a release was decided and its child is not yet bound to it.
@@ -266,10 +329,17 @@ func (s *Scheduler) assignmentView(ctx context.Context) *registry.AssignmentView
 	return view
 }
 
-// loadAcceptanceByID reads one acceptance of any state.
+// loadAcceptanceByID reads one acceptance of any state, of either side: an id that dag_acceptances does not hold is looked up in dag_agent_acceptances (R06).
 func loadAcceptanceByID(ctx context.Context, q store.Querier, id string) (Acceptance, error) {
 	a, err := scanAcceptance(q.QueryRowContext(ctx, "SELECT "+acceptanceColumns+" FROM dag_acceptances WHERE acceptance_id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
+		agent, found, aerr := loadAgentAcceptanceByID(ctx, q, id)
+		if aerr != nil {
+			return Acceptance{}, aerr
+		}
+		if found {
+			return agent.record(), nil
+		}
 		return Acceptance{}, errNoAcceptance
 	}
 	return a, err

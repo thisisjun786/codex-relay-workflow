@@ -53,7 +53,14 @@ func (s *Scheduler) sweepHeads(ctx context.Context, q store.Querier, plan string
 			out = append(out, h)
 			continue
 		}
-		if h.Head, h.Reason, err = s.childCheckoutHead(ctx, q, rel, relFound, checkout); err != nil {
+		if cur, agent, aerr := currentAgentExecution(ctx, q, plan, n.NodeID); aerr != nil {
+			return nil, aerr
+		} else if agent {
+			// the node an agent works in has no child: the checkout it works in is the worktree its execution records (R06)
+			if h.Head, h.Reason, err = headOfWorkingCheckout(ctx, cur.Worktree, checkout); err != nil {
+				return nil, err
+			}
+		} else if h.Head, h.Reason, err = s.childCheckoutHead(ctx, q, rel, relFound, checkout); err != nil {
 			return nil, err
 		}
 		if h.Reason == "" {
@@ -69,6 +76,10 @@ func (s *Scheduler) sweepHeads(ctx context.Context, q store.Querier, plan string
 // stays active until the new result is accepted, so the node's reading does not say so itself). After a recorded base refresh (baserefresh.go) what the acceptance stands on is the later generation, its head
 // event and its head, and that head is the one returned. "" is no current accepted head.
 func (s *Scheduler) currentAcceptanceHead(ctx context.Context, q store.Querier, acc Acceptance, hasAcc bool, rel relRow, relFound bool) (string, error) {
+	if hasAcc && acc.agent != nil {
+		// an agent acceptance is the node's current result while its execution is the node's current execution or one it continues (R06); it stands on itself, so there is no generation or head event to compare
+		return currentAgentAcceptanceHead(ctx, q, acc.PlanID, acc)
+	}
 	if !hasAcc || acc.HeadSHA == "" || !relFound || rel.ID != acc.RelationshipID {
 		return "", nil
 	}
@@ -96,18 +107,24 @@ func (s *Scheduler) childCheckoutHead(ctx context.Context, q store.Querier, rel 
 	if _, err := queryOne(ctx, q, "SELECT child_cwd FROM relationships WHERE relationship_id = ?", []any{rel.ID}, &cwd); err != nil {
 		return "", "", err
 	}
-	if !cwd.Valid || !isGitCheckout(ctx, cwd.String) {
+	return headOfWorkingCheckout(ctx, cwd.String, checkout)
+}
+
+// headOfWorkingCheckout is the HEAD of the checkout a node's worker (a child or an agent) works in. It counts only when that checkout is a worktree of the sweep's own repository (one git common directory)
+// and not the sweep's own working tree, whose HEAD would be the parent's. Otherwise the reason says why there is none.
+func headOfWorkingCheckout(ctx context.Context, cwd, checkout string) (head, reason string, err error) {
+	if cwd == "" || !isGitCheckout(ctx, cwd) {
 		return "", ReasonHeadUnknown, nil
 	}
-	childCommon, childErr := gitCommonDir(ctx, cwd.String)
+	childCommon, childErr := gitCommonDir(ctx, cwd)
 	sweepCommon, sweepErr := gitCommonDir(ctx, checkout)
 	if childErr != nil || sweepErr != nil || childCommon != sweepCommon {
 		return "", ReasonCheckoutMismatch, nil
 	}
-	if top := gitTopLevel(ctx, cwd.String); top != "" && top == gitTopLevel(ctx, checkout) {
+	if top := gitTopLevel(ctx, cwd); top != "" && top == gitTopLevel(ctx, checkout) {
 		return "", ReasonCheckoutMismatch, nil
 	}
-	out, err := runGit(ctx, cwd.String, nil, "rev-parse", "HEAD")
+	out, err := runGit(ctx, cwd, nil, "rev-parse", "HEAD")
 	if err != nil || !commitPattern.MatchString(strings.TrimSpace(out)) {
 		return "", ReasonHeadUnknown, nil
 	}
@@ -230,11 +247,16 @@ func (s *Scheduler) manifestBase(ctx context.Context, q store.Querier, plan, nod
 		return "", "", false, nil
 	}
 	var digest string
+	if cur, agent, err := currentAgentExecution(ctx, q, plan, node); err != nil {
+		return "", "", false, err
+	} else if agent {
+		digest = cur.ManifestDigest // the manifest the agent execution was released under (R06)
+	}
 	rel, relFound, err := currentRelationshipOf(ctx, q, plan, node)
 	if err != nil {
 		return "", "", false, err
 	}
-	if relFound {
+	if relFound && digest == "" {
 		if _, err := queryOne(ctx, q, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &digest); err != nil {
 			return "", "", false, err
 		}

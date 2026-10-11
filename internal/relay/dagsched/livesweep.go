@@ -265,6 +265,30 @@ func (s *Scheduler) resolveCheckout(ctx context.Context, q store.Querier, plan, 
 	if err := rows.Close(); err != nil {
 		return "", err
 	}
+	// the checkouts agent acceptances of the plan were proved in (R06): an agent node has no parent_cwd, and its acceptance names the checkout its head was proved in and is judged against
+	if has, err := tableExists(ctx, q, "dag_agent_acceptances"); err != nil {
+		return "", err
+	} else if has {
+		agentRows, err := q.QueryContext(ctx, "SELECT DISTINCT repository FROM dag_agent_acceptances WHERE plan_id = ? AND repository <> '' ORDER BY CASE WHEN node_id = ? THEN 0 ELSE 1 END, repository", plan, node)
+		if err != nil {
+			return "", err
+		}
+		for agentRows.Next() {
+			var repository string
+			if err := agentRows.Scan(&repository); err != nil {
+				_ = agentRows.Close()
+				return "", err
+			}
+			candidates = append(candidates, repository)
+		}
+		if err := agentRows.Err(); err != nil {
+			_ = agentRows.Close()
+			return "", err
+		}
+		if err := agentRows.Close(); err != nil {
+			return "", err
+		}
+	}
 	for _, cwd := range candidates {
 		if isGitCheckout(ctx, cwd) {
 			return cwd, nil

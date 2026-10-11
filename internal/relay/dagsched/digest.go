@@ -23,6 +23,9 @@ type Acceptance struct {
 	VerdictTurnID, RuleVersionJSON, AcceptedByTask string
 	CoordinatorEpoch                               int64
 	AcceptedAt, SupersedesAcceptanceID, State      string
+	// agent is the row of dag_agent_acceptances this record stands for, nil for a row of dag_acceptances. An agent acceptance read by a node-scoped reader (agentRecord) is carried in this shape so
+	// that the readers that need only its common fields (the head, the manifest, the criteria) keep one code path, and the ones that differ ask agent (standOf, integratedAt, standing).
+	agent *AgentAcceptance
 }
 
 // AcceptanceDigest is the digest contract 4.3 marks as the identity of an acceptance: canonical JSON of the included fields,

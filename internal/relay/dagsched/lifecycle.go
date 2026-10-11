@@ -187,7 +187,7 @@ func endedInManifest(ctx context.Context, q store.Querier, snap dag.Snapshot, di
 
 // endedPredecessor is the edge status of an edge out of a node whose accepted result rests on a node the plan ended, or nil.
 func (s *Scheduler) endedPredecessor(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, from dag.SnapNode) (*EdgeStatus, error) {
-	a, found, err := loadActiveAcceptance(ctx, q, plan, from.NodeID)
+	a, found, err := tolerantAcceptanceOf(ctx, q, plan, from.NodeID)
 	if err != nil || !found {
 		return nil, err
 	}

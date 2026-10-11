@@ -246,6 +246,9 @@ func (h mergeHistory) staleReading(head string, checks []Check) (Check, Check, b
 	return Check{}, Check{}, false
 }
 
+// An agent acceptance has no merge check and no history here (R06): the merge judgement refuses it (mergejudge.go, mergeAcceptanceOf), since an agent node lands through dag-integrate on a commit route and
+// never as a pull request, and a merge check is a row about a pull request's checks of the exact head.
+//
 // loadMergeHistory reads what the judgements of one head of a node already say, across every acceptance the node had of it and whichever pull request (or spelling of the repository: the forge
 // does not tell owner/name apart by case) carried it: the checks ran on the commit, so a head that used up its retry or was evicted stays so when the node is accepted again at the same head.
 // The rows come in the order they were written, each is verified against the digest it recorded, and each recorded listing is reduced to the newest reading of every run before anything is

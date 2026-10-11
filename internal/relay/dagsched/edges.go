@@ -175,6 +175,9 @@ func (s *Scheduler) edgeStatus(ctx context.Context, q store.Querier, plan string
 // standing is what every edge that rests on an accepted result needs of the acceptance, whatever the edge's kind: the row is what its digest says and whole, it belongs to an execution of
 // the node, and the criteria it stands on are the plan's and the relationship's now. A blocked answer is returned for the first link that fails; nil means all hold.
 func (s *Scheduler) standing(ctx context.Context, q store.Querier, plan string, from dag.SnapNode, a Acceptance) (*EdgeStatus, error) {
+	if a.agent != nil {
+		return s.agentStanding(ctx, q, plan, from, *a.agent)
+	}
 	// 2. the row is what its digest says, and whole.
 	if AcceptanceDigest(a) != a.AcceptanceID {
 		st := blocked(BlockedAcceptanceTampered, "the acceptance row no longer digests to its id")
@@ -214,6 +217,35 @@ func (s *Scheduler) standing(ctx context.Context, q store.Querier, plan string, 
 	return nil, nil
 }
 
+// agentStanding is standing for an agent acceptance (R06): the row is what its id says (the id is a pure function of the plan, node, execution, head and criteria, AgentAcceptanceID), it is whole, it belongs
+// to an execution of this node that is still the node's work (the current execution, or one it continues), and the criteria it was accepted under are the plan's now. An agent acceptance has no
+// relationship, so there is no relationship criteria registry to agree with, and no revalidation: a change of the criteria is a new acceptance.
+func (s *Scheduler) agentStanding(ctx context.Context, q store.Querier, plan string, from dag.SnapNode, a AgentAcceptance) (*EdgeStatus, error) {
+	if AgentAcceptanceID(a.PlanID, a.NodeID, a.ExecutionID, a.Head, a.CriteriaSetDigest) != a.AcceptanceID {
+		st := blocked(BlockedAcceptanceTampered, "the agent acceptance row no longer digests to its id")
+		return &st, nil
+	}
+	if a.ManifestDigest == "" || a.ExecutionID == "" || a.CriteriaSetDigest == "" || a.ReviewerCallID == "" || a.AcceptedBy == "" || a.AcceptedAt == "" ||
+		(from.Kind == dag.NodeImplementation && (a.Head == "" || a.Repository == "" || a.VerificationDigest == "" || a.PremergeDigest == "")) {
+		st := blocked(BlockedAcceptanceIncomplete, "a required column of the agent acceptance is blank")
+		return &st, nil
+	}
+	var one int
+	tied, err := queryOne(ctx, q, "SELECT 1 FROM dag_agent_executions WHERE execution_id = ? AND plan_id = ? AND node_id = ?", []any{a.ExecutionID, plan, from.NodeID}, &one)
+	if err != nil {
+		return nil, err
+	}
+	if !tied {
+		st := blocked(BlockedInputUnaccepted, "the agent acceptance is not tied to an execution of the node")
+		return &st, nil
+	}
+	if a.CriteriaSetDigest != from.CriteriaSetDigest {
+		st := blocked(BlockedStaleCriteria, "the agent acceptance's criteria digest is not the plan's")
+		return &st, nil
+	}
+	return nil, nil
+}
+
 // consumedStanding is step 6: what the accepted node consumed is still what its predecessors' acceptances are (Frankenbuild, E-25).
 func (s *Scheduler) consumedStanding(ctx context.Context, q store.Querier, plan string, a Acceptance) (*EdgeStatus, error) {
 	body, mfound, err := dag.ReadManifestOn(ctx, q, a.ManifestDigest)
@@ -240,11 +272,14 @@ func (s *Scheduler) consumedStanding(ctx context.Context, q store.Querier, plan 
 			}
 			// the consumed acceptance must be the active acceptance of the node the manifest names, in THIS plan (ids are plan-local).
 			fromNode, _ := in["from_node_id"].(string)
-			var one int
-			active, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptances WHERE acceptance_id = ? AND plan_id = ? AND node_id = ? AND state = 'active'", []any{id, plan, fromNode}, &one)
+			current, has, err := acceptanceOf(ctx, q, plan, fromNode)
+			if crossKindHeld(err) {
+				current, has, err = NodeAcceptance{}, false, nil
+			}
 			if err != nil {
 				return nil, err
 			}
+			active := has && current.AcceptanceID == id
 			if !active {
 				st := blocked(BlockedStalePredecessor, "an input of the accepted node, acceptance "+id+", is no longer active")
 				return &st, nil
@@ -257,6 +292,10 @@ func (s *Scheduler) consumedStanding(ctx context.Context, q store.Querier, plan 
 // recordedEvidence is the part of step 8 every edge on an implementation node needs: the latest merge check the relay recorded still digests to what it recorded (B-13). It returns the head
 // that check observed and the head the acceptance stood on when the check was made, if there is one.
 func (s *Scheduler) recordedEvidence(ctx context.Context, q store.Querier, a Acceptance) (observed, judged string, st *EdgeStatus, err error) {
+	if a.agent != nil {
+		// an agent acceptance has no pull request: no merge check is ever recorded for it (Judge refuses it), so there is nothing to digest again and no observed head
+		return "", "", nil, nil
+	}
 	var digest, evidence string
 	seen, err := queryOne(ctx, q, "SELECT checks_digest, evidence_json, observed_head_sha, head_sha FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1", []any{a.AcceptanceID}, &digest, &evidence, &observed, &judged)
 	if err != nil || !seen {
@@ -289,7 +328,10 @@ func (s *Scheduler) pullRequestMoved(ctx context.Context, q store.Querier, a Acc
 // artifactVerified is contract 2.1 as the reader applies it: the durable acceptance plus the currency checks that make a stale
 // result open nothing.
 func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
-	a, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
+	a, found, err := activeAcceptanceOf(ctx, q, plan, e.FromNodeID)
+	if crossKindHeld(err) {
+		return blocked(BlockedAmbiguousHead, "the predecessor holds an acceptance on both sides (cross_kind_acceptance): neither is read"), nil
+	}
 	if err != nil {
 		return EdgeStatus{}, err
 	}
@@ -304,9 +346,26 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	if err != nil {
 		return EdgeStatus{}, err
 	}
-	rel, relFound, err := loadRelationship(ctx, q, a.RelationshipID)
-	if err != nil {
-		return EdgeStatus{}, err
+	if a.agent != nil {
+		// an agent acceptance stands on itself: it is the node's current result while its execution is the node's current execution or one it continues (a new execution, a correction or a tier step, is new
+		// work that nobody has accepted)
+		if cur, live, err := currentAgentExecution(ctx, q, plan, a.NodeID); err != nil {
+			return EdgeStatus{}, err
+		} else if live {
+			stands, err := agentExecutionStands(ctx, q, cur, a.agent.ExecutionID)
+			if err != nil {
+				return EdgeStatus{}, err
+			}
+			if !stands {
+				return blocked(BlockedStaleHead, "the node's current execution "+cur.ExecutionID+" is not the one the acceptance stands on"), nil
+			}
+		}
+	}
+	rel, relFound := relRow{}, false
+	if a.agent == nil {
+		if rel, relFound, err = loadRelationship(ctx, q, a.RelationshipID); err != nil {
+			return EdgeStatus{}, err
+		}
 	}
 	if relFound && (rel.Status == "active" || rel.Status == "paused") {
 		if rel.Generation != stand.Generation {
@@ -329,13 +388,17 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 		// A pull-request acceptance is read through its forge row and pull request; a commit acceptance (CRW-965) has
 		// its verification row and no pull request. Either one needs the accepted head and the edge's target.
 		var forge, verified int
-		hasForge, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{a.AcceptanceID}, &forge)
+		hasForge, err := false, error(nil)
+		if a.agent == nil {
+			hasForge, err = queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{a.AcceptanceID}, &forge)
+		}
 		if err != nil {
 			return EdgeStatus{}, err
 		}
 		// the verification table is read only for an acceptance without a forge row: a store that predates it still reads its pull requests (CRW-965 review)
-		hasVerification := false
-		if !hasForge {
+		// an agent acceptance carries its verification record in its row (a commit proof, no forge)
+		hasVerification := a.agent != nil && a.agent.VerificationDigest != ""
+		if !hasForge && a.agent == nil {
 			if hasVerification, err = queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{a.AcceptanceID}, &verified); err != nil {
 				return EdgeStatus{}, err
 			}
@@ -403,6 +466,10 @@ type IntegratedAt struct {
 // negative one). Ancestry is monotone, so a merge that moves the target changes no answer, and the landed commit and the time the edge became satisfied
 // that consumers recorded must not follow every later observation of a moved tip (contract E-27).
 func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan string, a Acceptance, repository, baseRef string) (IntegratedAt, error) {
+	if a.agent != nil {
+		// an agent acceptance is integrated by its own marked row and the observations of its head (agentIntegratedAt): there is no merge turn to diagnose and no relationship mark
+		return agentIntegratedAt(ctx, q, *a.agent, repository, baseRef)
+	}
 	var out IntegratedAt
 	// the head and the merged mark are those of what the acceptance stands on: itself, or after a recorded base refresh the later generation (baserefresh.go)
 	stand, err := s.standOf(ctx, q, a)
@@ -441,7 +508,10 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 }
 
 func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
-	a, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
+	a, found, err := activeAcceptanceOf(ctx, q, plan, e.FromNodeID)
+	if crossKindHeld(err) {
+		return blocked(BlockedAmbiguousHead, "the predecessor holds an acceptance on both sides (cross_kind_acceptance): neither is read"), nil
+	}
 	if err != nil {
 		return EdgeStatus{}, err
 	}
