@@ -62,6 +62,8 @@ type ChangeCounts struct {
 	RetireNode int `json:"retire_node"`
 	AddEdge    int `json:"add_edge"`
 	RetireEdge int `json:"retire_edge"`
+	// KeepDecisionEdge is how many decision edges of the base the revision leaves alone: the handoff cannot state an approval, so compile never retires one.
+	KeepDecisionEdge int `json:"keep_decision_edge,omitempty"`
 }
 
 // IssuePreview is one issue with what compile carried for it.

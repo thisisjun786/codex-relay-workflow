@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
@@ -171,6 +172,9 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 		refuse("over_64", "issues", "the project holds %d issues; a plan holds at most %d (split the project)", len(p.Issues), dag.MaxNodes)
 		return plan, refusals
 	}
+	if p.CoordinatorEpoch < 0 {
+		refuse("input", "coordinator_epoch", "coordinator_epoch %d: an epoch is 0 (a plan nobody has claimed) or the epoch of the writing session's claim", p.CoordinatorEpoch)
+	}
 	if t := p.Target; t != nil && (t.Repository == "" || t.BaseRef == "") {
 		refuse("input", "target", "target needs both repository and base_ref")
 	}
@@ -205,6 +209,11 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 		case len(is.Criteria) > 0 && is.CriteriaSetDigest != "":
 			refuse("input", path+".criteria", "give the criteria or their digest, not both")
 		case len(is.Criteria) > 0:
+			for j, c := range is.Criteria {
+				if strings.TrimSpace(c) == "" {
+					refuse("input", fmt.Sprintf("%s.criteria[%d]", path, j), "a criterion needs its text: the relay registers no blank title")
+				}
+			}
 			u.digest = criteriaDigest(is.Criteria)
 		case is.CriteriaSetDigest != "":
 			u.digest = is.CriteriaSetDigest
@@ -306,7 +315,7 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 		plan.Status = StatusUnchanged
 		return plan, nil
 	}
-	rev := dag.Revision{PlanID: id, ProjectKey: p.Key, RequestID: p.RequestID, ExpectedParent: base.Revision, AuthorTaskID: in.AuthorTaskID, Changes: changes}
+	rev := dag.Revision{PlanID: id, ProjectKey: p.Key, RequestID: p.RequestID, ExpectedParent: base.Revision, CoordinatorEpoch: p.CoordinatorEpoch, AuthorTaskID: in.AuthorTaskID, Changes: changes}
 	if rev.AuthorTaskID == "" {
 		rev.AuthorTaskID = DefaultAuthor
 	}
@@ -349,19 +358,15 @@ func dagRefusals(project string, err error) []Refusal {
 	return []Refusal{{Project: project, Rule: "input", Detail: err.Error()}}
 }
 
-// criteriaDigest is the node's criteria_set_digest: the digest of the set of criteria, in whatever order they were listed.
+// criteriaDigest is the node's criteria_set_digest, the digest dag-release recomputes from the canonical criteria
+// (delivery.SetDigest of {id, title, required}): the criteria of the handoff, in the order they are listed, are the canonical
+// criteria c1, c2, ... each required, with the title trimmed as the release trims it.
 func criteriaDigest(criteria []string) string {
-	set := make([]string, 0, len(criteria))
-	for _, c := range criteria {
-		set = append(set, strings.Join(strings.Fields(c), " "))
+	set := make([]delivery.Criterion, len(criteria))
+	for i, c := range criteria {
+		set[i] = delivery.Criterion{ID: fmt.Sprintf("c%d", i+1), Title: strings.TrimSpace(c), Required: true}
 	}
-	sort.Strings(set)
-	set = slices.Compact(set)
-	list := make([]any, len(set))
-	for i, c := range set {
-		list[i] = c
-	}
-	return dag.Digest(map[string]any{"schema": "crw-criteria-set/1", "criteria": list})
+	return delivery.SetDigest(set)
 }
 
 // document is the revision as the dag-plan-revision/1 document dag-plan-put reads (canonical JSON).
@@ -373,6 +378,9 @@ func document(rev dag.Revision) (json.RawMessage, error) {
 	doc := map[string]any{
 		"schema": dag.SchemaRevision, "plan_id": rev.PlanID, "project_key": rev.ProjectKey, "request_id": rev.RequestID,
 		"expected_parent_revision": rev.ExpectedParent, "author_task_id": rev.AuthorTaskID, "changes": changes,
+	}
+	if rev.CoordinatorEpoch != 0 {
+		doc["coordinator_epoch"] = rev.CoordinatorEpoch
 	}
 	raw := []byte(dag.Canonical(doc))
 	if _, err := dag.DecodeRevision(raw); err != nil {
@@ -652,6 +660,12 @@ func diff(units []*unit, order []pair, t *Target, h baseView, refusals *[]Refusa
 	// edges
 	for _, row := range h.liveEdges { // by edge id; the first edge of a pair that is what the handoff wants stays, any other is retired
 		e := pair{row.FromNodeID, row.ToNodeID}
+		// A decision edge carries an approval (subject, digest, required authority), which the handoff has no way to state: it is
+		// neither an order edge compile owns nor something to drop in silence, so it stays while both of its nodes do.
+		if row.Kind == dag.EdgeDecision && desiredIDs[row.FromNodeID] && desiredIDs[row.ToNodeID] {
+			counts.KeepDecisionEdge++
+			continue
+		}
 		if w, ok := want[e]; ok && edgeIDs[e] == "" && sameEdge(row.Edge, w) {
 			edgeIDs[e] = row.EdgeID
 			continue

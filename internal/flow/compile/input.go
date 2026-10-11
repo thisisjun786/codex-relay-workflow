@@ -13,6 +13,12 @@
 // refused; so are a cycle through prerequisites of more than one project, an issue key held by two projects, and the root of the
 // repository as an edit region. size_fit, size_reason and the issue-size answer are carried as they are, and an issue that answers
 // over_line with neither a bundle reason nor a split is shown as size_unreviewed (it is never refused).
+//
+// Three things tie a revision to the relay it is put into. The criteria of an issue are the canonical criteria c1, c2, ...
+// (each required, in the order listed), and the node's criteria_set_digest is delivery.SetDigest of them, the digest dag-release
+// recomputes. A project names the coordinator_epoch its writing session holds, which the revision document carries, so a claimed plan
+// admits the put. And a recompile never retires a decision edge of the base while both of its nodes stay: the handoff cannot state an
+// approval, so dropping one would make work ready that waits for it.
 package compile
 
 import (
@@ -53,7 +59,9 @@ type Project struct {
 	PlanID    string  `json:"plan_id,omitempty"`    // the plan this project's revision is for; the key when absent
 	RequestID string  `json:"request_id,omitempty"` // derived from the revision when absent, so a repeated compile repeats its request
 	Target    *Target `json:"target,omitempty"`
-	Issues    []Issue `json:"issues"`
+	// CoordinatorEpoch is the epoch the writing session holds on the plan (the epoch its claim raised it to); 0 for a plan nobody has claimed.
+	CoordinatorEpoch int64   `json:"coordinator_epoch,omitempty"`
+	Issues           []Issue `json:"issues"`
 }
 
 // Target is where the project's issues integrate: the repository and the base ref an order edge names.

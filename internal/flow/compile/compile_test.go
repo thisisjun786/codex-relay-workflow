@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 const fixtureDir = "../../../testdata/flow/compile/"
@@ -792,4 +793,146 @@ func TestRegionOfTheRepositoryRootRefused(t *testing.T) {
 	if res := mustRefuse(t, project(a), nil); !res.Has("input") {
 		t.Errorf("refusal %v", res)
 	}
+}
+
+// --- post-evaluation round (CRW-1203, pre-merge evaluation of ceb7a599)
+
+// TestCriteriaDigestIsTheRelaysSetDigest: the digest a node carries for criteria:[string] is the one dag-release recomputes from the
+// canonical criteria (delivery.SetDigest of {id, title, required}); ids are c1.. in the declared order.
+func TestCriteriaDigestIsTheRelaysSetDigest(t *testing.T) {
+	p := compileOne(t, project(iss("A", criteria("produce the report", "  review   it ", "ship it"))), nil)
+	var got string
+	for _, c := range p.Change.Changes {
+		if c.Op == dag.OpAddNode {
+			got = c.Node.CriteriaSetDigest
+		}
+	}
+	want := delivery.SetDigest([]delivery.Criterion{
+		{ID: "c1", Title: "produce the report", Required: true},
+		{ID: "c2", Title: "review   it", Required: true},
+		{ID: "c3", Title: "ship it", Required: true},
+	})
+	if got != want {
+		t.Fatalf("criteria_set_digest %s, the relay recomputes %s", got, want)
+	}
+	// the order the criteria are listed in is the order of their ids
+	if criteriaDigest([]string{"b", "a"}) == criteriaDigest([]string{"a", "b"}) {
+		t.Errorf("ids follow the declared order, so a reordered list is another set")
+	}
+	// a blank criterion cannot be registered by the relay
+	a := iss("A")
+	a.Criteria = []string{"fine", "   "}
+	if r := mustRefuse(t, project(a), nil); !r.Has("input") {
+		t.Errorf("refusal %v", r)
+	}
+}
+
+// TestCoordinatorEpochOfTheWritingSession: a project names the epoch its session holds, and the revision document carries it, so a claimed plan's fence admits the put.
+func TestCoordinatorEpochOfTheWritingSession(t *testing.T) {
+	in := project(iss("A"))
+	in.AuthorTaskID = "parent-task"
+	in.Projects[0].CoordinatorEpoch = 3
+	p := compileOne(t, in, nil)
+	if p.Change.CoordinatorEpoch != 3 {
+		t.Fatalf("revision epoch %d", p.Change.CoordinatorEpoch)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(p.Revision, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["coordinator_epoch"] != float64(3) {
+		t.Fatalf("document %s", p.Revision)
+	}
+	back, err := dag.DecodeRevision(p.Revision)
+	if err != nil || back.CoordinatorEpoch != 3 || dag.RequestDigest(back) != dag.RequestDigest(*p.Change) {
+		t.Fatalf("decoded %+v, %v", back, err)
+	}
+	// the request id follows the epoch: the same issues under another epoch are another request
+	in.Projects[0].CoordinatorEpoch = 4
+	if q := compileOne(t, in, nil); q.Change.RequestID == p.Change.RequestID {
+		t.Errorf("request id %s repeats across epochs", q.Change.RequestID)
+	}
+	// an unclaimed plan names none
+	plain := compileOne(t, project(iss("A")), nil)
+	if strings.Contains(string(plain.Revision), "coordinator_epoch") {
+		t.Errorf("document %s names an epoch nobody holds", plain.Revision)
+	}
+	// a negative epoch is not an epoch
+	in.Projects[0].CoordinatorEpoch = -1
+	if r := mustRefuse(t, in, nil); !r.Has("input") {
+		t.Errorf("refusal %v", r)
+	}
+	// and the input reads it from the handoff
+	raw := `{"schema":"crw-flow-compile-input/1","projects":[{"key":"P","coordinator_epoch":2,"target":{"repository":"r","base_ref":"b"},"issues":[{"key":"A","title":"a","criteria":["c"]}]}]}`
+	if d, err := Decode([]byte(raw)); err != nil || d.Projects[0].CoordinatorEpoch != 2 {
+		t.Fatalf("decode: %+v, %v", d, err)
+	}
+}
+
+// TestRecompileKeepsDecisionEdges: an edge that carries an approval (kind decision) is not something the handoff can state, so a recompile never retires it
+// while both of its nodes stay; a node that leaves still takes its edges with it.
+func TestRecompileKeepsDecisionEdges(t *testing.T) {
+	node := func(id, kind string) *dag.Node {
+		return &dag.Node{NodeID: id, IssueKey: id, Kind: kind, Title: "issue " + id, CriteriaSetDigest: criteriaDigest([]string{"criterion of " + id})}
+	}
+	seed := dag.Revision{PlanID: "plan-px", ProjectKey: "PX", RequestID: "seed", AuthorTaskID: "t", Changes: []dag.Change{
+		{Op: dag.OpAddNode, Node: node("A", dag.NodeNonPR)}, {Op: dag.OpAddNode, Node: node("B", dag.NodeImplementation)},
+		{Op: dag.OpAddEdge, Edge: &dag.Edge{EdgeID: "e:A:B", FromNodeID: "A", ToNodeID: "B", Kind: dag.EdgeArtifactVerified}},
+		{Op: dag.OpAddEdge, Edge: &dag.Edge{EdgeID: "gate", FromNodeID: "A", ToNodeID: "B", Kind: dag.EdgeDecision,
+			DecisionSubject: "release", DecisionDigest: "d1", RequiredAuthority: []string{"owner"}}},
+	}}
+	base, _, vs := dag.Apply(dag.State{PlanID: "plan-px"}, seed)
+	if len(vs) > 0 {
+		t.Fatalf("seed refused: %v", vs)
+	}
+	bases := map[string]dag.State{"plan-px": base}
+	liveGate := func(s dag.State) bool {
+		for _, e := range s.Edges {
+			if e.EdgeID == "gate" && e.RetiredRev == 0 {
+				return true
+			}
+		}
+		return false
+	}
+	a := func() Issue { return iss("A", nonPR()) }
+
+	t.Run("the order edge is stated, the gate is not touched", func(t *testing.T) {
+		p := compileOne(t, project(a(), iss("B", after("A"))), bases)
+		if p.Status != StatusUnchanged {
+			t.Fatalf("status %s, changes %v", p.Status, changeOps(p))
+		}
+	})
+	t.Run("the prerequisite is dropped: only the order edge goes", func(t *testing.T) {
+		p := compileOne(t, project(a(), iss("B")), bases)
+		if ops := changeOps(p); fmt.Sprint(ops["retire_edge"]) != "[e:A:B]" {
+			t.Fatalf("changes %v", ops)
+		}
+		if !liveGate(fold(t, base, p)) {
+			t.Errorf("the decision edge was retired")
+		}
+	})
+	t.Run("another change of the node keeps the gate", func(t *testing.T) {
+		p := compileOne(t, project(a(), iss("B", after("A"), title("issue B, retitled"))), bases)
+		if ops := changeOps(p); len(ops["retire_edge"]) != 0 {
+			t.Fatalf("changes %v", ops)
+		}
+		if !liveGate(fold(t, base, p)) {
+			t.Errorf("the decision edge was retired")
+		}
+	})
+	t.Run("a node that leaves takes its gate with it", func(t *testing.T) {
+		p := compileOne(t, project(a()), bases)
+		if ops := changeOps(p); fmt.Sprint(ops["retire_edge"]) != "[e:A:B gate]" || fmt.Sprint(ops["retire_node"]) != "[B]" {
+			t.Fatalf("changes %v", ops)
+		}
+		if liveGate(fold(t, base, p)) {
+			t.Errorf("the decision edge stays on a retired node")
+		}
+	})
+	t.Run("the preview counts the gates it kept", func(t *testing.T) {
+		p := compileOne(t, project(a(), iss("B")), bases)
+		if p.Preview.Changes.KeepDecisionEdge != 1 {
+			t.Fatalf("preview %+v", p.Preview.Changes)
+		}
+	})
 }
