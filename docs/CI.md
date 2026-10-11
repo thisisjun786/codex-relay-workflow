@@ -323,21 +323,31 @@ and 40 s with `relay/dagsched` at 53, 60 and 25 s, against the 600 s of its budg
 
 ### The `internal/manage` test time
 
-`go test ./internal/manage/` ran its 1011 tests one after another and took 829 s on the shared host
+`go test ./internal/manage/` ran its 1,014 registered tests (1,011 PASS and 3 SKIP) one after another and took 829 s on the shared host
 (load 30 to 50 on 20 CPUs, `nice` 12, `-json` log in `/scratch/crw/diag-manage/manage.json`), so the integration's
 10 minute bound for a package was close. The time was not CPU (a 79-test slice used 16% of a CPU): a run makes about 15,500 fsyncs and 5,800
 processes, and each fsync waits behind the other writers of the disk. Method: read the per-test
 `Elapsed` of `go test -json`, take the biggest costs first, count the processes and fsyncs a test makes
 (`strace -f -y -e trace=execve,fsync`, test directories are named after the test), change, and measure the whole
-package again. Whole-package times, same host, same command, load 20 to 37:
+package again. The tests run under the `TMPDIR` the caller sets (no memory-backed temporary root). Whole-package times,
+same host, same command (`go test -count=1`, through `heavy_slot.sh`), `load1` read before and after the command:
 
 | Step | Package time |
 | --- | --- |
 | before (`TestPumpQueueOverlappingLegacyRecordsKeepTheInvariants` alone took 289 s) | 829 s at load 40 |
 | the 375 overlap combinations as parallel subtests | 146 s at load 19 |
-| and the pre-merge tests copy a built repository pair | 128 s and 138 s |
-| and the tests' temporary root in `/dev/shm` | 47 s and 43 s |
-| the same, after merging dev at `fc5e5bd87` (1106 top-level tests, 95 more from CRW-692's pump signal tests) | 51.8 s at load 17 to 44 |
+| and the pre-merge tests copy a built repository pair | 128 s and 138 s at load 20 to 37 |
+| the same, after merging dev at `fc5e5bd87` (1,106 registered tests: 1,103 PASS and 3 SKIP; CRW-692 added 87 of the 92 new ones) | 211 s at load 17 to 25 |
+| the same plus this lane's last test (1,107 registered), run 1 | 591 s at load 20 to 25 |
+| the same, run 2 | 241 s at load 31 to 18 |
+
+The spread is the disk, not the suite. In run 1 one test, `TestPumpSignalCapacityStateWrittenAgainByteForByteEndsTheProposal`,
+took 229 s and its neighbours 17 to 33 s, where run 2 and the earlier runs took under 1 s each: the host's I/O pressure
+(`/proc/pressure/io`, `full avg10` 19 to 41) stalled every fsync for minutes. A run on an idle disk is a fraction of
+the 10 minute bound; one that meets a stall can come within seconds of it (run 1 ended at 591 s of 600 s).
+`go test -race -gcflags=all=-d=checkptr=0 -count=1` takes longer than the default `-timeout` here (it timed out at
+600 s once, and with `-timeout 30m` took 1,351 s at load 18 to 20); the race run is a developer check, not a CI step,
+so pass a larger `-timeout` to it.
 
 - The overlap combinations (CRW-991) are parallel subtests: each has its own state directory, fake bridge and
   clock, and the parent sets the homes once, because `t.Setenv` is refused in a parallel test
@@ -346,12 +356,13 @@ package again. Whole-package times, same host, same command, load 20 to 37:
   stops any test that opens a store.
 - `premergeTestNewRepo` built a git remote and a clone with sixteen git commands per test (the pre-merge tests made 2,917 of
   the 5,833 processes of a run). It builds each repository spec once, under a directory the run removes, and copies the
-  pair with the checkout's origin pointed at the copy. The commits carry a fixed identity and date, so the
+  pair, then sets the copy's origin with `git remote set-url origin`, so a `TMPDIR` whose name holds a backslash, a tab or
+  a newline (git writes those escaped in its configuration) still works
+  (`TestPremergeTestCopyRepoKeepsOddTemporaryPaths`). The commits carry a fixed identity and date, so the
   copy is the repository the build made.
-- `TestMain` puts `TMPDIR` on `/dev/shm` when a script run from there executes, so state directories, stores
-  and repositories need no disk. The tests assert no durability that an fsync gives. `CRW_MANAGE_TEST_DISK_TMP=1`
-  keeps `TMPDIR` as the caller set it, which is the slower row: 128 to 138 s before the merge, 211 s after it
-  (load 25 to 17, the host busier than for the earlier runs).
+- An earlier version of this lane put the tests' `TMPDIR` on `/dev/shm` (47 s and 43 s before the dev merge, 52 s after).
+  It is removed: a helper process re-run by a test made its own `/dev/shm` root that nothing removed, and a small or
+  full tmpfs that passed a probe still failed every fixture write.
 
 ## Leftover isolation trees
 
