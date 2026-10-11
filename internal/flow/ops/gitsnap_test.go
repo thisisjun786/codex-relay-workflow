@@ -232,3 +232,66 @@ func TestScopeRecordsPathsOutsideTheEditRegions(t *testing.T) {
 		t.Errorf("no declared region leaves nothing out of scope: %+v", rep)
 	}
 }
+
+// trimmingGit is the git runner of the agent package's allocator: it hands back standard output trimmed as text. The
+// snapshot and the scope must give the same answer through it as through the raw ExecGit.
+func trimmingGit(inner GitFunc) GitFunc {
+	return func(ctx context.Context, dir string, env []string, args ...string) (string, error) {
+		out, err := inner(ctx, dir, env, args...)
+		return strings.TrimSpace(out), err
+	}
+}
+
+// A worktree whose directory name ends in a space is a valid worktree: the snapshot reads the directory it was given, not a
+// path git printed and the runner trimmed.
+func TestSnapshotOfAWorktreeWhoseNameEndsInASpace(t *testing.T) {
+	for name, git := range map[string]GitFunc{"exec": ExecGit("git"), "trimmed": trimmingGit(ExecGit("git"))} {
+		t.Run(name, func(t *testing.T) {
+			repo, first := newRepo(t)
+			wt := addWorktree(t, repo, "attempt ", first)
+			write(t, wt, "src/new.txt", "added\n", 0o644)
+			snap, err := Snapshot(ctx, git, wt)
+			if err != nil {
+				t.Fatalf("the snapshot of %q: %v", wt, err)
+			}
+			if want := gitIn(t, wt, "rev-parse", "HEAD^{tree}"); snap == want {
+				t.Errorf("the snapshot %s is the tree of HEAD: the added file is missing", snap)
+			}
+			if listing := gitIn(t, repo, "ls-tree", "-r", "--name-only", snap); !strings.Contains(listing, "src/new.txt") {
+				t.Errorf("the snapshot lists %q", listing)
+			}
+		})
+	}
+}
+
+// The paths of a scope report are exact: a changed file whose name begins with a space keeps it, and an edit region names it.
+func TestScopeKeepsPathsWithLeadingSpace(t *testing.T) {
+	for name, git := range map[string]GitFunc{"exec": ExecGit("git"), "trimmed": trimmingGit(ExecGit("git"))} {
+		t.Run(name, func(t *testing.T) {
+			repo, _ := newRepo(t)
+			write(t, repo, " a.txt", "spaced\n", 0o644)
+			gitIn(t, repo, "add", "-A")
+			gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "spaced")
+			base := gitIn(t, repo, "rev-parse", "HEAD")
+			write(t, repo, " a.txt", "spaced and changed\n", 0o644)
+			snap, err := Snapshot(ctx, ExecGit("git"), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rep, err := Scope(ctx, git, repo, base, snap, []string{" a.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rep.Changed) != 1 || rep.Changed[0] != " a.txt" || len(rep.OutOfScope) != 0 {
+				t.Errorf("%q", rep)
+			}
+			rep, err = Scope(ctx, git, repo, base, snap, []string{"a.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rep.OutOfScope) != 1 || rep.OutOfScope[0] != " a.txt" {
+				t.Errorf("the region a.txt is not the file ' a.txt': %q", rep)
+			}
+		})
+	}
+}

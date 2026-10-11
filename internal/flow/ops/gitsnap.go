@@ -16,8 +16,11 @@ import (
 	"strings"
 )
 
-// GitFunc runs one git command as `git -C dir args...` with env added to the process environment and returns its
-// trimmed standard output. Every command of this package goes through it, so a test can see what was run.
+// GitFunc runs one git command as `git -C dir args...` with env added to the process environment and returns its standard
+// output. ExecGit removes only the line feed that ends the output; a runner that trims more (the agent allocator's) is
+// accepted because no command of this package reads a leading or trailing space from the output: the directories it works in
+// are the ones it is given, and the commands whose output is a list of names are asked in a form that begins with a status
+// letter or ends with a NUL. Every command of this package goes through it, so a test can see what was run.
 type GitFunc func(ctx context.Context, dir string, env []string, args ...string) (string, error)
 
 // ExecGit is the GitFunc that runs the git binary. The variables that route git to a repository, a work tree or an index
@@ -32,7 +35,7 @@ func ExecGit(binary string) GitFunc {
 		if err := cmd.Run(); err != nil {
 			return "", &GitError{Dir: dir, Args: args, Err: err, Stderr: strings.TrimSpace(stderr.String())}
 		}
-		return strings.TrimSpace(stdout.String()), nil
+		return strings.TrimSuffix(stdout.String(), "\n"), nil
 	}
 }
 
@@ -85,10 +88,9 @@ var identity = []string{
 // executor leaves nothing staged. A file that is ignored and not tracked is not in the snapshot, so it is not in a commit
 // of it either. Two worktrees with the same files have the same snapshot, whatever their HEAD.
 func Snapshot(ctx context.Context, git GitFunc, worktree string) (string, error) {
-	root, err := git(ctx, worktree, nil, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", err
-	}
+	// The worktree is the directory it is given, exactly: a path git prints is text a runner may have trimmed, and a worktree
+	// whose name ends in a space is a worktree.
+	root := worktree
 	dir, err := os.MkdirTemp("", "crw-snapshot-")
 	if err != nil {
 		return "", err
@@ -239,12 +241,16 @@ type ScopeReport struct {
 // is a directory prefix ending in "/", a file path, or a pattern with `*`, `?` or `[` (path.Match, on the whole path). With
 // no region declared nothing is out of scope.
 func Scope(ctx context.Context, git GitFunc, dir, base, tree string, regions []string) (ScopeReport, error) {
-	out, err := git(ctx, dir, nil, "diff-tree", "-r", "-z", "--name-only", "--no-renames", "--end-of-options", base, tree)
+	// --name-status -z: every record is a status letter and then the path, each ended by a NUL. The output begins with a
+	// letter, so a runner that trims the text cannot take a leading space off the first path.
+	out, err := git(ctx, dir, nil, "diff-tree", "-r", "-z", "--name-status", "--no-renames", "--end-of-options", base, tree)
 	if err != nil {
 		return ScopeReport{}, err
 	}
 	rep := ScopeReport{Changed: []string{}, OutOfScope: []string{}}
-	for _, p := range strings.Split(out, "\x00") {
+	fields := strings.Split(out, "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		p := fields[i+1]
 		if p == "" {
 			continue
 		}
