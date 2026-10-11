@@ -10,9 +10,12 @@ import (
 )
 
 // commitAccepted is whether an acceptance was made by the commit path: a verification row and no forge row (CRW-965).
-// A store that predates the verification table has no commit acceptances, so it is answered without a query that
-// would fail on it.
+// An agent acceptance is one (CRW-1213): the verification record is in its row and no forge is involved. A store that
+// predates the verification table has no commit acceptances, so it is answered without a query that would fail on it.
 func commitAccepted(ctx context.Context, q store.Querier, acceptanceID string) (bool, error) {
+	if agent, found, err := loadAgentAcceptanceByID(ctx, q, acceptanceID); err != nil || found {
+		return found && agent.Head != "", err
+	}
 	var name string
 	exists, err := queryOne(ctx, q, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dag_acceptance_verifications'", nil, &name)
 	if err != nil || !exists {
@@ -34,25 +37,39 @@ func commitAccepted(ctx context.Context, q store.Querier, acceptanceID string) (
 // refs of the acceptance's own batches that moved the ref (a ref_moved row), and the ref of any of its batches that marked the
 // acceptance as already contained on it (a marked row, which moves no ref). A batch that failed before its move, and a planned
 // or abandoned intent, name no ref. The result is sorted and deduplicated, and nodeTargets and the observation both read it.
+//
+// An agent acceptance (CRW-1213) is read the same way from its own rows: the node-level intent in dag_agent_integration_stages is joined by
+// batch_id to the batch-level intent in dag_integration_stages (which every batch writes, agent-only or mixed), and the ref counts when that batch
+// moved the ref (a batch-level ref_moved row) or when the same acceptance has a marked row of the batch in dag_agent_integration_stages.
 func integrationRefsOf(ctx context.Context, q store.Querier, acceptanceID string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, "SELECT DISTINCT b.detail FROM dag_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.acceptance_id = ? AND c.stage = 'intent' AND c.node_id <> '' AND (EXISTS (SELECT 1 FROM dag_integration_stages m WHERE m.batch_id = c.batch_id AND m.stage = 'ref_moved') OR EXISTS (SELECT 1 FROM dag_integration_stages k WHERE k.batch_id = c.batch_id AND k.acceptance_id = c.acceptance_id AND k.stage = 'marked'))", acceptanceID)
-	if err != nil {
+	seen := map[string]bool{}
+	read := func(query string) error {
+		rows, err := q.QueryContext(ctx, query, acceptanceID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var detail string
+			if err := rows.Scan(&detail); err != nil {
+				return err
+			}
+			var d map[string]string
+			if json.Unmarshal([]byte(detail), &d) == nil && d["integration_ref"] != "" {
+				seen[d["integration_ref"]] = true
+			}
+		}
+		return rows.Err()
+	}
+	if err := read("SELECT DISTINCT b.detail FROM dag_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.acceptance_id = ? AND c.stage = 'intent' AND c.node_id <> '' AND (EXISTS (SELECT 1 FROM dag_integration_stages m WHERE m.batch_id = c.batch_id AND m.stage = 'ref_moved') OR EXISTS (SELECT 1 FROM dag_integration_stages k WHERE k.batch_id = c.batch_id AND k.acceptance_id = c.acceptance_id AND k.stage = 'marked'))"); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	seen := map[string]bool{}
-	for rows.Next() {
-		var detail string
-		if err := rows.Scan(&detail); err != nil {
+	if has, err := tableExists(ctx, q, "dag_agent_integration_stages"); err != nil {
+		return nil, err
+	} else if has {
+		if err := read("SELECT DISTINCT b.detail FROM dag_agent_integration_stages c JOIN dag_integration_stages b ON b.batch_id = c.batch_id AND b.stage = 'intent' AND b.node_id = '' WHERE c.acceptance_id = ? AND c.stage = 'intent' AND (EXISTS (SELECT 1 FROM dag_integration_stages m WHERE m.batch_id = c.batch_id AND m.stage = 'ref_moved') OR EXISTS (SELECT 1 FROM dag_agent_integration_stages k WHERE k.batch_id = c.batch_id AND k.acceptance_id = c.acceptance_id AND k.stage = 'marked'))"); err != nil {
 			return nil, err
 		}
-		var d map[string]string
-		if json.Unmarshal([]byte(detail), &d) == nil && d["integration_ref"] != "" {
-			seen[d["integration_ref"]] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	out := make([]string, 0, len(seen))
 	for ref := range seen {

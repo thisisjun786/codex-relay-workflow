@@ -1,6 +1,6 @@
 # Agent execution: the readers of the frozen tables
 
-An agent node (R04) is released on the agent surface of `dag-release` and its rows are in `dag_agent_executions` and `dag_agent_closures` (and, from R05, the agent acceptance and stage tables). Nothing of it is ever written into a frozen table (`dag_releases`, `dag_node_executions`, `dag_acceptances`, `dag_verified_heads`, `dag_integration_stages`, `dag_acceptance_premerge`, `dag_acceptance_verifications`), so a reader of those tables that answers a question about a NODE sees only the relationship side of it. This page classifies every such reader, so the issue that moves one to the union readers (`executionOf`, `releaseOf`, `acceptanceOf`, `agentIntegratedAt`, in `internal/relay/dagsched/agent_union.go`) has the list, and a reader that nobody classified fails a test.
+An agent node (R04) is released on the agent surface of `dag-release` and its rows are in `dag_agent_executions` and `dag_agent_closures` (and, from R05, `dag_agent_acceptances` and `dag_agent_integration_stages`). Nothing of it is ever written into a frozen table (`dag_releases`, `dag_node_executions`, `dag_acceptances`, `dag_verified_heads`, `dag_integration_stages`, `dag_acceptance_premerge`, `dag_acceptance_verifications`), so a reader of those tables that answers a question about a NODE sees only the relationship side of it. This page classifies every such reader, so the issue that moves one to the union readers (`executionOf`, `releaseOf`, `acceptanceOf`, `agentIntegratedAt`, in `internal/relay/dagsched/agent_union.go`) has the list, and a reader that nobody classified fails a test.
 
 ## The set
 
@@ -31,6 +31,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/childcleanup/command.go` | `caller` | `R06` | n/a | the cleanup command runs the gate of gate.go through Execute |
 | `internal/relay/childcleanup/gate.go` | `relationship-scoped` | `R06` | n/a | asks ExecutionIntegrated of a relationship's merged mark, not of a node |
 | `internal/relay/dagsched/accept.go` | `agent-writer` | `R05` | n/a | dag-accept: the agent path reads the current agent execution and writes the agent acceptance row |
+| `internal/relay/dagsched/accept_agent.go` | `agent-writer` | `R05` | n/a | the agent path of dag-accept: the reviewer verdict and the author pairs of the run (flow_calls), the commit proof read from git, the pre-merge and verification bodies stored in the agent acceptance row |
 | `internal/relay/dagsched/accept_commit.go` | `relationship-scoped` | `R06` | n/a | the commit acceptance of a relationship; agents use accept_agent |
 | `internal/relay/dagsched/accept_premerge.go` | `relationship-scoped` | `R06` | n/a | the pre-merge record of a relationship's acceptance; the agent body is judged by the same function and stored in the agent row |
 | `internal/relay/dagsched/accept_refresh.go` | `node-scoped-acceptance` | `R06` | no | the proof dag-accept records for a head a ruling verified |

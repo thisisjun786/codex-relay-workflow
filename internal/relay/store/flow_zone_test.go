@@ -22,6 +22,8 @@ import (
 var (
 	flowTables  = []string{"flow_runs", "flow_calls", "flow_events", "flow_spawn_decisions", "flow_step_decisions"}
 	agentTables = []string{"dag_agent_executions", "dag_agent_closures"}
+	// CRW-1213: the agent acceptance chain and the node-level stages of an agent acceptance, appended after the agent execution tables.
+	acceptTables = []string{"dag_agent_acceptances", "dag_agent_integration_stages"}
 )
 
 func flowRunRow(id string) string {
@@ -301,7 +303,7 @@ func TestZoneShippedSnapshot(t *testing.T) {
 	live := zoneObjects(t, path)
 	shipped := zoneShipped(t)
 	var want []string
-	for _, table := range append(slices.Clone(flowTables), agentTables...) {
+	for _, table := range slices.Concat(flowTables, agentTables, acceptTables) {
 		want = append(want, "table "+table, "trigger "+table+"_no_update", "trigger "+table+"_no_delete")
 		for _, g := range zoneKeyGuardsOf(table) {
 			want = append(want, "trigger "+g.name())
@@ -309,11 +311,13 @@ func TestZoneShippedSnapshot(t *testing.T) {
 		want = append(want, "trigger "+table+"_rowid_guard", "trigger "+table+"_rowid_minus1_mark_guard", "trigger "+table+"_rowid_minus1_guard")
 	}
 	for _, g := range zoneNullKeyGuards {
-		if slices.Contains(flowTables, g.table) || slices.Contains(agentTables, g.table) {
+		if slices.Contains(flowTables, g.table) || slices.Contains(agentTables, g.table) || slices.Contains(acceptTables, g.table) {
 			want = append(want, "trigger "+g.insertTrigger())
 		}
 	}
-	want = append(want, "index dag_agent_executions_node", "index dag_agent_executions_root", "index dag_agent_executions_successor", "trigger dag_agent_executions_chain_check")
+	want = append(want, "index dag_agent_executions_node", "index dag_agent_executions_root", "index dag_agent_executions_successor", "trigger dag_agent_executions_chain_check",
+		"index dag_agent_acceptances_node", "index dag_agent_acceptances_root", "index dag_agent_acceptances_successor", "trigger dag_agent_acceptances_execution_check", "trigger dag_agent_acceptances_chain_check",
+		"index dag_agent_integration_stages_batch", "index dag_agent_integration_stages_acceptance", "trigger dag_agent_integration_stages_acceptance_check")
 	for _, key := range want {
 		text, ok := shipped[key]
 		if !ok {

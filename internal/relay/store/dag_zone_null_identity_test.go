@@ -73,6 +73,9 @@ var zoneNullKeyGuards = []nullKeyGuard{
 	{table: "flow_step_decisions", bornGuarded: true, key: "step_id", emptyRefused: true},
 	{table: "dag_agent_executions", bornGuarded: true, key: "execution_id", emptyRefused: true, overrides: map[string]string{"kind": "'initial'"}},
 	{table: "dag_agent_closures", bornGuarded: true, key: "subject_id", emptyRefused: true, overrides: map[string]string{"subject_kind": "'execution'", "state": "'cancelled'"}},
+	// CRW-1213: the agent acceptance and integration stage rows.
+	{table: "dag_agent_acceptances", bornGuarded: true, key: "acceptance_id", emptyRefused: true},
+	{table: "dag_agent_integration_stages", bornGuarded: true, key: "stage_id", emptyRefused: true, overrides: map[string]string{"stage": "'intent'"}},
 }
 
 // zoneFillerDB is a raw connection to path with the CHECK constraints ignored, so a test writes a row

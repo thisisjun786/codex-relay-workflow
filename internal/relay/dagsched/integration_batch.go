@@ -62,9 +62,11 @@ type IntegrationBatchInput struct {
 	RetryNotProven bool
 }
 
-// IntegrationBatchMerged is one candidate the batch merged onto the branch.
+// IntegrationBatchMerged is one candidate the batch merged onto the branch. ExecutionKind names the kind of execution the candidate's acceptance stands on in the batch row (merged_json) when it is not a
+// relationship's: "agent" (CRW-1213). A relationship candidate keeps the entry it always had.
 type IntegrationBatchMerged struct {
 	NodeID, AcceptanceID, HeadSHA, MergeCommit string
+	ExecutionKind                              string `json:"execution_kind,omitempty"`
 }
 
 // IntegrationBatchSplit is one candidate the batch left out, with the reason it is returned to its parent.
@@ -147,6 +149,10 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	batch := integrationBatchID(in, old, candidates)
 	out.BatchID = batch
+	// the batch that freezes an agent candidate is the batch its merged mark is a row of
+	for i := range candidates {
+		candidates[i].BatchID = batch
+	}
 	if err := s.recordIntent(ctx, in, batch, old, baseTip, candidates); err != nil {
 		return out, err
 	}
@@ -204,7 +210,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	out.Split = append(out.Split, settled.split...)
 	for _, m := range settled.merged {
-		out.Merged = append(out.Merged, IntegrationBatchMerged{NodeID: m.NodeID, AcceptanceID: m.AcceptanceID, HeadSHA: m.HeadSHA, MergeCommit: m.MergeCommit})
+		out.Merged = append(out.Merged, IntegrationBatchMerged{NodeID: m.NodeID, AcceptanceID: m.AcceptanceID, HeadSHA: m.HeadSHA, MergeCommit: m.MergeCommit, ExecutionKind: m.ExecutionKind})
 	}
 	if len(settled.merged) == 0 {
 		out.NewHead = old
@@ -230,6 +236,20 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 				}
 				if !current {
 					return refuse(contract.RefusalMergeCandidateMoved, "candidate %s (acceptance %s) is no longer current after the verification of %s: the branch did not move, and the next batch freezes again without it", m.NodeID, m.AcceptanceID, in.IntegrationRef)
+				}
+				if m.ExecutionKind == ExecutionAgent {
+					// the owner of an agent node is the orchestrator that holds its current execution, and a handover keeps the acceptance standing: the actor is proved again here, so a batch of an orchestrator that
+					// lost the node while the merged tree was being verified does not move the branch (CRW-1213)
+					cur, live, err := executionOf(txCtx, s.Store.Q(txCtx), in.Plan, m.NodeID)
+					if err != nil {
+						return err
+					}
+					if !live || cur.Kind != ExecutionAgent {
+						return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to integrate", m.NodeID)
+					}
+					if cur.Agent.Actor != in.Actor {
+						return notOrchestrator(in.Actor, cur.Agent)
+					}
 				}
 			}
 			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
@@ -329,6 +349,20 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 		}
 	}
 	for _, c := range pick {
+		if c.ExecutionKind == ExecutionAgent {
+			// a parent integrates its own nodes only, and the owner of an agent node is the orchestrator that holds its current execution (also after a handover)
+			cur, live, err := executionOf(ctx, s.Store.Q(ctx), in.Plan, c.NodeID)
+			if err != nil {
+				return nil, err
+			}
+			if !live || cur.Kind != ExecutionAgent {
+				return nil, refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to integrate", c.NodeID)
+			}
+			if cur.Agent.Actor != in.Actor {
+				return nil, notOrchestrator(in.Actor, cur.Agent)
+			}
+			continue
+		}
 		rel, found, err := currentRelationshipOf(ctx, s.Store.Q(ctx), in.Plan, c.NodeID)
 		if err != nil {
 			return nil, err
@@ -389,7 +423,16 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 		}
 		for _, c := range candidates {
 			// each frozen row names the criteria set the batch verifies the candidate under (CRW-965, parent decision d2)
-			if err := s.stageRow(txCtx, in, batch, "intent", c, c.CriteriaSetDigest); err != nil {
+			frozen := c.CriteriaSetDigest
+			if c.ExecutionKind == ExecutionAgent {
+				// an agent row also names how far the acceptance's observations of this target went when the batch froze it: an observation up to that point was made before this batch could land
+				// the head, so this batch's merge commit is never its landed_sha (agentLandedSHA; CRW-1213, evaluation d4)
+				var ierr error
+				if frozen, ierr = agentIntentDetail(txCtx, s.Store.Q(txCtx), c, in.Checkout, in.IntegrationRef); ierr != nil {
+					return ierr
+				}
+			}
+			if err := s.stageRow(txCtx, in, batch, "intent", c, frozen); err != nil {
 				return err
 			}
 		}
@@ -401,6 +444,10 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 
 // recordMark writes one node's mark outcome: marked with the event it named, or mark_pending with the refusal.
 func (s *Scheduler) recordMark(ctx context.Context, in IntegrationBatchInput, batch string, c Candidate, stage, detail string) error {
+	if c.ExecutionKind == ExecutionAgent && stage == "marked" {
+		// the marked row of an agent candidate is written by MarkFrozen, in the transaction that proves the candidate current (the merged mark is that row)
+		return nil
+	}
 	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
 		return s.stageRow(txCtx, in, batch, stage, c, detail)
 	})
@@ -408,6 +455,12 @@ func (s *Scheduler) recordMark(ctx context.Context, in IntegrationBatchInput, ba
 
 // stageRow appends one stage row. A batch-level row carries no node; a node row carries the frozen identity.
 func (s *Scheduler) stageRow(ctx context.Context, in IntegrationBatchInput, batch, stage string, c Candidate, detail string) error {
+	if c.ExecutionKind == ExecutionAgent {
+		// the node-level rows of an agent candidate are rows of the agent stage table; the batch-level rows stay in dag_integration_stages
+		_, err := store.RecordAgentIntegrationStage(ctx, s.Store, store.AgentIntegrationStageRow{StageID: agentStageID(batch, stage, c.NodeID, detail), BatchID: batch, PlanID: in.Plan,
+			NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, ExecutionID: c.ExecutionID, Stage: stage, Head: c.HeadSHA, Detail: detail, RecordedBy: in.Actor, RecordedAt: registry.SystemISO()})
+		return err
+	}
 	stageID := registry.CoordinationID("dis", batch, stage, c.NodeID, detail)
 	return store.RecordIntegrationStage(ctx, s.Store, store.IntegrationStageRow{StageID: stageID, BatchID: batch, PlanID: in.Plan, Stage: stage,
 		NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, EventID: c.EventID, RevisionHash: c.RevisionHash, Generation: c.Generation,
@@ -416,10 +469,23 @@ func (s *Scheduler) stageRow(ctx context.Context, in IntegrationBatchInput, batc
 
 // completePendingMarks completes the marks earlier batches left pending. A pending mark is completed only when its
 // batch's merge commit is on the integration branch now, from the frozen candidate; a mark already present counts as done.
+// The node-level rows of an agent candidate are rows of dag_agent_integration_stages and are completed the same way (CRW-1213).
 func (s *Scheduler) completePendingMarks(ctx context.Context, in IntegrationBatchInput) error {
-	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	batchRows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
 	if err != nil {
 		return err
+	}
+	agentRows, err := store.AgentIntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return err
+	}
+	rows := make([]stageView, 0, len(batchRows)+len(agentRows))
+	for _, r := range batchRows {
+		rows = append(rows, stageView{IntegrationStageRow: r})
+	}
+	for _, r := range agentRows {
+		rows = append(rows, stageView{IntegrationStageRow: store.IntegrationStageRow{StageID: r.StageID, BatchID: r.BatchID, PlanID: r.PlanID, Stage: r.Stage, NodeID: r.NodeID,
+			AcceptanceID: r.AcceptanceID, HeadSHA: r.Head, Detail: r.Detail, RecordedBy: r.RecordedBy, RecordedAt: r.RecordedAt}, ExecutionID: r.ExecutionID, agent: true})
 	}
 	done := map[string]bool{}
 	for _, r := range rows {
@@ -446,6 +512,9 @@ func (s *Scheduler) completePendingMarks(ctx context.Context, in IntegrationBatc
 		}
 		c := Candidate{PlanID: in.Plan, NodeID: r.NodeID, AcceptanceID: r.AcceptanceID, EventID: r.EventID, RevisionHash: r.RevisionHash,
 			Generation: r.Generation, HeadSHA: r.HeadSHA}
+		if r.agent {
+			c.ExecutionKind, c.ExecutionID, c.BatchID = ExecutionAgent, r.ExecutionID, r.BatchID
+		}
 		event, err := s.MarkFrozen(ctx, c, in.Actor, r.BatchID)
 		if err != nil {
 			continue
@@ -455,6 +524,14 @@ func (s *Scheduler) completePendingMarks(ctx context.Context, in IntegrationBatc
 		}
 	}
 	return nil
+}
+
+// stageView is a stage row of either table: the batch-level and relationship rows of dag_integration_stages, and the node-level rows of an agent acceptance (agent set, ExecutionID filled; the relationship
+// columns are empty).
+type stageView struct {
+	store.IntegrationStageRow
+	ExecutionID string
+	agent       bool
 }
 
 // settleCandidates merges, verifies and settles the candidates in a temporary worktree, removed on every path.
@@ -1132,6 +1209,15 @@ func (s *Scheduler) markContained(ctx context.Context, in IntegrationBatchInput,
 			prior[r.NodeID] = r.Detail
 		}
 	}
+	agentRows, err := store.AgentIntegrationStagesOfPlan(ctx, s.Store, in.Plan)
+	if err != nil {
+		return err
+	}
+	for _, r := range agentRows {
+		if r.BatchID == batch && r.Stage == "marked" {
+			prior[r.NodeID] = r.StageID
+		}
+	}
 	for _, c := range candidates {
 		row := IntegrationBatchContained{NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, HeadSHA: c.HeadSHA, ContainedIn: tip}
 		if event, done := prior[c.NodeID]; done {
@@ -1290,6 +1376,11 @@ func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchI
 		return err
 	}
 	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+		// the same verified head recorded again (the earlier run of this batch was refused after its verification, and the run that takes it over verifies the same tree) is the same fact, the same row
+		var one int
+		if exists, err := queryOne(txCtx, s.Store.Q(txCtx), "SELECT 1 FROM dag_integration_stages WHERE stage_id = ?", []any{registry.CoordinationID("dis", batch, "intent", "", string(detail))}, &one); err != nil || exists {
+			return err
+		}
 		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, string(detail))
 	})
 }

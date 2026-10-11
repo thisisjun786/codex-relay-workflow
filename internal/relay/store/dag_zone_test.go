@@ -97,6 +97,9 @@ var zoneInventory = map[string][]string{
 	"flow_step_decisions":  {"step_id", "run_id", "node_id", "from_tier", "to_tier", "rule_id", "evidence_json", "checkpoint_head", "checkpoint_tree", "decided_at"},
 	"dag_agent_executions": {"execution_id", "plan_id", "node_id", "attempt", "kind", "manifest_digest", "role", "tier", "author_model", "author_effort", "thread_id", "worktree", "base_sha", "run_id", "actor_task_id", "coordinator_epoch", "decided_at", "supersedes_execution_id"},
 	"dag_agent_closures":   {"subject_kind", "subject_id", "state", "slot_released", "actor_task_id", "coordinator_epoch", "reason", "closed_at"},
+	// CRW-1213 (appended statements): the agent acceptance rows and the node-level integration stages of an agent acceptance.
+	"dag_agent_acceptances":        {"acceptance_id", "plan_id", "node_id", "manifest_digest", "execution_id", "head", "base", "repository", "premerge_digest", "premerge_json", "premerge_evaluated_head", "verification_digest", "verification_json", "tree_sha", "criteria_set_digest", "reviewer_call_id", "reviewer_thread_id", "reviewer_turn_id", "reviewer_model", "reviewer_effort", "author_pairs_digest", "accepted_by_task_id", "coordinator_epoch", "accepted_at", "supersedes_acceptance_id"},
+	"dag_agent_integration_stages": {"stage_id", "batch_id", "plan_id", "node_id", "acceptance_id", "execution_id", "stage", "head", "detail", "recorded_by", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

@@ -179,6 +179,12 @@ var zoneKeyGuards = []keyGuard{
 	{table: "dag_agent_executions", suffix: "root_key", cols: []string{"plan_id", "node_id"}, where: "supersedes_execution_id IS NULL", newWhere: "NEW.supersedes_execution_id IS NULL", whereCols: []string{"supersedes_execution_id"}},
 	{table: "dag_agent_executions", suffix: "successor_key", cols: []string{"supersedes_execution_id"}, where: "supersedes_execution_id IS NOT NULL", newWhere: "NEW.supersedes_execution_id IS NOT NULL", whereCols: []string{"supersedes_execution_id"}},
 	{table: "dag_agent_closures", suffix: "pk", cols: []string{"subject_kind", "subject_id"}},
+	// CRW-1213: the agent acceptance chain has the same two partial keys as the execution chain, and the UNIQUE (execution_id, head, criteria_set_digest) of the shipped sentence; the stage rows have a primary key only.
+	{table: "dag_agent_acceptances", suffix: "pk", cols: []string{"acceptance_id"}},
+	{table: "dag_agent_acceptances", suffix: "effect_key", cols: []string{"execution_id", "head", "criteria_set_digest"}},
+	{table: "dag_agent_acceptances", suffix: "root_key", cols: []string{"plan_id", "node_id"}, where: "supersedes_acceptance_id IS NULL", newWhere: "NEW.supersedes_acceptance_id IS NULL", whereCols: []string{"supersedes_acceptance_id"}},
+	{table: "dag_agent_acceptances", suffix: "successor_key", cols: []string{"supersedes_acceptance_id"}, where: "supersedes_acceptance_id IS NOT NULL", newWhere: "NEW.supersedes_acceptance_id IS NOT NULL", whereCols: []string{"supersedes_acceptance_id"}},
+	{table: "dag_agent_integration_stages", suffix: "pk", cols: []string{"stage_id"}},
 }
 
 // zoneKeyGuardExempt are the unique keys of the guarded tables that have no guard, with the reason. The unique
@@ -303,6 +309,10 @@ var zoneKeyScenarios = map[string][]keyScenario{
 		{base: map[string]string{"supersedes_execution_id": "NULL"}, fixed: []string{"supersedes_execution_id"}},
 		{base: map[string]string{"supersedes_execution_id": "'b-predecessor'"}, fixed: []string{"supersedes_execution_id"}},
 	},
+	"dag_agent_acceptances": {
+		{base: map[string]string{"supersedes_acceptance_id": "NULL"}, fixed: []string{"supersedes_acceptance_id"}},
+		{base: map[string]string{"supersedes_acceptance_id": "'b-predecessor'"}, fixed: []string{"supersedes_acceptance_id"}},
+	},
 	"dag_summary_outbox": {
 		// the stream's first entry is open
 		{base: map[string]string{"state": "'pending'", "attempts": "0", "plan_revision": "1"}, other: map[string]string{"seq": "2"},
@@ -335,6 +345,12 @@ func (s keyScenario) value(column zoneColumn, other bool) string {
 }
 
 // zoneKeyColumns is every column that is part of a key of table or of the WHERE of a partial key.
+// zoneKeyParents are the tables whose placeholder rows a table's value checks read.
+var zoneKeyParents = map[string][]string{
+	"dag_agent_acceptances":        {"dag_agent_executions"},
+	"dag_agent_integration_stages": {"dag_agent_acceptances"},
+}
+
 func zoneKeyColumns(table string) []string {
 	var out []string
 	for _, g := range zoneKeyGuardsOf(table) {
@@ -387,6 +403,11 @@ func zoneScenarioFor(table string, variant int) keyScenario {
 // zoneSeedKeyRow stores the scenario's base row of table and applies its settle statements. The scenario's
 func zoneSeedKeyRow(t *testing.T, db *sql.DB, table string, s keyScenario) []zoneColumn {
 	t.Helper()
+	// the rows an earlier table of the test left under a placeholder id are the parents a value check of this table reads (dag_agent_acceptances_execution_check, dag_agent_integration_stages_acceptance_check): a row
+	// of another placeholder plan would be refused by the check and not by the key under test
+	for _, parent := range zoneKeyParents[table] {
+		clearTable(t, db, parent)
+	}
 	clearTable(t, db, table)
 	columns := zoneTableColumns(t, db, table)
 	var all []string
@@ -402,6 +423,10 @@ func zoneSeedKeyRow(t *testing.T, db *sql.DB, table string, s keyScenario) []zon
 // skipAgentChainVariant is whether a scenario of dag_agent_executions is outside the key g covers: a row with no predecessor is not in the successor key, a row with one is not in the root key, and the
 // primary key is repeated alone by the rows without a predecessor (a row that repeats a predecessor too is refused by the successor key first, which SQLite checks before the primary key).
 func skipAgentChainVariant(g keyGuard, variant int) bool {
+	if g.table == "dag_agent_acceptances" {
+		// the same chain rule, with the effect key as one more key the rows with a predecessor repeat alone only when the successor key does not fire first
+		return g.suffix == "root_key" && variant == 1 || g.suffix == "successor_key" && variant == 0 || (g.suffix == "pk" || g.suffix == "effect_key") && variant == 1
+	}
 	return g.table == "dag_agent_executions" && (g.suffix == "root_key" && variant == 1 || g.suffix == "successor_key" && variant == 0 || g.suffix == "pk" && variant == 1)
 }
 

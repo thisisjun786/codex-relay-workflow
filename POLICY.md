@@ -203,6 +203,17 @@ verification, and fast-forwards `dev` to it. A risky or urgent change goes alone
 removes or fixes the cause and what depends on it and re-verifies the changed tree; when the
 destination moves, only the invalidated evidence is refreshed.
 
+Each candidate of a DAG plan is integrated by the owner of its own plan: the project parent that holds the
+execution edge of the node, and for a node run by an agent the orchestrator that holds the node's current
+execution, also after a handover. The check that a parent integrates only its own nodes applies to both kinds,
+and no task has authority over another plan's candidates. Integrations into one target are serialized by the
+compare-and-swap of the ref move, not by a standing integrator or a lease: the integration branch moves, and a
+push succeeds, only while the tip is still the base the candidate was verified on. A candidate whose base moved
+is merged again onto the new tip and verified again, and only that verification lets it land; a branch that
+points at a tree the relay did not verify and move it onto is never pushed. How many full verifications run at
+once on a host is bounded by its heavy-check gate (`heavy_slot.sh`), so a repeated verification of the same
+tree costs time and no correctness.
+
 The relay still carries the PR path it was built with — a merge lane, a merge train and
 `merge-evidence` — and that path is unchanged by this policy. While it runs, its lane is the
 installed tool's route, not the repository's integration rule; where the collector or the lane
