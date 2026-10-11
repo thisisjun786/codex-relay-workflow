@@ -67,7 +67,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/dagsched/mergeorder_derive.go` | `node-scoped-release` | `R06` | yes | the merge order among the nodes that hold a release or an execution of either side; an agent node is in the lane by its accepted head and never has a turn |
 | `internal/relay/dagsched/nodestate.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | yes | the derived state of a node (stateOf) from the current execution and acceptance of either side |
 | `internal/relay/dagsched/optimism.go` | `node-scoped-acceptance` | `R06` | yes | local-optimistic release reads the landings of both sides |
-| `internal/relay/dagsched/outbox.go` | `caller` | `R06` | n/a | the summary outbox calls Scheduler.Progress |
+| `internal/relay/dagsched/outbox.go` | `node-scoped-acceptance` | `R06` | yes | the summary outbox calls Scheduler.Progress and reads an issue's integration batch from the stage rows of the acceptance of either side (acceptanceOf's id); the surface of a node is executionOf's |
 | `internal/relay/dagsched/outbox_cli.go` | `caller` | `R06` | n/a | dag-summary commands: call EnqueueSummary and SummaryStatus (outbox.go) |
 | `internal/relay/dagsched/pass.go` | `caller` | `R06` | n/a | a dag-ready pass calls Scheduler.Ready (ready.go) |
 | `internal/relay/dagsched/policy_cli.go` | `caller` | `R06` | n/a | dag-landing-result-record: calls RecordLandingResult |
@@ -85,6 +85,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/delivery/ack.go` | `relationship-scoped` | `R06` | n/a | delivery acknowledgement records the verified head of a relationship |
 | `internal/relay/delivery/cli.go` | `caller` | `R06` | n/a | delivery commands call Ack.RecordVerdict (ack.go) and the receive path |
 | `internal/relay/delivery/receive.go` | `caller` | `R06` | n/a | a received verdict is recorded through PreparedVerdict.Record (ack.go) |
+| `internal/relay/delivery/sync.go` | `relationship-scoped` | `R06` | n/a | asks whether a plan runs the relationship (a dag_node_executions row of that relationship) to skip the sync_outbox row of its verdict; the summary outbox carries it |
 | `internal/relay/integrate/cli.go` | `caller` | `R05,R06` | n/a | dag-integrate and its readers call Scheduler.IntegrateBatch (integration_batch.go, R05), StaleIntegratedNodes (integration_stale.go) and VerifiedMoveOnto (integration_push.go) |
 | `internal/relay/mergeturn/check.go` | `relationship-scoped` | `R06` | n/a | the merge turn refuses an under-correction relationship |
 | `internal/relay/mergeturn/commands.go` | `caller` | `R06` | n/a | the merge-turn commands call Service.Check, Land, Open, TrainLand and Verify |
