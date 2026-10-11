@@ -221,16 +221,12 @@ func (s *Scheduler) AgentClose(ctx context.Context, plan, node, actor string, in
 		}
 		out.RevokedAcceptance = ""
 		if revoke != nil {
-			if revoke.Head != "" {
-				snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
-				if err != nil {
-					return err
-				}
-				if landed, _, err := s.agentNodeIntegrated(txCtx, tx, snap, *revoke); err != nil {
-					return err
-				} else if landed {
-					return refuse(contract.RefusalDispositionConflict, "%s landed (its accepted head %s is contained in every target it lands on): a node that landed is not given up, its value is in the target", node, short(revoke.Head))
-				}
+			snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+			if err != nil {
+				return err
+			}
+			if err := s.agentLandingRefusal(txCtx, tx, snap, node, *revoke, "given up"); err != nil {
+				return err
 			}
 			out.RevokedAcceptance = revoke.AcceptanceID
 		}
@@ -275,12 +271,8 @@ type AgentCorrectResult struct {
 
 // agentCorrectionRoute is the refusal of a correction that is not owed: the node is not stale, its result landed, or its route is not agent_correction. It reads the node as the snapshot holds it.
 func (s *Scheduler) agentCorrectionRoute(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, acc AgentAcceptance) (*Stale, error) {
-	if acc.Head != "" {
-		if landed, _, err := s.agentNodeIntegrated(ctx, q, snap, acc); err != nil {
-			return nil, err
-		} else if landed {
-			return nil, refuse(contract.RefusalDispositionConflict, "%s landed (its accepted head %s is contained in every target it lands on): a node that landed is never run again, so no correction attempt is released for it; what changed above it is carried by a successor node of a new plan revision (contract 8.4, E-20)", n.NodeID, short(acc.Head))
-		}
+	if err := s.agentLandingRefusal(ctx, q, snap, n.NodeID, acc, "run again"); err != nil {
+		return nil, err
 	}
 	ctx, _ = memoFor(ctx, plan, snap)
 	st, err := s.staleOf(ctx, q, plan, snap, n)
@@ -306,6 +298,9 @@ func (s *Scheduler) agentCorrectionRoute(ctx context.Context, q store.Querier, p
 func (s *Scheduler) judgeCorrection(ctx context.Context, q store.Querier, plan, node, actor string, req ReleaseRequest) (releaseJudgement, error) {
 	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
+		return releaseJudgement{}, err
+	}
+	if err := s.correctionAdmission(ctx, q, plan, snap, n, true); err != nil {
 		return releaseJudgement{}, err
 	}
 	var base *BaseRef
@@ -510,6 +505,12 @@ func (s *Scheduler) AgentCorrect(ctx context.Context, plan, node, actor string, 
 			stash = refused
 			return nil
 		}
+		if refused, err := asRefusal(s.correctionAdmission(txCtx, tx, plan, snap, n, false)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
+			return nil
+		}
 		if err := releaseGate(txCtx, tx, plan, node, j.digest); err != nil {
 			if refused, ferr := asRefusal(err); ferr != nil {
 				return ferr
@@ -598,8 +599,9 @@ func agentWorkOf(ctx context.Context, q store.Querier, cur AgentExecution) ([]st
 	return ids, nil
 }
 
-// agentCallHeld is whether the newest call row of the work the execution holds says the run does not know where it stands: the call ended held or with an unknown outcome (a dispatch whose answer never came, a
-// host failure), or never ended. The journal of a store that has none holds nothing.
+// agentCallHeld is whether a call of the work the execution holds is unresolved: its newest event (the row of the greatest event_seq of that call) is neither terminal nor a refusal, so the run does not know where
+// the call stands (a dispatch whose answer never came, a host failure, a turn requested and never ended). Calls are judged one by one: the completion of another call, of the same execution or of the one a
+// handover continues, says nothing of an unresolved one, which stays until a later event of its own settles it. The journal of a store that has none holds nothing.
 func agentCallHeld(ctx context.Context, q store.Querier, plan, node string, cur AgentExecution) (bool, error) {
 	has, err := tableExists(ctx, q, "flow_calls")
 	if err != nil || !has {
@@ -613,16 +615,24 @@ func agentCallHeld(ctx context.Context, q store.Querier, plan, node string, cur 
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	var event string
-	found, err := queryOne(ctx, q, "SELECT event FROM flow_calls WHERE kind = 'agent' AND plan_id = ? AND node_id = ? AND execution_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+") ORDER BY rowid DESC LIMIT 1", args, &event)
-	if err != nil || !found {
+	rows, err := q.QueryContext(ctx, "SELECT c.event FROM flow_calls c WHERE c.kind = 'agent' AND c.plan_id = ? AND c.node_id = ? AND c.execution_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+")"+
+		" AND c.event_seq = (SELECT MAX(l.event_seq) FROM flow_calls l WHERE l.call_id = c.call_id)", args...)
+	if err != nil {
 		return false, err
 	}
-	switch event {
-	case "completed", "null_model", "refused", "superseded":
-		return false, nil
+	defer rows.Close()
+	for rows.Next() {
+		var event string
+		if err := rows.Scan(&event); err != nil {
+			return false, err
+		}
+		switch event {
+		case "completed", "null_model", "refused", "superseded":
+		default:
+			return true, nil
+		}
 	}
-	return true, nil
+	return false, rows.Err()
 }
 
 // resumeOfAgent fills the report of a node whose current execution is an agent execution and answers whether it did (a node of the relationship side is the caller's). The state is released (the execution
@@ -682,7 +692,7 @@ func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, ac
 		out.ResumeDetail = "run dag-adopt: execution " + cur.ExecutionID + " is held by " + cur.Actor + " and the actor is the registered parent that replaced it; then " + action
 	case a.State == AgentStateHeld:
 		a.Action = action
-		out.Resume, out.ResumeDetail = ResumeReconcile, "the newest call of execution "+cur.ExecutionID+" ended held or with an unknown outcome: settle it with "+action+" and never call it again"
+		out.Resume, out.ResumeDetail = ResumeReconcile, "a call of execution "+cur.ExecutionID+" is unresolved (it ended held or with an unknown outcome, or never ended): settle it with "+action+" and never call it again"
 	default:
 		a.Action = action
 		out.Resume, out.ResumeDetail = ResumeAdopt, "this actor holds execution "+cur.ExecutionID+": "+action

@@ -747,3 +747,134 @@ func TestRestartReportsStaleAgentNodes(t *testing.T) {
 		t.Fatalf("restart does not report %v", want)
 	}
 }
+
+// ---- the correction round of the pre-merge evaluation (08a9d2b1): d1, d2, d3 ----
+
+// IntegrateBatch moves the target and records the move before ObserveIntegration reads it. A close or a correction in that interval would revoke or supersede an acceptance whose head is already in the
+// target (and ObserveIntegration needs the acceptance to stay current to finish the landing): both are refused until an observation settles the landing.
+func TestAgentCloseAndCorrectKeepAMovedUnobservedLanding(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	spec := agentSpec{name: "a", files: fileOf("a")}
+	k := newAgentKit(t, spec)
+	k.acceptAll(spec)
+	if res, err := k.integrate(t); err != nil || len(res.Merged) != 1 {
+		t.Fatalf("batch: %+v, %v", res, err)
+	}
+	before := allRows(t, k.s.DB)
+	_, err := k.sched.AgentClose(ctx, "g", "a", "parent", AgentCloseInput{Reason: AgentReasonFlowCancel})
+	wantAgentRefusal(t, "closing a node whose head moved into the target and was not observed", err, contract.RefusalDispositionConflict, "observe")
+	if !equalRows(before, allRows(t, k.s.DB)) {
+		t.Fatal("a refused close changed the store")
+	}
+	k.reviseNode("a", func(n doc) { n["title"] = "a, redefined" })
+	wt, _ := k.reworked("a")
+	_, err = k.sched.AgentCorrect(ctx, "g", "a", "parent", k.agentRequest(true), AgentReleaseOptions{RunID: "run-2", Worktree: wt})
+	wantAgentRefusal(t, "correcting a node whose head moved into the target and was not observed", err, contract.RefusalDispositionConflict, "observe")
+	if k.count("SELECT COUNT(*) FROM dag_agent_closures") != 0 {
+		t.Fatal("a refused close or correction wrote a closure")
+	}
+	if k.rowsOfKind("a", AgentCorrection) != 0 {
+		t.Fatal("a refused correction wrote an execution")
+	}
+	// the observation settles it: the landing finishes on the acceptance that was kept
+	if obs, err := k.observe("a"); err != nil || !obs.Integrated {
+		t.Fatalf("observe after the refused close: %+v, %v", obs, err)
+	}
+}
+
+// A landing that was lost (the target no longer holds the head and an observation made after the batch says so) is no landing: the node is given up as before.
+func TestAgentCloseAfterALostLandingIsAllowed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	spec := agentSpec{name: "a", files: fileOf("a")}
+	k := newAgentKit(t, spec)
+	k.acceptAll(spec)
+	if _, err := k.integrate(t); err != nil {
+		t.Fatal(err)
+	}
+	k.repo.git("branch", "-f", "dev-int", k.base)
+	if obs, err := k.observe("a"); err != nil || obs.Integrated {
+		t.Fatalf("observe after the target lost the head: %+v, %v", obs, err)
+	}
+	res, err := k.sched.AgentClose(ctx, "g", "a", "parent", AgentCloseInput{Reason: AgentReasonFlowCancel})
+	if err != nil || !res.Closed || res.RevokedAcceptance == "" {
+		t.Fatalf("close after a lost landing = %+v, %v", res, err)
+	}
+}
+
+// An agent correction is admitted as a release is: a host short of memory holds it, and so does a merge turn that moves a branch the node builds on.
+func TestAgentCorrectKeepsTheReleaseAdmission(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	k := newAgentKit(t, agentSpec{name: "doc", nonPR: true, unreleased: true})
+	k.release("doc")
+	k.record(journalCall{role: "architect", node: "doc", model: authorModel})
+	k.record(journalCall{role: "reviewer", node: "doc", model: reviewerModel, verdict: "verified", criteria: releaseCriteriaDigest()})
+	if _, err := k.sched.Accept(ctx, "g", "doc", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"}}); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	k.reviseNodeKind("doc", dag.NodeNonPR, func(n doc) { n["title"] = "doc, redefined" })
+
+	k.sched.Host = hostBound(shortHosts[0].sample)
+	if _, err := k.sched.AgentCorrect(ctx, "g", "doc", "parent", k.agentRequest(false), AgentReleaseOptions{}); refusalReason(err) != string(contract.RefusalCapacityExhausted) {
+		t.Fatalf("correction on a host short of memory = %v, want capacity_exhausted", err)
+	}
+	if len(k.closures()) != 0 || k.rowsOfKind("doc", AgentCorrection) != 0 {
+		t.Fatalf("a refused correction wrote closures %v or a row", k.closures())
+	}
+
+	// a merge turn that moves the branch an incoming edge of the node targets
+	k.sched.Host = nil
+	k.putPlan("g", int(k.snapshot("g").Revision), "g-r-edge", addRelNode("up", dag.NodeImplementation), addEdge("e-up", "up", "doc", dag.EdgeIntegrated, doc{"target_repository": k.repo.path, "target_base_ref": "dev"}))
+	k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, pr_number, candidate_head, state, tenure, requested_at, updated_at)"+
+		" VALUES ('mtn-moving', 'tgt', ?, 'dev', 'P-TEST', 'parent', 'host', NULL, NULL, 'x', 'merging', 1, 't', 't')", k.repo.path)
+	snap := k.snapshot("g")
+	n, _ := nodeOf(snap, "doc")
+	err := k.sched.correctionAdmission(ctx, k.s.Q(ctx), "g", snap, n, false)
+	if err == nil || !strings.Contains(err.Error(), DeferMergeWindow) {
+		t.Fatalf("admission over a moving merge turn = %v, want %s", err, DeferMergeWindow)
+	}
+}
+
+// dag-restart settles a held call per call: a call that ended with an unknown outcome stays unresolved when another call of the same execution, or of the execution a handover continues, completes.
+func TestRestartKeepsAnUnresolvedCallWhenAnotherCallCompletes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	k := newAgentKit(t, agentSpec{name: "a", files: fileOf("a")})
+	stateOf := func(s *Scheduler, actor string) (string, string) {
+		t.Helper()
+		report, err := s.Restart(ctx, "g", actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range report.Nodes {
+			if n.NodeID == "a" && n.Agent != nil {
+				return n.Agent.State, n.Agent.Action
+			}
+		}
+		t.Fatalf("restart does not report a: %+v", report.Nodes)
+		return "", ""
+	}
+	k.callIn("a", "outcome_unknown")
+	unresolved := fmt.Sprintf("call-%d", k.calls)
+	k.author("a", authorModel) // an independent call of the same execution completes after it
+	if state, action := stateOf(k.sched, "parent"); state != AgentStateHeld || action != AgentActionFlowRecover {
+		t.Fatalf("restart with an unresolved call and a later completed call = %s/%s, want held/%s", state, action, AgentActionFlowRecover)
+	}
+	// a handover continues the work; a call of the new execution completing does not settle the old one
+	s2 := k.orchestrator("parent-2", "session-2")
+	if _, err := s2.Adopt(ctx, "g", "a", "parent-2"); err != nil {
+		t.Fatal(err)
+	}
+	k.review("a", reviewerModel, "verified", releaseCriteriaDigest())
+	if state, action := stateOf(s2, "parent-2"); state != AgentStateHeld || action != AgentActionFlowRecover {
+		t.Fatalf("restart after a handover = %s/%s, want held/%s", state, action, AgentActionFlowRecover)
+	}
+	// a later event of the SAME call settles it
+	k.exec("INSERT INTO flow_calls (call_id, event_seq, run_id, path, position, kind, role, event, plan_id, node_id, execution_id, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+		unresolved, 4, "run-1", "executor:a", 0, "agent", "executor", "completed", "g", "a", k.execution("a"), k.clock())
+	if state, action := stateOf(s2, "parent-2"); state != AgentStateReleased || action != AgentActionRunResume {
+		t.Fatalf("restart after the call was settled = %s/%s, want released/%s", state, action, AgentActionRunResume)
+	}
+}
