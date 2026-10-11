@@ -172,3 +172,31 @@ func spawnHookWithout(o pyjson.Object, keys ...string) pyjson.Object {
 	}
 	return out
 }
+
+// spawnHookManagedCiphertext ties a native V2 spawn whose task is ciphertext to the attempt it is for (CRW-1260). The dispatch
+// marker is in the task, which the hook cannot read, so no source resolved; the call is then the session's one claimed attempt
+// that waits for its spawn (role.ManagedSpawnResolver.Pending), narrowed by the role agent_type names. A call that is not a fresh or
+// partial-fork child (a full-history fork is never managed), that already resolved a marker, or for which the session's records
+// leave no single attempt is left unmanaged, as before. A record that cannot be read leaves the call unmanaged too: the issuance
+// is not a reason to refuse a spawn the matching cannot decide. The tie the created check
+// makes afterwards stays the host's own result of this call.
+func spawnHookManagedCiphertext(a *spawnHookAssembly) {
+	if a.managed != nil || !a.encryptedV2Message || a.sessionID == "" || IsFullHistoryFork(spawnHookView(a.toolInput)) {
+		return
+	}
+	var filter *role.RoleName
+	if kind, ok := a.toolInput.Get("agent_type").(string); ok {
+		switch kind {
+		case "worker", "executor":
+			r := role.Executor
+			filter = &r
+		case "architect", "reviewer", "explorer":
+			r := role.RoleName(kind)
+			filter = &r
+		}
+	}
+	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Pending(a.sessionID, a.toolUseID, filter)
+	if err == nil && selection != nil {
+		a.managed, a.dispatchSource = selection, source
+	}
+}

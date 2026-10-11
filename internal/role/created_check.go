@@ -217,11 +217,14 @@ type createdSpawnResult struct {
 }
 
 // createdCheckSpawnResult reads the host's result of the native spawn call with tool use id call out of the rollout of the
-// session, whose path the native thread database holds. The host writes each collaboration tool call it runs as an item of
-// type CollabAgentToolCall whose id is the call's tool use id (the id the spawn hook received and recorded), and its
-// item_completed event names the threads the call created (receiver_thread_ids). The caller cannot write that event; a line
-// that does not parse is not a result. The look runs under the same 30 s bound as the host's other reads, and the rollout is
-// read within the scan's bounds (dispatchRolloutScan).
+// session, whose path the native thread database holds. Two forms are read, both events the host writes about a call it ran
+// and the caller cannot write. Multi-agent V1 writes each collaboration tool call as an item of type CollabAgentToolCall whose
+// id is the call's tool use id (the id the spawn hook received and recorded); its item_completed event names the threads the
+// call created (receiver_thread_ids). Multi-agent V2 runs spawn_agent as a plain function call whose output holds only the
+// agent path, and writes the thread it created as an item_completed event of type SubAgentActivity (kind "started") whose id
+// is the call's id and whose agent_thread_id is the new thread (CRW-1260; the study's V2 rollouts). The sender of either event
+// is the session; a line that does not parse is not a result. The look runs under the same 30 s bound as the host's other
+// reads, and the rollout is read within the scan's bounds (dispatchRolloutScan).
 func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, call string) (createdSpawnResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -246,28 +249,42 @@ func createdCheckSpawnResult(ctx context.Context, env host.LookupEnv, session, c
 	defer f.Close()
 	var out createdSpawnResult
 	err = dispatchRolloutScan(ctx, f, func(line []byte) {
-		// Only a line naming the item type is decoded; the id is compared decoded, however the host escaped it. A line over the
-		// scan's line bound (nil) is not decoded.
-		if !bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) {
+		// Only a line naming one of the two item types is decoded; the id is compared decoded, however the host escaped it. A
+		// line over the scan's line bound (nil) is not decoded.
+		if !bytes.Contains(line, []byte(`"CollabAgentToolCall"`)) && !bytes.Contains(line, []byte(`"SubAgentActivity"`)) {
 			return
 		}
 		var e struct {
 			Type    string `json:"type"`
 			Payload struct {
-				Type string `json:"type"`
-				Item struct {
+				Type   string `json:"type"`
+				Thread string `json:"thread_id"`
+				Item   struct {
 					Type      string   `json:"type"`
 					ID        string   `json:"id"`
 					Tool      string   `json:"tool"`
 					Status    string   `json:"status"`
 					Sender    string   `json:"sender_thread_id"`
 					Receivers []string `json:"receiver_thread_ids"`
+					Kind      string   `json:"kind"`
+					Child     string   `json:"agent_thread_id"`
 				} `json:"item"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal(line, &e) == nil && e.Type == "event_msg" && e.Payload.Type == "item_completed" {
-			if it := e.Payload.Item; it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session {
-				out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
+		if json.Unmarshal(line, &e) != nil || e.Type != "event_msg" || e.Payload.Type != "item_completed" {
+			return
+		}
+		switch it := e.Payload.Item; {
+		case it.Type == "CollabAgentToolCall" && it.Tool == "spawn_agent" && it.ID == call && it.Sender == session:
+			out = createdSpawnResult{Seen: true, Status: it.Status, Children: it.Receivers}
+		case it.Type == "SubAgentActivity" && it.Kind == "started" && it.ID == call && e.Payload.Thread == session && it.Child != "":
+			// The activity of a V2 spawn is written once the thread exists, so it is a completed call; a call that made two
+			// threads (it does not) would name both.
+			if !out.Seen || out.Status != "completed" {
+				out = createdSpawnResult{Seen: true, Status: "completed"}
+			}
+			if !slices.Contains(out.Children, it.Child) {
+				out.Children = append(out.Children, it.Child)
 			}
 		}
 	})

@@ -76,6 +76,33 @@ func agentPathNative(t *testing.T, env host.LookupEnv, agentPathColumn bool, row
 
 const agentPathReviewer = "/root/independent_review"
 
+// agentPathV2Call is one V2 spawn_agent call as the host writes it to the parent's rollout (the study's prep round 2 rollouts): a
+// plain function_call whose arguments hold the task as ciphertext, the SubAgentActivity event the host writes once the thread
+// exists (the only line that names the thread id), and the function_call_output that holds the agent path alone.
+type agentPathV2Call struct{ call, child, path string }
+
+// agentPathParentV2 gives env's native database a row for session-test whose rollout holds the V2 calls as the host writes them.
+func agentPathParentV2(t *testing.T, env host.LookupEnv, calls ...agentPathV2Call) {
+	t.Helper()
+	native, _ := env("CODEX_HOME")
+	rollout := filepath.Join(native, "rollout-session-test.jsonl")
+	line := func(v map[string]any) string { return string(must(json.Marshal(v))) }
+	lines := []string{line(map[string]any{"type": "session_meta", "payload": map[string]any{"id": "session-test"}})}
+	for _, c := range calls {
+		args := string(must(json.Marshal(map[string]any{"task_name": "independent_review", "fork_turns": "2", "message": "gAAAAABqyuyTEhaESnb0NxWN91zwF9OdePSHNsx8TuFTz4caREl98DDdcb9EuHhV2ArJTb4U8PGrSa_otZMnRDgtSrBX3YoZ7hjYjQnrtdveY3eHlCGDI-FFMvflhCi9yBlwXNhLLypb8RyRd_nKrX79uvPtrXX4LiuXfE7eU1w54Tyh_LhTfcExI9I5jSjsHIjaj0VYkx9sUSL_6HtFSWoFn7INcUASQ19rq_a-dLjFTDfl7izpoZUHPyeMQmPSmarZ-rh1pC0LtNodKL7pipICd-uz1dZxUI2iaEAR-t-NmYK-iV3VslCk_Z4a72cLYge36C6hUTZUjEZIesbf2jwb2WCSU7QlvTU5ec0kJvME04Ni2QBxiO84UfFafON9-_pBHvw"})))
+		lines = append(lines,
+			line(map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call", "name": "spawn_agent", "namespace": "collaboration", "arguments": args, "call_id": c.call}}),
+			line(map[string]any{"type": "event_msg", "payload": map[string]any{"type": "item_completed", "thread_id": "session-test", "turn_id": "turn-1",
+				"item": map[string]any{"type": "SubAgentActivity", "id": c.call, "kind": "started", "agent_thread_id": c.child, "agent_path": c.path}}}),
+			line(map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call_output", "call_id": c.call, "output": `{"task_name":"` + c.path + `"}`}}))
+	}
+	check(t, os.WriteFile(rollout, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	db := must(sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.Join(native, "state_5.sqlite")}).String()))
+	defer db.Close()
+	_, err := db.Exec("INSERT INTO threads (id, rollout_path, source, archived, first_user_message, model, reasoning_effort) VALUES (?,?,?,0,?,?,?)", "session-test", rollout, "cli", "", "", "")
+	check(t, err)
+}
+
 // agentPathReviewerEnv is an environment whose reviewer role is the pair gpt-6.1-sol high, the pair a served child is compared with.
 func agentPathReviewerEnv(t *testing.T) host.LookupEnv {
 	t.Helper()
@@ -110,10 +137,12 @@ func TestCreatedAgentPathReceiptMatchesThreadId(t *testing.T) {
 				row.forkedFrom = "session-test"
 			}
 			seen := agentPathNative(t, env, true, row)
-			dispatchReceiptParent(t, seen, dispatchReceiptSpawn{"call-1", "completed", []string{row.id}})
 			name := row.id
 			if tc.v2 {
 				name = agentPathReviewer
+				agentPathParentV2(t, seen, agentPathV2Call{"call-1", row.id, agentPathReviewer})
+			} else {
+				dispatchReceiptParent(t, seen, dispatchReceiptSpawn{"call-1", "completed", []string{row.id}})
 			}
 			report := dispatchReceiptCreated("review-test", attempt, name)
 			out, err := CheckedDispatch(context.Background(), ws, report, seen, nil)
@@ -297,4 +326,92 @@ func TestCreatedForkedChildFirstMessageExcuseIsNarrow(t *testing.T) {
 	if r := out.Attempts[0].Receipt; r == nil || r.Correlation != "unverified" || !strings.Contains(out.Reason, "cannot satisfy independent review") {
 		t.Fatalf("created of a forked child without the call's result = %+v %q", out.Attempts[0].Receipt, out.Reason)
 	}
+}
+
+// V2's host result of an issued call: another call's thread ties nothing, an activity of another session is not read, and a
+// call with no activity (the function_call alone) stays unverified.
+func TestCreatedAgentPathV2ResultOfTheIssuedCallOnly(t *testing.T) {
+	const child = "01a128af-384b-72e0-9cbe-e6f6cd6decb4"
+	const other = "01a128af-0000-72e0-9cbe-e6f6cd6decb5"
+	for _, tc := range []struct {
+		name  string
+		calls []agentPathV2Call
+		want  string // a refusal's text, or the receipt correlation
+	}{
+		{"the issued call made the child", []agentPathV2Call{{"call-1", child, agentPathReviewer}}, "spawn-result"},
+		{"the issued call made another child", []agentPathV2Call{{"call-1", other, "/root/other"}, {"call-2", child, agentPathReviewer}}, "names another child"},
+		{"no activity of the issued call", []agentPathV2Call{{"call-2", child, agentPathReviewer}}, "unverified"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			env := agentPathReviewerEnv(t)
+			attempt, marker := dispatchReceiptClaim(t, ws, env, Reviewer, "review-test")
+			dispatchReceiptIssue(t, ws, marker, "call-1")
+			seen := agentPathNative(t, env, true, agentPathRow{id: child, parent: "session-test", path: agentPathReviewer, model: "gpt-6.1-sol", effort: "high"})
+			agentPathParentV2(t, seen, tc.calls...)
+			out, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, child), seen, nil)
+			if tc.want == "spawn-result" || tc.want == "unverified" {
+				check(t, err)
+				if r := out.Attempts[0].Receipt; r == nil || r.Correlation != tc.want {
+					t.Fatalf("receipt = %+v", r)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("created = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Two partial-fork children of one task name both inherit the parent's first message, so the marker names neither: the issued
+// call's result names the current one, and the reports after it (complete, failed, stopped) find it by the id the record holds.
+func TestCreatedAgentPathReusedNameOfPartialForkChildren(t *testing.T) {
+	const inherited = "You are the orchestrator thread of a benchmark run. This turn is a PREPARATION turn."
+	old := agentPathRow{id: "01a128af-0000-72e0-9cbe-e6f6cd6decb5", parent: "session-test", path: agentPathReviewer, first: inherited, forkedFrom: "session-test", model: "gpt-6.1-sol", effort: "high"}
+	mine := agentPathRow{id: "01a128af-384b-72e0-9cbe-e6f6cd6decb4", parent: "session-test", path: agentPathReviewer, first: inherited, forkedFrom: "session-test", model: "gpt-6.1-sol", effort: "high"}
+	for _, outcome := range []string{"complete", "failed", "stopped"} {
+		t.Run(outcome, func(t *testing.T) {
+			ws := t.TempDir()
+			env := agentPathReviewerEnv(t)
+			attempt, marker := dispatchReceiptClaim(t, ws, env, Reviewer, "review-test")
+			dispatchReceiptIssue(t, ws, marker, "call-2")
+			seen := agentPathNative(t, env, true, old, mine)
+			agentPathParentV2(t, seen, agentPathV2Call{"call-1", old.id, agentPathReviewer}, agentPathV2Call{"call-2", mine.id, agentPathReviewer})
+			out, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, agentPathReviewer), seen, nil)
+			check(t, err)
+			if a := out.Attempts[0]; a.AgentID == nil || *a.AgentID != mine.id || a.Receipt == nil || a.Receipt.Correlation != "spawn-result" {
+				t.Fatalf("created = %+v", a)
+			}
+			report := dispatchReceiptCreated("review-test", attempt, agentPathReviewer)
+			report["outcome"] = outcome
+			if outcome != "complete" {
+				report["executionState"] = "stopped"
+				report["reconciliation"] = "the child ended"
+				report["error"] = "insufficient_quota"
+			}
+			done, err := CheckedDispatch(context.Background(), ws, report, seen, nil)
+			if err != nil {
+				t.Fatalf("%s by path: %v", outcome, err)
+			}
+			if done.Attempts[0].AgentID == nil || *done.Attempts[0].AgentID != mine.id {
+				t.Fatalf("recorded child = %v", done.Attempts[0].AgentID)
+			}
+		})
+	}
+	t.Run("without the call's result the path stays ambiguous", func(t *testing.T) {
+		ws := t.TempDir()
+		env := agentPathReviewerEnv(t)
+		attempt, marker := dispatchReceiptClaim(t, ws, env, Reviewer, "review-test")
+		dispatchReceiptIssue(t, ws, marker, "call-2")
+		seen := agentPathNative(t, env, true, old, mine)
+		file := dispatchReceiptFile(ws, "review-test")
+		before := must(os.ReadFile(file))
+		if _, err := CheckedDispatch(context.Background(), ws, dispatchReceiptCreated("review-test", attempt, agentPathReviewer), seen, nil); err == nil || !strings.Contains(err.Error(), "names more than one child") {
+			t.Fatalf("created = %v", err)
+		}
+		if string(before) != string(must(os.ReadFile(file))) {
+			t.Fatal("a refused created report wrote state")
+		}
+	})
 }

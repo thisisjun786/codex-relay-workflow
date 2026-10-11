@@ -7,6 +7,7 @@ import (
 	"errors"
 	"maps"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -46,7 +47,7 @@ func createdBindAgentPath(ctx context.Context, env host.LookupEnv, d *Dispatch, 
 		return nil, errors.New("invalid agentId")
 	}
 	a := d.Attempts[len(d.Attempts)-1]
-	id, err := createdResolveAgentPath(ctx, env, d.SessionID, d.ID, a.ID, path)
+	id, err := createdResolveAgentPath(ctx, env, d.SessionID, d.ID, a, path)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +58,11 @@ func createdBindAgentPath(ctx context.Context, env host.LookupEnv, d *Dispatch, 
 
 // createdResolveAgentPath is the thread id of the child of session whose agent path is path, read from the native thread
 // database. The edge table is the witness of "child of the session" where the host has it, the thread's own spawn source where it
-// does not. A task name the session used more than once names several threads; the one whose first message carries the marker of
-// this attempt is the child, and without exactly one such thread the path is ambiguous.
-func createdResolveAgentPath(ctx context.Context, env host.LookupEnv, session, dispatch, attempt, path string) (string, error) {
+// does not. A task name the session used more than once names several threads, and the attempt narrows them by the strongest
+// evidence it holds: the child it already records, then the child the host's result of the call it was issued to names, then the
+// one thread whose first message carries its marker (a child forked from the session inherits the parent's first message, so the
+// marker cannot name it). Without exactly one thread left the path is ambiguous.
+func createdResolveAgentPath(ctx context.Context, env host.LookupEnv, session, dispatch string, a DispatchAttempt, path string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var found []createdCheckIdentity
@@ -113,24 +116,50 @@ func createdResolveAgentPath(ctx context.Context, env host.LookupEnv, session, d
 		return "", errors.New("host could not resolve agent path " + path + " to a thread" + createdCheckCorrection)
 	}
 	if len(found) > 1 {
-		var marked []createdCheckIdentity
-		for _, row := range found {
-			if managedSpawnCarries(row.FirstMessage, dispatch, attempt) {
-				marked = append(marked, row)
-			}
-		}
-		found = marked
-		if len(found) == 0 {
-			return "", errors.New("agent path " + path + " names more than one child of this session and none carries this attempt's marker" + createdCheckCorrection)
-		}
-		if len(found) > 1 {
-			return "", errors.New("agent path " + path + " names more than one child of this session that carries this attempt's marker" + createdCheckCorrection)
+		if found, err = createdNarrowAgentPath(ctx, env, session, dispatch, a, path, found); err != nil {
+			return "", err
 		}
 	}
 	if len(found) == 0 {
 		return "", errors.New("agent path " + path + " names no child of this session in the host's thread database" + createdCheckCorrection)
 	}
 	return found[0].ID, nil
+}
+
+// createdNarrowAgentPath is the one child among found, which all carry the agent path, that the attempt's own evidence names.
+func createdNarrowAgentPath(ctx context.Context, env host.LookupEnv, session, dispatch string, a DispatchAttempt, path string, found []createdCheckIdentity) ([]createdCheckIdentity, error) {
+	only := func(keep func(createdCheckIdentity) bool) []createdCheckIdentity {
+		var kept []createdCheckIdentity
+		for _, row := range found {
+			if keep(row) {
+				kept = append(kept, row)
+			}
+		}
+		return kept
+	}
+	// The child a report already recorded is the child of every later report, whatever else the session spawned under the name.
+	if a.AgentID != nil && *a.AgentID != "" {
+		if kept := only(func(r createdCheckIdentity) bool { return r.ID == *a.AgentID }); len(kept) == 1 {
+			return kept, nil
+		}
+	}
+	// The host's result of the call the attempt was issued to names the thread the call created, which is the evidence for a
+	// child that carries no marker of its own (a partial fork).
+	if a.SpawnIssued && a.ToolUseID != nil && *a.ToolUseID != "" {
+		if result, err := createdCheckSpawnResult(ctx, env, session, *a.ToolUseID); err == nil && result.Seen && result.Status == "completed" {
+			if kept := only(func(r createdCheckIdentity) bool { return slices.Contains(result.Children, r.ID) }); len(kept) == 1 {
+				return kept, nil
+			}
+		}
+	}
+	marked := only(func(r createdCheckIdentity) bool { return managedSpawnCarries(r.FirstMessage, dispatch, a.ID) })
+	switch len(marked) {
+	case 1:
+		return marked, nil
+	case 0:
+		return nil, errors.New("agent path " + path + " names more than one child of this session and none is tied to this attempt by its recorded child, the issued spawn's result or its marker" + createdCheckCorrection)
+	}
+	return nil, errors.New("agent path " + path + " names more than one child of this session that carries this attempt's marker" + createdCheckCorrection)
 }
 
 // createdForkedFrom is the thread the thread whose rollout is path was forked from, "" when the first line of the rollout is not a
