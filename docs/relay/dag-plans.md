@@ -207,11 +207,18 @@ tables (decision D-01):
   the next write open. A node's agent executions are a chain (a row names the row it supersedes; one row per node has none, and a row is followed by at most one);
   the current execution is the last row of the chain when no closure row ends it. `relay-sqlite.sql` and every frozen table are unchanged, and no agent row is
   written into one ([the scheduler](dag-scheduler.md#the-agent-surface-of-the-release-r04), [the readers](agent-execution-readers.md));
+* two tables R05 (CRW-1213) appends: the agent acceptance rows (`dag_agent_acceptances`) and the node-level integration stages of an agent acceptance
+  (`dag_agent_integration_stages`), written by the agent path of `dag-accept` and `dag-integrate`. Both are append-only under the same guards. An agent node's acceptances
+  are a chain like its executions (the current acceptance is the last row of the chain unless a closure of kind `acceptance` ends it), the key
+  `UNIQUE (execution_id, head, criteria_set_digest)` makes the same output accepted again the same row and a re-review under new criteria another, and the premerge and
+  verification bodies live in the row because their frozen tables reference `dag_acceptances`. The batch-level stage rows of every batch stay in
+  `dag_integration_stages`; the agent acceptance id is held by no frozen table but `dag_integration_observations`
+  ([the scheduler](dag-scheduler.md#accepting-and-integrating-an-agent-nodes-result-r05));
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
   later issue needs arrives as an appended `ALTER TABLE ... ADD COLUMN` that every open runs, so a fresh store and an upgraded store read the
   same text. `testdata/dag_zone_shipped.json` holds the text each object had when it shipped.
-* an append-only table (one with a `<table>_no_delete` trigger: 24 of them) refuses `INSERT OR REPLACE` of a stored key as well (CRW-974). The
+* an append-only table (one with a `<table>_no_delete` trigger: 26 of them) refuses `INSERT OR REPLACE` of a stored key as well (CRW-974). The
   UPDATE and DELETE triggers cannot see a REPLACE, which deletes the row it replaces without running a DELETE trigger while `recursive_triggers`
   is OFF (the store's setting, unchanged). Each key of such a table (the primary key, each UNIQUE, each partial UNIQUE with its `WHERE`) has a
   `BEFORE INSERT` guard named `<table>_<key>_guard`, appended to the statements, that raises the text SQLite gives a plain INSERT of that key
