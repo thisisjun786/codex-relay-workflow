@@ -22,11 +22,19 @@ const (
 	RootTemp     = "temp_root"
 	RootData     = "data_root"
 	RootManage   = "manage_state"
+	// RootSandbox is the base path a sandboxed Codex runs in (CRW-1265, internal/sandboxroot). It is a
+	// directory the product names, not one it derives from the cache root: moving scratch_root would
+	// move every harness that uses it.
+	RootSandbox = "sandbox_root"
 )
+
+// DefaultSandboxRoot is sandbox_root's default. It is outside the account home, decision C names
+// /scratch, and the coordinator's sandboxed runs already work below it.
+const DefaultSandboxRoot = "/scratch/crw"
 
 // rootOrder is every root, in the order the decided layout lists them: the order
 // Resolve checks them in and the order a caller that prints them walks.
-var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEvidence, RootTemp, RootData, RootManage}
+var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEvidence, RootTemp, RootData, RootManage, RootSandbox}
 
 // RootNames is the root names in the decided order, so a caller that prints the roots
 // has one fixed order to follow. The slice is a copy, so a caller cannot change the
@@ -122,6 +130,7 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 		{RootTemp, rootJoin(temp, "crw"), tempEnv},
 		{RootData, rootJoin(data, "crw", "data"), dataEnv},
 		{RootManage, rootJoin(state, "crw", "manage"), stateEnv},
+		{RootSandbox, DefaultSandboxRoot, false},
 	} {
 		roots[row.name] = Root{Path: row.path, Source: sourceOf(row.fromEnv)}
 	}

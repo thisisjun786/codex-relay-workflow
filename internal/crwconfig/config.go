@@ -55,6 +55,21 @@ func (f *File) Section(name string, v any) error {
 	return json.Unmarshal(raw, v)
 }
 
+// sandboxSection is the sandbox section of the configuration document.
+type sandboxSection struct {
+	ProjectRoots []string `json:"project_roots"`
+}
+
+// SandboxProjectRoots is the sandbox.project_roots list: the project roots a sandboxed Codex may run
+// in or below, wherever they are (CRW-1265). A file without the section has none.
+func (f *File) SandboxProjectRoots() ([]string, error) {
+	var section sandboxSection
+	if err := f.Section("sandbox", &section); err != nil {
+		return nil, fmt.Errorf("%s: sandbox is not an object with a project_roots list of paths: %v", f.path, err)
+	}
+	return append([]string(nil), section.ProjectRoots...), nil
+}
+
 // Load resolves the configuration. The file is located by flagPath, then by the
 // CRW_CONFIG environment variable, then at the configuration home below
 // ${XDG_CONFIG_HOME:-$HOME/.config}. A file that is not there leaves the defaults in
@@ -107,6 +122,17 @@ func Load(getenv func(string) string, flagPath string) (*File, error) {
 		return nil, err
 	}
 	file.roots = roots
+	// A malformed sandbox section is refused here, where the file is read, so crw config show names it
+	// instead of a sandbox start finding it later.
+	explicit, err := file.SandboxProjectRoots()
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range explicit {
+		if !filepath.IsAbs(path) {
+			return nil, fmt.Errorf("%s: sandbox.project_roots %q: not an absolute path", file.path, path)
+		}
+	}
 	return file, nil
 }
 
