@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord"
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -29,6 +30,17 @@ const V2TaskNameNote = `CRW V2: claim with v2TaskName:true and spawn with task_n
 // global-only store replaces the oracle's project layer; reads never write it.
 func SessionFallbackNotice(env host.LookupEnv) (string, error) {
 	return fallbackSessionNotice(env, func() (string, error) { return RenderDispatchCard(env) })
+}
+
+// sessionNoticeFor is the SessionStart notice of one session: the ordinary one, except for a thread a flow run bound (F14), whose
+// card shows the role key and the header form instead of a model alias and a low effort. A thread whose binding cannot be read
+// gets the ordinary card; its spawns are refused by the hook all the same.
+func sessionNoticeFor(env host.LookupEnv, session string) (string, error) {
+	switch res := bound.Lookup(session); res.State {
+	case bound.Engine, bound.Orchestrator:
+		return fallbackSessionNotice(env, func() (string, error) { return RenderFlowBoundDispatchCard(res.Line.Kind) })
+	}
+	return SessionFallbackNotice(env)
 }
 
 func fallbackSessionNotice(env host.LookupEnv, render func() (string, error)) (string, error) {
@@ -115,7 +127,7 @@ func RunFallbackNoticeHook(ctx context.Context, in io.Reader, out io.Writer, env
 		transcript, _ = object["transcript_path"].(string) // the evidence of the turn a resume and a compact run in (CRW-1180)
 	}
 	resumed := source == "resume"
-	answer, err := SessionFallbackNotice(env)
+	answer, err := sessionNoticeFor(env, session)
 	if ctx.Err() != nil {
 		return fallbackInterrupted
 	}

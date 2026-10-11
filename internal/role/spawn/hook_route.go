@@ -65,6 +65,10 @@ func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if !ok {
 		return ""
 	}
+	// F14: a thread a flow run bound is decided by its binding (flow_bound.go); every other thread falls through, unchanged.
+	if bounded, handled := spawnFlowBound(payload); handled {
+		return bounded
+	}
 	a, deny, stop := spawnHookAssembleWith(spawnHookView(payload), env, commit)
 	if stop {
 		return deny

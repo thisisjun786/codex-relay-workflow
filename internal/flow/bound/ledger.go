@@ -58,8 +58,9 @@ type Decision struct {
 // maxLedger bounds a ledger that is read.
 const maxLedger = 8 << 20
 
-// AppendDecision adds d to the ledger of its thread under dir, once: a line identical to one already there is not written
-// again, so a delivery of the same event repeats nothing. The ledger and its directory are made (mode 0700 and 0600) when they
+// AppendDecision adds d to the ledger of its thread under dir, once: a decision of the same tool use that says the same (the
+// same decision and reason), or a line identical to one already there when d has no tool use id, is not written again, so a
+// delivery of the same event repeats nothing. The ledger and its directory are made (mode 0700 and 0600) when they
 // are not there; the directory, the file and the lock around the append must be the current user's.
 func AppendDecision(dir string, d Decision) error {
 	if !ValidThreadID(d.ThreadID) {
@@ -110,6 +111,10 @@ func AppendDecision(dir string, d Decision) error {
 	}
 	for _, line := range bytes.SplitAfter(existing, []byte("\n")) {
 		if bytes.Equal(line, raw) {
+			return nil
+		}
+		var seen Decision
+		if d.ToolUseID != "" && json.Unmarshal(line, &seen) == nil && seen.ToolUseID == d.ToolUseID && seen.Decision == d.Decision && seen.Reason == d.Reason {
 			return nil
 		}
 	}

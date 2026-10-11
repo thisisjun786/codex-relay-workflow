@@ -90,6 +90,9 @@ func ReadLast(dir, thread string) (line Line, present bool, err error) {
 	}
 	defer root.Close()
 	name := thread + FileSuffix
+	if link, err := root.Lstat(name); err == nil && link.Mode()&os.ModeSymlink != 0 {
+		return Line{}, true, unavailable(ReasonUnsafeFile, "%s is a symbolic link", name)
+	}
 	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errorsIsAbsent(err) {

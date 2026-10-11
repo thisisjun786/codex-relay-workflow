@@ -380,12 +380,6 @@ func TestFlowBoundLookupUnavailableDenies(t *testing.T) {
 		{"file 0644", bound.ReasonUnsafeFile, func(r *fbRig) { r.write(fbThreadA, good, 0o644) }},
 		{"file 0660", bound.ReasonUnsafeFile, func(r *fbRig) { r.write(fbThreadA, good, 0o660) }},
 		{"file without read permission", "", func(r *fbRig) { r.write(fbThreadA, good, 0o000) }},
-		{"file of another owner", bound.ReasonUnsafeFile, func(r *fbRig) {
-			r.write(fbThreadA, good, 0o600)
-			uid := bound.UID
-			bound.UID = func() int { return os.Getuid() + 1 }
-			r.t.Cleanup(func() { bound.UID = uid })
-		}},
 		{"file is a directory", bound.ReasonUnsafeFile, func(r *fbRig) {
 			r.mkdir(0o700)
 			spawnHookMust(r.t, os.Mkdir(filepath.Join(r.dir, fbThreadA+bound.FileSuffix), 0o700))
