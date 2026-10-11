@@ -25,12 +25,15 @@ func lintFile(t *testing.T, name string) Report {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sameAcrossBranchOrders(t, name, text)
 	return Check(context.Background(), script.Source{Name: name, Text: text}, Options{DryRun: true, Args: json.RawMessage(`{"node":"n1","plan":"p","nodes":[]}`)})
 }
 
 func lintText(t *testing.T, body string) Report {
 	t.Helper()
-	return Check(context.Background(), script.Source{Name: "inline.js", Text: []byte("export const meta = { name: 'inline' }\n" + body)}, Options{DryRun: true})
+	text := []byte("export const meta = { name: 'inline' }\n" + body)
+	sameAcrossBranchOrders(t, "inline.js", text)
+	return Check(context.Background(), script.Source{Name: "inline.js", Text: text}, Options{DryRun: true})
 }
 
 // rules are the distinct rules of a report, sorted.
@@ -981,7 +984,9 @@ return 1`)
 // lintStatic checks a script with the static rules only: what the walker shows, without the dry run.
 func lintStatic(t *testing.T, body string) Report {
 	t.Helper()
-	return Check(context.Background(), script.Source{Name: "inline.js", Text: []byte("export const meta = { name: 'inline' }\n" + body)}, Options{})
+	text := []byte("export const meta = { name: 'inline' }\n" + body)
+	sameAcrossBranchOrders(t, "inline.js", text)
+	return Check(context.Background(), script.Source{Name: "inline.js", Text: text}, Options{})
 }
 
 func TestLintLifecyclePromiseContexts(t *testing.T) {
@@ -1122,6 +1127,44 @@ return crw.land('n', { head })`,
 	} {
 		if r := lintStatic(t, body); !r.OK() {
 			t.Errorf("%s: %v", name, r.Diagnostics)
+		}
+	}
+}
+
+// Where paths meet, a name keeps every pending call it may hold, each with its own generation: the phase after the name
+// is read is the union over the paths, whichever branch the text lists first, and a land is reported only when every
+// path that reaches it lands without a review of the current head.
+func TestLintPendingAlternativesAtABranchJoin(t *testing.T) {
+	const prefix = `
+const ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })
+const head = await crw.commit('n', ex)
+await crw.verify('n', head)
+let r = crw.review('n', head, null)
+`
+	const recommit = "const next = await crw.commit('n', ex); await crw.verify('n', next);"
+	const replacement = "r = crw.review('n', head, null);"
+	const land = "\nawait r\nreturn crw.land('n', { head })"
+	for name, body := range map[string]string{
+		"a new round, or a replacement review":           "if (args.flag) {" + recommit + "} else {" + replacement + "}",
+		"a replacement review, or a new round":           "if (args.flag) {" + replacement + "} else {" + recommit + "}",
+		"the same review current on the path that skips": "if (args.flag) {" + recommit + "}",
+		"a new round in try, a replacement in catch":     "try {" + recommit + "} catch (e) {" + replacement + "}",
+		"a replacement in try, a new round in catch":     "try {" + replacement + "} catch (e) {" + recommit + "}",
+		"a new commit or a replacement in a conditional": "args.flag ? await crw.commit('n', ex) : (r = crw.review('n', head, null))",
+		"three alternatives, one replacement":            "if (args.a) {" + recommit + "} else if (args.b) { await crw.commit('n', ex) } else {" + replacement + "}",
+	} {
+		if r := lintStatic(t, prefix+body+land); !r.OK() {
+			t.Errorf("%s: one path that reaches the land reviewed the current head: %v", name, r.Diagnostics)
+		}
+	}
+	// Every path superseded: each alternative is a review of a head a later commit replaced.
+	for name, body := range map[string]string{
+		"a new round on both paths, the old review on one": "if (args.flag) {" + recommit + "} else { await crw.commit('n', ex); await crw.verify('n', head);" + replacement + " await crw.commit('n', ex); await crw.verify('n', head) }",
+		"a replacement then a new round, or a new round":   "if (args.flag) {" + replacement + recommit + "} else {" + recommit + "}",
+		"a new round after the join":                       "if (args.flag) {" + replacement + "}\nconst after = await crw.commit('n', ex)\nawait crw.verify('n', after)",
+	} {
+		if r := lintStatic(t, prefix+body+land); !slices.Contains(rules(r), RuleLandWithoutReview) {
+			t.Errorf("%s: no path reviewed the current head: %v", name, r.Diagnostics)
 		}
 	}
 }

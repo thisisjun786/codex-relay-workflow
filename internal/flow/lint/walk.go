@@ -48,8 +48,9 @@ type state struct {
 	// to judge).
 	steps map[*binding]bool
 	// pend are the lifecycle calls whose promise a name of the function holds and the path has not read yet: the call has
-	// run, and the node reaches its phase only when the name is read (awaited, passed on, returned).
-	pend map[*binding]pending
+	// run, and the node reaches its phase only when the name is read (awaited, passed on, returned). Where paths meet, a
+	// name may hold a different call on each: it keeps them all.
+	pend map[*binding]pendSet
 }
 
 // pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node, its phase, the
@@ -70,17 +71,62 @@ const (
 	pathSuperseded
 )
 
+// pendSet is what a name may hold at a point where paths meet: the pending calls of the paths, one alternative per call
+// with that call's own generation (two calls are never merged, and none of them wins over another), and partial when on
+// some path the name holds no pending call (it was read there, or not yet given one). The alternatives are kept in the
+// order of the calls in the text, so a set does not depend on the order the walk met the paths in.
+type pendSet struct {
+	alts    []pending
+	partial bool
+}
+
+// add merges one alternative into the set: the paths of the same call are united, another call is a new alternative.
+func (p *pendSet) add(v pending) {
+	for i, have := range p.alts {
+		if have.call == v.call {
+			p.alts[i].paths |= v.paths
+			return
+		}
+	}
+	i := 0
+	for i < len(p.alts) && callBefore(p.alts[i].call, v.call) {
+		i++
+	}
+	p.alts = slices.Insert(p.alts, i, v)
+}
+
+// callBefore orders two calls by where they are in the text.
+func callBefore(a, b *ast.CallExpression) bool {
+	if a.Idx0() != b.Idx0() {
+		return a.Idx0() < b.Idx0()
+	}
+	return a.Idx1() < b.Idx1()
+}
+
+func (p pendSet) clone() pendSet {
+	return pendSet{alts: slices.Clone(p.alts), partial: p.partial}
+}
+
+func (p pendSet) equal(o pendSet) bool {
+	return p.partial == o.partial && slices.Equal(p.alts, o.alts)
+}
+
+// holds reports whether one of the alternatives is the call.
+func (p pendSet) holds(c *ast.CallExpression) bool {
+	return slices.ContainsFunc(p.alts, func(v pending) bool { return v.call == c })
+}
+
 func newState() *state {
-	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}, pend: map[*binding]pending{}}
+	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}, pend: map[*binding]pendSet{}}
 }
 
 func (s *state) dead() bool { return !s.live }
 func (s *state) kill()      { s.live = false }
 
 func (s *state) clone() *state {
-	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pending, len(s.pend))}
+	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pendSet, len(s.pend))}
 	for k, v := range s.pend {
-		c.pend[k] = v
+		c.pend[k] = v.clone()
 	}
 	for k, v := range s.phases {
 		c.phases[k] = v
@@ -95,7 +141,8 @@ func (s *state) clone() *state {
 }
 
 // join merges the state of another path into s: the phases of a node may be any of both, a label is used or a name holds
-// a step only when it does on both, and the author is known only when both agree.
+// a step only when it does on both, the author is known only when both agree, and a name may hold any pending call
+// either path gives it (or none, where one path gives it none). The result is the same whichever state joins the other.
 func (s *state) join(o *state) {
 	switch {
 	case o.dead():
@@ -117,13 +164,25 @@ func (s *state) join(o *state) {
 			delete(s.steps, k)
 		}
 	}
-	for k, v := range o.pend {
-		if have, ok := s.pend[k]; !ok {
-			s.pend[k] = v
-		} else if have.call == v.call {
-			have.paths |= v.paths
+	for k, have := range s.pend {
+		if _, ok := o.pend[k]; !ok {
+			have.partial = true
 			s.pend[k] = have
 		}
+	}
+	for k, v := range o.pend {
+		have, ok := s.pend[k]
+		if !ok {
+			v = v.clone()
+			v.partial = true
+			s.pend[k] = v
+			continue
+		}
+		have.partial = have.partial || v.partial
+		for _, alt := range v.alts {
+			have.add(alt)
+		}
+		s.pend[k] = have
 	}
 	if s.author != o.author {
 		s.author = ""
@@ -135,7 +194,7 @@ func (s *state) equal(o *state) bool {
 		return false
 	}
 	for k, v := range s.pend {
-		if o.pend[k] != v {
+		if ov, ok := o.pend[k]; !ok || !v.equal(ov) {
 			return false
 		}
 	}
@@ -581,27 +640,47 @@ func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
 }
 
 // complete marks the event a name's promise stands for as done, and no other name that holds the same promise is still
-// pending. The node reaches the event's phase only where the call is of the node's current generation: on every path it
-// is in that phase, on none it stays where it is, and on some it may be in either.
+// pending. Each call the name may hold counts for its own paths: the node reaches the call's phase only where the call
+// is of the node's current generation (on every path it is in that phase, on none it stays where it is, on some it may
+// be in either), and a node stays where it is on a path where the name holds no call or a call of another node. The
+// phase after the read is the union over the alternatives.
 func (w *walker) complete(bd *binding, st *state) {
 	p, ok := st.pend[bd]
 	if !ok {
 		return
 	}
+	delete(st.pend, bd)
 	for k, v := range st.pend {
-		if v.call == p.call {
+		kept := slices.DeleteFunc(slices.Clone(v.alts), func(alt pending) bool { return p.holds(alt.call) })
+		switch {
+		case len(kept) == 0:
 			delete(st.pend, k)
+		case len(kept) < len(v.alts):
+			st.pend[k] = pendSet{alts: kept, partial: true}
 		}
 	}
-	switch p.paths {
-	case pathCurrent:
-		st.phases[p.slot] = p.ev
-	case pathCurrent | pathSuperseded:
-		cur, ok := st.phases[p.slot]
-		if !ok {
-			cur = pBuilt
+	phase := func(slot string) uint8 {
+		if cur, ok := st.phases[slot]; ok {
+			return cur
 		}
-		st.phases[p.slot] = cur | p.ev
+		return pBuilt
+	}
+	next := map[string]uint8{}
+	for _, alt := range p.alts {
+		switch alt.paths {
+		case pathCurrent:
+			next[alt.slot] |= alt.ev
+		case pathCurrent | pathSuperseded:
+			next[alt.slot] |= phase(alt.slot) | alt.ev
+		default:
+			next[alt.slot] |= phase(alt.slot)
+		}
+	}
+	for slot, mask := range next {
+		if p.partial || slices.ContainsFunc(p.alts, func(alt pending) bool { return alt.slot != slot }) {
+			mask |= phase(slot)
+		}
+		st.phases[slot] = mask
 	}
 }
 
@@ -656,10 +735,11 @@ func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral
 	}
 	if ev == pBuilt || ev == pCommitted || ev == pLanded {
 		// A new generation of the node starts with the call, whether or not its promise is awaited.
-		for k, v := range st.pend {
-			if v.slot == slot {
-				v.paths = pathSuperseded
-				st.pend[k] = v
+		for _, v := range st.pend {
+			for i := range v.alts {
+				if v.alts[i].slot == slot {
+					v.alts[i].paths = pathSuperseded
+				}
 			}
 		}
 	}
@@ -669,7 +749,7 @@ func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral
 	}
 	st.phases[slot] = started(ev, cur)
 	for _, bd := range def.bds {
-		st.pend[bd] = pending{slot: slot, ev: ev, call: def.call, paths: pathCurrent}
+		st.pend[bd] = pendSet{alts: []pending{{slot: slot, ev: ev, call: def.call, paths: pathCurrent}}}
 	}
 }
 
