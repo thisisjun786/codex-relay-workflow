@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
@@ -73,14 +74,19 @@ type hookJournal struct {
 	mu    sync.Mutex
 	dead  bool
 	after func(engine.Event)
+	// rewrite changes a row before it is stored: a record that does not describe what happened.
+	rewrite func(engine.Event) engine.Event
 }
 
 func (j *hookJournal) Append(e engine.Event) engine.Event {
 	j.mu.Lock()
-	dead, after := j.dead, j.after
+	dead, after, rewrite := j.dead, j.after, j.rewrite
 	j.mu.Unlock()
 	if dead {
 		return e
+	}
+	if rewrite != nil {
+		e = rewrite(e)
 	}
 	out := j.Journal.Append(e)
 	if after != nil {
@@ -198,8 +204,21 @@ func (l *Lab) spawn(owner string) {
 	l.journal = &hookJournal{Journal: j}
 	l.journal.flush = func() { _ = j.Flush() }
 	l.decisions = ops.StoreDecisions{DB: l.Store.DB}
-	l.lane = ops.NewLane(ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent",
-		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }})
+	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent",
+		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
+	deps.Threads = labThreads{BusReader: audit.BusReader{Bus: l.client.Bus()}, backend: l.backend}
+	l.lane = ops.NewLane(deps)
+}
+
+// labThreads is the host of the close: the audit reads the reviewer threads through the client of the run process, and the backend
+// archives them.
+type labThreads struct {
+	audit.BusReader
+	backend *agent.Backend
+}
+
+func (t labThreads) ArchiveThread(ctx context.Context, id string) error {
+	return t.backend.ArchiveThread(ctx, id)
 }
 
 // NewProcess is the resume after a process ended: the journal is read again from the store, and a new client and backend serve
@@ -229,6 +248,13 @@ func (l *Lab) Kill() {
 func (l *Lab) OnRow(fn func(engine.Event)) {
 	l.journal.mu.Lock()
 	l.journal.after = fn
+	l.journal.mu.Unlock()
+}
+
+// Rewrite changes every row the run journals from now on with fn before it is stored.
+func (l *Lab) Rewrite(fn func(engine.Event) engine.Event) {
+	l.journal.mu.Lock()
+	l.journal.rewrite = fn
 	l.journal.mu.Unlock()
 }
 
@@ -657,6 +683,31 @@ func Verdict(verified bool, defects ...map[string]any) map[string]any {
 	return map[string]any{"verdict": v, "criteria": []any{map[string]any{"id": "c1", "met": verified, "evidence": "read the head"}}, "defects": defects, "summary": "reviewed"}
 }
 
+// VerdictFinal is the answer of reviewer-final: verified with one criterion met and the alignment of the range with the DESIGN.
+func VerdictFinal(aligned bool) map[string]any {
+	alignment := map[string]any{"verdict": "ALIGNED", "drift": []any{}}
+	if !aligned {
+		alignment = map[string]any{"verdict": "MISALIGNED", "drift": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1", "file": "README.md", "line": 1, "affected_nodes": []string{"A"}}}}
+	}
+	return map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{}, "alignment": alignment, "summary": "reviewed the range"}
+}
+
+// QACapture is the answer of the QA capture call: one screenshot.
+func QACapture() map[string]any {
+	return map[string]any{"captures": []any{map[string]any{"path": "/tmp/qa/shot-1.png", "kind": "screenshot", "shows": "the home screen at 1280px"}},
+		"matrix": []string{"home at 1280px"}, "teardown": []string{"no resources spawned: checked ps and lsof"}, "summary": "drove the surface"}
+}
+
+// QAPassOf is the answer of an oracle pass.
+func QAPassOf(pass, verdict string) map[string]any {
+	return map[string]any{"pass": pass, "verdict": verdict, "findings": []any{}, "summary": "pass " + pass + " read the captures"}
+}
+
+// QAReceiptOf is the verdict of the QA call: its self-review or the synthesis of the passes.
+func QAReceiptOf(verdict string) map[string]any {
+	return map[string]any{"verdict": verdict, "findings": []any{}, "summary": "receipt " + verdict}
+}
+
 // Defect is a defect of a verdict.
 func Defect(ref, kind, severity, finding string) map[string]any {
 	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": "", "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
@@ -706,6 +757,14 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 	switch {
 	case c.Role == "architect":
 		return Say(l.designFor())
+	case c.Role == "reviewer-final":
+		return Say(VerdictFinal(true))
+	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa:"):
+		return Say(QACapture())
+	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa-"):
+		return Say(QAReceiptOf("PASS"))
+	case c.Role == "explorer" && strings.HasPrefix(c.Label, "qa-pass:"):
+		return Say(QAPassOf(strings.SplitN(c.Label, ":", 3)[1], "PASS"))
 	case c.Role == "reviewer" && strings.HasPrefix(c.Label, "design-audit"):
 		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
 	case c.Role == "reviewer":
@@ -729,3 +788,6 @@ func (l *Lab) GitIn(dir string, args ...string) string { return l.git(dir, args.
 
 // Tip is the tip of the integration branch.
 func (l *Lab) Tip() string { return l.git(l.Repo, "rev-parse", IntegrationRef) }
+
+// Archived are the threads the host was asked to archive, in order.
+func (l *Lab) Archived() []string { return l.Threads.Archived() }

@@ -4,7 +4,8 @@ The CRW flow engine appends this section to the role definition above. Where the
 
 ## Your thread
 
-- Working directory: your thread's cwd is a scratch worktree at the pinned integrated head. No other call writes to it. Every edit you make is discarded when the call ends; change nothing you are not forced to change to drive the surface.
+- Working directory: your thread's cwd is a scratch worktree at the pinned integrated head. No other call writes to it. Every edit you make is discarded when the call ends, and the run reads the tree you end in: if it is not the pinned head (a tracked file edited, a file created outside `.crw/`), your capture did not exercise the head and the QA is INCONCLUSIVE. Change no source or configuration file; write your artifacts under `.crw/evidence/<sessionId>/qa/` as the `crw-qa` skill says.
+- Artifacts: name each capture in `captures` by its path relative to your worktree (or absolute). The run resolves the relative path against this worktree and hands that path to the reviewer calls, which read checkouts of their own.
 - Commits: do not run `git commit` or any other branch-level git command. Nothing you do here is committed.
 - Procedure: follow sections 1 to 4 of the `crw-qa` skill (surface, scenarios, captured artifacts, adversarial classes) and read `crw-dev` and the `crw-dev-*` skill the surface needs (`crw-dev-frontend` and `crw-dev-uiux-design` for a visual surface, `crw-dev-testing`).
 - Do not start the two reviewer passes of section 5 of the `crw-qa` skill (`## 5. Reviewer passes`) yourself. The run starts them (SP-QA-2) after this call returns, from the captures you hand over, and a later turn on this thread asks you to synthesise their results.

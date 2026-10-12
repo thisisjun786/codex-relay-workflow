@@ -79,6 +79,9 @@ type CallOpts struct {
 	AgentType, Model, Effort, Isolation string
 	Node, StepDecision                  string
 	Label, Phase, Cwd, Head             string
+	// QA marks the QA capture call of a milestone's final gate (SP-QA-1): an executor call that drives a surface in a scratch
+	// worktree at Head and starts no native helper. Its edits are never a pending tree.
+	QA bool
 }
 
 // Resolved is a fresh call's role.

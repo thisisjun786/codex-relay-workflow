@@ -50,6 +50,11 @@ type FakeRelay struct {
 	Slots int
 	// RefuseAccept makes the relay refuse an acceptance with this reason.
 	RefuseAccept string
+	// Surfaces, Grade and Commands are what the plan says of the milestone: the surfaces of its criteria, the work grade and the
+	// required verification commands (CRW-1206).
+	Surfaces []string
+	Grade    string
+	Commands []string
 
 	nodes    []NodeSpec
 	released map[string]ops.ReleaseResult
@@ -73,7 +78,8 @@ func newRelay(l *Lab) *FakeRelay {
 
 // Milestone implements ops.Relay.
 func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Milestone, error) {
-	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone)}
+	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone),
+		Surfaces: r.Surfaces, Grade: r.Grade, RequiredCommands: r.Commands}
 	for _, n := range r.nodes {
 		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria()}
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))

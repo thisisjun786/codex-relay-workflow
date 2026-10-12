@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
@@ -224,9 +225,15 @@ func modes() []mode {
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			}
+			// audit reads the reviewer threads of a run from its host and leaves the result in its journal (internal/flow/cli).
+			if flowcli.Handles(c.args) {
+				flowcli.Env = flowcli.OpenStore
+				return flowcli.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
+			}
 			code := lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			if len(c.args) > 0 && code == 0 && (c.args[0] == "help" || c.args[0] == "-h" || c.args[0] == "--help") {
 				fmt.Fprintln(c.stdout, shadow.Usage)
+				fmt.Fprintln(c.stdout, flowcli.Usage)
 			}
 			return code
 		}},

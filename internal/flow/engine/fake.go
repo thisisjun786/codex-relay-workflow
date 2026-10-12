@@ -9,6 +9,9 @@ import (
 	"regexp/syntax"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // FakeThread is a thread of the fake backend.
@@ -18,6 +21,8 @@ type FakeThread struct {
 	Role    string
 	Sandbox string
 	Turns   []string
+	// QA is set on the thread of a QA capture call.
+	QA bool
 }
 
 // FakeRequest is one request the fake backend received.
@@ -28,6 +33,8 @@ type FakeRequest struct {
 	ThreadID string
 	Prompt   string
 	Repair   bool
+	// QA is set on a turn of a QA capture call's thread.
+	QA bool
 }
 
 // FakeReply is what a fake turn answers. The zero value is the default answer.
@@ -48,6 +55,9 @@ type FakeReply struct {
 type Fake struct {
 	Handler   func(FakeRequest) FakeReply
 	StartHook func(ThreadSpec) (ThreadInfo, error)
+	// SourceHook decides the source identity the fake reports for the directory of a QA call; without it the directory holds a clean
+	// checkout of the head the call names.
+	SourceHook func(cwd, head string) (source.Identity, error)
 
 	mu       sync.Mutex
 	threads  map[string]*FakeThread
@@ -72,8 +82,18 @@ func (f *Fake) Thread(id string) (FakeThread, bool) {
 	if !ok {
 		return FakeThread{}, false
 	}
-	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Sandbox: t.Sandbox, Turns: append([]string(nil), t.Turns...)}, true
+	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Sandbox: t.Sandbox, QA: t.QA, Turns: append([]string(nil), t.Turns...)}, true
 }
+
+// SourceOf implements SourceReader.
+func (f *Fake) SourceOf(_ context.Context, cwd, head string) (source.Identity, error) {
+	if f.SourceHook != nil {
+		return f.SourceHook(cwd, head)
+	}
+	return source.CommitIdentity(head, fakeNow), nil
+}
+
+func fakeNow() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
 
 // StartThread implements Backend.
 func (f *Fake) StartThread(ctx context.Context, spec ThreadSpec) (ThreadInfo, error) {
@@ -94,7 +114,7 @@ func (f *Fake) StartThread(ctx context.Context, spec ThreadSpec) (ThreadInfo, er
 		}
 	}
 	f.mu.Lock()
-	f.threads[info.ID] = &FakeThread{ID: info.ID, Pair: info.Pair, Role: spec.Role, Sandbox: spec.Sandbox}
+	f.threads[info.ID] = &FakeThread{ID: info.ID, Pair: info.Pair, Role: spec.Role, Sandbox: spec.Sandbox, QA: spec.QA}
 	f.mu.Unlock()
 	return info, nil
 }
@@ -105,7 +125,7 @@ func (f *Fake) RunTurn(ctx context.Context, spec TurnSpec) (TurnOutcome, error) 
 	if _, rest, ok := strings.Cut(prompt, "\n\n"); ok {
 		prompt = rest
 	}
-	req := FakeRequest{Kind: "turn", CallID: spec.CallID, Op: spec.Op, ThreadID: spec.ThreadID, Prompt: prompt, Repair: spec.Repair}
+	req := FakeRequest{Kind: "turn", CallID: spec.CallID, Op: spec.Op, ThreadID: spec.ThreadID, Prompt: prompt, Repair: spec.Repair, QA: spec.QA}
 	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	th := f.threads[spec.ThreadID]

@@ -216,7 +216,9 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 	restores, prepared := journaled(events, node)
 	pending := pendingRestore(restores, prepared)
 
-	if req.Family != "executor" {
+	// the QA capture call is an executor call that edits nothing it keeps: it gets a call-private scratch worktree at the head it
+	// names, as the roles that do not write do, and never a worktree of a node
+	if req.Family != "executor" || req.QA {
 		if req.Continues != nil {
 			if req.Fork {
 				// inside a suffix the continuation runs on a fork in a private directory of its own
