@@ -19,7 +19,7 @@ is not confirmed, one enqueued before the verdict, one of another document and o
 
 The entry's `document` and the relationship's `coordination_document` target (`sync_targets.target_ref`) are compared as the two texts they are, byte for byte, the way `Reportable`, `ReportableCurrent` and `Selection` compare a
 `sync_outbox` row's `target_ref` with the target: neither is normalised or resolved, so a document named by its URL is not the target recorded by its id, and the reverse. The parent therefore gives `dag-summary-enqueue --document`
-the spelling the relationship's target is recorded in. An entry of another spelling does not discharge the verdict, which stays standing until the supervisor reports it once more (the safe side). The order of the two instants is the
+the spelling the relationship's target is recorded in. An entry of another spelling does not discharge the verdict: it stays standing until a confirmed record of the target's own spelling discharges it (the safe side). Whether the supervisor reports it again is a separate decision (`Selection` keeps `standing` and sets `report` false when a report was already made under the obligation, or when the recipient is not contactable); a report does not discharge it. The order of the two instants is the
 writers' own: the verdict is stamped by the delivery clock in `Ack.RecordVerdict`, the entry by `Scheduler.Now` in `EnqueueSummary`, and an entry stamped at or after the verdict's instant discharges it once it is confirmed
 (`TestPlanSummaryDischargesTheVerdictThroughTheRecordingWriters` runs the order through the writers with both clocks injected).
 
