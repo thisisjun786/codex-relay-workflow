@@ -136,7 +136,7 @@ func worseQA(a, b string) string {
 // judges what the run's calls answered and writes the receipt the gate reads (finalgate.go): the state, the head it stands on,
 // and for each call its role, its pair as the thread read it back and its thread. It decides nothing a model says: a call that did
 // not complete, an answer the schema or a rule refuses, a capture list that is empty, a pass that is not a read-only explorer
-// call, a synthesis that is not a turn on the thread of the QA call - each makes the receipt INCONCLUSIVE, and an INCONCLUSIVE
+// call, a synthesis that is not a continuation of the QA call - each makes the receipt INCONCLUSIVE, and an INCONCLUSIVE
 // receipt is never a pass.
 type qaReceiptOp struct{ l *Lane }
 
@@ -249,8 +249,10 @@ func (o *qaReceiptOp) Run(_ context.Context, req engine.OpRequest) (engine.OpRes
 	if receipt.Status != "completed" {
 		return inconclusive("synthesis_" + receipt.Status), nil
 	}
-	if receipt.Meta.ThreadID == "" || receipt.Meta.ThreadID != capture.Meta.ThreadID {
-		return inconclusive("synthesis_other_thread"), nil
+	// the next turn of the QA call's thread: the journal says the call continues the QA call. After a resume the continuation runs on
+	// a fork of the thread (its history through the QA call's last turn), so the thread id is not the test.
+	if !continues(rows(req.Journal.Events()), receipt.CallID, capture.CallID) {
+		return inconclusive("synthesis_not_continuation"), nil
 	}
 	ans, err := DecodeQAReceipt(receipt.Output)
 	if err != nil {
@@ -270,6 +272,12 @@ func (o *qaReceiptOp) done(res QAResult) engine.OpResult {
 
 func (o *qaReceiptOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	return provenAlways(ctx, ev, row)
+}
+
+// continues says whether the journal records the call as a continuation of the other (agent.call with resume: its handle).
+func continues(r rows, call, of string) bool {
+	prep, ok := r.prepared().last(func(ev engine.Event) bool { return ev.CallID == call })
+	return ok && str(prep.Data, "resume_of") == of
 }
 
 // qaReceiptOf decodes the receipt a completed crw.qaReceipt row holds.

@@ -419,7 +419,7 @@ read-only reviews in parallel, a native thread of the flow may spawn one explore
 both; the QA overlay tells the call not to start them and the binding line of the call allows no native spawn, so the hook refuses it.
 `crw.qaReceipt` judges what the calls answered and writes the receipt: it is `INCONCLUSIVE` when the capture did not complete or lists no
 capture, when a pass did not complete (the synthesis is then not asked for), is not an explorer call or answers for the other pass, or
-when the synthesis is not a completed `QA_RECEIPT` on the thread of the QA call; a `PASS` over a P0 or P1 finding is not a valid answer,
+when the synthesis is not a completed `QA_RECEIPT` of a call that continues the QA call (the journal's `resume_of`: after a resume the continuation runs on a fork of the thread); a `PASS` over a P0 or P1 finding is not a valid answer,
 and the receipt is as bad as the worst of the verdicts it rests on. The spawn decisions of the three calls (SP-QA-1, SP-QA-2 twice) are
 rows of `flow_spawn_decisions`; the roles and the pairs the threads read back are in the receipt.
 

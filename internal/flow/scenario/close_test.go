@@ -356,3 +356,49 @@ func TestFlowAuditCommandAuditsARunFromItsStore(t *testing.T) {
 		t.Errorf("an unreachable host: exit %d, %v", code, rep)
 	}
 }
+
+// The process of a run ends right after the QA call captured, before its self-review: the resume does not capture again, the call
+// that gives the receipt continues the QA call (on a fork of its thread, since the thread belongs to the process that ended), and the
+// close goes on to a receipt and a closed milestone.
+func TestResumeAfterTheQACaptureContinuesTheQACall(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Relay.Surfaces, l.Relay.Grade = []string{"web"}, "C2"
+	killed := false
+	l.OnRow(func(ev engine.Event) {
+		if !killed && ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "qa:M1" {
+			killed = true
+			l.Kill()
+		}
+	})
+	l.Run()
+	if !killed {
+		t.Fatal("the run never reached the QA call")
+	}
+	if rows := l.Rows("crw.qaReceipt"); len(rows) != 0 {
+		t.Fatalf("a receipt before the resume: %+v", rows)
+	}
+	capture := callNamed(t, l, "qa:M1")
+	before := l.LastSeq()
+	l.OnRow(nil)
+	l.NewProcess("proc-2")
+	got := Value[closeResult](t, l.Resume())
+	if got.State != "closed" || got.Gate != "pass" {
+		t.Fatalf("resume: %+v; calls %v", got, l.Labels())
+	}
+	for _, c := range l.LiveCalls(before) {
+		if c.Label == "qa:M1" || strings.HasPrefix(c.Label, "build:") || strings.HasPrefix(c.Label, "review:") {
+			t.Errorf("the resume ran %q again", c.Label)
+		}
+	}
+	review := callNamed(t, l, "qa-review:M1")
+	if review.Resume != capture.ID {
+		t.Errorf("the self-review continues %q, want the QA call %s", review.Resume, capture.ID)
+	}
+	rows := l.Rows("crw.qaReceipt")
+	if len(rows) != 1 || str(rows[0].Data, "state") != "PASS" {
+		t.Errorf("receipt rows %+v", rows)
+	}
+	if forks := l.Requests("thread/fork"); len(forks) != 1 {
+		t.Errorf("%d thread/fork requests: the continuation of a thread of the ended process runs on a fork", len(forks))
+	}
+}

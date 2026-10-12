@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -229,5 +228,4 @@ func TestArchiveRefusedOrNoHostKeepsTheThread(t *testing.T) {
 	if len(arch.Archived) != 0 {
 		t.Errorf("archived with no host: %+v", arch)
 	}
-	_ = fmt.Sprint
 }

@@ -49,10 +49,17 @@ func qaFinding(sev string) map[string]any {
 
 func qaOp(t *testing.T, gate GateRef, capture CallRef, passes []CallRef, receipt *CallRef) QAResult {
 	t.Helper()
+	return qaOpAfter(t, gate, capture, passes, receipt, capture.CallID)
+}
+
+// qaOpAfter is qaOp with a journal in which the receipt call continues the call resumeOf.
+func qaOpAfter(t *testing.T, gate GateRef, capture CallRef, passes []CallRef, receipt *CallRef, resumeOf string) QAResult {
+	t.Helper()
 	w := newWorld(t)
 	var rec any
 	if receipt != nil {
 		rec = *receipt
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: receipt.CallID, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "resume_of": resumeOf}})
 	}
 	if passes == nil {
 		passes = []CallRef{}
@@ -82,7 +89,6 @@ func TestQAReceiptC2SelfReview(t *testing.T) {
 		{"no capture is listed", qaCall("c_cap", "completed", "executor", "thr-qa", qaCapture(0)), nil, &review, "no_captures"},
 		{"no self-review", capture, nil, nil, "synthesis_missing"},
 		{"the self-review did not complete", capture, nil, &CallRef{CallID: "c_rev", Status: "null_model", Meta: review.Meta}, "synthesis_null_model"},
-		{"the self-review is on another thread", capture, nil, ptr(qaCall("c_rev", "completed", "executor", "thr-other", qaReceiptOut("PASS"))), "synthesis_other_thread"},
 		{"the self-review is no QA_RECEIPT", capture, nil, ptr(qaCall("c_rev", "completed", "executor", "thr-qa", json.RawMessage(`{"verdict":"MAYBE"}`))), "synthesis_invalid"},
 		{"a PASS over a P1 finding", capture, nil, ptr(qaCall("c_rev", "completed", "executor", "thr-qa", qaReceiptOut("PASS", qaFinding("P1")))), "synthesis_invalid"},
 		{"passes at C2", capture, []CallRef{qaCall("c_a", "completed", "explorer", "thr-a", qaPassOut("A", "PASS"))}, &review, "passes_not_asked"},
@@ -91,6 +97,16 @@ func TestQAReceiptC2SelfReview(t *testing.T) {
 		if got.State != QAInconclusive || got.Reason != c.reason {
 			t.Errorf("%s: %+v", c.name, got)
 		}
+	}
+	// the receipt is the next turn of the QA call's thread: a call that continues another call is not (after a resume the
+	// continuation runs on a fork of the thread, so the journal's resume_of is the test, not the thread id)
+	other := qaCall("c_rev", "completed", "executor", "thr-qa", qaReceiptOut("PASS"))
+	if got := qaOpAfter(t, gate, capture, nil, &other, "c_somebody_else"); got.State != QAInconclusive || got.Reason != "synthesis_not_continuation" {
+		t.Errorf("a self-review that continues another call: %+v", got)
+	}
+	forked := qaCall("c_rev", "completed", "executor", "thr-fork-of-qa", qaReceiptOut("PASS"))
+	if got := qaOp(t, gate, capture, nil, &forked); got.State != QAPass {
+		t.Errorf("a self-review on a fork of the QA thread: %+v", got)
 	}
 	// a P2 finding does not turn a PASS into a failure, and REVISE and FAIL are what they say
 	if got := qaOp(t, gate, capture, nil, ptr(qaCall("c_rev", "completed", "executor", "thr-qa", qaReceiptOut("PASS", qaFinding("P2"))))); got.State != QAPass || len(got.Findings) != 1 {
