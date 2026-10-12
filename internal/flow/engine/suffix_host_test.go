@@ -1260,3 +1260,46 @@ return [b.status]`
 		}
 	})
 }
+
+// A commit the resumed process makes live moves the boundary of its node like a replayed one: the continuation that follows
+// it, on the thread of the earlier process, is restored at that commit, and the history it builds on has both commits.
+func TestLiveCommitMovesTheBoundaryOfTheNextRestore(t *testing.T) {
+	e := newEnv(t)
+	e.edits(nil)
+	body := buildScript + `
+const c1 = await crw.commit('n1', b.callId)
+const f2 = await agent.call('fixtwo the parser', { resume: b, label: 'fix2' })
+const c2 = await crw.commit('n1', f2.callId)
+const f3 = await agent.call('fixthree again', { resume: f2, label: 'fix3' })
+const c3 = await crw.commit('n1', f3.callId)
+return [b.status, f2.status, f3.status, c1.commit, c2.commit, c3.commit]`
+	// the process dies when fix 2 has ended and before its commit
+	e.killWhen(func(ev engine.Event) bool {
+		return ev.Kind == engine.KindCall && ev.Label == "fix2" && ev.Event == engine.EvCompleted
+	})
+	e.run(body)
+	e.newProcess("proc-2")
+	e.edits(nil)
+	got := value[[]string](t, e.resume(body))
+	if got[0] != "completed" || got[1] != "completed" || got[2] != "completed" {
+		t.Fatalf("%v", got)
+	}
+	c1, c2, c3 := got[3], got[4], got[5]
+	rows := e.flowRows(engine.EvWorktreeRestored)
+	if len(rows) != 1 || rows[0].Data["C"] != c2 || rows[0].Data["P"] != nil {
+		t.Fatalf("worktree_restored %+v, want the boundary at the commit the resume made (%s)", rows, c2)
+	}
+	restored := e.wt("n1", 2, 1)
+	if rows[0].Data["path"] != restored {
+		t.Errorf("restored at %v", rows[0].Data["path"])
+	}
+	if got := git(t, restored, "rev-parse", c3+"^"); got != c2 {
+		t.Errorf("the third commit sits on %s, want the second %s", got, c2)
+	}
+	if got := git(t, restored, "rev-parse", c2+"^"); got != c1 {
+		t.Errorf("the second commit sits on %s, want the first %s", got, c1)
+	}
+	if n := len(e.requests("thread/start")); n != 1 {
+		t.Errorf("%d thread/start requests: the build and fix 2 were replayed", n)
+	}
+}

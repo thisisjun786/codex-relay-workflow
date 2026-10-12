@@ -130,7 +130,8 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 			e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvRefused, Data: data})
 		} else {
 			data["result"] = string(res.Result)
-			e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvCompleted, Data: data})
+			// a commit this process made moves the boundary of its node as a replayed one does
+			e.noteOp(e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvCompleted, Data: data}))
 		}
 		if jerr := journalErr(e.j); jerr != nil {
 			e.journalFailed(jerr)
