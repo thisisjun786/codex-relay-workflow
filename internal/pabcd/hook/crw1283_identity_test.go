@@ -46,12 +46,12 @@ func TestReview1283SystemDirectoryNameDoesNotIdentifyAProgram(t *testing.T) {
 			}
 		}
 	}
-	// The PATH the shell starts with runs the same file: the assignment does not change which program runs.
+	// Split (1) (Sion 10-13): a PATH the shell starts with that runs the same file is refused too, as at c007bd50, until CRW-1292.
 	t.Setenv("PATH", "/usr/bin:/bin")
 	for _, target := range crw1283Targets(t) {
 		for _, control := range []string{"PATH=/usr/bin:/bin printf x", "PATH=/usr/bin:/bin ls /tmp", "export PATH=/usr/bin:/bin; env true", "PATH=/usr/bin:/bin nice true"} {
-			if target.refused(control) {
-				t.Errorf("%s guard refused a system program the starting PATH runs: %s", target.name, control)
+			if !target.refused(control) {
+				t.Errorf("%s guard ALLOWED a PATH assignment (refused as at c007bd50 until CRW-1292): %s", target.name, control)
 			}
 		}
 	}
@@ -85,7 +85,8 @@ func TestReview1283ShebangInterpreterOnAssignedPath(t *testing.T) {
 				t.Errorf("%s guard ALLOWED a script whose env interpreter the assigned PATH selects: %s", target.name, command)
 			}
 		}
-		// The assigned PATH holds no interpreter of that name before the system directories: the script is read as before.
+		// The assigned PATH holds no interpreter of that name before the system directories: refused as well since split (1) (Sion
+		// 10-13), as at c007bd50, until CRW-1292.
 		quiet := filepath.Join(target.dir, "q")
 		if err := os.MkdirAll(quiet, 0o755); err != nil {
 			t.Fatal(err)
@@ -93,8 +94,8 @@ func TestReview1283ShebangInterpreterOnAssignedPath(t *testing.T) {
 		crw1283Script(t, quiet, "check", "#!/usr/bin/env bash\nset -eu\nprintf ok\n")
 		for _, control := range []string{"PATH={Q}:/usr/bin:/bin check", "export PATH={Q}:/usr/bin:/bin; {Q}/check", "PATH={Q}:/usr/bin:/bin nice check"} {
 			command := strings.ReplaceAll(control, "{Q}", quiet)
-			if target.refused(command) {
-				t.Errorf("%s guard refused a script whose env interpreter is the one the starting PATH runs: %s", target.name, command)
+			if !target.refused(command) {
+				t.Errorf("%s guard ALLOWED a PATH assignment (refused as at c007bd50 until CRW-1292): %s", target.name, command)
 			}
 		}
 	}

@@ -31,7 +31,7 @@ func shellIRDirectForwarder(execution shellir.Exec) bool {
 	if !githubPostDirectPath(execution) {
 		return false
 	}
-	body, kind := githubPostReadDirectExec(execution, execution.Dir.Path)
+	body, kind := githubPostReadDirect(execution.Program.Value, execution.Dir.Path)
 	return kind == githubPostFileShell && shellIRScriptUsesArgs(body)
 }
 
@@ -52,13 +52,11 @@ func shellIRScriptDests(e shellir.Exec, cwd string, lookup func(string) (string,
 		}
 		return unknown
 	}
-	read, dir := func(body, dir string, cdpath bool) (shellir.Result, error) {
-		return shellir.AnalyzeScriptBody(body, dir, cdpath, nil, e.SearchPath)
-	}, e.Dir.Path
+	read, dir := shellir.AnalyzeScript, e.Dir.Path
 	if resolve {
 		// The script inherits what the text that runs it did to exit and cd (CRW-1165), and the environment the gate is given.
 		read = func(body, dir string, cdpath bool) (shellir.Result, error) {
-			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup, Body: true, Path: e.SearchPath})
+			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup})
 		}
 		if !e.Dir.Known {
 			dir = ""

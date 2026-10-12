@@ -52,9 +52,6 @@ func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) 
 
 // ScriptOptions is what a reader of a text with failed-cd tracking knows about the shell that runs it besides the text (CRW-1165).
 type ScriptOptions struct {
-	// Body says the text is a script file's body; Path is Exec.SearchPath of the record that runs it (CRW-1283).
-	Body bool
-	Path *Word
 	// Cdpath is Exec.Cdpath of the record that runs the text.
 	Cdpath bool
 	// ExitTainted is Exec.ExitTainted of the record that runs the text: the text that ran it did not leave exit and cd alone, so a
@@ -73,17 +70,7 @@ func AnalyzeScriptProven(src, cwd string, o ScriptOptions) (Result, error) {
 	st.proveCD = true
 	st.exitTainted = o.ExitTainted
 	st.startup = o.Startup
-	st.searchPath, st.pathTouched, st.scriptBody = o.Path, o.Path != nil, o.Body
 	return analyze(src, st, nil)
-}
-
-// AnalyzeScriptBody is AnalyzeScriptEnv for a script file's body run with the PATH searchPath (Exec.SearchPath of the record that runs
-// it): its programs are found on that PATH, and an assignment to PATH in it is refused (CRW-1283).
-func AnalyzeScriptBody(src, cwd string, cdpath bool, lookup func(string) (string, bool), searchPath *Word) (Result, error) {
-	st := newState(cwd)
-	st.cdpath = cdpath
-	st.searchPath, st.pathTouched, st.scriptBody = searchPath, searchPath != nil, true
-	return analyze(src, st, lookup)
 }
 
 // textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
@@ -154,9 +141,6 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 
 // value is a variable's value: one the walk assigns, else one the environment gives, else empty.
 func (s *state) value(name string) string {
-	if name == "PATH" && s.searchPath != nil {
-		return s.searchPath.Value
-	}
 	if v, ok := s.vars[name]; ok {
 		return v
 	}
@@ -170,9 +154,6 @@ func (s *state) value(name string) string {
 
 // known is whether a variable has a value the walk or the environment gives.
 func (s *state) known(name string) bool {
-	if name == "PATH" && s.searchPath != nil {
-		return s.searchPath.Known
-	}
 	if _, ok := s.vars[name]; ok {
 		return true
 	}

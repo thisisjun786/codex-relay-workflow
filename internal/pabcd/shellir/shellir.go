@@ -58,9 +58,10 @@ func unreadablef(format string, args ...any) error {
 // Word is one word after evaluation. Known is false when the value depends on
 // something the reader cannot see; Reason then names what it depends on.
 type Word struct {
-	Known          bool
-	Value          string
-	Reason         string
+	Known  bool
+	Value  string
+	Reason string
+	// AssignmentName is "PATH" for a word the reader does not know that starts with PATH= (CRW-1283).
 	AssignmentName string
 }
 
@@ -139,10 +140,6 @@ type Context struct {
 	// wrapRedirs says a wrapper around this command carries a redirection: the reader does not follow a pipe into a shell
 	// behind a redirected wrapper (exec with a redirection), so the piped program stays unreadable there.
 	wrapRedirs bool
-	// launched says a program other than the shell itself starts this command (env, exec, nice, xargs, find -exec and the other
-	// wrappers except command and builtin): it runs the file the PATH finds, never a builtin or a function of that name (CRW-1283).
-	// dispatch reads it for its own command only.
-	launched bool
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -172,9 +169,7 @@ type Exec struct {
 	// ExitTainted is whether the text that holds a KindScriptFile record may have changed what exit or cd does for the shell that runs
 	// the script (a function, option or builtin it changed, or an environment it was not shown to leave alone): the reader of the
 	// script's body does not give it the proof of `cd <literal> || exit <digits>` (AnalyzeScriptProven, CRW-1165).
-	ExitTainted  bool
-	SearchPath   *Word
-	PathResolved bool
+	ExitTainted bool
 	// Line is the line, in the text the record was read from, of the statement that holds it (1-based; 0 when unknown).
 	Line int
 }
@@ -207,10 +202,6 @@ type state struct {
 	funcs   map[string]*syntax.Stmt
 	cdpath  bool
 	lookup  func(string) (string, bool)
-	// searchPath is the PATH an assignment the walk read gives (nil: the PATH the shell starts with); pathTouched says the text assigned
-	// PATH; scriptBody says the text is a script file's body, where an assignment to PATH is refused (pathAssignment, CRW-1283).
-	searchPath              *Word
-	pathTouched, scriptBody bool
 	// exitTainted and startup are what the reader was told about the shell around the text (ScriptOptions); they are read once, at the
 	// start of the walk.
 	exitTainted bool
@@ -230,13 +221,12 @@ func newState(cwd string) *state {
 
 func (s *state) clone() *state {
 	c := &state{
-		dir:        s.dir,
-		proveCD:    s.proveCD,
-		vars:       make(map[string]string, len(s.vars)),
-		funcs:      make(map[string]*syntax.Stmt, len(s.funcs)),
-		cdpath:     s.cdpath,
-		lookup:     s.lookup,
-		searchPath: s.searchPath, pathTouched: s.pathTouched, scriptBody: s.scriptBody,
+		dir:     s.dir,
+		proveCD: s.proveCD,
+		vars:    make(map[string]string, len(s.vars)),
+		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
+		cdpath:  s.cdpath,
+		lookup:  s.lookup,
 
 		exitTainted: s.exitTainted, startup: s.startup, noExitProof: s.noExitProof,
 	}
@@ -251,33 +241,11 @@ func (s *state) clone() *state {
 
 func (s *state) replace(o *state) { *s = *o }
 
-// clearVars makes the variables unknown, and an assigned PATH with them.
-func (s *state) clearVars() {
-	s.vars = map[string]string{}
-	if s.searchPath != nil {
-		s.searchPath = &Word{Reason: "PATH may have changed"}
-	}
-}
+func (s *state) clearVars() { s.vars = map[string]string{} }
 
-func (s *state) unsetVar(name string) {
-	delete(s.vars, name)
-	if name == "PATH" {
-		s.searchPath = &Word{Reason: "PATH is unset"}
-	}
-}
+func (s *state) unsetVar(name string) { delete(s.vars, name) }
 
 func (s *state) setVar(name string, v Word, appendValue bool) {
-	if name == "PATH" {
-		search := v
-		if appendValue {
-			if s.searchPath != nil && s.searchPath.Known && v.Known {
-				search.Value = s.searchPath.Value + v.Value
-			} else {
-				search = Word{Reason: "PATH append is not known"}
-			}
-		}
-		s.searchPath = &search
-	}
 	if !v.Known {
 		delete(s.vars, name)
 		return
@@ -304,12 +272,7 @@ func joinStates(states ...*state) *state {
 	}
 	out.lookup = first.lookup
 	out.proveCD = first.proveCD
-	out.searchPath = first.searchPath
 	for _, s := range states {
-		out.pathTouched = out.pathTouched || s.pathTouched
-		if !samePath(out.searchPath, s.searchPath) {
-			out.searchPath = &Word{Reason: "PATH differs between branches"}
-		}
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false
 		}
@@ -358,9 +321,6 @@ type walker struct {
 	createdUpTo  int
 	// pipeOut is what the last pipeline the walk finished prints (see stageSource).
 	pipeOut *pipeSource
-	// builtinsChanged is whether the text may have disabled a builtin or a function (enable, disable, or a file it sources), so that a
-	// name the shell ran itself may now be searched on the PATH (CRW-1283).
-	builtinsChanged bool
 	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command or an expansion of
 	// it may assign a variable whose name it does not spell: either may give a later module run a cache prefix (CRW-1178).
 	prefixNamed, prefixUnknown bool
@@ -487,64 +447,33 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		afterLoop(st, before, keepsDir)
 		return err
 	case *syntax.ForClause:
-		if c.Select {
-			if err := w.keywordOnPath("select", st); err != nil {
-				return err
-			}
-		}
 		return w.forClause(c, st, ctx)
 	case *syntax.CaseClause:
 		return w.caseClause(c, st, ctx)
 	case *syntax.FuncDecl:
-		if c.RsrvWord {
-			if err := w.keywordOnPath("function", st); err != nil {
-				return err
-			}
-		}
 		return w.funcDecl(c, st, ctx)
 	case *syntax.ArithmCmd:
-		if st.searchPath != nil {
-			// sh (dash) reads ((word)) as subshells that run the program word on the PATH (CRW-1283, Sion decision 5).
-			return unreadablef("(( is arithmetic in bash and zsh and runs the program it holds in sh; with an assigned PATH that program is not known")
-		}
 		if err := w.substsIn(c, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
 		return nil
 	case *syntax.TestClause:
-		if err := w.keywordOnPath("[[", st); err != nil {
-			return err
-		}
 		return w.substsIn(c, st, ctx)
 	case *syntax.LetClause:
-		if err := w.keywordOnPath("let", st); err != nil {
-			return err
-		}
 		if err := w.substsIn(c, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
 		return nil
 	case *syntax.DeclClause:
-		if c.Variant != nil {
-			if err := w.keywordOnPath(c.Variant.Value, st); err != nil {
-				return err
-			}
-		}
 		return w.decl(c, st, ctx)
 	case *syntax.TimeClause:
-		if err := w.keywordOnPath("time", st); err != nil {
-			return err
-		}
 		if c.Stmt == nil {
 			return nil
 		}
 		return w.stmt(c.Stmt, st, ctx)
 	case *syntax.CoprocClause:
-		if err := w.keywordOnPath("coproc", st); err != nil {
-			return err
-		}
 		cctx := ctx
 		cctx.Coprocess = true
 		return w.stmt(c.Stmt, st.clone(), cctx)
@@ -941,12 +870,11 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if err != nil {
 				return err
 			}
+			if pathWord(v) {
+				return unreadablef("assignment to PATH changes which program runs") // export 'PATH=/dir', export "PATH=$D" (CRW-1283)
+			}
 			// A quoted declaration ('a[i]=v') evaluates its subscript as arithmetic (CRW-1178).
 			w.nameSubscriptPrefix(st, v)
-			if a, ok := pathWord(v); ok {
-				assigns = append(assigns, a)
-				continue
-			}
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
 				st.clearVars()
 				// A name built at run time, or a name reference, may be or reach PYTHONPYCACHEPREFIX (CRW-1178).
@@ -975,7 +903,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if err != nil {
 				return err
 			}
-			asg.Value = pathValue(asg.Name, a.Value, v)
+			asg.Value = v
 			if v.Known && textNamesPycachePrefix(v.Value) {
 				w.prefixUnknown = true // a name reference to it, built from parts (declare -n r=${N}PREFIX)
 			}
@@ -985,7 +913,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 		}
 		assigns = append(assigns, asg)
 	}
-	if err := checkAssigns(assigns, st, ctx); err != nil {
+	if err := checkAssigns(assigns, st); err != nil {
 		return err
 	}
 	for _, a := range assigns {
@@ -1083,7 +1011,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 			if err != nil {
 				return err
 			}
-			asg.Value = pathValue(asg.Name, a.Value, v)
+			asg.Value = v
 		default:
 			asg.Value = Word{Known: true}
 		}
@@ -1098,7 +1026,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 		words = append(words, v)
 	}
 	if len(words) == 0 {
-		if err := checkAssigns(assigns, st, ctx); err != nil {
+		if err := checkAssigns(assigns, st); err != nil {
 			return err
 		}
 		// A command with no words is a program position that is empty, not an unknown one: a redirection alone
@@ -1160,15 +1088,11 @@ func assignedNames(name string, args []Word) []Word {
 
 // checkAssigns refuses the assignments that change what a program means
 // before it runs, and records that CDPATH was assigned: from then on a cd to a bare name may land in a CDPATH directory.
-func checkAssigns(assigns []Assign, st *state, ctx Context) error {
+func checkAssigns(assigns []Assign, st *state) error {
 	for _, a := range assigns {
 		switch {
-		case a.Name == "path" || a.Name == "PATH" && a.Array:
-			return unreadablef("array or lower-case path assignment is not modelled")
-		case a.Name == "PATH":
-			if err := pathAssignment(a, st, ctx); err != nil {
-				return err
-			}
+		case a.Name == "PATH" || a.Name == "path":
+			return unreadablef("assignment to %s changes which program runs", a.Name)
 		case isCodeEnvName(a.Name):
 			return unreadablef("assignment to %s makes a program run code the text does not show", a.Name)
 		case isCdpathName(a.Name):
@@ -1273,43 +1197,8 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	if w.createdByText(prog.Value, st.dir) {
 		return unreadablef("program %q is created by this text; the file it writes is what runs", prog.Value)
 	}
-	// A program another program starts is found on the PATH: the shell's builtin or function of that name does not run (CRW-1283).
-	launched := ctx.launched
-	ctx.launched = false
-	if err := checkAssigns(assigns, st, ctx); err != nil {
+	if err := checkAssigns(assigns, st); err != nil {
 		return err
-	}
-	if restore, err := st.prefixPath(name, words, assigns, launched); err != nil {
-		return err
-	} else if restore != nil {
-		defer restore()
-	}
-	resolved := false
-	// The shell runs its own builtin or function of a name without searching PATH, unless the text may have disabled it (enable -n,
-	// zsh's disable, or a sourced file that does): then a file of that name on the PATH is what runs, and only a name no directory
-	// holds is still the builtin.
-	exempt := !launched && pathIndependent(name, st)
-	if st.searchPath != nil && !strings.Contains(prog.Value, "/") && (!exempt || w.builtinsChanged) {
-		found, err := resolveProgram(prog, st)
-		switch {
-		case err == errPathNotFound && (exempt || !launched && shellOwnSomewhere(name)):
-			found = prog
-		case err != nil:
-			return err
-		}
-		prog = found
-		resolved = strings.Contains(prog.Value, "/")
-		if resolved && w.createdByText(prog.Value, st.dir) {
-			return unreadablef("PATH program is written before it runs")
-		}
-		// The program the PATH finds is read as the same program by its absolute path would be: by its name, and a shell file's body
-		// by the consumers. A binary is not identified by its name or by the directory it stands in (a copy of a shell named check runs
-		// its -c text), so it is admitted only when the PATH the shell started with runs the same file for the name (CRW-1283).
-		if resolved {
-			if err := pathProgramIdentified(name, prog.Value); err != nil {
-				return err
-			}
-		}
 	}
 	if reason := zshOnlyUse(name, words[1:]); reason != "" {
 		return unreadablef("%s", reason)
@@ -1346,12 +1235,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	w.out = append(w.out, Exec{
 		Kind: KindCommand, Program: prog, Name: name, Args: words[1:],
 		Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Inline: inline, Cdpath: st.cdpath,
-		SearchPath: st.searchPath, PathResolved: resolved,
 	})
-	switch name {
-	case "enable", "disable", "source", ".", "eval", "unhash", "unfunction":
-		w.builtinsChanged = true
-	}
 	if script != nil {
 		if err := w.scriptFile(name, *script, st, ctx); err != nil {
 			return err
@@ -1405,10 +1289,15 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	case isWrapper(name):
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
-		st.clearVars()
-		if err := declaredPath(name, words[1:], st, ctx); err != nil {
-			return err
+		// A declaration builtin the walk reaches as a command (X=1 export PATH=/dir) assigns PATH as the clause does (CRW-1283).
+		if name == "export" || name == "declare" || name == "typeset" || name == "readonly" || name == "local" {
+			for _, arg := range words[1:] {
+				if pathWord(arg) {
+					return unreadablef("assignment to PATH changes which program runs")
+				}
+			}
 		}
+		st.clearVars()
 		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
 		}
@@ -1560,7 +1449,6 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
 		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, ExitTainted: !w.exitProof,
-		SearchPath: st.searchPath,
 	})
 	return nil
 }
@@ -1602,9 +1490,6 @@ func (w *walker) carried(text string, st *state, ctx Context, carrier string) er
 func (w *walker) sourceCall(args []Word, st *state, ctx Context) error {
 	if len(args) == 0 {
 		return unreadablef("source without a file")
-	}
-	if st.pathTouched && (!args[0].Known || !strings.Contains(args[0].Value, "/")) {
-		return unreadablef("source searches an assigned PATH; use an absolute script path")
 	}
 	if err := w.scriptFile("source", args[0], st, ctx); err != nil {
 		return err
@@ -1660,7 +1545,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if err != nil {
 		return err
 	}
-	if err := checkAssigns(u.assigns, st, ctx); err != nil {
+	if err := checkAssigns(u.assigns, st); err != nil {
 		return err
 	}
 	if name == "xargs" || name == "find" || name == "entr" {
@@ -1713,7 +1598,6 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 				ictx.Feed.Dir = st.dir
 			}
 		}
-		ictx.launched = name != "command" && name != "builtin"
 		if external {
 			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
 				return unreadablef("a shell builtin named behind the external program %s", name)

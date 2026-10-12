@@ -50,11 +50,8 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 			}
 			continue
 		}
-		forwarder := false
-		if depth == 0 && !e.PathResolved {
-			forwarder = shellIRDirectForwarder(e)
-		}
-		if (e.PathResolved || e.SearchPath != nil || forwarder || depth > 0 && !githubPostInstalledName(e)) && githubPostDirectPath(e) {
+		// A shell file run by its path that forwards "$@" is read here too, so that the forward refuses it (CRW-1283 plan C).
+		if (depth == 0 && shellIRDirectForwarder(e) || depth > 0 && !githubPostInstalledName(e)) && githubPostDirectPath(e) {
 			own := shellIRExecDests(e)
 			if resolve {
 				own = shellIRResolve(own, e.Dir, cwd)
@@ -65,10 +62,7 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {
 				continue // A proven missing child has no body to execute.
 			}
-			_, kind := githubPostReadDirectExec(e, e.Dir.Path)
-			if (e.PathResolved || e.SearchPath != nil) && kind == githubPostFileBinary && !writes.stale(i, e.Program.Value, e.Dir) {
-				continue
-			}
+			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
 			if kind != githubPostFileShell || writes.stale(i, e.Program.Value, e.Dir) {
 				dests = append(dests, shellIRUnknownDest)
 			} else {

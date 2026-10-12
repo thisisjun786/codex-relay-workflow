@@ -79,8 +79,8 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 // githubPostJudgeTextDepth judges a text that a script file holds; outer is the writes of the texts that run it, which also
 // happen before the script's own commands. cdpath is whether CDPATH may be set where the script runs (shellir.Exec.Cdpath): the body
 // is read with it set, so a cd to a bare name in it is not a directory the guard knows.
-func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool, execution ...shellir.Exec) (githubPostSite, bool) {
-	site, denied := githubPostJudgeTextOnly(command, cwd, depth, outer, cdpath, execution...)
+func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
+	site, denied := githubPostJudgeTextOnly(command, cwd, depth, outer, cdpath)
 	if denied && !site.judged {
 		// Whether a refusal is about a GitHub post is a fact of the text it was found in: the innermost text that refuses sets it,
 		// and the text that runs that text does not overwrite it.
@@ -100,15 +100,8 @@ func githubPostEnv(name string) (string, bool) {
 	return os.LookupEnv(name)
 }
 
-func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool, execution ...shellir.Exec) (githubPostSite, bool) {
-	read := shellir.AnalyzeScriptEnv
-	if len(execution) > 0 {
-		// a script file's body, run with the PATH of the record that runs it (CRW-1283)
-		read = func(src, cwd string, cdpath bool, lookup func(string) (string, bool)) (shellir.Result, error) {
-			return shellir.AnalyzeScriptBody(src, cwd, cdpath, lookup, execution[0].SearchPath)
-		}
-	}
-	res, err := read(command, cwd, cdpath, githubPostEnv)
+func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
+	res, err := shellir.AnalyzeScriptEnv(command, cwd, cdpath, githubPostEnv)
 	if err != nil {
 		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: unreadableCause(err), analysis: true}, true
 	}
@@ -162,7 +155,8 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	for i = range execs {
 		e := execs[i]
 		failLine = e.Line
-		if e.Name == "git" && (depth > 0 || e.SearchPath != nil) && githubPostGitPush(e.Args) {
+		// git push inside a script file is refused: the reader of a script's body does not judge a push (CRW-1283).
+		if e.Name == "git" && depth > 0 && githubPostGitPush(e.Args) {
 			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
 		}
 		if e.Kind == shellir.KindScriptFile {
@@ -484,7 +478,7 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 		}
 		return githubPostSite{}, false
 	}
-	return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath, e))(e.Script.Value)
+	return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath))(e.Script.Value)
 }
 
 // githubPostLocate turns a refusal found inside a script into script-file:line, once: a refusal that already has a place (an
@@ -685,15 +679,15 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 	if !e.Dir.Known {
 		cwd = ""
 	}
-	body, kind := githubPostReadDirectExec(e, cwd)
+	body, kind := githubPostReadDirect(e.Program.Value, cwd)
 	switch kind {
 	case githubPostFileUnreadable:
-		unread.reason = githubPostScriptReason("script file cannot be read or names an interpreter the assigned PATH selects", e.Program.Value)
+		unread.reason = githubPostScriptReason("script file cannot be read", e.Program.Value)
 		return unread, true
 	case githubPostFileBinary, githubPostFileAbsent:
 		return githubPostSite{}, false
 	case githubPostFileShell:
-		return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath, e))(e.Program.Value)
+		return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath))(e.Program.Value)
 	}
 	if githubPostScriptMentionsPost(body) {
 		return unread, true
@@ -782,22 +776,6 @@ func githubPostReadDirect(name, dir string) (string, githubPostFileKind) {
 		return body, githubPostFileShell
 	}
 	return body, githubPostFileOther
-}
-
-// githubPostReadDirectExec reads the file an execution runs by its path, as githubPostReadDirect does, and follows the interpreter
-// of an env #! line when the execution has an assigned PATH: env runs the file that PATH selects for the interpreter's name, which
-// the body of the script says nothing about, so a script whose interpreter is not the one the starting PATH runs is unreadable
-// (CRW-1283, the evaluation of deb45bd1, d2).
-func githubPostReadDirectExec(e shellir.Exec, dir string) (string, githubPostFileKind) {
-	body, kind := githubPostReadDirect(e.Program.Value, dir)
-	if e.SearchPath == nil || kind != githubPostFileShell && kind != githubPostFileOther {
-		return body, kind
-	}
-	line, _, _ := strings.Cut(body, "\n")
-	if shellir.EnvShebang(line, e.SearchPath, e.Dir) != nil {
-		return "", githubPostFileUnreadable
-	}
-	return body, kind
 }
 
 // githubPostShellName is whether a program name is a POSIX or Korn family shell that reads a script file as shell text: the

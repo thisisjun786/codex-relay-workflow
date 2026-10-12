@@ -409,7 +409,8 @@ func fzGuards(t *testing.T) []*fzGuard {
 }
 
 // TestCRW1283GuardFuzz: the corpus keeps its pinned size, every form carrying a guard's target is refused, and the intended
-// relaxations (a program wrapper running go test, a PATH assignment with go, a readable script without a target) still allow.
+// relaxations (a program wrapper running go test, a readable script without a target) still allow; a PATH assignment with go is
+// refused as at c007bd50 until CRW-1292 (split (1), Sion 10-13).
 func TestCRW1283GuardFuzz(t *testing.T) {
 	t.Setenv("HOME", cleanTempDir(t))
 	t.Setenv("PATH", "/usr/bin:/bin")
@@ -462,8 +463,9 @@ func TestCRW1283GuardFuzz(t *testing.T) {
 	}
 }
 
-// controls: the intended relaxations still allow: a program wrapper, a PATH assignment with go (the toolchain the starting PATH runs),
-// a PATH of system directories, and a readable script without a target; plan C refuses the heavy_slot-shaped "$@" script wrapper.
+// controls: the intended relaxations still allow: a program wrapper and a readable script without a target; plan C refuses the
+// heavy_slot-shaped "$@" script wrapper, and split (1) (Sion 10-13) refuses every PATH assignment as at c007bd50 (with go, the toolchain
+// the starting PATH runs, and with a PATH of system directories) until CRW-1292 reads a literal PATH.
 func (g *fzGuard) controls() {
 	tool := filepath.Join(g.dir, "toolchain")
 	program, err := os.ReadFile("/usr/bin/true")
@@ -480,9 +482,13 @@ func (g *fzGuard) controls() {
 			g.t.Errorf("%s guard allowed the \"$@\" script wrapper plan C refuses: %s", g.name, refused)
 		}
 	}
-	for _, control := range []string{"ionice -c3 nice -n 5 go test ./...", "PATH=" + tool + ":/usr/bin:/bin go version",
-		"export PATH=" + tool + ":/usr/bin:/bin; go version", "PATH=/usr/bin:/bin printf x", "bash " + g.write("control.sh", "go version\n"),
-		"PATH=" + tool + ":/usr/bin:/bin " + filepath.Join(g.dir, "sb0")} {
+	for _, refused := range []string{"PATH=" + tool + ":/usr/bin:/bin go version", "export PATH=" + tool + ":/usr/bin:/bin; go version",
+		"PATH=/usr/bin:/bin printf x", "PATH=" + tool + ":/usr/bin:/bin " + filepath.Join(g.dir, "sb0")} {
+		if !g.refused(refused) {
+			g.t.Errorf("%s guard allowed a PATH assignment (refused as at c007bd50 until CRW-1292): %s", g.name, refused)
+		}
+	}
+	for _, control := range []string{"ionice -c3 nice -n 5 go test ./...", "bash " + g.write("control.sh", "go version\n")} {
 		if g.refused(control) {
 			g.t.Errorf("%s guard refused the intended relaxation: %s", g.name, control)
 		}

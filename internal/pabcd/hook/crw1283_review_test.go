@@ -148,7 +148,7 @@ func TestReview1283ExternalBuiltinName(t *testing.T) {
 		}
 		// printf is a builtin in bash, zsh and dash and a program the PATH finds in a strict POSIX shell or one without the builtin:
 		// a file of that name on the assigned PATH is read (review b2ae50e0, Sion decision 5). A PATH whose printf is the system's
-		// stays a control.
+		// is refused too since split (1) (Sion 10-13), as at c007bd50, until CRW-1292.
 		for _, shadowed := range []string{"PATH={DIR}:/usr/bin:/bin printf ok", "PATH={DIR}:/usr/bin:/bin command printf ok"} {
 			command := strings.ReplaceAll(shadowed, "{DIR}", target.dir)
 			if !target.refused(command) {
@@ -156,8 +156,8 @@ func TestReview1283ExternalBuiltinName(t *testing.T) {
 			}
 		}
 		for _, control := range []string{"PATH=/usr/bin:/bin printf ok", "PATH=/usr/bin:/bin command printf ok", "env PATH=/usr/bin:/bin printf ok"} {
-			if target.refused(control) {
-				t.Errorf("%s guard refused printf on a PATH of system directories: %s", target.name, control)
+			if !target.refused(control) {
+				t.Errorf("%s guard ALLOWED a PATH assignment (refused as at c007bd50 until CRW-1292): %s", target.name, control)
 			}
 		}
 	}
@@ -248,9 +248,9 @@ func TestReview1283PathPrefixKeepsShellState(t *testing.T) {
 	}
 }
 
-// TestReview1283PathBinaryOfTheStartingPath: a binary outside the system directories is admitted behind an assigned PATH when the
-// PATH the shell starts with runs the same file for its name (the toolchain case: PATH=<go>/bin:$PATH go version); a binary the
-// assignment puts in front of it is refused.
+// TestReview1283PathBinaryOfTheStartingPath: a binary the assignment puts in front of the one the PATH the shell starts with runs is
+// refused. The toolchain case (PATH=<go>/bin:... go version, the starting PATH runs the same file) is refused too since split (1)
+// (Sion 10-13), as at c007bd50, until CRW-1292 reads a literal PATH.
 func TestReview1283PathBinaryOfTheStartingPath(t *testing.T) {
 	base := cleanTempDir(t)
 	toolchain := filepath.Join(base, "toolchain")
@@ -265,8 +265,8 @@ func TestReview1283PathBinaryOfTheStartingPath(t *testing.T) {
 	t.Setenv("PATH", toolchain+":/usr/bin:/bin")
 	for _, target := range crw1283Targets(t) {
 		for _, command := range []string{"PATH=" + toolchain + ":/usr/bin:/bin tool version", "export PATH=" + toolchain + ":/usr/bin:/bin; tool version"} {
-			if target.refused(command) {
-				t.Errorf("%s guard refused the binary the starting PATH runs: %s", target.name, command)
+			if !target.refused(command) {
+				t.Errorf("%s guard ALLOWED a PATH assignment (refused as at c007bd50 until CRW-1292): %s", target.name, command)
 			}
 		}
 		for _, command := range []string{

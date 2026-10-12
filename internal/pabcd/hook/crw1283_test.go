@@ -85,28 +85,27 @@ func TestMemoryWriteGateReadsAReadableScriptFile(t *testing.T) {
 	}
 }
 
+// TestCommandReaderPathAssignmentResolvesTheProgram (decided answer 4, split (1), Sion 10-13): CRW-1283 refuses every PATH assignment
+// as c007bd50 did, a literal one in front of a harmless program included (a named limit; the literal PATH reading is CRW-1292); a
+// gh, a script that posts and a memory writer the assigned PATH would select stay refused, and a value that is not literal too.
 func TestCommandReaderPathAssignmentResolvesTheProgram(t *testing.T) {
 	cwd, root, env := gateScene(t)
-	program := crw1283Script(t, cwd, "check", "#!/bin/bash\nprintf ok\n")
-	for _, prefix := range []string{"PATH=" + cwd + " ", "export PATH=" + cwd + "; ", "export 'PATH=" + cwd + "'; ", "env PATH=" + cwd + " "} {
+	rig := newDelRig(t)
+	crw1283Script(t, cwd, "check", "#!/bin/bash\nprintf ok\n")
+	for _, prefix := range []string{"PATH=" + cwd + " ", "export PATH=" + cwd + "; ", "export 'PATH=" + cwd + "'; ", "env PATH=" + cwd + " ",
+		"X=1 export PATH=" + cwd + "; ", "PATH=/usr/bin:/bin "} {
 		command := prefix + "check"
-		res, err := shellir.Analyze(command, cwd)
-		if err != nil {
-			t.Errorf("%s: %v", command, err)
-			continue
+		if _, err := shellir.Analyze(command, cwd); err == nil || !strings.Contains(err.Error(), "assignment to PATH changes which program runs") {
+			t.Errorf("%s: the PATH assignment was read, refused as at c007bd50 until CRW-1292: %v", command, err)
 		}
-		found := false
-		for _, exec := range res.Execs {
-			found = found || exec.Program.Value == program
+		if _, denied := githubPostJudgeText(command, cwd); !denied {
+			t.Errorf("GitHub guard allowed a PATH assignment: %s", command)
 		}
-		if !found {
-			t.Errorf("%s: did not resolve %s: %+v", command, program, res.Execs)
+		if got := HandleMemoryWriteGate(gateBash(t, cwd, command), env); got == "" {
+			t.Errorf("memory gate allowed a PATH assignment: %s", command)
 		}
-		if _, denied := githubPostJudgeText(command, cwd); denied {
-			t.Errorf("benign PATH program refused: %s", command)
-		}
-		if got := HandleMemoryWriteGate(gateBash(t, cwd, command), env); got != "" {
-			t.Errorf("benign PATH program refused by memory gate: %s", got)
+		if got := rig.verdict(command); !got.Deny {
+			t.Errorf("worktree guard allowed a PATH assignment: %s", command)
 		}
 	}
 	crw1283Script(t, cwd, "gh", "#!/bin/bash\nprintf ok\n")
@@ -120,7 +119,7 @@ func TestCommandReaderPathAssignmentResolvesTheProgram(t *testing.T) {
 	if got := HandleMemoryWriteGate(gateBash(t, cwd, "PATH="+cwd+" writer"), env); got == "" {
 		t.Fatal("memory writer escaped PATH")
 	}
-	// Plan C (decided answer 4): a PATH value that is not literal is refused as before CRW-1283, even in front of an absolute program.
+	// A PATH value that is not literal is refused as well, even in front of an absolute program.
 	for _, command := range []string{"PATH=$UNKNOWN /usr/bin/true", "env PATH=$UNKNOWN /usr/bin/true", "PATH=" + cwd + ":$PATH check"} {
 		if _, err := shellir.Analyze(command, cwd); err == nil {
 			t.Errorf("a PATH value that is not literal was read: %s", command)

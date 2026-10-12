@@ -17,14 +17,9 @@ func (w *walker) word(x *syntax.Word, st *state, ctx Context) (Word, error) {
 	if err := w.substsIn(x, st, ctx); err != nil {
 		return Word{}, err
 	}
-	// A PATH= word whose value is not literal (env PATH=$D, export "PATH=$D") is not known (CRW-1283 plan C).
-	path := pathAssignmentPrefix(x)
-	_, literal := literalWord(x)
-	if reason := unknownWord(x, st); reason != "" || path != "" && !literal {
-		if reason == "" {
-			reason = "the PATH value is not literal"
-		}
-		return Word{Reason: reason, AssignmentName: path}, nil
+	if reason := unknownWord(x, st); reason != "" {
+		// A word that assigns PATH (export "PATH=$D") keeps that name, so a declaration still refuses it (CRW-1283).
+		return Word{Reason: reason, AssignmentName: pathAssignmentPrefix(x)}, nil
 	}
 	cfg := &expand.Config{
 		Env:       expand.FuncEnviron(func(name string) string { return st.value(name) }),
@@ -542,4 +537,26 @@ func hasBraceExpansion(raw string) bool {
 		}
 	}
 	return false
+}
+
+// pathAssignmentPrefix is "PATH" when a word starts with the literal PATH= or PATH+= (quoted or not), else "".
+func pathAssignmentPrefix(word *syntax.Word) string {
+	parts := word.Parts
+	if len(parts) == 1 {
+		if quoted, ok := parts[0].(*syntax.DblQuoted); ok {
+			parts = quoted.Parts
+		}
+	}
+	if len(parts) > 0 {
+		if literal, ok := parts[0].(*syntax.Lit); ok && (strings.HasPrefix(literal.Value, "PATH=") || strings.HasPrefix(literal.Value, "PATH+=")) {
+			return "PATH"
+		}
+	}
+	return ""
+}
+
+// pathWord is whether a declaration word assigns PATH: PATH=dir or PATH+=dir, its value known or not. Every assignment to PATH is
+// refused as checkAssigns refuses it (CRW-1283; the literal PATH reading is CRW-1292).
+func pathWord(arg Word) bool {
+	return !arg.Known && arg.AssignmentName == "PATH" || arg.Known && (strings.HasPrefix(arg.Value, "PATH=") || strings.HasPrefix(arg.Value, "PATH+="))
 }

@@ -8,8 +8,7 @@ import (
 )
 
 // Plan C of CRW-1283 (Sion 10-13, decided answers 2 and 4 rewritten): the reader no longer follows the arguments a script forwards
-// with "$@", and a PATH assignment is read only where the walk follows it in order, with a literal value, when the hook knows the PATH
-// the shell starts with. The forms below are the findings of the final Opus verification of 93890d32 (opusverify-final-93890d32-f3):
+// with "$@", and, since split (1), every PATH assignment is refused as at c007bd50 (the literal PATH reading is CRW-1292). The forms below are the findings of the final Opus verification of 93890d32 (opusverify-final-93890d32-f3):
 // each was allowed at 93890d32 and was refused before the relaxations (c007bd50 refused every "$@" and every PATH assignment). No test
 // runs the command.
 
@@ -92,13 +91,14 @@ func TestPlanC1283PathAssignmentOutOfOrder(t *testing.T) {
 
 // TestPlanC1283PathAssignmentNeedsAKnownStartingPath: without a PATH in the hook's environment the reader cannot tell what an
 // assigned PATH replaces, so the assignment is refused as before the relaxations, even with a literal value and a harmless program.
+// Split (1) (Sion 10-13): with a known starting PATH it is refused too, as at c007bd50, until CRW-1292 reads a literal PATH.
 func TestPlanC1283PathAssignmentNeedsAKnownStartingPath(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	for _, target := range crw1283Targets(t) {
 		planCScript(t, target.dir, "ben/check", "#!/bin/sh\n:\n")
 		command := "PATH=" + filepath.Join(target.dir, "ben") + " check"
-		if target.refused(command) {
-			t.Errorf("%s guard refused the literal PATH assignment with a known starting PATH: %s", target.name, command)
+		if !target.refused(command) {
+			t.Errorf("%s guard ALLOWED a literal PATH assignment with a known starting PATH (refused as at c007bd50 until CRW-1292): %s", target.name, command)
 		}
 		os.Unsetenv("PATH")
 		if !target.refused(command) {

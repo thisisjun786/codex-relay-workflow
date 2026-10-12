@@ -28,7 +28,7 @@ func TestCRW1283LoopArgumentsFollowPositionalChangesOnly(t *testing.T) {
 		"for i in 1 2; do start=$(date +%s); ionice -c3 nice \"$@\"; done",
 		"until false; do X=1 env \"$@\"; n=$((n + 1)); cd /tmp; break; done",
 	} {
-		_, err := AnalyzeScriptBody(body, "/work", false, lookup, nil)
+		_, err := AnalyzeScriptEnv(body, "/work", false, lookup)
 		if err == nil || !strings.Contains(err.Error(), "run the forwarded command directly") {
 			t.Errorf("a loop that forwards \"$@\" was not refused with the followable path: %s: %v", body, err)
 		}
@@ -42,7 +42,7 @@ func TestCRW1283LoopArgumentsFollowPositionalChangesOnly(t *testing.T) {
 		"while :; do nice \"$@\"; shift; done",
 		"while :; do nice \"$@\"; for 1 in env; do :; done; done",
 	} {
-		if _, err := AnalyzeScriptBody(body, "/work", false, lookup, nil); err == nil {
+		if _, err := AnalyzeScriptEnv(body, "/work", false, lookup); err == nil {
 			t.Errorf("a loop that changes the positional parameters kept the arguments: %s", body)
 		}
 	}
@@ -59,7 +59,7 @@ func TestCRW1283ZshParameterBuiltinsEndTheArguments(t *testing.T) {
 		"while :; do print -n x; nice \"$@\"; break; done",
 		"for i in 1 2; do nice \"$@\"; print done; done",
 	} {
-		if _, err := AnalyzeScriptBody(body, "/work", false, lookup, nil); err == nil {
+		if _, err := AnalyzeScriptEnv(body, "/work", false, lookup); err == nil {
 			t.Errorf("a print without -v forwarded \"$@\": %s", body)
 		}
 	}
@@ -87,7 +87,7 @@ func TestCRW1283ZshParameterBuiltinsEndTheArguments(t *testing.T) {
 		"for i in 1 2; do nice \"$@\"; vared 1; done",
 		"f() { print -v 1 env; }; while :; do nice \"$@\"; f; done",
 	} {
-		if _, err := AnalyzeScriptBody(body, "/work", false, lookup, nil); err == nil {
+		if _, err := AnalyzeScriptEnv(body, "/work", false, lookup); err == nil {
 			t.Errorf("a zsh builtin that assigns a positional parameter kept the arguments: %s", body)
 		}
 	}

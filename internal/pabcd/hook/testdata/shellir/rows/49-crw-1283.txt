@@ -82,8 +82,8 @@ echo x >{MEMORY}/note.md
 --cmd
 bash write.sh
 
-=== CRW-1283-path-control | B
---why A literal PATH resolves the harmless installed binary without changing its policy.
+=== CRW-1283-path-control | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A literal PATH resolves the harmless installed binary without changing its policy.
 --cmd
 PATH=/usr/bin:/bin cat /dev/null
 
@@ -92,13 +92,13 @@ PATH=/usr/bin:/bin cat /dev/null
 --cmd
 PATH=$UNRESOLVED gh pr comment 1 --body x
 
-=== CRW-1283-path-push | none/deny/allow
---why A resolved git program behind a literal PATH does not bypass the push refusal.
+=== CRW-1283-path-push | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A resolved git program behind a literal PATH does not bypass the push refusal.
 --cmd
 PATH=/usr/bin:/bin git push origin dev
 
-=== CRW-1283-path-memory | W
---why A resolved tee behind a literal PATH still writes its memory operand.
+=== CRW-1283-path-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A resolved tee behind a literal PATH still writes its memory operand.
 --cmd
 PATH=/usr/bin:/bin tee {MEMORY}/note.md
 
@@ -120,8 +120,8 @@ echo x >{MEMORY}/note.md
 --cmd
 PATH=$UNRESOLVED {WORK}/write.sh
 
-=== CRW-1283-path-direct-removal | R
---why PATH relaxation must not hide an absolute shell file's protected worktree removal.
+=== CRW-1283-path-direct-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: PATH relaxation must not hide an absolute shell file's protected worktree removal.
 --file remove.sh
 #!/bin/bash
 rm -rf {CHECKOUT}
@@ -207,32 +207,32 @@ set -euo pipefail
 --cmd
 bash slot.sh go version
 
-=== CRW-1283-review-env-printf-memory | W
---why env runs the printf the assigned PATH finds, not the shell's builtin: that file's memory write is read.
+=== CRW-1283-review-env-printf-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: env runs the printf the assigned PATH finds, not the shell's builtin: that file's memory write is read.
 --file printf
 #!/bin/sh
 echo x >{MEMORY}/note.md
 --cmd
 env PATH={WORK}:/usr/bin:/bin printf
 
-=== CRW-1283-review-exec-printf-post | P
---why exec runs the printf the assigned PATH finds, so the post in that file is read and refused.
+=== CRW-1283-review-exec-printf-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: exec runs the printf the assigned PATH finds, so the post in that file is read and refused.
 --file printf
 #!/bin/sh
 gh pr comment 1 --body x
 --cmd
 PATH={WORK}:/usr/bin:/bin exec printf
 
-=== CRW-1283-review-env-true-removal | R
---why env runs the true the assigned PATH finds: its protected removal is read.
+=== CRW-1283-review-env-true-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: env runs the true the assigned PATH finds: its protected removal is read.
 --file true
 #!/bin/sh
 rm -rf {CHECKOUT}
 --cmd
 env PATH={WORK}:/usr/bin:/bin true
 
-=== CRW-1283-review-shadowed-printf-memory | W
---why printf is a builtin in some shells and the file the assigned PATH finds in others, so that file's memory write is read (review b2ae50e0, Sion decision 5).
+=== CRW-1283-review-shadowed-printf-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: printf is a builtin in some shells and the file the assigned PATH finds in others, so that file's memory write is read (review b2ae50e0, Sion decision 5).
 --file printf
 #!/bin/sh
 echo x >{MEMORY}/note.md
@@ -271,8 +271,8 @@ exec /usr/bin/git "$@"
 --cmd
 PATH={WORK}:/usr/bin:/bin git -c 'alias.review=!rm -rf {CHECKOUT}' review
 
-=== CRW-1283-review-path-prefix-cd-removal | R
---why A PATH assignment in front of cd lasts for cd only; the directory cd moves to stays for the removal after it.
+=== CRW-1283-review-path-prefix-cd-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A PATH assignment in front of cd lasts for cd only; the directory cd moves to stays for the removal after it.
 --cmd
 PATH=/usr/bin:/bin cd {CHECKOUT}/..; rm -rf repo
 
@@ -284,8 +284,8 @@ echo x >{MEMORY}/note.md
 --cmd
 PATH={WORK}:/usr/bin:/bin export X=1; env printf
 
-=== CRW-1283-review-disabled-builtin-memory | W
---why A builtin the text disables is searched on the assigned PATH: the printf file found there and its memory write are read.
+=== CRW-1283-review-disabled-builtin-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A builtin the text disables is searched on the assigned PATH: the printf file found there and its memory write are read.
 --file printf
 #!/bin/sh
 echo x >{MEMORY}/note.md
@@ -420,8 +420,8 @@ zsh -c 'for 1 in tee; do "$@"; done' z true {MEMORY}/note.md
 --cmd
 bash -s gh pr comment 1 --body x <<<'"$@"'
 
-=== CRW-1283-r2-prefix-time-removal | R
---why Review b2ae50e0 probe prefix-time: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+=== CRW-1283-r2-prefix-time-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe prefix-time: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
 --file time
 #!/bin/sh
 rm -rf {CHECKOUT}
@@ -436,16 +436,16 @@ tee {MEMORY}/note.md
 --cmd
 export PATH={WORK}:/usr/bin:/bin; time true
 
-=== CRW-1283-r2-export-chdir-post | P
---why Review b2ae50e0 probe export-chdir: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+=== CRW-1283-r2-export-chdir-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe export-chdir: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
 --file chdir
 #!/bin/sh
 gh pr comment 1 --body x
 --cmd
 export PATH={WORK}:/usr/bin:/bin; chdir /tmp
 
-=== CRW-1283-r2-export-printf-removal | R
---why Review b2ae50e0 probe export-printf: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+=== CRW-1283-r2-export-printf-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe export-printf: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
 --file printf
 #!/bin/sh
 rm -rf {CHECKOUT}
@@ -460,8 +460,8 @@ tee {MEMORY}/note.md
 --cmd
 sh -c 'export PATH={WORK}:/usr/bin:/bin; let x=1'
 
-=== CRW-1283-r2-dash-pushd-post | P
---why Review b2ae50e0 probe dash-pushd: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+=== CRW-1283-r2-dash-pushd-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe dash-pushd: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
 --file pushd
 #!/bin/sh
 gh pr comment 1 --body x
@@ -484,16 +484,16 @@ tee {MEMORY}/note.md
 --cmd
 sh -c 'PATH={WORK}:/usr/bin:/bin; export PATH; declare x=1'
 
-=== CRW-1283-r2-dash-mapfile-post | P
---why Review b2ae50e0 probe dash-mapfile: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+=== CRW-1283-r2-dash-mapfile-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe dash-mapfile: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
 --file mapfile
 #!/bin/sh
 gh pr comment 1 --body x
 --cmd
 sh -c 'export PATH={WORK}:/usr/bin:/bin; mapfile x </dev/null'
 
-=== CRW-1283-r2-zsh-readarray-removal | R
---why Review b2ae50e0 probe zsh-readarray: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+=== CRW-1283-r2-zsh-readarray-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe zsh-readarray: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
 --file readarray
 #!/bin/sh
 rm -rf {CHECKOUT}
@@ -709,8 +709,8 @@ rm -rf {CHECKOUT}
 --cmd
 PATH={WORK}/p:/usr/bin:/bin py
 
-=== CRW-1283-r3-env-shebang-control | B
---why Control: an env #! script whose interpreter the assigned PATH leaves to the system directories is read as before (Sion decision 4).
+=== CRW-1283-r3-env-shebang-control | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Control: an env #! script whose interpreter the assigned PATH leaves to the system directories is read as before (Sion decision 4).
 --file q/check
 #!/usr/bin/env bash
 set -eu
@@ -718,8 +718,8 @@ printf ok
 --cmd
 PATH={WORK}/q:/usr/bin:/bin check
 
-=== CRW-1283-r3-bin-dir-control | B
---why Control: a system program the PATH the shell starts with runs is read by its name behind an assigned PATH (Sion decision 4).
+=== CRW-1283-r3-bin-dir-control | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Control: a system program the PATH the shell starts with runs is read by its name behind an assigned PATH (Sion decision 4).
 --cmd
 PATH=/usr/bin:/bin ls /tmp
 
