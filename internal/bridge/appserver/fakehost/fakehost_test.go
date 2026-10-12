@@ -264,3 +264,83 @@ func TestPaddedReply_exceedsClientLimit_whenPadBytesPastIt(t *testing.T) {
 		t.Fatalf("notification=%+v err=%v", notification, err)
 	}
 }
+
+// call sends a request and reads its answer.
+func (c *client) call(id int, method string, params map[string]any) frame {
+	c.t.Helper()
+	c.send(map[string]any{"id": id, "method": method, "params": params})
+	return c.read()
+}
+
+func turnIDs(t *testing.T, f frame) (ids []string, next any) {
+	t.Helper()
+	if f.Error != nil {
+		t.Fatalf("thread/turns/list: %+v", f.Error)
+	}
+	data, _ := f.Result["data"].([]any)
+	for _, d := range data {
+		m, _ := d.(map[string]any)
+		ids = append(ids, m["id"].(string))
+	}
+	return ids, f.Result["nextCursor"]
+}
+
+// TurnsPageSize caps the page of thread/turns/list at n, so a history takes several pages; the cursor leads through them.
+func TestTurnsList_takesSeveralPages_whenThePageSizeIsCapped(t *testing.T) {
+	// Given
+	server := fakehost.Start(t)
+	thread := server.Threads().Seed(fakehost.SeedThread{Cwd: "/w", Turns: []fakehost.SeedTurn{{Text: "one"}, {Text: "two"}, {Text: "three"}}})
+	server.Threads().TurnsPageSize(1)
+	c := dial(t, server)
+	c.handshake()
+
+	// When
+	var all []string
+	var cursor any
+	pages := 0
+	for id := 2; ; id++ {
+		params := map[string]any{"threadId": thread, "sortDirection": "asc", "limit": 50}
+		if cursor != nil {
+			params["cursor"] = cursor
+		}
+		ids, next := turnIDs(t, c.call(id, "thread/turns/list", params))
+		all, cursor, pages = append(all, ids...), next, pages+1
+		if next == nil {
+			break
+		}
+	}
+
+	// Then
+	if pages != 3 || len(all) != 3 {
+		t.Fatalf("%d pages with turns %v, want three pages of one turn", pages, all)
+	}
+}
+
+// ForkKeepsAllTurns makes thread/fork ignore lastTurnId, as a host that does not omit the turns after the boundary does.
+func TestFork_keepsTheTurnsAfterTheBoundary_whenTheHostIgnoresLastTurnId(t *testing.T) {
+	// Given
+	server := fakehost.Start(t)
+	source := server.Threads().Seed(fakehost.SeedThread{Cwd: "/w", Model: "m", Turns: []fakehost.SeedTurn{{Text: "one"}, {Text: "two"}, {Text: "three"}}})
+	view, _ := server.Threads().Thread(source)
+	c := dial(t, server)
+	c.handshake()
+	fork := func(id int) []string {
+		answer := c.call(id, "thread/fork", map[string]any{"threadId": source, "lastTurnId": view.Turns[1].ID, "cwd": "/f", "excludeTurns": true})
+		if answer.Error != nil {
+			t.Fatalf("thread/fork: %+v", answer.Error)
+		}
+		forked := answer.Result["thread"].(map[string]any)["id"].(string)
+		ids, _ := turnIDs(t, c.call(id+1, "thread/turns/list", map[string]any{"threadId": forked, "sortDirection": "asc"}))
+		return ids
+	}
+
+	// When
+	omitting := fork(2)
+	server.Threads().ForkKeepsAllTurns(true)
+	keeping := fork(4)
+
+	// Then
+	if len(omitting) != 2 || len(keeping) != 3 {
+		t.Fatalf("the fork holds %v by default and %v when the host keeps every turn", omitting, keeping)
+	}
+}
