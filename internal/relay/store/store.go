@@ -50,7 +50,8 @@ type Store struct {
 	// readOnly is Store(read_only=True): mode=ro, query_only=ON, deferred BEGIN.
 	readOnly bool
 	// live is this store's reference in the store-file identity table (CRW-967), given back by Close.
-	live *liveStoreRef
+	live     *liveStoreRef
+	borrowed bool
 }
 
 // The frozen contract contains DDL, then guard indexes, then illustrative seed SQL.
@@ -72,6 +73,14 @@ type OpenOptions struct {
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
+	if owner, ok := ctx.Value(borrowedStoreKey{}).(*Store); ok {
+		if !SameStoreFile(path, owner.Path) {
+			return nil, &RefusedError{Reason: "store_owned_by_other", Detail: "child command may only borrow the daemon's own store"}
+		}
+		borrowed := *owner
+		borrowed.borrowed = true
+		return &borrowed, nil
+	}
 	if ReadOnlyCommand(ctx) {
 		return openForRead(ctx, path, socketPath)
 	}
@@ -84,6 +93,31 @@ func Open(ctx context.Context, path, socketPath string) (*Store, error) {
 }
 
 type admittedKey struct{}
+
+type borrowedStoreKey struct{}
+
+func WithBorrowedStore(ctx context.Context, owner *Store) context.Context {
+	return context.WithValue(ctx, borrowedStoreKey{}, owner)
+}
+
+func HasBorrowedStore(ctx context.Context) bool {
+	owner, _ := ctx.Value(borrowedStoreKey{}).(*Store)
+	return owner != nil
+}
+
+// SameStoreFile is whether a and b name one store file: one spelling, or one file reached by two (a symbolic link on
+// the path, CRW-1286). A path that cannot be read names no store a child may borrow.
+func SameStoreFile(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	first, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	second, err := os.Stat(b)
+	return err == nil && os.SameFile(first, second)
+}
 
 // Admitted is the one writable store a relay command admitted before its handler ran (cli.main's
 // _ownership_preflight opens services.store once, and the handler uses that same store). Hold places the store in the slot; the first writable Open of
@@ -473,6 +507,9 @@ func randomBytes(size int) ([]byte, error) {
 // table (CRW-967). The reference is released after the connection, so the database descriptor is
 // closed before its identity stops being recognised.
 func (s *Store) Close() error {
+	if s.borrowed {
+		return nil
+	}
 	err := s.DB.Close()
 	if s.gate != nil {
 		err = errors.Join(err, s.gate.Close())

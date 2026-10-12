@@ -131,7 +131,7 @@ func newRealKit(t *testing.T) *realKit {
 }
 
 func (k *realKit) settings() map[string]any {
-	return map[string]any{"sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "approvalPolicy": "never", "cwd": k.root, "runtimeWorkspaceRoots": []any{k.root},
+	return map[string]any{"sandbox": map[string]any{"type": "dangerFullAccess"}, "approvalPolicy": "never", "cwd": k.root, "runtimeWorkspaceRoots": []any{k.root},
 		"model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": k.root, "runtimeWorkspaceRoots": []any{k.root}}}}
 }
 

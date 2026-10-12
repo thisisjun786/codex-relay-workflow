@@ -68,10 +68,13 @@ func autoCompactListed(value any, field string) bool {
 func TestCreateThreadSendsThePairsAutoCompactLimit(t *testing.T) {
 	b, host := policyBridge(t, autoCompactPolicy)
 	cwd := t.TempDir()
-	host.Respond("thread/start", startReply(cwd))
+	started := startReply(cwd)
+	started.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
+	host.Respond("thread/start", started)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	input := createInput(cwd, "auto-compact-create")
 	input.Role = "child"
+	input.Sandbox = "danger-full-access"
 	receipt, err := b.CreateThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
@@ -114,10 +117,12 @@ func TestSendMessageSendsThePairsAutoCompactLimitAndStillDelivers(t *testing.T) 
 func TestAPolicyWithoutTheLimitSendsNoAutoCompactKey(t *testing.T) {
 	b, host := policyBridge(t, `{"roles":{"child":{"model":"explicit-model","reasoningEffort":"high"}}}`)
 	cwd := t.TempDir()
-	host.Respond("thread/start", startReply(cwd))
+	started := startReply(cwd)
+	started.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
+	host.Respond("thread/start", started)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	input := createInput(cwd, "auto-compact-absent")
-	input.Role = "child"
+	input.Role, input.Sandbox = "child", "danger-full-access"
 	receipt, err := b.CreateThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
@@ -135,8 +140,9 @@ func TestAPolicyWithoutTheLimitSendsNoAutoCompactKey(t *testing.T) {
 func TestCreateWorktreeThreadSendsThePairsAutoCompactLimit(t *testing.T) {
 	b, host := policyBridge(t, autoCompactPolicy)
 	input := worktreeInput(t)
-	input.Role = "child"
-	worktreeHost(host, input.Destination)
+	// A relay child is created writable (CRW-1296).
+	input.Role, input.Sandbox, input.Policy = "child", "danger-full-access", map[string]any{"type": "dangerFullAccess"}
+	worktreeHost(host, input.Destination, input.Policy)
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" || receipt["phase"] != "complete" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
@@ -161,11 +167,11 @@ func TestAnExceptionCarriesNoAutoCompactLimit(t *testing.T) {
 	}
 	b.Policy = loaded
 	start := startReply(cwd)
-	start.Result["model"] = "gpt-6-astra"
+	start.Result["model"], start.Result["sandbox"] = "gpt-6-astra", map[string]any{"type": "dangerFullAccess"}
 	host.Respond("thread/start", start)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	input := createInput(cwd, "auto-compact-exception")
-	input.Role, input.Model, input.Effort, input.Exception = "child", "gpt-6-astra", "high", "one-task"
+	input.Role, input.Model, input.Effort, input.Exception, input.Sandbox = "child", "gpt-6-astra", "high", "one-task", "danger-full-access"
 	receipt, err := b.CreateThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)

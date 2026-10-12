@@ -51,9 +51,9 @@ func Test30ControlSocketRealSurface(t *testing.T) {
 	if answer.Get("decision") != "release" || answer.Get("state") != "unmanaged" {
 		t.Fatal(answer)
 	}
-	// control.sock serves guard-evaluate only, as Python's GuardServer does: decision-25
-	// ingress is the queued command's own file publication, so an inbox-submit request is
-	// rejected like any other method, never acknowledged.
+	// control.sock serves guard-evaluate, as Python's GuardServer does, and the daemon's
+	// child-command (CRW-1286); decision-25 ingress is the queued command's own file
+	// publication, so an inbox-submit request is rejected like any other method, never acknowledged.
 	conn, err = net.Dial("unix", controlPath(state))
 	if err != nil {
 		t.Fatal(err)

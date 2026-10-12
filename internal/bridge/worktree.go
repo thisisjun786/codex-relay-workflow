@@ -73,6 +73,9 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		if err != nil {
 			return err
 		}
+		if err = refuseReadOnlyChild(in.Role, in.Sandbox, in.Policy); err != nil {
+			return err
+		}
 		contract = settings.Contract{Sandbox: in.Sandbox, ExpectedPolicy: in.Policy, Model: auth.Model, ReasoningEffort: auth.Effort, AutoCompactTokenLimit: auth.AutoCompactTokenLimit}
 		return contract.Validate()
 	}

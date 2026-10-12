@@ -12,7 +12,7 @@ source in this package changes none of those.
 
 ## Where the state lives
 
-Every participant of one assignment must read and write the same SQLite store. The
+Every participant of one assignment must select the same SQLite store. The
 directory is chosen by the first rule that applies:
 
 | Precedence | Source | Notes |
@@ -50,6 +50,63 @@ the flag splits the relay store from the ledger that carries send idempotency. S
 
 Status: implemented. `resolve_state_dir` returns the winning rule and `doctor` reports it with
 the resolved database and the measured access.
+
+### Child reports use the daemon
+
+`crw relay emit`, `intent-claim` and `intent-disposition` submit their commands through
+the selected state's `control.sock`. The child process does not open a writable store or
+publish its claim or disposition marker. The daemon executes the command against its
+already-owned store, preserving receipt admission, replay identity and parent delivery.
+The command crosses the socket byte for byte: its arguments arrive as the child was given
+them, and the child prints the command's stdout and stderr and exits with its exit code.
+The socket client checks the daemon's peer UID and the ownership of the socket and its
+directory. The daemon accepts only these child commands, its own store and its own marker
+root; a marker naming another store is refused before publication. The daemon alone
+decides where a child report is recorded: the child's `--state` or
+`CODEX_SESSION_RELAY_STATE` only finds the socket, and the daemon records the command in
+its own store whatever the request names. A path relative to the child (`--socket`,
+`--workspace`, `--marker-root`, `--independent-review`) is refused with an explicit error;
+the child names it absolute. The command runs in the daemon's environment: the default marker root
+is the daemon's (`CODEX_SESSION_RELAY_MARKER_ROOT`, else under `XDG_STATE_HOME` or the
+home), a child naming another `--marker-root` is refused, and a child naming a
+`--kind-module` that installs something (`codex_session_relay.projects`) is refused, since it
+would install into the daemon for every later command. A child `emit` naming `--artifact`
+with `--manifest-ref` is refused `manifest_forbidden`: the daemon freezes no artifact into a
+destination the child chose, so omit `--manifest-ref`. An intent may name the daemon's store
+by any spelling of the same file.
+
+An unavailable daemon is an explicit host error (exit 3), not success and not a fallback
+to a local writer or a bridge MCP call. A lost answer after submission is reported as an
+unknown report outcome: retry the same receipt identity, not a new receipt. The daemon
+serves one child command for up to 50 s after its request line (the store's 30 s busy wait
+and one 20 s App Server read, `hook.ChildCommandBudget`), and the child waits that long;
+the 5 s bound of `control.sock` is the request line's. A writable
+child needs the daemon too.
+
+Reaching `control.sock` is a network permission, not a filesystem one. Codex (measured on
+codex-cli 0.154.0) refuses the child's `connect` with `EPERM` in every sandbox without
+network access: `read-only`, and `workspace-write` unless its policy grants
+`networkAccess`. A child there cannot report at all; each child command ends with exit 3
+and says that its sandbox refuses the connection. The connect succeeds under
+`danger-full-access`, under `workspace-write` with network access, and under a read-only
+filesystem with network access, so a child whose filesystem cannot write the store still
+reports through the daemon when its network is enabled. The bridge still refuses to create a
+relay child with a `read-only` sandbox or an explicit `readOnly` policy, network or not: a
+relay child writes its work, so the refusal names the two sandboxes that both write and
+reach the daemon (CRW-1296).
+
+Bridge `create_thread` (the relay's managed start included) and `create_worktree_thread`
+refuse a `child` role whose sandbox cannot reach the daemon, before starting a thread or
+creating a checkout: a `read-only` sandbox or an explicit `readOnly` policy, and a
+`workspace-write` sandbox whose `expected_sandbox_policy` does not grant `networkAccess`
+(without that policy the network is the host configuration's, which the bridge cannot
+see). Recreate that child with an explicitly authorized writable sandbox that reaches the
+daemon: `danger-full-access`, or `workspace-write` with an `expected_sandbox_policy`
+granting `networkAccess` (it travels in the start config and the created thread is checked
+against it). The bridge never silently changes its sandbox. Read-only threads without the
+child role remain supported.
+
+Status: implemented in source. Installation and live delivery are separate operations.
 
 ### When the rules cannot pick a store
 

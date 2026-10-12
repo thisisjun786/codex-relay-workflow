@@ -42,6 +42,14 @@ func workspaceWrite(writable ...string) map[string]any {
 	return map[string]any{"type": "workspaceWrite", "writableRoots": roots, "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}
 }
 
+// relayChildSandbox is the workspace-write sandbox the fixtures create a relay child in: with network access, so the child
+// reaches the relay daemon's socket, as bridge creation requires (CRW-1296).
+func relayChildSandbox() map[string]any {
+	sandbox := workspaceWrite()
+	sandbox["networkAccess"] = true
+	return sandbox
+}
+
 // sandboxedSend runs one relay send over a scripted host and returns the receipt and the host calls.
 func sandboxedSend(t *testing.T, settings map[string]any, settingsFree bool, hostThread map[string]any, hostTop map[string]any, answers ...map[string]any) (delivery.Obj, []string) {
 	t.Helper()

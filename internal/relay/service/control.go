@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Control is bound only while the caller holds daemon and scope ownership.
@@ -28,6 +29,12 @@ var acceptControl = (*net.UnixListener).Accept
 
 func ListenControl(ctx context.Context, state string) (*Control, error) {
 	return ListenControlWake(ctx, state, nil)
+}
+
+// ListenControlStore is ListenControlWake for the daemon that owns the store at state: the child commands it serves run
+// on owner, borrowed, never on a store of their own (CRW-1286).
+func ListenControlStore(ctx context.Context, state string, owner *store.Store, wake func(string)) (*Control, error) {
+	return ListenControlWake(store.WithBorrowedStore(ctx, owner), state, wake)
 }
 
 // ListenControlWake is ListenControl for the daemon's own process: wake is told the thread of every
@@ -100,8 +107,9 @@ func ListenControlWake(ctx context.Context, state string, wake func(thread strin
 				defer func() { _ = recover() }()
 				// control.py gives the whole request line 5 s from the moment it serves the peer
 				// (READ_TIMEOUT) and answers its expiry; the handler keeps ControlAnswerGrace past
-				// it to write that answer.
-				requestCtx, stop := context.WithTimeout(serveCtx, 5*time.Second+hook.ControlAnswerGrace)
+				// it to write that answer, and serves a guard request within it. A child command
+				// runs for hook.ChildCommandBudget after its line (CRW-1289).
+				requestCtx, stop := context.WithTimeout(serveCtx, hook.ControlRequestBound)
 				defer stop()
 				// The request deadline bounds malformed/idle clients too.
 				deadline, _ := requestCtx.Deadline()
@@ -140,9 +148,9 @@ func (c *Control) Close() error {
 	return errors.Join(err, <-c.done)
 }
 
-// control.sock serves guard-evaluate only, as Python's GuardServer does. Decision-25 ingress
-// is the queued command's own file publication, never a socket method. Delegate exactly to
-// todo 33, including shared state-selection refusals; the handler reads the one request line.
+// control.sock serves guard-evaluate, as Python's GuardServer does, and, when the listener holds the daemon's store
+// (ListenControlStore), a child's emit, intent-claim and intent-disposition (child-command, CRW-1286). Decision-25
+// ingress is the queued command's own file publication, never a socket method. The handler reads the one request line.
 func dispatchControl(ctx context.Context, conn net.Conn, state string, wake func(thread string)) error {
 	return hook.HandleControlWake(ctx, conn, state, wake)
 }

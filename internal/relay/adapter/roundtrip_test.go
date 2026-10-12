@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -73,6 +74,16 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 		delivery.HostCommand = oldHost
 		delivery.ObserveTurn = oldObserve
 	})
+	owner, err := openStore(context.Background(), path, host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	control, err := service.ListenControlStore(context.Background(), goState, owner, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
 	invocations := 0
 	run := func(args ...string) map[string]any {
 		t.Helper()

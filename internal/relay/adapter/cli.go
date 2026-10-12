@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -34,6 +35,7 @@ func Register(configure ...func(*appserver.Client)) {
 	delivery.HostCommand = f.hostCommand
 	delivery.ObserveTurn = f.observeTurn
 	delivery.EmitConfirmTurn = f.confirmTurn
+	dispatch.ForwardChild = hook.ForwardChild
 	cli.SupervisorHostCommand = f.supervisorHostCommand
 	cli.DaemonFactory = f.daemonFactory
 	managed.HostStart = f.managedStart

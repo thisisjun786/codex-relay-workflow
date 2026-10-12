@@ -12,6 +12,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // clockReading is a clock reading, which differs between the two runs of one registration.
@@ -103,6 +107,11 @@ func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 			}
 			break
 		}
+		stop := func() {}
+		if parsed := argparse.Parse("", argv); len(parsed.Remaining) > 0 && dispatch.ChildCommand(parsed.Remaining[0]) {
+			// A child command reports through the relay daemon of its store, which runs it as the child would have.
+			stop = testsupport.ChildOwner(t, filepath.Join(root, "go"), "", os.Environ())
+		}
 		command := exec.Command(relay, argv...)
 		command.Env = os.Environ()
 		var stdout bytes.Buffer
@@ -115,6 +124,7 @@ func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 			}
 			code = exit.ExitCode()
 		}
+		stop()
 		got := answer{code, clockReading.ReplaceAllString(stdout.String(), `"<at>"`)}
 		answers = append(answers, got)
 	}

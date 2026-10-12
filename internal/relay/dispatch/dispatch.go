@@ -144,6 +144,32 @@ func Names() []string {
 
 const parserExit = 2 // the exit status of a command line the parser cannot read
 
+// ForwardChild runs a child command on the relay daemon (hook.ForwardChild): the daemon's stdout and stderr bytes arrive
+// as written, and its exit code is the command's.
+var ForwardChild func(ctx context.Context, state, program string, argv []string, stdout, stderr io.Writer) (int, error)
+
+type childOwnerKey struct{}
+
+// ChildCommand is whether name is a command a child reports with (emit, intent-claim, intent-disposition): the relay
+// daemon runs it on its own store (CRW-1286).
+func ChildCommand(name string) bool {
+	return name == "emit" || name == "intent-claim" || name == "intent-disposition"
+}
+
+type childStateKey struct{}
+
+// OwnedChildState is ctx naming the relay daemon's own state directory, which ExecuteOwnedChild runs a child command
+// on in place of the caller's --state: no caller selection decides where a child report is recorded (CRW-1299).
+func OwnedChildState(ctx context.Context, state string) context.Context {
+	return context.WithValue(ctx, childStateKey{}, state)
+}
+
+// ExecuteOwnedChild is Execute for the relay daemon serving a child command: the command runs here, on the state
+// OwnedChildState names, and is never forwarded again.
+func ExecuteOwnedChild(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) int {
+	return Execute(context.WithValue(ctx, childOwnerKey{}, true), argv0, argv, stdout, stderr)
+}
+
 // Execute is the relay CLI for one command line; argv0 is how the CLI was invoked (its base
 // name is the program the usage lines name, and Services.Program spells the recovery commands
 // with it). The root options come before the command, the command's own after it.
@@ -221,6 +247,26 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	}
 	if values := root.Values["socket"]; len(values) > 0 {
 		global.socket = values[0]
+	}
+	if state, ok := ctx.Value(childStateKey{}).(string); ok && ctx.Value(childOwnerKey{}) == true {
+		global.state = state
+	}
+	for _, module := range global.modules {
+		// A module that installs something would install it in the relay daemon for every later command (CRW-1286).
+		if ctx.Value(childOwnerKey{}) == true && kindModules[module] != nil {
+			return emit(stdout, stderr, nil, Host(fmt.Sprintf("--kind-module %q installs into the relay daemon that runs a child command, for every later command; a child report names no module that installs", module)), command.family)
+		}
+	}
+	if ForwardChild != nil && ChildCommand(name) && ctx.Value(childOwnerKey{}) != true {
+		selection, err := store.ResolveStateDir(global.state, global.socket)
+		if err != nil {
+			return emit(stdout, stderr, nil, Host("the state directory cannot be resolved: "+Detail(err)), command.family)
+		}
+		code, err := ForwardChild(ctx, selection.Path, argv0, argv, stdout, stderr)
+		if err != nil {
+			return emit(stdout, stderr, nil, err, command.family)
+		}
+		return code
 	}
 	result, err := command.run(ctx, global, Args{Parsed: parsed, Positionals: positionals, Defaults: command.Defaults})
 	return emit(stdout, stderr, result, err, command.family)

@@ -33,7 +33,7 @@ func TestMCPOnlyMismatchRecreatedOverSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := map[string]any{"sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
+	settings := map[string]any{"sandbox": relayChildSandbox(), "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
 	child := map[string]any{}
 	for key, value := range settings {
 		child[key] = value
