@@ -16,6 +16,8 @@ linear-issue-CRW-1283.json	literal PATH exposes git push	CRW-1283-path-push	row	
 linear-issue-CRW-1283.json	literal PATH exposes tee memory operand	CRW-1283-path-memory	row	-
 linear-issue-CRW-1283.json	absolute program ignores unknown PATH	CRW-1283-unknown-path-absolute	row	-
 linear-issue-CRW-1283.json	absolute program behind env ignores unknown PATH	CRW-1283-env-unknown-path-absolute	row	-
+linear-issue-CRW-1283.json	PATH assigned before an absolute memory-writing shell file	CRW-1283-path-direct-memory	row	-
+linear-issue-CRW-1283.json	PATH assigned before an absolute worktree-removing shell file	CRW-1283-path-direct-removal	row	-
 linear-issue-CRW-1283.json	source inherits script arguments	CRW-1283-source-inherits-arguments	row	-
 linear-issue-CRW-1283.json	modified positional parameters are not exact forwarding	CRW-1283-modified-arguments	row	-
 linear-issue-CRW-1283.json	new shell owns its positional parameters	CRW-1283-inner-shell-post	row	-

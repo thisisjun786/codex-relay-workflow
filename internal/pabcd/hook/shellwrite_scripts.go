@@ -33,7 +33,7 @@ func shellIRScriptArgs(execution shellir.Exec) []shellir.Word {
 }
 
 func shellIRDirectForwarder(execution shellir.Exec) bool {
-	if !githubPostDirectPath(execution) || githubPostInstalledName(execution) {
+	if !githubPostDirectPath(execution) {
 		return false
 	}
 	body, kind := githubPostReadDirect(execution.Program.Value, execution.Dir.Path)

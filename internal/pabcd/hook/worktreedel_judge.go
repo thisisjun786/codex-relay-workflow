@@ -84,7 +84,7 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 			v = worktreeDelJudgeScript(e, id, depth, written.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))
 		} else {
 			v = worktreeDelJudgeExec(e, id)
-			if !v.Deny && githubPostDirectPath(e) && (e.PathResolved || shellIRDirectForwarder(e)) {
+			if !v.Deny && githubPostDirectPath(e) && (e.PathResolved || e.SearchPath != nil || shellIRDirectForwarder(e)) {
 				if written == nil {
 					written = githubPostWritesOf(res.Execs, outer)
 				}

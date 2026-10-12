@@ -54,7 +54,7 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 		if depth == 0 && !e.PathResolved {
 			forwarder = shellIRDirectForwarder(e)
 		}
-		if (depth > 0 || e.PathResolved || forwarder) && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+		if (e.PathResolved || e.SearchPath != nil || forwarder || depth > 0 && !githubPostInstalledName(e)) && githubPostDirectPath(e) {
 			own := shellIRExecDests(e)
 			if resolve {
 				own = shellIRResolve(own, e.Dir, cwd)
@@ -66,7 +66,7 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 				continue // A proven missing child has no body to execute.
 			}
 			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
-			if e.PathResolved && kind == githubPostFileBinary && !writes.stale(i, e.Program.Value, e.Dir) {
+			if (e.PathResolved || e.SearchPath != nil) && kind == githubPostFileBinary && !writes.stale(i, e.Program.Value, e.Dir) {
 				continue
 			}
 			if kind != githubPostFileShell || writes.stale(i, e.Program.Value, e.Dir) {

@@ -162,3 +162,18 @@ func TestCRW1283SourceInheritsArgumentsAndAssignedPath(t *testing.T) {
 		t.Fatal("source searched an inherited PATH without proving the loaded file")
 	}
 }
+
+func TestCRW1283AssignedPathDoesNotHideADirectScript(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	writer := crw1283Script(t, cwd, "write.sh", "#!/bin/bash\necho x >"+root+"/note.md\n")
+	for _, prefix := range []string{"PATH=/usr/bin:/bin ", "PATH=$UNKNOWN "} {
+		if got := HandleMemoryWriteGate(gateBash(t, cwd, prefix+writer), env); got == "" {
+			t.Errorf("PATH relaxation concealed a direct script's memory write: %s", prefix)
+		}
+	}
+	rig := newDelRig(t)
+	remover := crw1283Script(t, rig.checkout, "remove.sh", "#!/bin/bash\nrm -rf "+rig.checkout+"\n")
+	if got := rig.verdict("PATH=/usr/bin:/bin " + remover); !got.Deny {
+		t.Error("PATH relaxation concealed a direct script's worktree removal")
+	}
+}

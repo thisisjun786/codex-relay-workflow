@@ -112,6 +112,22 @@ PATH=$UNRESOLVED /usr/bin/true
 --cmd
 env PATH=$UNRESOLVED /usr/bin/true
 
+=== CRW-1283-path-direct-memory | W
+--why PATH relaxation must not hide an absolute shell file's builtin memory write.
+--file write.sh
+#!/bin/bash
+echo x >{MEMORY}/note.md
+--cmd
+PATH=$UNRESOLVED {WORK}/write.sh
+
+=== CRW-1283-path-direct-removal | R
+--why PATH relaxation must not hide an absolute shell file's protected worktree removal.
+--file remove.sh
+#!/bin/bash
+rm -rf {CHECKOUT}
+--cmd
+PATH=/usr/bin:/bin {WORK}/remove.sh
+
 === CRW-1283-source-inherits-arguments | W
 --why A sourced body inherits the script's positional arguments, including protected tee operands.
 --file source.sh
