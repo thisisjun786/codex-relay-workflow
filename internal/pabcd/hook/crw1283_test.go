@@ -28,11 +28,14 @@ func TestGithubPostGuardAllowsAWrapperThatNamesNoPost(t *testing.T) {
 			t.Errorf("%s: refused: %+v", command, site)
 		}
 	}
-	// git push run directly, or behind the program wrappers, keeps the policy it had at c007bd50: the GitHub guard does not judge it.
-	// Inside a script file (bash push.sh) it is refused, and behind an assigned PATH the assignment is refused.
-	for _, command := range []string{"git push origin dev", "ionice -c3 nice git push origin dev"} {
+	// git push keeps the policy it had at c007bd50: the GitHub guard does not judge it, run directly, behind the program wrappers,
+	// in bash -c or inside a script file (the push policy for relay children is CRW-1284); behind an assigned PATH the assignment is
+	// refused.
+	push := crw1283Script(t, cwd, "push.sh", "#!/bin/bash\ngit push origin dev\n")
+	for _, command := range []string{"git push origin dev", "ionice -c3 nice git push origin dev", "bash -c 'git push origin dev'",
+		"bash " + push, "sh " + push, push} {
 		if site, denied := githubPostJudgeText(command, cwd); denied {
-			t.Errorf("%s: git push run directly is refused, unlike at c007bd50: %+v", command, site)
+			t.Errorf("%s: git push is refused, unlike at c007bd50: %+v", command, site)
 		}
 	}
 	// A gh post behind the program wrappers is refused.

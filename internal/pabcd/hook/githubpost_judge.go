@@ -155,10 +155,6 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	for i = range execs {
 		e := execs[i]
 		failLine = e.Line
-		// git push inside a script file is refused: the reader of a script's body does not judge a push (CRW-1283).
-		if e.Name == "git" && depth > 0 && githubPostGitPush(e.Args) {
-			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
-		}
 		if e.Kind == shellir.KindScriptFile {
 			if textWrites().stale(i, e.Script.Value, e.Dir) {
 				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: githubPostScriptReason("script file is written before it runs", e.Script.Value)}, true

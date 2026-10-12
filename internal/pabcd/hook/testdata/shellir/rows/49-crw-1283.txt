@@ -68,8 +68,8 @@ gh pr comment 1 --body x
 --cmd
 bash post.sh
 
-=== CRW-1283-script-push | none/deny/allow
---why The script-file reader does not conceal git push.
+=== CRW-1283-script-push | B
+--why git push is not a GitHub-guard target at c007bd50, run directly or inside a script file; the push policy for relay children is CRW-1284 (coordinator decision under Sion's split (1) A scope, 10-13).
 --file push.sh
 git push origin dev
 --cmd

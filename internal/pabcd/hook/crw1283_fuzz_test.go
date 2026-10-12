@@ -15,8 +15,8 @@ import (
 // not follow in order, and compositions of two layers) around payloads taken only from crw1283_test.go, crw1283_review_test.go and crw1283_probe_test.go: each guard's
 // protected command and the benign controls. The corpus is deterministic (full enumeration; the depth-2 sample is drawn with PCG
 // seed 1283) and pinned by fzFamilyCounts. No test runs a command. A form is class target when its payload is a guard's target
-// (git push only behind a wrapper, script or PATH assignment, where the GitHub guard reads it) or an assigned PATH makes a fixture
-// that holds the target the program it runs; benign otherwise; ownlimit for the pre-existing unread-script limit fzOwnLimit pins.
+// or an assigned PATH makes a fixture that holds the target the program it runs; benign otherwise (git push is a benign payload of
+// the GitHub guard: as at c007bd50 the guard does not judge it, the push policy for relay children being CRW-1284); ownlimit for the pre-existing unread-script limit fzOwnLimit pins.
 //
 // Head property (always runs): every form carrying a guard's target is refused by that guard. Base differential, from the
 // repository (OUT is any directory, TMP a directory under the TMPDIR of the verification):
@@ -46,13 +46,12 @@ const fzDepth2Pairs = 300
 
 type fzPayload struct {
 	id, cmd, prog string
-	target, deep  bool // deep: a target only behind a wrapper file, a script or a PATH assignment (the GitHub guard reads git push there only)
+	target        bool
 }
 
 type fzCmd struct {
 	cmd, desc, path string // path is the PATH value a layer assigned ("" if none)
 	amb             string // the PATH the shell starts with, when the form needs another than /usr/bin:/bin
-	deep            bool   // a wrapper file, a script or a PATH assignment is around the payload
 	direct          bool   // a script is run by its path somewhere in the chain
 }
 
@@ -154,7 +153,7 @@ func fzLayers(family string) (layers []fzLayer) {
 		for i := range fzBodies {
 			for j, mode := range fzRunModes {
 				layers = append(layers, fzLayer{fmt.Sprintf("wrapper%d.%d", i, j), true, func(g *fzGuard, c fzCmd) fzCmd {
-					c.cmd, c.deep = fmt.Sprintf(mode, filepath.Join(g.dir, fmt.Sprintf("w%d.sh", i)))+c.cmd, true
+					c.cmd = fmt.Sprintf(mode, filepath.Join(g.dir, fmt.Sprintf("w%d.sh", i))) + c.cmd
 					return c
 				}})
 			}
@@ -169,7 +168,7 @@ func fzLayers(family string) (layers []fzLayer) {
 			for j, value := range fzPathValues {
 				layers = append(layers, fzLayer{fmt.Sprintf("path%d.%d", i, j), i == 3, func(g *fzGuard, c fzCmd) fzCmd {
 					v := strings.NewReplacer("{D}", filepath.Join(g.dir, "ben"), "{E}", filepath.Join(g.dir, "evil")).Replace(value)
-					c.cmd, c.deep = fmt.Sprintf(kind, v)+c.cmd, true
+					c.cmd = fmt.Sprintf(kind, v) + c.cmd
 					if c.path == "" {
 						c.path = v
 					}
@@ -184,7 +183,7 @@ func fzLayers(family string) (layers []fzLayer) {
 					g.seq++
 					g.write("shift.sh", "shift\n")
 					file := g.write(fmt.Sprintf("m%05d.sh", g.seq), "#!/bin/bash\n"+strings.ReplaceAll(m[0], "{C}", c.cmd))
-					c.cmd, c.deep, c.direct = fmt.Sprintf(mode, file)+" "+strings.ReplaceAll(m[1], "{C}", c.cmd), true, c.direct || j == 4
+					c.cmd, c.direct = fmt.Sprintf(mode, file)+" "+strings.ReplaceAll(m[1], "{C}", c.cmd), c.direct || j == 4
 					return c
 				}})
 			}
@@ -198,7 +197,7 @@ func fzLayers(family string) (layers []fzLayer) {
 					shebang = ""
 				}
 				file := g.write(fmt.Sprintf("s%05d.sh", g.seq), shebang+c.cmd+"\n")
-				c.cmd, c.deep, c.direct = fmt.Sprintf(mode, file), true, c.direct || i >= 4
+				c.cmd, c.direct = fmt.Sprintf(mode, file), c.direct || i >= 4
 				return c
 			}})
 		}
@@ -273,7 +272,7 @@ func fzResolve(prog, value string) string {
 func (g *fzGuard) form(family string, n int, p fzPayload, c fzCmd) fzForm {
 	class := "benign"
 	switch r := fzResolve(p.prog, c.path); {
-	case p.target && (!p.deep || c.deep) || r == "evil":
+	case p.target || r == "evil":
 		class = "target"
 	case r == "unknown" && c.path != "":
 		class = "unknown"
@@ -337,7 +336,7 @@ func (g *fzGuard) forms() (all []fzForm, counts map[string]int) {
 			v := strings.NewReplacer("{B}", filepath.Join(g.dir, "usr/local/bin"), "{L}", filepath.Join(g.dir, "bin")).Replace(value)
 			for _, prog := range fzBinProgs {
 				for _, p := range g.payloads {
-					c := fzCmd{cmd: fmt.Sprintf(kind, v) + prog + " -c '" + strings.ReplaceAll(p.cmd, "'", `'\''`) + "'", path: v, deep: true}
+					c := fzCmd{cmd: fmt.Sprintf(kind, v) + prog + " -c '" + strings.ReplaceAll(p.cmd, "'", `'\''`) + "'", path: v}
 					c.desc = fmt.Sprintf("binhdr%d.%d.%s", ki, i, prog)
 					if prog == "static-sh" {
 						c.amb = filepath.Join(g.dir, "amb")
@@ -353,7 +352,7 @@ func (g *fzGuard) forms() (all []fzForm, counts map[string]int) {
 			sourced := g.write(fmt.Sprintf("late-%s.sh", dir), "PATH="+value+"\n")
 			for _, name := range fzNames {
 				if cmd := fzFixture[name]; cmd != "" {
-					c := fzCmd{cmd: fmt.Sprintf(strings.NewReplacer("{V}", value, "{L}", sourced).Replace(late), cmd), path: value, deep: true}
+					c := fzCmd{cmd: fmt.Sprintf(strings.NewReplacer("{V}", value, "{L}", sourced).Replace(late), cmd), path: value}
 					c.desc = fmt.Sprintf("late%d.%s", k, dir)
 					add("pathlate", fzPayload{id: "file-" + name, cmd: cmd, prog: name}, c)
 				}
@@ -388,18 +387,18 @@ func (g *fzGuard) forms() (all []fzForm, counts map[string]int) {
 }
 
 func fzGuards(t *testing.T) []*fzGuard {
-	benign := []fzPayload{{"go-version", "go version", "go", false, false}, {"go-test", "go test ./...", "go", false, false}, {"true", "true", "true", false, false},
-		{"echo", "echo ok", "echo", false, false}}
+	benign := []fzPayload{{"go-version", "go version", "go", false}, {"go-test", "go test ./...", "go", false}, {"true", "true", "true", false},
+		{"echo", "echo ok", "echo", false}}
 	cwd, root, env := gateScene(t)
 	gh, _, _ := gateScene(t)
 	rig := newDelRig(t)
 	targets := []*fzGuard{
 		{name: "memory", dir: cwd, root: root, refused: func(c string) bool { return HandleMemoryWriteGate(gateBash(t, cwd, c), env) != "" },
-			payloads: []fzPayload{{"tee", "tee " + root + "/note.md", "tee", true, false}, {"sh-redirect", "sh -c 'echo x >\"" + root + "/note.md\"'", "sh", true, false}}},
+			payloads: []fzPayload{{"tee", "tee " + root + "/note.md", "tee", true}, {"sh-redirect", "sh -c 'echo x >\"" + root + "/note.md\"'", "sh", true}}},
 		{name: "github", dir: gh, refused: func(c string) bool { _, denied := githubPostJudgeText(c, gh); return denied },
-			payloads: []fzPayload{{"gh-comment", "gh pr comment 1 --body x", "gh", true, false}, {"git-push", "git push origin dev", "git", true, true}}},
+			payloads: []fzPayload{{"gh-comment", "gh pr comment 1 --body x", "gh", true}, {"git-push", "git push origin dev", "git", false}}},
 		{name: "worktree", dir: rig.checkout, refused: func(c string) bool { return rig.verdict(c).Deny },
-			payloads: []fzPayload{{"rm-rf", "rm -rf " + rig.checkout, "rm", true, false}, {"git-worktree-remove", "git worktree remove --force " + rig.checkout, "git", true, false}}},
+			payloads: []fzPayload{{"rm-rf", "rm -rf " + rig.checkout, "rm", true}, {"git-worktree-remove", "git worktree remove --force " + rig.checkout, "git", true}}},
 	}
 	for _, g := range targets {
 		g.t, g.payloads = t, append(g.payloads, benign...)

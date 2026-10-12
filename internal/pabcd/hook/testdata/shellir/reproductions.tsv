@@ -8,7 +8,7 @@ linear-issue-CRW-1283.json	forwarding wrapper exposes git push	CRW-1283-wrapper-
 linear-issue-CRW-1283.json	forwarding wrapper exposes tee memory operand	CRW-1283-wrapper-memory	row	-
 linear-issue-CRW-1283.json	readable script runs go version	CRW-1283-script-control	row	-
 linear-issue-CRW-1283.json	readable script exposes gh inline post	CRW-1283-script-post	row	-
-linear-issue-CRW-1283.json	readable script exposes git push	CRW-1283-script-push	row	-
+linear-issue-CRW-1283.json	readable script with git push judged as at c007bd50	CRW-1283-script-push	row	-
 linear-issue-CRW-1283.json	readable script exposes protected redirect	CRW-1283-script-memory	row	-
 linear-issue-CRW-1283.json	literal PATH resolves harmless installed binary	CRW-1283-path-control	row	-
 linear-issue-CRW-1283.json	unknown PATH may run a posting program	CRW-1283-path-post	row	-
