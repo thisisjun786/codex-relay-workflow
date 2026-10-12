@@ -110,10 +110,19 @@ record) is asked again on a resume. The base it names is the merge-base of the h
 work grew from, which the acceptance of the head uses too. A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a
-passing record of the current integration head, the same command and the same range (`crw.gate`). Reviewer-final: a record of the
-same integration range and criteria digest (`crw.reviewerFinal`).
+passing record of the current integration head, the same command set (the plan's required commands joined with `;`) and the same
+range (`crw.finalGate`; its row holds the judgement of each piece of evidence, fresh, missing or stale, and the gate row of a head the
+target has left is not replayed: the gate judges the new head). Reviewer-final: a record of the same integration range and criteria
+digest (`crw.reviewerFinal`). The test evidence of the gate is a `crw.verify` row with no node (the verification of the integrated head,
+which names the milestone), and the QA evidence a `crw.qaReceipt` row; each is judged fresh by the identity of the head it stands on
+(`source.Compare`).
 
-**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit` and `designLedger` only record a fact. A call with a completed row
+**Audit.** A row `crw.audit` (the call row of the audit, written by `crw.audit` in a run and by `crw flow audit` beside it) holds the
+audit results of acceptances: `results`, each with the acceptance id, the node, the head, the reviewer call, the thread and turn it read,
+the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
+(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
+
+**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `reviewerFinal`, `audit` and `archive` only record a fact. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent
 request id (`ops.RequestID`).
