@@ -722,3 +722,67 @@ PATH={WORK}/q:/usr/bin:/bin check
 --why Control: a system program the PATH the shell starts with runs is read by its name behind an assigned PATH (Sion decision 4).
 --cmd
 PATH=/usr/bin:/bin ls /tmp
+
+=== CRW-1283-r5-loop-wrapper-control | B
+--why Final verification 418273ef finding 2: a loop that only assigns variables forwards its arguments in every iteration (the shape of heavy_slot.sh).
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-r5-loop-direct-control | B
+--why Final verification 418273ef finding 2: the same loop wrapper run by its path.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+{WORK}/slot.sh go version
+
+=== CRW-1283-r5-loop-wrapper-post | none/deny/allow
+--why A post forwarded by a loop wrapper stays refused.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+bash slot.sh gh pr comment 1 --body x
+
+=== CRW-1283-r5-loop-wrapper-memory | W
+--why Forwarded tee operands name the protected memory root through a loop wrapper.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+bash slot.sh tee {MEMORY}/note.md
+
+=== CRW-1283-r5-loop-wrapper-removal | R
+--why A protected worktree removal forwarded by a loop wrapper stays refused.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+{WORK}/slot.sh rm -rf {CHECKOUT}
+
+=== CRW-1283-r5-loop-posassign-post | U
+--why Final verification 418273ef finding 1: a zsh positional assignment after "$@" in a loop changes the next iteration's arguments; refused by the github guard before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; 1=env; done
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r5-loop-posassign-memory | U
+--why Final verification 418273ef finding 1: the same loop with a memory write; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; 1=env; done
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r5-loop-posassign-removal | U
+--why Final verification 418273ef finding 1: the same loop with a worktree removal; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; 1=env; done
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}

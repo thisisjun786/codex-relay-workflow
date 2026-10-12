@@ -35,9 +35,9 @@ import (
 // guards from the command itself unless its body forwards "$@" outside quotes (c007bd50 and the head alike; the CRW-1283 handoff
 // names it an open item), and the worktree guard does not read one at any depth, nor a script without a shebang line. The count is
 // pinned so it cannot grow; a form of this class that the head refuses is not counted.
-var fzOwnLimit = map[string]int{"memory": 46, "github": 0, "worktree": 48}
+var fzOwnLimit = map[string]int{"memory": 36, "github": 0, "worktree": 36}
 
-var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 300, "mutate": 420, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
+var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 360, "mutate": 630, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
 	"binhdr": 360, "shebang": 384}
 
 // fzDepth2Pairs is the depth-2 sample size; CRW1283_FUZZ_PAIRS=all runs every pair (an exhaustive search; the pinned counts and the
@@ -90,7 +90,9 @@ var fzNames = func() (names []string) {
 var fzBodies = []string{"\"$@\"\n", "#!/bin/bash\nexec \"$@\"\n", "#!/bin/bash\nionice -c3 nice \"$@\"\n",
 	"#!/usr/bin/env bash\nset -euo pipefail\nexec ionice -c3 nice -n 5 \"$@\"\n", "#!/bin/sh\nenv TZ=UTC GOFLAGS=-p=4 \"$@\"\n",
 	"#!/bin/bash\ntimeout 600 \"$@\"\n", "#!/bin/bash\nexport TMPDIR=/tmp\nexec ionice -c3 nice \"$@\"\n", "#!/bin/bash\n\"$@\"\n",
-	"#!/bin/bash\n{W2} \"$@\"\n", "#!/bin/bash\nexec bash {W2} \"$@\"\n"}
+	"#!/bin/bash\n{W2} \"$@\"\n", "#!/bin/bash\nexec bash {W2} \"$@\"\n",
+	// the loop shapes of heavy_slot.sh (the final verification of 418273ef, finding 2): variables assigned in the loop that forwards "$@"
+	"#!/bin/bash\nwhile :; do x=1; nice \"$@\"; rc=$?; exit $rc; done\n", "#!/bin/bash\nfor i in 1 2; do start=$(date +%s); ionice -c3 nice \"$@\"; break; done\n"}
 
 // fzMutants are the scripts the security reviews found read as forwarders: a script that changes its positional parameters, or runs
 // "$@" later or in another shell, does not forward the arguments it was given. {C} is the inner command; each body and its
@@ -101,7 +103,13 @@ var fzMutants = [][2]string{{"set -- {C}\n\"$@\"\n", "true"}, {"set -e -- {C}\n\
 	{"f() { set -- {C}; }\nf\n\"$@\"\n", "true"}, {"if test -n \"$1\"; then shift; fi\n\"$@\"\n", "true {C}"},
 	{"trap '\"$@\"' EXIT\nshift\n", "true {C}"}, {"trap '\"$@\"' EXIT\nset -- {C}\n", "true"},
 	{"bash -s {C} <<'EOF'\n\"$@\"\nEOF\n", "true"}, {"bash /dev/fd/3 {C} 3<<'EOF'\n\"$@\"\nEOF\n", "true"},
-	{"sh -s {C} <<'EOF'\n\"$@\"\nEOF\n", "true"}, {". ./shift.sh\n\"$@\"\n", "true {C}"}}
+	{"sh -s {C} <<'EOF'\n\"$@\"\nEOF\n", "true"}, {". ./shift.sh\n\"$@\"\n", "true {C}"},
+	// "$@" run before a positional change in a loop: the next iteration runs the changed arguments (the final verification of 418273ef,
+	// finding 1); TestReview1283LoopPositionalChange has the bodies. {C} is the command the changed arguments reach.
+	{"while :; do nice \"$@\"; 1=env; done\n", "true {C}"}, {"until false; do ionice -c3 \"$@\"; 2+=x; done\n", "true {C}"},
+	{"while :; do timeout 5 \"$@\"; argv=(env {C}); done\n", "true"}, {"while :; do env \"$@\"; set -- {C}; done\n", "true"},
+	{"while :; do nice \"$@\"; shift; done\n", "true {C}"}, {"while :; do nice \"$@\"; for 1 in env; do :; done; done\n", "true {C}"},
+	{"while :; do x=1; nice \"$@\"; if :; then 1=env; fi; done\n", "true {C}"}}
 
 // fzShebangs are scripts whose #! line launches the interpreter fzShebangProgs names through env (the evaluation of deb45bd1, d2): the
 // assigned PATH selects the interpreter, whose body in the evil fixture directory is the target. fzBinValues are the PATH values of

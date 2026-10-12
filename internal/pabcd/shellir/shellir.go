@@ -252,12 +252,16 @@ func (s *state) clone() *state {
 func (s *state) replace(o *state) { *s = *o }
 
 func (s *state) clearVars() {
+	s.forgetVars()
+	s.args = nil
+}
+
+// forgetVars makes the variables and the search PATH unknown; the positional parameters stay as they were. An assignment to a
+// variable does not change them (a positional assignment, set and shift do, and clearVars forgets them with the rest).
+func (s *state) forgetVars() {
 	s.vars = map[string]string{}
 	if s.searchPath != nil {
 		s.searchPath = &Word{Reason: "PATH may have changed"}
-	}
-	if s.args != nil {
-		s.args = nil
 	}
 }
 
@@ -588,12 +592,15 @@ func loopContext(ctx Context) Context {
 // directory stay known through the loop.
 func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 	dir := changesDir(st, lists...)
-	vars := newEffectScan(st, false)
-	changes := false
+	vars, args := newEffectScan(st, false), newArgsScan(st)
+	changes, argsChange := false, false
 	for _, list := range lists {
 		for _, s := range list {
 			if vars.stateChanges(s) {
 				changes = true
+			}
+			if args.stateChanges(s) {
+				argsChange = true
 			}
 		}
 	}
@@ -601,7 +608,12 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 		st.dir = notProvenDir(st.dir)
 	}
 	if changes {
-		st.clearVars()
+		// A later iteration sees the variables an earlier one set, but the same positional parameters unless the statements can
+		// change those (CRW-1283: heavy_slot.sh assigns variables in the loop that forwards "$@").
+		st.forgetVars()
+	}
+	if argsChange {
+		st.args = nil
 	}
 	return !dir
 }
@@ -625,15 +637,25 @@ func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
 // does. The verdict for each function is kept, so a function that many calls reach is judged once and the work stays bounded by
 // the size of the text. A verdict of no change is exact. A verdict of change may be conservative: a call back into a function
 // being judged, or a chain of calls deeper than MaxNestingDepth, counts as a change.
+//
+// An argsOnly scan judges whether a statement can change the positional parameters ("$@"): set, shift, eval, source and the other
+// builtins listed in positionalChange, a zsh positional assignment (1=x, 2+=x, argv=(...)), a positional loop variable, and any
+// builtin, declaration or expansion whose assigned name is a positional parameter or is not shown. An assignment to a variable
+// by name is not one.
 type effectScan struct {
 	st            *state
 	directoryOnly bool
+	argsOnly      bool
 	verdicts      map[string]bool
 	active        []string
 }
 
 func newEffectScan(st *state, directoryOnly bool) *effectScan {
 	return &effectScan{st: st, directoryOnly: directoryOnly, verdicts: map[string]bool{}}
+}
+
+func newArgsScan(st *state) *effectScan {
+	return &effectScan{st: st, argsOnly: true, verdicts: map[string]bool{}}
 }
 
 // stateChanges reports whether a node can change the state the scan judges. Changes are only ever set to true, so a later
@@ -647,31 +669,95 @@ func (e *effectScan) stateChanges(n syntax.Node) bool {
 				changes = true
 			}
 		case *syntax.CallExpr:
-			if !e.directoryOnly && len(c.Assigns) > 0 || e.callChanges(c) {
+			if !e.directoryOnly && e.assignsChange(c.Assigns) || e.callChanges(c) {
 				changes = true
 			}
-		case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
-			if !e.directoryOnly {
+		case *syntax.DeclClause:
+			if !e.directoryOnly && (!e.argsOnly || declChangesArgs(c)) {
+				changes = true
+			}
+		case *syntax.LetClause, *syntax.ArithmCmd:
+			// the assignments inside are visited as BinaryArithm and UnaryArithm nodes
+			if !e.directoryOnly && !e.argsOnly {
+				changes = true
+			}
+		case *syntax.ForClause:
+			if !e.directoryOnly && (!e.argsOnly || forChangesArgs(c)) {
 				changes = true
 			}
 		case *syntax.BinaryArithm:
 			// an assignment inside an arithmetic expansion, $((n=1)), sets the variable on its left
-			if !e.directoryOnly && assignsArithm(c.Op) {
+			if !e.directoryOnly && assignsArithm(c.Op) && (!e.argsOnly || arithmTargetMayBePositional(c.X)) {
 				changes = true
 			}
 		case *syntax.UnaryArithm:
-			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) {
+			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) && (!e.argsOnly || arithmTargetMayBePositional(c.X)) {
 				changes = true
 			}
 		case *syntax.ParamExp:
 			// a default assignment, ${n:=x} or ${n=x}, sets the variable it names when the test holds
-			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
+			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) &&
+				(!e.argsOnly || c.Excl || c.Param == nil || c.NestedParam != nil || c.Flags != nil || positionalName(c.Param.Value)) {
 				changes = true
 			}
 		}
 		return !changes
 	})
 	return changes
+}
+
+// assignsChange reports whether the prefix assignments of a command change the state the scan judges: any assignment changes the
+// variables; only one to a positional parameter (argv=(...) in zsh) changes the arguments.
+func (e *effectScan) assignsChange(assigns []*syntax.Assign) bool {
+	if !e.argsOnly {
+		return len(assigns) > 0
+	}
+	for _, a := range assigns {
+		if a.Name == nil || positionalName(a.Name.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+// declChangesArgs: a declaration changes the positional parameters when it assigns one (declare argv=(x)), makes a name reference
+// (declare -n r=argv; r=(x)) or takes a name or option the text does not show.
+func declChangesArgs(c *syntax.DeclClause) bool {
+	if c.Variant != nil && c.Variant.Value == "nameref" {
+		return true
+	}
+	for _, a := range c.Args {
+		if a.Name != nil {
+			if positionalName(a.Name.Value) {
+				return true
+			}
+			continue
+		}
+		v := a.Value.Lit()
+		if v == "" || !strings.HasPrefix(v, "-") || strings.Contains(v, "n") {
+			return true
+		}
+	}
+	return false
+}
+
+// forChangesArgs: a loop assigns its variable on every iteration; a positional name (for 1 in x, for argv in x) changes "$@".
+func forChangesArgs(c *syntax.ForClause) bool {
+	if it, ok := c.Loop.(*syntax.WordIter); ok {
+		return it.Name == nil || positionalName(it.Name.Value)
+	}
+	return false
+}
+
+// arithmTargetMayBePositional: an arithmetic assignment names the variable on its left; a plain name is not a positional parameter,
+// anything the text does not spell as a plain name (a subscript, an expansion) may be.
+func arithmTargetMayBePositional(x syntax.ArithmExpr) bool {
+	w, ok := x.(*syntax.Word)
+	if !ok {
+		return true
+	}
+	v := w.Lit()
+	return v == "" || positionalName(v)
 }
 
 // assignsArithm reports whether an arithmetic operator assigns to its left operand.
@@ -706,8 +792,16 @@ func (e *effectScan) wordsChange(words []Word) bool {
 	if e.directoryOnly && strings.ContainsAny(name, `\$'"`+"`") {
 		return true
 	}
+	if !e.directoryOnly && positionalAssignment(name) {
+		return true // zsh runs 1=x, 2+=x and argv=x as assignments to the positional parameters
+	}
 	if body, ok := e.st.funcs[name]; ok {
 		return e.function(name, body)
+	}
+	if e.argsOnly {
+		if changes, judged := argsBuiltinChange(name, words[1:]); judged {
+			return changes
+		}
 	}
 	switch name {
 	case "command", "builtin", "exec":
@@ -729,6 +823,48 @@ func (e *effectScan) wordsChange(words []Word) bool {
 		return !e.directoryOnly
 	}
 	return false
+}
+
+// argsBuiltinChange judges the builtins whose effect on the positional parameters differs from their effect on the other state: a
+// directory change and a builtin that assigns a variable by name leave "$@" as it is, one that assigns a name the text does not
+// show or a positional parameter does not. judged is false for the others, which the general rules decide.
+func argsBuiltinChange(name string, args []Word) (changes, judged bool) {
+	switch name {
+	case "cd", "chdir", "pushd", "popd":
+		return false, true
+	case "read", "mapfile", "readarray", "getopts", "unset", "let", "export", "declare", "typeset", "local", "readonly", "printf", "wait":
+		if !clobbersVars(name, args) && name != "unset" {
+			return false, true
+		}
+		for _, a := range assignedNames(name, args) {
+			if !a.Known {
+				return true, true
+			}
+			v := a.Value
+			if strings.HasPrefix(v, "-") {
+				if strings.Contains(v, "n") {
+					return true, true // declare -n r=argv, unset -n r: a name reference reaches a positional parameter
+				}
+				continue
+			}
+			if i := strings.IndexByte(v, '='); i >= 0 {
+				v = v[:i]
+			}
+			v = strings.TrimSuffix(v, "+")
+			if i := strings.IndexByte(v, '['); i >= 0 {
+				v = v[:i]
+			}
+			if positionalName(v) {
+				return true, true
+			}
+		}
+		return false, true
+	case "set":
+		return positionalChange(name, args), true
+	case "shift", "eval", "source", ".", "trap", "alias":
+		return true, true
+	}
+	return false, false
 }
 
 // function judges the body of a function once for this scan. A call back into a function being judged is a change, as is a
