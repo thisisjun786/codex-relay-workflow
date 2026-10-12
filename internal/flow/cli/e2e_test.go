@@ -101,7 +101,7 @@ func TestStartRunsARealDetachedProcess(t *testing.T) {
 	if _, line, _ := run(append([]string{"status-line", "--thread", "thread-owner"}, common...)...); line != "" {
 		t.Errorf("a status line for a run that is over: %q", line)
 	}
-	code, wout, _ := run(append([]string{"watch", id, "--json", "--limit", "1000"}, common...)...)
+	code, wout, _ := run(append([]string{"watch", id, "--after", "0", "--json", "--limit", "1000"}, common...)...)
 	if code != 0 || !strings.Contains(wout, `"event":"finished"`) {
 		t.Errorf("watch: %d %s", code, wout)
 	}
