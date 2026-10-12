@@ -36,7 +36,8 @@ func nightDecision(t *testing.T, w *world, id, context_ string, answer string) {
 
 func batchJSON(t *testing.T, mutate func(*NightBatch)) string {
 	t.Helper()
-	b := NightBatch{Schema: NightBatchSchema, Label: "night-2026-10-12", Issues: []string{"CRW-11", "CRW-12", "CRW-13"}, Plan: "plan-1", Milestone: "M1", TokenBudget: 750000, Deadline: "2026-10-13T06:00:00Z", Cap: 2}
+	b := NightBatch{Schema: NightBatchSchema, Label: "night-2026-10-12", Issues: []string{"CRW-11", "CRW-12", "CRW-13"}, Plan: "plan-1", Milestone: "M1", TokenBudget: 750000, Deadline: "2026-10-13T06:00:00Z", Cap: 2,
+		Handoff: refOf(t, defaultHandoff(t))}
 	if mutate != nil {
 		mutate(&b)
 	}
@@ -95,6 +96,7 @@ func TestNightBatchStartsFromDecision(t *testing.T) {
 		{"a decision not answered", "ud-raised", nil, "answers it"},
 		{"a decision that holds no night batch", "ud-text", nil, "holds no night batch document"},
 		{"a night batch with no budget", "ud-nobudget", nil, "no token budget"},
+		{"a night batch with no handoff", "ud-nohandoff", nil, "names no handoff"},
 		{"a deadline that is no time", "ud-time", nil, "not an RFC 3339 time"},
 		{"a decision that does not exist", "ud-ghost", nil, "ud-ghost"},
 		{"arguments beside the decision", "ud-night", []string{"--args", "{}"}, "--args is not given"},
@@ -103,6 +105,7 @@ func TestNightBatchStartsFromDecision(t *testing.T) {
 	nightDecision(t, w, "ud-raised", batchJSON(t, func(b *NightBatch) { b.Label = "raised" }), "")
 	nightDecision(t, w, "ud-text", "start the batch tonight please", NightRun)
 	nightDecision(t, w, "ud-nobudget", batchJSON(t, func(b *NightBatch) { b.Label, b.TokenBudget = "nobudget", 0 }), NightRun)
+	nightDecision(t, w, "ud-nohandoff", batchJSON(t, func(b *NightBatch) { b.Label, b.Handoff = "nohandoff", nil }), NightRun)
 	nightDecision(t, w, "ud-time", batchJSON(t, func(b *NightBatch) { b.Label, b.Deadline = "time", "tomorrow morning" }), NightRun)
 	before := len(td.spawned)
 	for _, tc := range refused {

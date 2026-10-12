@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
@@ -39,7 +42,9 @@ type Plan struct {
 	Pool        int                 `json:"pool"`
 	Deadline    string              `json:"deadline,omitempty"`
 	Decision    string              `json:"decision,omitempty"`
-	Facts       []Fact              `json:"facts"`
+	// Handoff is the sha256 of the crw-plan handoff the run reads its compiled milestone from ("" when it names none).
+	Handoff string `json:"handoff,omitempty"`
+	Facts   []Fact `json:"facts"`
 	Refused     bool                `json:"refused,omitempty"`
 	// Blocked says why the run cannot start whatever the facts are (--force does not override it).
 	Blocked string `json:"blocked,omitempty"`
@@ -64,6 +69,7 @@ func (c *command) start(args []string) int {
 	decision := fs.String("decision", "", "the decision record a night batch starts from")
 	deadline := fs.String("deadline", "", "an RFC 3339 time the run pauses at")
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from (default: the working directory's)")
+	handoff := fs.String("handoff", "", "the crw-plan handoff (crw-flow-compile-input/1) that produced the plan's current revision: the run reads its compiled milestone from a copy of it")
 	previewOnly := fs.Bool("preview", false, "show the preview and the preflight facts and start nothing")
 	force := fs.Bool("force", false, "start although a preflight fact failed")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
@@ -112,6 +118,15 @@ func (c *command) start(args []string) int {
 	if r != nil {
 		defer r.Close()
 	}
+	// the compiled milestone: the bytes of the handoff the run pins (a night batch's decision names its own)
+	var handoffRaw []byte
+	if *handoff != "" {
+		raw, err := os.ReadFile(*handoff)
+		if err != nil {
+			return c.fail("the handoff cannot be read: %v", err)
+		}
+		handoffRaw = raw
+	}
 	// a night batch starts from the manager's decision record
 	if spec.Script == "" && spec.Workflow == NightBatchWorkflow {
 		if *decision == "" {
@@ -128,6 +143,14 @@ func (c *command) start(args []string) int {
 			return c.usage("night-batch takes its arguments from the decision; --args is not given")
 		}
 		spec.Args = compactJSON(batch.Args(*decision))
+		if *handoff != "" {
+			return c.usage("night-batch reads the handoff its decision names; --handoff is not given")
+		}
+		raw, _, err := ReadHandoff(*batch.Handoff)
+		if err != nil {
+			return c.fail("the handoff of the decision %s: %v", *decision, err)
+		}
+		handoffRaw = raw
 		// the flags narrow what the manager approved and never widen it: a budget above the decision's and a later deadline are refused
 		switch {
 		case spec.TokenBudget == 0:
@@ -155,6 +178,20 @@ func (c *command) start(args []string) int {
 			return c.fail("the deadline %q is not an RFC 3339 time", spec.Deadline)
 		}
 	}
+	handoffSum := ""
+	if handoffRaw != nil {
+		in, err := DecodeHandoff(handoffRaw)
+		if err != nil {
+			return c.fail("%v", err)
+		}
+		if why := CheckHandoff(in, planOf(spec.Args), milestoneArg(spec.Args)); why != "" {
+			return c.fail("%s", why)
+		}
+		if _, named := HandoffOf(spec.Args); named {
+			return c.usage("the args name a handoff of their own: the run's handoff is given with --handoff")
+		}
+		handoffSum = sha256Hex(handoffRaw)
+	}
 	src, err := spec.Load()
 	if err != nil {
 		return c.fail("the workflow cannot be loaded: %v", err)
@@ -163,7 +200,7 @@ func (c *command) start(args []string) int {
 		return c.usage("the owner thread is required: --thread T (or CODEX_THREAD_ID)")
 	}
 
-	plan := Plan{Workflow: spec.Workflow, Thread: spec.Thread, TokenBudget: spec.TokenBudget, Pool: spec.Pool, Deadline: spec.Deadline, Decision: spec.Decision, Nodes: []PreviewNode{}}
+	plan := Plan{Workflow: spec.Workflow, Thread: spec.Thread, TokenBudget: spec.TokenBudget, Pool: spec.Pool, Deadline: spec.Deadline, Decision: spec.Decision, Handoff: handoffSum, Nodes: []PreviewNode{}}
 	if plan.Pool <= 0 {
 		plan.Pool = engine.DefaultPool
 	}
@@ -222,6 +259,9 @@ func (c *command) start(args []string) int {
 			plan.Blocked = fmt.Sprintf("this build installs no project lane operations (cli.OpsFor is not set) and %s calls %s: the run would end in a script error at its first call", spec.Workflow, strings.Join(need, ", "))
 		}
 	}
+	if plan.Blocked == "" && handoffRaw == nil && slices.Contains(LaneOperations(src), "crw."+ops.NameMilestone) {
+		plan.Blocked = fmt.Sprintf("%s reads its milestone with crw.milestone and the run names no compiled milestone: start it with --handoff FILE, the crw-plan handoff (%s) that produced the plan's current revision", spec.Workflow, compile.InputSchema)
+	}
 	answer := StartAnswer{Plan: plan}
 	if !*asJSON {
 		c.printPlan(plan)
@@ -257,6 +297,15 @@ func (c *command) start(args []string) int {
 		return c.fail("%v", err)
 	}
 	spec.CreatedAt = c.now().UTC().Format(time.RFC3339)
+	if handoffRaw != nil {
+		ref, err := PinHandoff(sel.Path, spec.RunID, handoffRaw)
+		if err != nil {
+			return c.fail("the handoff cannot be pinned for run %s: %v", spec.RunID, err)
+		}
+		if spec.Args, err = withHandoff(spec.Args, ref); err != nil {
+			return c.fail("%v", err)
+		}
+	}
 	spec.Forced = failed
 	if resolved, err := repository(c.ctx, *repo); err == nil {
 		spec.Repo = resolved
@@ -342,6 +391,9 @@ func (c *command) printPlan(p Plan) {
 		fmt.Fprintf(w, "   deadline: %s", p.Deadline)
 	}
 	fmt.Fprintln(w)
+	if p.Handoff != "" {
+		fmt.Fprintf(w, "  handoff: sha256 %s\n", p.Handoff)
+	}
 	if p.Blocked != "" {
 		fmt.Fprintf(w, "  blocked: %s\n", p.Blocked)
 	}
