@@ -2,9 +2,13 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +22,7 @@ import (
 // (flowcli.NightBatch), raised and answered `run` through the relay's own decision commands. `crw flow start night-batch --decision D`
 // starts the run from it. Nothing is released here, and nothing is started: releases happen only inside the run.
 
-const batchDecideUsage = "usage: crw manage batch decide --plan FILE --flow-plan PLAN --milestone M --token-budget N --deadline RFC3339 [--cap N] [--by TASK]"
+const batchDecideUsage = "usage: crw manage batch decide --plan FILE --flow-plan PLAN --milestone M --handoff FILE --token-budget N --deadline RFC3339 [--cap N] [--by TASK]"
 
 // batchDecideConfig is where the command reads its configuration; a test replaces it to point the relay helper at a fake.
 var batchDecideConfig = coreDefaults
@@ -31,11 +35,11 @@ func batchRunDecide(ctx context.Context, e *Env, args []string) int {
 	if code, refused := batchConfigRefused(e); refused {
 		return code
 	}
-	values, err := auditPkgParseArgs(args, map[string]bool{"plan": true, "flow-plan": true, "milestone": true, "token-budget": true, "deadline": true, "cap": true, "by": true})
+	values, err := auditPkgParseArgs(args, map[string]bool{"plan": true, "flow-plan": true, "milestone": true, "token-budget": true, "deadline": true, "cap": true, "by": true, "handoff": true})
 	if err != nil {
 		return batchRefuse(e, batchDecideUsage, "decide", err)
 	}
-	for _, name := range []string{"plan", "flow-plan", "milestone", "token-budget", "deadline"} {
+	for _, name := range []string{"plan", "flow-plan", "milestone", "token-budget", "deadline", "handoff"} {
 		if strings.TrimSpace(values[name]) == "" {
 			return batchRefuse(e, batchDecideUsage, "decide", fmt.Errorf("the option --%s needs a value", name))
 		}
@@ -62,6 +66,11 @@ func batchRunDecide(ctx context.Context, e *Env, args []string) int {
 		TokenBudget: budget, Deadline: strings.TrimSpace(values["deadline"]), Cap: cap}
 	for _, s := range plan.Selected {
 		night.Issues = append(night.Issues, s.Issue)
+	}
+	// the compiled milestone (CRW-1277 a): the crw-plan handoff the plan's current revision was compiled from, named by its file and
+	// the sha256 of its bytes; the run pins those bytes and refuses a file that changed since this decision
+	if night.Handoff, err = batchHandoff(strings.TrimSpace(values["handoff"]), night.Plan, night.Milestone); err != nil {
+		return batchRefuse(e, batchDecideUsage, "decide", err)
 	}
 	if err := night.Validate(); err != nil {
 		return batchRefuse(e, batchDecideUsage, "decide", err)
@@ -109,6 +118,34 @@ func batchRunDecide(ctx context.Context, e *Env, args []string) int {
 	})
 	fmt.Fprintf(e.Stdout, "%s\n", doc)
 	return 0
+}
+
+// batchHandoff reads the handoff a decision names: a crw-flow-compile-input/1 document that holds the project of the plan and the entry
+// of the milestone.
+func batchHandoff(path, plan, milestone string) (*flowcli.HandoffRef, error) {
+	// the decision names the file absolutely, spelled as given below the working directory (no cleaning: a ".." after a link stays the
+	// filesystem's to resolve)
+	abs := path
+	if !filepath.IsAbs(abs) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		abs = wd + string(os.PathSeparator) + path
+	}
+	raw, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, fmt.Errorf("the handoff cannot be read: %w", err)
+	}
+	in, err := flowcli.DecodeHandoff(raw)
+	if err != nil {
+		return nil, err
+	}
+	if why := flowcli.CheckHandoff(in, plan, milestone); why != "" {
+		return nil, errors.New(why)
+	}
+	sum := sha256.Sum256(raw)
+	return &flowcli.HandoffRef{Path: abs, SHA256: hex.EncodeToString(sum[:])}, nil
 }
 
 // batchDecideFail reports a relay command that failed: the relay's own refusal when it printed one.

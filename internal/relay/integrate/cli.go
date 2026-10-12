@@ -1,12 +1,8 @@
 package integrate
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -48,7 +44,7 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 		Plan: args.Text("plan"), Actor: args.Text("actor"), Checkout: args.Text("checkout"),
 		IntegrationRef: args.Text("integration-ref"), BaseRef: args.Text("base"), Nodes: args.Strings("node"),
 		RetryNotProven: args.Bool("retry-not-proven"),
-	}, dagsched.IntegrationBatchDeps{Verify: commandVerifier(argv), Update: updateRef})
+	}, dagsched.IntegrationDeps(dagsched.CommandVerifier(argv)))
 	if err != nil {
 		return nil, err
 	}
@@ -139,34 +135,6 @@ func nullableText(s string) any {
 	return s
 }
 
-// commandVerifier runs the one verification command, given as an argument vector (never a shell), in the directory
-// the batch names, with the batch's CRW_VERIFY_* variables added to the inherited environment. A non-zero exit is a
-// failing run.
-func commandVerifier(argv []string) dagsched.IntegrationBatchVerifier {
-	return func(ctx context.Context, dir string, env []string) error {
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.Dir = dir
-		// inherited GIT_* variables would redirect the command's git reads to another repository, so they are dropped
-		for _, kv := range os.Environ() {
-			if !strings.HasPrefix(kv, "GIT_") {
-				cmd.Env = append(cmd.Env, kv)
-			}
-		}
-		cmd.Env = append(cmd.Env, env...)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			var exitErr *exec.ExitError
-			if !errors.As(err, &exitErr) {
-				// the command never ran: a host failure, not a verification result
-				return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification command could not start: %v", err)}
-			}
-			return fmt.Errorf("the verification command failed: %v: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return nil
-	}
-}
-
 // splitCommand splits a command line into an argument vector. Single and double quotes group words and a backslash
 // escapes the next character; an unterminated quote or escape, or an empty command, is refused, so a command the caller
 // typed is never handed to a shell.
@@ -218,23 +186,4 @@ func splitCommand(command string) ([]string, error) {
 // refuse is a refusal under an existing reason, with the relay's exit code 2.
 func refuse(reason contract.RefusalReason, format string, args ...any) error {
 	return &store.RefusedError{Reason: string(reason), Detail: fmt.Sprintf(format, args...)}
-}
-
-// updateRef moves a local branch to newCommit only when it still holds oldCommit: git's own compare-and-swap. The
-// all-zero oldCommit creates the branch and refuses when it already exists, so a ref that moved under the batch fails
-// the update instead of being overwritten.
-func updateRef(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "update-ref", "refs/heads/"+ref, newCommit, oldCommit)
-	// inherited GIT_* variables would redirect the write to another repository (finding d4)
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "GIT_") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git update-ref refs/heads/%s: %v: %s", ref, err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
 }

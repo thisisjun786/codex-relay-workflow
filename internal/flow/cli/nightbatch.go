@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,6 +47,9 @@ type NightBatch struct {
 	Deadline    string `json:"deadline"`
 	// Cap is the number of executors at once (0: the project lane's default).
 	Cap int `json:"cap,omitempty"`
+	// Handoff is the crw-plan handoff the plan's current revision was compiled from (`crw manage batch decide --handoff FILE`): the
+	// run pins its bytes and reads the compiled milestone from them (CRW-1277 a).
+	Handoff *HandoffRef `json:"handoff"`
 }
 
 // Validate checks a decision document.
@@ -59,6 +63,8 @@ func (n NightBatch) Validate() error {
 		return errors.New("the batch names no plan and milestone to run the issues as nodes of")
 	case n.TokenBudget <= 0:
 		return errors.New("the batch has no token budget (a night run without a ceiling is not started)")
+	case n.Handoff == nil || !filepath.IsAbs(n.Handoff.Path) || !sha256Pattern.MatchString(n.Handoff.SHA256):
+		return errors.New("the batch names no handoff {path, sha256}: the run reads the milestone it compiled from the crw-plan handoff (crw manage batch decide --handoff FILE)")
 	}
 	if _, err := time.Parse(time.RFC3339, n.Deadline); err != nil {
 		return fmt.Errorf("the deadline %q is not an RFC 3339 time", n.Deadline)
