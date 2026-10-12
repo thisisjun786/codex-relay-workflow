@@ -233,6 +233,7 @@ func TestPumpQueueRefusalOrdinalNeverCollidesWithDeliverRetryIDs(t *testing.T) {
 	}
 	base := ids[0]
 	pumpLedgerSetMode(t, dir, pumpLedgerUp)
+	cfg.Settings.Parent.ReasoningEffort = "medium"
 	flush()
 	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 0 {
 		t.Fatalf("the recovered bridge left notices queued: %v (ids %v)", names, mustSends(t, dir))

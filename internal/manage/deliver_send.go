@@ -57,7 +57,7 @@ const (
 // deliverBridge is one bridge session, started for a single delivery and closed with it.
 type deliverBridge struct{ session *mcp.ClientSession }
 
-var deliverSteerOnlyIdle = errors.New("crw manage: steer-only delivery waits for an active turn")
+var errDeliverSteerOnlyIdle = errors.New("crw manage: steer-only delivery waits for an active turn")
 
 // deliverMessageSHA256 is the digest of one message's text, the value the record keeps so a
 // logical id cannot silently stand for two different messages.
@@ -261,7 +261,7 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			}
 		}
 		reply, tool := deliverAttemptSend(ctx, bridge, m, requestID)
-		if errors.Is(reply.Err, deliverSteerOnlyIdle) {
+		if errors.Is(reply.Err, errDeliverSteerOnlyIdle) {
 			record.State = deliverStateWaiting
 			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: requestID, Receipt: map[string]any{"status": deliverStateWaiting}})
 		}
@@ -503,7 +503,7 @@ func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, reques
 		}
 	}
 	if m.SteerOnly {
-		return deliverReply{Err: deliverSteerOnlyIdle}, deliverToolActive
+		return deliverReply{Err: errDeliverSteerOnlyIdle}, deliverToolActive
 	}
 	args := map[string]any{"request_id": requestID, "thread_id": m.Thread, "message": m.Text}
 	if m.Settings.Model != "" || m.Settings.ReasoningEffort != "" {
