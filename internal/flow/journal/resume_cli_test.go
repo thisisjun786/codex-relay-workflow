@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
@@ -53,6 +55,8 @@ func newGuided(t *testing.T, unknown bool) *guided {
 	// the id the engine gives the script's first call: its run, path and position
 	idSum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", runID, "root", 1)))
 	g := &guided{holdFixture: &holdFixture{host: fakehost.Start(t), cwd: "/w/attempt-1", base: time.Unix(1_780_000_000, 0), callID: "c_" + hex.EncodeToString(idSum[:])[:12]}}
+	// the resume binds every engine turn (CRW-1207 F14), and a binding names a thread only by an id of a real host's form
+	g.host.Threads().ThreadIDs(hexThreadID)
 	dir := t.TempDir()
 	g.script = filepath.Join(dir, "w.js")
 	text := header + "const a = await agent.call('build it', { agentType: 'executor', node: 'n1', label: 'a' })\nreturn a.status\n"
@@ -251,8 +255,12 @@ const heldScript = header + "const warm = await agent.call('warm up', { agentTyp
 // newHeldRun runs heldScript in this process, as the engine on the fake host, in a store of its own with the host faulted by
 // setup (and the token budget given): the executor call 'a' ends held. The process is gone when it returns; the call, the
 // store and the script file are what a `crw flow resume` of the built binary finds.
-func newHeldRun(t *testing.T, budget int64, setup func(th *fakehost.Threads)) *guided {
+func newHeldRun(t *testing.T, budget int64, setup func(th *fakehost.Threads), opts ...heldRunOption) *guided {
 	t.Helper()
+	var o heldRunOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
@@ -267,6 +275,7 @@ func newHeldRun(t *testing.T, budget int64, setup func(th *fakehost.Threads)) *g
 	t.Setenv("GIT_COMMITTER_NAME", "test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.invalid")
 	g := &guided{holdFixture: &holdFixture{host: fakehost.Start(t), base: time.Unix(1_780_000_000, 0)}}
+	g.host.Threads().ThreadIDs(hexThreadID)
 	g.host.Threads().OnTurn(func(fakehost.TurnRequest) fakehost.TurnPlan { return fakehost.TurnPlan{Message: "done"} })
 	setup(g.host.Threads())
 	dir := t.TempDir()
@@ -297,7 +306,11 @@ func newHeldRun(t *testing.T, budget int64, setup func(th *fakehost.Threads)) *g
 	}
 	threads := agent.NewThreads()
 	client := appserver.New(g.host.SocketPath, appserver.DefaultBounds, agent.ClientOption(threads))
-	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads})
+	var bind *agent.BoundConfig
+	if o.bound != nil {
+		bind = o.bound(t)
+	}
+	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: bind})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +333,21 @@ func newHeldRun(t *testing.T, budget int64, setup func(th *fakehost.Threads)) *g
 	}
 	return g
 }
+
+// heldRunOptions change the first process of newHeldRun: bound, when set, gives its backend the flow binding it returns (it is
+// called once the test's home is in place).
+type heldRunOptions struct {
+	bound func(t *testing.T) *agent.BoundConfig
+}
+
+type heldRunOption func(*heldRunOptions)
+
+func withFirstBinding(fn func(t *testing.T) *agent.BoundConfig) heldRunOption {
+	return func(o *heldRunOptions) { o.bound = fn }
+}
+
+// hexThreadID is the id the fake host gives its threads here: a flow binding names a thread only by an id of that form.
+func hexThreadID(n int) string { return fmt.Sprintf("0190a000-0000-7000-8000-%012x", n) }
 
 // holdCleared says whether the journal holds a hold_cleared row of the guided call.
 func (g *guided) holdCleared(t *testing.T) bool {
@@ -346,4 +374,145 @@ func countRows(rows []string, event string) int {
 		}
 	}
 	return n
+}
+
+// threadOf is the thread the guided call was on, from its last thread_started row, and the cwd of its last creation request.
+func (g *guided) threadOf(t *testing.T) (thread, cwd string) {
+	t.Helper()
+	st := openStore(t, g.db)
+	events, _, err := Load(ctx, st, runID)
+	_ = st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Kind != engine.KindCall || e.CallID != g.callID {
+			continue
+		}
+		switch e.Event {
+		case engine.EvThreadStarted:
+			thread, _ = e.Data["thread_id"].(string)
+		case engine.EvThreadRequested:
+			cwd, _ = e.Data["cwd"].(string)
+		}
+	}
+	return thread, cwd
+}
+
+// CRW-1269 d2: the shipped resume writes the flow binding (CRW-1207 F14) of every engine turn before turn/start, as the first
+// process did. A call held host_config_flow_binding because the binding could not be written stays held, with nothing sent,
+// while the flow-bound directory is still unsafe; once the directory is repaired the resume writes the call's engine line and
+// only then sends its turn.
+func TestResumeWritesTheFlowBindingOrKeepsTheCallHeld(t *testing.T) {
+	var dir string
+	g := newHeldRun(t, 0, func(*fakehost.Threads) {}, withFirstBinding(func(t *testing.T) *agent.BoundConfig {
+		var err error
+		if dir, err = bound.Dir(); err != nil {
+			t.Fatal(err)
+		}
+		// a flow-bound directory that is not private: no line can be written
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return &agent.BoundConfig{RunID: runID, Policy: engine.FakePolicy()}
+	}))
+	rows := g.callRows(t)
+	if last := rows[len(rows)-1]; last.Event != engine.EvHeld || last.Reason != "host_config_flow_binding" {
+		t.Fatalf("the first process left the call at %+v, want held host_config_flow_binding", last)
+	}
+	if n := g.host.Count("turn/start"); n != 0 {
+		t.Fatalf("the first process sent %d turns without a binding", n)
+	}
+	// the directory is still unsafe: the resume sends nothing and the call stays held for the binding
+	code, out, errOut := g.resume(t)
+	if code != 0 {
+		t.Fatalf("resume: exit %d\nstdout %s\nstderr %s", code, out, errOut)
+	}
+	if n := g.host.Count("turn/start"); n != 0 {
+		t.Errorf("the resume sent %d turns although the binding could not be written", n)
+	}
+	rows = g.callRows(t)
+	if last := rows[len(rows)-1]; last.Event != engine.EvHeld || last.Reason != "host_config_flow_binding" {
+		t.Errorf("after the resume over the unsafe directory the call is at %+v, want held host_config_flow_binding", last)
+	}
+	// the operator repairs the directory: the resume writes the call's engine line, then sends the turn
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = g.resume(t)
+	if code != 0 || !strings.Contains(out, `"completed"`) {
+		t.Fatalf("resume after the repair: exit %d\nstdout %s\nstderr %s", code, out, errOut)
+	}
+	if got := g.kinds(t); got[len(got)-1] != engine.EvCompleted {
+		t.Fatalf("rows %v: the call did not complete after the repair", got)
+	}
+	// the thread the call completed on (the call in front of it went on in place, so this call is in the suffix and ran a
+	// new attempt)
+	thread, _ := g.threadOf(t)
+	raw, err := os.ReadFile(filepath.Join(dir, thread+bound.FileSuffix))
+	if err != nil {
+		t.Fatalf("no binding file for thread %s: %v", thread, err)
+	}
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var l bound.Line
+		if err := json.Unmarshal([]byte(line), &l); err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+		if l.RunID == runID && l.ThreadID == thread && l.Kind == bound.KindEngine && l.CallID == g.callID && l.Role == "executor" && l.Allowance() == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the binding file of %s holds no engine line of call %s: %s", thread, g.callID, raw)
+	}
+}
+
+// CRW-1269 d3: a held call goes on only through the host's proof. When the proof fails after the held row - here the host
+// shows a thread with a turn at the cwd of the refused thread/start, so nobody can prove the refused request made nothing -
+// the resume ends the call outcome_unknown (dispatch_unknown): it is in recovery hold now, so dag-restart names
+// `crw flow recover` for it and the built binary's recover no longer refuses it as not in recovery_hold.
+func TestHeldCallWhoseHostProofFailsBecomesARecoveryHold(t *testing.T) {
+	g := newHeldRun(t, 0, func(th *fakehost.Threads) {
+		th.OnStart(func(p map[string]any) map[string]any {
+			if cwd, _ := p["cwd"].(string); strings.Contains(cwd, string(filepath.Separator)+"wt"+string(filepath.Separator)) {
+				return fakehost.ErrorWithInfo(-32600, "usage limit", "usageLimitExceeded")
+			}
+			return nil
+		})
+	})
+	rows := g.callRows(t)
+	if last := rows[len(rows)-1]; last.Event != engine.EvHeld || last.Reason != "host_infra_usageLimitExceeded" {
+		t.Fatalf("the first process left the call at %+v", last)
+	}
+	if got := callstate.Classify(rows); got != callstate.Unsettled {
+		t.Fatalf("the held call is %s, want unsettled (crw flow resume)", got)
+	}
+	_, cwd := g.threadOf(t)
+	g.host.Threads().OnStart(nil)
+	g.host.Threads().Seed(fakehost.SeedThread{Cwd: cwd, CreatedAt: time.Now(), Turns: []fakehost.SeedTurn{{Text: "work nobody recorded"}}})
+	starts, turns := g.host.Count("thread/start"), g.host.Count("turn/start")
+	code, out, errOut := g.resume(t)
+	if code != 0 {
+		t.Fatalf("resume: exit %d\nstdout %s\nstderr %s", code, out, errOut)
+	}
+	if n := g.host.Count("thread/start") - starts; n != 0 {
+		t.Errorf("the resume made %d threads although the proof failed", n)
+	}
+	if n := g.host.Count("turn/start") - turns; n != 0 {
+		t.Errorf("the resume sent %d turns for the call although the proof failed", n)
+	}
+	rows = g.callRows(t)
+	if last := rows[len(rows)-1]; last.Event != engine.EvOutcomeUnknown || last.Reason != engine.ReasonDispatchUnknown {
+		t.Fatalf("after the failed proof the call is at %+v, want outcome_unknown dispatch_unknown", last)
+	}
+	if got := callstate.Classify(rows); got != callstate.RecoveryHold {
+		t.Fatalf("the call is %s: dag-restart names crw flow recover only for a call in recovery hold", got)
+	}
+	if _, _, errOut := crwRecover(t, "--state", g.state, "--socket", g.host.SocketPath, "--absent", g.callID); strings.Contains(errOut, "not in recovery_hold") {
+		t.Errorf("crw flow recover refused the call the failed proof put in recovery hold: %q", errOut)
+	}
 }

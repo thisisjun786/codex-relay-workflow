@@ -20,7 +20,8 @@ import (
 // call may spawn.
 
 // BoundConfig turns the binding on for a backend. A backend without one writes none: the hook then takes every thread of the
-// run for an ordinary one, so a process that starts runs on the App Server sets it.
+// run for an ordinary one, so a process that starts or resumes runs on the App Server sets it (internal/flow/journal.ResumeEnv
+// does for `crw flow resume`).
 type BoundConfig struct {
 	// RunID is the run the lines name.
 	RunID string
