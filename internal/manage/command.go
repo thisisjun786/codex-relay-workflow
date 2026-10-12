@@ -111,6 +111,19 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return usageExit
 }
 
+// ConfigReport is the report of crw manage config for a reader that only needs the configuration's
+// blocks (the policy API reads the relay block): the same file, precedence and refusals of a file this
+// product cannot use, without the judgement that the configuration can deliver to the management
+// thread (CRW-1273). That judgement belongs to the commands that send; a reader that never sends is not
+// refused for the settings of a send. The exit code and the streams are those of the command.
+func ConfigReport(args []string, stdout, stderr io.Writer) int {
+	e := &Env{Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr, Getenv: os.Getenv, Now: time.Now, Executable: coreExecutable()}
+	defer coreForgetConfig(e)
+	defer relayHelperForget(e)
+	defer branchAlwaysForget(e)
+	return coreConfigReportRun(e, args, false)
+}
+
 // coreUsage writes the usage line and one line per registered command, name-sorted.
 func coreUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: crw manage [-h] {"+strings.Join(coreNames(), ",")+"} ...")
