@@ -18,7 +18,7 @@ func (w *walker) word(x *syntax.Word, st *state, ctx Context) (Word, error) {
 		return Word{}, err
 	}
 	if reason := unknownWord(x, st); reason != "" {
-		return Word{Reason: reason}, nil
+		return Word{Reason: reason, AssignmentName: pathAssignmentPrefix(x)}, nil
 	}
 	cfg := &expand.Config{
 		Env:       expand.FuncEnviron(func(name string) string { return st.value(name) }),

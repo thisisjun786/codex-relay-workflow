@@ -52,6 +52,9 @@ func AnalyzeScriptProvenDirectory(src, cwd string, cdpath bool) (Result, error) 
 
 // ScriptOptions is what a reader of a text with failed-cd tracking knows about the shell that runs it besides the text (CRW-1165).
 type ScriptOptions struct {
+	Args   []Word
+	Path   *Word
+	Lookup func(string) (string, bool)
 	// Cdpath is Exec.Cdpath of the record that runs the text.
 	Cdpath bool
 	// ExitTainted is Exec.ExitTainted of the record that runs the text: the text that ran it did not leave exit and cd alone, so a
@@ -70,7 +73,17 @@ func AnalyzeScriptProven(src, cwd string, o ScriptOptions) (Result, error) {
 	st.proveCD = true
 	st.exitTainted = o.ExitTainted
 	st.startup = o.Startup
-	return analyze(src, st, nil)
+	st.args, st.searchPath = o.Args, o.Path
+	st.pathTouched = o.Path != nil
+	return analyze(src, st, o.Lookup)
+}
+
+func AnalyzeScriptEnvArgs(src, cwd string, cdpath bool, lookup func(string) (string, bool), args []Word, searchPath *Word) (Result, error) {
+	st := newState(cwd)
+	st.cdpath = cdpath
+	st.args, st.searchPath = args, searchPath
+	st.pathTouched = searchPath != nil
+	return analyze(src, st, lookup)
 }
 
 // textNamesCdpath is whether a text spells CDPATH (or zsh's cdpath) anywhere: an assignment, a read, a printf -v, a loop variable or
@@ -141,6 +154,9 @@ func analyze(src string, st *state, lookup func(string) (string, bool)) (Result,
 
 // value is a variable's value: one the walk assigns, else one the environment gives, else empty.
 func (s *state) value(name string) string {
+	if name == "PATH" && s.searchPath != nil {
+		return s.searchPath.Value
+	}
 	if v, ok := s.vars[name]; ok {
 		return v
 	}
@@ -154,6 +170,9 @@ func (s *state) value(name string) string {
 
 // known is whether a variable has a value the walk or the environment gives.
 func (s *state) known(name string) bool {
+	if name == "PATH" && s.searchPath != nil {
+		return s.searchPath.Known
+	}
 	if _, ok := s.vars[name]; ok {
 		return true
 	}

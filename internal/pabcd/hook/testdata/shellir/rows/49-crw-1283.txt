@@ -1,0 +1,138 @@
+=== CRW-1283-wrapper-control | B
+--why A readable forwarding wrapper passes its exact arguments to a harmless command.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-direct-wrapper-control | B
+--why A readable direct forwarding script passes its exact arguments without hiding worktree targets.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+{WORK}/slot.sh go version
+
+=== CRW-1283-direct-wrapper-memory | W
+--why The direct wrapper is read by the memory gate as well as the GitHub guard.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+{WORK}/slot.sh tee {MEMORY}/note.md
+
+=== CRW-1283-direct-wrapper-removal | R
+--why A newly readable direct forwarder still exposes a protected worktree removal.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+{WORK}/slot.sh rm -rf {CHECKOUT}
+
+=== CRW-1283-wrapper-post | none/deny/allow
+--why The forwarding wrapper exposes the real gh arguments; inline posting stays refused.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh gh pr comment 1 --body x
+
+=== CRW-1283-wrapper-push | none/deny/allow
+--why A git push cannot hide behind the newly readable forwarding wrapper.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh git push origin dev
+
+=== CRW-1283-wrapper-memory | W
+--why Forwarded tee operands still name the protected memory root.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh tee {MEMORY}/note.md
+
+=== CRW-1283-script-control | B
+--why A readable shell file with a literal, unrelated command has no protected operation.
+--file check.sh
+go version
+--cmd
+bash check.sh
+
+=== CRW-1283-script-post | none/deny/allow
+--why A readable shell file that posts inline is still refused by the GitHub guard.
+--file post.sh
+gh pr comment 1 --body x
+--cmd
+bash post.sh
+
+=== CRW-1283-script-push | none/deny/allow
+--why The script-file reader does not conceal git push.
+--file push.sh
+git push origin dev
+--cmd
+bash push.sh
+
+=== CRW-1283-script-memory | W
+--why Reading a script does not authorize its literal protected write.
+--file write.sh
+echo x >{MEMORY}/note.md
+--cmd
+bash write.sh
+
+=== CRW-1283-path-control | B
+--why A literal PATH resolves the harmless installed binary without changing its policy.
+--cmd
+PATH=/usr/bin:/bin cat /dev/null
+
+=== CRW-1283-path-post | U
+--why Unknown PATH leaves an external target capable of running protected operations.
+--cmd
+PATH=$UNRESOLVED gh pr comment 1 --body x
+
+=== CRW-1283-path-push | none/deny/allow
+--why A resolved git program behind a literal PATH does not bypass the push refusal.
+--cmd
+PATH=/usr/bin:/bin git push origin dev
+
+=== CRW-1283-path-memory | W
+--why A resolved tee behind a literal PATH still writes its memory operand.
+--cmd
+PATH=/usr/bin:/bin tee {MEMORY}/note.md
+
+=== CRW-1283-unknown-path-absolute | B
+--why An absolute, harmless program does not search an unknown PATH.
+--cmd
+PATH=$UNRESOLVED /usr/bin/true
+
+=== CRW-1283-env-unknown-path-absolute | B
+--why An absolute harmless command behind env does not search an unknown PATH either.
+--cmd
+env PATH=$UNRESOLVED /usr/bin/true
+
+=== CRW-1283-source-inherits-arguments | W
+--why A sourced body inherits the script's positional arguments, including protected tee operands.
+--file source.sh
+source {WORK}/body.sh
+--file body.sh
+"$@"
+--cmd
+bash source.sh tee {MEMORY}/note.md
+
+=== CRW-1283-modified-arguments | U
+--why Parameter rewriting is not exact forwarding and stays fail-closed.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "${@#prefix}"
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-inner-shell-post | none/deny/allow
+--why A new shell has its own positional arguments, not the outer script's harmless arguments.
+--file slot.sh
+#!/bin/bash
+bash -c '"$@"' zero gh pr comment 1 --body x
+--cmd
+bash slot.sh go version

@@ -8,6 +8,7 @@ package shellir
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -58,9 +59,10 @@ func unreadablef(format string, args ...any) error {
 // Word is one word after evaluation. Known is false when the value depends on
 // something the reader cannot see; Reason then names what it depends on.
 type Word struct {
-	Known  bool
-	Value  string
-	Reason string
+	Known          bool
+	Value          string
+	Reason         string
+	AssignmentName string
 }
 
 // Dir is the working directory at a point in the text. Known is false when
@@ -167,7 +169,9 @@ type Exec struct {
 	// ExitTainted is whether the text that holds a KindScriptFile record may have changed what exit or cd does for the shell that runs
 	// the script (a function, option or builtin it changed, or an environment it was not shown to leave alone): the reader of the
 	// script's body does not give it the proof of `cd <literal> || exit <digits>` (AnalyzeScriptProven, CRW-1165).
-	ExitTainted bool
+	ExitTainted  bool
+	SearchPath   *Word
+	PathResolved bool
 	// Line is the line, in the text the record was read from, of the statement that holds it (1-based; 0 when unknown).
 	Line int
 }
@@ -195,11 +199,14 @@ type state struct {
 	dir Dir
 	// proveCD retains failed-cd possibilities for consumers that require a
 	// proven effective directory rather than the legacy literal-cd reading.
-	proveCD bool
-	vars    map[string]string
-	funcs   map[string]*syntax.Stmt
-	cdpath  bool
-	lookup  func(string) (string, bool)
+	proveCD     bool
+	vars        map[string]string
+	funcs       map[string]*syntax.Stmt
+	cdpath      bool
+	lookup      func(string) (string, bool)
+	args        []Word
+	searchPath  *Word
+	pathTouched bool
 	// exitTainted and startup are what the reader was told about the shell around the text (ScriptOptions); they are read once, at the
 	// start of the walk.
 	exitTainted bool
@@ -225,6 +232,7 @@ func (s *state) clone() *state {
 		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
 		cdpath:  s.cdpath,
 		lookup:  s.lookup,
+		args:    s.args, searchPath: s.searchPath, pathTouched: s.pathTouched,
 
 		exitTainted: s.exitTainted, startup: s.startup, noExitProof: s.noExitProof,
 	}
@@ -239,11 +247,35 @@ func (s *state) clone() *state {
 
 func (s *state) replace(o *state) { *s = *o }
 
-func (s *state) clearVars() { s.vars = map[string]string{} }
+func (s *state) clearVars() {
+	s.vars = map[string]string{}
+	if s.searchPath != nil {
+		s.searchPath = &Word{Reason: "PATH may have changed"}
+	}
+	if s.args != nil {
+		s.args = nil
+	}
+}
 
-func (s *state) unsetVar(name string) { delete(s.vars, name) }
+func (s *state) unsetVar(name string) {
+	delete(s.vars, name)
+	if name == "PATH" {
+		s.searchPath = &Word{Reason: "PATH is unset"}
+	}
+}
 
 func (s *state) setVar(name string, v Word, appendValue bool) {
+	if name == "PATH" {
+		search := v
+		if appendValue {
+			if s.searchPath != nil && s.searchPath.Known && v.Known {
+				search.Value = s.searchPath.Value + v.Value
+			} else {
+				search = Word{Reason: "PATH append is not known"}
+			}
+		}
+		s.searchPath = &search
+	}
 	if !v.Known {
 		delete(s.vars, name)
 		return
@@ -270,7 +302,15 @@ func joinStates(states ...*state) *state {
 	}
 	out.lookup = first.lookup
 	out.proveCD = first.proveCD
+	out.args, out.searchPath = first.args, first.searchPath
 	for _, s := range states {
+		if !slices.Equal(out.args, s.args) || (out.args == nil) != (s.args == nil) {
+			out.args = nil
+		}
+		out.pathTouched = out.pathTouched || s.pathTouched
+		if !samePath(out.searchPath, s.searchPath) {
+			out.searchPath = &Word{Reason: "PATH differs between branches"}
+		}
 		if !s.dir.Known || !first.dir.Known || s.dir.Path != first.dir.Path {
 			out.dir.Known = false
 		}
@@ -837,7 +877,9 @@ func (w *walker) funcDecl(c *syntax.FuncDecl, st *state, ctx Context) error {
 	st.funcs[name] = c.Body
 	fctx := ctx
 	fctx.FuncBody = true
-	return w.stmt(c.Body, st.clone(), fctx)
+	bodyState := st.clone()
+	bodyState.args = nil
+	return w.stmt(c.Body, bodyState, fctx)
 }
 
 func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context) error {
@@ -854,6 +896,7 @@ func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context
 	ctx.succeeds = false
 	w.calls = append(w.calls, name)
 	defer func() { w.calls = w.calls[:len(w.calls)-1] }()
+	st.args = nil
 	return w.stmt(body, st, ctx)
 }
 
@@ -870,6 +913,16 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			}
 			// A quoted declaration ('a[i]=v') evaluates its subscript as arithmetic (CRW-1178).
 			w.nameSubscriptPrefix(st, v)
+			if !v.Known && v.AssignmentName == "PATH" {
+				assigns = append(assigns, Assign{Name: "PATH", Value: Word{Reason: v.Reason}})
+				continue
+			}
+			if v.Known {
+				if name, value, ok := splitAssignment(v.Value); ok && name == "PATH" {
+					assigns = append(assigns, Assign{Name: name, Value: Word{Known: true, Value: value}})
+					continue
+				}
+			}
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
 				st.clearVars()
 				// A name built at run time, or a name reference, may be or reach PYTHONPYCACHEPREFIX (CRW-1178).
@@ -1014,6 +1067,13 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 	}
 	words := make([]Word, 0, len(c.Args))
 	for _, arg := range c.Args {
+		if st.args != nil && quotedArgs(arg) {
+			if len(words)+len(st.args) > MaxCommandBytes {
+				return unreadablef("forwarded argument list exceeds the reader limit")
+			}
+			words = append(words, st.args...)
+			continue
+		}
 		v, err := w.word(arg, st, wctx)
 		if err != nil {
 			return err
@@ -1086,8 +1146,10 @@ func assignedNames(name string, args []Word) []Word {
 func checkAssigns(assigns []Assign, st *state) error {
 	for _, a := range assigns {
 		switch {
-		case a.Name == "PATH" || a.Name == "path":
-			return unreadablef("assignment to %s changes which program runs", a.Name)
+		case a.Name == "path" || a.Name == "PATH" && a.Array:
+			return unreadablef("array or lower-case path assignment is not modelled")
+		case a.Name == "PATH":
+			st.pathTouched = true
 		case isCodeEnvName(a.Name):
 			return unreadablef("assignment to %s makes a program run code the text does not show", a.Name)
 		case isCdpathName(a.Name):
@@ -1195,6 +1257,28 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	if err := checkAssigns(assigns, st); err != nil {
 		return err
 	}
+	for _, assignment := range assigns {
+		if assignment.Name == "PATH" {
+			st = st.clone()
+			st.setVar(assignment.Name, assignment.Value, assignment.Append)
+		}
+	}
+	resolved := false
+	if st.searchPath != nil && !strings.Contains(prog.Value, "/") && !pathIndependent(name, st) {
+		var err error
+		prog, err = resolveProgram(prog, st)
+		if err != nil {
+			return err
+		}
+		resolved = strings.Contains(prog.Value, "/")
+		if resolved && w.createdByText(prog.Value, st.dir) {
+			return unreadablef("PATH program is written before it runs")
+		}
+		if resolved && !systemProgram(prog.Value) {
+			w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: name, Args: words[1:], Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, SearchPath: st.searchPath, PathResolved: true})
+			return nil
+		}
+	}
 	if reason := zshOnlyUse(name, words[1:]); reason != "" {
 		return unreadablef("%s", reason)
 	}
@@ -1230,6 +1314,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	w.out = append(w.out, Exec{
 		Kind: KindCommand, Program: prog, Name: name, Args: words[1:],
 		Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Inline: inline, Cdpath: st.cdpath,
+		SearchPath: st.searchPath, PathResolved: resolved,
 	})
 	if script != nil {
 		if err := w.scriptFile(name, *script, st, ctx); err != nil {
@@ -1418,7 +1503,7 @@ func clobbersVars(name string, args []Word) bool {
 	return false
 }
 
-func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) error {
+func (w *walker) scriptFile(name string, script Word, st *state, ctx Context, args ...Word) error {
 	if !script.Known {
 		return unreadablef("%s reads a script file that is not known (%s)", name, script.Reason)
 	}
@@ -1436,6 +1521,7 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) er
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
 		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, ExitTainted: !w.exitProof,
+		Args: append([]Word{}, args...), SearchPath: st.searchPath,
 	})
 	return nil
 }
@@ -1478,8 +1564,19 @@ func (w *walker) sourceCall(args []Word, st *state, ctx Context) error {
 	if len(args) == 0 {
 		return unreadablef("source without a file")
 	}
-	if err := w.scriptFile("source", args[0], st, ctx); err != nil {
+	if st.pathTouched && (!args[0].Known || !strings.Contains(args[0].Value, "/")) {
+		return unreadablef("source searches an assigned PATH; use an absolute script path")
+	}
+	inherited := st.args
+	if len(args) > 1 {
+		inherited = args[1:]
+	}
+	before := len(w.out)
+	if err := w.scriptFile("source", args[0], st, ctx, inherited...); err != nil {
 		return err
+	}
+	if len(w.out) > before && inherited == nil {
+		w.out[len(w.out)-1].Args = nil
 	}
 	st.dir = unknownDir(st.dir)
 	st.clearVars()

@@ -29,7 +29,7 @@ func newMemoryShellAnalysis(command, dir string, lookup host.LookupEnv) *memoryS
 func memoryPlainReading(lookup host.LookupEnv) func(string, string) (shellir.Result, error) {
 	return func(command, dir string) (shellir.Result, error) {
 		return shellir.AnalyzeEnv(command, dir, func(name string) (string, bool) {
-			if name == "PYTHONPATH" && lookup != nil {
+			if (name == "PYTHONPATH" || name == "PATH") && lookup != nil {
 				return lookup(name)
 			}
 			return "", false
@@ -115,5 +115,5 @@ func commandUnreadableReason(rule, reason string, leaf bool, names string) strin
 	if leaf {
 		return out + "Report the blocked command and this reason to your parent."
 	}
-	return out + "Run a readable script file, or change the part the reason names."
+	return out + "Use a direct command with a literal program and absolute write paths; change the part the reason names. A readable script file must meet the same checks."
 }

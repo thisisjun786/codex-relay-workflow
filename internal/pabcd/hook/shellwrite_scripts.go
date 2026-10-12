@@ -5,8 +5,40 @@ import (
 	"slices"
 	"strings"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
 )
+
+func shellIRScriptUsesArgs(body string) bool {
+	file, err := syntax.NewParser().Parse(strings.NewReader(body), "")
+	if err != nil {
+		return false
+	}
+	found := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if parameter, ok := node.(*syntax.ParamExp); ok && parameter.Param != nil && parameter.Param.Value == "@" {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+func shellIRScriptArgs(execution shellir.Exec) []shellir.Word {
+	if execution.Kind == shellir.KindScriptFile {
+		return execution.Args
+	}
+	return append([]shellir.Word{}, execution.Args...)
+}
+
+func shellIRDirectForwarder(execution shellir.Exec) bool {
+	if !githubPostDirectPath(execution) || githubPostInstalledName(execution) {
+		return false
+	}
+	body, kind := githubPostReadDirect(execution.Program.Value, execution.Dir.Path)
+	return kind == githubPostFileShell && shellIRScriptUsesArgs(body)
+}
 
 // Carried shell files reuse the bounded regular-file reader and stale-file
 // checks of the GitHub guard. No file changed by this command can be trusted.
@@ -25,11 +57,13 @@ func shellIRScriptDests(e shellir.Exec, cwd string, lookup func(string) (string,
 		}
 		return unknown
 	}
-	read, dir := shellir.AnalyzeScript, e.Dir.Path
+	read, dir := func(body, dir string, cdpath bool) (shellir.Result, error) {
+		return shellir.AnalyzeScriptEnvArgs(body, dir, cdpath, lookup, shellIRScriptArgs(e), e.SearchPath)
+	}, e.Dir.Path
 	if resolve {
 		// The script inherits what the text that runs it did to exit and cd (CRW-1165), and the environment the gate is given.
 		read = func(body, dir string, cdpath bool) (shellir.Result, error) {
-			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup})
+			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup, Lookup: lookup, Args: shellIRScriptArgs(e), Path: e.SearchPath})
 		}
 		if !e.Dir.Known {
 			dir = ""

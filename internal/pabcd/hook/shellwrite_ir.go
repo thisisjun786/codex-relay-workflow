@@ -50,17 +50,30 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 			}
 			continue
 		}
-		if depth > 0 && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+		forwarder := false
+		if depth == 0 && !e.PathResolved {
+			forwarder = shellIRDirectForwarder(e)
+		}
+		if (depth > 0 || e.PathResolved || forwarder) && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+			own := shellIRExecDests(e)
+			if resolve {
+				own = shellIRResolve(own, e.Dir, cwd)
+			}
+			dests = append(dests, own...)
 			// A direct child of an admitted shell file must also be read.
 			// Only a bounded shell program has a destination reader here.
 			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {
 				continue // A proven missing child has no body to execute.
 			}
 			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+			if e.PathResolved && kind == githubPostFileBinary && !writes.stale(i, e.Program.Value, e.Dir) {
+				continue
+			}
 			if kind != githubPostFileShell || writes.stale(i, e.Program.Value, e.Dir) {
 				dests = append(dests, shellIRUnknownDest)
 			} else {
 				child := e
+				child.Args = shellIRScriptArgs(e)
 				child.Kind, child.Name, child.Script = shellir.KindScriptFile, "sh", e.Program
 				dests = append(dests, shellIRScriptDests(child, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
 			}

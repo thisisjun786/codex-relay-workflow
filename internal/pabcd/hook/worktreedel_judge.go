@@ -41,8 +41,13 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 // The one part of the hook's own environment it reads is what a shell reads at start (worktreeDelStartupEnv), because the proof of
 // `cd <literal> || exit <digits>` stands on exit and cd being the builtins; tainted is whether the text that runs this one (a script
 // file's body) left them alone (CRW-1165).
-func worktreeDelRead(command, cwd string, cdpath, tainted bool) (shellir.Result, error) {
-	return shellir.AnalyzeScriptProven(command, cwd, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: tainted, Startup: worktreeDelStartupEnv})
+func worktreeDelRead(command, cwd string, cdpath, tainted bool, execution ...shellir.Exec) (shellir.Result, error) {
+	options := shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: tainted, Startup: worktreeDelStartupEnv}
+	if len(execution) > 0 {
+		options.Args = shellIRScriptArgs(execution[0])
+		options.Path = execution[0].SearchPath
+	}
+	return shellir.AnalyzeScriptProven(command, cwd, options)
 }
 
 // worktreeDelStartupEnv answers the variables a shell reads at start from the hook's own environment, which the command it judges
@@ -60,8 +65,8 @@ func worktreeDelUnreadable(id WorktreeIdentity) GuardVerdict {
 
 // worktreeDelJudgeText judges one text; outer is the writes of the texts that run it (a script file's body), which happen before
 // its own commands.
-func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites, cdpath, tainted bool) GuardVerdict {
-	res, err := worktreeDelRead(command, cwd, cdpath, tainted)
+func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, outer *githubPostWrites, cdpath, tainted bool, execution ...shellir.Exec) GuardVerdict {
+	res, err := worktreeDelRead(command, cwd, cdpath, tainted, execution...)
 	if err != nil {
 		return worktreeDelUnreadable(id)
 	}
@@ -79,6 +84,25 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 			v = worktreeDelJudgeScript(e, id, depth, written.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))
 		} else {
 			v = worktreeDelJudgeExec(e, id)
+			if !v.Deny && githubPostDirectPath(e) && (e.PathResolved || shellIRDirectForwarder(e)) {
+				if written == nil {
+					written = githubPostWritesOf(res.Execs, outer)
+				}
+				if written.stale(i, e.Program.Value, e.Dir) {
+					return worktreeDelUnreadable(id)
+				}
+				body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+				switch kind {
+				case githubPostFileBinary, githubPostFileAbsent:
+				case githubPostFileShell:
+					if depth >= worktreeDelMaxScriptDepth {
+						return worktreeDelUnreadable(id)
+					}
+					v = worktreeDelJudgeText(body, e.Dir.Path, id, depth+1, written.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)), e.Cdpath, true, e)
+				default:
+					return worktreeDelUnreadable(id)
+				}
+			}
 		}
 		if v.Deny {
 			return v
@@ -102,7 +126,7 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int, writ
 		return worktreeDelUnreadable(id)
 	}
 	// The body is judged as any text is: the script files it runs are checked against what it and the texts around it write.
-	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes, e.Cdpath, e.ExitTainted)
+	return worktreeDelJudgeText(string(b), e.Dir.Path, id, depth+1, writes, e.Cdpath, e.ExitTainted, e)
 }
 
 // worktreeDelJudgeExec is the verdict for one program the reader shows.

@@ -192,6 +192,11 @@ func isDashDigits(v string) bool {
 func unwrapEnv(args []Word) (unwrapped, error) {
 	var u unwrapped
 	for len(args) > 0 {
+		if !args[0].Known && args[0].AssignmentName == "PATH" {
+			u.assigns = append(u.assigns, Assign{Name: "PATH", Value: Word{Reason: args[0].Reason}})
+			args = args[1:]
+			continue
+		}
 		v, err := knownValue(args[0], "env option")
 		if err != nil {
 			return u, err

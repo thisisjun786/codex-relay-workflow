@@ -480,7 +480,15 @@ loop:
 		if err != nil {
 			return err
 		}
-		return w.carried(text, st.clone(), ctx, name+" -c")
+		child := st.clone()
+		child.args = []Word{}
+		if i+1 < len(args) {
+			child.args = append(child.args, args[i+2:]...)
+		}
+		if ctx.Feed != nil || ctx.RuntimeCarrier != "" {
+			child.args = nil
+		}
+		return w.carried(text, child, ctx, name+" -c")
 	}
 	if operand != nil && !stdinMode && operand.Known && fdAliasPath(operand.Value, st.dir) {
 		// A shell that runs a descriptor alias runs the text that descriptor carries, as a shell string does.
@@ -491,7 +499,7 @@ loop:
 		return w.carried(text, st.clone(), ctx, name+" fd")
 	}
 	if operand != nil && !stdinMode {
-		return w.scriptFile(name, *operand, st, ctx)
+		return w.scriptFile(name, *operand, st, ctx, args[i+1:]...)
 	}
 	if file, ok := stdinIsFile(ctx); ok && ctx.Carrier != "" {
 		// A shell in a carried text reads its program from a file the text names: /dev/null holds none, any other file is

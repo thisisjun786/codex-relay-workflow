@@ -94,7 +94,7 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 		return githubPostDeny(site.rule, site.place)
 	}
 	leaf := p["agent_id"] != nil || p["agent_type"] != nil
-	recovery := "Run a readable script file."
+	recovery := "Use a direct command with a literal program and absolute file paths; GitHub text must come from a reviewed file. A readable script file must meet the same checks."
 	if leaf {
 		recovery = "Report the blocked command and cause code to your parent."
 	}

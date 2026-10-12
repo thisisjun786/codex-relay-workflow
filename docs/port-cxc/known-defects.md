@@ -1561,3 +1561,7 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedW
 ## CRW-1085 — CRW-726/741 reader range
 
 CRW's shared reader accepts non-executing diagnostic options, bracket conditions, bounded shell files, four fixed Python modules with bounded test discovery, and read-only awk while unreadable code and destinations still fail closed. The oracle has no matching reader; port: fixed (CRW-specific over-refusal). Details and the superseded CRW-894 module controls are in [CRW-1085](known-defects/CRW-1085.md).
+
+## CRW-1283 — forwarding script arguments and assigned PATH
+
+Readable shell wrappers carry exact quoted positional arguments into each guard, and scalar PATH assignments resolve the program they select. Unreadable code, unknown external search paths and protected operations still fail closed. Details, the unchanged security cases and the limits of script recovery are in [CRW-1283](known-defects/CRW-1283.md).

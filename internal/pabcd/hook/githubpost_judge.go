@@ -79,8 +79,8 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 // githubPostJudgeTextDepth judges a text that a script file holds; outer is the writes of the texts that run it, which also
 // happen before the script's own commands. cdpath is whether CDPATH may be set where the script runs (shellir.Exec.Cdpath): the body
 // is read with it set, so a cd to a bare name in it is not a directory the guard knows.
-func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
-	site, denied := githubPostJudgeTextOnly(command, cwd, depth, outer, cdpath)
+func githubPostJudgeTextDepth(command, cwd string, depth int, outer *githubPostWrites, cdpath bool, execution ...shellir.Exec) (githubPostSite, bool) {
+	site, denied := githubPostJudgeTextOnly(command, cwd, depth, outer, cdpath, execution...)
 	if denied && !site.judged {
 		// Whether a refusal is about a GitHub post is a fact of the text it was found in: the innermost text that refuses sets it,
 		// and the text that runs that text does not overwrite it.
@@ -100,8 +100,14 @@ func githubPostEnv(name string) (string, bool) {
 	return os.LookupEnv(name)
 }
 
-func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) (githubPostSite, bool) {
-	res, err := shellir.AnalyzeScriptEnv(command, cwd, cdpath, githubPostEnv)
+func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool, execution ...shellir.Exec) (githubPostSite, bool) {
+	var args []shellir.Word
+	var searchPath *shellir.Word
+	if len(execution) > 0 {
+		args = shellIRScriptArgs(execution[0])
+		searchPath = execution[0].SearchPath
+	}
+	res, err := shellir.AnalyzeScriptEnvArgs(command, cwd, cdpath, githubPostEnv, args, searchPath)
 	if err != nil {
 		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: unreadableCause(err), analysis: true}, true
 	}
@@ -155,6 +161,9 @@ func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrit
 	for i = range execs {
 		e := execs[i]
 		failLine = e.Line
+		if e.Name == "git" && (depth > 0 || e.SearchPath != nil) && githubPostGitPush(e.Args) {
+			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, post: true}, true
+		}
 		if e.Kind == shellir.KindScriptFile {
 			if textWrites().stale(i, e.Script.Value, e.Dir) {
 				return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: githubPostScriptReason("script file is written before it runs", e.Script.Value)}, true
@@ -474,7 +483,7 @@ func githubPostJudgeScript(e shellir.Exec, depth int, writes *githubPostWrites) 
 		}
 		return githubPostSite{}, false
 	}
-	return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath))(e.Script.Value)
+	return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath, e))(e.Script.Value)
 }
 
 // githubPostLocate turns a refusal found inside a script into script-file:line, once: a refusal that already has a place (an
@@ -683,7 +692,7 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 	case githubPostFileBinary, githubPostFileAbsent:
 		return githubPostSite{}, false
 	case githubPostFileShell:
-		return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath))(e.Program.Value)
+		return githubPostLocate(githubPostJudgeTextDepth(body, cwd, depth+1, writes, e.Cdpath, e))(e.Program.Value)
 	}
 	if githubPostScriptMentionsPost(body) {
 		return unread, true
