@@ -285,34 +285,6 @@ func ParseSpec(spec Spec, argv []string) Result {
 	return r
 }
 
-// Rewrite is argv, a line ParseSpec(Specs[command]) read, with each option value replaced by what replace answers for
-// its key; a parser that names commands stops at its command. The relay daemon's child requests use it (CRW-1286).
-func Rewrite(command string, argv []string, replace func(key, value string) (string, error)) ([]string, error) {
-	spec, out := Specs[command], slices.Clone(argv)
-	for i := 0; i < len(out); i++ {
-		name, value, inline := strings.Cut(out[i], "=")
-		at := spec.find(name)
-		if at < 0 || !spec.Actions[at].takesValue() || !inline && i+1 >= len(out) {
-			if spec.Commands && (out[i] == "--" || at < 0 && !Optional(out[i])) {
-				break
-			}
-			continue
-		}
-		if !inline {
-			i++
-			value = out[i]
-		}
-		replaced, err := replace(spec.Actions[at].Key(), value)
-		if err != nil {
-			return nil, err
-		}
-		if out[i] = replaced; inline {
-			out[i] = name + "=" + replaced
-		}
-	}
-	return out, nil
-}
-
 // convert checks a value against its option's type and choices, keeping a number in Numbers;
 // it answers why the value is refused, or "".
 func (r *Result) convert(a Action, value string) string {

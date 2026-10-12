@@ -16,53 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// callerPaths are the values a child names relative to its own working directory or home: the child makes each absolute
-// where it runs, and the daemon refuses a request that still carries a relative one (CRW-1286).
-var callerPaths = map[string]func(string) (string, error){"state": store.AbsoluteExpanded, "socket": store.Absolute,
-	"workspace": store.AbsoluteExpanded, "marker-root": store.AbsoluteExpanded, "independent-review": store.Absolute}
-
-// childArgv is the child's line with every caller selection resolved in the child: its path values absolute, the state
-// directory it selected (flag, environment or discovery) named by --state, an intent command's marker root by --marker-root.
-func childArgv(state string, argv []string) ([]string, error) {
-	absolute := func(key, value string) (string, error) {
-		if resolve := callerPaths[key]; resolve != nil {
-			return resolve(value)
-		}
-		return value, nil
-	}
-	root := argparse.Parse("", argv)
-	name := root.Remaining[0]
-	head, err := argparse.Rewrite("", argv[:len(argv)-len(root.Remaining)], absolute)
-	if err != nil {
-		return nil, err
-	}
-	line, err := argparse.Rewrite(name, root.Remaining[1:], absolute)
-	if err != nil {
-		return nil, err
-	}
-	if n := len(head); n > 0 && head[n-1] == "--" {
-		head = head[:n-1]
-	}
-	out := append(append(head, "--state", state, name), line...)
-	if name == "emit" {
-		return out, nil
-	}
-	selection, err := delivery.ResolveMarkerRoot(lastValue(argparse.Parse(name, line).Values, "marker-root"))
-	return append(out, "--marker-root", selection.Path), err
-}
-
-func lastValue(values map[string][]string, key string) string {
-	if entries := values[key]; len(entries) > 0 {
-		return entries[len(entries)-1]
-	}
-	return ""
-}
-
 func ForwardChild(ctx context.Context, state, program string, argv []string) (any, error) {
-	argv, err := childArgv(state, argv)
-	if err != nil {
-		return nil, err
-	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	address, release, err := ControlAddress(filepath.Join(state, "control.sock"))
@@ -89,9 +43,6 @@ func ForwardChild(ctx context.Context, state, program string, argv []string) (an
 	response, err := readFrame(conn)
 	if err != nil {
 		return nil, dispatch.Host("relay daemon report outcome unknown; retry the same receipt identity: " + err.Error())
-	}
-	if detail, refused := response.Get("detail").(string); refused && response.Get("error") != nil {
-		return nil, dispatch.Host("relay daemon refused the child report: " + detail)
 	}
 	code, valid := response.Get("exitCode").(int64)
 	result, object := response.Get("result").(Object)
@@ -125,31 +76,28 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 	if parsed.Help || parsed.Message != "" {
 		return rejectControl(conn)
 	}
-	relative := ""
-	check := func(key, value string) (string, error) {
-		if callerPaths[key] != nil && !filepath.IsAbs(value) && relative == "" {
-			relative = "--" + key
+	text := func(values map[string][]string, key string) string {
+		entries := values[key]
+		if len(entries) == 0 {
+			return ""
 		}
-		return value, nil
+		return entries[len(entries)-1]
 	}
-	_, _ = argparse.Rewrite("", argv, check)
-	_, _ = argparse.Rewrite(name, root.Remaining[1:], check)
-	if relative != "" {
-		return answerHost(conn, "the child request carries an unresolved caller-relative "+relative+"; the child resolves it where it runs, the daemon never does")
-	}
-	if selected := lastValue(root.Values, "state"); selected == "" || filepath.Clean(selected) != filepath.Clean(state) {
+	selected, err := store.ResolveStateDir(text(root.Values, "state"), text(root.Values, "socket"))
+	if err != nil || filepath.Clean(selected.Path) != filepath.Clean(state) {
 		return answerHost(conn, "child command may only write the daemon's own store")
 	}
 	if name != "emit" {
-		if lastValue(parsed.Values, "marker-root") == "" {
-			return answerHost(conn, "the child request names no --marker-root; the child resolves its marker root where it runs")
+		selection, err := delivery.ResolveMarkerRoot(text(parsed.Values, "marker-root"))
+		if err != nil {
+			return answerHost(conn, err.Error())
 		}
-		params := Object{{Key: "markerRoot", Value: lastValue(parsed.Values, "marker-root")}, {Key: "dbPath", Value: filepath.Join(state, "relay.sqlite3")}}
+		params := Object{{Key: "markerRoot", Value: selection.Path}, {Key: "dbPath", Value: filepath.Join(state, "relay.sqlite3")}}
 		marker, _, refused, err := ownerPaths(state, params)
 		if err != nil || refused != "" {
 			return answerHost(conn, fmt.Sprintf("child marker selection refused: %s %v", refused, err))
 		}
-		directory, err := delivery.AssignmentDir(marker, lastValue(parsed.Values, "workspace"), lastValue(parsed.Values, "assignment"))
+		directory, err := delivery.AssignmentDir(marker, text(parsed.Values, "workspace"), text(parsed.Values, "assignment"))
 		if err != nil {
 			return answerHost(conn, err.Error())
 		}
@@ -166,9 +114,9 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 		return answerHost(conn, "child command produced no JSON answer: "+stderr.String())
 	}
 	if wake != nil && code == 0 {
-		thread := lastValue(parsed.Values, "turn-thread")
+		thread := text(parsed.Values, "turn-thread")
 		if thread == "" {
-			thread = lastValue(parsed.Values, "session")
+			thread = text(parsed.Values, "session")
 		}
 		if thread != "" {
 			wake(thread)

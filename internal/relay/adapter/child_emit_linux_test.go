@@ -1,11 +1,9 @@
 package adapter
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +16,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -75,14 +72,9 @@ func readonlyEmit(t *testing.T, state string, host *fakehost.Server) (map[string
 }
 
 func readonlyCommand(t *testing.T, state string, host *fakehost.Server, args ...string) (map[string]any, error) {
-	return readonlyIn(t, "", nil, append([]string{"--state", state, "--socket", host.SocketPath}, args...)...)
-}
-
-// readonlyIn runs the relay CLI as a readOnly child in its own working directory and with its own environment.
-func readonlyIn(t *testing.T, dir string, env []string, args ...string) (map[string]any, error) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], append([]string{"relay"}, args...)...)
-	cmd.Dir, cmd.Env = dir, append(append(os.Environ(), "CRW_READONLY_CHILD_BINARY="+suiteBinary), env...)
+	cmd := exec.Command(os.Args[0], append([]string{"relay", "--state", state, "--socket", host.SocketPath}, args...)...)
+	cmd.Env = append(os.Environ(), "CRW_READONLY_CHILD_BINARY="+suiteBinary)
 	raw, err := cmd.CombinedOutput()
 	var result map[string]any
 	if decodeErr := json.Unmarshal(raw, &result); decodeErr != nil {
@@ -234,79 +226,5 @@ func TestReadOnlyChildBlockedReachesTheParent(t *testing.T) {
 	var recipient, status string
 	if err := database.Q(context.Background()).QueryRowContext(context.Background(), "SELECT recipient_thread_id,state FROM deliveries").Scan(&recipient, &status); err != nil || recipient != "01parent-task" || status != "dispatched" || host.Count("turn/start") != 1 {
 		t.Fatalf("parent did not receive blocked report: %s %s %v, calls %v", recipient, status, err, host.Requests())
-	}
-}
-
-// CRW-1286: what the child selected relative to its own working directory or environment is resolved where the child
-// runs, so the daemon, in another directory with another environment, records the report for the caller.
-func TestReadOnlyChildSelectionsResolveInTheChildsContext(t *testing.T) {
-	for _, mode := range []string{"relative-state", "child-environment-state", "relative-workspace"} {
-		t.Run(mode, func(t *testing.T) {
-			state, database, host := blockedChildWorld(t)
-			root := filepath.Dir(state)
-			t.Setenv(store.StateEnv, "")
-			t.Setenv(delivery.MarkerEnv, filepath.Join(root, "markers"))
-			control, err := service.ListenControlStore(context.Background(), state, database, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer control.Close()
-			args, env := []string{"--socket", host.SocketPath}, []string{}
-			switch mode {
-			case "relative-state":
-				args = append(args, "--state", "state")
-			case "child-environment-state":
-				env = append(env, store.StateEnv+"="+state)
-			default:
-				if _, err := delivery.DeclareIntent(context.Background(), filepath.Join(root, "markers"), delivery.IntentDeclaration{Workspace: root, DispatchRequestID: "dispatch-1", IssueKey: "REL-1", DBPath: database.Path}); err != nil {
-					t.Fatal(err)
-				}
-				result, err := readonlyIn(t, root, nil, append(args, "--state", state, "intent-claim", "--workspace", ".", "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task", "--dispatch-request-id", "dispatch-1", "--first-turn", "turn-dispatch-1")...)
-				if record, _ := result["storeRecord"].(map[string]any); err != nil || record["recorded"] != true {
-					t.Fatalf("a claim for the child's own workspace was not recorded: %v %v", result, err)
-				}
-				return
-			}
-			result, err := readonlyIn(t, root, env, append(args, "emit", "--relationship", "rel-1", "--generation", "1", "--outcome", "blocked_needs_input", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed")...)
-			var count int
-			if queryErr := database.Q(context.Background()).QueryRowContext(context.Background(), "SELECT COUNT(*) FROM events WHERE outcome='blocked_needs_input'").Scan(&count); err != nil || queryErr != nil || count != 1 {
-				t.Fatalf("the child's own state selection did not reach the daemon's store: %v %v, events=%d %v", result, err, count, queryErr)
-			}
-		})
-	}
-}
-
-// CRW-1286: the daemon never resolves a caller-relative value in its own directory: a request that still carries one is
-// refused, and nothing is published.
-func TestTheDaemonRefusesAnUnresolvedCallerRelativeValue(t *testing.T) {
-	state, database, _ := blockedChildWorld(t)
-	root := filepath.Dir(state)
-	t.Setenv(delivery.MarkerEnv, filepath.Join(root, "markers"))
-	control, err := service.ListenControlStore(context.Background(), state, database, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer control.Close()
-	address, release, err := hook.ControlAddress(filepath.Join(state, "control.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	conn, err := net.Dial("unix", address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	argv := []string{"--state", state, "intent-claim", "--marker-root", filepath.Join(root, "markers"), "--workspace", ".", "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task", "--dispatch-request-id", "dispatch-1"}
-	request, _ := json.Marshal(map[string]any{"protocol": 1, "method": "child-command", "program": "crw", "argv": argv})
-	if _, err := conn.Write(append(request, '\n')); err != nil {
-		t.Fatal(err)
-	}
-	answer, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil || !strings.Contains(answer, `"error"`) || !strings.Contains(answer, "--workspace") {
-		t.Fatalf("a caller-relative --workspace must be refused by name: %q %v", answer, err)
-	}
-	if entries, err := os.ReadDir(filepath.Join(root, "markers")); err == nil && len(entries) > 0 {
-		t.Fatalf("a refused request published markers: %v", entries)
 	}
 }
