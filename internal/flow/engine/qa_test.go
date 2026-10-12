@@ -82,3 +82,47 @@ return [bad.status, bad.reason, bad2.status, bad2.reason]
 		t.Errorf("%d requests reached the backend, want the thread and the turn of the build only", n)
 	}
 }
+
+// The mark is part of what a call was given (CRW-1206 correction, d7): it changes the overlay, the placement, the snapshot and the
+// native-spawn allowance, so a call whose only difference from an earlier one is the mark is another call. A resume does not replay
+// the unmarked attempt as the QA call, and it does not replay the QA call as an unmarked one.
+func TestResumeDoesNotReplayACallUnderAnotherQAMark(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		first, now string
+		wantQATurn bool
+	}{
+		{"plain then qa", "", "qa: true,", true},
+		{"qa then plain", "qa: true,", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			body := func(opt string) string {
+				return `const c = await agent.call('capture', { agentType: 'executor', ` + opt + ` head: 'abcdef0', label: 'qa' })
+return c.status`
+			}
+			if got := value[string](t, h.run(body(tc.first))); got != "completed" {
+				t.Fatalf("first run: %v", got)
+			}
+			mark := len(h.fake.Requests())
+			if got := value[string](t, h.resumeOn(body(tc.now))); got != "completed" {
+				t.Fatalf("resumed run: %v", got)
+			}
+			var turns, qaTurns int
+			for _, r := range h.fake.Requests()[mark:] {
+				if r.Kind == "turn" {
+					turns++
+					if r.QA {
+						qaTurns++
+					}
+				}
+			}
+			if turns != 1 {
+				t.Fatalf("the resumed call sent %d turns, want 1: the earlier attempt is another call and is not replayed", turns)
+			}
+			if (qaTurns == 1) != tc.wantQATurn {
+				t.Errorf("the resumed turn carries qa = %v, want %v", qaTurns == 1, tc.wantQATurn)
+			}
+		})
+	}
+}

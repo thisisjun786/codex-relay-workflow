@@ -109,6 +109,58 @@ func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
 	}
 }
 
+// The host refuses thread/start of the first executor (a configuration fault), the orchestrator retries, and the replacement
+// executor builds the head that is reviewed and accepted: the refused attempt never created a thread and wrote nothing, so the
+// acceptance is audited ok - its pair is the replacement's - and the reviewer thread is archived (CRW-1206 correction, d5).
+func TestAuditOfARecoveredNodeIgnoresTheRefusedExecutorAttempt(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	var mu sync.Mutex
+	refused := 0
+	l.Threads.OnStart(func(params map[string]any) map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		if cwd, _ := params["cwd"].(string); strings.Contains(cwd, "/wt/A/") && refused == 0 {
+			refused++
+			return map[string]any{"code": -32600, "message": "bad request", "data": map[string]any{"codexErrorInfo": "badRequest"}}
+		}
+		return nil
+	})
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "waiting" || reason != "host_config_badRequest" {
+		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	esc := l.FlowRows(engine.EvEscalation)
+	if len(esc) != 1 {
+		t.Fatalf("escalations %+v", esc)
+	}
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Label == "build:A:executor" && ev.Event == engine.EvThreadStarted {
+			t.Fatalf("the refused executor attempt started a thread: the fixture does not model a refused thread/start")
+		}
+	}
+	l.apply(ops.EvDecisionApplied, map[string]any{"ask": str(esc[0].Data, "escalation_id"), "node": "A", "decision": map[string]any{"action": "retry"}})
+	l.NewProcess("proc-applied")
+	if got := Value[laneResult](t, l.Resume()); got.State != "closed" {
+		t.Fatalf("after the applied row: %+v", got)
+	}
+	audits := l.Rows("crw.audit")
+	if len(audits) == 0 {
+		t.Fatalf("no audit row after the close")
+	}
+	last := audits[len(audits)-1]
+	if num(last.Data["ok"]) != 1 || num(last.Data["mismatch"]) != 0 || num(last.Data["unobserved"]) != 0 {
+		t.Errorf("the audit of the recovered node: ok %v mismatch %v unobserved %v (%v)", last.Data["ok"], last.Data["mismatch"], last.Data["unobserved"], last.Data["results"])
+	}
+	if len(l.Archived()) != 1 {
+		t.Errorf("archived %v: the recovered node's reviewer thread is archived once", l.Archived())
+	}
+}
+
+func num(v any) int {
+	f, _ := v.(float64)
+	return int(f)
+}
+
 // A landing the integration target lost is integrated again when the run resumes: the lane that landed it runs only its integrate
 // (everything before it replays: the commit, the verification, the review and the acceptance still stand) and lands a new batch,
 // the target is not the head the final gate judged, and the whole close runs live again over the new head - the gate, the

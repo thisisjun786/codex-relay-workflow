@@ -71,6 +71,14 @@ type Evidence struct {
 	Why string `json:"why"`
 }
 
+// GateDecision is one decision of the approved DESIGN as the reviewer of the range sees it: its id, what it changes and the nodes
+// whose issues follow it.
+type GateDecision struct {
+	ID     string   `json:"id"`
+	Change string   `json:"change"`
+	Nodes  []string `json:"nodes"`
+}
+
 // GateOutcome is the answer of crw.finalGate.
 type GateOutcome struct {
 	Milestone string `json:"milestone"`
@@ -95,6 +103,9 @@ type GateOutcome struct {
 	// NeedTests are the commands whose test evidence is missing or stale, NeedQA whether the QA receipt is.
 	NeedTests []string `json:"need_tests"`
 	NeedQA    bool     `json:"need_qa"`
+	// Decisions are the decisions of the approved DESIGN revision the milestone runs under (the ledger row): the comparison source
+	// of the alignment judgement of reviewer-final, which reads a checkout of the repository and not the journal.
+	Decisions []GateDecision `json:"decisions"`
 }
 
 // RequiredCommands are the verification commands of the plan's required set; a plan that names none requires the verification
@@ -145,10 +156,11 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	}
 	id := source.CommitIdentity(head, o.l.d.Now)
 	out := GateOutcome{Milestone: ms, Plan: plan, Head: head, Base: base, Range: head, Identity: id, Grade: m.Grade, Surfaces: nonNil(m.Surfaces),
-		QARequired: m.needsQA(), QAPasses: m.needsQA() && GradeAtLeast(m.Grade, 3), Commands: m.requiredCommands(), Evidence: []Evidence{}, NeedTests: []string{}}
+		QARequired: m.needsQA(), QAPasses: m.needsQA() && GradeAtLeast(m.Grade, 3), Commands: m.requiredCommands(), Evidence: []Evidence{}, NeedTests: []string{}, Decisions: []GateDecision{}}
 	if base != "" {
 		out.Range = base + ".." + head
 	}
+	out.Decisions = gateDecisions(r, ms)
 	for _, cmd := range out.Commands {
 		ev := judgeTest(r, ms, cmd, id)
 		out.Evidence = append(out.Evidence, ev)
@@ -165,8 +177,36 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	return engine.OpResult{Result: result(out), Data: map[string]any{
 		"milestone": ms, "plan": plan, "head": head, "base": base, "range": out.Range, "command": strings.Join(out.Commands, ";"), "ok": out.State == GatePass,
 		"state": out.State, "reason": out.Reason, "qa_required": out.QARequired, "qa_passes": out.QAPasses, "grade": out.Grade,
-		"evidence": out.Evidence, "need_tests": out.NeedTests, "need_qa": out.NeedQA,
+		"evidence": out.Evidence, "need_tests": out.NeedTests, "need_qa": out.NeedQA, "decisions": out.Decisions,
 	}}, nil
+}
+
+// gateDecisions are the decisions of the DESIGN revision the milestone runs under, read from the ledger row of the journal, each
+// with the nodes whose issues name it. A milestone with no ledger row (or a ledger that holds no valid DESIGN) has none.
+func gateDecisions(r rows, ms string) []GateDecision {
+	out := []GateDecision{}
+	led, ok := ledgerOf(r, ms, FirstRevision)
+	if !ok {
+		return out
+	}
+	raw, err := json.Marshal(led.Data["design"])
+	if err != nil {
+		return out
+	}
+	d, err := DecodeDesign(raw)
+	if err != nil {
+		return out
+	}
+	for _, dec := range d.Decisions {
+		gd := GateDecision{ID: dec.ID, Change: dec.Change, Nodes: []string{}}
+		for _, is := range d.Issues {
+			if slices.Contains(is.DecisionRefs, dec.ID) {
+				gd.Nodes = append(gd.Nodes, is.Node)
+			}
+		}
+		out = append(out, gd)
+	}
+	return out
 }
 
 // judgeGate: a piece of evidence that is fresh and says no fails the gate (the work is not good, however the head moves); the
@@ -311,6 +351,7 @@ func (o *reviewerFinalOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 	}
 	res := FinalResult{Milestone: ms, Head: gate.Head, Range: gate.Range, Verdict: json.RawMessage(`null`), Call: call.brief(), Retried: opts.Retried}
 	var v VerdictFinal
+	detail := ""
 	switch call.Status {
 	case "completed":
 		var derr error
@@ -320,6 +361,14 @@ func (o *reviewerFinalOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 		}
 		if why := independent(call.Meta.ConfiguredPair.Model, r.milestoneAuthorModels()); why != "" {
 			res.State, res.Reason = StateRefused, why
+			break
+		}
+		// A verified final review is the authority the close rests on, so it is held to what a node's verified review is: no
+		// criterion that is not met, no defect of P0 to P2, and every criterion of the milestone evaluated once under its id (c1 to
+		// cn, the labels of the packet). An answer that says verified without it is not a verdict; it is asked once more.
+		if cerr := checkFinalVerified(v, m); cerr != nil {
+			res.State, res.Reason = StateNullModel, "verdict_invalid"
+			detail = cerr.Error()
 			break
 		}
 		res.State, res.Verdict = StateVerdict, call.Output
@@ -337,8 +386,20 @@ func (o *reviewerFinalOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 	}
 	return engine.OpResult{Result: result(res), Data: map[string]any{
 		"milestone": ms, "head": gate.Head, "range": gate.Range, "criteria_digest": m.CriteriaDigest, "state": res.State, "reason": res.Reason, "verdict": v.Verdict,
-		"alignment": res.Alignment, "call": call.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "retried": opts.Retried,
+		"alignment": res.Alignment, "call": call.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "retried": opts.Retried, "detail": detail,
 	}}, nil
+}
+
+// checkFinalVerified holds a verified VERDICT_FINAL to the rules of a verified VERDICT and to the criteria of the milestone.
+func checkFinalVerified(v VerdictFinal, m Milestone) error {
+	rv := ReviewVerdict{Verdict: v.Verdict, Criteria: v.Criteria, Defects: v.Defects, Summary: v.Summary}
+	if err := rv.check("VERDICT_FINAL"); err != nil {
+		return err
+	}
+	if v.Verdict == "verified" {
+		return CheckCoverage(v.Criteria, CriterionIDs(len(m.Criteria)))
+	}
+	return nil
 }
 
 func (o *reviewerFinalOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {

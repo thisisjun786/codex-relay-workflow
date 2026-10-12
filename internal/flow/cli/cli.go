@@ -59,7 +59,7 @@ var Now = time.Now
 // acceptance audited is ok, 1 when one is a mismatch or is unobserved (unobserved is not a pass), and 2 for a command line, a
 // store or a run it cannot use. The result is appended to the journal of the run as a crw.audit row (kind audit) unless
 // --no-record is given or the run has not finished.
-func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) (code int) {
 	if len(args) == 0 || args[0] != "audit" {
 		fmt.Fprintln(stderr, Usage)
 		return 2
@@ -97,10 +97,15 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw flow audit: error: %v\n", err)
 		return 2
 	}
-	var closeErr error
+	// closing the store, the host client and the journal is part of the command: an error of it is reported and is exit 2, whatever
+	// the audit found (the exit code is the named result, so the deferred close sets it)
 	defer func() {
-		if setup.Close != nil {
-			closeErr = setup.Close()
+		if setup.Close == nil {
+			return
+		}
+		if err := setup.Close(); err != nil {
+			fmt.Fprintf(stderr, "crw flow audit: error: %v\n", err)
+			code = 2
 		}
 	}()
 	events := setup.Journal.Events()
@@ -146,10 +151,6 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_ = enc.Encode(report)
 	} else {
 		printText(stdout, report.Run, results, report.Summary, recorded, why)
-	}
-	if closeErr != nil {
-		fmt.Fprintf(stderr, "crw flow audit: error: %v\n", closeErr)
-		return 2
 	}
 	if report.Summary.Mismatch > 0 || report.Summary.Unobserved > 0 {
 		return 1

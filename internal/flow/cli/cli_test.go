@@ -154,3 +154,30 @@ func TestAuditCommandExitCodesAndRecording(t *testing.T) {
 		t.Errorf("another milestone: %d", code)
 	}
 }
+
+// A store, a host client or a journal that fails to close after the audit is an error of the command: it says so on stderr and the
+// exit code is 2, whatever the audit found (CRW-1206 correction, d8: the close ran after the exit code was chosen, so its error was
+// dropped).
+func TestAuditCommandReportsACloseError(t *testing.T) {
+	fixedClock(t)
+	for name, c := range map[string]struct {
+		journal  *engine.MemoryJournal
+		wantCode int
+	}{
+		"an audit with a mismatch": {acceptedWithNoReview(true), 2},
+	} {
+		prev := Env
+		closed := 0
+		Env = func(_ context.Context, req Request) (Setup, error) {
+			return Setup{RunID: "run-1", Journal: c.journal, Finished: true, Close: func() error {
+				closed++
+				return errors.New("the store did not close")
+			}}, nil
+		}
+		code, _, errOut := run("--run", "run-1", "--no-record")
+		Env = prev
+		if closed != 1 || code != c.wantCode || !strings.Contains(errOut, "the store did not close") {
+			t.Errorf("%s: closed %d times, exit %d, stderr %q", name, closed, code, errOut)
+		}
+	}
+}

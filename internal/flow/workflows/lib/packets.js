@@ -133,6 +133,10 @@ function captureLines(captures) {
   return list((captures || []).map((c) => c.kind + ' ' + c.path + ': ' + c.shows))
 }
 
+function decisionLines(decisions) {
+  return list((decisions || []).map((d) => d.id + ' (' + ((d.nodes || []).length ? 'nodes ' + d.nodes.join(', ') : 'no node') + '): ' + d.change), 'none recorded')
+}
+
 function evidenceLines(g) {
   return list((g.evidence || []).map((e) => e.kind + (e.command ? ' ' + e.command : '') + ': ' + e.state + (e.pass ? ' pass' : '') + (e.head ? ' at ' + e.head : '')))
 }
@@ -193,6 +197,9 @@ export function finalPacket(ms, g) {
     'HEAD: ' + g.head + '\nRANGE: ' + g.range,
     section('FINAL GATE (passed)', evidenceLines(g)),
     section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
-    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the decisions of the DESIGN (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED).',
+    // the approved DESIGN lives in the journal's ledger, not in the checkout this reviewer reads: its decisions are the comparison
+    // source of the alignment judgement
+    section('DESIGN DECISIONS (the approved DESIGN of this milestone; name a decision by its id in the drift)', decisionLines(g.decisions)),
+    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect of P0 to P2 stands.',
   ].join('\n\n')
 }

@@ -606,3 +606,107 @@ func TestQAOracleMissingPassInconclusive(t *testing.T) {
 		t.Errorf("gate %+v", last)
 	}
 }
+
+// ---- the final review as the authority of the close (CRW-1206 correction) ----
+
+func twoCriteria() Milestone {
+	return Milestone{ID: "M1", Plan: "plan-1", Title: "milestone one", CriteriaDigest: "crit-digest-1", Criteria: []string{"first", "second"}}
+}
+
+func finalAnswer(verdict string, criteria []map[string]any, defects ...map[string]any) engine.FakeReply {
+	cs := []any{}
+	for _, c := range criteria {
+		cs = append(cs, c)
+	}
+	ds := []any{}
+	for _, d := range defects {
+		ds = append(ds, d)
+	}
+	return engine.FakeReply{Text: jsonOf(map[string]any{"verdict": verdict, "criteria": cs, "defects": ds,
+		"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "reviewed"})}
+}
+
+func crit(id string, met bool) map[string]any {
+	return map[string]any{"id": id, "met": met, "evidence": "read the range"}
+}
+
+// A verified final review evaluated every criterion of the milestone once and found each met, and names no defect of P0 to P2: a
+// schema-valid answer that says verified over criteria it never evaluated, over a criterion it did not meet, or over a defect of
+// P1 does not close the milestone. It is asked once more, as an answer that is no verdict is, and the close stops when the second
+// answer is as bad.
+func TestReviewerFinalVerifiedMustBeComplete(t *testing.T) {
+	p1 := map[string]any{"ref": "d1", "kind": "correctness", "severity": "P1", "introduced": true, "impact": "core_function", "inPromise": true, "file": "a.go", "line": 1, "finding": "broken", "evidence_question": nil}
+	for name, c := range map[string]struct {
+		answer engine.FakeReply
+		closed bool
+	}{
+		"no criterion evaluated":    {finalAnswer("verified", nil), false},
+		"one criterion left out":    {finalAnswer("verified", []map[string]any{crit("c1", true)}), false},
+		"a criterion named twice":   {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c1", true)}), false},
+		"a criterion of no plan":    {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c9", true)}), false},
+		"a criterion not met":       {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", false)}), false},
+		"a P1 defect stands":        {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", true)}, p1), false},
+		"every criterion met":       {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", true)}), true},
+		"criteria in another order": {finalAnswer("verified", []map[string]any{crit("c2", true), crit("c1", true)}), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCloseWorld(t, twoCriteria())
+			w.answers["final"] = c.answer
+			got := w.close()
+			if closed := got["state"] == "closed"; closed != c.closed {
+				t.Fatalf("closed = %v, want %v: %v", closed, c.closed, got)
+			}
+			if c.closed {
+				return
+			}
+			if got["state"] != "stop" || got["source"] != "reviewer_final" || got["status"] != StateNullModel {
+				t.Errorf("stop %v", got)
+			}
+			if n := w.count("final"); n != 2 {
+				t.Errorf("reviewer-final asked %d times, want the call and one retry", n)
+			}
+			if len(w.opRows(OpMilestoneClose)) != 0 {
+				t.Errorf("the milestone close was recorded over an incomplete final review")
+			}
+		})
+	}
+}
+
+// reviewer-final judges the integrated range against the decisions of the approved DESIGN, so its packet carries them: each
+// decision with its id (the drift names it), what it changes and the nodes that follow it. The DESIGN is the journal's ledger
+// row, not a file of the checkout the reviewer reads.
+func TestReviewerFinalPacketCarriesTheDesignDecisions(t *testing.T) {
+	w := newCloseWorld(t, Milestone{})
+	design := designOf("A", "B")
+	design.Decisions = []Decision{
+		{ID: "D1", Evidence: []string{}, Change: "the ledger row is the only source of the approved decisions", Alternatives: []string{}, Assumptions: []string{}},
+		{ID: "D7", Evidence: []string{}, Change: "every close judges the head it pinned", Alternatives: []string{}, Assumptions: []string{}},
+	}
+	design.Issues[0].DecisionRefs = []string{"D1"}
+	design.Issues[1].DecisionRefs = []string{"D1", "D7"}
+	raw, err := json.Marshal(design)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asAny any
+	_ = json.Unmarshal(raw, &asAny)
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ledger", Op: OpDesignLedger, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": "M1", "revision": FirstRevision, "digest": "sha256:design", "base_tip": headOne, "design": asAny}})
+	if got := w.close(); got["state"] != "closed" {
+		t.Fatalf("%v", got)
+	}
+	var packet string
+	for _, req := range w.fake.Requests() {
+		if kindOf(req.Prompt) == "final" {
+			packet = req.Prompt
+		}
+	}
+	for _, want := range []string{"DESIGN DECISIONS", "D1", "the ledger row is the only source of the approved decisions", "D7", "every close judges the head it pinned", "nodes A, B", "nodes B"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("the reviewer-final packet lacks %q:\n%s", want, packet)
+		}
+	}
+	if g := w.gates(); len(g) == 0 || len(g[len(g)-1].Decisions) != 2 {
+		t.Errorf("the gate row names its decisions: %+v", g)
+	}
+}

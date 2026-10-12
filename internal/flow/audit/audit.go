@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
@@ -157,19 +158,21 @@ func Audit(ctx context.Context, reader Reader, events []engine.Event, s Subject)
 		add(CheckExecutor, Unobserved, detail)
 	}
 	if res.Checks[0].Result == OK {
-		hostChecks(ctx, reader, s, call, add)
+		hostChecks(ctx, reader, events, s, call, add)
 	}
 	res.State, res.Reason = summarize(res.Checks)
 	return res
 }
 
 // hostChecks reads the thread of the reviewer from the host and compares it with the journal.
-func hostChecks(ctx context.Context, reader Reader, s Subject, call callRecord, add func(name, result, detail string)) {
+func hostChecks(ctx context.Context, reader Reader, events []engine.Event, s Subject, call callRecord, add func(name, result, detail string)) {
 	if reader == nil {
 		add(CheckHost, Unobserved, "no host reader is configured")
 		return
 	}
-	first, last := call.turns[0], call.turns[len(call.turns)-1]
+	// the packet is what the thread was first sent: the first turn of the call that started the thread, which for a continued call
+	// is not its own first turn
+	first, last := packetTurn(events, call), call.turns[len(call.turns)-1]
 	ids := []string{first}
 	if last != first {
 		ids = append(ids, last)
@@ -267,6 +270,8 @@ type callRecord struct {
 	thread   string
 	turns    []string
 	digest   string
+	// resumeOf is the call this one continues: its thread is the thread of that call (or a fork of it).
+	resumeOf string
 }
 
 func callOf(events []engine.Event, id string) callRecord {
@@ -280,8 +285,13 @@ func callOf(events []engine.Event, id string) callRecord {
 		}
 		switch ev.Event {
 		case engine.EvPrepared:
-			// a new attempt of the call starts over
-			c = callRecord{}
+			// a new attempt of the call starts over. A continuation names the thread it continues on its prepared row and creates
+			// none (it sends its turn to that thread), so the thread is known from the row that starts the attempt; a fork of it
+			// replaces the thread below.
+			c = callRecord{resumeOf: str(ev.Data, "resume_of")}
+			if c.resumeOf != "" {
+				c.thread = str(ev.Data, "thread_id")
+			}
 		case engine.EvThreadStarted, engine.EvForkStarted:
 			c.thread = str(ev.Data, "thread_id")
 		case engine.EvTurnStarted:
@@ -298,35 +308,82 @@ func callOf(events []engine.Event, id string) callRecord {
 	return c
 }
 
-// executorPair reports whether the pair of every executor call of the node was observed: the thread read back its model and
-// effort (the row of the thread or the fork it started on, or of the call it continues).
+// packetTurn is the turn that carried the packet of a reviewer call: its first turn, or for a call that continues another, the first
+// turn of the call at the root of the chain, which started the thread.
+func packetTurn(events []engine.Event, call callRecord) string {
+	first := call.turns[0]
+	seen := map[string]bool{}
+	for cur := call; cur.resumeOf != "" && !seen[cur.resumeOf]; {
+		seen[cur.resumeOf] = true
+		parent := callOf(events, cur.resumeOf)
+		if len(parent.turns) > 0 {
+			first = parent.turns[0]
+		}
+		cur = parent
+	}
+	return first
+}
+
+// executorPair reports whether the pair of every executor that wrote the node's head was observed: the thread read back its model
+// and effort (the row of the thread or the fork it started on, or of the call it continues). The executors that wrote the head are
+// the calls the recorded commits of the node name (crw.commit); a node with no recorded commit has the executor calls that ended
+// completed. An attempt that never created a thread or never completed - a host that refused thread/start, a call the run gave up
+// and rebuilt - wrote nothing the head holds, and its missing pair does not make the acceptance of the replacement unobserved.
 func executorPair(events []engine.Event, node string) (bool, string) {
 	started := map[string]bool{}
 	resumeOf := map[string]string{}
-	var calls []string
+	completed := map[string]bool{}
+	var executors []string
+	isExecutor := map[string]bool{}
+	var committed []string
 	for _, ev := range events {
-		if ev.Kind != engine.KindCall || ev.Op != "agent" {
+		if ev.Kind != engine.KindCall {
+			continue
+		}
+		if ev.Op == "crw.commit" && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node && str(ev.Data, "commit") != "" {
+			if call := str(ev.Data, "call"); call != "" && !slices.Contains(committed, call) {
+				committed = append(committed, call)
+			}
+			continue
+		}
+		if ev.Op != "agent" {
 			continue
 		}
 		switch ev.Event {
 		case engine.EvPrepared:
 			role := str(ev.Data, "role")
-			if (role == "executor" || role == "executor-t1") && str(ev.Data, "node") == node {
-				calls = append(calls, ev.CallID)
+			if (role == "executor" || role == "executor-t1") && str(ev.Data, "node") == node && !isExecutor[ev.CallID] {
+				executors = append(executors, ev.CallID)
+				isExecutor[ev.CallID] = true
 			}
 			if r := str(ev.Data, "resume_of"); r != "" {
 				resumeOf[ev.CallID] = r
 			}
+			// a new attempt of the call starts over
+			completed[ev.CallID] = false
 		case engine.EvThreadStarted, engine.EvForkStarted:
 			if str(ev.Data, "model") != "" && str(ev.Data, "effort") != "" {
 				started[ev.CallID] = true
 			}
+		case engine.EvCompleted:
+			completed[ev.CallID] = true
 		}
 	}
-	if len(calls) == 0 {
+	if len(executors) == 0 {
 		return false, fmt.Sprintf("the journal records no executor call of node %s", node)
 	}
-	for _, id := range calls {
+	writers := committed
+	if len(writers) == 0 {
+		for _, id := range executors {
+			if completed[id] {
+				writers = append(writers, id)
+			}
+		}
+	}
+	if len(writers) == 0 {
+		return false, fmt.Sprintf("no executor call of node %s ended completed, so no executor is known to have written its head", node)
+	}
+	for _, id := range writers {
 		root := id
 		for hops := 0; !started[root] && resumeOf[root] != "" && hops < 64; hops++ {
 			root = resumeOf[root]

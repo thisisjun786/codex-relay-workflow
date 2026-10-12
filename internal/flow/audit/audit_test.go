@@ -55,7 +55,10 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 }
 
 // newAuditLab runs a build call of node A and a review call of the head on the fake host, and keeps the journal.
-func newAuditLab(t *testing.T, packetHead, packetCriteria string) *auditLab {
+//
+// With the option "continued" the reviewer's verdict is the answer of a second call that continues the first one on its thread
+// (agent.call with resume), as a script may ask a reviewer to answer again.
+func newAuditLab(t *testing.T, packetHead, packetCriteria string, opts ...string) *auditLab {
 	t.Helper()
 	l := &auditLab{t: t, reply: `{"verdict":"pass"}`}
 	root := t.TempDir()
@@ -98,10 +101,15 @@ func newAuditLab(t *testing.T, packetHead, packetCriteria string) *auditLab {
 	if packetCriteria != "" {
 		packet += "CRITERIA DIGEST: " + packetCriteria + "\\n"
 	}
+	continuation := "const r = r0"
+	if slices.Contains(opts, "continued") {
+		continuation = "const r = await agent.call('ROLE: reviewer. Answer once more, in the same JSON shape.', { resume: r0, schema: S, label: 'review:A:r1:again' })"
+	}
 	prog, err := script.Load(script.Source{Name: "audit.js", Text: []byte(`export const meta = { name: 'audit' }
 const S = { type: 'object', properties: { verdict: { type: 'string' } }, required: ['verdict'], additionalProperties: false }
 const b = await agent.call('ROLE: executor. build', { agentType: 'executor', node: 'A', label: 'build:A' })
-const r = await agent.call('` + packet + `', { agentType: 'reviewer', node: 'A', head: '` + base + `', schema: S, label: 'review:A:r1' })
+const r0 = await agent.call('` + packet + `', { agentType: 'reviewer', node: 'A', head: '` + base + `', schema: S, label: 'review:A:r1' })
+` + continuation + `
 return { build: b.callId, review: r.callId, status: [b.status, r.status] }
 `)})
 	if err != nil {
@@ -354,4 +362,59 @@ func TestAuditSubjectsAndAcceptanceWithoutReview(t *testing.T) {
 	if r.State != audit.Mismatch || check(r, audit.CheckRecorded).Result != audit.Mismatch {
 		t.Errorf("an acceptance with no review: %+v", r)
 	}
+}
+
+// A reviewer that is asked to answer again on its thread (agent.call with resume, in the process that started the thread) records
+// the thread on its prepared row and creates none: the audit still knows the thread of the continued call, and reads the packet from
+// the turn that started the thread, not from the continuation prompt (CRW-1206 correction, d6).
+func TestAuditAcceptanceOnAContinuedReviewerThread(t *testing.T) {
+	l := newAuditLab(t, acceptedHead, criteriaDigest, "continued")
+	r := l.audit(l.reader(), l.events)
+	if r.State != audit.OK || r.Thread == "" || r.Turn == "" {
+		t.Fatalf("a continued reviewer call is a false %s: %+v", r.State, r)
+	}
+	for _, c := range r.Checks {
+		if c.Result != audit.OK {
+			t.Errorf("check %+v", c)
+		}
+	}
+}
+
+// An executor attempt that never created a thread (the host refused thread/start, the orchestrator retried) is not an author of
+// the head: the pair of the executor that wrote the head - the call a recorded commit names - is what the audit needs observed
+// (CRW-1206 correction, d5). An executor that wrote part of the head and was not observed still is not a pass.
+func TestAuditExecutorPairIgnoresAnAttemptThatWroteNothing(t *testing.T) {
+	l := newAuditLab(t, acceptedHead, criteriaDigest)
+	refused := func(seq int) []engine.Event {
+		return []engine.Event{
+			{Seq: seq, RunID: "run-audit", Kind: engine.KindCall, CallID: "c_refused", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A"}},
+			{Seq: seq + 1, RunID: "run-audit", Kind: engine.KindCall, CallID: "c_refused", Op: "agent", Event: engine.EvRefused, Data: map[string]any{"detail": "thread/start badRequest"}},
+		}
+	}
+	// the refused attempt came first; the rebuild is the call the build row of the run names and it completed
+	events := append(refused(0), l.events...)
+	if r := l.audit(l.reader(), events); r.State != audit.OK || check(r, audit.CheckExecutor).Result != audit.OK {
+		t.Fatalf("a refused attempt that wrote nothing makes the acceptance %s: %+v", r.State, r)
+	}
+	// a commit row names the call that wrote the head: it must be observed, whatever else was tried
+	commit := func(call string) engine.Event {
+		return engine.Event{Seq: 500, RunID: "run-audit", Kind: engine.KindCall, CallID: "c_commit", Op: "crw.commit", Event: engine.EvCompleted, Data: map[string]any{"node": "A", "commit": acceptedHead, "call": call}}
+	}
+	built := ""
+	for _, ev := range l.events {
+		if ev.Op == "agent" && ev.Event == engine.EvPrepared && str(ev.Data, "role") == "executor" {
+			built = ev.CallID
+		}
+	}
+	if r := l.audit(l.reader(), append(slices.Clone(events), commit(built))); r.State != audit.OK {
+		t.Errorf("the commit names the observed executor: %+v", r)
+	}
+	if r := l.audit(l.reader(), append(slices.Clone(events), commit("c_refused"))); r.State != audit.Unobserved || check(r, audit.CheckExecutor).Result != audit.Unobserved {
+		t.Errorf("the head was written by a call whose pair was never read back: %+v", r)
+	}
+}
+
+func str(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
 }
