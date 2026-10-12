@@ -1,0 +1,286 @@
+package hook
+
+// The relay child push guard (CRW-1284). In a relay child session a git push may move only the child's own branch: integration is
+// the parent's and the integrator's. A push whose destination is another branch (HEAD:dev, src:dev, a pattern, --all, --mirror, a
+// push whose destination git configuration decides) is refused, through any remote. The command is read with the shared reader as
+// the other guards read it (CRW-1283): a program wrapper is read; a script file a shell runs, or one run by its path, is read; a
+// "$@" forwarder, a word or text the reader cannot read, and a program file or inline program that spells push are refused. A
+// session the relay does not know as a child (a parent, an integrator) is not judged.
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+)
+
+// ChildPushBinding is what the relay says about a session: whether it is a relay child, the branch it may push ("" when it has
+// none) and why the relay's record of it could not be read.
+type ChildPushBinding struct {
+	Child      bool
+	Own        string
+	Unreadable string
+}
+
+// HandleChildPushGuard is the guard's PreToolUse leg: the deny envelope for a push it stops, else empty. bind is asked only for a
+// command that pushes or that the reader cannot read; its answer for any other session than a child lets the command through.
+func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBinding) string {
+	p := editObject(raw)
+	tool, _ := p["tool_name"].(string)
+	input, _ := p["tool_input"].(map[string]any)
+	if p["hook_event_name"] != "PreToolUse" || !memoryGateShellTool(tool) || input == nil {
+		return ""
+	}
+	cwd, _ := p["cwd"].(string)
+	cwd = shellirPayloadCwd(cwd)
+	command, _ := githubPostCommand(input)
+	if words, ok := githubPostArgv(input); ok {
+		command = "'" + strings.Join(func() (q []string) {
+			for _, w := range words {
+				q = append(q, strings.ReplaceAll(w, "'", `'\''`))
+			}
+			return q
+		}(), "' '") + "'"
+	}
+	if text.Trim(command) == "" {
+		return ""
+	}
+	var s childPushScan
+	s.text(command, cwd, 0, nil, false)
+	if s.why == "" && len(s.pushes) == 0 {
+		return ""
+	}
+	session, _ := p["session_id"].(string)
+	b := bind(session, cwd)
+	switch {
+	case b.Unreadable != "":
+		s.why = "the relay's record of this session cannot be read (" + unreadableLabel(b.Unreadable) + ")"
+	case !b.Child:
+		return ""
+	}
+	for _, push := range s.pushes {
+		if s.why == "" {
+			s.why = childPushJudge(push, b.Own, cwd)
+		}
+	}
+	if s.why == "" {
+		return ""
+	}
+	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): a relay child pushes only its own branch, " +
+		"named in a direct git push (git push origin " + b.Own + "). Refused: " + s.why + "."
+	return editAnswer("deny", reason, reason)
+}
+
+// ChildPushOwnBranch is the branch a child in cwd may push: the branch its checkout has, unless the parent's checkout has the same
+// one, which is then not the child's own.
+func ChildPushOwnBranch(ctx context.Context, cwd, parent string) string {
+	branch := func(dir string) string {
+		out, err := gitprobe.Command(ctx, dir, nil, "symbolic-ref", "-q", "--short", "HEAD").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	own := branch(cwd)
+	if own != "" && parent != "" && branch(parent) == own {
+		return ""
+	}
+	return own
+}
+
+// childPushScan is what a text shows of pushing: the git push executions it runs, the bodies of its scripts included, or why it
+// cannot be read.
+type childPushScan struct {
+	pushes []childPush
+	why    string
+}
+
+// childPush is one git push: its words after push, where it runs, and whether -C, --git-dir, --work-tree or --namespace points it
+// at another repository, or find or xargs gives it words.
+type childPush struct {
+	args            []shellir.Word
+	dir             shellir.Dir
+	elsewhere, feed bool
+}
+
+func (s *childPushScan) text(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) {
+	res, err := shellir.AnalyzeScriptEnv(command, cwd, cdpath, githubPostEnv)
+	if err != nil {
+		s.why = "the command cannot be read: " + unreadableCause(err)
+		return
+	}
+	var written *githubPostTextWrites
+	for i, e := range res.Execs {
+		dir := e.Dir.Path
+		if !e.Dir.Known {
+			dir = githubPostNoDir
+		}
+		var name, body string
+		kind := githubPostFileShell
+		switch {
+		case e.Kind == shellir.KindScriptFile:
+			name = e.Script.Value
+			var ok bool
+			if body, ok = githubPostReadScript(name, dir); !e.Script.Known || !ok {
+				s.why = githubPostScriptReason("script file cannot be read", name)
+				return
+			}
+			if e.Name == "sed" || strings.HasSuffix(e.Name, "awk") {
+				kind = githubPostFileOther
+			}
+		case basename(e.Name) == "git":
+			s.git(e)
+			continue
+		case e.Inline != nil:
+			s.mentions(e.Inline.Source, "an inline program")
+			continue
+		case githubPostRunner(e.Name) || childPushInterpreter(e.Name):
+			for _, a := range e.Args {
+				if s.mentions(a, "the arguments of "+e.Name); a.Known && s.why == "" && childPushInterpreter(e.Name) {
+					if text, ok := githubPostReadScript(a.Value, dir); ok {
+						s.mentions(shellir.Word{Known: true, Value: text}, "the program file "+a.Value)
+					}
+				}
+			}
+			continue
+		case githubPostDirectPath(e):
+			name = e.Program.Value
+			if body, kind = githubPostReadDirect(name, dir); kind == githubPostFileBinary || kind == githubPostFileAbsent {
+				continue
+			}
+		default:
+			continue
+		}
+		if written == nil {
+			written = githubPostWritesOf(res.Execs, outer)
+		}
+		switch {
+		case kind == githubPostFileUnreadable || written.stale(i, name, e.Dir):
+			s.why = githubPostScriptReason("script file cannot be read before it runs", name)
+		case kind != githubPostFileShell:
+			s.mentions(shellir.Word{Known: true, Value: body}, "the script file "+name)
+		case depth >= githubPostMaxScriptDepth:
+			s.why = "scripts run scripts too deeply"
+		default:
+			s.text(body, dir, depth+1, written.at(i).as(githubPostBodyKey(name, e.Dir)), e.Cdpath)
+		}
+		if s.why != "" {
+			return
+		}
+	}
+}
+
+// mentions refuses a word the reader cannot evaluate, or one that spells push, where a program the guard does not read gets it.
+func (s *childPushScan) mentions(w shellir.Word, what string) {
+	if s.why == "" && (!w.Known || strings.Contains(strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(w.Value)), "push")) {
+		s.why = what + " may push, and the guard does not read it"
+	}
+}
+
+// childPushInterpreter is whether a program runs a program file it is given: the guard reads that file for a push.
+func childPushInterpreter(name string) bool {
+	for _, p := range []string{"python", "node", "perl", "ruby", "php", "bun", "deno", "lua", "tclsh", "Rscript", "osascript"} {
+		if strings.HasPrefix(basename(name), p) {
+			return true
+		}
+	}
+	return false
+}
+
+// git records a git execution whose subcommand is push.
+func (s *childPushScan) git(e shellir.Exec) {
+	elsewhere := false
+	for i := 0; i < len(e.Args); i++ {
+		v := e.Args[i].Value
+		switch {
+		case !e.Args[i].Known:
+			s.why = "a git argument cannot be read"
+			return
+		case v == "-C" || v == "--git-dir" || v == "--work-tree" || v == "--namespace":
+			elsewhere = true
+			i++
+		case v == "-c" || v == "--super-prefix":
+			i++
+		case strings.HasPrefix(v, "-"):
+			elsewhere = elsewhere || strings.HasPrefix(v, "--git-dir=") || strings.HasPrefix(v, "--work-tree=") || strings.HasPrefix(v, "--namespace=")
+		case v == "push":
+			s.pushes = append(s.pushes, childPush{args: e.Args[i+1:], dir: e.Dir, elsewhere: elsewhere, feed: e.Ctx.Feed != nil})
+			return
+		default:
+			return
+		}
+	}
+}
+
+// childPushFlags are the push options that take no value and move nothing but the refspecs: everything else (--all, --mirror,
+// --tags, --repo, --receive-pack, a submodule push) is refused.
+var childPushFlags = map[string]bool{"--set-upstream": true, "--force": true, "--force-with-lease": true, "--no-force-with-lease": true,
+	"--force-if-includes": true, "--no-force-if-includes": true, "--quiet": true, "--verbose": true, "--progress": true, "--no-progress": true,
+	"--dry-run": true, "--porcelain": true, "--atomic": true, "--no-atomic": true, "--no-verify": true, "--verify": true, "--thin": true,
+	"--no-thin": true, "--ipv4": true, "--ipv6": true, "--delete": true, "--recurse-submodules=no": true, "--recurse-submodules=check": true}
+
+// childPushJudge is why one push is refused for a child whose own branch is own in cwd, or "" when it pushes own only.
+func childPushJudge(p childPush, own, cwd string) string {
+	if own == "" {
+		return "this session has no branch of its own (its checkout has none, or the parent's checkout has the same)"
+	}
+	if p.feed {
+		return "find or xargs gives the push its words"
+	}
+	var operands []string
+	options := true
+	for i := 0; i < len(p.args); i++ {
+		if !p.args[i].Known {
+			return "a word of the push cannot be read"
+		}
+		v := p.args[i].Value
+		switch {
+		case !options || v == "-" || !strings.HasPrefix(v, "-"):
+			operands = append(operands, v)
+		case v == "--":
+			options = false
+		case v == "--push-option" || v == "-o":
+			i++
+		case strings.HasPrefix(v, "--"):
+			if !childPushFlags[v] && !strings.HasPrefix(v, "--force-with-lease=") && !strings.HasPrefix(v, "--push-option=") {
+				return "git push " + v + " is not an option the guard reads"
+			}
+		default:
+			// a bundle of short flags; -o takes the rest of the bundle, or the next word, as its value
+			for j := 1; j < len(v) && v[j] != 'o'; j++ {
+				if !strings.ContainsRune("ufqvnd46", rune(v[j])) {
+					return "git push " + v + " is not an option the guard reads"
+				}
+			}
+			if strings.HasSuffix(v, "o") && strings.Count(v, "o") == 1 {
+				i++
+			}
+		}
+	}
+	if len(operands) < 2 {
+		return "a push without a refspec goes where git configuration says"
+	}
+	for _, ref := range operands[1:] {
+		src, dst, colon := strings.Cut(strings.TrimPrefix(ref, "+"), ":")
+		switch {
+		case strings.ContainsAny(ref, "*") || strings.HasPrefix(src, "^"):
+			return "the refspec " + ref + " is a pattern"
+		case !colon && (src == "HEAD" || src == "@"):
+			// HEAD is the branch checked out where git runs, which is own only in the session's own checkout
+			if p.elsewhere || !p.dir.Known || filepath.Clean(p.dir.Path) != filepath.Clean(cwd) {
+				return "HEAD names the branch of another checkout"
+			}
+		case !colon:
+			dst = src
+			fallthrough
+		default:
+			if strings.TrimPrefix(dst, "refs/heads/") != own {
+				return "git push " + operands[0] + " " + ref + " does not push " + own
+			}
+		}
+	}
+	return ""
+}
