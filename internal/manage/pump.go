@@ -717,6 +717,8 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	// that may already have been accepted. An attempt already frozen is reused as it stands.
 	if st.Attempt == nil {
 		if pumpSettingsFrom(cfg).SteerOnly {
+			// steer_only (CRW-1275): a batch is formed only while the management thread has an active
+			// turn to steer; on an idle or unmeasured thread the pending events wait and gather.
 			state, err := pumpQueueTurnState(ctx, e, cfg, cfg.ManagementThread)
 			if err != nil {
 				pumpLog(cfg, "management steer waits: "+err.Error())
@@ -767,6 +769,20 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	}
 	if err != nil && out.Class == "" {
 		return 1, err
+	}
+	if status, _ := out.Receipt["status"].(string); status == deliverSteerOnlyWaiting {
+		// steer_only: the management thread had no active turn to steer, so nothing was dispatched and
+		// the outbox holds no request id. The attempt stays frozen and is steered under the same id and
+		// body once the thread is active; no retry id, refusal or ordinal is spent.
+		reason := "no active turn to steer"
+		if observation, _ := out.Receipt["observation"].(string); observation != "" {
+			reason += " (observation " + observation + ")"
+		}
+		if err != nil {
+			reason = strings.Join(strings.Fields(err.Error()), " ")
+		}
+		pumpLog(cfg, fmt.Sprintf("management batch %s waits on %s: %s; nothing was sent", attempt.LogicalID, cfg.ManagementThread, reason))
+		return 0, err
 	}
 	line := fmt.Sprintf("deliver request=%s events=%d class=%s received=%v applied=%v",
 		out.RequestID, len(attempt.IDs), out.Class, out.Class == deliverClassAccepted, false)

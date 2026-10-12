@@ -28,7 +28,6 @@ const (
 	deliverStateAccepted = "accepted"
 	deliverStateRefused  = "refused"
 	deliverStateUnknown  = "unknown"
-	deliverStateWaiting  = "waiting"
 
 	deliverToolSend  = "send_message_to_thread"
 	deliverToolSteer = "steer_thread"
@@ -41,7 +40,9 @@ const (
 	deliverRetrySuffixRoom = 3
 )
 
-// Message is one logical message to deliver.
+// Message is one logical message to deliver. SteerOnly (the management pump's manage.pump.steer_only,
+// CRW-1275) restricts the delivery to steering the thread's active turn: it never starts a turn, and a
+// request id reaches the outbox only right before steer_thread is called with it.
 type Message struct {
 	LogicalID string
 	Thread    string

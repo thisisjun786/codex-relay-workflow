@@ -95,17 +95,16 @@ func TestPumpSteerOnlyNeverStartsAnIdleTurnAfterTheProbe(t *testing.T) {
 	if st.Attempt == nil {
 		t.Fatal("the idle race must preserve the frozen body")
 	}
-	record, known, err := deliverLoad(cfg, st.Attempt.LogicalID)
-	if err != nil || !known || record.State != "waiting" {
-		t.Fatalf("idle race must wait without an uncertain dispatch: record %+v known %v err %v", record, known, err)
+	requestID := st.Attempt.LogicalID
+	if record, known, err := deliverLoad(cfg, requestID); err != nil || known {
+		t.Fatalf("the idle race wrote a request id nothing was dispatched under: record %+v known %v err %v", record, known, err)
 	}
-	requestID := record.RequestID
 	for round := 0; round < pumpQueueRefusalLimit+deliverRetryLimit; round++ {
 		pumpRefusedRound(t, e, cfg)
 		st = pumpTestReadState(t, cfg)
-		record, _, err = deliverLoad(cfg, st.Attempt.LogicalID)
-		if err != nil || record.State != "waiting" || record.RequestID != requestID || st.MgmtRefused.Count != 0 || len(st.Parked) != 0 {
-			t.Fatalf("idle round %d consumed a retry or refusal: record %+v state %+v err %v", round, record, st, err)
+		record, known, err := deliverLoad(cfg, requestID)
+		if err != nil || known || st.Attempt == nil || st.Attempt.LogicalID != requestID || st.MgmtRefused != (pumpQueueRefusal{}) || len(st.Parked) != 0 {
+			t.Fatalf("idle round %d consumed a retry or refusal: record %+v known %v state %+v err %v", round, record, known, st, err)
 		}
 	}
 	cfg.Bridge.Binary = activeBridge
@@ -208,13 +207,13 @@ func TestDeliverSteerOnlyUnmeasuredRaceKeepsWaitingWithoutRetries(t *testing.T) 
 			configuration := pumpTestConfig(t, bridge)
 			message := Message{LogicalID: "waiting-message", Thread: "mgmt-thread", Text: "body", SteerOnly: true}
 			outcome, err := Deliver(context.Background(), environment, configuration, message)
-			if err != nil || outcome.Class != deliverClassUnknown || outcome.Receipt["status"] != deliverStateWaiting {
+			if err != nil || outcome.Class != deliverClassUnknown || outcome.Receipt["status"] != deliverSteerOnlyWaiting {
 				t.Fatalf("initial idle wait: %+v err %v", outcome, err)
 			}
 			pumpLedgerSetObservation(t, dir, observation, "")
 			for round := 0; round < pumpQueueRefusalLimit*(deliverRetryLimit+3); round++ {
 				outcome, err = Deliver(context.Background(), environment, configuration, message)
-				if err != nil || outcome.Class != deliverClassUnknown || outcome.RequestID != message.LogicalID || outcome.Receipt["status"] != deliverStateWaiting {
+				if err != nil || outcome.Class != deliverClassUnknown || outcome.RequestID != message.LogicalID || outcome.Receipt["status"] != deliverSteerOnlyWaiting {
 					t.Errorf("observation round %d consumed a waiting request: %+v err %v", round, outcome, err)
 				}
 			}
@@ -223,9 +222,8 @@ func TestDeliverSteerOnlyUnmeasuredRaceKeepsWaitingWithoutRetries(t *testing.T) 
 					t.Errorf("unsent observation caused reconciliation or dispatch: %+v", call)
 				}
 			}
-			record, known, err := deliverLoad(configuration, message.LogicalID)
-			if err != nil || !known || record.State != deliverStateWaiting || record.RequestID != message.LogicalID || len(record.Attempts) != 0 {
-				t.Fatalf("observations spent retries or refusals: record %+v known %v err %v", record, known, err)
+			if record, known, err := deliverLoad(configuration, message.LogicalID); err != nil || known {
+				t.Fatalf("observations wrote a request id nothing was dispatched under: record %+v known %v err %v", record, known, err)
 			}
 		})
 	}
@@ -273,9 +271,8 @@ func TestPumpSteerOnlyObservationWaitNeverParksAndRecovers(t *testing.T) {
 			}
 		}
 	}
-	record, known, err := deliverLoad(harness.cfg, frozen.LogicalID)
-	if err != nil || !known || record.State != deliverStateWaiting || record.RequestID != frozen.LogicalID || len(record.Attempts) != 0 {
-		t.Fatalf("unsent observations did not remain waiting: record %+v known %v err %v", record, known, err)
+	if record, known, err := deliverLoad(harness.cfg, frozen.LogicalID); err != nil || known {
+		t.Fatalf("unsent observations wrote a request id nothing was dispatched under: record %+v known %v err %v", record, known, err)
 	}
 	harness.addEvent("e2")
 	state = harness.round()
@@ -333,7 +330,6 @@ func TestPumpQueueRefusalOrdinalNeverCollidesWithDeliverRetryIDs(t *testing.T) {
 	e := pumpTestEnv(t, &now)
 	bridge, dir := pumpLedgerBridge(t)
 	cfg := pumpTestConfig(t, bridge)
-	cfg.raw = map[string]json.RawMessage{"pump": json.RawMessage(`{"steer_only":true}`)}
 	cfg.Settings.Parent = coreSettings{Model: "m1", ReasoningEffort: "low"}
 	path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
 	old := now.Add(-time.Hour)
@@ -369,5 +365,131 @@ func TestPumpQueueRefusalOrdinalNeverCollidesWithDeliverRetryIDs(t *testing.T) {
 	flush()
 	if len(mustSends(t, dir)) != 4 {
 		t.Fatal("an accepted notice was sent twice")
+	}
+}
+
+// pumpSteerOnlyRace puts a bridge in front of the harness's ledger bridge: the first start (the pump's
+// own probe of a round with no frozen attempt) is a bridge that answers an active turn and leaves the
+// returned marker, every later start is the ledger bridge, whose observation is idle unless the test
+// writes another. The thread goes idle between the pump's probe and the delivery core's own
+// observation; removing the marker arms the race again.
+func pumpSteerOnlyRace(t *testing.T, h *pumpLedgerHarness) (marker, probeLog string) {
+	t.Helper()
+	h.cfg.raw = map[string]json.RawMessage{"pump": json.RawMessage(`{"steer_only":true}`)}
+	h.cfg.Settings.Management = coreSettings{}
+	probe, probeLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	marker = filepath.Join(h.dir, "probed")
+	bridge := filepath.Join(h.dir, "race-bridge")
+	script := "#!/bin/sh\nif [ -e " + coreShellQuote(marker) + " ]; then\nexec " + coreShellQuote(h.cfg.Bridge.Binary) +
+		"\nfi\ntouch " + coreShellQuote(marker) + "\nexec " + coreShellQuote(probe) + "\n"
+	if err := os.WriteFile(bridge, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.Bridge.Binary = bridge
+	return marker, probeLog
+}
+
+// pumpSteerOnlyDispatches is every call of the logs that is no observation: a send, a steer or a
+// get_operation lookup.
+func pumpSteerOnlyDispatches(t *testing.T, logs ...string) []map[string]any {
+	t.Helper()
+	var calls []map[string]any
+	for _, log := range logs {
+		for _, call := range deliverSendCallsOf(t, log) {
+			if call["tool"] != deliverToolActive {
+				calls = append(calls, call)
+			}
+		}
+	}
+	return calls
+}
+
+// CRW-1275 (independent verification of 79d1d71a, P0): an idle race leaves a steer-only attempt that was
+// never dispatched, and then the delivery core's get_active_turn fails in transport in every round while
+// get_operation keeps answering. Nothing went to the bridge, so nothing is reconciled: no -r retry id and
+// no refusal is spent, the ordinal does not move, and the event is never parked. When the thread is
+// active again, the frozen batch is steered once, under its own id and body.
+func TestPumpSteerOnlyObservationTransportFailureNeverParks(t *testing.T) {
+	h := newPumpLedgerHarness(t)
+	marker, probeLog := pumpSteerOnlyRace(t, h)
+	st := h.round()
+	if st.Attempt == nil || len(st.Pending) != 1 {
+		t.Fatalf("the idle race did not freeze the unsent batch: %+v", st)
+	}
+	frozen := *st.Attempt
+	if err := os.WriteFile(filepath.Join(h.dir, pumpLedgerObservationDown), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ledgerLog := filepath.Join(h.dir, "calls.jsonl")
+	for round := 0; round < pumpQueueRefusalLimit*(deliverRetryLimit+3); round++ {
+		if st.Attempt == nil {
+			if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		st = h.round()
+		if len(st.Pending) != 1 || len(st.Parked) != 0 || st.MgmtRefused != (pumpQueueRefusal{}) ||
+			st.Attempt == nil || st.Attempt.LogicalID != frozen.LogicalID || st.Attempt.Text != frozen.Text {
+			t.Fatalf("round %d: an observation that never answered spent the unsent batch: pending %d parked %d refused %+v attempt %+v",
+				round, len(st.Pending), len(st.Parked), st.MgmtRefused, st.Attempt)
+		}
+		if calls := pumpSteerOnlyDispatches(t, probeLog, ledgerLog); len(calls) != 0 {
+			t.Fatalf("round %d: an unsent attempt was reconciled or dispatched: %+v", round, calls)
+		}
+	}
+	if err := os.Remove(filepath.Join(h.dir, pumpLedgerObservationDown)); err != nil {
+		t.Fatal(err)
+	}
+	pumpLedgerSetObservation(t, h.dir, "active", "turn-2")
+	pumpLedgerSetMode(t, h.dir, pumpLedgerUp)
+	st = h.round()
+	if !st.Sent["e1"] || st.Attempt != nil || len(st.Pending) != 0 || len(st.Parked) != 0 {
+		t.Fatalf("the active turn did not receive the frozen batch: %+v", st)
+	}
+	calls := pumpSteerOnlyDispatches(t, probeLog, ledgerLog)
+	if len(calls) != 1 || calls[0]["tool"] != deliverToolSteer {
+		t.Fatalf("recovery calls %+v, want exactly one steer", calls)
+	}
+	args := calls[0]["args"].(map[string]any)
+	if args["request_id"] != frozen.LogicalID || args["message"] != frozen.Text || args["expected_turn_id"] != "turn-2" || args["expected_settings"] != nil {
+		t.Fatalf("recovery steered %+v, want the frozen id %s and body into turn-2", args, frozen.LogicalID)
+	}
+}
+
+// CRW-1275 (independent verification of 79d1d71a, P1): management_thread changes while a steer-only attempt
+// that was never dispatched is frozen. Nothing was sent to the old thread, so there is nothing to close:
+// no get_operation lookup, no refusal and no ordinal are spent, and the frozen batch goes to the
+// configured thread under its own id once that thread has an active turn.
+func TestPumpSteerOnlyUnsentAttemptFollowsAManagementThreadChange(t *testing.T) {
+	h := newPumpLedgerHarness(t)
+	_, probeLog := pumpSteerOnlyRace(t, h)
+	st := h.round()
+	if st.Attempt == nil || len(st.Pending) != 1 {
+		t.Fatalf("the idle race did not freeze the unsent batch: %+v", st)
+	}
+	frozen := *st.Attempt
+	h.cfg.ManagementThread = "mgmt-thread-2"
+	pumpLedgerSetObservation(t, h.dir, "active", "turn-2")
+	pumpLedgerSetMode(t, h.dir, pumpLedgerUp)
+	st = h.round()
+	if st.MgmtRefused != (pumpQueueRefusal{}) || len(st.Parked) != 0 {
+		t.Fatalf("the unsent attempt was charged when the thread changed: refused %+v parked %+v", st.MgmtRefused, st.Parked)
+	}
+	if !st.Sent["e1"] || st.Attempt != nil || len(st.Pending) != 0 {
+		t.Fatalf("the frozen batch did not reach the configured thread: %+v", st)
+	}
+	calls := pumpSteerOnlyDispatches(t, probeLog, filepath.Join(h.dir, "calls.jsonl"))
+	if len(calls) != 1 || calls[0]["tool"] != deliverToolSteer {
+		t.Fatalf("calls after the thread change %+v, want exactly one steer and no lookup", calls)
+	}
+	args := calls[0]["args"].(map[string]any)
+	if args["thread_id"] != "mgmt-thread-2" || args["request_id"] != frozen.LogicalID || args["message"] != frozen.Text {
+		t.Fatalf("the batch was steered as %+v, want the frozen id %s and body on mgmt-thread-2", args, frozen.LogicalID)
+	}
+	raw, err := os.ReadFile(filepath.Join(h.cfg.StateDir, pumpLogFile))
+	if err != nil || strings.Contains(string(raw), "closed as stranded") {
+		t.Fatalf("pump.log closed an attempt that was never sent: %v\n%s", err, raw)
 	}
 }
