@@ -80,6 +80,8 @@ type Config struct {
 	// because only an external act changes them. Git facts are never read here: they are rebuilt from the journal. Nil
 	// records and compares none.
 	InputSnapshot func(ctx context.Context, req SnapshotRequest) (string, error)
+	// Control, when set, is how the process that runs the script pauses it from outside (`crw flow pause`, a run deadline).
+	Control *Control
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.
@@ -263,6 +265,10 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 
 	e.startSeq = started.Seq
+	if cfg.Control != nil {
+		cfg.Control.bind(e)
+		defer cfg.Control.end()
+	}
 	if cfg.Resume != nil {
 		e.resume(ctx)
 		// what reconcile appended is the journal's state too: the calls are compared with every row written so far

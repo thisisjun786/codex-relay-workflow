@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -488,7 +489,16 @@ func Load(ctx context.Context, st *store.Store, runID string) (events []engine.E
 }
 
 func readCalls(ctx context.Context, st *store.Store, where string, args ...any) ([]engine.Event, error) {
-	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, call_id, event_seq, path, position, kind, event, result_bytes, detail_json FROM flow_calls `+where+` ORDER BY event_seq`, args...)
+	return readCallsLimited(ctx, st, where, 0, args...)
+}
+
+// readCallsLimited reads the rows of flow_calls that where selects, in order, at most limit of them (0: all).
+func readCallsLimited(ctx context.Context, st *store.Store, where string, limit int, args ...any) ([]engine.Event, error) {
+	order := ` ORDER BY event_seq`
+	if limit > 0 {
+		order += ` LIMIT ` + strconv.Itoa(limit)
+	}
+	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, call_id, event_seq, path, position, kind, event, result_bytes, detail_json FROM flow_calls `+where+order, args...)
 	if err != nil {
 		return nil, fmt.Errorf("journal: %w", err)
 	}
@@ -523,7 +533,16 @@ func readCalls(ctx context.Context, st *store.Store, where string, args ...any) 
 }
 
 func readEvents(ctx context.Context, st *store.Store, runID string) ([]engine.Event, error) {
-	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, seq, kind, call_id, payload_json FROM flow_events WHERE run_id = ? ORDER BY seq`, runID)
+	return readEventsAfter(ctx, st, runID, 0, 0)
+}
+
+// readEventsAfter reads the flow rows of a run after the sequence number after, in order, at most limit of them (0: all).
+func readEventsAfter(ctx context.Context, st *store.Store, runID string, after, limit int) ([]engine.Event, error) {
+	order := ` ORDER BY seq`
+	if limit > 0 {
+		order += ` LIMIT ` + strconv.Itoa(limit)
+	}
+	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, seq, kind, call_id, payload_json FROM flow_events WHERE run_id = ? AND seq > ?`+order, runID, after)
 	if err != nil {
 		return nil, fmt.Errorf("journal: %w", err)
 	}
@@ -594,4 +613,35 @@ func RunOf(ctx context.Context, st *store.Store, callID string) (string, error) 
 		return "", fmt.Errorf("journal: %w", err)
 	}
 	return run.String, nil
+}
+
+// LoadAfter reads the rows of run runID whose sequence number is above after, in order, at most limit of them (limit 1 or more),
+// and says whether a row beyond the page exists. It is the read of `crw flow watch` and of the GUI's event stream: the number of
+// the last row is the cursor of the next read, as `crw relay journal-tail` keeps the relay journal's. A store that holds no
+// run runID answers hasRun false.
+func LoadAfter(ctx context.Context, st *store.Store, runID string, after, limit int) (events []engine.Event, more, hasRun bool, err error) {
+	if limit < 1 {
+		return nil, false, false, errors.New("journal: a page holds at least one row")
+	}
+	var n int
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE run_id = ?`, runID).Scan(&n); err != nil {
+		return nil, false, false, fmt.Errorf("journal: %w", err)
+	}
+	if n == 0 {
+		return nil, false, false, nil
+	}
+	calls, err := readCallsLimited(ctx, st, `WHERE run_id = ? AND event_seq > ?`, limit+1, runID, after)
+	if err != nil {
+		return nil, false, true, err
+	}
+	flows, err := readEventsAfter(ctx, st, runID, after, limit+1)
+	if err != nil {
+		return nil, false, true, err
+	}
+	events = append(calls, flows...)
+	sort.SliceStable(events, func(i, k int) bool { return events[i].Seq < events[k].Seq })
+	if len(events) > limit {
+		events, more = events[:limit], true
+	}
+	return events, more, true, nil
 }
