@@ -88,7 +88,7 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 		return entries[len(entries)-1]
 	}
 	// CRW-1286: the daemon alone decides where a child report is recorded. The caller's --state and environment only
-	// found this socket; the command runs on the daemon's own state (ExecuteOwnedChild drops the caller's --state),
+	// found this socket; the command runs on the daemon's own state (OwnedChildState drops the caller's --state),
 	// and a path relative to the caller is refused, never interpreted in the daemon's directory.
 	for _, option := range []struct {
 		values map[string][]string
@@ -121,7 +121,7 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	code := dispatch.ExecuteOwnedChild(ctx, state, pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
+	code := dispatch.ExecuteOwnedChild(dispatch.OwnedChildState(ctx, state), pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
 	result, err := decodeObject(stdout.Bytes())
 	if err != nil {
 		return answerHost(conn, "child command produced no JSON answer: "+stderr.String())
