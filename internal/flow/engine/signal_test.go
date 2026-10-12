@@ -7,7 +7,9 @@ import (
 )
 
 // recordOp is an op that writes the row the signal path reads: its arguments, as the fields a real op writes.
-type recordOp struct{ fields func(args []any) map[string]any }
+type recordOp struct {
+	fields func(args []any) map[string]any
+}
 
 func (o recordOp) Run(_ context.Context, req OpRequest) (OpResult, error) {
 	var args []any
@@ -120,7 +122,9 @@ func TestCallFactsAndRecordedRowsOfAResume(t *testing.T) {
 	}
 
 	// another prompt is another input: the call runs again, is live, and the rows of the positions after it were ended by the resume
-	h.fake.Handler = func(FakeRequest) FakeReply { return FakeReply{Text: `{"outcome":"ready_for_review","files":[],"verification":[],"summary":"s","gap":null,"research_question":null,"plan_mismatch":"changed"}`} }
+	h.fake.Handler = func(FakeRequest) FakeReply {
+		return FakeReply{Text: `{"outcome":"ready_for_review","files":[],"verification":[],"summary":"s","gap":null,"research_question":null,"plan_mismatch":"changed"}`}
+	}
 	changed := runSignalScript(h, `'build it another way'`)
 	if !changed.Facts.Live || changed.Facts.Digest == first.Facts.Digest || changed.Facts.CallID != first.Facts.CallID {
 		t.Errorf("a call that ran again answers %+v, the first run's was %+v", changed.Facts, first.Facts)
