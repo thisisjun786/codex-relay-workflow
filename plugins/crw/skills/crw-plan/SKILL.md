@@ -67,10 +67,43 @@ Size is judged by concept; the numbers say when to look again.
 - A project is what one project orchestrator finishes. A project has one integration target; work in several repositories is one project per repository, each project with its own single integration target and an initiative holding the projects, and an issue never carries a target of its own. The plan the project orchestrator runs holds at most 64 live issues: `MaxNodes` (`internal/relay/dag/model.go`) bounds the live nodes of one plan revision, and a retired node leaves that count, so issues the plan has retired do not count against it. Of a Linear project's issues, 4-20 is recommended, and that recommendation is advice, not the runtime bound. Split a project when its edit-region map divides into groups joined only by named artifacts; keep heavily overlapping regions in one project.
 - A milestone is one observable result, at most 8 issues recommended; a milestone over 12 issues is split.
 - An issue is a concept bundle, decided with [issue boundaries](references/issue-boundaries.md); the wish to parallelize never splits an issue.
-- For every issue, run `crw skill issue-size check` and record its answer (`ok`, `over_line` or `over_line_accepted`) in the issue, with the exception record the report returns when there is one. Answer the report's concept questions and judge by them: no count alone splits an issue or keeps one together.
+- For every issue, run `crw skill issue-size check` and record its answer (`ok`, `over_line` or `over_line_accepted`) in the issue as its `issue_size`, beside the `size_fit` and `size_reason` it sets ([Set the size fields](#set-the-size-fields)), with the exception record the report returns when there is one. Answer the report's concept questions and judge by them: no count alone splits an issue, keeps one together or sends it to a child.
 - The issue line carries no model name and no effort of its own: its child pair line names only a pair family, and the declared policy supplies the model and effort when the child is created.
 
 These sizes belong to the levels in [hierarchy.md](../crw-canon/references/hierarchy.md#sizes-at-each-level). `crw-add-issue` tells its caller when the issue it adds would pass the project or milestone limit.
+
+## Set the size fields
+
+Each implementation issue carries these fields beside its criteria. The handoff to the run reads them, and `crw flow compile` refuses a value outside its set.
+
+| Field | Closed set | What it says |
+|---|---|---|
+| `size_fit` | `executor`, `child`, `split` | where the run takes the issue: an executor call of the run, an issue child that only coordinates an issue-lane run, or an issue that is not yet one issue and is divided first |
+| `size_reason` | `regions_gt3`, `packages_contract_gt2`, `steps_gt5`, `verify_gt20m`, `own_goal`, `fits_executor` | the one reason for the `size_fit`: more than 3 edit regions, more than 2 packages whose contract changes, more than 5 ordered steps, verification over 20 minutes, a goal of its own, or work that fits one executor |
+| `issue_size` | `ok`, `over_line`, `over_line_accepted` | the answer of `crw skill issue-size check`, recorded as the report gave it |
+| `group` | a name, at most 4 issues | issues whose edit regions overlap and that run in the order the handoff declares them, each on its own executor |
+
+1. Run `crw skill issue-size check` on the issue and record the answer as `issue_size`, with the exception record when the report returns one.
+2. `ok` gives `size_fit` `executor` and `size_reason` `fits_executor`. `over_line` is answered by the report's concept questions: either divide the issue along the report's proposal under the second-merge rules and check each new issue, or keep the bundle with a bundle reason, which makes the answer `over_line_accepted`. A kept bundle, and any other issue, gets `size_fit` `child` only with a `size_reason` of the set other than `fits_executor`; without one it is `executor` with `fits_executor`. `split` marks an issue that is divided through [crw-add-issue](../crw-add-issue/SKILL.md) and a plan revision before its node is released; a node that reaches a run still `split` escalates as `size_split`.
+3. Run `crw skill size-fit` with the report and the counts the body states (edit regions, packages whose contract changes, ordered steps, minutes of verification) and the own-goal flag. Its proposal is advice: it shows the issue-size answer and the exception record beside the counts and names the first reason of the set whose count crosses its line. Read it as a question put to the planner. Never divide an issue, or send it to a child, because a number crossed its line: the concept boundary decides whether an issue splits, and a child is for an issue that needs a coordinator of its own. Write the count that crossed beside the reason in the issue body.
+4. Name a `group` for at most four issues that overlap in their edit regions and must run in order; the handoff declares the order, and compile chains the members. Issues that overlap with nothing ordering them are refused (`region_order_missing`), so the order is a prerequisite or a group, never a note.
+
+The architect of a milestone reads these fields as the starting values of its DESIGN and may set `child` for a node with a `size_reason` of the set. The issue line carries no model name and no effort.
+
+## Write the Orchestration section of the project
+
+The body of the Linear project carries an `## Orchestration` section, written with the plan and refreshed with it, that the project orchestrator and its run read before the first milestone starts:
+
+- **Parallel width:** how many issues the plan lets run at once, and why (the number of groups of issues whose edit regions are disjoint).
+- **Region map:** for each group the edit regions its issues hold, the groups joined only by a named artifact, and the order that settles each pair of issues sharing a region.
+- **Integration target:** the repository and the base branch the project's issues are integrated into, one for the project.
+- **Expected review rounds:** how many review rounds an ordinary issue should take, and which issues are expected to need more, a high-risk (C4) issue first among them.
+
+The section states facts of the plan. It names no model and no effort, which the declared policy supplies.
+
+## Hand the plan to the run
+
+The handoff the project orchestrator takes to the run is the `crw-flow-compile-input/1` document, built from the issues as they were read back: for each project its key, plan id, `target` (repository and base ref) and issues, and for each milestone an entry with its title, criteria, surfaces, grade and required commands. An issue line holds its key, title, criteria, milestone, edit regions, prerequisites (`after`), `group`, `size_fit`, `size_reason`, `issue_size` and, where there are one, its bundle reason and exception record. `crw flow compile --dry-run` checks it as the last step of the [closing check](references/issue-boundaries.md#close-the-plan); the project orchestrator puts the compiled revision into the plan and starts the run of a milestone from the same file ([crw-run](../crw-run/SKILL.md#run-a-milestone-with-a-flow-run)).
 
 ## Schedule the plan
 
@@ -94,7 +127,7 @@ Link issues to the canonical Linear item body or supporting document instead of 
 
 ## Deliver
 
-Return Linear document/item links, meaningful changes, unresolved decisions, and the next ready issue or batch with prerequisites. Close the plan in the order the [closing check](references/issue-boundaries.md#close-the-plan) sets: every promised outcome maps to an issue criterion, no two issues claim one deliverable, every stated prerequisite is a real blocking relation with no cycle and one ordering per shared surface, and each written item and relation is read back and reported as observed rather than as sent.
+Return Linear document/item links, meaningful changes, unresolved decisions, and the next ready issue or batch with prerequisites. Close the plan in the order the [closing check](references/issue-boundaries.md#close-the-plan) sets: every promised outcome maps to an issue criterion, no two issues claim one deliverable, every stated prerequisite is a real blocking relation with no cycle and one ordering per shared surface, each written item and relation is read back and reported as observed rather than as sent, and the handoff built from what was read back compiles with `crw flow compile --dry-run`.
 
 For a full plan, do not stop at an initiative, project outline, or the first batch. Cover the entire agreed scope with issue-level criteria, repository/delivery boundaries for implementation, dependencies, and verification. When discovery is necessary, define its question, output, and which later work it blocks instead of inventing implementation details. Report any unplanned scope or incomplete writes explicitly; an outline is not a completed plan. Creating the plan does not execute its issues, and aligning a canonical document, its milestones and its issues in one authorized pass is still planning: it starts no task, opens no branch or pull request, and approves no merge.
 

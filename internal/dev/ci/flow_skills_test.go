@@ -4,7 +4,9 @@ package ci
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -228,4 +230,135 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 			}
 		}
 	})
+}
+
+const (
+	issueBoundaries   = "plugins/crw/skills/crw-plan/references/issue-boundaries.md"
+	compileSourceFile = "internal/flow/compile/compile.go"
+)
+
+var compileRuleWord = regexp.MustCompile("`(over_64|cycle|self_reference|region_order_missing|group_cap|after_unknown|size_value|milestone|input)`")
+
+// closingCheckProblems judges the "Close the plan" section of the issue-boundaries page: the compile of the handoff is its step after
+// the read-back, a refusal sends the planner back to the step that owns the defect, and each refusal rule it names is a rule the
+// compiler has.
+func closingCheckProblems(section, compileSource string) []string {
+	var problems []string
+	steps := regexp.MustCompile(`(?m)^[0-9]+\. ([A-Z][A-Za-z-]*)\.`).FindAllStringSubmatch(section, -1)
+	var names []string
+	for _, s := range steps {
+		names = append(names, s[1])
+	}
+	want := []string{"Coverage", "Duplication", "Relations", "Read-back", "Compile"}
+	if !slices.Equal(names, want) {
+		problems = append(problems, "the steps are "+strings.Join(names, ", ")+", want "+strings.Join(want, ", "))
+	}
+	flat := normalized(section)
+	for _, p := range wordingMissing(flat, []string{
+		"`crw flow compile --dry-run`",
+		`(?i)exits? 0`,
+		`(?i)a refusal is a defect of the plan`,
+		`(?i)the plan is not closed (with|while) a refusal`,
+		"`size_unreviewed`",
+		`(?i)draft-only[^.]*steps 1 to 3 and 5`,
+	}) {
+		problems = append(problems, "the section lacks "+p)
+	}
+	for _, m := range compileRuleWord.FindAllStringSubmatch(flat, -1) {
+		if !strings.Contains(compileSource, `"`+m[1]+`"`) {
+			problems = append(problems, "the section names the rule `"+m[1]+"`, which "+compileSourceFile+" does not write")
+		}
+	}
+	for _, rule := range []string{"over_64", "cycle", "region_order_missing", "group_cap", "size_value"} {
+		if !strings.Contains(flat, "`"+rule+"`") {
+			problems = append(problems, "the section does not name the refusal `"+rule+"`")
+		}
+	}
+	return problems
+}
+
+func TestPlanClosingCheckRunsCompile(t *testing.T) {
+	boundaries := readRepoText(t, issueBoundaries)
+	compileSource := readRepoText(t, compileSourceFile)
+	if problems := closingCheckProblems(sectionOf(boundaries, "Close the plan"), compileSource); len(problems) > 0 {
+		t.Errorf("%s, Close the plan:\n  %s", issueBoundaries, strings.Join(problems, "\n  "))
+	}
+	// The planning skill closes with the same step, and writes the handoff that compile reads.
+	plan := normalized(readRepoText(t, planSkillFile))
+	if missing := wordingMissing(plan, []string{
+		`(?i)closing check.{0,700}crw flow compile`,
+		"`crw-flow-compile-input/1`",
+		"`crw flow compile --dry-run`",
+	}); len(missing) > 0 {
+		t.Errorf("%s lacks: %s", planSkillFile, strings.Join(missing, "\n  "))
+	}
+	// The handoff's schema name is the one the compiler reads.
+	if !strings.Contains(readRepoText(t, "internal/flow/compile/input.go"), `"crw-flow-compile-input/1"`) {
+		t.Error("internal/flow/compile/input.go no longer reads crw-flow-compile-input/1; revisit the plan skill")
+	}
+
+	t.Run("fixture: the step, its order and the refusals are each required", func(t *testing.T) {
+		good := "## Close the plan\n\n1. Coverage. a\n2. Duplication. b\n3. Relations. c\n4. Read-back. d\n5. Compile. Run `crw flow compile --dry-run` over the handoff; it exits 0. A refusal is a defect of the plan: `over_64`, `cycle`, `region_order_missing`, `group_cap`, `size_value`. The plan is not closed with a refusal. `size_unreviewed` is not a refusal.\n\n" +
+			"A draft-only request runs steps 1 to 3 and 5.\n"
+		source := `"over_64" "cycle" "region_order_missing" "group_cap" "size_value"`
+		if p := closingCheckProblems(sectionOf(good, "Close the plan"), source); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		for label, mutate := range map[string]func(string) string{
+			"no step": func(s string) string { return strings.Replace(s, "5. Compile.", "5. Other.", 1) },
+			"before": func(s string) string {
+				return strings.Replace(s, "4. Read-back. d\n5. Compile.", "4. Compile.\n5. Read-back.", 1)
+			},
+			"no command":    func(s string) string { return strings.Replace(s, "`crw flow compile --dry-run`", "the compiler", 1) },
+			"no rule":       func(s string) string { return strings.Replace(s, "`group_cap`, ", "", 1) },
+			"closed anyway": func(s string) string { return strings.Replace(s, "The plan is not closed with a refusal.", "", 1) },
+			"foreign rule":  func(s string) string { return strings.Replace(s, "`cycle`", "`self_reference`", 1) },
+		} {
+			if p := closingCheckProblems(sectionOf(mutate(good), "Close the plan"), source); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+}
+
+// The planning skills write what the run reads: the size fields, the group, the proposal of `crw skill size-fit` read as advice, and the
+// Orchestration section of the project body.
+func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
+	plan := readRepoText(t, planSkillFile)
+	fields := normalized(sectionOf(plan, "Set the size fields"))
+	if missing := wordingMissing(fields, []string{
+		"`crw skill issue-size check`", "`crw skill size-fit`",
+		`(?i)never divide an issue, or send it to a child, because a number crossed its line`,
+		`(?i)the concept boundary decides`,
+		"`over_line_accepted`", `(?i)bundle reason`,
+		"`size_split`", "`region_order_missing`",
+		`(?i)no model name and no effort`,
+		fmt.Sprintf(`(?i)a name, at most %d issues`, compileMaxGroup(t)),
+	}); len(missing) > 0 {
+		t.Errorf("Set the size fields lacks: %s\n%s", strings.Join(missing, "\n  "), fields)
+	}
+	orchestration := normalized(sectionOf(plan, "Write the Orchestration section of the project"))
+	if missing := wordingMissing(orchestration, []string{
+		"`## Orchestration`", `(?i)parallel width`, `(?i)region map`, `(?i)integration target`, `(?i)expected review rounds`, `(?i)names no model and no effort`,
+	}); len(missing) > 0 {
+		t.Errorf("the Orchestration section lacks: %s\n%s", strings.Join(missing, "\n  "), orchestration)
+	}
+	add := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md"), "Set the size fields"))
+	if missing := wordingMissing(add, []string{
+		"`size_fit`", "`size_reason`", "`issue_size`", "`group`", "`crw skill size-fit`", `(?i)no count alone divides the issue or sends it to a child`,
+		`\(\.\./crw-plan/SKILL\.md#set-the-size-fields\)`,
+	}); len(missing) > 0 {
+		t.Errorf("crw-add-issue, Set the size fields, lacks: %s\n%s", strings.Join(missing, "\n  "), add)
+	}
+}
+
+// compileMaxGroup is the most issues one group names, read from the compiler's source.
+func compileMaxGroup(t *testing.T) int {
+	t.Helper()
+	m := regexp.MustCompile(`(?m)^\s*MaxGroup\s*=\s*(\d+)`).FindStringSubmatch(readRepoText(t, "internal/flow/compile/input.go"))
+	if m == nil {
+		t.Fatal("internal/flow/compile/input.go has no MaxGroup")
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
 }

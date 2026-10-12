@@ -33,13 +33,17 @@ Write the body in Korean, under these headings (the English headings of the gate
 
 Add the repository label and the explicit owner/repo, the prerequisite relations that truly hold, and the child pair line as [Child pair by issue type](../crw-plan/references/integrations.md#child-pair-by-issue-type) sets it. Reuse existing labels and the existing team conventions; add no label scheme.
 
+## Set the size fields
+
+Beside the five items the issue carries `size_fit`, `size_reason`, the `issue_size` answer and, when it overlaps another issue's edit regions, a `group`. The closed sets and the way to choose them are [crw-plan's](../crw-plan/SKILL.md#set-the-size-fields); this skill states none of them again. Run `crw skill issue-size check` on the drafted body and record its answer as `issue_size`, then run `crw skill size-fit` and read its proposal as advice: no count alone divides the issue or sends it to a child, and an `over_line` answer is judged by the report's concept questions, not by the number. A request that states no size reason gets `size_fit` `executor`; a split goes back to the caller as a proposal, because dividing an issue is a plan revision.
+
 ## When a design question remains
 
 Do not invent the answer to make the item look filled. A question the repository and the request cannot settle goes under `## 열린 결정`, the `정한 답` states what is already decided, and the issue gets the label `설계 먼저` so the state shows in Linear. Return the questions to the user or the parent as the design to obtain: an architect-role proposal that checks the repository's constraints, and the parent's decision. The issue is released only after that result stands in `정한 답`, the open decisions are empty and the label is removed. Choosing the model or role for the design is outside this skill.
 
 ## Tell the caller about the limits
 
-A plan revision holds at most 64 live nodes (the plan refuses more; a retired node leaves the count), and a milestone is split above 12 issues. Count the issues of the target project's plan that are live, not every issue the Linear project ever had, and the target milestone's issues, before writing. When the new issue would put the plan at more than 64 issues or the milestone at more than 12 issues, say so to the caller in the report and leave the choice of a split to the caller or to [crw-plan](../crw-plan/SKILL.md). This is advisory: a sentence of this procedure, not a warning of an executable, and it blocks nothing.
+A plan revision holds at most 64 live nodes (the plan refuses more; a retired node leaves the count), and a milestone is split above 12 issues. Count the issues of the target project's plan that are live, not every issue the Linear project ever had, and the target milestone's issues, before writing. When the new issue would put the plan at more than 64 issues or the milestone at more than 12 issues, say so to the caller in the report and leave the choice of a split to the caller or to [crw-plan](../crw-plan/SKILL.md). This is advisory: a sentence of this procedure, not a warning of an executable, and it blocks nothing. The executable check of the same limit is `crw flow compile --dry-run` (`over_64`), which the [closing check](../crw-plan/references/issue-boundaries.md#close-the-plan) of the plan runs over the whole handoff.
 
 ## Check, write, read back
 

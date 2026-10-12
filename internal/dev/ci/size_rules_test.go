@@ -89,8 +89,8 @@ func dagLimit(t *testing.T, name string) int {
 	return n
 }
 
-// laterSizeFields are the fields and the proposer that later issues bring into the documents; the size
-// sentences of this change state today's facts only.
+// laterSizeFields are the fields and the proposer that the planning documents carry (crw-plan, crw-add-issue) since the second skill
+// series (CRW-1222); the initiative's size rules (crw-define) state none of them.
 var laterSizeFields = regexp.MustCompile(`size_fit|size_reason|size-fit|\bgroup:`)
 
 func TestPlanSizeRulesWording(t *testing.T) {
@@ -124,13 +124,10 @@ func TestPlanSizeRulesWording(t *testing.T) {
 			t.Errorf("crw-plan Size rules lack: %s\n%s", strings.Join(missing, "\n  "), plan)
 		}
 	})
-	t.Run("the section carries no model name and no later field", func(t *testing.T) {
+	t.Run("the section carries no model name", func(t *testing.T) {
 		stripped := strings.ReplaceAll(strings.ToLower(plan), "no model name and no effort", "")
 		if found := modelNames.FindString(stripped); found != "" {
 			t.Errorf("Size rules names %q", found)
-		}
-		if found := laterSizeFields.FindString(plan); found != "" {
-			t.Errorf("Size rules names %q, which a later issue brings in", found)
 		}
 	})
 	t.Run("crw-define sizes an initiative", func(t *testing.T) {
@@ -152,7 +149,7 @@ func TestPlanSizeRulesWording(t *testing.T) {
 			t.Errorf("crw-define Size rules lack: %s\n%s", strings.Join(missing, "\n  "), define)
 		}
 		if found := laterSizeFields.FindString(define); found != "" {
-			t.Errorf("Size rules names %q, which a later issue brings in", found)
+			t.Errorf("Size rules names %q, which an initiative does not carry", found)
 		}
 	})
 }
@@ -211,9 +208,6 @@ func TestAddIssueAdvisoryLimitsWording(t *testing.T) {
 	last := normalized(sectionOf(text, "Check, write, read back"))
 	if !strings.Contains(last, "`crw skill issue-ready check`") {
 		t.Errorf("the closing section does not run `crw skill issue-ready check`")
-	}
-	if found := laterSizeFields.FindString(text); found != "" {
-		t.Errorf("crw-add-issue names %q, which a later issue brings in", found)
 	}
 }
 
