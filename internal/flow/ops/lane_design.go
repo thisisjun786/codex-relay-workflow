@@ -358,8 +358,17 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Kind, out.Reason = "split", "size_split"
 		return finish()
 	}
+	// the criteria are those of the plan the run read; the slice is the node's slice of the plan as it is when the node is released,
+	// the one a later revision of the ledger is compared with (a node whose slice another revision was not made against is not kept
+	// under it)
 	mnode, _ := planNodeOf(r, plan, ms, node)
-	data["slice_digest"], data["criteria_digest"] = mnode.SliceDigest, mnode.CriteriaDigest
+	slice := mnode.SliceDigest
+	if now, err := o.l.liveMilestone(ctx, plan, ms); err == nil {
+		if d, ok := liveSlices(now)[node]; ok {
+			slice = d
+		}
+	}
+	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
 	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID})
 	if err != nil {
 		return engine.OpResult{}, err
@@ -390,9 +399,6 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 		// a node the scheduler held back may be releasable now: the position asks again
 		return false, "the release did not happen", nil
 	}
-	if ended, how := endedByRun(rows(ev), row); ended {
-		return true, how, nil
-	}
 	r := rows(ev)
 	ms, rev, node := dataStr(row, "milestone"), dataStr(row, "revision"), dataStr(row, "node")
 	if revisionSuperseded(r, ms, rev) {
@@ -401,6 +407,9 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 			return false, "the release stands under revision " + rev + ", which a resume superseded, and the node's slice is not the one the revision that stands was made against", nil
 		}
 		o.l.rebind(r, row, cur)
+	}
+	if ended, how := endedByRun(r, row); ended {
+		return true, how, nil
 	}
 	ok, err := o.l.d.Relay.ReleaseStands(ctx, dataStr(row, "plan"), dataStr(row, "node"), dataStr(row, "execution_id"))
 	if err != nil {

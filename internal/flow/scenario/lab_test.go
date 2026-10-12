@@ -50,6 +50,8 @@ type Lab struct {
 	// Nodes are the issue nodes of the plan; Design is the architect's DESIGN (built from the nodes when nil).
 	Nodes  []NodeSpec
 	Design *ops.Design
+	// Cap is the executors the project lane runs at once (0: three).
+	Cap int
 
 	owner   string
 	client  *appserver.Client
@@ -270,7 +272,11 @@ func (l *Lab) Config(resume bool) engine.Config {
 
 // Args are the arguments of the project lane the lab runs.
 func (l *Lab) Args() json.RawMessage {
-	return json.RawMessage(`{"plan":"plan-1","milestone":"M1","cap":3}`)
+	cap := 3
+	if l.Cap > 0 {
+		cap = l.Cap
+	}
+	return json.RawMessage(fmt.Sprintf(`{"plan":"plan-1","milestone":"M1","cap":%d}`, cap))
 }
 
 // Run runs the project lane as a new run of the lab's journal.

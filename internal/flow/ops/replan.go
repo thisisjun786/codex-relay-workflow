@@ -55,9 +55,9 @@ const (
 
 // The reasons SP-ARCH-2 re-plans for.
 const (
-	ReasonPlanMismatch        = "plan_mismatch"
-	ReasonSliceChange         = "slice_change"
-	ReasonFinalMisaligned     = "reviewer_final_misaligned"
+	ReasonPlanMismatch         = "plan_mismatch"
+	ReasonSliceChange          = "slice_change"
+	ReasonFinalMisaligned      = "reviewer_final_misaligned"
 	ReasonReflectionMisaligned = "reflection_misaligned"
 )
 
@@ -415,7 +415,7 @@ func (o *signalDoneOp) Run(_ context.Context, req engine.OpRequest) (engine.OpRe
 	}
 	out := SignalDone{Milestone: ms, K: k, Result: oc.Result, Revision: oc.Revision}
 	out.Digest = digestOf(map[string]any{"milestone": ms, "k": k, "result": oc.Result, "revision": oc.Revision})
-	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "k": k, "result": oc.Result, "revision": oc.Revision, "reasons": oc.Reasons, "digest": out.Digest}}, nil
+	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "k": k, "outcome": oc.Result, "revision": oc.Revision, "reasons": oc.Reasons, "digest": out.Digest}}, nil
 }
 
 func (o *signalDoneOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -488,6 +488,11 @@ type SliceChange struct {
 	Changed []string `json:"changed"`
 	Total   int      `json:"total"`
 	Percent float64  `json:"percent"`
+}
+
+// Due says whether the change is a reason to re-plan: more than SliceChangeOverPercent of the nodes. Exactly that share is not.
+func (c SliceChange) Due() bool {
+	return c.Total > 0 && len(c.Changed)*100 > SliceChangeOverPercent*c.Total
 }
 
 // ReplanState is the answer of crw.replanSignals.
@@ -583,7 +588,7 @@ func (o *replanSignalsOp) Run(ctx context.Context, req engine.OpRequest) (engine
 	if st.PlanMismatch >= PlanMismatchLimit {
 		st.Reasons = append(st.Reasons, ReasonPlanMismatch)
 	}
-	if st.Slices.Total > 0 && len(st.Slices.Changed)*100 > SliceChangeOverPercent*st.Slices.Total {
+	if st.Slices.Due() {
 		st.Reasons = append(st.Reasons, ReasonSliceChange)
 	}
 	if opts.Phase == "close" {
