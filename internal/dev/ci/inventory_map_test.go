@@ -18,13 +18,12 @@ import (
 )
 
 // The inventory map (docs/skills/inventory-map.json) has one row for each of the 83 overlap items of
-// the skill inventory, keyed <category>[<index>]. This file is its format checker, in the mode the
-// 0.5.0-alpha design calls the format mode: the identifier sets are equal, every row has a
+// the skill inventory, keyed <category>[<index>]. This file is its checker: the identifier sets are equal, every row has a
 // disposition, an owner and a check, and a done row has the evidence its disposition asks for. The
-// completion mode (no open row left) is switched on by the issue that closes the series.
+// completion mode (no open row left) is on since the issue that closes the series (S07, CRW-1222).
 
-// inventoryCompletionMode is the completion mode switch: the final issue of the series (S07) sets it.
-const inventoryCompletionMode = false
+// inventoryCompletionMode is the completion mode switch: the final issue of the series (S07) set it, so a row that is open is an error.
+const inventoryCompletionMode = true
 
 // defaultTestPackage is the package of a check test the registry does not name.
 const defaultTestPackage = "internal/dev/ci"

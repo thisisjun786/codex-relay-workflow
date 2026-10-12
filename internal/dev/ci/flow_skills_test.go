@@ -5,11 +5,17 @@ package ci
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The skills that describe the flow engine (CRW-1222, the second skill series): the page of the commands (crw-canon/references/flow.md),
@@ -361,4 +367,261 @@ func compileMaxGroup(t *testing.T) int {
 	}
 	n, _ := strconv.Atoi(m[1])
 	return n
+}
+
+const (
+	flowCLIFile      = "internal/flow/cli/cli.go"
+	initiativeSkill  = "plugins/crw/skills/crw-run-initiative/SKILL.md"
+	hierarchyRefFile = canonRefDir + "hierarchy.md"
+)
+
+// flowUsageHas reports whether `crw flow --help` (the Usage text of internal/flow/cli) lists the command line.
+func flowUsageHas(t *testing.T, line string) bool {
+	t.Helper()
+	return strings.Contains(readRepoText(t, flowCLIFile), line)
+}
+
+// operatingFlowCommand is a `crw flow` command that changes a run: the initiative lead and the status reader do not run one.
+var operatingFlowCommand = regexp.MustCompile("`crw flow (start|answer|pause|cancel|resume|recover|apply|report-up|report-delivered|digest)\\b")
+
+// initiativeReportProblems judges the section of crw-run-initiative that reads milestone reports.
+func initiativeReportProblems(section, whole string) []string {
+	flat := normalized(section)
+	if flat == "" {
+		return []string{"crw-run-initiative has no section \"Read the milestone reports\""}
+	}
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		"`crw flow reports --initiative INITIATIVE --unread`",
+		`(?i)at the start of every turn`,
+		`(?i)waits in the supervisor queue until the thread loads`,
+		"`milestone_report`", "`project_blocked`", "`project_decision_request`",
+		"\\[crw-check\\]\\(\\.\\./crw-check/SKILL\\.md\\)",
+		"`crw flow report-ack REPORT --turn TURN`",
+		`(?i)acknowledges a report only after it has judged it`,
+		`(?i)reads and acknowledges[^.]*(never|does not)[^.]*(operate|act on)[^.]*run|never operates? a run`,
+	}) {
+		problems = append(problems, "the section lacks "+p)
+	}
+	if found := operatingFlowCommand.FindString(whole); found != "" {
+		problems = append(problems, "the skill names "+found+"`, a command that changes a run, which an initiative lead does not run")
+	}
+	return problems
+}
+
+func TestRunInitiativeReadsReports(t *testing.T) {
+	text := readRepoText(t, initiativeSkill)
+	if problems := initiativeReportProblems(sectionOf(text, "Read the milestone reports"), text); len(problems) > 0 {
+		t.Errorf("%s:\n  %s", initiativeSkill, strings.Join(problems, "\n  "))
+	}
+	// The commands are the commands of the binary's usage, with the flags the skill uses.
+	for _, line := range []string{"crw flow reports [--initiative I] [--unread] [--json]", "crw flow report-ack REPORT --turn T"} {
+		if !flowUsageHas(t, line) {
+			t.Errorf("internal/flow/cli/cli.go no longer has the usage line %q", line)
+		}
+	}
+	if !strings.Contains(normalized(text), "only when its prerequisites hold and the manager's orchestrator cap allows it") {
+		t.Errorf("%s does not say that a project's orchestrator starts only when its prerequisites hold and the cap allows it", initiativeSkill)
+	}
+
+	t.Run("fixture: an initiative lead that operates a run or skips the ack is reported", func(t *testing.T) {
+		good := "## Read the milestone reports\n\nRun `crw flow reports --initiative INITIATIVE --unread` at the start of every turn: a report to a thread that is not loaded waits in the supervisor queue until the thread loads. " +
+			"The kinds are `milestone_report`, `project_blocked` and `project_decision_request`. Judge each with [crw-check](../crw-check/SKILL.md), then `crw flow report-ack REPORT --turn TURN`: it acknowledges a report only after it has judged it. " +
+			"It never operates a run.\n"
+		section := sectionOf(good, "Read the milestone reports")
+		if p := initiativeReportProblems(section, good); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		if p := initiativeReportProblems(section, good+"Then `crw flow resume RUN`.\n"); len(p) == 0 {
+			t.Error("a skill that resumes a run is accepted")
+		}
+		for label, mutate := range map[string]func(string) string{
+			"no unread": func(s string) string { return strings.Replace(s, " --unread", "", 1) },
+			"no ack": func(s string) string {
+				return strings.Replace(s, "`crw flow report-ack REPORT --turn TURN`", "a mark", 1)
+			},
+			"no check":  func(s string) string { return strings.Replace(s, "[crw-check](../crw-check/SKILL.md)", "a look", 1) },
+			"each turn": func(s string) string { return strings.Replace(s, "at the start of every turn", "sometimes", 1) },
+		} {
+			if p := initiativeReportProblems(sectionOf(mutate(good), "Read the milestone reports"), mutate(good)); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+}
+
+// statusFlowProblems judges how crw-status reads a run: with the read commands, and without a command that writes.
+func statusFlowProblems(section, whole string) []string {
+	flat := normalized(section)
+	if flat == "" {
+		return []string{"crw-status has no section \"Read a project's run\""}
+	}
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		"`crw flow ps`", "`crw flow show RUN`", "`crw flow watch RUN --after SEQ`", "`crw relay journal-tail`",
+		"`crw flow reports --unread`",
+		`(?i)unread report`,
+		`(?i)(does|do) not acknowledge[^.]*` + "`crw flow report-ack`",
+	}) {
+		problems = append(problems, "the section lacks "+p)
+	}
+	if found := operatingFlowCommand.FindString(whole); found != "" {
+		problems = append(problems, "the skill names "+found+"`, a command that changes a run, in a read-only report")
+	}
+	return problems
+}
+
+func TestStatusReadsRunStateAndUnreadReports(t *testing.T) {
+	text := readRepoText(t, statusSkillFile)
+	if problems := statusFlowProblems(sectionOf(text, "Read a project's run"), text); len(problems) > 0 {
+		t.Errorf("%s:\n  %s", statusSkillFile, strings.Join(problems, "\n  "))
+	}
+	for _, line := range []string{"crw flow ps [--all] [--json]", "crw flow show RUN [--json]", "crw flow watch RUN [--after SEQ]", "crw flow reports [--initiative I] [--unread]"} {
+		if !flowUsageHas(t, line) {
+			t.Errorf("internal/flow/cli/cli.go no longer has the usage line %q", line)
+		}
+	}
+	if !strings.Contains(readRepoText(t, "internal/relay/argparse/specs.json"), `"journal-tail"`) {
+		t.Error("the relay's command table has no journal-tail")
+	}
+}
+
+func TestHierarchyNamesTheIssueExecutor(t *testing.T) {
+	text := readRepoText(t, hierarchyRefFile)
+	rows := tableRows(text, "Level")
+	var executor []string
+	for _, row := range rows {
+		if len(row) > 0 && row[0] == "issue executor" {
+			executor = row
+		}
+	}
+	if executor == nil {
+		t.Fatalf("the level table of %s has no issue executor row: %v", hierarchyRefFile, rows)
+	}
+	if relayRoleID.MatchString(executor[1]) {
+		t.Errorf("the issue executor row names a relay role id: %q", executor[1])
+	}
+	flat := normalized(text)
+	if missing := wordingMissing(flat, []string{
+		`(?i)issue executor[^.]*(is not|holds no)[^.]*(Codex task|binding)`,
+		`(?i)the run alone (speaks to|instructs) (it|an issue executor)`,
+	}); len(missing) > 0 {
+		t.Errorf("%s lacks: %s", hierarchyRefFile, strings.Join(missing, "\n  "))
+	}
+}
+
+// skillFlowSubcommands is every `crw flow <sub>` the skill texts write in code (an inline span or a fenced block), with the files that
+// write it. `crw flow _run` is the run process's own entry and `crw flow <run>` is a placeholder; neither is a subcommand a reader types.
+var skillFlowCommand = regexp.MustCompile("`?crw flow ([a-z][a-z-]*)")
+
+func skillFlowSubcommands(texts map[string]string) map[string][]string {
+	found := map[string][]string{}
+	for file, text := range texts {
+		fence := ""
+		for _, line := range lines(text) {
+			trimmed := strings.TrimLeft(line, " ")
+			if marker := fenceMarker(trimmed); marker != "" {
+				switch {
+				case fence == "":
+					fence = marker
+				case marker[0] == fence[0] && len(marker) >= len(fence):
+					fence = ""
+				}
+				continue
+			}
+			scan := line
+			if fence == "" {
+				// outside a fence only the inline code spans count
+				var spans []string
+				for _, m := range inlineCode.FindAllString(line, -1) {
+					spans = append(spans, m)
+				}
+				scan = strings.Join(spans, " ")
+			}
+			for _, m := range skillFlowCommand.FindAllStringSubmatch(scan, -1) {
+				if !slices.Contains(found[m[1]], file) {
+					found[m[1]] = append(found[m[1]], file)
+				}
+			}
+		}
+	}
+	return found
+}
+
+// flowHelpSubcommands is the subcommands the output of `crw flow --help` lists: the word after `crw flow` at the start of a usage line.
+func flowHelpSubcommands(help string) []string {
+	var subs []string
+	for _, line := range lines(help) {
+		if m := regexp.MustCompile(`^(?:usage: )?\s*crw flow ([a-z][a-z-]*)`).FindStringSubmatch(line); m != nil && !slices.Contains(subs, m[1]) {
+			subs = append(subs, m[1])
+		}
+	}
+	slices.Sort(subs)
+	return subs
+}
+
+// skillCommandProblems compares the subcommands the skills write with the ones the help lists.
+func skillCommandProblems(texts map[string]string, help string) []string {
+	var problems []string
+	listed := flowHelpSubcommands(help)
+	if len(listed) == 0 {
+		return []string{"the help lists no subcommand"}
+	}
+	found := skillFlowSubcommands(texts)
+	for _, sub := range slices.Sorted(maps.Keys(found)) {
+		if !slices.Contains(listed, sub) {
+			problems = append(problems, "`crw flow "+sub+"` is written in "+strings.Join(found[sub], ", ")+" and the binary does not list it (`crw flow --help`: "+strings.Join(listed, ", ")+")")
+		}
+	}
+	return problems
+}
+
+func TestSkillCommandsExist(t *testing.T) {
+	root := repoRoot()
+	texts := map[string]string{}
+	err := filepath.WalkDir(filepath.Join(root, "plugins/crw/skills"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		texts[filepath.ToSlash(rel)] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(testsupport.CRW(t), "flow", "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("crw flow --help: %v\n%s", err, out)
+	}
+	if problems := skillCommandProblems(texts, string(out)); len(problems) > 0 {
+		t.Errorf("%s", strings.Join(problems, "\n"))
+	}
+	// The commands the skills of this series rely on are among the ones written, so the comparison above has them as its subject.
+	found := skillFlowSubcommands(texts)
+	for _, sub := range []string{"start", "show", "watch", "apply", "reports", "report-ack", "report-up", "compile", "resume", "answer"} {
+		if len(found[sub]) == 0 {
+			t.Errorf("no skill text writes `crw flow %s`: the comparison no longer covers it", sub)
+		}
+	}
+
+	t.Run("fixture: a command the binary lacks is reported, the ones it lists and the placeholders are not", func(t *testing.T) {
+		help := "usage: crw flow start WORKFLOW\n       crw flow ps [--all]\n       crw flow trace export --out F\n"
+		ok := map[string]string{"a.md": "Run `crw flow start x` and `crw flow trace export`.\n\n```\ncrw flow ps\n```\nThe `crw flow <run> line` and `crw flow _run` are not commands. The crw flow command table is prose.\n"}
+		if p := skillCommandProblems(ok, help); len(p) > 0 {
+			t.Errorf("listed commands are reported: %v", p)
+		}
+		bad := map[string]string{"b.md": "Run `crw flow nonesuch --x`.\n\n```\ncrw flow gone\n```\n"}
+		p := skillCommandProblems(bad, help)
+		if len(p) != 2 || !strings.Contains(p[0], "crw flow gone") || !strings.Contains(p[1], "crw flow nonesuch") {
+			t.Errorf("the unknown commands are not reported: %v", p)
+		}
+		if p := skillCommandProblems(ok, "no usage here\n"); len(p) == 0 {
+			t.Error("an empty help is accepted")
+		}
+	})
 }
