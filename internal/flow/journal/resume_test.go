@@ -189,3 +189,52 @@ const a = await crw.accept('n1', c.id)
 const i = await crw.integrate('n1', a.id)
 return [b.status, c.id, a.id, i.id]`, opDone("integrate"))
 }
+
+// The join digest and the rows of a resumed run survive the store: a parallel() and a pipeline() run to the end,
+// the store is reopened by another process, and the resume replays every position - the join digests it compares are the ones
+// read back from flow_events.
+func TestResumeReplaysJoinsFromTheStore(t *testing.T) {
+	body := `
+const both = await parallel([
+  async () => (await agent.call('left', { agentType: 'explorer', label: 'l' })).status,
+  async () => (await agent.call('right', { agentType: 'explorer', label: 'r' })).status,
+], { keys: ['l', 'r'] })
+const piped = await pipeline(['a', 'b'], async (x) => (await agent.call('stage ' + x, { agentType: 'explorer', label: 's' + x })).status)
+const after = await agent.call('after the joins', { agentType: 'explorer', label: 'after' })
+return [both, piped, after.status]`
+	st, path := newStore(t)
+	j := newJournal(t, st)
+	w := newWorld()
+	first := engine.NewFake()
+	want := runWith(t, j, first, w, nil, body)
+	if want.Status != engine.RunCompleted || len(first.Requests()) == 0 {
+		t.Fatalf("%s %s", want.Status, want.Error)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+
+	again := openStore(t, path)
+	j2 := newJournal(t, again)
+	settled := 0
+	for _, e := range j2.Events() {
+		if e.Kind == engine.KindFlow && e.Event == "join_settled" {
+			settled++
+			if e.Data["digest"] == "" || e.Data["digest"] == nil {
+				t.Errorf("join_settled without a digest: %+v", e)
+			}
+		}
+	}
+	if settled != 2 {
+		t.Fatalf("%d join_settled rows in the store", settled)
+	}
+	second := engine.NewFake()
+	got := runWith(t, j2, second, w, &engine.ResumeOptions{}, body)
+	if string(got.Value) != string(want.Value) {
+		t.Errorf("the resume returned %s, the run %s", got.Value, want.Value)
+	}
+	if n := len(second.Requests()); n != 0 {
+		t.Errorf("the resume sent %d requests", n)
+	}
+}
