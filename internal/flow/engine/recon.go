@@ -429,7 +429,8 @@ type reconciler struct {
 // Reconcile decides every call of the run whose last row is an intent, and every call whose outcome is unknown and has not
 // been cleared, against the host. It appends what it established (an adopted thread, fork or turn, the orphans it
 // archived, outcome_unknown with the escalation that names the node) and returns what each call does next. A call whose last
-// row is terminal - a held call included - is not looked up at all.
+// row is terminal - a held call included - is not looked up at all: a held call's turns are proven ended where the resumed run
+// reaches it, or replaces it (heldTurnsEnded).
 func Reconcile(ctx context.Context, j Journal, cfg ReconcileConfig) (*Reconciliation, error) {
 	if cfg.Host == nil {
 		return nil, errors.New("engine: reconcile needs a host")

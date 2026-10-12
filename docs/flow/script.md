@@ -438,6 +438,28 @@ the rest of its path are the suffix: its calls end `superseded` with the reason 
 cleared, a call that ended held); `crw flow recover` settles a call in recovery hold, and a call it does not accept is a call
 `crw flow resume` takes.
 
+A call that ended held has one resolution command whatever the reason (a spent budget, a refused `thread/start`, a failed turn, an
+engine pause, a flow binding that could not be written): `crw flow resume RUN SCRIPT`. A held row asks no operator input
+(`--adopt`, `--absent`); what the call needs is the condition outside the run gone and a process that goes on with it. That
+process proves on the host what the hold left open before it sends anything, and the proof decides what happens:
+
+- A turn of the call may still run: a pause whose `turn/interrupt` the host ignored, or whose end did not come in time, ends the
+  call held `engine_paused` all the same. Every thread a held attempt of the call sent a turn on is read (`thread/read`); a running
+  turn of the call is interrupted and its end confirmed with `thread/read`, as a supersede does. While a turn still runs, the
+  thread cannot be read or it runs a turn that is not the call's, the call stays held as it is: nothing is sent on its thread,
+  and no new attempt starts on its node (no worktree is kept or restored, another call of the node ends held `recovery_hold`).
+- A refused request (`thread/start`, `turn/start`) made nothing only if the host shows it: the listing of the call's cwd, or the
+  marker of its operation on its thread. When that proof fails (the listing is not complete, a thread with turns stands at the
+  cwd, a turn carries the marker), nobody can prove the outcome: the call ends `outcome_unknown` (`dispatch_unknown`) with an
+  escalation. It is then in recovery hold, and dag-restart names `crw flow recover` for it.
+- The resumed process binds every engine turn as the first process does (`host_config_flow_binding` is written before the turn);
+  while the flow-bound directory is still unsafe the call ends held for it again with nothing sent.
+
+When the proof holds, the call goes on in place (the original packet before a thread existed, the continuation instruction after a
+delivered turn) and `hold_cleared` is written; where it cannot go on in place (a worktree failure, files that are not the hold
+snapshot, an attempt that waited for an older turn and made nothing) the call runs again as a new attempt. A resume while the
+condition outside the run still holds (the budget, the host's availability) ends the call held again.
+
 ## The App Server backend
 
 `internal/flow/backend/agent` runs a call as a persistent Codex 0.154 thread. A thread is never ephemeral: Codex refuses

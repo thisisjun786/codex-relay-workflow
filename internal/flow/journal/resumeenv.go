@@ -18,9 +18,10 @@ import (
 // ResumeEnv is engine.ResumeEnv of the shipped binary: it opens the relay store the run's journal is persisted in (the state
 // directory the operator named, else the relay's own selection for the control socket), connects to the App Server control
 // socket the run's host listens on, and makes the allocator of the run's working directories (<state>/flow/<run>/...) over the
-// repository the operator named, else the one the working directory is in. The store is opened for writing, because a resumed
-// run appends rows; a store that does not exist is an error, never a new empty store. Close commits the rows still buffered
-// and ends the connection and the store.
+// repository the operator named, else the one the working directory is in. The backend writes the flow binding of every
+// engine turn before turn/start, as the first process of a run on the App Server does (agent.BoundConfig). The store is opened
+// for writing, because a resumed run appends rows; a store that does not exist is an error, never a new empty store. Close
+// commits the rows still buffered and ends the connection and the store.
 func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeSetup, error) {
 	socket := req.Socket
 	if socket == "" {
@@ -41,6 +42,13 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 	if err != nil {
 		return engine.ResumeSetup{}, err
 	}
+	// The run's turns go to the App Server, so the resumed process binds every engine turn as a run on the App Server does
+	// (CRW-1207 F14): the run id and the role table of the run (the one `crw flow resume` pins, read from the same policy
+	// source) make the binding, and a line that cannot be written holds the call host_config_flow_binding with nothing sent.
+	policy, _, err := engine.LoadPolicy()
+	if err != nil {
+		return engine.ResumeSetup{}, err
+	}
 	st, err := store.Open(ctx, db, socket)
 	if err != nil {
 		return engine.ResumeSetup{}, err
@@ -57,7 +65,7 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 	}
 	threads := agent.NewThreads()
 	client := appserver.New(socket, appserver.DefaultBounds, agent.ClientOption(threads))
-	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads})
+	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: &agent.BoundConfig{RunID: req.RunID, Policy: policy}})
 	if err != nil {
 		_ = client.Close()
 		_ = st.Close()

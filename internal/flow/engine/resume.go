@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -364,7 +365,21 @@ func (c *callRun) endOpenCalls(ctx context.Context) *supersedeFailure {
 	}
 	host, _ := e.cfg.Backend.(ReconHost)
 	for _, st := range callStatesBefore(e.j, e.runID, e.startSeq) {
-		if st.terminal != "" || (st.id != c.id && (c.plan.node == "" || st.node != c.plan.node)) {
+		if st.id != c.id && (c.plan.node == "" || st.node != c.plan.node) {
+			continue
+		}
+		if st.terminal == EvHeld {
+			// A held call is not superseded (its P_held is kept with the old worktree), but a turn of it may still run: the
+			// host shows that none does, or the new attempt does not start. A call the resumed script took over proved it at
+			// its own position and goes on there.
+			if host != nil && (st.id == c.id || !e.claimedByScript(st.id)) {
+				if err := e.heldTurnsEnded(ctx, host, st.rows); err != nil {
+					return &supersedeFailure{detail: err.Error()}
+				}
+			}
+			continue
+		}
+		if st.terminal != "" {
 			continue
 		}
 		op, owner, skip := e.beginSupersede(st.id, st.id == c.id)
@@ -424,9 +439,17 @@ func (c *callRun) interruptAndConfirm(ctx context.Context, host ReconHost, st *c
 	if err := host.InterruptTurn(ctx, st.thread, turnID); err != nil {
 		return fmt.Errorf("turn %s of thread %s could not be interrupted: %w", turnID, st.thread, err)
 	}
-	o := c.e.cfg.Resume.timings()
+	if err := c.e.awaitInactive(ctx, host, st.thread); err != nil {
+		return fmt.Errorf("the interruption of turn %s of thread %s could not be confirmed: %w", turnID, st.thread, err)
+	}
+	return nil
+}
+
+// awaitInactive waits until thread/read shows the thread no longer active, polling at the resume's pace.
+func (e *Engine) awaitInactive(ctx context.Context, host ReconHost, thread string) error {
+	o := e.cfg.Resume.timings()
 	for i := 0; i < 50; i++ {
-		th, err := host.ReadThread(ctx, st.thread)
+		th, err := host.ReadThread(ctx, thread)
 		if err == nil && th.Status != "active" {
 			return nil
 		}
@@ -434,7 +457,7 @@ func (c *callRun) interruptAndConfirm(ctx context.Context, host ReconHost, st *c
 			return err
 		}
 	}
-	return fmt.Errorf("the interruption of turn %s of thread %s could not be confirmed", turnID, st.thread)
+	return errors.New("thread/read still shows it active")
 }
 
 // timings fills the defaults of a resume's timings.

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // This file is (g) of the replay rule: a position whose last event is held is never replayed, neither its held CallResult
@@ -25,8 +26,20 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	e := c.e
 	held := lastTerminal(rows)
 	reason := rowStr(held.Data, "reason")
-	// a held worktree failure made nothing of what the call needs: it starts again, in the allocation the journal records
-	if reason == ReasonWorktreeFailed || !c.heldStateHolds(rows, prep, held) {
+	// A held row does not show that the call's turn stopped (an interrupt the host ignored, or whose end did not come in time,
+	// ends the call held engine_paused all the same). Before the call goes on, or anything replaces it, the host shows that no
+	// turn of it still runs; while one does, the call stays held as it is and nothing else starts on its node.
+	if host, ok := e.cfg.Backend.(ReconHost); ok {
+		if err := e.heldTurnsEnded(e.ctx, host, rows); err != nil {
+			e.stopNode(c.plan.node, ReasonRecoveryHold)
+			e.markLive(c.path, c.position+1)
+			return c.replayFrom(rows, prep)
+		}
+	}
+	// A held worktree failure made nothing of what the call needs: it starts again, in the allocation the journal records. So
+	// does an attempt held recovery_hold before it made anything (a turn of an earlier attempt could not be confirmed ended
+	// when it began): that turn is shown ended now, and the attempt has no thread, and perhaps no allocation, to go on with.
+	if reason == ReasonWorktreeFailed || (reason == ReasonRecoveryHold && stateOf(c.id, rows).last == EvPrepared) || !c.heldStateHolds(rows, prep, held) {
 		return c.live()
 	}
 	info, _ := lookupCall(rows, c.id)
@@ -57,6 +70,119 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	// are the suffix
 	e.markLive(c.path, c.position+1)
 	return true
+}
+
+// heldTurnsEnded is the host's proof that no turn a held attempt of the call sent still runs. Every thread such an attempt sent
+// a turn on is read (thread/read): an idle or unloaded thread runs nothing. On an active thread each running turn has to be one
+// the call recorded (by its id, or by the operation marker of a turn it requested), and it is interrupted and the interruption
+// confirmed with thread/read, as a supersede does. A thread that cannot be read, a running turn that is not the call's, or an
+// interruption that is not confirmed is an error: the call stays held and nothing replaces it. Only attempts that ended held
+// (or that a resume's suffix ended superseded after their held row) are read: an attempt a new attempt superseded was
+// confirmed interrupted, a completed or refused one ended, and an open or unknown one is reconcile's.
+func (e *Engine) heldTurnsEnded(ctx context.Context, host ReconHost, rows []Event) error {
+	type attempt struct {
+		terminal string
+		turns    map[string]map[string]bool // thread -> recorded turn ids and operation markers
+	}
+	var attempts []*attempt
+	var cur *attempt
+	thread := ""
+	for _, ev := range rows {
+		switch {
+		case ev.Event == EvPrepared:
+			cur = &attempt{turns: map[string]map[string]bool{}}
+			attempts = append(attempts, cur)
+			thread = rowStr(ev.Data, "thread_id")
+		case cur == nil:
+		case ev.Event == EvThreadStarted || ev.Event == EvForkStarted:
+			thread = rowStr(ev.Data, "thread_id")
+		case ev.Event == EvTurnStarted || ev.Event == EvTurnRequested:
+			if thread == "" {
+				continue
+			}
+			if cur.turns[thread] == nil {
+				cur.turns[thread] = map[string]bool{}
+			}
+			for _, key := range []string{rowStr(ev.Data, "turn_id"), rowStr(ev.Data, "op")} {
+				if key != "" {
+					cur.turns[thread][key] = true
+				}
+			}
+		case ev.Event == EvRecoveryCleared:
+			cur.terminal = ""
+		case ev.Event == EvSuperseded && rowStr(ev.Data, "last_event") == EvHeld:
+			// a resume whose suffix began before the call ended the held call superseded without reading its thread
+			// (supersedeSuffix): its turn is as unproven as before
+			cur.terminal = EvHeld
+		case isTerminal(ev.Event):
+			cur.terminal = ev.Event
+		}
+	}
+	threads := map[string]map[string]bool{}
+	var order []string
+	for _, a := range attempts {
+		if a.terminal != EvHeld {
+			continue
+		}
+		for th, keys := range a.turns {
+			if threads[th] == nil {
+				threads[th] = map[string]bool{}
+				order = append(order, th)
+			}
+			for k := range keys {
+				threads[th][k] = true
+			}
+		}
+	}
+	sort.Strings(order)
+	for _, th := range order {
+		if err := e.endHeldTurns(ctx, host, th, threads[th]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// endHeldTurns makes sure no turn of a held call runs on thread: it reads the thread, and on an active one interrupts the turns
+// of the call that run and waits until thread/read shows the thread no longer active.
+func (e *Engine) endHeldTurns(ctx context.Context, host ReconHost, thread string, recorded map[string]bool) error {
+	th, err := host.ReadThread(ctx, thread)
+	if err != nil {
+		return fmt.Errorf("thread %s of the held call cannot be read: %w", thread, err)
+	}
+	if th.Status != "active" {
+		return nil
+	}
+	turns, err := host.Turns(ctx, thread)
+	if err != nil {
+		return fmt.Errorf("the turns of thread %s cannot be read: %w", thread, err)
+	}
+	var running []string
+	for _, t := range turns {
+		if t.Status != "inProgress" {
+			continue
+		}
+		if !recorded[t.ID] && !(t.Readable && t.Marker != "" && recorded[t.Marker]) {
+			return fmt.Errorf("thread %s runs turn %s, which is not the held call's", thread, t.ID)
+		}
+		running = append(running, t.ID)
+	}
+	for _, id := range running {
+		if err := host.InterruptTurn(ctx, thread, id); err != nil {
+			return fmt.Errorf("turn %s of thread %s could not be interrupted: %w", id, thread, err)
+		}
+	}
+	if err := e.awaitInactive(ctx, host, thread); err != nil {
+		return fmt.Errorf("the turn of the held call on thread %s did not end: %w", thread, err)
+	}
+	return nil
+}
+
+// claimedByScript says whether the resumed script took a call of the previous process over (it goes on in place).
+func (e *Engine) claimedByScript(id string) bool {
+	e.claimedM.Lock()
+	defer e.claimedM.Unlock()
+	return e.claimed[id]
 }
 
 // heldStateHolds is (e) for a held call. An executor goes on in place only when its worktree is exactly the state the hold
