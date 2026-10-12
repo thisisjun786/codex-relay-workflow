@@ -159,7 +159,7 @@ func ChildCommand(name string) bool {
 type childStateKey struct{}
 
 // OwnedChildState is ctx naming the relay daemon's own state directory, which ExecuteOwnedChild runs a child command
-// on in place of the caller's --state: no caller selection decides where a child report is recorded (CRW-1286).
+// on in place of the caller's --state: no caller selection decides where a child report is recorded (CRW-1299).
 func OwnedChildState(ctx context.Context, state string) context.Context {
 	return context.WithValue(ctx, childStateKey{}, state)
 }

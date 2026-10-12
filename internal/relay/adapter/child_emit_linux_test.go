@@ -391,7 +391,7 @@ func childIn(t *testing.T, dir string, env []string, args ...string) (map[string
 	return result, err
 }
 
-// CRW-1286: the relay daemon alone decides where a child report is recorded. The child's state selection, a flag
+// CRW-1299: the relay daemon alone decides where a child report is recorded. The child's state selection, a flag
 // absolute or relative to its own directory or its environment, only finds the daemon's socket; the daemon, in
 // another directory with its own environment naming another state, records the report in its own store.
 func TestChildReportStateLocationIsTheDaemons(t *testing.T) {
@@ -426,7 +426,7 @@ func TestChildReportStateLocationIsTheDaemons(t *testing.T) {
 	}
 }
 
-// CRW-1286: a request that reaches the daemon naming another state, an initialized store holding the same
+// CRW-1299: a request that reaches the daemon naming another state, an initialized store holding the same
 // relationship or a path relative to the child, cannot redirect the record: the daemon records it in its own store.
 func TestAChildStateSelectionCannotRedirectTheDaemonsRecord(t *testing.T) {
 	for _, named := range []string{"other", "state"} {
@@ -468,7 +468,7 @@ func TestAChildStateSelectionCannotRedirectTheDaemonsRecord(t *testing.T) {
 	}
 }
 
-// CRW-1286: the daemon never interprets a path relative to the child. A child naming one gets an explicit error
+// CRW-1299: the daemon never interprets a path relative to the child. A child naming one gets an explicit error
 // naming the option, and nothing is recorded.
 func TestTheDaemonRefusesACallerRelativePath(t *testing.T) {
 	claim := []string{"intent-claim", "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task", "--dispatch-request-id", "dispatch-1"}
