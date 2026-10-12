@@ -52,6 +52,24 @@ return [a.status, b.status]`)
 			t.Fatalf("row %d: %+v, want %+v", i, got[i], all[i])
 		}
 	}
+	lean, _, err := LoadLean(ctx, st, runID)
+	if err != nil || len(lean) != len(all) {
+		t.Fatalf("LoadLean: %d rows, %v", len(lean), err)
+	}
+	for _, e := range lean {
+		if _, has := e.Data["result"]; has {
+			t.Fatalf("a lean row carries a result: %+v", e)
+		}
+	}
+	withResult := 0
+	for _, e := range all {
+		if _, has := e.Data["result"]; has {
+			withResult++
+		}
+	}
+	if withResult == 0 {
+		t.Fatal("the full load carries no result either, so the lean check proves nothing")
+	}
 	if page, more, _, err := LoadAfter(ctx, st, runID, cursor, 3); err != nil || len(page) != 0 || more {
 		t.Errorf("after the last row: %d rows, more %v, %v", len(page), more, err)
 	}

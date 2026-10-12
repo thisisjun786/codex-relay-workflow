@@ -489,16 +489,22 @@ func Load(ctx context.Context, st *store.Store, runID string) (events []engine.E
 }
 
 func readCalls(ctx context.Context, st *store.Store, where string, args ...any) ([]engine.Event, error) {
-	return readCallsLimited(ctx, st, where, 0, args...)
+	return readCallsLimited(ctx, st, where, 0, false, args...)
 }
 
-// readCallsLimited reads the rows of flow_calls that where selects, in order, at most limit of them (0: all).
-func readCallsLimited(ctx context.Context, st *store.Store, where string, limit int, args ...any) ([]engine.Event, error) {
+// readCallsLimited reads the rows of flow_calls that where selects, in order, at most limit of them (0: all). Lean leaves the
+// result bytes out: the rows then carry no "result" member, which a reader of the shape of a run (not of what its calls returned)
+// does not need and which can be large.
+func readCallsLimited(ctx context.Context, st *store.Store, where string, limit int, lean bool, args ...any) ([]engine.Event, error) {
 	order := ` ORDER BY event_seq`
 	if limit > 0 {
 		order += ` LIMIT ` + strconv.Itoa(limit)
 	}
-	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, call_id, event_seq, path, position, kind, event, result_bytes, detail_json FROM flow_calls `+where+order, args...)
+	result := `result_bytes`
+	if lean {
+		result = `NULL`
+	}
+	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, call_id, event_seq, path, position, kind, event, `+result+`, detail_json FROM flow_calls `+where+order, args...)
 	if err != nil {
 		return nil, fmt.Errorf("journal: %w", err)
 	}
@@ -619,6 +625,9 @@ func RunOf(ctx context.Context, st *store.Store, callID string) (string, error) 
 // and says whether a row beyond the page exists. It is the read of `crw flow watch` and of the GUI's event stream: the number of
 // the last row is the cursor of the next read, as `crw relay journal-tail` keeps the relay journal's. A store that holds no
 // run runID answers hasRun false.
+//
+// The rows are lean: they carry no call result (the "result" member of Data), so a follower of a run pays for the shape of the
+// run and not for what its calls returned.
 func LoadAfter(ctx context.Context, st *store.Store, runID string, after, limit int) (events []engine.Event, more, hasRun bool, err error) {
 	if limit < 1 {
 		return nil, false, false, errors.New("journal: a page holds at least one row")
@@ -630,7 +639,7 @@ func LoadAfter(ctx context.Context, st *store.Store, runID string, after, limit 
 	if n == 0 {
 		return nil, false, false, nil
 	}
-	calls, err := readCallsLimited(ctx, st, `WHERE run_id = ? AND event_seq > ?`, limit+1, runID, after)
+	calls, err := readCallsLimited(ctx, st, `WHERE run_id = ? AND event_seq > ?`, limit+1, true, runID, after)
 	if err != nil {
 		return nil, false, true, err
 	}
@@ -644,4 +653,26 @@ func LoadAfter(ctx context.Context, st *store.Store, runID string, after, limit 
 		events, more = events[:limit], true
 	}
 	return events, more, true, nil
+}
+
+// LoadLean is Load without the results of the calls: the rows of a run as `crw flow ps`, `show` and the GUI read them.
+func LoadLean(ctx context.Context, st *store.Store, runID string) (events []engine.Event, hasRun bool, err error) {
+	var n int
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE run_id = ?`, runID).Scan(&n); err != nil {
+		return nil, false, fmt.Errorf("journal: %w", err)
+	}
+	if n == 0 {
+		return nil, false, nil
+	}
+	calls, err := readCallsLimited(ctx, st, `WHERE run_id = ?`, 0, true, runID)
+	if err != nil {
+		return nil, true, err
+	}
+	flows, err := readEvents(ctx, st, runID)
+	if err != nil {
+		return nil, true, err
+	}
+	events = append(calls, flows...)
+	sort.SliceStable(events, func(i, k int) bool { return events[i].Seq < events[k].Seq })
+	return events, true, nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
@@ -220,6 +221,11 @@ func modes() []mode {
 			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
 			engine.ResumeEnv = journal.ResumeEnv
+			// start, ps, show, watch, answer, pause, cancel, status-line, and resume and recover under the run lock, are the run surface
+			// (internal/flow/cli); the run process it starts is `crw flow _run`.
+			if flowcli.Handles(c.args) {
+				return flowcli.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr)
+			}
 			// trace export, shadow and measure read store copies and trace files and call no agent (internal/flow/shadow).
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
@@ -227,6 +233,7 @@ func modes() []mode {
 			code := lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			if len(c.args) > 0 && code == 0 && (c.args[0] == "help" || c.args[0] == "-h" || c.args[0] == "--help") {
 				fmt.Fprintln(c.stdout, shadow.Usage)
+				fmt.Fprintln(c.stdout, flowcli.Usage)
 			}
 			return code
 		}},
